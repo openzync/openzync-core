@@ -179,4 +179,24 @@ Production readiness and developer experience.
 
 ---
 
+---
+
+## Phase-by-Phase Development Timeline
+
+The definitive project plan is at **[15-development-timeline/00-master-timeline.md](15-development-timeline/00-master-timeline.md)**.
+
+This single document synthesises inputs from all six specialist reviews and provides:
+
+- **Calibrated durations** (22 weeks, 8 phases — corrected from original 14 weeks)
+- **Task-level breakdown** per phase with effort estimates (person-days)
+- **Parallel tracks** (A: API/Core, B: NLP/Workers, C: DevOps/Infra)
+- **Senior vs junior allocation** per task
+- **42 measurable exit criteria** across all phases (G0.1 through G5b.8)
+- **Risk gates** that must pass before progressing between phases
+- **Teaching sessions** scheduled before each phase
+- **Technical debt log** with incurrence and payback phases
+- **Resource ramp** showing team composition over time
+
+---
+
 *Generated from `SRS_MemGraph.md` v1.0.0. All requirement IDs (AUTH-01, ING-01, etc.) are preserved in each domain doc for traceability.*
