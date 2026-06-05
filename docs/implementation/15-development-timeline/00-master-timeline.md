@@ -1,4 +1,4 @@
-# MemGraph — Phase-by-Phase Development Timeline
+# OpenZep — Phase-by-Phase Development Timeline
 
 > **Master Plan** — Synthesised from all specialist reviews: @architect, @senior-dev, @reviewer, @qa-engineer, @junior-mentor, @devops
 >
@@ -258,7 +258,7 @@ Foundation  Core Mem    Full Parity NLP Enrich  Dash+Infra  Hardening    Release
 
 | Week | Task | Est. Days | Depends On |
 |------|------|-----------|------------|
-| W7–8 | 📦 **Python SDK** (`memgraph`): sync/async duality, all 5 domains (memory, facts, graph, users, sessions), `PaginatedAsyncIterator`, typed errors, PyPI CI pipeline | 8 | Phase 1 stable API |
+| W7–8 | 📦 **Python SDK** (`openzep`): sync/async duality, all 5 domains (memory, facts, graph, users, sessions), `PaginatedAsyncIterator`, typed errors, PyPI CI pipeline | 8 | Phase 1 stable API |
 | W9 | 📦 SDK integration tests (against running API in CI) | 2 | 2.1 |
 | W9 | 🔒 Business data ingestion: `POST /facts` with batch triples (max 500), validation, low-queue ARQ task | 2 | 1.1 |
 | W9 | 🔒 Hybrid search endpoint: `GET /search?query=&types=` with vector + BM25 + graph + RRF | 2 | 1.6 |
@@ -287,7 +287,7 @@ Foundation  Core Mem    Full Parity NLP Enrich  Dash+Infra  Hardening    Release
 
 | # | Criterion | Verification |
 |---|-----------|-------------|
-| **G2.1** | `pip install memgraph` → `client.memory.add()` returns typed response | Integration test |
+| **G2.1** | `pip install openzep` → `client.memory.add()` returns typed response | Integration test |
 | **G2.2** | MCP server starts with stdio + SSE. All 8 tools respond correctly | Integration test + Claude Desktop manual |
 | **G2.3** | Graph query: `GET /graph/nodes` with 15k entity nodes returns ≤500ms p99 | Load test |
 | **G2.4** | Community summary generated for 5-entity cluster, `CommunityNode` created in FalkorDB | Integration test |

@@ -1,0 +1,241 @@
+"""Domain exception hierarchy and FastAPI exception-handler registration.
+
+Every custom exception carries a ``status_code``, a machine-readable ``code``
+string, a human-readable ``message``, and an optional ``detail`` dict for
+additional context.
+
+Exception handlers are registered via ``register_exception_handlers(app)`` and
+return response bodies conforming to **RFC 7807** (Problem Details for HTTP
+APIs).
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Exception hierarchy
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class AppError(Exception):
+    """Base exception for all OpenZep application errors.
+
+    Subclass this to create domain-specific errors.  Every subclass **must**
+    set :attr:`status_code` and :attr:`code`.
+    """
+
+    status_code: int = 500
+    """HTTP status code returned to the client."""
+
+    code: str = "internal_error"
+    """Machine-readable error-code string (e.g. ``"not_found"``)."""
+
+    def __init__(
+        self,
+        message: str = "An unexpected error occurred.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        self.message = message
+        self.detail = detail or {}
+        super().__init__(self.message)
+
+
+class NotFoundError(AppError):
+    """Requested resource does not exist."""
+
+    status_code: int = 404
+    code: str = "not_found"
+
+    def __init__(
+        self,
+        message: str = "The requested resource was not found.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class ValidationError(AppError):
+    """Request payload failed validation (business-rule level)."""
+
+    status_code: int = 422
+    code: str = "validation_error"
+
+    def __init__(
+        self,
+        message: str = "The request payload is invalid.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class AuthenticationError(AppError):
+    """Missing or invalid authentication credentials."""
+
+    status_code: int = 401
+    code: str = "authentication_error"
+
+    def __init__(
+        self,
+        message: str = "Authentication is required.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class AuthorizationError(AppError):
+    """Authenticated but insufficient permissions."""
+
+    status_code: int = 403
+    code: str = "authorization_error"
+
+    def __init__(
+        self,
+        message: str = "You do not have permission to perform this action.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class ConflictError(AppError):
+    """Resource already exists or is in a conflicting state."""
+
+    status_code: int = 409
+    code: str = "conflict"
+
+    def __init__(
+        self,
+        message: str = "The request conflicts with the current state of the resource.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class RateLimitError(AppError):
+    """Client exceeded rate-limit allowance."""
+
+    status_code: int = 429
+    code: str = "rate_limit_exceeded"
+
+    def __init__(
+        self,
+        message: str = "Too many requests.  Please slow down.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class InsufficientCreditsError(AppError):
+    """Account balance too low to perform the requested operation."""
+
+    status_code: int = 402
+    code: str = "insufficient_credits"
+
+    def __init__(
+        self,
+        message: str = "Insufficient credits to complete this request.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class ExternalServiceError(AppError):
+    """External dependency (LLM, DB, S3, etc.) returned an error or timed out."""
+
+    status_code: int = 502
+    code: str = "external_service_error"
+
+    def __init__(
+        self,
+        message: str = "An external service error occurred.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class PayloadTooLargeError(AppError):
+    """Request body exceeds the maximum allowed size."""
+
+    status_code: int = 413
+    code: str = "payload_too_large"
+
+    def __init__(
+        self,
+        message: str = "The request body is too large.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# RFC 7807 Problem Details
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _to_problem_json(request: Request, exc: AppError) -> JSONResponse:
+    """Convert an ``AppError`` to an RFC 7807 Problem Details response.
+
+    https://www.rfc-editor.org/rfc/rfc7807
+    """
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "type": f"https://errors.openzep.dev/{exc.code}",
+            "title": exc.code.replace("_", " ").title(),
+            "status": exc.status_code,
+            "detail": exc.message,
+            "instance": str(request.url.path),
+            **exc.detail,
+        },
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Registration — call once during app creation
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def register_exception_handlers(app: FastAPI) -> None:
+    """Register exception handlers for the complete ``AppError`` hierarchy.
+
+    Every exception above is mapped to an RFC 7807 JSON body so that API
+    consumers receive structured, machine-readable error information.
+
+    Args:
+        app: The FastAPI application instance.
+    """
+    handlers: dict[type[AppError], int] = {
+        NotFoundError: 404,
+        ValidationError: 422,
+        AuthenticationError: 401,
+        AuthorizationError: 403,
+        ConflictError: 409,
+        RateLimitError: 429,
+        InsufficientCreditsError: 402,
+        ExternalServiceError: 502,
+        PayloadTooLargeError: 413,
+    }
+
+    for exc_type, _status in handlers.items():
+        # FastAPI expects a callable with signature (request, exc) -> response.
+        # We capture exc_type by using it as a default argument in the closure.
+        def _handler(
+            request: Request,
+            exc: AppError,
+            _exc_type: type[AppError] = exc_type,  # type: ignore[assignment]
+        ) -> JSONResponse:
+            if not isinstance(exc, _exc_type):
+                # If a subclass matched, fall through to the base handler.
+                return _handler(request, exc, AppError)
+            return _to_problem_json(request, exc)
+
+        app.add_exception_handler(exc_type, _handler)  # type: ignore[arg-type]
+
+    # Catch-all for any other AppError subclasses that may be defined later.
+    @app.exception_handler(AppError)
+    async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+        return _to_problem_json(request, exc)

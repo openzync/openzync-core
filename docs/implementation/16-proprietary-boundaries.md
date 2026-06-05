@@ -26,7 +26,7 @@
 
 ## 1. Licensing Strategy
 
-MemGraph uses a **dual-license model** that protects core competitive IP while maximising community adoption of the developer surface area.
+OpenZep uses a **dual-license model** that protects core competitive IP while maximising community adoption of the developer surface area.
 
 ### 1.1 The Two Licenses
 
@@ -40,7 +40,7 @@ MemGraph uses a **dual-license model** that protects core competitive IP while m
 This is the same model used by **MongoDB, Grafana, GitLab, and Sentry**. It strikes a balance between:
 
 - **Open-source adoption** — developers can self-host for free, inspect the code, and contribute to non-core components
-- **Commercial sustainability** — organisations that want to offer MemGraph as a SaaS without releasing their modifications under AGPL purchase a commercial license
+- **Commercial sustainability** — organisations that want to offer OpenZep as a SaaS without releasing their modifications under AGPL purchase a commercial license
 - **Competitive moat** — the core algorithmic IP (context assembly, enrichment orchestration, prompt engineering) is never permissively licensed
 
 ### 1.3 Relationship to the SRS
@@ -60,13 +60,13 @@ The original SRS (Phase 5, Hardening) listed `LICENSE (Apache 2.0)` for the full
 | Building a proprietary SDK integration against `oss/` components | MIT/Apache 2.0 — no restrictions |
 | Contributing a bug fix to `oss/repositories/` | MIT/Apache 2.0 — contribution under same license |
 | Contributing a bug fix to `core/context-assembly/` | AGPL v3 — contribution under AGPL v3 |
-| Embedding MemGraph in a proprietary appliance | Commercial license required |
+| Embedding OpenZep in a proprietary appliance | Commercial license required |
 
 ---
 
 ## 2. Open-Source Components (OSS/)
 
-These components live under `oss/` and are licensed under a **permissive license (MIT or Apache 2.0)**. They are the community-accessible surface area of MemGraph.
+These components live under `oss/` and are licensed under a **permissive license (MIT or Apache 2.0)**. They are the community-accessible surface area of OpenZep.
 
 ### 2.1 Component Table
 
@@ -94,7 +94,7 @@ These components live under `oss/` and are licensed under a **permissive license
 
 **Repositories:** SQLAlchemy CRUD patterns are mechanical. The IP value is in *how* data is composed and enriched, not in `SELECT` / `INSERT` statements. Opening repositories allows community contributors to add new query patterns and backends.
 
-**MCP Server:** The MCP protocol is an open standard (Anthropic). Making the server implementation open-source encourages community contributions and makes MemGraph the default MCP memory provider.
+**MCP Server:** The MCP protocol is an open standard (Anthropic). Making the server implementation open-source encourages community contributions and makes OpenZep the default MCP memory provider.
 
 **Infra configs:** Docker Compose files and Helm charts are operational boilerplate. Opening them reduces friction for self-hosters and encourages community-provided deployment options (e.g., Nomad, Ansible).
 
@@ -153,7 +153,7 @@ The following files are strictly internal and must NEVER be referenced from `oss
 | `private/prompt-overrides/` | Organisation-specific prompt customisation — contains client ontologies |
 | `private/integration-secrets/` | Third-party API credentials, webhook signing keys |
 
-These live outside the repository in a private `memgraph-private` repo or a Vault instance.
+These live outside the repository in a private `openzep-private` repo or a Vault instance.
 
 ---
 
@@ -164,11 +164,11 @@ The OSS vs proprietary boundary maps cleanly onto the physical directory structu
 ### 4.1 Directory Layout
 
 ```
-memgraph/
+openzep/
 │
 ├── oss/                              # OPEN SOURCE — MIT / Apache 2.0
 │   ├── sdk-python/                   # Python client library (PyPI)
-│   │   ├── memgraph/                 # SDK package
+│   │   ├── openzep/                 # SDK package
 │   │   ├── tests/
 │   │   ├── pyproject.toml
 │   │   └── README.md
@@ -180,7 +180,7 @@ memgraph/
 │   │   └── README.md
 │   │
 │   ├── sdk-go/                       # Go client library (pkg.go.dev)
-│   │   ├── memgraph/
+│   │   ├── openzep/
 │   │   ├── tests/
 │   │   ├── go.mod
 │   │   └── README.md
@@ -502,7 +502,7 @@ OpenZep/
 ### 6.2 Target Layout (This Document)
 
 ```
-memgraph/
+openzep/
 ├── oss/                      # All OSS code in one tree
 │   ├── sdk-python/
 │   ├── sdk-typescript/
@@ -531,13 +531,13 @@ memgraph/
 
 ### 6.3 Package Names & Imports During Transition
 
-To allow a gradual migration without breaking imports mid-flight, use `memgraph.` as the root package:
+To allow a gradual migration without breaking imports mid-flight, use `openzep.` as the root package:
 
 | Current Import | New Import (Phase 1 — both work) | Final Import |
 |----------------|-----------------------------------|--------------|
-| `from services.api.routers import ...` | `from memgraph.oss.routers import ...` | Same |
-| `from packages.core import ...` | `from memgraph.core import ...` | Same |
-| `from packages.sdk_python import ...` | `from memgraph.oss.sdk_python import ...` | Same |
+| `from services.api.routers import ...` | `from openzep.oss.routers import ...` | Same |
+| `from packages.core import ...` | `from openzep.core import ...` | Same |
+| `from packages.sdk_python import ...` | `from openzep.oss.sdk_python import ...` | Same |
 
 Phase 1: Add the new structure alongside the old one, with symlinks or import redirects.
 Phase 2: Update all internal imports to the new paths.
@@ -602,8 +602,8 @@ This is a non-breaking refactoring — no external consumer should notice the ch
 |--------|--------|
 | **What the buyer gets** | Access to the full proprietary codebase with the right to modify and operate without AGPL source release obligations |
 | **What the buyer does NOT get** | Exclusive rights — the code remains public under AGPL; only the license terms differ |
-| **SaaS use case** | Commercial license required if offering MemGraph as a managed service without AGPL compliance |
-| **Embedded use case** | Commercial license required if embedding MemGraph in a proprietary appliance or product |
+| **SaaS use case** | Commercial license required if offering OpenZep as a managed service without AGPL compliance |
+| **Embedded use case** | Commercial license required if embedding OpenZep in a proprietary appliance or product |
 | **Support and SLA** | Commercial license typically bundled with support contract (separate from this document) |
 | **Pricing model** | Out of scope for this document — defined in commercial contracts |
 
@@ -652,7 +652,7 @@ The existing codebase (as of `SRS_MemGraph.md` v1.0.0) uses a different monorepo
 
 ### 8.2 Phase 1 — Import Path Updates (Week 0-1)
 
-- Update all `pyproject.toml` and `setup.py` files to use `memgraph.` as the root namespace
+- Update all `pyproject.toml` and `setup.py` files to use `openzep.` as the root namespace
 - Add import compatibility shims at old paths (deprecation warnings)
 - Script: `scripts/update-imports.py` — automated import path migration
 
@@ -674,11 +674,11 @@ The existing codebase (as of `SRS_MemGraph.md` v1.0.0) uses a different monorepo
 
 ### Why AGPL v3 and not Apache 2.0?
 
-Apache 2.0 would allow a competitor to take MemGraph's core algorithms (context assembly with RRF weights, enrichment DAG orchestration, prompt templates) and offer them as a proprietary SaaS without contributing any improvements back to the community. AGPL v3 closes this gap: any organisation that modifies and runs MemGraph as a network service must release their modifications. Organisations that prefer not to release modifications can purchase a commercial license.
+Apache 2.0 would allow a competitor to take OpenZep's core algorithms (context assembly with RRF weights, enrichment DAG orchestration, prompt templates) and offer them as a proprietary SaaS without contributing any improvements back to the community. AGPL v3 closes this gap: any organisation that modifies and runs OpenZep as a network service must release their modifications. Organisations that prefer not to release modifications can purchase a commercial license.
 
 ### Why not SSPL (MongoDB) or BSL (Redis)?
 
-SSPL and BSL are not OSI-approved open-source licenses. Using them would mean MemGraph cannot call itself "open source," which harms community adoption. AGPL v3 is OSI-approved and achieves the same practical protection without the branding cost.
+SSPL and BSL are not OSI-approved open-source licenses. Using them would mean OpenZep cannot call itself "open source," which harms community adoption. AGPL v3 is OSI-approved and achieves the same practical protection without the branding cost.
 
 ### Can a contributor accidentally violate the AGPL?
 
@@ -688,7 +688,7 @@ External contributors can only submit PRs to `oss/` directories (MIT/Apache 2.0)
 
 The contributor submits the OSS portion (e.g., a new router endpoint in `oss/routers/` and new schemas in `oss/schemas/`). The internal team implements the corresponding service layer in `services/` and core logic in `core/`. The contributor never needs to see the proprietary implementation.
 
-### Can an organisation use MemGraph under AGPL v3 for internal tools?
+### Can an organisation use OpenZep under AGPL v3 for internal tools?
 
 Yes. AGPL v3's network-use-as-distribution clause applies when the software is used to provide a service to third parties. Internal company tools, dev/staging environments, and employee-only applications are free under AGPL v3 with no source release obligation.
 
@@ -735,7 +735,7 @@ The Next.js admin dashboard (`apps/dashboard/`) is AGPL v3 / commercial. It does
 | Redis | RSALv2 | Use as external service | Use as external service | Not embedded — AGPL does not require copyleft on external services |
 | PostgreSQL | PostgreSQL License | Yes | Yes | Not linked — client-server protocol |
 
-Libraries embedded in the MemGraph process must be license-compatible with AGPL v3. Services accessed over the network (PostgreSQL, Redis, FalkorDB) are not affected by MemGraph's license.
+Libraries embedded in the OpenZep process must be license-compatible with AGPL v3. Services accessed over the network (PostgreSQL, Redis, FalkorDB) are not affected by OpenZep's license.
 
 ---
 
@@ -752,7 +752,7 @@ Rule 5: No core/ file may import from services/, workers/, or prompts/
 Rule 6: Repository files (oss/repositories/) must not import from core/ except exceptions
 ```
 
-Implementation approach: AST-parsing of all `.py` files, extracting `import` and `from ... import` statements, resolving them against the project's `memgraph.` namespace, and asserting the rules above. Fail CI on any violation.
+Implementation approach: AST-parsing of all `.py` files, extracting `import` and `from ... import` statements, resolving them against the project's `openzep.` namespace, and asserting the rules above. Fail CI on any violation.
 
 ```python
 # Pseudo-code for scripts/check-import-boundaries.py
@@ -778,7 +778,7 @@ def check_file(filepath: Path) -> list[str]:
                 if str(filepath).startswith(prefix):
                     module = node.module or ""
                     for f_mod in forbidden:
-                        if module.startswith(f"memgraph.{f_mod}"):
+                        if module.startswith(f"openzep.{f_mod}"):
                             if module not in ALLOWED_OSS_CORE_IMPORTS:
                                 violations.append(...)
     return violations

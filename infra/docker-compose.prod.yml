@@ -1,0 +1,59 @@
+version: "3.9"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Production overrides for docker-compose.yml
+#
+# Apply alongside the base compose file:
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.prod.yml up -d
+#
+# Covers:
+#   - Replicated API behind a load balancer (add Traefik / nginx separately)
+#   - Resource limits and reservations
+#   - Production log levels
+#   - Placeholder notes for managed services (pgBouncer, Redis Sentinel, TLS)
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  api:
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "2"
+          memory: "4G"
+        reservations:
+          cpus: "1"
+          memory: "2G"
+    environment:
+      LOG_LEVEL: INFO
+    # ⚠️ Production: add a reverse proxy (Traefik, nginx) with TLS termination
+    #    in front of the API service.  Mount certs and configure
+    #    ``allowed_hosts`` in ``CORS_ORIGINS`` / ``TrustedHostMiddleware``.
+
+  postgres:
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: "4G"
+    # TechLead note: In production, prefer a managed PostgreSQL (RDS, Cloud SQL)
+    # or configure WAL archiving + point-in-time recovery.  The stock pgvector
+    # image is suitable for dev/staging only.
+
+  redis:
+    deploy:
+      replicas: 1
+    # TechLead note: For production HA, replace with Redis Sentinel / Redis
+    # Cluster, or use a managed service (ElastiCache, Upstash).  The single
+    # replica here is suitable for staging only.
+
+  # TechLead note: Add pgBouncer or PgCat for connection pooling in front of
+  # PostgreSQL when the number of worker connections exceeds ~50.  The SQLAlchemy
+  # pool is configured with ``pool_size=20, max_overflow=10``, so pgBouncer
+  # transaction-mode pooling is recommended.
+
+  # Future services to add for production hardening:
+  #   - traefik: reverse proxy with Let's Encrypt TLS
+  #   - pg-bouncer: connection pooling for PostgreSQL
+  #   - redis-sentinel: high-availability Redis
+  #   - loki / prometheus: log aggregation and metrics

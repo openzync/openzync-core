@@ -1,0 +1,65 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# OpenZep — pre-commit hooks
+# ──────────────────────────────────────────────────────────────────────────────
+# Install:  pre-commit install
+# Update:   pre-commit autoupdate
+# Run all:  pre-commit run --all-files
+# ──────────────────────────────────────────────────────────────────────────────
+
+repos:
+  # ── Ruff: linter + formatter ────────────────────────────────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.4.0
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        types_or: [python, pyi]
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  # ── mypy: static type checking ──────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.9.0
+    hooks:
+      - id: mypy
+        additional_dependencies:
+          - pydantic
+          - pydantic-settings
+          - types-redis
+          - types-requests
+        args: [--ignore-missing-imports, --explicit-package-bases]
+        # Allow_failure because mypy strict is still aspirational
+        stages: [manual]
+
+  # ── General-purpose hooks ───────────────────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      - id: check-json
+      - id: check-toml
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  # ── Security: bandit on diff ────────────────────────────────────────────────
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.8
+    hooks:
+      - id: bandit
+        args: [--skip, "B101,B311", --confidence-level, medium]
+        stages: [manual]
+
+  # ── Detect secrets ──────────────────────────────────────────────────────────
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.4.13
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        stages: [manual]

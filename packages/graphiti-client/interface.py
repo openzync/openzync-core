@@ -1,0 +1,168 @@
+"""Abstract interface for graph-database operations.
+
+The ``GraphBackend`` ABC defines the contract every graph backend must
+satisfy.  Currently shipped with a :class:`FalkorDBBackend
+<openzep.packages.graphiti_client.backends.falkordb.FalkorDBBackend>`
+implementation; future backends (Neo4j, Amazon Neptune, etc.) implement the
+same interface.
+
+Every method requires ``org_id`` as the first parameter — OpenZep enforces
+strict organisational isolation.  No cross-org graph traversal is possible.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from uuid import UUID
+
+
+class GraphBackend(ABC):
+    """Abstract interface for graph database operations.
+
+    Implementations map these operations to the underlying graph engine
+    (FalkorDB / RedisGraph, Neo4j, etc.) and translate engine-specific
+    exceptions into the OpenZep exception hierarchy.
+    """
+
+    # ── Entity CRUD ────────────────────────────────────────────────────────────
+
+    @abstractmethod
+    async def create_entity(
+        self,
+        org_id: UUID,
+        name: str,
+        entity_type: str,
+        summary: str | None = None,
+    ) -> dict:
+        """Create a new entity node in the graph.
+
+        Args:
+            org_id: Organisational scope — the entity belongs to this org.
+            name: Human-readable name for the entity.
+            entity_type: Type label (e.g. ``"person"``, ``"document"``,
+                ``"topic"``).
+            summary: Optional text summary or description.
+
+        Returns:
+            A dictionary representing the created entity with at minimum
+            ``id``, ``name``, ``type``, and ``created_at`` keys.
+        """
+        ...
+
+    @abstractmethod
+    async def get_entity(self, org_id: UUID, entity_id: UUID) -> dict | None:
+        """Retrieve an entity node by its ID.
+
+        Args:
+            org_id: Organisational scope for isolation.
+            entity_id: The UUID of the entity to fetch.
+
+        Returns:
+            The entity dict, or ``None`` if no entity with that ID exists
+            within the given org.
+        """
+        ...
+
+    @abstractmethod
+    async def delete_entity(self, org_id: UUID, entity_id: UUID) -> bool:
+        """Remove an entity node from the graph.
+
+        Args:
+            org_id: Organisational scope.
+            entity_id: The UUID of the entity to delete.
+
+        Returns:
+            ``True`` if the entity was deleted, ``False`` if it did not exist.
+        """
+        ...
+
+    # ── Relationships ──────────────────────────────────────────────────────────
+
+    @abstractmethod
+    async def create_relationship(
+        self,
+        org_id: UUID,
+        source_id: UUID,
+        target_id: UUID,
+        relationship_type: str,
+        properties: dict | None = None,
+    ) -> dict:
+        """Create a directed edge between two entity nodes.
+
+        Args:
+            org_id: Organisational scope.
+            source_id: UUID of the source entity.
+            target_id: UUID of the target entity.
+            relationship_type: Label for the edge (e.g. ``"mentions"``,
+                ``"authored_by"``).
+            properties: Optional key-value metadata attached to the edge.
+
+        Returns:
+            A dictionary representing the created relationship with at
+            minimum ``id``, ``source_id``, ``target_id``, ``type``, and
+            ``created_at`` keys.
+        """
+        ...
+
+    # ── Traversal & Search ─────────────────────────────────────────────────────
+
+    @abstractmethod
+    async def traverse(
+        self,
+        org_id: UUID,
+        start_node_id: UUID,
+        max_depth: int = 2,
+        edge_types: list[str] | None = None,
+    ) -> list[dict]:
+        """Traverse the graph outward from a starting node.
+
+        Args:
+            org_id: Organisational scope.
+            start_node_id: UUID of the node to begin traversal from.
+            max_depth: Maximum number of edge hops (default 2).
+            edge_types: Optional filter — only follow edges with these labels.
+                ``None`` means all edge types are followed.
+
+        Returns:
+            A list of node dicts reachable within the depth limit, including
+            the start node at depth 0.  Each dict includes a ``depth`` key
+            indicating the number of hops from the start node.
+        """
+        ...
+
+    @abstractmethod
+    async def search_entities(
+        self,
+        org_id: UUID,
+        query: str,
+        types: list[str] | None = None,
+        limit: int = 50,
+    ) -> list[dict]:
+        """Search entity nodes by name or summary text.
+
+        The backend may use full-text search, fuzzy matching, or vector
+        similarity depending on the engine capabilities.
+
+        Args:
+            org_id: Organisational scope.
+            query: Free-text search string.
+            types: Optional filter — only return entities matching these
+                type labels.
+            limit: Maximum number of results to return.
+
+        Returns:
+            A list of matching entity dicts, ordered by relevance
+            (descending).  Each dict includes a ``score`` key.
+        """
+        ...
+
+    # ── Observability ──────────────────────────────────────────────────────────
+
+    @abstractmethod
+    async def health_check(self) -> bool:
+        """Verify the graph backend is reachable and responsive.
+
+        Returns:
+            ``True`` if the backend is healthy, ``False`` otherwise.
+        """
+        ...

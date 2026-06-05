@@ -1,0 +1,139 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# OpenZep — GitLab CI pipeline
+# ──────────────────────────────────────────────────────────────────────────────
+# Stages:
+#   lint        → ruff, mypy
+#   test-unit   → pytest with coverage
+#   test-integration → pytest with real Postgres/Redis via services
+#   build       → Docker image (main/tags only)
+#
+# TechLead note: The `coverage` report uses gocover format because GitLab's
+# native coverage report parser expects this format.  We generate a Cobertura
+# XML via pytest-cov and then convert to the expected format in a later
+# iteration if the UI needs it.  For now the regex-based coverage extraction
+# (line 73) is sufficient for the MR widget.
+# ──────────────────────────────────────────────────────────────────────────────
+
+stages:
+  - lint
+  - test-unit
+  - test-integration
+  - build
+
+default:
+  image: python:3.12-slim
+  cache:
+    key: "$CI_COMMIT_REF_SLUG"
+    paths:
+      - .cache/pip/
+      - .venv/
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  COLUMNS: "120"
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LINT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+ruff:
+  stage: lint
+  script:
+    - pip install ruff
+    - ruff check . --output-format=gitlab
+    - ruff format --check .
+  allow_failure: false
+
+mypy:
+  stage: lint
+  script:
+    - pip install mypy
+    - pip install -e ".[llm,neo4j,falkordb]"  # install type stubs for optional deps
+    - mypy core/ middleware/ dependencies/ routers/ models/ schemas/ services/
+  allow_failure: true  # mypy strict mode is aspirational during early development
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# UNIT TESTS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+test-unit:
+  stage: test-unit
+  script:
+    - pip install -e ".[dev]"
+    - pytest tests/unit/ -v --timeout=30
+      --cov=core --cov=middleware --cov=dependencies
+      --cov-report=term --cov-report=xml:coverage.xml
+      -n auto  # parallelise across CPU cores
+  coverage: '/TOTAL\s+\d+\s+\d+\s+(\d+)%/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: gocover
+        path: coverage.xml
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# INTEGRATION TESTS  (requires Postgres + Redis)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+test-integration:
+  stage: test-integration
+  services:
+    - name: postgres:15
+      alias: postgres
+    - name: redis:7-alpine
+      alias: redis
+  variables:
+    MG_DATABASE_URL: "postgresql+asyncpg://postgres:postgres@postgres:5432/test"
+    MG_REDIS_URL: "redis://redis:6379/0"
+    MG_FALKORDB_URL: "redis://redis:6379/0"
+    MG_SECRET_KEY: "ci-secret-key-that-is-at-least-32-chars!!"
+    MG_ENVIRONMENT: "testing"
+    MG_LOG_LEVEL: "WARNING"
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq postgresql-client >/dev/null 2>&1
+    - PGPASSWORD=postgres psql -h postgres -U postgres -c "CREATE DATABASE test;" 2>/dev/null || true
+    - pip install -e ".[dev]"
+  script:
+    - alembic upgrade head
+    - pytest tests/integration/ -v --timeout=60
+      --cov=services --cov-report=term
+  needs: ["test-unit"]
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# BUILD  (Docker image — main branch and tags only)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+build-api:
+  stage: build
+  image: docker:24
+  services:
+    - docker:dind
+  variables:
+    DOCKER_DRIVER: overlay2
+    DOCKER_TLS_CERTDIR: ""
+  script:
+    - docker build -t openzep-api:${CI_COMMIT_SHORT_SHA:-latest} -f services/api/Dockerfile .
+    - docker tag openzep-api:${CI_COMMIT_SHORT_SHA} openzep-api:latest
+    # Push to registry (uncomment when registry is configured)
+    # - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    # - docker push openzep-api:${CI_COMMIT_SHORT_SHA}
+    # - docker push openzep-api:latest
+  needs: ["test-integration"]
+  only:
+    - main
+    - tags
+  except:
+    - schedules
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY SCAN  (weekly schedule)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+dependency-scan:
+  stage: test-unit  # re-use unit stage since this doesn't need services
+  script:
+    - pip install pip-audit
+    - pip-audit
+  only:
+    - schedules  # e.g. every Monday 06:00 UTC

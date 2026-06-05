@@ -1,0 +1,164 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "memgraph"
+version = "0.1.0"
+description = "Open-source agent memory platform — persistent, queryable, graph-based memory for AI agents."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "TheLinkAI", email = "opensource@thelink.ai" },
+]
+
+keywords = ["agent", "memory", "graph", "ai", "RAG", "llm", "falkordb", "neo4j"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "sqlalchemy[asyncio]>=2.0.30",
+    "asyncpg>=0.29.0",
+    "alembic>=1.13.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.2.0",
+    "structlog>=24.1.0",
+    "redis[hiredis]>=5.0.0",
+    "arq>=0.26.0",
+    "httpx>=0.27.0",
+    "pybreaker>=1.0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=5.0.0",
+    "pytest-xdist>=3.6.0",
+    "testcontainers[postgres,redis]>=4.0.0",
+    "httpx>=0.27.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "pre-commit>=3.7.0",
+]
+llm = [
+    "openai>=1.30.0",
+    "anthropic>=0.30.0",
+]
+neo4j = [
+    "neo4j>=5.20.0",
+]
+falkordb = [
+    "redis>=5.0.0",
+]
+doc = [
+    "mkdocs>=1.6.0",
+    "mkdocs-material>=9.5.0",
+]
+all = [
+    "memgraph[dev,llm,neo4j,falkordb,doc]",
+]
+
+[tool.setuptools.packages.find]
+include = ["memgraph*"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "N",   # naming
+    "W",   # pycodestyle warnings
+    "D",   # pydocstyle (Google-style)
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "S",   # flake8-bandit (security)
+    "SIM", # flake8-simplify
+    "TCH", # flake8-type-checking
+]
+ignore = [
+    "D107", # missing docstring in __init__ — not enforced on init methods
+    "D203", # 1 blank line required before class docstring — conflicts with D211
+    "D213", # multi-line summary should start at second line — conflicts with D212
+    "S101", # allow assert in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "S101"]
+"scripts/**" = ["D", "S101"]
+"core/config.py" = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+disallow_any_unimported = false
+explicit_package_bases = true
+namespace_packages = true
+
+[[tool.mypy.overrides]]
+module = [
+    "tests.*",
+    "scripts.*",
+]
+ignore_errors = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+asyncio_mode = "auto"
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:alembic.*",
+    "ignore::DeprecationWarning:sqlalchemy.*",
+]
+markers = [
+    "unit: Unit tests — no I/O, no DB, no network. Mock at the service boundary.",
+    "integration: Integration tests — real DB/Redis via testcontainers.",
+    "e2e: End-to-end API flow tests with httpx.AsyncClient.",
+    "slow: Tests that take longer than 5 seconds.",
+]
+
+[tool.coverage.run]
+source = ["memgraph"]
+omit = [
+    "tests/*",
+    "scripts/*",
+    "**/__init__.py",
+    "**/conftest.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "def __str__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]

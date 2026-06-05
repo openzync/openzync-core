@@ -1,4 +1,4 @@
-> **⚠️ POSTPONED TO v1.1+** — This SDK is not in the v1.0 scope. Python SDK (`memgraph-py`) is the only SDK for v1.0. This document remains as a reference for future implementation.
+> **⚠️ POSTPONED TO v1.1+** — This SDK is not in the v1.0 scope. Python SDK (`openzep-py`) is the only SDK for v1.0. This document remains as a reference for future implementation.
 
 ---
 

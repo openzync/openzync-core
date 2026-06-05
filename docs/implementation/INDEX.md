@@ -121,7 +121,7 @@ The developer-facing surface area.
 
 ### Deferred SDKs (Post-v1.0)
 
-The following SDKs are **deferred to v1.1+** to focus v1.0 on the Python SDK (`memgraph-py`):
+The following SDKs are **deferred to v1.1+** to focus v1.0 on the Python SDK (`openzep-py`):
 
 | # | SDK | Planned Version | Key Features |
 |---|-----|----------------|--------------|
