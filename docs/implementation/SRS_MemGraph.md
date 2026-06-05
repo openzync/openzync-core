@@ -1,6 +1,6 @@
 # Software Requirements Specification (SRS)
 
-## MemGraph — Open-Source Agent Memory Platform
+## OpenZep — Open-Source Agent Memory Platform
 
 ---
 
@@ -50,11 +50,11 @@
 
 ### 1.1 Purpose
 
-This document defines the complete software requirements for **MemGraph**, a fully open-source, self-hostable agent memory platform. MemGraph replicates and extends the feature set of [Zep.ai](https://getzep.com) — specifically Zep Cloud — by combining a temporal knowledge graph engine, hybrid retrieval, NLP enrichment, multi-tenant user management, and developer SDKs into a single deployable platform.
+This document defines the complete software requirements for **OpenZep**, a fully open-source, self-hostable agent memory platform. OpenZep replicates and extends the feature set of [Zep.ai](https://getzep.com) — specifically Zep Cloud — by combining a temporal knowledge graph engine, hybrid retrieval, NLP enrichment, multi-tenant user management, and developer SDKs into a single deployable platform.
 
 ### 1.2 Scope
 
-MemGraph provides:
+OpenZep provides:
 
 - A **REST API** for persisting and retrieving agent memory across sessions
 - A **temporal knowledge graph** (powered by Graphiti, Apache 2.0) tracking entities, relationships, and their validity over time
@@ -92,13 +92,13 @@ See [Section 16 — Glossary](#16-glossary).
 
 ### 2.1 Product Perspective
 
-LLM agents are stateless by default — each conversation starts without memory of prior interactions, user preferences, or accumulated knowledge. MemGraph solves this by acting as a persistent, structured memory layer sitting between the application layer and the LLM. Unlike naive vector stores, MemGraph models memory as a temporal knowledge graph: facts have timestamps, validity windows, and typed relationships, enabling agents to reason about *what was true when*.
+LLM agents are stateless by default — each conversation starts without memory of prior interactions, user preferences, or accumulated knowledge. OpenZep solves this by acting as a persistent, structured memory layer sitting between the application layer and the LLM. Unlike naive vector stores, OpenZep models memory as a temporal knowledge graph: facts have timestamps, validity windows, and typed relationships, enabling agents to reason about *what was true when*.
 
 ```
 Application / Agent
         │
         ▼
-  MemGraph API
+  OpenZep API
   ┌──────────────────────────────┐
   │  Ingest  │  Retrieve │  Query │
   └──────────────────────────────┘
@@ -128,10 +128,10 @@ Application / Agent
 
 | User Class | Description |
 |---|---|
-| **Agent developer** | Integrates MemGraph into AI agents via SDK or REST |
+| **Agent developer** | Integrates OpenZep into AI agents via SDK or REST |
 | **Platform admin** | Manages tenants, API keys, usage quotas via dashboard |
-| **End user (indirect)** | Person whose conversations are stored; has no direct MemGraph access |
-| **DevOps engineer** | Deploys and operates MemGraph infrastructure |
+| **End user (indirect)** | Person whose conversations are stored; has no direct OpenZep access |
+| **DevOps engineer** | Deploys and operates OpenZep infrastructure |
 
 ### 2.4 Operating Environment
 
@@ -230,7 +230,7 @@ Application / Agent
 ### 4.2 Monorepo Structure
 
 ```
-memgraph/
+OpenZep/
 ├── services/
 │   ├── api/                    # FastAPI gateway
 │   │   ├── routers/            # Route handlers per domain
@@ -481,20 +481,20 @@ All enrichment runs asynchronously via the ARQ worker pool after ingestion.
 
 ### 5.8 SDKs
 
-#### 5.8.1 Python SDK (`memgraph-py`)
+#### 5.8.1 Python SDK (`OpenZep-py`)
 
 | ID | Requirement | Priority |
 |---|---|---|
 | SDK-01 | SDK shall support both sync and async (asyncio) interfaces | P0 |
-| SDK-02 | SDK shall be published to PyPI as `memgraph-py` | P0 |
+| SDK-02 | SDK shall be published to PyPI as `OpenZep-py` | P0 |
 | SDK-03 | SDK shall implement automatic retry with exponential backoff | P0 |
 | SDK-04 | SDK shall support environment variable configuration (`MEMGRAPH_API_KEY`, `MEMGRAPH_BASE_URL`) | P0 |
 
 ```python
 # Target developer experience
-from memgraph import MemGraph
+from OpenZep import OpenZep
 
-client = MemGraph(api_key="mg_live_...", base_url="http://localhost:8000")
+client = OpenZep(api_key="mg_live_...", base_url="http://localhost:8000")
 
 # Add memory
 await client.memory.add(
@@ -519,19 +519,19 @@ await client.facts.add(user_id="user_123", facts=[
 ])
 ```
 
-#### 5.8.2 TypeScript SDK (`memgraph-ts`)
+#### 5.8.2 TypeScript SDK (`OpenZep-ts`)
 
 | ID | Requirement | Priority |
 |---|---|---|
-| SDK-05 | SDK shall be published to npm as `memgraph-ts` | P1 |
+| SDK-05 | SDK shall be published to npm as `OpenZep-ts` | P1 |
 | SDK-06 | SDK shall be fully typed with TypeScript generics on structured extraction responses | P1 |
 | SDK-07 | SDK shall support both Node.js (18+) and browser (via fetch) | P1 |
 
-#### 5.8.3 Go SDK (`memgraph-go`)
+#### 5.8.3 Go SDK (`OpenZep-go`)
 
 | ID | Requirement | Priority |
 |---|---|---|
-| SDK-08 | SDK shall be published to `pkg.go.dev` as `github.com/thelinkAI/memgraph-go` | P2 |
+| SDK-08 | SDK shall be published to `pkg.go.dev` as `github.com/thelinkAI/OpenZep-go` | P2 |
 | SDK-09 | SDK shall use idiomatic Go patterns (context propagation, error returns) | P2 |
 
 ---
@@ -1030,7 +1030,7 @@ Pre-built dashboard panels:
 
 ## 13. Competitive Feature Parity Matrix
 
-| Feature | Zep CE (self-hosted) | Zep Cloud (paid) | **MemGraph** |
+| Feature | Zep CE (self-hosted) | Zep Cloud (paid) | **OpenZep** |
 |---|---|---|---|
 | Temporal knowledge graph | ✅ Graphiti | ✅ Graphiti | ✅ Graphiti |
 | Episodic memory | ✅ | ✅ | ✅ |
@@ -1084,7 +1084,7 @@ Pre-built dashboard panels:
 
 - [ ] Business data ingestion (`POST /facts`)
 - [ ] Community summarisation worker + schedule
-- [ ] Python SDK (`memgraph-py`) published to PyPI
+- [ ] Python SDK (`OpenZep-py`) published to PyPI
 - [ ] MCP server (stdio + SSE) with all 8 tools
 - [ ] Graph query endpoints (nodes, edges, communities)
 - [ ] Full-text search via `pg_trgm`
@@ -1103,7 +1103,7 @@ Pre-built dashboard panels:
 ### Phase 4 — Dashboard & SDKs (Week 10–12)
 
 - [ ] Next.js admin dashboard (tenant mgmt, user list, graph explorer)
-- [ ] TypeScript SDK (`memgraph-ts`) published to npm
+- [ ] TypeScript SDK (`OpenZep-ts`) published to npm
 - [ ] Grafana dashboards for API + worker metrics
 - [ ] Kubernetes Helm chart with horizontal pod autoscaling
 - [ ] Comprehensive OpenAPI 3.1 spec
@@ -1148,7 +1148,7 @@ Pre-built dashboard panels:
 | **Episode** | A single raw conversation message stored in the episodic memory layer |
 | **Fact triple** | A `(subject, predicate, object)` statement, e.g., `(user_123, purchased, Pro plan)` |
 | **FalkorDB** | An open-source graph database using the Redis wire protocol, supporting the property graph model |
-| **Graphiti** | Open-source temporal knowledge graph engine by Zep (Apache 2.0), used as MemGraph's core graph layer |
+| **Graphiti** | Open-source temporal knowledge graph engine by Zep (Apache 2.0), used as OpenZep's core graph layer |
 | **Hybrid retrieval** | Combining vector similarity search, BM25 full-text, and graph traversal, merged with RRF |
 | **LGTM** | Loki + Grafana + Tempo + Mimir — TheLinkAI's self-hosted observability stack |
 | **MCP** | Model Context Protocol — an open protocol for exposing tools to LLM agents |

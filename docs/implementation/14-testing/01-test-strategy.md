@@ -11,7 +11,7 @@
 
 ## 1. Overview
 
-MemGraph follows a multi-layered test strategy inspired by the **test pyramid**, adapted for an LLM-enriched async system. The strategy balances speed, confidence, and coverage across six test levels.
+OpenZep follows a multi-layered test strategy inspired by the **test pyramid**, adapted for an LLM-enriched async system. The strategy balances speed, confidence, and coverage across six test levels.
 
 The guiding principle: **fast tests run on every commit; slow tests gate merges; expensive tests run on a schedule.**
 

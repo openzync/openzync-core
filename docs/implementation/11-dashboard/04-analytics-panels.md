@@ -761,7 +761,7 @@ function getTimeRange(range: string): [Date, Date] {
 ### 5.1 When to Use Grafana Embedding
 
 Use Grafana embedded panels when:
-- The LGTM stack (Loki, Grafana, Tempo, Mimir) is deployed alongside MemGraph
+- The LGTM stack (Loki, Grafana, Tempo, Mimir) is deployed alongside OpenZep
 - You want richer visualisation options (annotations, alert thresholds, ad-hoc queries)
 - You already have Grafana dashboards created (see `12-observability/04-grafana-dashboards.md`)
 
@@ -812,7 +812,7 @@ export function GrafanaEmbeddedPanels({ timeRange }: { timeRange: string }) {
       {panels.map((panel) => (
         <div key={panel.panelId} className="border rounded-lg overflow-hidden">
           <iframe
-            src={`${grafanaUrl}/d-solo/${panel.dashboardUid}/memgraph?orgId=${orgId}&from=${range.from}&to=${range.to}&panelId=${panel.panelId}&theme=light`}
+            src={`${grafanaUrl}/d-solo/${panel.dashboardUid}/OpenZep?orgId=${orgId}&from=${range.from}&to=${range.to}&panelId=${panel.panelId}&theme=light`}
             width="100%"
             height="300"
             frameBorder="0"
@@ -848,9 +848,9 @@ Create these dashboards in Grafana (see `12-observability/04-grafana-dashboards.
 
 | Dashboard | UID | Panels |
 |-----------|-----|--------|
-| MemGraph API | `memgraph_api` | RPS, Error rate, Latency |
-| MemGraph Usage | `memgraph_usage` | Active users, Graph growth, Token usage |
-| MemGraph Worker | `memgraph_worker` | Queue depth, Task throughput |
+| OpenZep API | `memgraph_api` | RPS, Error rate, Latency |
+| OpenZep Usage | `memgraph_usage` | Active users, Graph growth, Token usage |
+| OpenZep Worker | `memgraph_worker` | Queue depth, Task throughput |
 
 ---
 

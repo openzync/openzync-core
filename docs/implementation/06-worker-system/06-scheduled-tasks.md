@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-Several MemGraph tasks are not triggered by API requests but run on a schedule:
+Several OpenZep tasks are not triggered by API requests but run on a schedule:
 
 - **Nightly**: Community re-summarisation, data retention cleanup, DLQ purge
 - **Weekly**: Entity deduplication
@@ -234,8 +234,8 @@ async def trigger_scheduled_task(
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: memgraph-summarise-community
-  namespace: memgraph
+  name: OpenZep-summarise-community
+  namespace: OpenZep
 spec:
   schedule: "0 2 * * *"        # Nightly at 02:00 UTC
   concurrencyPolicy: Forbid     # Don't start a new run if previous is still running
@@ -246,7 +246,7 @@ spec:
     spec:
       template:
         spec:
-          serviceAccountName: memgraph-scheduler
+          serviceAccountName: OpenZep-scheduler
           restartPolicy: Never
           containers:
             - name: trigger
@@ -257,19 +257,19 @@ spec:
                 - |
                   curl -s -X POST \
                     -H "Authorization: Bearer $(MEMGRAPH_ADMIN_KEY)" \
-                    http://memgraph-api:8000/v1/admin/workers/schedule/summarise_community
+                    http://OpenZep-api:8000/v1/admin/workers/schedule/summarise_community
               env:
                 - name: MEMGRAPH_ADMIN_KEY
                   valueFrom:
                     secretKeyRef:
-                      name: memgraph-secrets
+                      name: OpenZep-secrets
                       key: admin-api-key
 ---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: memgraph-merge-duplicate-entities
-  namespace: memgraph
+  name: OpenZep-merge-duplicate-entities
+  namespace: OpenZep
 spec:
   schedule: "0 3 * * 0"        # Weekly on Sunday at 03:00 UTC
   concurrencyPolicy: Forbid
@@ -280,7 +280,7 @@ spec:
     spec:
       template:
         spec:
-          serviceAccountName: memgraph-scheduler
+          serviceAccountName: OpenZep-scheduler
           restartPolicy: Never
           containers:
             - name: trigger
@@ -291,19 +291,19 @@ spec:
                 - |
                   curl -s -X POST \
                     -H "Authorization: Bearer $(MEMGRAPH_ADMIN_KEY)" \
-                    http://memgraph-api:8000/v1/admin/workers/schedule/merge_duplicate_entities
+                    http://OpenZep-api:8000/v1/admin/workers/schedule/merge_duplicate_entities
               env:
                 - name: MEMGRAPH_ADMIN_KEY
                   valueFrom:
                     secretKeyRef:
-                      name: memgraph-secrets
+                      name: OpenZep-secrets
                       key: admin-api-key
 ---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: memgraph-data-retention-cleanup
-  namespace: memgraph
+  name: OpenZep-data-retention-cleanup
+  namespace: OpenZep
 spec:
   schedule: "0 4 * * *"        # Nightly at 04:00 UTC
   concurrencyPolicy: Forbid
@@ -312,7 +312,7 @@ spec:
     spec:
       template:
         spec:
-          serviceAccountName: memgraph-scheduler
+          serviceAccountName: OpenZep-scheduler
           restartPolicy: Never
           containers:
             - name: trigger
@@ -323,19 +323,19 @@ spec:
                 - |
                   curl -s -X POST \
                     -H "Authorization: Bearer $(MEMGRAPH_ADMIN_KEY)" \
-                    http://memgraph-api:8000/v1/admin/workers/schedule/data_retention_cleanup
+                    http://OpenZep-api:8000/v1/admin/workers/schedule/data_retention_cleanup
               env:
                 - name: MEMGRAPH_ADMIN_KEY
                   valueFrom:
                     secretKeyRef:
-                      name: memgraph-secrets
+                      name: OpenZep-secrets
                       key: admin-api-key
 ---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: memgraph-dlq-purge
-  namespace: memgraph
+  name: OpenZep-dlq-purge
+  namespace: OpenZep
 spec:
   schedule: "30 4 * * *"       # Nightly at 04:30 UTC
   concurrencyPolicy: Forbid
@@ -343,7 +343,7 @@ spec:
     spec:
       template:
         spec:
-          serviceAccountName: memgraph-scheduler
+          serviceAccountName: OpenZep-scheduler
           restartPolicy: Never
           containers:
             - name: trigger
@@ -354,12 +354,12 @@ spec:
                 - |
                   curl -s -X POST \
                     -H "Authorization: Bearer $(MEMGRAPH_ADMIN_KEY)" \
-                    http://memgraph-api:8000/v1/admin/workers/schedule/dlq_purge
+                    http://OpenZep-api:8000/v1/admin/workers/schedule/dlq_purge
               env:
                 - name: MEMGRAPH_ADMIN_KEY
                   valueFrom:
                     secretKeyRef:
-                      name: memgraph-secrets
+                      name: OpenZep-secrets
                       key: admin-api-key
 ```
 
@@ -421,7 +421,7 @@ from services.worker.config import settings, enqueue_task
 from services.worker.dlq import purge_dlq
 
 
-logger = structlog.get_logger("memgraph.worker.scheduler")
+logger = structlog.get_logger("OpenZep.worker.scheduler")
 
 
 class ScheduledTaskScheduler:
@@ -646,7 +646,7 @@ services:
 
 ```cron
 # scripts/crontab
-# ── MemGraph Scheduled Task Triggers ──
+# ── OpenZep Scheduled Task Triggers ──
 # Community summarisation — nightly 2am
 0 2 * * *   wget -qO- --header="Authorization: Bearer $MEMGRAPH_ADMIN_KEY" $API_URL/v1/admin/workers/schedule/summarise_community
 
@@ -721,7 +721,7 @@ async def test_summarise_community_schedule(async_client, admin_headers, arq_red
     assert data["task_name"] == "summarise_community"
 
     # Verify the job was enqueued to the low queue
-    low_queue = "memgraph:test:queue:low:jobs"
+    low_queue = "OpenZep:test:queue:low:jobs"
     depth = await arq_redis.zcard(low_queue)
     assert depth == 1  # Our job plus any cleanup jobs
     assert data["job_id"] is not None

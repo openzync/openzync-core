@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-This document defines every ARQ task function in MemGraph. Each specification covers: trigger condition, queue assignment, input schema, output/side effects, idempotency mechanism, timeout, and retry policy.
+This document defines every ARQ task function in OpenZep. Each specification covers: trigger condition, queue assignment, input schema, output/side effects, idempotency mechanism, timeout, and retry policy.
 
 ### 1.1 Task Inventory (12 tasks)
 
@@ -46,7 +46,7 @@ async def extract_entities(ctx: dict, **kwargs: Any) -> dict:
 
     Args:
         ctx: ARQ worker context (redis, job_id, task_type populated by ARQ).
-            MemGraph adds: trace_id, org_id, user_id via job payload.
+            OpenZep adds: trace_id, org_id, user_id via job payload.
         **kwargs: Task-specific payload fields (defined in Input Schema below).
 
     Returns:
@@ -75,7 +75,7 @@ async def extract_entities(ctx: dict, **kwargs: Any) -> dict:
         job_id=job_id,
     )
 
-    logger = structlog.get_logger("memgraph.worker.tasks")
+    logger = structlog.get_logger("OpenZep.worker.tasks")
 
     # ... implementation ...
 
@@ -634,7 +634,7 @@ class MergeDuplicateEntitiesPayload(BaseModel):
 ```python
 async def merge_duplicate_entities(ctx: dict, **kwargs: Any) -> dict:
     payload = MergeDuplicateEntitiesPayload(**kwargs)
-    logger = structlog.get_logger("memgraph.worker.tasks")
+    logger = structlog.get_logger("OpenZep.worker.tasks")
 
     # 1. Fetch all entity nodes for this org from Graphiti
     entities = await graphiti_client.get_all_entities(org_id=payload.org_id)

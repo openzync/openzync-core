@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide covers backup strategies, restore procedures, and disaster recovery for MemGraph. The design targets **RTO ≤ 4 hours** and **RPO ≤ 1 hour** for the PostgreSQL database — the primary source of truth.
+This guide covers backup strategies, restore procedures, and disaster recovery for OpenZep. The design targets **RTO ≤ 4 hours** and **RPO ≤ 1 hour** for the PostgreSQL database — the primary source of truth.
 
 ---
 
@@ -40,8 +40,8 @@ This guide covers backup strategies, restore procedures, and disaster recovery f
 # Run hourly via cron
 
 BACKUP_DIR="/backups/postgres"
-DB_NAME="memgraph"
-DB_USER="memgraph"
+DB_NAME="OpenZep"
+DB_USER="OpenZep"
 RETENTION_DAYS=7
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 BACKUP_FILE="${BACKUP_DIR}/memgraph_${TIMESTAMP}.dump"
@@ -60,7 +60,7 @@ if [ $? -eq 0 ]; then
   echo "${TIMESTAMP}: Backup successful — ${BACKUP_FILE}" >> "${BACKUP_DIR}/backup.log"
 
   # Sync to S3-compatible storage
-  aws s3 cp "${BACKUP_FILE}" "s3://memgraph-backups/postgres/${TIMESTAMP}/" \
+  aws s3 cp "${BACKUP_FILE}" "s3://OpenZep-backups/postgres/${TIMESTAMP}/" \
     --endpoint-url="${S3_ENDPOINT}"
 
   # Cleanup old backups
@@ -78,7 +78,7 @@ PostgreSQL configuration (`infra/postgres/postgresql.conf`):
 ```ini
 wal_level = replica
 archive_mode = on
-archive_command = 'aws s3 cp %p s3://memgraph-backups/postgres/wal/%f --endpoint-url=${S3_ENDPOINT}'
+archive_command = 'aws s3 cp %p s3://OpenZep-backups/postgres/wal/%f --endpoint-url=${S3_ENDPOINT}'
 archive_timeout = 60
 max_wal_senders = 3
 wal_keep_size = 1GB
@@ -99,8 +99,8 @@ minio:
   volumes:
     - minio_data:/data
   environment:
-    MINIO_ROOT_USER: memgraph
-    MINIO_ROOT_PASSWORD: memgraph-backup-secret
+    MINIO_ROOT_USER: OpenZep
+    MINIO_ROOT_PASSWORD: OpenZep-backup-secret
   healthcheck:
     test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
     interval: 30s
@@ -108,7 +108,7 @@ minio:
     retries: 3
 
 # Create bucket
-aws s3 mb s3://memgraph-backups --endpoint-url=http://localhost:9000
+aws s3 mb s3://OpenZep-backups --endpoint-url=http://localhost:9000
 ```
 
 ### 2. FalkorDB (RDB Backup)
@@ -134,7 +134,7 @@ gzip "${BACKUP_DIR}/falkordb_${TIMESTAMP}.rdb"
 
 # Sync to S3
 aws s3 cp "${BACKUP_DIR}/falkordb_${TIMESTAMP}.rdb.gz" \
-  "s3://memgraph-backups/falkordb/${TIMESTAMP}/" \
+  "s3://OpenZep-backups/falkordb/${TIMESTAMP}/" \
   --endpoint-url="${S3_ENDPOINT}"
 
 # Cleanup
@@ -164,7 +164,7 @@ gzip "${BACKUP_DIR}/redis_${TIMESTAMP}.rdb"
 
 # Sync to S3
 aws s3 cp "${BACKUP_DIR}/redis_${TIMESTAMP}.rdb.gz" \
-  "s3://memgraph-backups/redis/${TIMESTAMP}/" \
+  "s3://OpenZep-backups/redis/${TIMESTAMP}/" \
   --endpoint-url="${S3_ENDPOINT}"
 
 # Cleanup
@@ -186,12 +186,12 @@ mkdir -p "${BACKUP_DIR}"
 tar czf "${BACKUP_DIR}/config_${TIMESTAMP}.tar.gz" \
   .env \
   infra/docker-compose*.yml \
-  infra/helm/memgraph/values.yaml \
+  infra/helm/OpenZep/values.yaml \
   infra/postgres/postgresql.conf \
   infra/alloy/config.alloy
 
 aws s3 cp "${BACKUP_DIR}/config_${TIMESTAMP}.tar.gz" \
-  "s3://memgraph-backups/config/${TIMESTAMP}/" \
+  "s3://OpenZep-backups/config/${TIMESTAMP}/" \
   --endpoint-url="${S3_ENDPOINT}"
 ```
 
@@ -210,19 +210,19 @@ aws s3 cp "${BACKUP_DIR}/config_${TIMESTAMP}.tar.gz" \
 ### Crontab Entry
 
 ```bash
-# /etc/cron.d/memgraph-backup
+# /etc/cron.d/OpenZep-backup
 
 # PostgreSQL hourly
-0 * * * * root /opt/memgraph/scripts/backup-postgres.sh >> /var/log/memgraph-backup.log 2>&1
+0 * * * * root /opt/OpenZep/scripts/backup-postgres.sh >> /var/log/OpenZep-backup.log 2>&1
 
 # FalkorDB every 6 hours
-0 */6 * * * root /opt/memgraph/scripts/backup-falkordb.sh >> /var/log/memgraph-backup.log 2>&1
+0 */6 * * * root /opt/OpenZep/scripts/backup-falkordb.sh >> /var/log/OpenZep-backup.log 2>&1
 
 # Redis every 6 hours
-0 */6 * * * root /opt/memgraph/scripts/backup-redis.sh >> /var/log/memgraph-backup.log 2>&1
+0 */6 * * * root /opt/OpenZep/scripts/backup-redis.sh >> /var/log/OpenZep-backup.log 2>&1
 
 # Config weekly
-0 0 * * 0 root /opt/memgraph/scripts/backup-config.sh >> /var/log/memgraph-backup.log 2>&1
+0 0 * * 0 root /opt/OpenZep/scripts/backup-config.sh >> /var/log/OpenZep-backup.log 2>&1
 ```
 
 ---
@@ -239,8 +239,8 @@ aws s3 cp "${BACKUP_DIR}/config_${TIMESTAMP}.tar.gz" \
 set -euo pipefail
 
 BACKUP_FILE="${1:?Usage: $0 <backup_file>}"
-DB_NAME="memgraph"
-DB_USER="memgraph"
+DB_NAME="OpenZep"
+DB_USER="OpenZep"
 
 echo "=== PostgreSQL Restore ==="
 echo "Backup file: ${BACKUP_FILE}"
@@ -295,12 +295,12 @@ docker compose stop postgres
 
 # 2. Restore base backup
 rm -rf "${PGDATA}/*"
-aws s3 sync "s3://memgraph-backups/postgres/base/" "${PGDATA}/" \
+aws s3 sync "s3://OpenZep-backups/postgres/base/" "${PGDATA}/" \
   --endpoint-url="${S3_ENDPOINT}"
 
 # 3. Create recovery.conf
 cat > "${PGDATA}/recovery.conf" <<EOF
-restore_command = 'aws s3 cp s3://memgraph-backups/postgres/wal/%f %p --endpoint-url=${S3_ENDPOINT}'
+restore_command = 'aws s3 cp s3://OpenZep-backups/postgres/wal/%f %p --endpoint-url=${S3_ENDPOINT}'
 recovery_target_time = '${TIMESTAMP}'
 recovery_target_action = 'promote'
 EOF
@@ -310,7 +310,7 @@ docker compose start postgres
 
 # 5. Monitor recovery
 sleep 10
-psql -U memgraph -d memgraph -c "SELECT pg_is_in_recovery();"
+psql -U OpenZep -d OpenZep -c "SELECT pg_is_in_recovery();"
 # Expected: 'f' (false) when recovery is complete
 ```
 
@@ -411,7 +411,7 @@ echo "=== Redis Restore Complete ==="
 
 **Recovery**:
 1. Provision new infrastructure (Kubernetes cluster or Docker hosts).
-2. Deploy MemGraph via Helm chart or Docker Compose.
+2. Deploy OpenZep via Helm chart or Docker Compose.
 3. Restore PostgreSQL from S3 backup (latest dump + WAL).
 4. Restore FalkorDB from S3 backup.
 5. Restore Redis from S3 backup (optional — jobs will be re-queued).
@@ -451,7 +451,7 @@ echo "=== Data Consistency Check ==="
 
 # 1. Check PostgreSQL row counts
 echo "PostgreSQL row counts:"
-psql -U memgraph -d memgraph -c "
+psql -U OpenZep -d OpenZep -c "
   SELECT 'organizations' AS tbl, count(*) FROM organizations
   UNION ALL
   SELECT 'users', count(*) FROM users
@@ -474,7 +474,7 @@ curl -s http://localhost:8000/v1/admin/consistency | python -m json.tool
 # 3. Compare PostgreSQL fact count vs graph entity count
 echo ""
 echo "Consistency ratios:"
-psql -U memgraph -d memgraph -c "
+psql -U OpenZep -d OpenZep -c "
   SELECT
     u.organization_id,
     COUNT(DISTINCT u.id) AS user_count,
@@ -490,7 +490,7 @@ psql -U memgraph -d memgraph -c "
 # 4. Search for NULL embeddings that should not be NULL
 echo ""
 echo "Null embedding check:"
-psql -U memgraph -d memgraph -c "
+psql -U OpenZep -d OpenZep -c "
   SELECT 'episodes missing embeddings' AS issue, count(*) FROM episodes WHERE embedding IS NULL
   UNION ALL
   SELECT 'facts missing embeddings', count(*) FROM facts WHERE embedding IS NULL;
@@ -529,8 +529,8 @@ docker compose -f infra/docker-compose.staging.yml up -d postgres redis falkordb
 
 # Step 3: Restore databases
 echo "[3/6] Restoring databases from S3 backups..."
-LATEST_PG=$(aws s3 ls s3://memgraph-backups/postgres/ --endpoint-url="${S3_ENDPOINT}" | sort | tail -1 | awk '{print $4}')
-./scripts/restore-postgres.sh "s3://memgraph-backups/postgres/${LATEST_PG}"
+LATEST_PG=$(aws s3 ls s3://OpenZep-backups/postgres/ --endpoint-url="${S3_ENDPOINT}" | sort | tail -1 | awk '{print $4}')
+./scripts/restore-postgres.sh "s3://OpenZep-backups/postgres/${LATEST_PG}"
 
 # Step 4: Start remaining services
 echo "[4/6] Starting remaining services..."
@@ -583,11 +583,11 @@ echo "=== DR Test Complete ==="
 ### Kubernetes CronJobs
 
 ```yaml
-# infra/helm/memgraph/templates/cronjob-backup.yaml
+# infra/helm/OpenZep/templates/cronjob-backup.yaml
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: {{ include "memgraph.fullname" . }}-backup-postgres
+  name: {{ include "OpenZep.fullname" . }}-backup-postgres
 spec:
   schedule: "0 * * * *"  # hourly
   jobTemplate:
@@ -601,35 +601,35 @@ spec:
                 - /bin/sh
                 - -c
                 - |
-                  pg_dump -h {{ include "memgraph.fullname" . }}-postgres \
-                    -U memgraph -d memgraph \
+                  pg_dump -h {{ include "OpenZep.fullname" . }}-postgres \
+                    -U OpenZep -d OpenZep \
                     --format=custom --compress=9 \
                     --file=/tmp/backup.dump && \
                   aws s3 cp /tmp/backup.dump \
-                    s3://memgraph-backups/postgres/$(date +%Y%m%d_%H%M%S).dump \
+                    s3://OpenZep-backups/postgres/$(date +%Y%m%d_%H%M%S).dump \
                     --endpoint-url={{ .Values.backup.s3Endpoint }}
               env:
                 - name: PGPASSWORD
                   valueFrom:
                     secretKeyRef:
-                      name: memgraph-secrets
+                      name: OpenZep-secrets
                       key: db_password
                 - name: AWS_ACCESS_KEY_ID
                   valueFrom:
                     secretKeyRef:
-                      name: memgraph-secrets
+                      name: OpenZep-secrets
                       key: aws_access_key_id
                 - name: AWS_SECRET_ACCESS_KEY
                   valueFrom:
                     secretKeyRef:
-                      name: memgraph-secrets
+                      name: OpenZep-secrets
                       key: aws_secret_access_key
           restartPolicy: OnFailure
 ---
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: {{ include "memgraph.fullname" . }}-backup-falkordb
+  name: {{ include "OpenZep.fullname" . }}-backup-falkordb
 spec:
   schedule: "0 */6 * * *"  # every 6 hours
   jobTemplate:
@@ -643,10 +643,10 @@ spec:
                 - /bin/sh
                 - -c
                 - |
-                  redis-cli -h {{ include "memgraph.fullname" . }}-falkordb -p 6380 SAVE && \
+                  redis-cli -h {{ include "OpenZep.fullname" . }}-falkordb -p 6380 SAVE && \
                   cp /data/dump.rdb /tmp/falkordb_$(date +%Y%m%d_%H%M%S).rdb && \
                   aws s3 cp /tmp/falkordb_*.rdb \
-                    s3://memgraph-backups/falkordb/ \
+                    s3://OpenZep-backups/falkordb/ \
                     --endpoint-url={{ .Values.backup.s3Endpoint }}
           restartPolicy: OnFailure
 ```

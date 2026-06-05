@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    JWT_ISSUER: str = "memgraph"  # iss claim for token validation
+    JWT_ISSUER: str = "OpenZep"  # iss claim for token validation
 ```
 
 ### 3.2 Signing Utilities
@@ -934,7 +934,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    JWT_ISSUER: str = "memgraph"
+    JWT_ISSUER: str = "OpenZep"
     JWT_LEEWAY_SECONDS: int = 30              # Clock skew tolerance
 
     # Session

@@ -11,7 +11,7 @@
 
 ## 1. Overview
 
-MemGraph uses **GitLab CI** (self-hosted, TheLinkAI standard). The pipeline is organized into 9 stages with progressive gating: fast checks run first, expensive checks gate merges, and scheduled jobs run nightly/weekly.
+OpenZep uses **GitLab CI** (self-hosted, TheLinkAI standard). The pipeline is organized into 9 stages with progressive gating: fast checks run first, expensive checks gate merges, and scheduled jobs run nightly/weekly.
 
 ### Pipeline Flow
 

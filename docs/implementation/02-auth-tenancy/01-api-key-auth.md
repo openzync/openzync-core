@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-MemGraph uses **API key authentication** for all agent-facing endpoints (`/v1/*`). Keys are scoped to an organization (tenant), prefixed for environment identification, and stored as salted SHA-256 hashes. A dual-key window enables zero-downtime rotation, and validated keys are cached in Redis to avoid a DB lookup on every request.
+OpenZep uses **API key authentication** for all agent-facing endpoints (`/v1/*`). Keys are scoped to an organization (tenant), prefixed for environment identification, and stored as salted SHA-256 hashes. A dual-key window enables zero-downtime rotation, and validated keys are cached in Redis to avoid a DB lookup on every request.
 
 > **Design note — deviation from SRS:** The SRS (SEC-01) specifies bcrypt for API key storage. **We use SHA-256 + 16-byte random salt instead.** Rationale:
 > - bcrypt truncates input at 72 bytes — our 64-char base62 tokens fit, but any future format change risks silent truncation.
@@ -264,7 +264,7 @@ async def create_api_key(
 ) -> ApiKeyCreatedResponse:
     """Generate a new API key for an organization.
 
-    The raw key is returned **once** in this response. MemGraph does not
+    The raw key is returned **once** in this response. OpenZep does not
     store the raw key. If lost, the key must be revoked and re-created.
 
     Args:
@@ -601,7 +601,7 @@ def require_scope(required_scope: str):
 from fastapi import FastAPI
 from dependencies.auth import get_api_key_identity
 
-app = FastAPI(title="MemGraph API")
+app = FastAPI(title="OpenZep API")
 
 # Public endpoints (no auth) — /health, /docs, /openapi.json
 # Admin endpoints — JWT auth (see 02-jwt-auth.md)

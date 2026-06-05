@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-The MCP (Model Context Protocol) server exposes MemGraph's core memory capabilities as **tools** that LLM agents (Claude Desktop, Cursor, custom agents) can invoke directly. Instead of calling REST endpoints, the agent calls named tools through JSON-RPC 2.0 messages over stdio or SSE transport.
+The MCP (Model Context Protocol) server exposes OpenZep's core memory capabilities as **tools** that LLM agents (Claude Desktop, Cursor, custom agents) can invoke directly. Instead of calling REST endpoints, the agent calls named tools through JSON-RPC 2.0 messages over stdio or SSE transport.
 
 ### 1.1 Key Design Decisions
 
@@ -18,7 +18,7 @@ The MCP (Model Context Protocol) server exposes MemGraph's core memory capabilit
 | **Pure Python (minimal deps)** | Only requires `mcp` or `fastmcp` package — avoids heavy framework dependencies. Chosen over FastMCP because FastMCP adds abstraction layers that make debug harder. We use the low-level `mcp` package. |
 | **Stdio as primary transport** | Required by Claude Desktop and Cursor. Zero network config — just `command` and `args` in the MCP config. |
 | **SSE as secondary transport** | Enables remote MCP clients (e.g., a browser-based agent) that cannot run a local Python process. Serves HTTP with an SSE endpoint. |
-| **Auth via injected MemGraphClient** | Every tool call delegates to an injected MemGraph REST client (same as SDK). No separate auth logic in the MCP server — auth is the API key in the client. |
+| **Auth via injected MemGraphClient** | Every tool call delegates to an injected OpenZep REST client (same as SDK). No separate auth logic in the MCP server — auth is the API key in the client. |
 | **One tool = one REST call** | No compound tools. Each MCP tool maps 1:1 to a REST endpoint for simplicity and debuggability. |
 
 ### 1.2 Architecture
@@ -199,7 +199,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
-logger = logging.getLogger("memgraph.mcp")
+logger = logging.getLogger("OpenZep.mcp")
 ```
 
 ---
@@ -331,9 +331,9 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from memgraph.client import MemGraphClient  # Same client as Python SDK
+from OpenZep.client import MemGraphClient  # Same client as Python SDK
 
-logger = logging.getLogger("memgraph.mcp")
+logger = logging.getLogger("OpenZep.mcp")
 
 
 class ToolDef:
@@ -353,10 +353,10 @@ class ToolDef:
 
 
 class MemGraphMCPServer:
-    """MCP protocol server exposing MemGraph as LLM-accessible tools.
+    """MCP protocol server exposing OpenZep as LLM-accessible tools.
 
     Handles JSON-RPC 2.0 dispatch over any transport (stdio, SSE).
-    Tool handlers delegate to the MemGraph REST client for actual work.
+    Tool handlers delegate to the OpenZep REST client for actual work.
 
     Usage:
         client = MemGraphClient(api_key="mg_live_...", base_url="http://localhost:8000")
@@ -484,7 +484,7 @@ class MemGraphMCPServer:
                 "resources": {},
             },
             "serverInfo": {
-                "name": "memgraph-mcp",
+                "name": "OpenZep-mcp",
                 "version": "1.0.0",
             },
         })
@@ -518,21 +518,21 @@ class MemGraphMCPServer:
 ### 5.2 Entry Point
 
 ```python
-"""services/mcp/__main__.py — Entry point for `python -m memgraph.mcp_server`."""
+"""services/mcp/__main__.py — Entry point for `python -m OpenZep.mcp_server`."""
 
 import argparse
 import asyncio
 import os
 import sys
 
-from memgraph.client import MemGraphClient
+from OpenZep.client import MemGraphClient
 from services.mcp.server import MemGraphMCPServer
 from services.mcp.transport.stdio import run_stdio_server
 from services.mcp.transport.sse import run_sse_server
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="MemGraph MCP Server")
+    parser = argparse.ArgumentParser(description="OpenZep MCP Server")
     parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio",
                         help="Transport protocol (default: stdio)")
     parser.add_argument("--host", default="0.0.0.0", help="SSE server host")
@@ -774,7 +774,7 @@ import json
 import pytest
 from services.mcp.transport.stdio import _process_line
 from services.mcp.server import MemGraphMCPServer
-from memgraph.client import MemGraphClient
+from OpenZep.client import MemGraphClient
 
 
 @pytest.mark.integration
@@ -791,8 +791,8 @@ async def test_add_memory_tool(mcp_client: MemGraphClient):
             "arguments": {
                 "user_id": "test_user_001",
                 "messages": [
-                    {"role": "user", "content": "What is MemGraph?"},
-                    {"role": "assistant", "content": "MemGraph is an open-source agent memory platform."}
+                    {"role": "user", "content": "What is OpenZep?"},
+                    {"role": "assistant", "content": "OpenZep is an open-source agent memory platform."}
                 ],
                 "session_id": "test_session_001",
             },
@@ -813,7 +813,7 @@ async def test_add_memory_tool(mcp_client: MemGraphClient):
 services/
   mcp/
     __init__.py
-    __main__.py              # Entry point: `python -m memgraph.mcp_server`
+    __main__.py              # Entry point: `python -m OpenZep.mcp_server`
     server.py                # MemGraphMCPServer class
     tool_def.py              # ToolDef dataclass
     transport/
@@ -839,7 +839,7 @@ services/
 | # | Question | Decision |
 |---|----------|----------|
 | Q1 | Should we support the `resources` protocol for streaming graph data? | Defer — not needed for MVP. Tools cover all use cases. |
-| Q2 | Should we support `sampling` (LLM calling back to the host)? | No — MemGraph is a tool provider, not a chat host. |
+| Q2 | Should we support `sampling` (LLM calling back to the host)? | No — OpenZep is a tool provider, not a chat host. |
 | Q3 | SSE auth: should the SSE endpoint require an API key header? | Yes — add Bearer auth check on `/sse` and `/messages` endpoints in production. For local use, auth is handled by the backend. |
 | Q4 | Should tools support streaming responses (e.g., for large context blocks)? | Defer — standard response is fine for context blocks < 32KB. Add streaming in Phase 5 if needed. |
 

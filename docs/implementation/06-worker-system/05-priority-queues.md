@@ -9,12 +9,12 @@
 
 ## 1. Overview
 
-MemGraph processes two categories of background tasks:
+OpenZep processes two categories of background tasks:
 
 - **Real-time ingestion tasks** (entity extraction, embedding, graph sync) — must complete within seconds of ingestion. Users expect quick enrichment after `POST /memory`.
 - **Batch/scheduled tasks** (community summarisation, entity dedup) — can take minutes to hours. These are not time-sensitive.
 
-To prevent batch tasks from starving real-time tasks, MemGraph implements **priority queues**: a `high` queue for ingestion tasks and a `low` queue for batch tasks, with separate worker pool allocations.
+To prevent batch tasks from starving real-time tasks, OpenZep implements **priority queues**: a `high` queue for ingestion tasks and a `low` queue for batch tasks, with separate worker pool allocations.
 
 ### 1.1 Design Constraints
 
@@ -30,7 +30,7 @@ ARQ does not natively support priority queues. There is no way to assign a "prio
                     ┌──────────────────────┐
                     │    Redis Instance     │
                     │                       │
-                    │  memgraph:prod:queue:high  ◄── High-priority jobs
+                    │  OpenZep:prod:queue:high  ◄── High-priority jobs
                     │  (consumed by 3 workers)     extract_entities
                     │                              embed_episode
                     │                              embed_entity
@@ -41,7 +41,7 @@ ARQ does not natively support priority queues. There is no way to assign a "prio
                     │                              delete_user_data
                     │                              refresh_context_cache
                     │
-                    │  memgraph:prod:queue:low   ◄── Low-priority jobs
+                    │  OpenZep:prod:queue:low   ◄── Low-priority jobs
                     │  (consumed by 1 worker)     summarise_community
                     │                              ingest_business_data
                     │                              merge_duplicate_entities
@@ -59,9 +59,9 @@ def get_queue_name(queue_type: str) -> str:
         queue_type: One of "high" or "low".
 
     Returns:
-        e.g. "memgraph:prod:queue:high"
+        e.g. "OpenZep:prod:queue:high"
     """
-    return f"memgraph:{settings.ENV}:queue:{queue_type}"
+    return f"OpenZep:{settings.ENV}:queue:{queue_type}"
 ```
 
 ---
@@ -117,7 +117,7 @@ async def enqueue_task(
 ) -> ArqJob | None:
     """Enqueue a task to its configured priority queue.
 
-    This is the canonical way to enqueue any MemGraph task.
+    This is the canonical way to enqueue any OpenZep task.
     It automatically routes to the correct queue based on TASK_QUEUE_MAP.
 
     Args:
@@ -129,7 +129,7 @@ async def enqueue_task(
         ARQ job handle, or None if enqueue failed.
     """
     queue_type = TASK_QUEUE_MAP.get(task_name, "high")
-    full_queue_name = f"memgraph:{settings.ENV}:queue:{queue_type}"
+    full_queue_name = f"OpenZep:{settings.ENV}:queue:{queue_type}"
 
     timeout = get_task_timeout(task_name)
     max_retries = get_task_max_retries(task_name)
@@ -250,7 +250,7 @@ async def monitor_starvation(high_worker, low_worker, redis: ArqRedis) -> None:
 
     This function runs as a background asyncio task in the worker process.
     """
-    logger = structlog.get_logger("memgraph.worker.starvation")
+    logger = structlog.get_logger("OpenZep.worker.starvation")
 
     # Track original allocation for restoration
     original_high = settings.HIGH_QUEUE_WORKERS
@@ -262,7 +262,7 @@ async def monitor_starvation(high_worker, low_worker, redis: ArqRedis) -> None:
         await asyncio.sleep(STARVATION_CHECK_INTERVAL)
 
         # Check low queue depth
-        low_queue_key = f"memgraph:{settings.ENV}:queue:{settings.LOW_QUEUE_NAME}:jobs"
+        low_queue_key = f"OpenZep:{settings.ENV}:queue:{settings.LOW_QUEUE_NAME}:jobs"
         low_depth = await redis.zcard(low_queue_key)
 
         logger.debug(
@@ -358,7 +358,7 @@ async def monitor_queue_depth(redis: ArqRedis, interval: int = 15) -> None:
     """
     while True:
         for queue_type in ["high", "low"]:
-            queue_key = f"memgraph:{settings.ENV}:queue:{queue_type}:jobs"
+            queue_key = f"OpenZep:{settings.ENV}:queue:{queue_type}:jobs"
             depth = await redis.zcard(queue_key)
             worker_queue_depth.labels(queue_name=queue_type).set(depth)
 
@@ -449,8 +449,8 @@ async def test_enqueue_routes_to_correct_queue(arq_redis):
     await enqueue_task(arq_redis, "extract_entities", episode_id=uuid4(), ...)
     await enqueue_task(arq_redis, "summarise_community", org_id="org_abc", ...)
 
-    high_depth = await arq_redis.zcard("memgraph:test:queue:high:jobs")
-    low_depth = await arq_redis.zcard("memgraph:test:queue:low:jobs")
+    high_depth = await arq_redis.zcard("OpenZep:test:queue:high:jobs")
+    low_depth = await arq_redis.zcard("OpenZep:test:queue:low:jobs")
 
     assert high_depth == 1
     assert low_depth == 1
@@ -469,7 +469,7 @@ async def test_high_priority_jobs_delivered_first(
     for i in range(5):
         await arq_worker.redis.enqueue_job(
             "summarise_community",
-            _queue_name="memgraph:test:queue:low",
+            _queue_name="OpenZep:test:queue:low",
             _job_timeout=10,
             org_id="org_abc",
         )
@@ -477,7 +477,7 @@ async def test_high_priority_jobs_delivered_first(
     # Now enqueue a high-priority job
     await arq_worker.redis.enqueue_job(
         "extract_entities",
-        _queue_name="memgraph:test:queue:high",
+        _queue_name="OpenZep:test:queue:high",
         _job_timeout=10,
         episode_id=uuid4(),
         content="test",
@@ -487,7 +487,7 @@ async def test_high_priority_jobs_delivered_first(
     await asyncio.sleep(2)
 
     # The high-priority job should have been consumed before the low ones
-    high_depth = await arq_worker.redis.zcard("memgraph:test:queue:high:jobs")
+    high_depth = await arq_worker.redis.zcard("OpenZep:test:queue:high:jobs")
     assert high_depth == 0  # High queue drained
 ```
 
@@ -502,14 +502,14 @@ async def test_starvation_reassigns_worker(arq_redis):
     for i in range(150):  # threshold is 100
         await arq_redis.enqueue_job(
             "summarise_community",
-            _queue_name="memgraph:test:queue:low",
+            _queue_name="OpenZep:test:queue:low",
             org_id="org_abc",
         )
 
     # Check monitor detects starvation
     from services.worker.starvation_monitor import LOW_QUEUE_STARVATION_THRESHOLD
 
-    low_depth = await arq_redis.zcard("memgraph:test:queue:low:jobs")
+    low_depth = await arq_redis.zcard("OpenZep:test:queue:low:jobs")
     assert low_depth > LOW_QUEUE_STARVATION_THRESHOLD
 ```
 

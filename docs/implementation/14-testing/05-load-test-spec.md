@@ -11,7 +11,7 @@
 
 ## 1. Objective
 
-Verify that MemGraph meets the Phase 5 performance targets (SRS §6.1):
+Verify that OpenZep meets the Phase 5 performance targets (SRS §6.1):
 
 | Metric | Target | Condition |
 |---|---|---|

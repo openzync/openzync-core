@@ -1,8 +1,8 @@
-# Go SDK Implementation Guide — `memgraph-go`
+# Go SDK Implementation Guide — `OpenZep-go`
 
 > **Phase**: Phase 5 — Hardening (Week 13-14)
 > **Priority**: P2
-> **Package**: `github.com/thelinkAI/memgraph-go` on [pkg.go.dev](https://pkg.go.dev/github.com/thelinkAI/memgraph-go)
+> **Package**: `github.com/thelinkAI/OpenZep-go` on [pkg.go.dev](https://pkg.go.dev/github.com/thelinkAI/OpenZep-go)
 > **Source**: SRS §5.8.3
 
 ---
@@ -10,7 +10,7 @@
 ## 1. Package Overview
 
 ```
-memgraph-go/
+OpenZep-go/
 ├── client.go              # Client interface + implementation
 ├── client_test.go         # Test suite with httptest
 ├── transport.go           # HTTP transport with retry + auth
@@ -40,7 +40,7 @@ memgraph-go/
 
 ```go
 // go.mod
-module github.com/thelinkAI/memgraph-go
+module github.com/thelinkAI/OpenZep-go
 
 go 1.22
 
@@ -59,14 +59,14 @@ The SDK is built around a `Client` interface. This enables callers to mock the S
 
 ```go
 // client.go
-package memgraph
+package OpenZep
 
 import (
     "context"
     "time"
 )
 
-// Client defines the full MemGraph SDK surface.
+// Client defines the full OpenZep SDK surface.
 // Implemented by *clientImpl. Use NewClient to construct.
 type Client interface {
     // --- Memory ---
@@ -117,7 +117,7 @@ type Client interface {
 
 ```go
 // options.go
-package memgraph
+package OpenZep
 
 import (
     "net/http"
@@ -142,7 +142,7 @@ func WithAPIKey(key string) Option {
     return func(c *config) { c.apiKey = key }
 }
 
-// WithBaseURL sets the MemGraph server URL (without /v1).
+// WithBaseURL sets the OpenZep server URL (without /v1).
 // Default: http://localhost:8000. Also read from MEMGRAPH_BASE_URL env var.
 func WithBaseURL(url string) Option {
     return func(c *config) { c.baseURL = url }
@@ -202,7 +202,7 @@ func envOrDefault(key, defaultVal string) string {
 
 ```go
 // client.go
-package memgraph
+package OpenZep
 
 import (
     "fmt"
@@ -210,7 +210,7 @@ import (
     "os"
 )
 
-// NewClient creates a new MemGraph client.
+// NewClient creates a new OpenZep client.
 // At minimum, an API key must be provided via WithAPIKey or MEMGRAPH_API_KEY env var.
 func NewClient(opts ...Option) (Client, error) {
     cfg := defaultConfig()
@@ -223,7 +223,7 @@ func NewClient(opts ...Option) (Client, error) {
         cfg.apiKey = os.Getenv("MEMGRAPH_API_KEY")
     }
     if cfg.apiKey == "" {
-        return nil, fmt.Errorf("memgraph: API key is required — pass WithAPIKey or set MEMGRAPH_API_KEY")
+        return nil, fmt.Errorf("OpenZep: API key is required — pass WithAPIKey or set MEMGRAPH_API_KEY")
     }
 
     // Normalise base URL
@@ -265,7 +265,7 @@ func (c *clientImpl) Close() error {
 
 ```go
 // transport.go
-package memgraph
+package OpenZep
 
 import (
     "bytes"
@@ -311,7 +311,7 @@ func (t *transport) request(ctx context.Context, method, path string, body any, 
     if body != nil {
         jsonBody, err := json.Marshal(body)
         if err != nil {
-            return fmt.Errorf("memgraph: marshal request body: %w", err)
+            return fmt.Errorf("OpenZep: marshal request body: %w", err)
         }
         reqBody = bytes.NewReader(jsonBody)
     }
@@ -331,12 +331,12 @@ func (t *transport) request(ctx context.Context, method, path string, body any, 
         // Build request
         req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
         if err != nil {
-            return fmt.Errorf("memgraph: create request: %w", err)
+            return fmt.Errorf("OpenZep: create request: %w", err)
         }
 
         // Headers
         req.Header.Set("Authorization", "Bearer "+t.config.apiKey)
-        req.Header.Set("User-Agent", fmt.Sprintf("memgraph-go-sdk/%s", t.version))
+        req.Header.Set("User-Agent", fmt.Sprintf("OpenZep-go-sdk/%s", t.version))
         req.Header.Set("Content-Type", "application/json")
 
         // Apply timeout via context
@@ -348,7 +348,7 @@ func (t *transport) request(ctx context.Context, method, path string, body any, 
         cancel()
 
         if err != nil {
-            lastErr = fmt.Errorf("memgraph: request failed: %w", err)
+            lastErr = fmt.Errorf("OpenZep: request failed: %w", err)
 
             // Network errors are retryable
             if attempt < t.config.maxRetries {
@@ -365,7 +365,7 @@ func (t *transport) request(ctx context.Context, method, path string, body any, 
 
         // Debug log
         if t.config.logger != nil {
-            t.config.logger.Debugf("memgraph: %s %s -> %d (attempt %d/%d)",
+            t.config.logger.Debugf("OpenZep: %s %s -> %d (attempt %d/%d)",
                 method, path, resp.StatusCode, attempt+1, t.config.maxRetries+1)
         }
 
@@ -378,7 +378,7 @@ func (t *transport) request(ctx context.Context, method, path string, body any, 
                 wait = computeBackoff(attempt)
             }
             if t.config.logger != nil {
-                t.config.logger.Debugf("memgraph: retrying in %v (status=%d)", wait, resp.StatusCode)
+                t.config.logger.Debugf("OpenZep: retrying in %v (status=%d)", wait, resp.StatusCode)
             }
             t.sleepDuration(wait)
             continue
@@ -393,13 +393,13 @@ func (t *transport) request(ctx context.Context, method, path string, body any, 
         if dest != nil {
             respBody, err := io.ReadAll(resp.Body)
             if err != nil {
-                return fmt.Errorf("memgraph: read response body: %w", err)
+                return fmt.Errorf("OpenZep: read response body: %w", err)
             }
             if len(respBody) == 0 {
                 return nil // 204 No Content
             }
             if err := json.Unmarshal(respBody, dest); err != nil {
-                return fmt.Errorf("memgraph: unmarshal response: %w", err)
+                return fmt.Errorf("OpenZep: unmarshal response: %w", err)
             }
         }
 
@@ -452,14 +452,14 @@ func (t *transport) sleepDuration(d time.Duration) {
 
 ```go
 // errors.go
-package memgraph
+package OpenZep
 
 import (
     "fmt"
     "net/http"
 )
 
-// Base error type. All MemGraph errors satisfy this interface.
+// Base error type. All OpenZep errors satisfy this interface.
 type MemGraphError struct {
     Message   string
     StatusCode int
@@ -468,9 +468,9 @@ type MemGraphError struct {
 
 func (e *MemGraphError) Error() string {
     if e.RequestID != "" {
-        return fmt.Sprintf("memgraph: %s (status=%d, request_id=%s)", e.Message, e.StatusCode, e.RequestID)
+        return fmt.Sprintf("OpenZep: %s (status=%d, request_id=%s)", e.Message, e.StatusCode, e.RequestID)
     }
-    return fmt.Sprintf("memgraph: %s (status=%d)", e.Message, e.StatusCode)
+    return fmt.Sprintf("OpenZep: %s (status=%d)", e.Message, e.StatusCode)
 }
 
 // Sentinel error types for errors.Is.
@@ -494,14 +494,14 @@ type ConnectionError struct {
     Message string
     Err     error
 }
-func (e *ConnectionError) Error() string { return fmt.Sprintf("memgraph: connection error: %s", e.Message) }
+func (e *ConnectionError) Error() string { return fmt.Sprintf("OpenZep: connection error: %s", e.Message) }
 func (e *ConnectionError) Unwrap() error { return e.Err }
 
 type TimeoutError struct {
     Message string
     Err     error
 }
-func (e *TimeoutError) Error() string { return fmt.Sprintf("memgraph: timeout: %s", e.Message) }
+func (e *TimeoutError) Error() string { return fmt.Sprintf("OpenZep: timeout: %s", e.Message) }
 func (e *TimeoutError) Unwrap() error { return e.Err }
 
 type MaxRetriesExceededError struct {
@@ -573,7 +573,7 @@ if errors.As(err, &rateLimitErr) {
 
 ```go
 // pagination.go
-package memgraph
+package OpenZep
 
 import "encoding/json"
 
@@ -648,7 +648,7 @@ func (it *FactIterator) Next() (*Fact, error) {
 
 ```go
 // memory.go
-package memgraph
+package OpenZep
 
 import (
     "context"
@@ -718,7 +718,7 @@ func (c *clientImpl) GetContext(ctx context.Context, userID string, query string
         url.PathEscape(userID), url.QueryEscape(query), cfg.limit, cfg.format)
 
     if cfg.format == "json" {
-        return "", fmt.Errorf("memgraph: use GetContextJSON for format=json")
+        return "", fmt.Errorf("OpenZep: use GetContextJSON for format=json")
     }
 
     var raw string
@@ -756,7 +756,7 @@ func (c *clientImpl) DeleteMemory(ctx context.Context, userID string) error {
 
 ```go
 // facts.go
-package memgraph
+package OpenZep
 
 import "context"
 
@@ -832,7 +832,7 @@ func (c *clientImpl) ListFacts(ctx context.Context, userID string, opts ...ListO
     }
     // Unmarshal inner data
     if err := json.Unmarshal(raw.Data, &page.Data); err != nil {
-        return nil, fmt.Errorf("memgraph: unmarshal fact page data: %w", err)
+        return nil, fmt.Errorf("OpenZep: unmarshal fact page data: %w", err)
     }
     page.NextCursor = raw.NextCursor
     page.HasMore = raw.HasMore
@@ -861,7 +861,7 @@ func (c *clientImpl) DeleteFact(ctx context.Context, userID string, factID strin
 
 ```go
 // graph.go
-package memgraph
+package OpenZep
 
 import "context"
 
@@ -978,7 +978,7 @@ func (c *clientImpl) GraphCommunities(ctx context.Context, userID string) ([]Com
 
 ```go
 // users.go
-package memgraph
+package OpenZep
 
 import "context"
 
@@ -1048,7 +1048,7 @@ func (c *clientImpl) ListUsers(ctx context.Context, opts ...ListOption) (*UserPa
         return nil, err
     }
     if err := json.Unmarshal(raw.Data, &page.Data); err != nil {
-        return nil, fmt.Errorf("memgraph: unmarshal user page: %w", err)
+        return nil, fmt.Errorf("OpenZep: unmarshal user page: %w", err)
     }
     page.NextCursor = raw.NextCursor
     page.HasMore = raw.HasMore
@@ -1076,7 +1076,7 @@ func (c *clientImpl) DeleteUser(ctx context.Context, userID string) error {
 
 ```go
 // sessions.go
-package memgraph
+package OpenZep
 
 import "context"
 
@@ -1127,7 +1127,7 @@ func (c *clientImpl) ListSessions(ctx context.Context, userID string, opts ...Li
         return nil, err
     }
     if err := json.Unmarshal(raw.Data, &page.Data); err != nil {
-        return nil, fmt.Errorf("memgraph: unmarshal session page: %w", err)
+        return nil, fmt.Errorf("OpenZep: unmarshal session page: %w", err)
     }
     page.NextCursor = raw.NextCursor
     page.HasMore = raw.HasMore
@@ -1174,7 +1174,7 @@ func (c *clientImpl) SessionMessages(ctx context.Context, userID string, session
         return nil, err
     }
     if err := json.Unmarshal(raw.Data, &page.Data); err != nil {
-        return nil, fmt.Errorf("memgraph: unmarshal message page: %w", err)
+        return nil, fmt.Errorf("OpenZep: unmarshal message page: %w", err)
     }
     page.NextCursor = raw.NextCursor
     page.HasMore = raw.HasMore
@@ -1196,16 +1196,16 @@ The `WithHTTPClient` option allows injecting any `*http.Client`. This is the idi
 
 ```go
 // In production
-client, _ := memgraph.NewClient(
-    memgraph.WithAPIKey("mg_live_abc"),
-    memgraph.WithBaseURL("https://mg.example.com"),
+client, _ := OpenZep.NewClient(
+    OpenZep.WithAPIKey("mg_live_abc"),
+    OpenZep.WithBaseURL("https://mg.example.com"),
 )
 
 // In tests
 func TestGetUser(t *testing.T) {
     server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         assert.Equal(t, "Bearer test_key", r.Header.Get("Authorization"))
-        assert.Contains(t, r.Header.Get("User-Agent"), "memgraph-go-sdk/")
+        assert.Contains(t, r.Header.Get("User-Agent"), "OpenZep-go-sdk/")
 
         json.NewEncoder(w).Encode(map[string]any{
             "id": "u1", "external_id": "ext1", "name": "Alice",
@@ -1213,10 +1213,10 @@ func TestGetUser(t *testing.T) {
     }))
     defer server.Close()
 
-    client, _ := memgraph.NewClient(
-        memgraph.WithAPIKey("test_key"),
-        memgraph.WithBaseURL(server.URL),
-        memgraph.WithHTTPClient(server.Client()),
+    client, _ := OpenZep.NewClient(
+        OpenZep.WithAPIKey("test_key"),
+        OpenZep.WithBaseURL(server.URL),
+        OpenZep.WithHTTPClient(server.Client()),
     )
 
     user, err := client.GetUser(context.Background(), "ext1")
@@ -1231,7 +1231,7 @@ func TestGetUser(t *testing.T) {
 
 ```go
 // version.go
-package memgraph
+package OpenZep
 
 // Version is the SDK version, injected at build time or set manually before release.
 // Must match the git tag.
@@ -1251,16 +1251,16 @@ import (
     "log"
     "os"
 
-    "github.com/thelinkAI/memgraph-go"
+    "github.com/thelinkAI/OpenZep-go"
 )
 
 func main() {
     ctx := context.Background()
 
-    client, err := memgraph.NewClient(
-        memgraph.WithAPIKey("mg_live_abc123"),
-        memgraph.WithBaseURL("https://mg.example.com"),
-        memgraph.WithLogger(log.New(os.Stderr, "", log.LstdFlags)),
+    client, err := OpenZep.NewClient(
+        OpenZep.WithAPIKey("mg_live_abc123"),
+        OpenZep.WithBaseURL("https://mg.example.com"),
+        OpenZep.WithLogger(log.New(os.Stderr, "", log.LstdFlags)),
     )
     if err != nil {
         log.Fatalf("create client: %v", err)
@@ -1268,7 +1268,7 @@ func main() {
     defer client.Close()
 
     // 1. Create a user
-    user, err := client.CreateUser(ctx, &memgraph.CreateUserRequest{
+    user, err := client.CreateUser(ctx, &OpenZep.CreateUserRequest{
         ExternalID: "usr_001",
         Name:       "Alice",
         Email:      "alice@example.com",
@@ -1279,7 +1279,7 @@ func main() {
     fmt.Printf("User: %s\n", user.ID)
 
     // 2. Create a session
-    session, err := client.CreateSession(ctx, user.ID, &memgraph.CreateSessionRequest{
+    session, err := client.CreateSession(ctx, user.ID, &OpenZep.CreateSessionRequest{
         ExternalID: "sess_001",
     })
     if err != nil {
@@ -1287,8 +1287,8 @@ func main() {
     }
 
     // 3. Ingest memory
-    ingestResp, err := client.AddMemory(ctx, user.ID, &memgraph.AddMemoryRequest{
-        Messages: []memgraph.MessageInput{
+    ingestResp, err := client.AddMemory(ctx, user.ID, &OpenZep.AddMemoryRequest{
+        Messages: []OpenZep.MessageInput{
             {Role: "user", Content: "I prefer Python over JavaScript."},
             {Role: "assistant", Content: "Noted! I'll keep that in mind."},
         },
@@ -1316,7 +1316,7 @@ func main() {
     }
 
     // 6. Add business facts
-    _, err = client.AddFacts(ctx, user.ID, []memgraph.FactInput{
+    _, err = client.AddFacts(ctx, user.ID, []OpenZep.FactInput{
         {Subject: user.ID, Predicate: "purchased", Object: "Pro plan"},
     })
     if err != nil {
@@ -1357,7 +1357,7 @@ func main() {
 
 ```go
 // client_test.go
-package memgraph
+package OpenZep
 
 import (
     "context"
@@ -1375,7 +1375,7 @@ func TestClient_AddMemory_Success(t *testing.T) {
         assert.Equal(t, "POST", r.Method)
         assert.Equal(t, "/v1/users/u1/memory", r.URL.Path)
         assert.Equal(t, "Bearer test_key", r.Header.Get("Authorization"))
-        assert.Contains(t, r.Header.Get("User-Agent"), "memgraph-go-sdk/")
+        assert.Contains(t, r.Header.Get("User-Agent"), "OpenZep-go-sdk/")
 
         w.WriteHeader(http.StatusAccepted)
         json.NewEncoder(w).Encode(map[string]string{
@@ -1482,7 +1482,7 @@ go test ./... -v -race -cover
 ## 13. pkg.go.dev CI Publishing
 
 ```yaml
-# .gitlab-ci.yml (in memgraph-go repo)
+# .gitlab-ci.yml (in OpenZep-go repo)
 publish-go:
   stage: release
   image: golang:1.22
@@ -1493,5 +1493,5 @@ publish-go:
     - go build ./...
     # pkg.go.dev auto-indexes from public repos on tags.
     # Trigger re-index explicitly:
-    - curl -X POST https://proxy.golang.org/github.com/thelinkAI/memgraph-go/@v/${CI_COMMIT_TAG}.info
+    - curl -X POST https://proxy.golang.org/github.com/thelinkAI/OpenZep-go/@v/${CI_COMMIT_TAG}.info
 ```

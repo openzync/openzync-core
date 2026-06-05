@@ -10,12 +10,12 @@
 
 ## 1. Overview
 
-MemGraph uses **FastAPI's built-in OpenAPI generation** to produce a fully documented OpenAPI 3.1 specification. This single source of truth serves multiple purposes:
+OpenZep uses **FastAPI's built-in OpenAPI generation** to produce a fully documented OpenAPI 3.1 specification. This single source of truth serves multiple purposes:
 
 - **Interactive documentation** at `/docs` (Swagger UI) and `/redoc` (ReDoc)
 - **Client SDK generation** for Python (`openapi-python-client`), TypeScript (`openapi-typescript`), and Go (`oapi-codegen`)
 - **CI validation** to catch schema breaking changes via `openapi-diff`
-- **API reference** for developers integrating with MemGraph
+- **API reference** for developers integrating with OpenZep
 - **Published artifact** committed to `docs/openapi.yaml` in the repo
 
 ### 1.1 Pipeline Overview
@@ -57,11 +57,11 @@ def create_app() -> FastAPI:
 
     app = FastAPI(
         # ── OpenAPI metadata ──────────────────────────────────────────
-        title="MemGraph API",
+        title="OpenZep API",
         version=settings.API_VERSION,       # "1.0.0"
         summary="Open-source temporal knowledge graph agent memory platform.",
         description="""
-MemGraph is an open-source, self-hostable agent memory platform that provides
+OpenZep is an open-source, self-hostable agent memory platform that provides
 persistent, structured memory for LLM agents.
 
 ## Key Features
@@ -126,11 +126,11 @@ All errors follow RFC 7807 Problem Details format.
         # ── Servers ───────────────────────────────────────────────────
         servers=[
             {
-                "url": "https://api.memgraph.dev",
+                "url": "https://api.OpenZep.dev",
                 "description": "Production server",
             },
             {
-                "url": "https://staging.memgraph.dev",
+                "url": "https://staging.OpenZep.dev",
                 "description": "Staging server",
             },
             {
@@ -157,7 +157,7 @@ All errors follow RFC 7807 Problem Details format.
 
 | Property | Value | Purpose |
 |---|---|---|
-| `title` | `"MemGraph API"` | Appears in Swagger UI title bar and OpenAPI `info.title` |
+| `title` | `"OpenZep API"` | Appears in Swagger UI title bar and OpenAPI `info.title` |
 | `version` | `Settings().API_VERSION` (e.g., `"1.0.0"`) | Pinned to API release version |
 | `summary` | Short tagline | OpenAPI 3.1 `info.summary` field |
 | `description` | Full markdown description | Rendered in Swagger UI and ReDoc |
@@ -452,7 +452,7 @@ Document error codes using the `responses` parameter:
             "content": {
                 "application/problem+json": {
                     "example": {
-                        "type": "https://api.memgraph.dev/errors/resource_not_found",
+                        "type": "https://api.OpenZep.dev/errors/resource_not_found",
                         "title": "Resource Not Found",
                         "status": 404,
                         "detail": "User '550e8400-e29b-41d4-a716-446655440000' not found",
@@ -476,7 +476,7 @@ Document error codes using the `responses` parameter:
     },
 )
 async def get_user(
-    user_id: UUID = Path(..., description="Internal MemGraph user UUID"),
+    user_id: UUID = Path(..., description="Internal OpenZep user UUID"),
     service: UserService = Depends(get_user_service),
     org: Organization = Depends(get_current_organization),
 ) -> UserResponseWithStats:
@@ -638,7 +638,7 @@ validate-openapi:
       app = create_app()
       spec = app.openapi()
       assert spec is not None, 'OpenAPI spec generation failed'
-      assert spec['info']['title'] == 'MemGraph API'
+      assert spec['info']['title'] == 'OpenZep API'
       assert spec['info']['version'] == '1.0.0'
       assert '/v1/users' in str(spec['paths']), 'Missing /v1/users endpoint'
       print(f'OpenAPI spec valid: {len(spec[\"paths\"])} paths, '
@@ -737,7 +737,7 @@ openapi-python-client generate \
 ```
 
 ```python
-# packages/sdk-python/memgraph/_client.py
+# packages/sdk-python/OpenZep/_client.py
 
 from memgraph_client import Client as GeneratedClient
 from memgraph_client.api.users import create_user, list_users
@@ -756,7 +756,7 @@ class MemGraphClient:
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://api.memgraph.dev",
+        base_url: str = "https://api.OpenZep.dev",
     ) -> None:
         self._client = GeneratedClient(
             base_url=base_url,
@@ -805,7 +805,7 @@ export class MemGraphClient {
 
   constructor(
     apiKey: string,
-    baseUrl = "https://api.memgraph.dev",
+    baseUrl = "https://api.OpenZep.dev",
   ) {
     this.client = createClient<paths>({
       baseUrl,
@@ -841,15 +841,15 @@ go install github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@latest
 
 # Generate Go client from OpenAPI spec
 oapi-codegen \
-    -package memgraph \
+    -package OpenZep \
     -generate types,client \
     docs/openapi.yaml \
-    > packages/sdk-go/memgraph/client.gen.go
+    > packages/sdk-go/OpenZep/client.gen.go
 ```
 
 ```go
-// packages/sdk-go/memgraph/client.go
-package memgraph
+// packages/sdk-go/OpenZep/client.go
+package OpenZep
 
 import (
     "context"
@@ -956,8 +956,8 @@ update-openapi-spec:
     - pip install pyyaml
   script:
     - python scripts/generate_openapi.py --output docs/openapi.yaml
-    - git config user.email "ci@memgraph.dev"
-    - git config user.name "MemGraph CI"
+    - git config user.email "ci@OpenZep.dev"
+    - git config user.name "OpenZep CI"
     - git add docs/openapi.yaml
     - git commit -m "docs(openapi): update OpenAPI spec to v${CI_COMMIT_TAG} [skip ci]" || true
     - git push
@@ -1013,8 +1013,8 @@ def validate() -> None:
         errors.append("Spec must be OpenAPI 3.x")
 
     # Check required metadata
-    if spec.get("info", {}).get("title") != "MemGraph API":
-        errors.append("info.title must be 'MemGraph API'")
+    if spec.get("info", {}).get("title") != "OpenZep API":
+        errors.append("info.title must be 'OpenZep API'")
     if not spec.get("info", {}).get("version"):
         errors.append("info.version must be set")
 
@@ -1074,7 +1074,7 @@ class TestOpenAPISpec:
 
         # Spec version
         assert spec["openapi"].startswith("3.")
-        assert spec["info"]["title"] == "MemGraph API"
+        assert spec["info"]["title"] == "OpenZep API"
         assert spec["info"]["version"] == "1.0.0"
 
         # All required paths exist
@@ -1260,8 +1260,8 @@ openapi-publish:
     - pip install pyyaml
   script:
     - python scripts/generate_openapi.py --output docs/openapi.yaml
-    - git config user.email "ci@memgraph.dev"
-    - git config user.name "MemGraph CI"
+    - git config user.email "ci@OpenZep.dev"
+    - git config user.name "OpenZep CI"
     - git add docs/openapi.yaml
     - git commit -m "docs(openapi): update OpenAPI spec [skip ci]" || true
     - git push

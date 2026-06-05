@@ -847,4 +847,4 @@ async def test_context_empty_for_new_user(
 
 ---
 
-*Document maintained by the MemGraph team. Update this document if discovery during implementation changes the context assembly flow.*
+*Document maintained by the OpenZep team. Update this document if discovery during implementation changes the context assembly flow.*

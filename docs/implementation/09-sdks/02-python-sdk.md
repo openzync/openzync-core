@@ -1,8 +1,8 @@
-# Python SDK Implementation Guide — `memgraph-py`
+# Python SDK Implementation Guide — `OpenZep-py`
 
 > **Phase**: Phase 2 — Full Feature Parity (Week 5-7)
 > **Priority**: P0
-> **Package**: `memgraph-py` on [PyPI](https://pypi.org/project/memgraph-py/)
+> **Package**: `OpenZep-py` on [PyPI](https://pypi.org/project/OpenZep-py/)
 > **Source**: SRS §5.8.1
 
 ---
@@ -10,10 +10,10 @@
 ## 1. Package Overview
 
 ```
-memgraph-py/
-├── src/memgraph/
+OpenZep-py/
+├── src/OpenZep/
 │   ├── __init__.py
-│   ├── client.py          # MemGraph client + AsyncMemGraph
+│   ├── client.py          # OpenZep client + AsyncMemGraph
 │   ├── models/
 │   │   ├── memory.py      # MemoryIngestRequest, ContextResponse
 │   │   ├── fact.py        # FactRequest, FactResponse
@@ -38,9 +38,9 @@ memgraph-py/
 ## 2. Installation
 
 ```bash
-pip install memgraph-py
+pip install OpenZep-py
 # or
-poetry add memgraph-py
+poetry add OpenZep-py
 ```
 
 Python 3.10+ required.
@@ -54,10 +54,10 @@ The SDK is **async-first** (built on `httpx.AsyncClient`) with a **sync wrapper*
 ### 3.1 Async client — primary implementation
 
 ```python
-# src/memgraph/_http.py
+# src/OpenZep/_http.py
 import httpx
 from typing import Optional
-from memgraph._errors import _raise_on_error
+from OpenZep._errors import _raise_on_error
 
 class _AsyncHTTPTransport:
     """Low-level async HTTP transport with retry, auth, and logging."""
@@ -91,7 +91,7 @@ class _AsyncHTTPTransport:
         """Send a request with auth, retry, and logging."""
         headers = kwargs.pop("headers", {})
         headers["Authorization"] = f"Bearer {self._api_key}"
-        headers["User-Agent"] = f"memgraph-py-sdk/{__version__}"
+        headers["User-Agent"] = f"OpenZep-py-sdk/{__version__}"
         headers["Content-Type"] = "application/json"
 
         last_error: Optional[Exception] = None
@@ -108,7 +108,7 @@ class _AsyncHTTPTransport:
             # Log if debug mode
             if self._debug:
                 import logging
-                logging.getLogger("memgraph").debug(
+                logging.getLogger("OpenZep").debug(
                     f"{method} {path} -> {response.status_code} (attempt {attempt + 1})"
                 )
 
@@ -117,7 +117,7 @@ class _AsyncHTTPTransport:
                 if attempt < self._max_retries:
                     wait = _compute_backoff(attempt, response)
                     if self._debug:
-                        logging.getLogger("memgraph").debug(
+                        logging.getLogger("OpenZep").debug(
                             f"Retrying in {wait:.2f}s (status={response.status_code})"
                         )
                     import asyncio
@@ -140,7 +140,7 @@ class _AsyncHTTPTransport:
 ### 3.2 Sync wrapper
 
 ```python
-# src/memgraph/client.py
+# src/OpenZep/client.py
 import asyncio
 from functools import wraps
 
@@ -154,8 +154,8 @@ def _syncify(async_method):
     return wrapper
 
 
-class MemGraph:
-    """Synchronous MemGraph client.
+class OpenZep:
+    """Synchronous OpenZep client.
 
     Every method wraps the async client with asyncio.run().
     Prefer AsyncMemGraph in async contexts.
@@ -192,10 +192,10 @@ class MemGraph:
 **Usage:**
 
 ```python
-from memgraph import MemGraph, AsyncMemGraph
+from OpenZep import OpenZep, AsyncMemGraph
 
 # Sync (wraps asyncio.run internally)
-client = MemGraph(api_key="mg_live_...")
+client = OpenZep(api_key="mg_live_...")
 response = client.memory.ingest(user_id="u1", session_id="s1", messages=[...])
 
 # Async
@@ -214,7 +214,7 @@ response = await async_client.memory.ingest(user_id="u1", session_id="s1", messa
 ### 4.1 Ingestion
 
 ```python
-# src/memgraph/models/memory.py
+# src/OpenZep/models/memory.py
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
 from typing import Optional
@@ -246,10 +246,10 @@ class ContextJSONResponse(BaseModel):
 ```
 
 ```python
-# src/memgraph/domains/memory.py
+# src/OpenZep/domains/memory.py
 from typing import Optional
-from memgraph._http import _AsyncHTTPTransport
-from memgraph.models.memory import Message, MemoryIngestResponse, ContextResponse
+from OpenZep._http import _AsyncHTTPTransport
+from OpenZep.models.memory import Message, MemoryIngestResponse, ContextResponse
 
 class MemoryDomain:
     """Access via client.memory"""
@@ -322,10 +322,10 @@ class MemoryDomain:
 ## 5. Facts Domain
 
 ```python
-# src/memgraph/domains/facts.py
+# src/OpenZep/domains/facts.py
 from typing import Optional
-from memgraph._pagination import PageIterator, Page
-from memgraph.models.fact import FactResponse
+from OpenZep._pagination import PageIterator, Page
+from OpenZep.models.fact import FactResponse
 
 class FactCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -408,9 +408,9 @@ class FactsDomain:
 ## 6. Graph Domain
 
 ```python
-# src/memgraph/domains/graph.py
+# src/OpenZep/domains/graph.py
 from typing import Optional
-from memgraph.models.graph import GraphNode, GraphEdge, GraphSearchResult
+from OpenZep.models.graph import GraphNode, GraphEdge, GraphSearchResult
 
 class GraphDomain:
     """Access via client.graph"""
@@ -510,10 +510,10 @@ class GraphDomain:
 ## 7. Users Domain
 
 ```python
-# src/memgraph/domains/users.py
+# src/OpenZep/domains/users.py
 from typing import Optional
-from memgraph._pagination import PageIterator, Page
-from memgraph.models.user import UserResponse
+from OpenZep._pagination import PageIterator, Page
+from OpenZep.models.user import UserResponse
 
 class UserCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -629,10 +629,10 @@ class UsersDomain:
 ## 8. Sessions Domain
 
 ```python
-# src/memgraph/domains/sessions.py
+# src/OpenZep/domains/sessions.py
 from typing import Optional
-from memgraph._pagination import PageIterator, Page
-from memgraph.models.session import SessionResponse, MessageResponse
+from OpenZep._pagination import PageIterator, Page
+from OpenZep.models.session import SessionResponse, MessageResponse
 
 class SessionCreate(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -743,11 +743,11 @@ class SessionsDomain:
 ## 9. Error Classes
 
 ```python
-# src/memgraph/_errors.py
+# src/OpenZep/_errors.py
 from typing import Optional
 
 class MemGraphError(Exception):
-    """Base exception for all MemGraph SDK errors."""
+    """Base exception for all OpenZep SDK errors."""
 
     def __init__(
         self,
@@ -827,7 +827,7 @@ def _raise_on_error(response: httpx.Response) -> None:
 ## 10. Pagination Helper
 
 ```python
-# src/memgraph/_pagination.py
+# src/OpenZep/_pagination.py
 from __future__ import annotations
 from typing import Generic, TypeVar, Callable, Optional, AsyncIterator
 from pydantic import BaseModel
@@ -898,15 +898,15 @@ class PageIterator(AsyncIterator, Generic[T]):
 ## 11. Constructor + Configuration
 
 ```python
-# src/memgraph/client.py
+# src/OpenZep/client.py
 import os
 from typing import Optional
-from memgraph._http import _AsyncHTTPTransport
+from OpenZep._http import _AsyncHTTPTransport
 
 __version__ = "1.0.0"
 
 class AsyncMemGraph:
-    """Async MemGraph client. Use in async contexts."""
+    """Async OpenZep client. Use in async contexts."""
 
     def __init__(
         self,
@@ -950,9 +950,9 @@ class AsyncMemGraph:
 ## 12. Public API — `__init__.py`
 
 ```python
-# src/memgraph/__init__.py
-from memgraph.client import MemGraph, AsyncMemGraph
-from memgraph._errors import (
+# src/OpenZep/__init__.py
+from OpenZep.client import OpenZep, AsyncMemGraph
+from OpenZep._errors import (
     MemGraphError,
     AuthenticationError,
     NotFoundError,
@@ -963,14 +963,14 @@ from memgraph._errors import (
     TimeoutError,
     MaxRetriesExceededError,
 )
-from memgraph.models.memory import Message, MemoryIngestResponse, ContextResponse
-from memgraph.models.fact import FactResponse
-from memgraph.models.graph import GraphNode, GraphEdge, GraphSearchResult
-from memgraph.models.user import UserResponse
-from memgraph.models.session import SessionResponse, MessageResponse
+from OpenZep.models.memory import Message, MemoryIngestResponse, ContextResponse
+from OpenZep.models.fact import FactResponse
+from OpenZep.models.graph import GraphNode, GraphEdge, GraphSearchResult
+from OpenZep.models.user import UserResponse
+from OpenZep.models.session import SessionResponse, MessageResponse
 
 __all__ = [
-    "MemGraph",
+    "OpenZep",
     "AsyncMemGraph",
     "MemGraphError",
     "AuthenticationError",
@@ -1000,15 +1000,15 @@ __all__ = [
 
 ```toml
 [tool.poetry]
-name = "memgraph-py"
+name = "OpenZep-py"
 version = "1.0.0"
-description = "MemGraph — open-source agent memory platform Python SDK"
+description = "OpenZep — open-source agent memory platform Python SDK"
 authors = ["TheLinkAI <engineering@thelinkai.com>"]
 license = "Apache-2.0"
 readme = "README.md"
-homepage = "https://github.com/thelinkai/memgraph"
-repository = "https://github.com/thelinkai/memgraph-py"
-keywords = ["memgraph", "agent-memory", "knowledge-graph", "llm", "ai"]
+homepage = "https://github.com/thelinkai/OpenZep"
+repository = "https://github.com/thelinkai/OpenZep-py"
+keywords = ["OpenZep", "agent-memory", "knowledge-graph", "llm", "ai"]
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -1035,7 +1035,7 @@ target-version = "py310"
 ## 14. PyPI Publishing CI
 
 ```yaml
-# .gitlab-ci.yml (in memgraph-py repo)
+# .gitlab-ci.yml (in OpenZep-py repo)
 publish-pypi:
   stage: release
   image: python:3.12-slim
@@ -1053,7 +1053,7 @@ publish-pypi:
 
 ```python
 import asyncio
-from memgraph import AsyncMemGraph, Message
+from OpenZep import AsyncMemGraph, Message
 
 async def main():
     client = AsyncMemGraph(
@@ -1141,7 +1141,7 @@ This ensures that if the API adds new response fields in a future version, the S
 import pytest
 import httpx
 import respx
-from memgraph import AsyncMemGraph
+from OpenZep import AsyncMemGraph
 
 @pytest.mark.asyncio
 async def test_memory_ingest_success():
@@ -1160,7 +1160,7 @@ async def test_memory_ingest_success():
         assert result.job_id == "j_abc"
         assert route.called
         assert route.calls[0].request.headers["Authorization"] == "Bearer test_key"
-        assert route.calls[0].request.headers["User-Agent"].startswith("memgraph-py-sdk/")
+        assert route.calls[0].request.headers["User-Agent"].startswith("OpenZep-py-sdk/")
 
     await client.close()
 ```
@@ -1168,5 +1168,5 @@ async def test_memory_ingest_success():
 Run tests:
 
 ```bash
-pytest tests/ -v --cov=memgraph
+pytest tests/ -v --cov=OpenZep
 ```

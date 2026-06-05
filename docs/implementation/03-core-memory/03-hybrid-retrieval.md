@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-The Hybrid Retrieval Engine is the core search infrastructure behind MemGraph's context assembly and search endpoints. It combines three retrieval methods — **vector similarity**, **BM25 full-text**, and **graph BFS traversal** — merged via **Reciprocal Rank Fusion (RRF)** to produce a single ranked result list.
+The Hybrid Retrieval Engine is the core search infrastructure behind OpenZep's context assembly and search endpoints. It combines three retrieval methods — **vector similarity**, **BM25 full-text**, and **graph BFS traversal** — merged via **Reciprocal Rank Fusion (RRF)** to produce a single ranked result list.
 
 ### 1.1 Why Three Retrieval Paths?
 
@@ -1176,4 +1176,4 @@ async def test_hybrid_search_latency(
 
 ---
 
-*Document maintained by the MemGraph team. Update this document if retrieval algorithms or index strategies change.*
+*Document maintained by the OpenZep team. Update this document if retrieval algorithms or index strategies change.*

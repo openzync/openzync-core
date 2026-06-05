@@ -23,7 +23,7 @@
 
 ## 2. Graphiti Library Overview
 
-[Graphiti](https://github.com/getzep/graphiti) (Apache 2.0) is a **temporal knowledge graph engine** that serves as MemGraph's core graph layer. It is imported as a **Python library** — not deployed as a sidecar — as specified in SRS §2.5.
+[Graphiti](https://github.com/getzep/graphiti) (Apache 2.0) is a **temporal knowledge graph engine** that serves as OpenZep's core graph layer. It is imported as a **Python library** — not deployed as a sidecar — as specified in SRS §2.5.
 
 ```python
 # PyPI package
@@ -275,7 +275,7 @@ def create_tracer() -> Tracer:
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-        resource = Resource.create({"service.name": "memgraph-graphiti"})
+        resource = Resource.create({"service.name": "OpenZep-graphiti"})
         provider = TracerProvider(resource=resource)
         exporter = OTLPSpanExporter(
             endpoint=settings.OTEL_EXPORTER_OTLP_ENDPOINT,

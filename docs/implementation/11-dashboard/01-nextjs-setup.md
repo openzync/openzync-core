@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-The MemGraph admin dashboard is a Next.js 14 application using the App Router with a `src/` directory structure. It provides a web UI for platform administrators to manage organisations (tenants), users, knowledge graphs, and usage analytics.
+The OpenZep admin dashboard is a Next.js 14 application using the App Router with a `src/` directory structure. It provides a web UI for platform administrators to manage organisations (tenants), users, knowledge graphs, and usage analytics.
 
 ### 1.1 Key Design Decisions
 
@@ -523,7 +523,7 @@ export function Sidebar() {
     <aside className="w-64 border-r bg-sidebar flex flex-col">
       <div className="p-4 border-b">
         <Link href="/dashboard" className="text-lg font-bold">
-          MemGraph
+          OpenZep
         </Link>
         <p className="text-xs text-muted-foreground">Admin Dashboard</p>
       </div>

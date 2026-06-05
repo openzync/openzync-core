@@ -1270,7 +1270,7 @@ async def test_add_memory_happy_path(mock_client):
 @pytest.mark.asyncio
 async def test_add_memory_user_not_found(mock_client):
     """Test error handling when user doesn't exist."""
-    from memgraph.client import NotFoundError
+    from OpenZep.client import NotFoundError
     mock_client.memory.add.side_effect = NotFoundError("User not found")
 
     result = await handle_add_memory(mock_client, {

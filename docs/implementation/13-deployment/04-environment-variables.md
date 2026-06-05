@@ -2,7 +2,7 @@
 
 ## Overview
 
-All MemGraph configuration is done via environment variables. Every service reads from environment variables and has sensible defaults for local development.
+All OpenZep configuration is done via environment variables. Every service reads from environment variables and has sensible defaults for local development.
 
 ---
 
@@ -158,7 +158,7 @@ All MemGraph configuration is done via environment variables. Every service read
 ### Development Minimal
 
 ```bash
-DATABASE_URL=postgresql+asyncpg://memgraph:memgraph@localhost:5432/memgraph
+DATABASE_URL=postgresql+asyncpg://OpenZep:OpenZep@localhost:5432/OpenZep
 REDIS_URL=redis://localhost:6379/0
 FALKORDB_URL=redis://localhost:6380
 OPENAI_API_KEY=sk-...
@@ -170,7 +170,7 @@ SECRET_KEY=dev-secret
 ```bash
 ENVIRONMENT=production
 LOG_LEVEL=INFO
-DATABASE_URL=postgresql+asyncpg://memgraph:${DB_PASSWORD}@pgbouncer:6432/memgraph
+DATABASE_URL=postgresql+asyncpg://OpenZep:${DB_PASSWORD}@pgbouncer:6432/OpenZep
 DATABASE_POOL_SIZE=5
 REDIS_URL=redis-sentinel://redis-sentinel:26379/mymaster/0
 FALKORDB_URL=redis://falkordb:6380
@@ -181,13 +181,13 @@ EMBEDDING_DIM=1536
 CONTEXT_CACHE_TTL=30
 SECRET_KEY_FILE=/run/secrets/jwt_secret
 OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
-CORS_ORIGINS=https://dashboard.memgraph.example.com
+CORS_ORIGINS=https://dashboard.OpenZep.example.com
 ```
 
 ### Air-Gapped (Ollama)
 
 ```bash
-DATABASE_URL=postgresql+asyncpg://memgraph:memgraph@postgres:5432/memgraph
+DATABASE_URL=postgresql+asyncpg://OpenZep:OpenZep@postgres:5432/OpenZep
 REDIS_URL=redis://redis:6379/0
 FALKORDB_URL=redis://falkordb:6380
 LLM_BACKEND=ollama

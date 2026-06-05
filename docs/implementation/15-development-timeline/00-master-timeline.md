@@ -1,4 +1,4 @@
-# MemGraph — Phase-by-Phase Development Timeline
+# OpenZep — Phase-by-Phase Development Timeline
 
 > **Master Plan** — Synthesised from all specialist reviews: @architect, @senior-dev, @reviewer, @qa-engineer, @junior-mentor, @devops
 >
@@ -253,7 +253,7 @@ Foundation  Core Mem    Full Parity NLP Enrich  Dash+Infra  Hardening    Release
 
 | Week | Task | Est. Days | Depends On |
 |------|------|-----------|------------|
-| W7–8 | **Python SDK** (`memgraph-py`): sync/async duality, all 5 domains (memory, facts, graph, users, sessions), PaginatedAsyncIterator, typed errors, PyPI CI pipeline | 8 | Phase 1 stable API |
+| W7–8 | **Python SDK** (`OpenZep-py`): sync/async duality, all 5 domains (memory, facts, graph, users, sessions), PaginatedAsyncIterator, typed errors, PyPI CI pipeline | 8 | Phase 1 stable API |
 | W9 | SDK integration tests (against running API in CI) | 2 | 2.1 |
 | W10 | Business data ingestion: `POST /facts` with batch triples (max 500), validation, low-queue ARQ task | 3 | 1.1 |
 | W10 | Hybrid search endpoint: `GET /search?query=&types=` with vector + BM25 + graph + RRF | 3 | 1.6 |
@@ -282,7 +282,7 @@ Foundation  Core Mem    Full Parity NLP Enrich  Dash+Infra  Hardening    Release
 
 | # | Criterion | Verification |
 |---|-----------|-------------|
-| **G2.1** | `pip install memgraph-py` from TestPyPI → `client.memory.add()` returns typed response | Integration test |
+| **G2.1** | `pip install OpenZep-py` from TestPyPI → `client.memory.add()` returns typed response | Integration test |
 | **G2.2** | MCP server starts with stdio + SSE. All 8 tools respond correctly | Integration test + Claude Desktop manual |
 | **G2.3** | Graph query: `GET /graph/nodes` with 15k entity nodes returns ≤500ms p99 | Load test |
 | **G2.4** | Community summary generated for 5-entity cluster, `CommunityNode` created in FalkorDB | Integration test |
@@ -425,7 +425,7 @@ Foundation  Core Mem    Full Parity NLP Enrich  Dash+Infra  Hardening    Release
 |---|-----------|-------------|
 | **G4.1** | Dashboard loads in browser, JWT auth works, tenant CRUD functional | Manual E2E |
 | **G4.2** | Graph explorer renders 50+ nodes with edges, search works | Manual test with seed data |
-| **G4.3** | TypeScript SDK: `npm install memgraph-ts`, typed methods compile and work | Integration test |
+| **G4.3** | TypeScript SDK: `npm install OpenZep-ts`, typed methods compile and work | Integration test |
 | **G4.4** | Helm chart: `helm install` on 3-node cluster, all pods healthy, HPA scales API 2→4 under load | Load test |
 | **G4.5** | Production Compose: Redis Sentinel failover <10s, pgBouncer pool stable at 500 req/s | Smoke test |
 | **G4.6** | Grafana dashboards auto-provisioned, all 6 panels render with data | Visual verification |
@@ -555,7 +555,7 @@ Foundation  Core Mem    Full Parity NLP Enrich  Dash+Infra  Hardening    Release
 
 | # | Criterion | Verification |
 |---|-----------|-------------|
-| **G5b.1** | Go SDK: `go get github.com/thelinkai/memgraph-go` → all methods work | Integration test |
+| **G5b.1** | Go SDK: `go get github.com/thelinkai/OpenZep-go` → all methods work | Integration test |
 | **G5b.2** | Bi-temporal: `GET /facts?valid_at=2026-01-15` returns correct historical state | Eval against known versions |
 | **G5b.3** | Air-gapped: full deploy from tarball + local mirrors, no internet access, ingest→enrich→retrieve passes | VM test (no network) |
 | **G5b.4** | Dashboard job monitor: shows queue depth, success/failure rates, DLQ | Visual + integration test |

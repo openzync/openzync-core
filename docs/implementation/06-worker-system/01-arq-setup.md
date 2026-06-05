@@ -9,16 +9,16 @@
 
 ## 1. Overview
 
-MemGraph uses **ARQ** (Async Redis Queue) for all background task processing. ARQ provides a lightweight, Redis-backed async job queue for Python asyncio applications — it is already the standardised worker system at TheLinkAI.
+OpenZep uses **ARQ** (Async Redis Queue) for all background task processing. ARQ provides a lightweight, Redis-backed async job queue for Python asyncio applications — it is already the standardised worker system at TheLinkAI.
 
 Key design decisions:
 
 - **Redis-backed**: Durable job persistence, built-in retry, no separate broker service
-- **Async-native**: Tasks are `async def` functions, compatible with MemGraph's asyncio FastAPI stack
-- **Lightweight**: No external dependencies beyond Redis — ideal for MemGraph's self-hosted, air-gappable deployment model
+- **Async-native**: Tasks are `async def` functions, compatible with OpenZep's asyncio FastAPI stack
+- **Lightweight**: No external dependencies beyond Redis — ideal for OpenZep's self-hosted, air-gappable deployment model
 - **Separate worker process**: The ARQ worker runs as an independent process (`services/worker/worker.py`), scalable independently of the API gateway
 
-> ⚠️ **Production boundary:** ARQ is not a message broker (no Kafka/RabbitMQ durability guarantees). Redis persistence (AOF + RDB) is sufficient for MemGraph's workload — tasks are short-lived (< 5 min) and idempotent. If durability at Redis failure scale is required, evaluate replacing ARQ with RabbitMQ in Phase 5.
+> ⚠️ **Production boundary:** ARQ is not a message broker (no Kafka/RabbitMQ durability guarantees). Redis persistence (AOF + RDB) is sufficient for OpenZep's workload — tasks are short-lived (< 5 min) and idempotent. If durability at Redis failure scale is required, evaluate replacing ARQ with RabbitMQ in Phase 5.
 
 ---
 
@@ -47,7 +47,7 @@ class WorkerSettings(BaseSettings):
     # Queue naming
     ENV: str = Field(
         default="dev",
-        description="Environment name used in queue name prefix: memgraph:{env}:queue:{queue_name}",
+        description="Environment name used in queue name prefix: OpenZep:{env}:queue:{queue_name}",
     )
 
     # Concurrency
@@ -108,11 +108,11 @@ settings = WorkerSettings()
 def get_queue_name(queue_type: str) -> str:
     """Generate a namespaced queue name.
 
-    Pattern: memgraph:{env}:queue:{queue_type}
+    Pattern: OpenZep:{env}:queue:{queue_type}
 
     Examples:
-        memgraph:dev:queue:high
-        memgraph:prod:queue:low
+        OpenZep:dev:queue:high
+        OpenZep:prod:queue:low
 
     Args:
         queue_type: One of "high" (real-time ingestion) or "low" (scheduled batch).
@@ -120,11 +120,11 @@ def get_queue_name(queue_type: str) -> str:
     Returns:
         Fully qualified queue name string.
     """
-    return f"memgraph:{settings.ENV}:queue:{queue_type}"
+    return f"OpenZep:{settings.ENV}:queue:{queue_type}"
 ```
 
-**Rationale for the `memgraph:{env}:queue:` prefix:**
-- **`memgraph`**: Avoids collisions with other services sharing the same Redis instance
+**Rationale for the `OpenZep:{env}:queue:` prefix:**
+- **`OpenZep`**: Avoids collisions with other services sharing the same Redis instance
 - **`{env}`**: Separates dev/staging/production queues on shared infrastructure
 - **`queue`**: Distinguishes ARQ queues from other Redis keys (cache, session, locks)
 
@@ -236,7 +236,7 @@ def setup_logging() -> None:
     )
 
 
-logger: structlog.stdlib.BoundLogger = structlog.get_logger("memgraph.worker")
+logger: structlog.stdlib.BoundLogger = structlog.get_logger("OpenZep.worker")
 
 
 # ── Task imports ────────────────────────────────────────────────
@@ -592,7 +592,7 @@ To scale workers horizontally, run multiple worker processes:
 # Redis handles job distribution — no coordination needed.
 ```
 
-> ⚠️ **Idempotency requirement:** Horizontal scaling means two workers may pick up the same job (if one worker crashes mid-job and the job is re-enqueued by ARQ's retry mechanism). All MemGraph tasks MUST be idempotent — see WRK-02 and [02-task-definitions.md](02-task-definitions.md).
+> ⚠️ **Idempotency requirement:** Horizontal scaling means two workers may pick up the same job (if one worker crashes mid-job and the job is re-enqueued by ARQ's retry mechanism). All OpenZep tasks MUST be idempotent — see WRK-02 and [02-task-definitions.md](02-task-definitions.md).
 
 ### 4.3 Per-Process vs Per-CPU
 
@@ -664,7 +664,7 @@ readinessProbe:
 
 ### 6.1 Log Enrichment Pattern
 
-Every ARQ task function must return a context dict that ARQ passes as `ctx` to subsequent callbacks. MemGraph enriches this context with observability fields:
+Every ARQ task function must return a context dict that ARQ passes as `ctx` to subsequent callbacks. OpenZep enriches this context with observability fields:
 
 ```python
 # Pattern used in every task function
@@ -675,7 +675,7 @@ async def example_task(ctx: dict, job_payload: dict) -> dict:
     # - ctx['redis'] (Redis connection pool)
     # - ctx['task_type'] (function name)
     #
-    # MemGraph adds:
+    # OpenZep adds:
     # - ctx['trace_id'] (from API request, propagated via job payload)
     # - ctx['org_id'] (from auth context, propagated via job payload)
     # - ctx['user_id'] (from request context)
@@ -713,7 +713,7 @@ async def example_task(ctx: dict, job_payload: dict) -> dict:
   "event": "job.completed",
   "timestamp": "2026-06-05T10:30:00.123456Z",
   "level": "info",
-  "logger": "memgraph.worker",
+  "logger": "OpenZep.worker",
   "trace_id": "req_01j9xmf...",
   "org_id": "org_abc123",
   "task_type": "extract_entities",
@@ -877,11 +877,11 @@ class TestWorkerSettings:
         assert settings.JOB_TIMEOUT_DEFAULT == 300
 
     def test_queue_name_generation(self):
-        """Queue names should follow the memgraph:{env}:queue:{name} pattern."""
+        """Queue names should follow the OpenZep:{env}:queue:{name} pattern."""
         from services.worker.worker import get_queue_name
         settings = WorkerSettings(ENV="prod")
-        assert get_queue_name("high") == "memgraph:prod:queue:high"
-        assert get_queue_name("low") == "memgraph:prod:queue:low"
+        assert get_queue_name("high") == "OpenZep:prod:queue:high"
+        assert get_queue_name("low") == "OpenZep:prod:queue:low"
 ```
 
 ### 10.2 Integration Tests
@@ -900,7 +900,7 @@ async def test_worker_queue_enqueue_dequeue(arq_redis: ArqRedis):
     # Enqueue a test job
     job = await arq_redis.enqueue_job(
         "test_ping",
-        queue_name="memgraph:test:queue:high",
+        queue_name="OpenZep:test:queue:high",
     )
     assert job is not None
     assert job.job_id is not None
@@ -919,7 +919,7 @@ async def test_graceful_shutdown(arq_worker):
     # Start a long-running job
     await arq_worker.redis.enqueue_job(
         "test_slow_task",
-        queue_name="memgraph:test:queue:high",
+        queue_name="OpenZep:test:queue:high",
     )
 
     # Send SIGTERM

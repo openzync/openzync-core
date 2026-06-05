@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-This document describes the FastAPI application setup for the MemGraph API gateway. The gateway is the single entry point for all client traffic: REST API requests, health checks, WebSocket connections (MCP SSE), and OpenAPI documentation.
+This document describes the FastAPI application setup for the OpenZep API gateway. The gateway is the single entry point for all client traffic: REST API requests, health checks, WebSocket connections (MCP SSE), and OpenAPI documentation.
 
 The gateway follows the company-standard separation of concerns:
 - `main.py` — Application factory, lifespan hooks, middleware registration, router includes
@@ -124,7 +124,7 @@ from routers import (
 
 
 def create_app() -> FastAPI:
-    """Application factory for the MemGraph API gateway.
+    """Application factory for the OpenZep API gateway.
 
     Returns a fully configured FastAPI instance ready to serve traffic.
     Call this from the ASGI entry point (asgi.py).
@@ -160,11 +160,11 @@ def create_app() -> FastAPI:
         await _shutdown(app)
 
     app = FastAPI(
-        title="MemGraph API",
+        title="OpenZep API",
         version=settings.API_VERSION,
         summary="Open-source temporal knowledge graph agent memory platform.",
         description=(
-            "MemGraph stores, retrieves, and queries LLM agent memory "
+            "OpenZep stores, retrieves, and queries LLM agent memory "
             "across sessions using a temporal knowledge graph engine. "
             "It provides hybrid retrieval (vector + BM25 + graph), "
             "async NLP enrichment, and multi-tenant data isolation."
@@ -196,7 +196,7 @@ def create_app() -> FastAPI:
                 "description": "Local development",
             },
             {
-                "url": "https://api.memgraph.dev",
+                "url": "https://api.OpenZep.dev",
                 "description": "Production",
             },
         ],
@@ -259,7 +259,7 @@ async def _shutdown(app: FastAPI) -> None:
 ```python
 # services/api/asgi.py
 
-"""ASGI entry point for the MemGraph API gateway.
+"""ASGI entry point for the OpenZep API gateway.
 
 Usage:
     uvicorn services.api.asgi:app --host 0.0.0.0 --port 8000
@@ -596,7 +596,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 status_code=401,
                 content={
-                    "type": "https://api.memgraph.dev/errors/unauthorized",
+                    "type": "https://api.OpenZep.dev/errors/unauthorized",
                     "title": "Unauthorized",
                     "status": 401,
                     "detail": (
@@ -622,7 +622,7 @@ import time
 import structlog
 from starlette.middleware.base import BaseHTTPMiddleware
 
-logger = structlog.get_logger("memgraph.api")
+logger = structlog.get_logger("OpenZep.api")
 
 
 class LoggingMiddleware(BaseHTTPMiddleware):
@@ -752,7 +752,7 @@ async def health():
     """
     return {
         "status": "healthy",
-        "service": "memgraph-api",
+        "service": "OpenZep-api",
         "version": "1.0.0",
     }
 ```
@@ -838,7 +838,7 @@ class Settings(BaseSettings):
         ),
     )
     TRUSTED_HOSTS: str = Field(
-        default="localhost,127.0.0.1,api.memgraph.dev",
+        default="localhost,127.0.0.1,api.OpenZep.dev",
         description=(
             "Comma-separated list of allowed Host header values. "
             "Prevents Host header injection attacks."
@@ -858,8 +858,8 @@ class Settings(BaseSettings):
 
 ```bash
 # .env (production)
-CORS_ORIGINS=https://dashboard.memgraph.dev,https://app.memgraph.dev
-TRUSTED_HOSTS=api.memgraph.dev,dashboard.memgraph.dev
+CORS_ORIGINS=https://dashboard.OpenZep.dev,https://app.OpenZep.dev
+TRUSTED_HOSTS=api.OpenZep.dev,dashboard.OpenZep.dev
 ```
 
 ### 8.3 Security Note
@@ -964,7 +964,7 @@ class Settings(BaseSettings):
 
     # ── Database ──────────────────────────────────────────────────────
     DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://memgraph:memgraph@localhost:5432/memgraph",
+        default="postgresql+asyncpg://OpenZep:OpenZep@localhost:5432/OpenZep",
         description="PostgreSQL DSN. MUST use postgresql+asyncpg:// scheme.",
     )
 
@@ -1016,7 +1016,7 @@ class Settings(BaseSettings):
     # ── Observability ──────────────────────────────────────────────────
     OTLP_ENDPOINT: Optional[str] = None
     LOG_LEVEL: str = "INFO"
-    SERVICE_NAME: str = "memgraph-api"
+    SERVICE_NAME: str = "OpenZep-api"
 ```
 
 ---
@@ -1101,7 +1101,7 @@ async def test_health_endpoint(async_client: AsyncClient) -> None:
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
-    assert data["service"] == "memgraph-api"
+    assert data["service"] == "OpenZep-api"
 
 
 @pytest.mark.asyncio
@@ -1118,7 +1118,7 @@ async def test_openapi_spec_generated(async_client: AsyncClient) -> None:
     response = await async_client.get("/openapi.json")
     assert response.status_code == 200
     spec = response.json()
-    assert spec["info"]["title"] == "MemGraph API"
+    assert spec["info"]["title"] == "OpenZep API"
     assert spec["info"]["version"] == "1.0.0"
     assert "/v1/users" in spec["paths"]
 
@@ -1180,7 +1180,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://memgraph:memgraph@postgres:5432/memgraph
+      - DATABASE_URL=postgresql+asyncpg://OpenZep:OpenZep@postgres:5432/OpenZep
       - REDIS_URL=redis://redis:6379
       - FALKORDB_URL=redis://falkordb:6380
       - CORS_ORIGINS=http://localhost:3000,http://localhost:8000

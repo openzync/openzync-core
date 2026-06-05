@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-Prompt templates are the interface between MemGraph's NLP pipeline and the LLM. Every extraction, classification, and structured output task is guided by a versioned `.jinja2` template. This document defines:
+Prompt templates are the interface between OpenZep's NLP pipeline and the LLM. Every extraction, classification, and structured output task is guided by a versioned `.jinja2` template. This document defines:
 
 - Template location, naming, and versioning conventions
 - The universal anti-injection pattern

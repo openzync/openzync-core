@@ -1102,4 +1102,4 @@ async def test_ingest_idempotency_key(
 
 ---
 
-*Document maintained by the MemGraph team. Update this document if discovery during implementation changes the ingestion flow.*
+*Document maintained by the OpenZep team. Update this document if discovery during implementation changes the ingestion flow.*

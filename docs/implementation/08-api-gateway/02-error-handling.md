@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-MemGraph uses **RFC 7807 Problem Details** (`application/problem+json`) as the standard error response format across all API endpoints. This provides a consistent, machine-readable error structure that clients can parse programmatically.
+OpenZep uses **RFC 7807 Problem Details** (`application/problem+json`) as the standard error response format across all API endpoints. This provides a consistent, machine-readable error structure that clients can parse programmatically.
 
 All errors flow through a single global exception handler that:
 1. Catches known `AppError` subclasses → maps to appropriate HTTP status code
@@ -21,7 +21,7 @@ All errors flow through a single global exception handler that:
 
 ```json
 {
-    "type": "https://api.memgraph.dev/errors/resource_not_found",
+    "type": "https://api.OpenZep.dev/errors/resource_not_found",
     "title": "Resource Not Found",
     "status": 404,
     "detail": "User '550e8400-e29b-41d4-a716-446655440000' not found in organization 'org_abc'",
@@ -283,7 +283,7 @@ from typing import Union
 import structlog
 import traceback
 
-logger = structlog.get_logger("memgraph.api")
+logger = structlog.get_logger("OpenZep.api")
 
 
 def register_exception_handlers(app: FastAPI) -> None:
@@ -412,7 +412,7 @@ def _problem_response(
     The response format is:
     ```json
     {
-        "type": "https://api.memgraph.dev/errors/{error_code}",
+        "type": "https://api.OpenZep.dev/errors/{error_code}",
         "title": "Resource Not Found",
         "status": 404,
         "detail": "User ... not found ...",
@@ -432,7 +432,7 @@ def _problem_response(
     request_id = getattr(request.state, "request_id", None)
 
     body = {
-        "type": f"https://api.memgraph.dev/errors/{error_code.lower()}",
+        "type": f"https://api.OpenZep.dev/errors/{error_code.lower()}",
         "title": title,
         "status": status_code,
         "detail": detail,
@@ -589,7 +589,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return JSONResponse(
                 status_code=429,
                 content={
-                    "type": "https://api.memgraph.dev/errors/rate_limit_exceeded",
+                    "type": "https://api.OpenZep.dev/errors/rate_limit_exceeded",
                     "title": "Rate Limit Exceeded",
                     "status": 429,
                     "detail": f"Rate limit exceeded. Retry after {retry_after} seconds.",
@@ -825,7 +825,7 @@ def get_request_id(request: Request) -> str:
 
 ```json
 {
-    "type": "https://api.memgraph.dev/errors/resource_not_found",
+    "type": "https://api.OpenZep.dev/errors/resource_not_found",
     "title": "Resource Not Found",
     "status": 404,
     "detail": "User '550e8400-e29b-41d4-a716-446655440000' not found in organization 'org_abc'",
@@ -838,7 +838,7 @@ def get_request_id(request: Request) -> str:
 
 ```json
 {
-    "type": "https://api.memgraph.dev/errors/validation_error",
+    "type": "https://api.OpenZep.dev/errors/validation_error",
     "title": "Validation Error",
     "status": 422,
     "detail": "One or more fields failed validation.",
@@ -863,7 +863,7 @@ def get_request_id(request: Request) -> str:
 
 ```json
 {
-    "type": "https://api.memgraph.dev/errors/rate_limit_exceeded",
+    "type": "https://api.OpenZep.dev/errors/rate_limit_exceeded",
     "title": "Rate Limit Exceeded",
     "status": 429,
     "detail": "Rate limit exceeded. Retry after 45 seconds.",
@@ -877,7 +877,7 @@ def get_request_id(request: Request) -> str:
 
 ```json
 {
-    "type": "https://api.memgraph.dev/errors/internal_error",
+    "type": "https://api.OpenZep.dev/errors/internal_error",
     "title": "Internal Server Error",
     "status": 500,
     "detail": "An unexpected error occurred. Please try again later. Reference: req_01j9xmfxyz",
@@ -936,7 +936,7 @@ async def test_404_error_format(async_client: AsyncClient, auth_headers: dict) -
     data = response.json()
 
     # RFC 7807 fields
-    assert data["type"] == "https://api.memgraph.dev/errors/resource_not_found"
+    assert data["type"] == "https://api.OpenZep.dev/errors/resource_not_found"
     assert data["title"] == "Resource Not Found"
     assert data["status"] == 404
     assert "detail" in data
@@ -957,7 +957,7 @@ async def test_validation_error_with_field_detail(
     assert response.status_code == 422
     data = response.json()
 
-    assert data["type"] == "https://api.memgraph.dev/errors/validation_error"
+    assert data["type"] == "https://api.OpenZep.dev/errors/validation_error"
     assert "fields" in data
     assert len(data["fields"]) > 0
     assert data["fields"][0]["field"] == "external_id"
@@ -969,7 +969,7 @@ async def test_401_missing_auth(async_client: AsyncClient) -> None:
     response = await async_client.get("/v1/users")
     assert response.status_code == 401
     data = response.json()
-    assert data["type"] == "https://api.memgraph.dev/errors/unauthorized"
+    assert data["type"] == "https://api.OpenZep.dev/errors/unauthorized"
 
 
 @pytest.mark.asyncio
@@ -992,7 +992,7 @@ async def test_500_no_stack_trace_leak(
     assert "password" not in data["detail"].lower()
     assert "traceback" not in data
     assert "RuntimeError" not in data["detail"]
-    assert data["type"] == "https://api.memgraph.dev/errors/internal_error"
+    assert data["type"] == "https://api.OpenZep.dev/errors/internal_error"
 
 
 @pytest.mark.asyncio
@@ -1018,7 +1018,7 @@ async def test_rate_limit_retry_after_header(
     assert "X-RateLimit-Reset" in response.headers
 
     # RFC 7807 body
-    assert data["type"] == "https://api.memgraph.dev/errors/rate_limit_exceeded"
+    assert data["type"] == "https://api.OpenZep.dev/errors/rate_limit_exceeded"
     assert data["status"] == 429
     assert "retry_after_seconds" in data
 
@@ -1042,7 +1042,7 @@ async def test_409_conflict_error(async_client: AsyncClient, auth_headers: dict)
     )
     assert response.status_code == 409
     data = response.json()
-    assert data["type"] == "https://api.memgraph.dev/errors/resource_conflict"
+    assert data["type"] == "https://api.OpenZep.dev/errors/resource_conflict"
     assert "already exists" in data["detail"].lower()
 
 

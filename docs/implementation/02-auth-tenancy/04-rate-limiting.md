@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-MemGraph implements **two-tier rate limiting** to protect the API from abuse and ensure fair resource allocation across tenants:
+OpenZep implements **two-tier rate limiting** to protect the API from abuse and ensure fair resource allocation across tenants:
 
 | Tier | Scope | Target | Default Limit |
 |------|-------|--------|---------------|
@@ -425,7 +425,7 @@ from fastapi import FastAPI
 from middleware.rate_limit import FailedAuthRateLimitMiddleware, ApiKeyRateLimitMiddleware
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="MemGraph API")
+    app = FastAPI(title="OpenZep API")
 
     # 1. Tracing middleware (adds request_id)
     app.add_middleware(TracingMiddleware)
@@ -852,9 +852,9 @@ return {1, max_requests - count - 1, (math.floor(now_ms / 1000 / 60) + 1) * 60}
 
 | Metric | What It Tracks | Alert Threshold |
 |--------|---------------|-----------------|
-| `memgraph.rate_limited_requests` | Count of 429 responses | > 1% of total requests |
-| `memgraph.rate_limit_key_count` | Active rate limit keys in Redis | > 100,000 keys |
-| `memgraph.rate_limit_p99_latency` | Time to check rate limit | > 5ms |
+| `OpenZep.rate_limited_requests` | Count of 429 responses | > 1% of total requests |
+| `OpenZep.rate_limit_key_count` | Active rate limit keys in Redis | > 100,000 keys |
+| `OpenZep.rate_limit_p99_latency` | Time to check rate limit | > 5ms |
 
 ### 12.2 Graceful Degradation
 

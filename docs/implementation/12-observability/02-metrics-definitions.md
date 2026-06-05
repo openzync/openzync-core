@@ -2,7 +2,7 @@
 
 ## Overview
 
-MemGraph exposes Prometheus metrics via a `/metrics` endpoint on the FastAPI gateway and a separate `/metrics` endpoint on the worker service. Metrics are scraped by Grafana Alloy and forwarded to Mimir for long-term storage and alerting.
+OpenZep exposes Prometheus metrics via a `/metrics` endpoint on the FastAPI gateway and a separate `/metrics` endpoint on the worker service. Metrics are scraped by Grafana Alloy and forwarded to Mimir for long-term storage and alerting.
 
 ---
 
@@ -305,11 +305,11 @@ prometheus.remote_write "mimir" {
 
 ## Alerting Rules
 
-### Prometheus Alert Rules (`infra/mimir/rules/memgraph.yml`)
+### Prometheus Alert Rules (`infra/mimir/rules/OpenZep.yml`)
 
 ```yaml
 groups:
-  - name: memgraph-api
+  - name: OpenZep-api
     interval: 30s
     rules:
       - alert: HighErrorRate
@@ -355,7 +355,7 @@ groups:
           summary: "p99 context assembly latency above 1000ms"
           description: "p99 context latency is {{ $value }}s over the last 5 minutes."
 
-  - name: memgraph-worker
+  - name: OpenZep-worker
     interval: 30s
     rules:
       - alert: WorkerQueueDepthCritical
@@ -397,7 +397,7 @@ groups:
           summary: "Worker task p99 latency above 30s"
           description: "Task {{ $labels.task_type }} p99 is {{ $value }}s."
 
-  - name: memgraph-infra
+  - name: OpenZep-infra
     interval: 30s
     rules:
       - alert: DBConnectionPoolHigh

@@ -2,7 +2,7 @@
 
 ## Overview
 
-MemGraph uses **Alembic** for PostgreSQL schema migrations. All schema changes go through a versioned migration — no `create_all()` in production. This runbook covers the workflow, zero-downtime patterns, and rollback procedures.
+OpenZep uses **Alembic** for PostgreSQL schema migrations. All schema changes go through a versioned migration — no `create_all()` in production. This runbook covers the workflow, zero-downtime patterns, and rollback procedures.
 
 ---
 
@@ -27,7 +27,7 @@ alembic init alembic
 ```ini
 [alembic]
 script_location = services/api/alembic
-sqlalchemy.url = postgresql://memgraph:memgraph@localhost:5432/memgraph
+sqlalchemy.url = postgresql://OpenZep:OpenZep@localhost:5432/OpenZep
 # ^ Sync driver (psycopg2) for migration commands.
 # The application uses async driver (asyncpg) at runtime.
 
@@ -239,13 +239,13 @@ def downgrade():
 alembic upgrade head
 
 # Verify schema
-psql -U memgraph -d memgraph -c "\d facts"
+psql -U OpenZep -d OpenZep -c "\d facts"
 
 # Downgrade one step
 alembic downgrade -1
 
 # Verify rollback worked
-psql -U memgraph -d memgraph -c "\d facts"
+psql -U OpenZep -d OpenZep -c "\d facts"
 
 # Re-upgrade
 alembic upgrade head
@@ -443,7 +443,7 @@ def run_migrations_online():
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: {{ include "memgraph.fullname" . }}-migrate
+  name: {{ include "OpenZep.fullname" . }}-migrate
   annotations:
     "helm.sh/hook": pre-upgrade,pre-install
     "helm.sh/hook-weight": "-5"
@@ -454,13 +454,13 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: migrate
-          image: "{{ .Values.global.imageRegistry }}/memgraph-api:{{ .Values.global.imageTag }}"
+          image: "{{ .Values.global.imageRegistry }}/OpenZep-api:{{ .Values.global.imageTag }}"
           command: ["alembic", "upgrade", "head"]
           env:
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:
-                  name: memgraph-secrets
+                  name: OpenZep-secrets
                   key: database_url
 ```
 

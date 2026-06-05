@@ -1,8 +1,8 @@
-# MemGraph — Implementation Documentation Suite
+# OpenZep — Implementation Documentation Suite
 
 > **Purpose:** These documents translate the SRS (`SRS_MemGraph.md`) into precise, actionable implementation guides for every domain. Each document follows a consistent template: Overview → Data Model → API Contracts → Service Layer → Repository Layer → Worker Integration → Sequence Diagram → Testing Guide → Configuration → Open Questions.
 >
-> **Audience:** All engineers building MemGraph. Read the domain docs relevant to your current phase before writing code.
+> **Audience:** All engineers building OpenZep. Read the domain docs relevant to your current phase before writing code.
 >
 > **Dependency Rule:** Documents are numbered in dependency order. Read `01-data-models/` before anything else. Within a domain, read docs in filename order.
 

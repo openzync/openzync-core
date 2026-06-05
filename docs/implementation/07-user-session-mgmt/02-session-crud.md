@@ -137,7 +137,7 @@ class CreateSessionRequest(BaseModel):
 class SessionResponse(BaseModel):
     """Response body for single-session endpoints."""
 
-    id: UUID = Field(..., description="Internal MemGraph session UUID.")
+    id: UUID = Field(..., description="Internal OpenZep session UUID.")
     user_id: UUID = Field(..., description="User UUID this session belongs to.")
     external_id: str = Field(..., description="Caller-defined session identifier.")
     metadata: dict[str, Any] = Field(

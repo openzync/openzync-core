@@ -2,7 +2,7 @@
 
 ## Overview
 
-MemGraph supports fully air-gapped (offline) deployment with no dependency on external SaaS endpoints. This guide covers prerequisites, image shipping, model management, and verification for environments without internet access.
+OpenZep supports fully air-gapped (offline) deployment with no dependency on external SaaS endpoints. This guide covers prerequisites, image shipping, model management, and verification for environments without internet access.
 
 ---
 
@@ -17,24 +17,24 @@ Before transitioning to the air-gapped environment, prepare on an internet-conne
 docker run -d -p 5000:5000 --restart=always --name registry registry:2
 
 # On the internet-connected build machine, tag and push images
-docker tag memgraph-api:0.1.0 localhost:5000/memgraph-api:0.1.0
-docker push localhost:5000/memgraph-api:0.1.0
+docker tag OpenZep-api:0.1.0 localhost:5000/OpenZep-api:0.1.0
+docker push localhost:5000/OpenZep-api:0.1.0
 ```
 
 Alternatively, export/import image tarballs:
 
 ```bash
 # On build machine: save images
-docker save memgraph-api:0.1.0 memgraph-worker:0.1.0 memgraph-mcp:0.1.0 \
+docker save OpenZep-api:0.1.0 OpenZep-worker:0.1.0 OpenZep-mcp:0.1.0 \
   pgvector/pgvector:pg15 falkordb/falkordb:latest redis:7-alpine \
   grafana/alloy:latest node:20-alpine \
-  -o memgraph-images.tar
+  -o OpenZep-images.tar
 
 # Transfer to air-gapped host
-scp memgraph-images.tar user@air-gapped-host:/tmp/
+scp OpenZep-images.tar user@air-gapped-host:/tmp/
 
 # On air-gapped host: load images
-docker load -i /tmp/memgraph-images.tar
+docker load -i /tmp/OpenZep-images.tar
 ```
 
 ### 2. PyPI Mirror
@@ -72,9 +72,9 @@ npm config set registry http://npm-mirror:4873/
 
 | Image | Source | Size (approx) |
 |---|---|---|
-| `memgraph-api:0.1.0` | Local build | ~500 MB |
-| `memgraph-worker:0.1.0` | Local build | ~500 MB |
-| `memgraph-mcp:0.1.0` | Local build | ~400 MB |
+| `OpenZep-api:0.1.0` | Local build | ~500 MB |
+| `OpenZep-worker:0.1.0` | Local build | ~500 MB |
+| `OpenZep-mcp:0.1.0` | Local build | ~400 MB |
 | `pgvector/pgvector:pg15` | Docker Hub | ~400 MB |
 | `falkordb/falkordb:latest` | Docker Hub | ~200 MB |
 | `redis:7-alpine` | Docker Hub | ~30 MB |
@@ -93,9 +93,9 @@ npm config set registry http://npm-mirror:4873/
 # save-images.sh — Run on internet-connected build machine
 
 IMAGES=(
-  "memgraph-api:0.1.0"
-  "memgraph-worker:0.1.0"
-  "memgraph-mcp:0.1.0"
+  "OpenZep-api:0.1.0"
+  "OpenZep-worker:0.1.0"
+  "OpenZep-mcp:0.1.0"
   "pgvector/pgvector:pg15"
   "falkordb/falkordb:latest"
   "redis:7-alpine"
@@ -106,17 +106,17 @@ IMAGES=(
   "bitnami/redis-sentinel:7.2"
 )
 
-echo "Saving ${#IMAGES[@]} images to memgraph-images.tar..."
-docker save "${IMAGES[@]}" -o memgraph-images.tar
-echo "Done. File size: $(du -h memgraph-images.tar | cut -f1)"
+echo "Saving ${#IMAGES[@]} images to OpenZep-images.tar..."
+docker save "${IMAGES[@]}" -o OpenZep-images.tar
+echo "Done. File size: $(du -h OpenZep-images.tar | cut -f1)"
 ```
 
 ```bash
 #!/bin/bash
 # load-images.sh — Run on air-gapped host
 
-echo "Loading images from memgraph-images.tar..."
-docker load -i memgraph-images.tar
+echo "Loading images from OpenZep-images.tar..."
+docker load -i OpenZep-images.tar
 echo "Done."
 ```
 
@@ -187,7 +187,7 @@ x-logging: &default-logging
 
 services:
   api:
-    image: memgraph-api:0.1.0
+    image: OpenZep-api:0.1.0
     ports:
       - "8000:8000"
     env_file:
@@ -210,7 +210,7 @@ services:
     logging: *default-logging
 
   worker:
-    image: memgraph-worker:0.1.0
+    image: OpenZep-worker:0.1.0
     env_file:
       - .env.air-gapped
     depends_on:
@@ -233,14 +233,14 @@ services:
   postgres:
     image: pgvector/pgvector:pg15
     environment:
-      POSTGRES_USER: memgraph
-      POSTGRES_PASSWORD: memgraph
-      POSTGRES_DB: memgraph
+      POSTGRES_USER: OpenZep
+      POSTGRES_PASSWORD: OpenZep
+      POSTGRES_DB: OpenZep
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U memgraph"]
+      test: ["CMD-SHELL", "pg_isready -U OpenZep"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -294,11 +294,11 @@ services:
   pgbouncer:
     image: bitnami/pgbouncer:latest
     environment:
-      - PGBOUNCER_DATABASE=memgraph
+      - PGBOUNCER_DATABASE=OpenZep
       - PGBOUNCER_HOST=postgres
       - PGBOUNCER_PORT=5432
-      - PGBOUNCER_USERNAME=memgraph
-      - PGBOUNCER_PASSWORD=memgraph
+      - PGBOUNCER_USERNAME=OpenZep
+      - PGBOUNCER_PASSWORD=OpenZep
       - PGBOUNCER_POOL_MODE=transaction
       - PGBOUNCER_DEFAULT_POOL_SIZE=25
     depends_on:
@@ -311,7 +311,7 @@ services:
     logging: *default-logging
 
   dashboard:
-    image: memgraph-dashboard:0.1.0
+    image: OpenZep-dashboard:0.1.0
     ports:
       - "3000:3000"
     environment:
@@ -351,11 +351,11 @@ networks:
 ### `.env.air-gapped`
 
 ```bash
-# MemGraph Air-Gapped Environment
+# OpenZep Air-Gapped Environment
 ENVIRONMENT=production
 LOG_LEVEL=INFO
 
-DATABASE_URL=postgresql+asyncpg://memgraph:memgraph@pgbouncer:6432/memgraph
+DATABASE_URL=postgresql+asyncpg://OpenZep:OpenZep@pgbouncer:6432/OpenZep
 DATABASE_POOL_SIZE=5
 
 REDIS_URL=redis://redis:6379/0

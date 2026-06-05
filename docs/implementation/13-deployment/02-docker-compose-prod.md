@@ -88,7 +88,7 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://memgraph:${DB_PASSWORD}@pgbouncer:6432/memgraph
+      - DATABASE_URL=postgresql+asyncpg://OpenZep:${DB_PASSWORD}@pgbouncer:6432/OpenZep
       - REDIS_URL=redis-sentinel://redis-sentinel:26379/mymaster/0
       - FALKORDB_URL=redis://falkordb:6380
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
@@ -107,7 +107,7 @@ services:
         condition: service_healthy
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.api.rule=Host(`api.memgraph.example.com`)"
+      - "traefik.http.routers.api.rule=Host(`api.OpenZep.example.com`)"
       - "traefik.http.routers.api.entrypoints=websecure"
       - "traefik.http.routers.api.tls.certresolver=letsencrypt"
       - "traefik.http.services.api.loadbalancer.server.port=8000"
@@ -132,7 +132,7 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://memgraph:${DB_PASSWORD}@pgbouncer:6432/memgraph
+      - DATABASE_URL=postgresql+asyncpg://OpenZep:${DB_PASSWORD}@pgbouncer:6432/OpenZep
       - REDIS_URL=redis-sentinel://redis-sentinel:26379/mymaster/0
       - FALKORDB_URL=redis://falkordb:6380
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
@@ -166,7 +166,7 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://memgraph:${DB_PASSWORD}@pgbouncer:6432/memgraph
+      - DATABASE_URL=postgresql+asyncpg://OpenZep:${DB_PASSWORD}@pgbouncer:6432/OpenZep
       - REDIS_URL=redis-sentinel://redis-sentinel:26379/mymaster/0
       - FALKORDB_URL=redis://falkordb:6380
       - LOG_LEVEL=INFO
@@ -188,10 +188,10 @@ services:
   pgbouncer:
     image: bitnami/pgbouncer:latest
     environment:
-      - PGBOUNCER_DATABASE=memgraph
+      - PGBOUNCER_DATABASE=OpenZep
       - PGBOUNCER_HOST=postgres
       - PGBOUNCER_PORT=5432
-      - PGBOUNCER_USERNAME=memgraph
+      - PGBOUNCER_USERNAME=OpenZep
       - PGBOUNCER_PASSWORD_FILE=/run/secrets/db_password
       - PGBOUNCER_POOL_MODE=transaction
       - PGBOUNCER_DEFAULT_POOL_SIZE=25
@@ -218,9 +218,9 @@ services:
   postgres:
     image: pgvector/pgvector:pg15
     environment:
-      POSTGRES_USER: memgraph
+      POSTGRES_USER: OpenZep
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
-      POSTGRES_DB: memgraph
+      POSTGRES_DB: OpenZep
     secrets:
       - db_password
     volumes:
@@ -231,7 +231,7 @@ services:
       - "-c"
       - "config_file=/etc/postgresql/postgresql.conf"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U memgraph"]
+      test: ["CMD-SHELL", "pg_isready -U OpenZep"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -253,9 +253,9 @@ services:
   # postgres-replica:
   #   image: pgvector/pgvector:pg15
   #   environment:
-  #     POSTGRES_USER: memgraph
+  #     POSTGRES_USER: OpenZep
   #     POSTGRES_PASSWORD_FILE: /run/secrets/db_password
-  #     POSTGRES_DB: memgraph
+  #     POSTGRES_DB: OpenZep
   #   secrets:
   #     - db_password
   #   volumes:
@@ -377,10 +377,10 @@ services:
     env_file:
       - .env
     environment:
-      - NEXT_PUBLIC_API_URL=https://api.memgraph.example.com
+      - NEXT_PUBLIC_API_URL=https://api.OpenZep.example.com
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.dashboard.rule=Host(`dashboard.memgraph.example.com`)"
+      - "traefik.http.routers.dashboard.rule=Host(`dashboard.OpenZep.example.com`)"
       - "traefik.http.routers.dashboard.entrypoints=websecure"
       - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
       - "traefik.http.services.dashboard.loadbalancer.server.port=3000"
@@ -559,7 +559,7 @@ docker compose -f infra/docker-compose.prod.yml up -d
 docker compose -f infra/docker-compose.prod.yml exec api alembic upgrade head
 
 # 4. Verify
-curl -f https://api.memgraph.example.com/health
+curl -f https://api.OpenZep.example.com/health
 ```
 
 ### Scaling
@@ -580,8 +580,8 @@ docker compose -f infra/docker-compose.prod.yml up -d --scale worker=6
 |---|---|---|
 | Alloy | `http://alloy:12345` | Alloy admin UI |
 | Traefik | Port 80/443 | Access logs, service routing |
-| Health | `https://api.memgraph.example.com/health` | API liveness |
-| Ready | `https://api.memgraph.example.com/ready` | API readiness (checks DB, Redis) |
+| Health | `https://api.OpenZep.example.com/health` | API liveness |
+| Ready | `https://api.OpenZep.example.com/ready` | API readiness (checks DB, Redis) |
 
 ### Production Health Endpoint
 

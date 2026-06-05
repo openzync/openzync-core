@@ -2,14 +2,14 @@
 
 ## Overview
 
-MemGraph ships a Helm chart for production Kubernetes deployment. The chart covers all components: API, worker, MCP server, PostgreSQL, FalkorDB, Redis with Sentinel, PgBouncer, the admin dashboard, and Grafana Alloy.
+OpenZep ships a Helm chart for production Kubernetes deployment. The chart covers all components: API, worker, MCP server, PostgreSQL, FalkorDB, Redis with Sentinel, PgBouncer, the admin dashboard, and Grafana Alloy.
 
 ---
 
 ## Chart Structure
 
 ```
-infra/helm/memgraph/
+infra/helm/OpenZep/
 ├── Chart.yaml                  # Chart metadata
 ├── values.yaml                 # All configurable parameters (documented)
 ├── values.dev.yaml             # Dev overrides (smaller resources, single replicas)
@@ -49,8 +49,8 @@ infra/helm/memgraph/
 
 ```yaml
 apiVersion: v2
-name: memgraph
-description: MemGraph — Open-Source Agent Memory Platform
+name: OpenZep
+description: OpenZep — Open-Source Agent Memory Platform
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
@@ -58,9 +58,9 @@ keywords:
   - agent-memory
   - knowledge-graph
   - open-source
-home: https://github.com/thelinkai/memgraph
+home: https://github.com/thelinkai/OpenZep
 sources:
-  - https://github.com/thelinkai/memgraph
+  - https://github.com/thelinkai/OpenZep
 maintainers:
   - name: TheLinkAI
     email: engineering@thelinkai.com
@@ -84,7 +84,7 @@ api:
   enabled: true
   replicas: 2
   image:
-    repository: memgraph-api
+    repository: OpenZep-api
     tag: ""
     pullPolicy: ""
   service:
@@ -109,14 +109,14 @@ api:
     - name: DATABASE_URL
       valueFrom:
         secretKeyRef:
-          name: memgraph-secrets
+          name: OpenZep-secrets
           key: database_url
     - name: REDIS_URL
-      value: "redis-sentinel://memgraph-redis-sentinel:26379/mymaster/0"
+      value: "redis-sentinel://OpenZep-redis-sentinel:26379/mymaster/0"
     - name: FALKORDB_URL
-      value: "redis://memgraph-falkordb:6380"
+      value: "redis://OpenZep-falkordb:6380"
     - name: OTEL_EXPORTER_OTLP_ENDPOINT
-      value: "http://memgraph-alloy:4317"
+      value: "http://OpenZep-alloy:4317"
     - name: LOG_LEVEL
       value: "INFO"
     - name: ENVIRONMENT
@@ -145,7 +145,7 @@ worker:
   enabled: true
   replicas: 2
   image:
-    repository: memgraph-worker
+    repository: OpenZep-worker
     tag: ""
     pullPolicy: ""
   resources:
@@ -176,12 +176,12 @@ worker:
     - name: DATABASE_URL
       valueFrom:
         secretKeyRef:
-          name: memgraph-secrets
+          name: OpenZep-secrets
           key: database_url
     - name: REDIS_URL
-      value: "redis-sentinel://memgraph-redis-sentinel:26379/mymaster/0"
+      value: "redis-sentinel://OpenZep-redis-sentinel:26379/mymaster/0"
     - name: FALKORDB_URL
-      value: "redis://memgraph-falkordb:6380"
+      value: "redis://OpenZep-falkordb:6380"
     - name: LOG_LEVEL
       value: "INFO"
 
@@ -190,7 +190,7 @@ mcp:
   enabled: true
   replicas: 1
   image:
-    repository: memgraph-mcp
+    repository: OpenZep-mcp
     tag: ""
     pullPolicy: ""
   service:
@@ -285,7 +285,7 @@ redis:
 dashboard:
   enabled: true
   image:
-    repository: memgraph-dashboard
+    repository: OpenZep-dashboard
     tag: ""
     pullPolicy: ""
   service:
@@ -293,7 +293,7 @@ dashboard:
     port: 3000
   env:
     - name: NEXT_PUBLIC_API_URL
-      value: "https://api.memgraph.example.com"
+      value: "https://api.OpenZep.example.com"
   resources:
     requests:
       cpu: "250m"
@@ -322,17 +322,17 @@ ingress:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
   hosts:
-    - host: api.memgraph.example.com
-      serviceName: memgraph-api
+    - host: api.OpenZep.example.com
+      serviceName: OpenZep-api
       servicePort: 8000
-    - host: dashboard.memgraph.example.com
-      serviceName: memgraph-dashboard
+    - host: dashboard.OpenZep.example.com
+      serviceName: OpenZep-dashboard
       servicePort: 3000
   tls:
-    - secretName: memgraph-tls
+    - secretName: OpenZep-tls
       hosts:
-        - api.memgraph.example.com
-        - dashboard.memgraph.example.com
+        - api.OpenZep.example.com
+        - dashboard.OpenZep.example.com
 
 # ─── Network Policies ─────────────────────────────────────────
 networkPolicy:
@@ -346,7 +346,7 @@ externalSecrets:
   # secretStore:
   #   region: us-east-1
   # secrets:
-  #   - name: memgraph-secrets
+  #   - name: OpenZep-secrets
   #     keys:
   #       - database_url
   #       - jwt_secret
@@ -364,20 +364,20 @@ externalSecrets:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "memgraph.fullname" . }}-api
+  name: {{ include "OpenZep.fullname" . }}-api
   labels:
-    app: memgraph
+    app: OpenZep
     component: api
 spec:
   replicas: {{ .Values.api.replicas }}
   selector:
     matchLabels:
-      app: memgraph
+      app: OpenZep
       component: api
   template:
     metadata:
       labels:
-        app: memgraph
+        app: OpenZep
         component: api
     spec:
       containers:
@@ -400,12 +400,12 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "memgraph.fullname" . }}-api
+  name: {{ include "OpenZep.fullname" . }}-api
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "memgraph.fullname" . }}-api
+    name: {{ include "OpenZep.fullname" . }}-api
   minReplicas: {{ .Values.api.hpa.minReplicas }}
   maxReplicas: {{ .Values.api.hpa.maxReplicas }}
   metrics:
@@ -430,12 +430,12 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "memgraph.fullname" . }}-worker
+  name: {{ include "OpenZep.fullname" . }}-worker
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "memgraph.fullname" . }}-worker
+    name: {{ include "OpenZep.fullname" . }}-worker
   minReplicas: {{ .Values.worker.hpa.minReplicas }}
   maxReplicas: {{ .Values.worker.hpa.maxReplicas }}
   metrics:
@@ -460,23 +460,23 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "memgraph.fullname" . }}-api-pdb
+  name: {{ include "OpenZep.fullname" . }}-api-pdb
 spec:
   minAvailable: {{ .Values.api.podDisruptionBudget.minAvailable }}
   selector:
     matchLabels:
-      app: memgraph
+      app: OpenZep
       component: api
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: {{ include "memgraph.fullname" . }}-worker-pdb
+  name: {{ include "OpenZep.fullname" . }}-worker-pdb
 spec:
   minAvailable: {{ .Values.worker.podDisruptionBudget.minAvailable }}
   selector:
     matchLabels:
-      app: memgraph
+      app: OpenZep
       component: worker
 ```
 
@@ -487,7 +487,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "memgraph.fullname" . }}-default-deny
+  name: {{ include "OpenZep.fullname" . }}-default-deny
 spec:
   podSelector: {}
   policyTypes:
@@ -497,11 +497,11 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "memgraph.fullname" . }}-api-allow
+  name: {{ include "OpenZep.fullname" . }}-api-allow
 spec:
   podSelector:
     matchLabels:
-      app: memgraph
+      app: OpenZep
       component: api
   ingress:
     - from:
@@ -514,16 +514,16 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: {{ include "memgraph.fullname" . }}-inter-service
+  name: {{ include "OpenZep.fullname" . }}-inter-service
 spec:
   podSelector:
     matchLabels:
-      app: memgraph
+      app: OpenZep
   ingress:
     - from:
         - podSelector:
             matchLabels:
-              app: memgraph
+              app: OpenZep
       ports:
         - port: 8000    # API
         - port: 8001    # MCP
@@ -537,7 +537,7 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              app: memgraph
+              app: OpenZep
   policyTypes:
     - Ingress
     - Egress
@@ -550,7 +550,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "memgraph.fullname" . }}
+  name: {{ include "OpenZep.fullname" . }}
   annotations:
     {{- toYaml .Values.ingress.annotations | nindent 4 }}
 spec:
@@ -589,7 +589,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "memgraph.fullname" . }}-postgres
+  name: {{ include "OpenZep.fullname" . }}-postgres
 spec:
   accessModes:
     - ReadWriteOnce
@@ -611,24 +611,24 @@ spec:
 apiVersion: external-secrets.io/v1beta1
 kind: ExternalSecret
 metadata:
-  name: memgraph-secrets
+  name: OpenZep-secrets
 spec:
   refreshInterval: 1h
   secretStoreRef:
     name: aws-secretsmanager
     kind: SecretStore
   target:
-    name: memgraph-secrets
+    name: OpenZep-secrets
   data:
     - secretKey: database_url
       remoteRef:
-        key: /memgraph/prod/database_url
+        key: /OpenZep/prod/database_url
     - secretKey: jwt_secret
       remoteRef:
-        key: /memgraph/prod/jwt_secret
+        key: /OpenZep/prod/jwt_secret
     - secretKey: openai_api_key
       remoteRef:
-        key: /memgraph/prod/openai_api_key
+        key: /OpenZep/prod/openai_api_key
 ```
 
 ### Option B: Sealed Secrets
@@ -638,7 +638,7 @@ spec:
 apiVersion: bitnami.com/v1alpha1
 kind: SealedSecret
 metadata:
-  name: memgraph-secrets
+  name: OpenZep-secrets
 spec:
   encryptedData:
     database_url: AgBy3i4...  # sealed with kubeseal
@@ -652,28 +652,28 @@ spec:
 
 ```bash
 # Add the repo
-helm repo add memgraph https://charts.thelinkai.com
+helm repo add OpenZep https://charts.thelinkai.com
 helm repo update
 
 # Install with dev values
-helm install memgraph memgraph/memgraph \
-  --namespace memgraph \
+helm install OpenZep OpenZep/OpenZep \
+  --namespace OpenZep \
   --create-namespace \
-  --values infra/helm/memgraph/values.dev.yaml
+  --values infra/helm/OpenZep/values.dev.yaml
 
 # Install with production values
-helm install memgraph memgraph/memgraph \
-  --namespace memgraph \
+helm install OpenZep OpenZep/OpenZep \
+  --namespace OpenZep \
   --create-namespace \
-  --values infra/helm/memgraph/values.prod.yaml
+  --values infra/helm/OpenZep/values.prod.yaml
 
 # Upgrade
-helm upgrade memgraph memgraph/memgraph \
-  --values infra/helm/memgraph/values.prod.yaml
+helm upgrade OpenZep OpenZep/OpenZep \
+  --values infra/helm/OpenZep/values.prod.yaml
 
 # Local development (from repo root)
-helm install memgraph ./infra/helm/memgraph \
-  --namespace memgraph \
+helm install OpenZep ./infra/helm/OpenZep \
+  --namespace OpenZep \
   --create-namespace
 ```
 
@@ -683,23 +683,23 @@ helm install memgraph ./infra/helm/memgraph \
 
 ```bash
 # Check all pods are running
-kubectl get pods -n memgraph
+kubectl get pods -n OpenZep
 
 # Check services
-kubectl get svc -n memgraph
+kubectl get svc -n OpenZep
 
 # Test API health
-kubectl port-forward -n memgraph svc/memgraph-api 8000:8000
+kubectl port-forward -n OpenZep svc/OpenZep-api 8000:8000
 curl http://localhost:8000/health
 
 # Check HPA status
-kubectl get hpa -n memgraph
+kubectl get hpa -n OpenZep
 
 # Check PDB status
-kubectl get pdb -n memgraph
+kubectl get pdb -n OpenZep
 
 # View logs
-kubectl logs -n memgraph -l component=api
+kubectl logs -n OpenZep -l component=api
 ```
 
 ---

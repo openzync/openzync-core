@@ -2,7 +2,7 @@
 
 ## Overview
 
-The development Docker Compose environment runs all MemGraph services locally for development and testing. It includes local defaults for all services, persistent volumes, and an optional Ollama service for local LLM testing.
+The development Docker Compose environment runs all OpenZep services locally for development and testing. It includes local defaults for all services, persistent volumes, and an optional Ollama service for local LLM testing.
 
 ---
 
@@ -16,8 +16,8 @@ The development Docker Compose environment runs all MemGraph services locally fo
 
 | Service | Image | Purpose | Port |
 |---|---|---|---|
-| `api` | `memgraph-api` (local build) | FastAPI gateway | `8000` |
-| `worker` | `memgraph-worker` (local build) | ARQ background workers | — |
+| `api` | `OpenZep-api` (local build) | FastAPI gateway | `8000` |
+| `worker` | `OpenZep-worker` (local build) | ARQ background workers | — |
 | `postgres` | `pgvector/pgvector:pg15` | PostgreSQL + pgvector | `5432` |
 | `falkordb` | `falkordb/falkordb:latest` | Graph database | `6380` |
 | `redis` | `redis:7-alpine` | Job queue + cache | `6379` |
@@ -48,7 +48,7 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://memgraph:memgraph@postgres:5432/memgraph
+      - DATABASE_URL=postgresql+asyncpg://OpenZep:OpenZep@postgres:5432/OpenZep
       - REDIS_URL=redis://redis:6379/0
       - FALKORDB_URL=redis://falkordb:6380
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
@@ -78,7 +78,7 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://memgraph:memgraph@postgres:5432/memgraph
+      - DATABASE_URL=postgresql+asyncpg://OpenZep:OpenZep@postgres:5432/OpenZep
       - REDIS_URL=redis://redis:6379/0
       - FALKORDB_URL=redis://falkordb:6380
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
@@ -104,16 +104,16 @@ services:
   postgres:
     image: pgvector/pgvector:pg15
     environment:
-      POSTGRES_USER: memgraph
-      POSTGRES_PASSWORD: memgraph
-      POSTGRES_DB: memgraph
+      POSTGRES_USER: OpenZep
+      POSTGRES_PASSWORD: OpenZep
+      POSTGRES_DB: OpenZep
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U memgraph"]
+      test: ["CMD-SHELL", "pg_isready -U OpenZep"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -165,7 +165,7 @@ services:
       - "3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000
-      - DATABASE_URL=postgresql+asyncpg://memgraph:memgraph@postgres:5432/memgraph
+      - DATABASE_URL=postgresql+asyncpg://OpenZep:OpenZep@postgres:5432/OpenZep
     depends_on:
       postgres:
         condition: service_healthy
@@ -229,7 +229,7 @@ networks:
 ## Environment File (`.env`)
 
 ```bash
-# MemGraph Development Environment
+# OpenZep Development Environment
 # Copy to .env and adjust as needed
 
 # Application
@@ -240,7 +240,7 @@ SECRET_KEY=dev-secret-key-do-not-use-in-production
 JWT_SECRET=dev-jwt-secret-do-not-use-in-production
 
 # PostgreSQL (defaults match docker-compose.yml)
-DATABASE_URL=postgresql+asyncpg://memgraph:memgraph@localhost:5432/memgraph
+DATABASE_URL=postgresql+asyncpg://OpenZep:OpenZep@localhost:5432/OpenZep
 DATABASE_POOL_SIZE=10
 DATABASE_MAX_OVERFLOW=5
 
@@ -329,8 +329,8 @@ Every service has a `HEALTHCHECK`:
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/thelinkai/memgraph.git
-cd memgraph
+git clone https://github.com/thelinkai/OpenZep.git
+cd OpenZep
 
 # 2. Copy environment file
 cp .env.example .env
@@ -373,7 +373,7 @@ docker compose -f infra/docker-compose.yml up -d --scale worker=4
 docker compose -f infra/docker-compose.yml exec api alembic revision --autogenerate -m "description"
 
 # Access PostgreSQL CLI
-docker compose -f infra/docker-compose.yml exec postgres psql -U memgraph
+docker compose -f infra/docker-compose.yml exec postgres psql -U OpenZep
 
 # Enable Ollama (then pull a model)
 docker compose -f infra/docker-compose.yml up -d ollama

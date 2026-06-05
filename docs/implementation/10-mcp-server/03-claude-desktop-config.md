@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-This document describes how to configure LLM agent hosts (Claude Desktop, Cursor, any MCP-compatible client) to connect to the MemGraph MCP server. The configuration is a JSON block that tells the host how to launch the MCP server process and what environment variables to set.
+This document describes how to configure LLM agent hosts (Claude Desktop, Cursor, any MCP-compatible client) to connect to the OpenZep MCP server. The configuration is a JSON block that tells the host how to launch the MCP server process and what environment variables to set.
 
 ---
 
@@ -37,9 +37,9 @@ This document describes how to configure LLM agent hosts (Claude Desktop, Cursor
 ```json
 {
   "mcpServers": {
-    "memgraph": {
+    "OpenZep": {
       "command": "python",
-      "args": ["-m", "memgraph.mcp_server"],
+      "args": ["-m", "OpenZep.mcp_server"],
       "env": {
         "MEMGRAPH_API_KEY": "mg_live_your_api_key_here",
         "MEMGRAPH_BASE_URL": "http://localhost:8000"
@@ -51,14 +51,14 @@ This document describes how to configure LLM agent hosts (Claude Desktop, Cursor
 
 ### 2.3 Virtual Environment Configuration
 
-If MemGraph is installed in a virtual environment, use the full path to the Python interpreter:
+If OpenZep is installed in a virtual environment, use the full path to the Python interpreter:
 
 ```json
 {
   "mcpServers": {
-    "memgraph": {
+    "OpenZep": {
       "command": "/path/to/venv/bin/python",
-      "args": ["-m", "memgraph.mcp_server"],
+      "args": ["-m", "OpenZep.mcp_server"],
       "env": {
         "MEMGRAPH_API_KEY": "mg_live_your_api_key_here",
         "MEMGRAPH_BASE_URL": "http://localhost:8000"
@@ -75,9 +75,9 @@ If installed via `uvx` or `pipx`:
 ```json
 {
   "mcpServers": {
-    "memgraph": {
+    "OpenZep": {
       "command": "uvx",
-      "args": ["memgraph-mcp"],
+      "args": ["OpenZep-mcp"],
       "env": {
         "MEMGRAPH_API_KEY": "mg_live_your_api_key_here",
         "MEMGRAPH_BASE_URL": "http://localhost:8000"
@@ -101,7 +101,7 @@ Run the MCP server from a Docker container instead of a local Python process. Th
 ```json
 {
   "mcpServers": {
-    "memgraph": {
+    "OpenZep": {
       "command": "docker",
       "args": [
         "run",
@@ -110,7 +110,7 @@ Run the MCP server from a Docker container instead of a local Python process. Th
         "--network", "host",
         "-e", "MEMGRAPH_API_KEY",
         "-e", "MEMGRAPH_BASE_URL",
-        "memgraph/mcp-server:latest"
+        "OpenZep/mcp-server:latest"
       ],
       "env": {
         "MEMGRAPH_API_KEY": "mg_live_your_api_key_here",
@@ -127,7 +127,7 @@ Run the MCP server from a Docker container instead of a local Python process. Th
 # docker-compose.yml
 services:
   mcp-server:
-    image: memgraph/mcp-server:latest
+    image: OpenZep/mcp-server:latest
     ports:
       - "8100:8100"
     environment:
@@ -135,7 +135,7 @@ services:
       MEMGRAPH_BASE_URL: "http://api:8000"
     command: ["--transport", "sse", "--port", "8100"]
     networks:
-      - memgraph-net
+      - OpenZep-net
 ```
 
 Then configure Claude Desktop with SSE URL:
@@ -143,7 +143,7 @@ Then configure Claude Desktop with SSE URL:
 ```json
 {
   "mcpServers": {
-    "memgraph": {
+    "OpenZep": {
       "type": "sse",
       "url": "http://localhost:8100/sse"
     }
@@ -171,7 +171,7 @@ EXPOSE 8100
 
 # Default: stdio transport for local MCP use
 # Override with --transport sse for remote connections
-ENTRYPOINT ["python", "-m", "memgraph.mcp_server"]
+ENTRYPOINT ["python", "-m", "OpenZep.mcp_server"]
 CMD ["--transport", "stdio"]
 ```
 
@@ -199,13 +199,13 @@ Or install globally:
 npm install -g @modelcontextprotocol/inspector
 ```
 
-### 4.3 Running Inspector with MemGraph
+### 4.3 Running Inspector with OpenZep
 
 **Option A: Stdio transport (run from project directory)**
 
 ```bash
 npx @modelcontextprotocol/inspector \
-  python -m memgraph.mcp_server
+  python -m OpenZep.mcp_server
 ```
 
 **Option B: SSE transport**
@@ -213,7 +213,7 @@ npx @modelcontextprotocol/inspector \
 First start the MCP server in SSE mode:
 
 ```bash
-python -m memgraph.mcp_server --transport sse --port 8100
+python -m OpenZep.mcp_server --transport sse --port 8100
 ```
 
 Then in another terminal:
@@ -256,14 +256,14 @@ Set environment variables before launching:
 
 ```bash
 # Verbose MCP protocol logging
-MEMGRAPH_LOG_LEVEL=DEBUG python -m memgraph.mcp_server
+MEMGRAPH_LOG_LEVEL=DEBUG python -m OpenZep.mcp_server
 
 # Or in claude_desktop_config.json
 {
   "mcpServers": {
-    "memgraph": {
+    "OpenZep": {
       "command": "python",
-      "args": ["-m", "memgraph.mcp_server"],
+      "args": ["-m", "OpenZep.mcp_server"],
       "env": {
         "MEMGRAPH_API_KEY": "mg_live_...",
         "MEMGRAPH_BASE_URL": "http://localhost:8000",
@@ -283,27 +283,27 @@ Claude Desktop captures the MCP server's **stderr** output. Logs are written to 
 # View Claude Desktop logs
 tail -f ~/Library/Logs/Claude/mcp*.log
 
-# Or for the memgraph server specifically
-grep "memgraph" ~/Library/Logs/Claude/mcp*.log
+# Or for the OpenZep server specifically
+grep "OpenZep" ~/Library/Logs/Claude/mcp*.log
 ```
 
 **Linux:**
 ```bash
-journalctl -u claude-desktop --no-pager | grep memgraph
+journalctl -u claude-desktop --no-pager | grep OpenZep
 ```
 
 **For stdio testing (manual):**
 ```bash
 # Test the MCP server directly — send a tools/list request and see the response
 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | \
-  python -m memgraph.mcp_server
+  python -m OpenZep.mcp_server
 ```
 
 ### 5.3 Common Issues and Solutions
 
 | Symptom | Likely Cause | Solution |
 |---------|--------------|----------|
-| **"Could not start MCP server"** in Claude Desktop | Python not found or module not installed | Use absolute path to Python. Run `python -m memgraph.mcp_server` from terminal first to verify. |
+| **"Could not start MCP server"** in Claude Desktop | Python not found or module not installed | Use absolute path to Python. Run `python -m OpenZep.mcp_server` from terminal first to verify. |
 | **"Connection refused"** | API backend not running | Start the FastAPI server (`uvicorn app.main:app`). Check `MEMGRAPH_BASE_URL`. |
 | **"401 Unauthorized"** | Invalid API key | Check `MEMGRAPH_API_KEY` value. Generate a new key from the dashboard if needed. |
 | **"Tool not found"** | Tool not in `tools/list` | Run Inspector to verify tool list. Check `_register_default_tools` is called. |
@@ -312,14 +312,14 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | \
 | **"Parse error"** | Non-JSON output on stdout | Ensure no `print()` statements in the code path. All logging goes to stderr. |
 | **Slow tool response (>5s)** | Backend latency or enrichment in progress | Check `/health` endpoint. `add_memory` returns immediately (202), enrichment is async. |
 | **MCP Inspector shows protocol version mismatch** | Outdated MCP package | Update `mcp` package: `pip install --upgrade mcp` |
-| **Docker: "Cannot connect"** | Docker not running or wrong image | Run `docker run --rm memgraph/mcp-server:latest` to test. |
+| **Docker: "Cannot connect"** | Docker not running or wrong image | Run `docker run --rm OpenZep/mcp-server:latest` to test. |
 
 ### 5.4 Debugging Checklist
 
 Before reporting an issue, run through this checklist:
 
-- [ ] Can you run `python -m memgraph.mcp_server` from the terminal without errors?
-- [ ] Does `echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | python -m memgraph.mcp_server` return a valid JSON response?
+- [ ] Can you run `python -m OpenZep.mcp_server` from the terminal without errors?
+- [ ] Does `echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | python -m OpenZep.mcp_server` return a valid JSON response?
 - [ ] Is `MEMGRAPH_API_KEY` set correctly? (Check with `echo $MEMGRAPH_API_KEY`)
 - [ ] Is the backend API server running? (Check with `curl http://localhost:8000/health`)
 - [ ] Are you flushing stdout after every response?
@@ -340,9 +340,9 @@ Place a `.cursor/mcp.json` file in your project root:
 ```json
 {
   "mcpServers": {
-    "memgraph": {
+    "OpenZep": {
       "command": "python",
-      "args": ["-m", "memgraph.mcp_server"],
+      "args": ["-m", "OpenZep.mcp_server"],
       "env": {
         "MEMGRAPH_API_KEY": "mg_live_your_api_key_here",
         "MEMGRAPH_BASE_URL": "http://localhost:8000"
@@ -366,7 +366,7 @@ If you run the MCP server on a remote machine (e.g., dev server):
 ```json
 {
   "mcpServers": {
-    "memgraph": {
+    "OpenZep": {
       "type": "sse",
       "url": "https://your-server:8100/sse"
     }
@@ -384,9 +384,9 @@ If you run the MCP server on a remote machine (e.g., dev server):
 {
   "experimental": {
     "mcpServers": {
-      "memgraph": {
+      "OpenZep": {
         "command": "python",
-        "args": ["-m", "memgraph.mcp_server"],
+        "args": ["-m", "OpenZep.mcp_server"],
         "env": {
           "MEMGRAPH_API_KEY": "mg_live_...",
           "MEMGRAPH_BASE_URL": "http://localhost:8000"
@@ -403,9 +403,9 @@ If you run the MCP server on a remote machine (e.g., dev server):
 // ~/.config/zed/settings.json
 {
   "mcp": {
-    "memgraph": {
+    "OpenZep": {
       "command": "python",
-      "args": ["-m", "memgraph.mcp_server"],
+      "args": ["-m", "OpenZep.mcp_server"],
       "env": {
         "MEMGRAPH_API_KEY": "mg_live_...",
         "MEMGRAPH_BASE_URL": "http://localhost:8000"
@@ -424,13 +424,13 @@ For production deployments where the MCP server runs remotely:
 ### 8.1 Nginx Reverse Proxy
 
 ```nginx
-# /etc/nginx/sites-available/mcp.memgraph.example.com
+# /etc/nginx/sites-available/mcp.OpenZep.example.com
 server {
     listen 443 ssl;
-    server_name mcp.memgraph.example.com;
+    server_name mcp.OpenZep.example.com;
 
-    ssl_certificate /etc/letsencrypt/live/mcp.memgraph.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/mcp.memgraph.example.com/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/mcp.OpenZep.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mcp.OpenZep.example.com/privkey.pem;
 
     # SSE endpoint — needs buffering disabled
     location /sse {
@@ -462,9 +462,9 @@ server {
 ```json
 {
   "mcpServers": {
-    "memgraph": {
+    "OpenZep": {
       "type": "sse",
-      "url": "https://mcp.memgraph.example.com/sse"
+      "url": "https://mcp.OpenZep.example.com/sse"
     }
   }
 }
@@ -495,7 +495,7 @@ Expected: Claude calls list_facts, returns stored facts.
 ### 9.2 Cleanup After Testing
 
 ```
-Prompt: "Delete all my data from MemGraph."
+Prompt: "Delete all my data from OpenZep."
 Expected: Claude should refuse (no delete tool available in MVP) or call delete_memory (if implemented).
 ```
 
@@ -512,8 +512,8 @@ curl -X DELETE http://localhost:8000/v1/users/test_user \
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `MEMGRAPH_API_KEY` | — | Yes | API key for MemGraph backend authentication |
-| `MEMGRAPH_BASE_URL` | `http://localhost:8000` | No | Base URL of the MemGraph FastAPI backend |
+| `MEMGRAPH_API_KEY` | — | Yes | API key for OpenZep backend authentication |
+| `MEMGRAPH_BASE_URL` | `http://localhost:8000` | No | Base URL of the OpenZep FastAPI backend |
 | `MEMGRAPH_LOG_LEVEL` | `INFO` | No | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `MCP_TRANSPORT` | `stdio` | No | Transport protocol: `stdio` or `sse` |
 | `MCP_PORT` | `8100` | No | Port for SSE transport |
@@ -530,14 +530,14 @@ curl -X DELETE http://localhost:8000/v1/users/test_user \
 
 set -euo pipefail
 
-echo "=== MemGraph MCP Server Quick Start ==="
+echo "=== OpenZep MCP Server Quick Start ==="
 echo ""
 
 # Check prerequisites
 echo "1. Checking prerequisites..."
 command -v python >/dev/null 2>&1 || { echo "ERROR: python not found"; exit 1; }
-python -c "import memgraph" 2>/dev/null || { echo "ERROR: memgraph package not installed"; exit 1; }
-echo "   ✅ Python + memgraph package found"
+python -c "import OpenZep" 2>/dev/null || { echo "ERROR: OpenZep package not installed"; exit 1; }
+echo "   ✅ Python + OpenZep package found"
 
 # Check env vars
 echo "2. Checking environment..."
@@ -562,7 +562,7 @@ fi
 # Test tools/list
 echo "4. Testing tools/list..."
 RESPONSE=$(echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | \
-    python -m memgraph.mcp_server 2>/dev/null)
+    python -m OpenZep.mcp_server 2>/dev/null)
 TOOL_COUNT=$(echo "$RESPONSE" | python -c "import sys,json; print(len(json.load(sys.stdin)['result']['tools']))" 2>/dev/null || echo "0")
 echo "   ✅ $TOOL_COUNT tools registered"
 
@@ -571,7 +571,7 @@ echo "5. Testing create_user + add_memory..."
 CREATE_REQ='{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"create_user","arguments":{"user_id":"mcp_qs_user"}}}'
 ADD_REQ='{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"add_memory","arguments":{"user_id":"mcp_qs_user","messages":[{"role":"user","content":"Hello from quick start!"}]}}}'
 
-echo "$CREATE_REQ" | python -m memgraph.mcp_server 2>/dev/null | python -c "
+echo "$CREATE_REQ" | python -m OpenZep.mcp_server 2>/dev/null | python -c "
 import sys, json
 r = json.load(sys.stdin)
 print('   ✅' if 'result' in r else '   ❌', 'create_user:', r.get('result', r.get('error')))

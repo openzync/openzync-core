@@ -9,11 +9,11 @@
 
 ## 1. Overview
 
-GDPR compliance is a first-class architectural concern for MemGraph, not an afterthought. The system stores potentially sensitive personal data — conversation messages, extracted facts, entity relationships — across multiple storage backends (PostgreSQL, FalkorDB/Neo4j, Redis). Complete data deletion must be verifiable across all stores.
+GDPR compliance is a first-class architectural concern for OpenZep, not an afterthought. The system stores potentially sensitive personal data — conversation messages, extracted facts, entity relationships — across multiple storage backends (PostgreSQL, FalkorDB/Neo4j, Redis). Complete data deletion must be verifiable across all stores.
 
 ### 1.1 Regulatory Requirements
 
-| GDPR Article | Requirement | MemGraph Implementation |
+| GDPR Article | Requirement | OpenZep Implementation |
 |-------------|-------------|------------------------|
 | Art. 17 | Right to erasure ("right to be forgotten") | Two-phase deletion: soft-delete → 30-day grace → hard-delete + graph removal |
 | Art. 20 | Right to data portability | `GET /v1/users/{user_id}/export` — full user data as JSON |

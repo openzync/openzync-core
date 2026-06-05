@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-LLM API costs are the single largest operational expense for MemGraph at scale. Without controls, a single organization processing 100K messages/day could incur $500+/day in LLM costs (entity + fact + classification calls per message).
+LLM API costs are the single largest operational expense for OpenZep at scale. Without controls, a single organization processing 100K messages/day could incur $500+/day in LLM costs (entity + fact + classification calls per message).
 
 This document defines the cost control system:
 

@@ -8,7 +8,7 @@
 
 ## 1. Overview
 
-MemGraph is a **multi-tenant platform** — a single deployment serves multiple organizations, strictly isolating their data. This document defines the **three-layer isolation strategy** that makes cross-tenant access impossible at every level of the stack:
+OpenZep is a **multi-tenant platform** — a single deployment serves multiple organizations, strictly isolating their data. This document defines the **three-layer isolation strategy** that makes cross-tenant access impossible at every level of the stack:
 
 | Layer | Mechanism | Guarantee |
 |-------|-----------|-----------|

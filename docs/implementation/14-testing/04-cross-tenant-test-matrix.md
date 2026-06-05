@@ -11,7 +11,7 @@
 
 ## 1. Objective
 
-Verify that **no data leaks between tenants** under any access pattern. This is MemGraph's most critical security property: a multi-tenant system where Tenant A can read Tenant B's data is a production-zero defect.
+Verify that **no data leaks between tenants** under any access pattern. This is OpenZep's most critical security property: a multi-tenant system where Tenant A can read Tenant B's data is a production-zero defect.
 
 The test matrix exhaustively covers:
 - **3 tenants** (A, B, C)

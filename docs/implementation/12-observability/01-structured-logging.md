@@ -2,7 +2,7 @@
 
 ## Overview
 
-MemGraph uses **structlog** for structured JSON logging in production and coloured console output in development. Every log entry carries standard fields for correlation, debugging, and observability integration with Loki.
+OpenZep uses **structlog** for structured JSON logging in production and coloured console output in development. Every log entry carries standard fields for correlation, debugging, and observability integration with Loki.
 
 ---
 
@@ -363,7 +363,7 @@ local.file_match "memgraph_logs" {
   path_targets = [{"__path__" = "/var/lib/docker/containers/*/*.json"}]
 }
 
-loki.source.file "memgraph" {
+loki.source.file "OpenZep" {
   targets    = local.file_match.memgraph_logs.targets
   forward_to = [loki.write.default.receiver]
 }

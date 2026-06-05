@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-MemGraph implements idempotency and deduplication at four layers, each handling a different failure mode:
+OpenZep implements idempotency and deduplication at four layers, each handling a different failure mode:
 
 | Layer | Failure Mode | Mechanism | TTL |
 |-------|-------------|-----------|-----|
@@ -71,7 +71,7 @@ class IdempotencyService:
     """Handles HTTP-level idempotency via Redis-backed Idempotency-Key.
 
     Key schema:
-        memgraph:{env}:idempotency:{key_value}
+        OpenZep:{env}:idempotency:{key_value}
     Value schema:
         {
             "status_code": 202,
@@ -83,7 +83,7 @@ class IdempotencyService:
 
     def __init__(self, redis: aioredis.Redis) -> None:
         self._redis = redis
-        self._prefix = f"memgraph:{settings.ENVIRONMENT}:idempotency:"
+        self._prefix = f"OpenZep:{settings.ENVIRONMENT}:idempotency:"
         self._ttl = settings.IDEMPOTENCY_TTL_SECONDS  # 172800 (48h)
         self._max_key_length = 255
 
@@ -291,7 +291,7 @@ async def test_idempotency_different_payload():
 | Field | Value |
 |-------|-------|
 | Mechanism | SHA-256 hash of `(user_id, session_id, JSON(messages))` |
-| Storage | Redis key `memgraph:{env}:contenthash:{sha256_hex}` |
+| Storage | Redis key `OpenZep:{env}:contenthash:{sha256_hex}` |
 | Value | `job_id` string |
 | TTL | 48 hours |
 | Scope | Per user + session + content combination |
@@ -326,7 +326,7 @@ class ContentDedupService:
 
     def __init__(self, redis: aioredis.Redis) -> None:
         self._redis = redis
-        self._prefix = f"memgraph:{settings.ENVIRONMENT}:contenthash:"
+        self._prefix = f"OpenZep:{settings.ENVIRONMENT}:contenthash:"
         self._ttl = settings.IDEMPOTENCY_TTL_SECONDS  # 48h
 
     def compute_hash(
@@ -1095,4 +1095,4 @@ async def test_idempotency_different_payload_same_key_422(
 
 ---
 
-*Document maintained by the MemGraph team. Update this document if idempotency mechanisms are extended to new endpoints or layers.*
+*Document maintained by the OpenZep team. Update this document if idempotency mechanisms are extended to new endpoints or layers.*

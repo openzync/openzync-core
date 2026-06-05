@@ -761,7 +761,7 @@ This migration requires:
   Steps to execute:
   1. alembic upgrade head  (drops indexes, alters columns)
   2. Deploy updated EMBEDDING_DIM=768
-  3. Run re-embed worker: memgraph reembed --batch-size=100
+  3. Run re-embed worker: OpenZep reembed --batch-size=100
   4. Run alembic to create new indexes (separate migration file)
 """
 

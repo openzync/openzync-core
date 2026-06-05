@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-MemGraph uses Redis as its primary caching layer. The caching strategy follows the **cache-aside** pattern exclusively — no write-through, no write-behind. Caches reduce latency for repetitive queries (context blocks, API key lookups) and protect downstream services (PostgreSQL, Graphiti, embedding API) from redundant load.
+OpenZep uses Redis as its primary caching layer. The caching strategy follows the **cache-aside** pattern exclusively — no write-through, no write-behind. Caches reduce latency for repetitive queries (context blocks, API key lookups) and protect downstream services (PostgreSQL, Graphiti, embedding API) from redundant load.
 
 ### 1.1 Cache Layers
 
@@ -37,7 +37,7 @@ MemGraph uses Redis as its primary caching layer. The caching strategy follows t
 All Redis keys are namespaced to prevent collisions between environments and cache types:
 
 ```
-memgraph:{env}:{cache_type}:{key_suffix}
+OpenZep:{env}:{cache_type}:{key_suffix}
 ```
 
 Where:
@@ -47,9 +47,9 @@ Where:
 
 **Examples:**
 ```
-memgraph:prod:ctx:org_abc:user_123:a1b2c3d4...
-memgraph:prod:apikey:$2b$12$...
-memgraph:prod:emb:query:e5f6g7h8...
+OpenZep:prod:ctx:org_abc:user_123:a1b2c3d4...
+OpenZep:prod:apikey:$2b$12$...
+OpenZep:prod:emb:query:e5f6g7h8...
 ```
 
 ### 2.1 Environment Prefix Configuration
@@ -57,7 +57,7 @@ memgraph:prod:emb:query:e5f6g7h8...
 ```python
 from app.core.config import settings
 
-REDIS_KEY_PREFIX = f"memgraph:{settings.ENVIRONMENT}:"
+REDIS_KEY_PREFIX = f"OpenZep:{settings.ENVIRONMENT}:"
 ```
 
 The `ENVIRONMENT` setting defaults to `dev` in development and `prod` in production. This ensures dev and prod caches never collide when sharing a Redis instance.
@@ -109,7 +109,7 @@ async def get_or_compute(
 ### 4.1 Key Format
 
 ```
-memgraph:{env}:ctx:{org_id}:{user_id}:{query_hash}
+OpenZep:{env}:ctx:{org_id}:{user_id}:{query_hash}
 ```
 
 Where `query_hash` is SHA-256 of the normalised query string (lowercased, stripped, whitespace-collapsed).
@@ -189,7 +189,7 @@ Target overall: **≥70% hit ratio for conversational use cases.**
 ### 5.1 Key Format
 
 ```
-memgraph:{env}:emb:query:{sha256_of_normalised_query}
+OpenZep:{env}:emb:query:{sha256_of_normalised_query}
 ```
 
 ### 5.2 Value Format
@@ -227,7 +227,7 @@ async def _embed_query(self, query: str) -> list[float]:
 ### 6.1 Key Format
 
 ```
-memgraph:{env}:apikey:{sha256_of_raw_key}
+OpenZep:{env}:apikey:{sha256_of_raw_key}
 ```
 
 We hash the raw API key (SHA-256) to compute the cache key. This avoids storing the raw key in Redis and matches the lookup pattern in the auth middleware.
@@ -322,7 +322,7 @@ async def get_api_key_org(
 ### 7.1 Key Format
 
 ```
-memgraph:{env}:graph:{org_id}:{user_id}:{query_hash}
+OpenZep:{env}:graph:{org_id}:{user_id}:{query_hash}
 ```
 
 ### 7.2 TTL
@@ -569,8 +569,8 @@ async def test_context_cache_invalidation():
     """Verify context cache invalidation deletes all user's keys."""
     redis = AsyncMock()
     redis.scan.side_effect = [
-        (5, [b"memgraph:prod:ctx:org1:user1:hash_a", b"memgraph:prod:ctx:org1:user1:hash_b"]),
-        (0, [b"memgraph:prod:ctx:org1:user1:hash_c"]),
+        (5, [b"OpenZep:prod:ctx:org1:user1:hash_a", b"OpenZep:prod:ctx:org1:user1:hash_b"]),
+        (0, [b"OpenZep:prod:ctx:org1:user1:hash_c"]),
     ]
 
     await _invalidate_context_cache(redis, "org1", "user1")
@@ -687,4 +687,4 @@ async def test_context_cache_invalidation_on_ingestion(
 
 ---
 
-*Document maintained by the MemGraph team. Update this document if caching patterns or Redis topology change.*
+*Document maintained by the OpenZep team. Update this document if caching patterns or Redis topology change.*

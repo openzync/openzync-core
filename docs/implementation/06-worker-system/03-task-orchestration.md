@@ -99,7 +99,7 @@ async def extract_entities(ctx: dict, **kwargs: Any) -> dict:
         org_id=payload.org_id,
         trace_id=payload.trace_id,
         summary_hash=payload.content_hash,
-        _queue_name="memgraph:dev:queue:high",
+        _queue_name="OpenZep:dev:queue:high",
     )
 
     # Also enqueue context cache refresh for this user
@@ -110,7 +110,7 @@ async def extract_entities(ctx: dict, **kwargs: Any) -> dict:
         trigger_type="entity_extraction",
         trigger_id=str(payload.episode_id),
         trace_id=payload.trace_id,
-        _queue_name="memgraph:dev:queue:high",
+        _queue_name="OpenZep:dev:queue:high",
     )
 
     return {"trace_id": payload.trace_id, "org_id": payload.org_id, "task_type": "extract_entities"}
@@ -261,7 +261,7 @@ async def process_memory(ctx: dict, **kwargs: Any) -> dict:
     - This is safe because each step is idempotent.
     """
     payload = ProcessMemoryPayload(**kwargs)
-    logger = structlog.get_logger("memgraph.worker.orchestrator")
+    logger = structlog.get_logger("OpenZep.worker.orchestrator")
 
     # ── Bind context for structured logging ────────────────
     structlog.contextvars.clear_contextvars()

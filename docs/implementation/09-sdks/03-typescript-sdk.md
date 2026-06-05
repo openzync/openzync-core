@@ -1,8 +1,8 @@
-# TypeScript SDK Implementation Guide — `memgraph-ts`
+# TypeScript SDK Implementation Guide — `OpenZep-ts`
 
 > **Phase**: Phase 4 — Dashboard & SDKs (Week 10-12)
 > **Priority**: P1
-> **Package**: `memgraph-ts` on [npm](https://www.npmjs.com/package/memgraph-ts)
+> **Package**: `OpenZep-ts` on [npm](https://www.npmjs.com/package/OpenZep-ts)
 > **Source**: SRS §5.8.2
 
 ---
@@ -10,10 +10,10 @@
 ## 1. Package Overview
 
 ```
-memgraph-ts/
+OpenZep-ts/
 ├── src/
 │   ├── index.ts                # Public exports
-│   ├── client.ts               # MemGraph client class
+│   ├── client.ts               # OpenZep client class
 │   ├── transport.ts            # HTTP transport — fetch-based, retry, auth
 │   ├── errors.ts               # Typed error classes
 │   ├── pagination.ts           # PaginatedAsyncIterator
@@ -47,11 +47,11 @@ memgraph-ts/
 ## 2. Installation
 
 ```bash
-npm install memgraph-ts
+npm install OpenZep-ts
 # or
-yarn add memgraph-ts
+yarn add OpenZep-ts
 # or
-pnpm add memgraph-ts
+pnpm add OpenZep-ts
 ```
 
 Node.js 18+ (with native `fetch`) or modern browser (Chrome 90+, Firefox 90+, Safari 15+).
@@ -74,8 +74,8 @@ The SDK detects and throws a clear error if `fetch` is unavailable:
 // src/transport.ts
 if (typeof globalThis.fetch === "undefined") {
   throw new Error(
-    "memgraph-ts requires a fetch-compatible runtime (Node.js 18+, modern browser). " +
-    "See https://github.com/thelinkai/memgraph-ts#requirements"
+    "OpenZep-ts requires a fetch-compatible runtime (Node.js 18+, modern browser). " +
+    "See https://github.com/thelinkai/OpenZep-ts#requirements"
   );
 }
 ```
@@ -126,7 +126,7 @@ export interface MemGraphConfig {
   debug?: boolean;
 }
 
-export class MemGraph {
+export class OpenZep {
   public readonly memory: MemoryDomain;
   public readonly facts: FactsDomain;
   public readonly graph: GraphDomain;
@@ -196,7 +196,7 @@ export interface RequestOptions {
 
 export function createTransport(config: TransportConfig): Transport {
   const baseUrl = config.baseUrl.replace(/\/+$/, "") + "/v1";
-  const userAgent = `memgraph-ts-sdk/${pkg.version}`;
+  const userAgent = `OpenZep-ts-sdk/${pkg.version}`;
 
   return {
     async request<T>(method: string, path: string, options?: RequestOptions): Promise<T> {
@@ -239,7 +239,7 @@ export function createTransport(config: TransportConfig): Transport {
           });
 
           if (config.debug) {
-            console.debug(`memgraph-ts: ${method} ${path} -> ${response.status} (attempt ${attempt + 1})`);
+            console.debug(`OpenZep-ts: ${method} ${path} -> ${response.status} (attempt ${attempt + 1})`);
           }
 
           // Retry on 429 or 5xx
@@ -247,7 +247,7 @@ export function createTransport(config: TransportConfig): Transport {
             const retryAfter = parseRetryAfter(response);
             const wait = retryAfter ?? computeBackoff(attempt);
             if (config.debug) {
-              console.debug(`memgraph-ts: retrying in ${wait}ms (status=${response.status})`);
+              console.debug(`OpenZep-ts: retrying in ${wait}ms (status=${response.status})`);
             }
             await sleep(wait);
             continue;
@@ -1003,7 +1003,7 @@ export class SessionsDomain {
 
 ```typescript
 // src/index.ts
-export { MemGraph } from "./client";
+export { OpenZep } from "./client";
 export type { MemGraphConfig } from "./client";
 
 export {
@@ -1099,16 +1099,16 @@ export type { ExtractionResponse } from "./domains/sessions";
 
 ```json
 {
-  "name": "memgraph-ts",
+  "name": "OpenZep-ts",
   "version": "1.0.0",
-  "description": "MemGraph — open-source agent memory platform TypeScript SDK",
+  "description": "OpenZep — open-source agent memory platform TypeScript SDK",
   "author": "TheLinkAI <engineering@thelinkai.com>",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/thelinkai/memgraph-ts.git"
+    "url": "https://github.com/thelinkai/OpenZep-ts.git"
   },
-  "keywords": ["memgraph", "agent-memory", "knowledge-graph", "llm", "ai"],
+  "keywords": ["OpenZep", "agent-memory", "knowledge-graph", "llm", "ai"],
   "type": "module",
   "main": "./dist/cjs/index.cjs",
   "module": "./dist/esm/index.mjs",
@@ -1143,7 +1143,7 @@ export type { ExtractionResponse } from "./domains/sessions";
 ## 12. npm Publishing CI
 
 ```yaml
-# .gitlab-ci.yml (in memgraph-ts repo)
+# .gitlab-ci.yml (in OpenZep-ts repo)
 publish-npm:
   stage: release
   image: node:20-alpine
@@ -1161,20 +1161,20 @@ publish-npm:
 
 ## 13. CORS Warning — Browser Usage
 
-When using the SDK from a browser, CORS headers must be configured on the MemGraph server. **Never expose a master tenant API key in browser code.** Use short-lived, scoped keys intended for browser clients.
+When using the SDK from a browser, CORS headers must be configured on the OpenZep server. **Never expose a master tenant API key in browser code.** Use short-lived, scoped keys intended for browser clients.
 
 Document prominently in README:
 
 ```
 ## Browser Usage
 
-memgraph-ts works in modern browsers, but:
+OpenZep-ts works in modern browsers, but:
 
 1. ⚠️ **Never embed your master API key in client-side code.**
    Generate short-lived, read-only scoped keys for browser usage.
    See [API Key Scopes](#) in the server admin docs.
 
-2. The MemGraph server must be configured with your browser origin
+2. The OpenZep server must be configured with your browser origin
    in the `CORS_ORIGINS` environment variable.
 
 3. For server-side usage (Node.js 18+), no additional setup is needed.
@@ -1189,12 +1189,12 @@ The MCP server (SSE transport) is a **Node.js-only** feature. Document in the RE
 ```
 ## MCP Integration
 
-The MemGraph MCP server uses SSE transport and is Node.js-only.
-See [github.com/thelinkai/memgraph-mcp](https://github.com/thelinkai/memgraph-mcp)
+The OpenZep MCP server uses SSE transport and is Node.js-only.
+See [github.com/thelinkai/OpenZep-mcp](https://github.com/thelinkai/OpenZep-mcp)
 for setup instructions.
 
-The `memgraph-ts` SDK is not required for MCP — the MCP server communicates
-with the MemGraph API directly.
+The `OpenZep-ts` SDK is not required for MCP — the MCP server communicates
+with the OpenZep API directly.
 ```
 
 ---
@@ -1205,11 +1205,11 @@ The SDK exports individual named classes and functions rather than a single name
 
 ```typescript
 // Good — tree-shakeable
-import { MemGraph, NotFoundError } from "memgraph-ts";
-import { PaginatedAsyncIterator } from "memgraph-ts";
+import { OpenZep, NotFoundError } from "OpenZep-ts";
+import { PaginatedAsyncIterator } from "OpenZep-ts";
 
 // Not recommended
-import * as MemGraph from "memgraph-ts";
+import * as OpenZep from "OpenZep-ts";
 ```
 
 ---
@@ -1217,10 +1217,10 @@ import * as MemGraph from "memgraph-ts";
 ## 16. Complete Usage Example
 
 ```typescript
-import { MemGraph } from "memgraph-ts";
+import { OpenZep } from "OpenZep-ts";
 
 async function main() {
-  const client = new MemGraph({
+  const client = new OpenZep({
     apiKey: "mg_live_abc123",
     baseUrl: "https://mg.example.com",
   });
@@ -1276,16 +1276,16 @@ main().catch(console.error);
 ```typescript
 // tests/client.test.ts
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { MemGraph } from "../src";
+import { OpenZep } from "../src";
 
-describe("MemGraph client", () => {
+describe("OpenZep client", () => {
   it("throws on missing API key", () => {
-    expect(() => new MemGraph({} as any)).toThrow("API key is required");
+    expect(() => new OpenZep({} as any)).toThrow("API key is required");
   });
 
   it("uses env MEMGRAPH_API_KEY", () => {
     vi.stubEnv("MEMGRAPH_API_KEY", "mg_test_envkey");
-    const client = new MemGraph({ baseUrl: "http://test.local" });
+    const client = new OpenZep({ baseUrl: "http://test.local" });
     expect(client).toBeDefined();
     vi.unstubAllEnvs();
   });
@@ -1296,12 +1296,12 @@ describe("MemGraph client", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const client = new MemGraph({ apiKey: "mg_test_key", baseUrl: "http://test.local" });
+    const client = new OpenZep({ apiKey: "mg_test_key", baseUrl: "http://test.local" });
     await client.users.list();
 
     const request = fetchMock.mock.calls[0][0] as Request;
     expect(request.headers.get("Authorization")).toBe("Bearer mg_test_key");
-    expect(request.headers.get("User-Agent")).toMatch(/^memgraph-ts-sdk\//);
+    expect(request.headers.get("User-Agent")).toMatch(/^OpenZep-ts-sdk\//);
 
     vi.unstubAllGlobals();
   });

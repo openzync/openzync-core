@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-The tenant management UI allows platform administrators to manage organisations (tenants), their API keys, and resource quotas. This is the primary interface for operational control of the MemGraph platform.
+The tenant management UI allows platform administrators to manage organisations (tenants), their API keys, and resource quotas. This is the primary interface for operational control of the OpenZep platform.
 
 ### 1.1 Pages
 

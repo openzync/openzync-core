@@ -2,7 +2,7 @@
 
 ## Overview
 
-MemGraph ships a pre-built Grafana dashboard providing operational visibility into the platform. The dashboard is provisioned automatically via Grafana Alloy and checked into the repository under `infra/grafana/dashboards/`.
+OpenZep ships a pre-built Grafana dashboard providing operational visibility into the platform. The dashboard is provisioned automatically via Grafana Alloy and checked into the repository under `infra/grafana/dashboards/`.
 
 ---
 
@@ -17,7 +17,7 @@ MemGraph ships a pre-built Grafana dashboard providing operational visibility in
 All data flows through Grafana Alloy on the same host:
 
 ```
-MemGraph → Alloy (scrape/collect) → Mimir / Tempo / Loki → Grafana
+OpenZep → Alloy (scrape/collect) → Mimir / Tempo / Loki → Grafana
 ```
 
 ### Provisioning (`infra/grafana/datasources/alloy.yaml`)
@@ -46,21 +46,21 @@ datasources:
 
 ## Dashboard JSON
 
-### Provisioning File (`infra/grafana/dashboards/memgraph-overview.json`)
+### Provisioning File (`infra/grafana/dashboards/OpenZep-overview.json`)
 
-The full dashboard JSON is checked into the repo at `infra/grafana/dashboards/memgraph-overview.json`. Auto-provisioned via:
+The full dashboard JSON is checked into the repo at `infra/grafana/dashboards/OpenZep-overview.json`. Auto-provisioned via:
 
 ```yaml
 apiVersion: 1
 providers:
-  - name: "MemGraph"
+  - name: "OpenZep"
     orgId: 1
-    folder: "MemGraph"
+    folder: "OpenZep"
     type: file
     disableDeletion: false
     editable: true
     options:
-      path: /etc/grafana/provisioning/dashboards/memgraph-overview.json
+      path: /etc/grafana/provisioning/dashboards/OpenZep-overview.json
 ```
 
 ---
@@ -230,13 +230,13 @@ up{job="memgraph_worker"}
 up{job="memgraph_mcp"}
 
 # PostgreSQL
-pg_up{service="memgraph"}
+pg_up{service="OpenZep"}
 
 # Redis
-redis_up{service="memgraph"}
+redis_up{service="OpenZep"}
 
 # FalkorDB
-falkordb_up{service="memgraph"}
+falkordb_up{service="OpenZep"}
 ```
 
 **Visual**:
@@ -324,7 +324,7 @@ curl -s -X POST "${GRAFANA_URL}/api/dashboards/db" \
   -u "${GRAFANA_USER}:${GRAFANA_PASSWORD}" \
   -H "Content-Type: application/json" \
   -d "{
-    \"dashboard\": $(cat infra/grafana/dashboards/memgraph-overview.json),
+    \"dashboard\": $(cat infra/grafana/dashboards/OpenZep-overview.json),
     \"overwrite\": true
   }"
 
@@ -343,7 +343,7 @@ infra/
     ├── datasources/
     │   └── alloy.yaml              # Data source provisioning
     ├── dashboards/
-    │   └── memgraph-overview.json  # Dashboard JSON (generated from Grafana UI)
+    │   └── OpenZep-overview.json  # Dashboard JSON (generated from Grafana UI)
     └── provisioning.yaml           # Dashboard provider config
 ```
 
@@ -351,5 +351,5 @@ infra/
 
 1. Build the dashboard in Grafana UI using the queries above.
 2. Export as JSON: Share → Export → Download JSON.
-3. Save to `infra/grafana/dashboards/memgraph-overview.json`.
+3. Save to `infra/grafana/dashboards/OpenZep-overview.json`.
 4. Remove any datasource-specific UIDs (use generic names matched to provisioning).

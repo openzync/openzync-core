@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-MemGraph validates all incoming requests at **two levels**:
+OpenZep validates all incoming requests at **two levels**:
 
 1. **HTTP/ingress level** (nginx/Traefik reverse proxy): Request size limits, header size limits, connection limits
 2. **Application level** (FastAPI/Pydantic): Schema validation, content validation, input sanitization
@@ -66,11 +66,11 @@ Client Request
 http:
   routers:
     api:
-      rule: "Host(`api.memgraph.dev`) && PathPrefix(`/v1/`)"
+      rule: "Host(`api.OpenZep.dev`) && PathPrefix(`/v1/`)"
       middlewares:
         - request-limits
         - security-headers
-      service: memgraph-api
+      service: OpenZep-api
 
   middlewares:
     request-limits:
@@ -91,11 +91,11 @@ http:
 ### 2.2 nginx Configuration
 
 ```nginx
-# /etc/nginx/conf.d/memgraph.conf
+# /etc/nginx/conf.d/OpenZep.conf
 
 server {
     listen 443 ssl;
-    server_name api.memgraph.dev;
+    server_name api.OpenZep.dev;
 
     # ── Request size limits ──────────────────────────────────────
     client_max_body_size 5m;
@@ -115,7 +115,7 @@ server {
     # Never add: Server, X-Powered-By
 
     location / {
-        proxy_pass http://memgraph-api:8000;
+        proxy_pass http://OpenZep-api:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

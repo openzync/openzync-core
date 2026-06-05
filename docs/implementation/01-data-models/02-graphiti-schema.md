@@ -17,7 +17,7 @@ Graphiti is embedded as a Python library (not a sidecar). The application calls 
 ```
 ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
 │   Service Layer   │────▶│   Graphiti API    │────▶│  Graph Database   │
-│ (memgraph-core)   │     │  (getzep/graphiti)│     │  FalkorDB / Neo4j │
+│ (OpenZep-core)   │     │  (getzep/graphiti)│     │  FalkorDB / Neo4j │
 └──────────────────┘     └──────────────────┘     └──────────────────┘
 ```
 
@@ -68,7 +68,7 @@ class EntityNode:
 
 **FalkorDB node creation (Cypher-like GQL):**
 ```cypher
-GRAPH.QUERY memgraph "{org_id}" "
+GRAPH.QUERY OpenZep "{org_id}" "
 CREATE (:EntityNode {
     uuid: $uuid,
     name: $name,
@@ -166,7 +166,7 @@ class RelatesToEdge:
 
 **FalkorDB:**
 ```cypher
-GRAPH.QUERY memgraph "{org_id}" "
+GRAPH.QUERY OpenZep "{org_id}" "
 MATCH (a:EntityNode {uuid: $source_uuid, org_id: $org_id})
 MATCH (b:EntityNode {uuid: $target_uuid, org_id: $org_id})
 CREATE (a)-[:RELATES_TO {
@@ -197,7 +197,7 @@ class HasEpisodeEdge:
 
 **FalkorDB:**
 ```cypher
-GRAPH.QUERY memgraph "{org_id}" "
+GRAPH.QUERY OpenZep "{org_id}" "
 MATCH (e:EntityNode {uuid: $entity_uuid, org_id: $org_id})
 MATCH (ep:EpisodicNode {uuid: $episode_uuid, org_id: $org_id})
 CREATE (e)-[:HAS_EPISODE {
@@ -289,7 +289,7 @@ The SRS §7.2 shows `episodes` as a property on `RELATES_TO`. This is a design t
 # Before creating a node, check for existing uuid
 async def _ensure_uuid_unique(self, graph: Graph, uuid: str, org_id: str) -> bool:
     result = await graph.query(
-        f"GRAPH.QUERY memgraph \"{org_id}\" "
+        f"GRAPH.QUERY OpenZep \"{org_id}\" "
         f"MATCH (n {{uuid: '{uuid}', org_id: '{org_id}'}}) RETURN count(n)"
     )
     return result[0][0] == 0  # True if no existing node
@@ -530,7 +530,7 @@ INPUT: episode_id, org_id, user_id
 | Aspect | Detail |
 |--------|--------|
 | **Connection** | Redis-protocol on port 6380 (default). Uses `redis-py` under Graphiti. |
-| **Graph name** | Use org_id as Redis key namespace: `memgraph:{org_id}`. Each org gets a logical graph. |
+| **Graph name** | Use org_id as Redis key namespace: `OpenZep:{org_id}`. Each org gets a logical graph. |
 | **Indexes** | FalkorDB v1.4+ supports `GRAPH.INDEX ADD` for node properties. Index `org_id` and `uuid` on all node types. |
 | **Limitations** | No native UNIQUE constraint. No composite indexes. No schema validation. |
 | **Persistence** | Configure FalkorDB with append-only file (AOF) for durability. Default is in-memory only. |
@@ -578,7 +578,7 @@ def _graph_name(self, org_id: str) -> str:
     Each org gets a separate graph key in Redis.
     This provides physical isolation alongside logical isolation.
     """
-    return f"memgraph:{org_id}"
+    return f"OpenZep:{org_id}"
 ```
 
 ### 4.3 Temporal Graph Operations

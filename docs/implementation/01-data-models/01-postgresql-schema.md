@@ -4,7 +4,7 @@
 
 | Field | Detail |
 |-------|--------|
-| **Coverage** | All PostgreSQL tables for MemGraph — relational data, vector storage, full-text search |
+| **Coverage** | All PostgreSQL tables for OpenZep — relational data, vector storage, full-text search |
 | **Dependencies** | PostgreSQL 15+ with `pgvector` extension; `pg_trgm` extension for BM25 |
 | **SRS Requirement IDs** | MT-01, MT-02, ING-01–ING-06, KG-05–KG-12, NLP-05–NLP-14, USR-01–USR-05, SES-01–SES-05, AUTH-01–AUTH-06, SEC-01, SEC-03, SEC-04, SEC-08, SEC-09, PERF-01–PERF-06, SCALE-02, MAINT-04 |
 | **Build Phase** | Phase 0 (Foundation) |
@@ -786,7 +786,7 @@ Every foreign key column MUST have an index. PostgreSQL does NOT auto-index FKs.
 
 | Variable | Default | Applies To | Description |
 |----------|---------|-----------|-------------|
-| `DATABASE_URL` | — | All tables | PostgreSQL DSN with async driver: `postgresql+asyncpg://user:pass@host:5432/memgraph` |
+| `DATABASE_URL` | — | All tables | PostgreSQL DSN with async driver: `postgresql+asyncpg://user:pass@host:5432/OpenZep` |
 | `EMBEDDING_DIM` | `1536` | episodes, facts | Vector dimension matching the embedding model |
 | `PGVECTOR_LISTS` | `100` | IVFFlat indexes | Number of IVF centroids — see `03-embedding-strategy.md` |
 | `FACT_CONFIDENCE_THRESHOLD` | `0.7` | facts | Minimum confidence score for facts to appear in context |
@@ -875,4 +875,4 @@ Every foreign key column MUST have an index. PostgreSQL does NOT auto-index FKs.
 
 *Document maintained by Rohan · TheLinkAI · Last updated: 2026-06-05*
 
-**SRS traceability:** This document implements all data model requirements from SRS §7.1 plus audit-identified gaps (`extraction_schemas`, `refresh_tokens`, `audit_log`, `llm_usage`), covering 12 tables, 14 FK indexes, 9 CHECK constraints, and the complete multi-tenant schema for MemGraph Phase 0.
+**SRS traceability:** This document implements all data model requirements from SRS §7.1 plus audit-identified gaps (`extraction_schemas`, `refresh_tokens`, `audit_log`, `llm_usage`), covering 12 tables, 14 FK indexes, 9 CHECK constraints, and the complete multi-tenant schema for OpenZep Phase 0.

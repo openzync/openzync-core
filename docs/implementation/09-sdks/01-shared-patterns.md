@@ -4,18 +4,18 @@
 > **Priority**: P0 (Python), P1 (TypeScript), P2 (Go)
 > **Source**: SRS §5.8, §8.2–8.5
 
-This document defines the **shared contract** that all three official MemGraph SDKs (`memgraph-py`, `memgraph-ts`, `memgraph-go`) MUST implement. Every SDK should be derivable from this document + its language-specific guide + the OpenAPI spec.
+This document defines the **shared contract** that all three official OpenZep SDKs (`OpenZep-py`, `OpenZep-ts`, `OpenZep-go`) MUST implement. Every SDK should be derivable from this document + its language-specific guide + the OpenAPI spec.
 
 ---
 
 ## 1. Client Constructor
 
-Every SDK exposes a single `MemGraph` client class. The constructor accepts:
+Every SDK exposes a single `OpenZep` client class. The constructor accepts:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `api_key` | `string` | env `MEMGRAPH_API_KEY` | API key, prefixed `mg_live_` or `mg_test_` |
-| `base_url` | `string` | env `MEMGRAPH_BASE_URL` or `http://localhost:8000` | MemGraph API base URL (without `/v1`) |
+| `base_url` | `string` | env `MEMGRAPH_BASE_URL` or `http://localhost:8000` | OpenZep API base URL (without `/v1`) |
 | `timeout_read` | `int` | `30` | Read timeout in seconds |
 | `timeout_write` | `int` | `60` | Write timeout in seconds |
 | `max_retries` | `int` | `3` | Maximum retry attempts for retryable errors |
@@ -25,19 +25,19 @@ Every SDK exposes a single `MemGraph` client class. The constructor accepts:
 
 ```python
 # Python
-client = MemGraph(api_key="mg_live_abc123")
+client = OpenZep(api_key="mg_live_abc123")
 ```
 
 ```typescript
 // TypeScript
-const client = new MemGraph({ apiKey: "mg_live_abc123" });
+const client = new OpenZep({ apiKey: "mg_live_abc123" });
 ```
 
 ```go
 // Go
-client, err := memgraph.NewClient(
-    memgraph.WithAPIKey("mg_live_abc123"),
-    memgraph.WithBaseURL("https://mg.example.com"),
+client, err := OpenZep.NewClient(
+    OpenZep.WithAPIKey("mg_live_abc123"),
+    OpenZep.WithBaseURL("https://mg.example.com"),
 )
 ```
 
@@ -65,14 +65,14 @@ Authorization: Bearer <api_key>
 Every request MUST include:
 
 ```
-User-Agent: memgraph-{lang}-sdk/{version}
+User-Agent: OpenZep-{lang}-sdk/{version}
 ```
 
 | SDK | Header value |
 |---|---|
-| Python | `memgraph-py-sdk/1.0.0` |
-| TypeScript | `memgraph-ts-sdk/1.0.0` |
-| Go | `memgraph-go-sdk/1.0.0` |
+| Python | `OpenZep-py-sdk/1.0.0` |
+| TypeScript | `OpenZep-ts-sdk/1.0.0` |
+| Go | `OpenZep-go-sdk/1.0.0` |
 
 The version MUST be derived from the package version at build time (not hardcoded).
 
@@ -265,23 +265,23 @@ The SDK MUST support optional debug logging via the host language's standard log
 
 ```python
 # Python — enabled via constructor
-client = MemGraph(api_key="...", debug=True)
+client = OpenZep(api_key="...", debug=True)
 
 # Or via stdlib logger
 import logging
-logging.getLogger("memgraph").setLevel(logging.DEBUG)
+logging.getLogger("OpenZep").setLevel(logging.DEBUG)
 ```
 
 ```typescript
 // TypeScript — enabled via constructor
-const client = new MemGraph({ apiKey: "...", debug: true });
+const client = new OpenZep({ apiKey: "...", debug: true });
 ```
 
 ```go
 // Go — via option
-client, err := memgraph.NewClient(
-    memgraph.WithAPIKey("..."),
-    memgraph.WithLogger(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))),
+client, err := OpenZep.NewClient(
+    OpenZep.WithAPIKey("..."),
+    OpenZep.WithLogger(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))),
 )
 ```
 
@@ -337,7 +337,7 @@ This keeps migration to future API versions clean — when `/v2` is introduced, 
 
 ## 12. Partial Response Forward Compatibility
 
-If the MemGraph API adds new fields to responses, existing SDK versions MUST NOT break.
+If the OpenZep API adds new fields to responses, existing SDK versions MUST NOT break.
 
 | SDK | Mechanism |
 |---|---|

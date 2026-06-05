@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-Every task can fail. MemGraph's retry and dead-letter queue system ensures that transient failures (LLM API timeout, DB connection blip) are retried automatically, while permanent failures (invalid payload, unrecoverable LLM error) are captured for human inspection.
+Every task can fail. OpenZep's retry and dead-letter queue system ensures that transient failures (LLM API timeout, DB connection blip) are retried automatically, while permanent failures (invalid payload, unrecoverable LLM error) are captured for human inspection.
 
 ### 1.1 Design Principles
 
@@ -155,7 +155,7 @@ async def my_task(ctx: dict, **kwargs: Any) -> dict:
 
 ### 2.3 How ARQ Handles Retries
 
-| Parameter | Description | MemGraph Default |
+| Parameter | Description | OpenZep Default |
 |-----------|-------------|------------------|
 | `max_tries` | Max job execution attempts (including first). Set at enqueue time. | Per-task, matches max_retries + 1 |
 | `job_timeout` | Max wall-clock time per attempt. | Per-task timeout |
@@ -292,7 +292,7 @@ async def execute_with_backoff(
 ```python
 async def extract_entities(ctx: dict, **kwargs: Any) -> dict:
     attempt = ctx.get("job_try", 1)
-    logger = structlog.get_logger("memgraph.worker.tasks")
+    logger = structlog.get_logger("OpenZep.worker.tasks")
 
     try:
         entities = await llm_client.extract_entities(text=kwargs["content"])
@@ -370,7 +370,7 @@ from core.exceptions import RetryableError, NonRetryableError
 
 
 def with_retry_policy(task_name: str) -> Callable:
-    """Decorator that applies MemGraph's retry policy to a task function.
+    """Decorator that applies OpenZep's retry policy to a task function.
 
     - RetryableError → raise Retry (ARQ handles re-enqueue with backoff)
     - NonRetryableError → let it propagate (task fails, goes to DLQ)
@@ -442,12 +442,12 @@ ARQ does not have a native dead-letter queue. When a job exhausts its retries, A
 - Alerting on failure rates
 - Auto-purging old failures
 
-MemGraph implements these features using a Redis sorted set.
+OpenZep implements these features using a Redis sorted set.
 
 ### 5.2 DLQ Data Structure
 
 ```
-Redis Key: memgraph:{env}:dlq
+Redis Key: OpenZep:{env}:dlq
 Type: Sorted Set
 Score: Unix timestamp of the failure (for TTL-based auto-purge)
 Member: JSON string of failed task metadata
@@ -459,7 +459,7 @@ Member: JSON string of failed task metadata
 {
   "job_id": "e7a8b9c0d1f2...",
   "task_name": "extract_entities",
-  "queue_name": "memgraph:prod:queue:high",
+  "queue_name": "OpenZep:prod:queue:high",
   "enqueued_at": "2026-06-05T10:29:00Z",
   "failed_at": "2026-06-05T10:30:00Z",
   "error": "LLM 504 Gateway Timeout after 120s",
@@ -494,7 +494,7 @@ from arq.connections import ArqRedis
 
 # Redis key for the DLQ sorted set
 def dlq_key(env: str = "dev") -> str:
-    return f"memgraph:{env}:dlq"
+    return f"OpenZep:{env}:dlq"
 
 
 DLQ_MAX_AGE_DAYS = 7  # Auto-purge entries older than 7 days
@@ -748,7 +748,7 @@ Authorization: Bearer mg_live_<admin_key>
     {
       "job_id": "e7a8b9c0d1f2...",
       "task_name": "extract_entities",
-      "queue_name": "memgraph:prod:queue:high",
+      "queue_name": "OpenZep:prod:queue:high",
       "failed_at": "2026-06-05T10:30:00Z",
       "error": "LLM 504 Gateway Timeout after 120s",
       "error_type": "LLMTimeoutError",
@@ -887,7 +887,7 @@ async def dlq_purge_task(ctx: dict, **kwargs: Any) -> dict:
 # prometheus/alerts.yml
 
 groups:
-  - name: memgraph-worker
+  - name: OpenZep-worker
     rules:
       - alert: MemGraphHighTaskFailureRate
         expr: rate(memgraph_worker_tasks_total{status="failure"}[5m]) / rate(memgraph_worker_tasks_total[5m]) > 0.05

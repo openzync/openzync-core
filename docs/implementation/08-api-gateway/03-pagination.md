@@ -10,7 +10,7 @@
 
 ## 1. Overview
 
-All MemGraph list endpoints use **cursor-based pagination** (keyset pagination) rather than traditional offset/limit pagination. This is a deliberate architectural choice for consistency and performance.
+All OpenZep list endpoints use **cursor-based pagination** (keyset pagination) rather than traditional offset/limit pagination. This is a deliberate architectural choice for consistency and performance.
 
 ### 1.1 Why Cursor-Based?
 
@@ -762,11 +762,11 @@ async def paginate_all_users(base_url: str, api_key: str) -> list[dict]:
 ```bash
 # First page
 curl -H "Authorization: Bearer mg_live_..." \
-  "https://api.memgraph.dev/v1/users?limit=50"
+  "https://api.OpenZep.dev/v1/users?limit=50"
 
 # Subsequent pages
 curl -H "Authorization: Bearer mg_live_..." \
-  "https://api.memgraph.dev/v1/users?limit=50&cursor=c_eyIyMDI2..."
+  "https://api.OpenZep.dev/v1/users?limit=50&cursor=c_eyIyMDI2..."
 ```
 
 ### 9.3 Handling Empty Results
@@ -1061,7 +1061,7 @@ async def test_pagination_consistency_under_write(
 ## 13. Full End-to-End Example
 
 ```
-Client                                                  MemGraph API
+Client                                                  OpenZep API
   │                                                         │
   │  GET /v1/users?limit=3                                 │
   │ ──────────────────────────────────────────────────────► │

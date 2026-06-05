@@ -2,7 +2,7 @@
 
 ## Overview
 
-MemGraph uses OpenTelemetry for distributed tracing. Traces are exported via OTLP gRPC to Grafana Alloy, which forwards to Tempo. All services (API, worker, MCP) are instrumented to produce a unified trace view from HTTP request → worker task → LLM call → database query.
+OpenZep uses OpenTelemetry for distributed tracing. Traces are exported via OTLP gRPC to Grafana Alloy, which forwards to Tempo. All services (API, worker, MCP) are instrumented to produce a unified trace view from HTTP request → worker task → LLM call → database query.
 
 ---
 
@@ -46,7 +46,7 @@ def setup_tracing(app=None, engine=None, service_name: str = "api"):
         service_name: One of 'api', 'worker', 'mcp'.
     """
     resource = Resource.create({
-        "service.name": f"memgraph-{service_name}",
+        "service.name": f"OpenZep-{service_name}",
         "service.version": settings.VERSION,
         "deployment.environment": settings.ENVIRONMENT,
     })
@@ -79,7 +79,7 @@ def setup_tracing(app=None, engine=None, service_name: str = "api"):
 | Variable | Default | Description |
 |---|---|---|
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://alloy:4317` | OTLP gRPC endpoint |
-| `OTEL_SERVICE_NAME` | `memgraph-api` | Override service name |
+| `OTEL_SERVICE_NAME` | `OpenZep-api` | Override service name |
 | `OTEL_SAMPLER` | `parentbased_always_on` | Sampler type |
 | `OTEL_SAMPLER_ARG` | — | Sampler configuration |
 
@@ -189,8 +189,8 @@ TRACE: POST /v1/users/{user_id}/memory
 | `http.status_code` | int | `202` |
 | `http.request_id` | string | `req_01j9xmf...` |
 | `enduser.id` | string | `org_abc` |
-| `memgraph.org_id` | string | `org_abc` |
-| `memgraph.user_id` | string | `user_xyz` |
+| `OpenZep.org_id` | string | `org_abc` |
+| `OpenZep.user_id` | string | `user_xyz` |
 
 #### LLM API Call Span
 
@@ -372,7 +372,7 @@ loki.process "add_trace_context" {
 
 ```logql
 # Jump from log to trace — click trace_id in Loki to open Tempo
-{service="memgraph-worker"} |= `"level":"ERROR"`
+{service="OpenZep-worker"} |= `"level":"ERROR"`
 
 # Jump from trace to logs — Tempo shows related Loki entries
 ```
@@ -416,7 +416,7 @@ provider = setup_tracing(service_name="worker")
 
 # Inside each task
 def get_tracer():
-    return trace.get_tracer("memgraph.worker")
+    return trace.get_tracer("OpenZep.worker")
 
 async def extract_entities_task(ctx, episode_id: str, org_id: str, user_id: str):
     tracer = get_tracer()
@@ -447,7 +447,7 @@ async def extract_entities_task(ctx, episode_id: str, org_id: str, user_id: str)
 | duration > 1s
 
 # Find traces by org
-{ resource.deployment.environment = "production" && resource.memgraph.org_id = "org_abc" }
+{ resource.deployment.environment = "production" && resource.OpenZep.org_id = "org_abc" }
 
 # Trace waterfall for a specific request ID
 { span.http.request_id = "req_01j9xmf..." }

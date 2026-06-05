@@ -9,7 +9,7 @@
 
 ## 1. Overview
 
-The User CRUD subsystem provides the foundational data management for all user-facing MemGraph features. Every piece of stored memory — episodes, facts, entities, graph nodes — belongs to a user within an organization.
+The User CRUD subsystem provides the foundational data management for all user-facing OpenZep features. Every piece of stored memory — episodes, facts, entities, graph nodes — belongs to a user within an organization.
 
 ### 1.1 Key Design Decisions
 
@@ -103,7 +103,7 @@ class CreateUserRequest(BaseModel):
 class UserResponse(BaseModel):
     """Response body for single-user endpoints."""
 
-    id: UUID = Field(..., description="Internal MemGraph user UUID.")
+    id: UUID = Field(..., description="Internal OpenZep user UUID.")
     external_id: str = Field(..., description="Caller-defined user identifier.")
     name: str | None = Field(default=None, description="Display name.")
     email: str | None = Field(default=None, description="Email address.")
