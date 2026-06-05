@@ -16,25 +16,21 @@ from models.base import Base, TimestampMixin
 
 
 class Session(TimestampMixin, Base):
-    """A conversation session belonging to a user.
-
-    Attributes:
-        id: UUID primary key.
-        user_id: Foreign key to the owning user.
-        external_id: Caller-chosen session identifier
-            (e.g., ``conv-20240601-abc``).
-        metadata: Arbitrary JSONB metadata.
-        is_active: Whether the session is currently accepting new episodes.
-        is_deleted: Soft-delete flag.
-        closed_at: Timestamp when the session was explicitly closed.
-    """
+    """A conversation session belonging to a user."""
 
     __tablename__ = "sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        primary_key=True,
-        default=uuid.uuid4,
-        server_default=func.gen_random_uuid(),
+        primary_key=True, default=uuid.uuid4, server_default=func.gen_random_uuid(),
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),

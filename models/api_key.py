@@ -50,10 +50,21 @@ class ApiKey(TimestampMixin, Base):
         nullable=False,
         # index defined explicitly in __table_args__ below
     )
-    key_hash: Mapped[str] = mapped_column(
+    lookup_hash: Mapped[str] = mapped_column(
         Text,
         nullable=False,
         unique=True,
+        comment="Unsalted SHA-256 of raw key — for fast DB/Redis lookups",
+    )
+    key_hash: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="Salted SHA-256 hash of raw key — for verification",
+    )
+    salt: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="16-byte random hex salt used in key_hash computation",
     )
     prefix: Mapped[str] = mapped_column(
         String(10),

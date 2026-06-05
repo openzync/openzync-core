@@ -1,36 +1,55 @@
-"""Service dependency factories.
+"""Service dependency factories for FastAPI route injection.
 
-This module provides dependency-injection factories for domain services.
-Each factory retrieves the service's required dependencies (DB session, Redis
-client, etc.) from ``request.app.state`` and returns an initialised service
-instance.
+Provides ``Depends``-compatible factory functions that construct domain
+service instances with their required dependencies (DB session, Redis, etc.).
 
-Concrete service dependencies will be added in Phase 1.  For now, this is a
-placeholder that demonstrates the pattern:
+Each factory retrieves an ``AsyncSession`` from the DB dependency, creates
+the repository, and returns an initialised service.
 
-.. code-block:: python
+Usage in a router::
 
-    from functools import lru_cache
+    from fastapi import APIRouter, Depends
+    from dependencies.services import get_session_service
+    from services.session_service import SessionService
 
-    from fastapi import Depends, Request
-    from sqlalchemy.ext.asyncio import AsyncSession
+    router = APIRouter()
 
-    from dependencies.db import get_db
-
-
-    # Example (uncomment in Phase 1):
-    #
-    # async def get_agent_service(
-    #     request: Request,
-    #     db: AsyncSession = Depends(get_db),
-    # ) -> AgentService:
-    #     \"\"\"Dependency that yields an initialised AgentService.\"\"\"
-    #     redis = request.app.state.redis
-    #     repo = AgentRepository(db)
-    #     return AgentService(repo=repo, redis=redis)
+    @router.get("/sessions")
+    async def list_sessions(
+        service: SessionService = Depends(get_session_service),
+    ):
+        ...
 """
 
 from __future__ import annotations
 
-# Placeholder for Phase 1 service dependencies.
-# Service factories will be added here as the domain expands.
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from dependencies.db import get_db
+from repositories.session_repository import SessionRepository
+from repositories.user_repository import UserRepository
+from services.session_service import SessionService
+from services.user_service import UserService
+
+
+async def get_user_service(
+    db: AsyncSession = Depends(get_db),
+) -> UserService:
+    """Dependency that yields an initialised UserService.
+
+    The service is constructed once per request using a DB session from
+    the application's async engine.
+    """
+    return UserService(repo=UserRepository(db))
+
+
+async def get_session_service(
+    db: AsyncSession = Depends(get_db),
+) -> SessionService:
+    """Dependency that yields an initialised SessionService.
+
+    The service is constructed once per request using a DB session from
+    the application's async engine.
+    """
+    return SessionService(repo=SessionRepository(db))

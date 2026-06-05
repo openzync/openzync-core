@@ -62,9 +62,6 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
 
     async with factory() as session:
         # ── Apply RLS context from auth middleware ─────────────────────
-        # The AuthMiddleware sets PostgreSQL session config for RLS, but
-        # that's on a different connection.  We need to re-apply it on
-        # *this* connection to ensure RLS policies filter correctly.
         org_id: str | None = getattr(request.state, "org_id", None)
         if org_id is not None:
             from sqlalchemy import text
@@ -77,7 +74,12 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
                 text("SELECT set_config('app.bypass_rls', 'false', true)"),
             )
 
-        yield session
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

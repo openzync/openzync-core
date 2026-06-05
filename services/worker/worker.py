@@ -1,123 +1,525 @@
-"""ARQ worker entrypoint.
+"""ARQ worker entrypoint — starts the worker pool, registers tasks, handles signals.
 
-Runs background tasks defined in ``WorkerSettings.functions``.
-The worker is started via:
+Usage:
 
     python -m services.worker.worker
 
-or inside the ``services/worker/`` Docker container.
+Environment variables are loaded via :mod:`pydantic-settings` from
+:class:`services.worker.worker_settings.WorkerSettings`.
 
-Worker functions are populated in Phase 1 as domain features
-(memory consolidation, embedding generation, etc.) are implemented.
+Architecture
+------------
+Two separate ARQ worker pools run in a single process:
+
+* **High-priority queue** — real-time ingestion tasks
+  (entity extraction, embedding, classification, graph sync).
+* **Low-priority queue** — batch / scheduled tasks
+  (community summarisation, data ingestion, entity merging).
+
+Each pool has independent concurrency and timeout settings.  The worker also
+exposes a Prometheus metrics endpoint and an aiohttp health-check server for
+Kubernetes liveness / readiness probes.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+import logging
+import signal
+import sys
+from collections.abc import Awaitable, Callable
+from typing import Any, NoReturn
 
 import structlog
-from arq import create_pool
-from arq.connections import RedisSettings
+from aiohttp import web
+from arq.connections import ArqRedis, RedisSettings
+from arq.worker import Worker as ArqWorker
+from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client import start_http_server as start_prometheus_server
 
-from core.config import settings as app_settings
+from services.worker.worker_settings import get_queue_name, settings
 
-logger = structlog.get_logger()
+# ═════════════════════════════════════════════════════════════════════════════
+# Structlog setup
+# ═════════════════════════════════════════════════════════════════════════════
 
 
-# ── Lifecycle hooks ─────────────────────────────────────────────────────────
+def setup_logging() -> None:
+    """Configure structlog for ARQ worker logging.
 
+    In production (``STRUCTLOG_FORMAT=json``) logs are emitted as JSON for
+    ingestion by Loki.  In development, human-readable console output.
 
-async def startup(ctx: dict[str, Any]) -> None:
-    """Called once when the worker starts.
-
-    Initialises the application ``Settings`` and stores it in the
-    worker context so that worker functions can access configuration
-    without re-reading environment variables.
-
-    Args:
-        ctx: Mutable worker context dict shared across all functions.
+    Every log entry is automatically enriched with:
+    * ``timestamp`` (ISO-8601)
+    * ``level``
+    * ``logger`` (``OpenZep.worker``)
+    * ``trace_id``, ``org_id``, ``task_type``, ``job_id`` — bound per-task
+      via :func:`structlog.contextvars.bind_contextvars`.
     """
-    ctx["settings"] = app_settings
-    logger.info("worker.started", redis_url=str(app_settings.REDIS_URL))
+    shared_processors: list[structlog.types.Processor] = [
+        structlog.stdlib.filter_by_level(
+            logging.getLevelName(settings.LOG_LEVEL),
+        ),
+        structlog.stdlib.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.dev.set_exc_info,
+        structlog.contextvars.merge_contextvars,
+    ]
+
+    if settings.STRUCTLOG_FORMAT == "json":
+        processors = [
+            *shared_processors,
+            structlog.processors.JSONRenderer(),
+        ]
+    else:
+        processors = [
+            *shared_processors,
+            structlog.dev.ConsoleRenderer(),
+        ]
+
+    structlog.configure(
+        processors=processors,
+        wrapper_class=structlog.stdlib.BoundLogger,
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
 
 
-async def shutdown(ctx: dict[str, Any]) -> None:  # noqa: ARG001
-    """Called once when the worker stops.
+logger: structlog.stdlib.BoundLogger = structlog.get_logger("OpenZep.worker")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Task registry (Phase 1b+)
+# ═════════════════════════════════════════════════════════════════════════════
+# Task functions are imported here and registered in HIGH_QUEUE_TASKS /
+# LOW_QUEUE_TASKS.  During Phase 1a these lists are empty; they are populated
+# as task modules are implemented.
+#
+# Import pattern (uncomment when tasks exist):
+#   from services.worker.tasks.extract_entities import extract_entities
+#   from services.worker.tasks.embed_episode import embed_episode
+#   from services.worker.tasks.embed_entity import embed_entity
+#   from services.worker.tasks.extract_facts import extract_facts
+#   from services.worker.tasks.classify_dialog import classify_dialog
+#   from services.worker.tasks.extract_structured import extract_structured
+#   from services.worker.tasks.summarise_community import summarise_community
+#   from services.worker.tasks.ingest_business_data import ingest_business_data
+#   from services.worker.tasks.sync_to_graph import sync_to_graph
+#   from services.worker.tasks.delete_user_data import delete_user_data
+#   from services.worker.tasks.merge_duplicate_entities import merge_duplicate_entities
+#   from services.worker.tasks.refresh_context_cache import refresh_context_cache
+
+HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = []
+"""Tasks assigned to the high-priority queue (real-time ingestion).
+
+See ``tasks/`` modules in Phase 1b.
+"""
+
+LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = []
+"""Tasks assigned to the low-priority queue (scheduled batch).
+
+See ``tasks/`` modules in Phase 1b.
+"""
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Signal handling
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+_shutdown_requested: bool = False
+"""Global flag — set by :func:`handle_signal`; checked by the worker loop."""
+
+
+def handle_signal(signum: int, _frame: object | None = None) -> None:
+    """Handle SIGTERM/SIGINT for graceful shutdown.
+
+    Sets a global flag; the worker loop checks this between jobs.  The current
+    job completes; no new jobs are accepted.  A second signal forces an exit.
 
     Args:
-        ctx: Worker context dict (unused on shutdown).
+        signum: Signal number (e.g. ``signal.SIGTERM``).
+        _frame: Current stack frame (ignored — present for signal handler API
+            compatibility).
     """
-    logger.info("worker.stopped")
+    global _shutdown_requested  # noqa: PLW0603  — intentional module-level flag
+
+    if _shutdown_requested:
+        # Second signal received while already shutting down — force exit.
+        logger.warning(
+            "shutdown.force_exit",
+            signal=signal.Signals(signum).name,
+        )
+        sys.exit(1)
+
+    _shutdown_requested = True
+    logger.info(
+        "shutdown.signal_received",
+        signal=signal.Signals(signum).name,
+        message="Finishing current jobs, not accepting new ones.",
+    )
 
 
-async def health_check(ctx: dict[str, Any]) -> bool:  # noqa: ARG001
-    """Return worker health status.
+# ═════════════════════════════════════════════════════════════════════════════
+# Prometheus metrics
+# ═════════════════════════════════════════════════════════════════════════════
+
+worker_tasks_total = Counter(
+    "memgraph_worker_tasks_total",
+    "Tasks completed by type and status",
+    labelnames=["task_type", "status"],
+)
+
+worker_task_duration_seconds = Histogram(
+    "memgraph_worker_task_duration_seconds",
+    "Task execution duration in seconds",
+    labelnames=["task_type"],
+    buckets=(1, 2.5, 5, 10, 15, 30, 60, 120, 300, 600),
+)
+
+worker_queue_depth = Gauge(
+    "memgraph_worker_queue_depth",
+    "Current queue depth by queue name",
+    labelnames=["queue_name"],
+)
+
+worker_tasks_per_org = Counter(
+    "memgraph_worker_tasks_per_org_total",
+    "Tasks by org, type, and status for cost tracking",
+    labelnames=["org_id", "task_type", "status"],
+)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Queue depth monitoring (background task)
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+async def monitor_queue_depth(redis: ArqRedis, interval: int = 15) -> None:
+    """Periodically sample queue depth for all known queues.
+
+    Runs as a background :class:`asyncio.Task` in the worker event loop.
+    Exposes queue depth as a Prometheus Gauge metric.
 
     Args:
-        ctx: Worker context dict (unused).
+        redis: Connected :class:`ArqRedis` instance (from the high-priority
+            worker pool).
+        interval: Polling interval in seconds.
+    """
+    queue_names = [
+        settings.high_queue_full,
+        settings.low_queue_full,
+    ]
+
+    while not _shutdown_requested:
+        for queue_name in queue_names:
+            try:
+                # ARQ stores pending jobs in a Redis sorted set: {queue_name}:jobs
+                depth = await redis.zcard(f"{queue_name}:jobs")  # type: ignore[arg-type]
+            except Exception:
+                depth = -1
+
+            worker_queue_depth.labels(queue_name=queue_name).set(depth)
+
+        await asyncio.sleep(interval)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Helper: create worker pool
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def create_arq_worker(
+    queue_name: str,
+    functions: list[Callable[..., Awaitable[Any]]],
+    redis_settings: RedisSettings,
+    concurrency: int,
+    timeout: int,
+) -> ArqWorker:
+    """Create a configured ARQ Worker instance for the given queue.
+
+    Args:
+        queue_name: Logical queue name (e.g. ``"high"`` or ``"low"``).  The
+            fully qualified name is derived via :func:`get_queue_name`.
+        functions: List of async task functions to register with this worker.
+        redis_settings: ARQ :class:`RedisSettings` instance.
+        concurrency: Number of concurrent tasks this worker processes.
+        timeout: Default job timeout in seconds.
 
     Returns:
-        Always ``True`` — the worker is healthy if it is running.
+        Configured :class:`ArqWorker` instance (not yet started).
     """
-    return True
+    return ArqWorker(
+        redis_settings=redis_settings,
+        functions=functions,
+        queue_name=get_queue_name(settings.ENV, queue_name),
+        concurrency=concurrency,
+        timeout=timeout,
+        keep_result=settings.JOB_KEEP_RESULT_FOR,
+        keep_result_failed=settings.JOB_KEEP_RESULT_FOR_FAILURE,
+        poll_delay=settings.POLL_DELAY,
+        on_job_complete=on_job_complete,
+        on_job_failed=on_job_failed,
+        on_shutdown=on_shutdown,
+    )
 
 
-# ── Worker configuration ────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+# Job lifecycle callbacks
+# ═════════════════════════════════════════════════════════════════════════════
 
 
-class WorkerSettings:
-    """ARQ worker configuration.
+async def on_job_complete(ctx: dict[str, Any], job_id: str, **kwargs: Any) -> None:
+    """Log and record Prometheus metrics when a job completes successfully.
 
-    Attributes are consumed directly by ``arq.Worker``.  See the
-    `ARQ documentation <https://arq-docs.helpmanual.io/>`_ for details.
+    Args:
+        ctx: ARQ worker context dict (includes ``task_type``, ``org_id``,
+            ``trace_id`` — populated by each task function).
+        job_id: ARQ job identifier.
+        kwargs: Additional ARQ-provided metadata.  Contains ``runtime`` (float
+            seconds) when available.
     """
+    task_type = ctx.get("task_type", "unknown")
+    org_id = ctx.get("org_id", "unknown")
+    trace_id = ctx.get("trace_id", "unknown")
+    duration_s: float = kwargs.get("runtime", 0.0)
 
-    functions: list = []
-    """List of async worker functions to register. Populated in Phase 1."""
+    logger.info(
+        "job.completed",
+        trace_id=trace_id,
+        org_id=org_id,
+        task_type=task_type,
+        job_id=job_id,
+        duration_ms=round(duration_s * 1000),
+    )
 
-    redis_settings: RedisSettings | None = None
-    """Redis connection settings. Set at runtime before calling run()."""
-
-    max_jobs: int = 4
-    """Maximum number of concurrent jobs this worker handles."""
-
-    job_timeout: int = 300
-    """Maximum job runtime in seconds before the job is timed out."""
-
-    poll_delay: float = 0.5
-    """Seconds between polls when the queue is empty."""
-
-    keep_result: int = 3600
-    """Seconds to keep successful job results."""
-
-    keep_result_failed: int = 86400
-    """Seconds to keep failed job results."""
-
-    on_startup: callable = startup
-    """Async callback invoked when the worker starts."""
-
-    on_shutdown: callable = shutdown
-    """Async callback invoked when the worker stops."""
-
-    health_check: callable = health_check
-    """Async function that returns ``True`` when the worker is healthy."""
+    worker_tasks_total.labels(task_type=task_type, status="success").inc()
+    worker_task_duration_seconds.labels(task_type=task_type).observe(duration_s)
+    worker_tasks_per_org.labels(
+        org_id=org_id,
+        task_type=task_type,
+        status="success",
+    ).inc()
 
 
-# ── CLI entrypoint ──────────────────────────────────────────────────────────
+async def on_job_failed(
+    ctx: dict[str, Any],
+    job_id: str,
+    exc: Exception,
+    **kwargs: Any,
+) -> None:
+    """Log and record Prometheus metrics when a job fails after exhausting retries.
+
+    Args:
+        ctx: ARQ worker context dict.
+        job_id: ARQ job identifier.
+        exc: The exception that caused the failure.
+        kwargs: Additional ARQ-provided metadata.  Contains ``retry_count``
+            after retries are exhausted.
+    """
+    task_type = ctx.get("task_type", "unknown")
+    org_id = ctx.get("org_id", "unknown")
+    trace_id = ctx.get("trace_id", "unknown")
+
+    logger.error(
+        "job.failed",
+        trace_id=trace_id,
+        org_id=org_id,
+        task_type=task_type,
+        job_id=job_id,
+        error=str(exc),
+        error_type=type(exc).__name__,
+        retry_count=kwargs.get("retry_count", -1),
+    )
+
+    worker_tasks_total.labels(task_type=task_type, status="failure").inc()
+    worker_tasks_per_org.labels(
+        org_id=org_id,
+        task_type=task_type,
+        status="failure",
+    ).inc()
+
+
+async def on_shutdown(_ctx: dict[str, Any]) -> None:
+    """Log when the worker pool shuts down.
+
+    Args:
+        _ctx: ARQ worker context dict (unused on shutdown).
+    """
+    logger.info("worker.shutdown_complete")
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Health check endpoint (aiohttp)
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+async def health_check(request: web.Request) -> web.Response:
+    """ARQ health check — verifies Redis connectivity.
+
+    Used by Kubernetes liveness / readiness probes and Docker HEALTHCHECK.
+
+    Returns:
+        HTTP 200 with ``{"status": "ok", "redis_connected": true}``
+        HTTP 503 if Redis is unreachable or no pool is configured.
+    """
+    pool: ArqRedis | None = request.app.get("redis_pool")
+    if pool is None:
+        return web.json_response(
+            {
+                "status": "unhealthy",
+                "redis_connected": False,
+                "error": "No Redis pool in application context",
+            },
+            status=503,
+        )
+
+    try:
+        await pool.execute_command("PING")
+        return web.json_response(
+            {"status": "ok", "redis_connected": True},
+        )
+    except Exception as exc:
+        logger.error("health_check.failed", error=str(exc))
+        return web.json_response(
+            {
+                "status": "unhealthy",
+                "redis_connected": False,
+                "error": str(exc),
+            },
+            status=503,
+        )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Main entrypoint
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+async def main() -> NoReturn:
+    """Start the ARQ worker pool, Prometheus server, and health endpoint.
+
+    Startup sequence:
+
+    1. Configure structured logging
+    2. Start the Prometheus metrics HTTP server on ``PROMETHEUS_PORT``
+    3. Create ARQ Redis connection settings from ``REDIS_URL``
+    4. Create high and low priority worker pools
+    5. Register SIGTERM / SIGINT handlers for graceful shutdown
+    6. Start aiohttp health check server on ``HEALTH_PORT`` (``/health``, ``/ready``)
+    7. Start queue depth monitoring as a background :class:`asyncio.Task`
+    8. Run both worker pools concurrently until a shutdown signal is received
+
+    Returns:
+        Never returns normally — always exits via signal handler.
+    """
+    setup_logging()
+
+    logger.info(
+        "worker.starting",
+        max_workers=settings.MAX_WORKERS,
+        redis_url=str(settings.REDIS_URL),
+        env=settings.ENV,
+        prometheus_port=settings.PROMETHEUS_PORT,
+        health_port=settings.HEALTH_PORT,
+    )
+
+    # ── Start Prometheus HTTP server ────────────────────────────────────
+    try:
+        start_prometheus_server(settings.PROMETHEUS_PORT)
+        logger.info("prometheus.server_started", port=settings.PROMETHEUS_PORT)
+    except OSError as exc:
+        logger.error(
+            "prometheus.server_failed",
+            port=settings.PROMETHEUS_PORT,
+            error=str(exc),
+        )
+        raise
+
+    # ── Redis connection settings ───────────────────────────────────────
+    redis_settings = RedisSettings.from_dsn(str(settings.REDIS_URL))
+
+    # ── Create worker pools ─────────────────────────────────────────────
+    # Two separate ARQ Worker instances for priority queue support.
+    # See 05-priority-queues.md for details on allocation.
+
+    high_worker = create_arq_worker(
+        queue_name=settings.HIGH_QUEUE_NAME,
+        functions=HIGH_QUEUE_TASKS,
+        redis_settings=redis_settings,
+        concurrency=min(settings.MAX_WORKERS, 8),
+        timeout=settings.JOB_TIMEOUT_DEFAULT,
+    )
+
+    low_worker = create_arq_worker(
+        queue_name=settings.LOW_QUEUE_NAME,
+        functions=LOW_QUEUE_TASKS,
+        redis_settings=redis_settings,
+        concurrency=max(1, settings.MAX_WORKERS // 4),
+        timeout=settings.JOB_TIMEOUT_DEFAULT * 2,
+    )
+
+    logger.info(
+        "worker.pools_created",
+        high_queue=settings.high_queue_full,
+        low_queue=settings.low_queue_full,
+        high_concurrency=min(settings.MAX_WORKERS, 8),
+        low_concurrency=max(1, settings.MAX_WORKERS // 4),
+    )
+
+    # ── Signal handlers ────────────────────────────────────────────────
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, lambda s=sig: handle_signal(s))
+
+    logger.info("worker.signal_handlers_registered")
+
+    # ── Health check web server ────────────────────────────────────────
+    health_app = web.Application()
+    health_app["redis_pool"] = high_worker.pool
+    health_app.router.add_get("/ready", health_check)
+    health_app.router.add_get("/health", health_check)
+
+    runner = web.AppRunner(health_app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", settings.HEALTH_PORT)
+    await site.start()
+    logger.info("health.server_started", port=settings.HEALTH_PORT)
+
+    # ── Queue depth monitoring ─────────────────────────────────────────
+    monitor_task = asyncio.create_task(
+        monitor_queue_depth(high_worker.pool),
+    )
+
+    # ── Run workers ────────────────────────────────────────────────────
+    try:
+        await asyncio.gather(
+            high_worker.run(),
+            low_worker.run(),
+        )
+    except asyncio.CancelledError:
+        logger.info("worker.run_cancelled")
+        raise
+    finally:
+        monitor_task.cancel()
+        await runner.cleanup()
+        logger.info("worker.stopped")
+
+    # NOTE: This line is never reached — asyncio.gather runs until a
+    # shutdown signal is received.  The NoReturn return type is
+    # intentionally unreachable.
+    sys.exit(0)  # pragma: no cover
+
+
+def entrypoint() -> None:
+    """Synchronous entrypoint for ``python -m services.worker.worker``."""
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("worker.keyboard_interrupt")
 
 
 if __name__ == "__main__":
-    settings = app_settings
-    WorkerSettings.redis_settings = RedisSettings.from_dsn(
-        str(settings.REDIS_URL)
-    )
-    logger.info(
-        "worker.starting",
-        concurrency=WorkerSettings.max_jobs,
-    )
-
-    # create_pool returns an asyncio-compatible connection pool.
-    # In production the ARQ CLI (``arq services.worker.worker.WorkerSettings``)
-    # handles the event loop; this manual path is for containerised use.
-    asyncio.run(create_pool(WorkerSettings.redis_settings))
+    entrypoint()

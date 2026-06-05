@@ -58,6 +58,12 @@ class User(TimestampMixin, Base):
         default=True,
         server_default="true",
     )
+    is_deleted: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
 
     __table_args__ = (
         UniqueConstraint(

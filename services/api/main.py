@@ -26,7 +26,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from core.arq import close_arq, init_arq
 from core.config import Settings
-from core.db import close_db_engine, init_db_engine
+from core.db import close_db_engine, get_async_session, init_db_engine
 from core.exceptions import register_exception_handlers
 from core.graphiti import close_graphiti, init_graphiti
 from core.logging import setup_logging
@@ -36,7 +36,7 @@ from middleware.logging import LoggingMiddleware
 from middleware.rate_limit import RateLimitMiddleware
 from middleware.request_id import RequestIDMiddleware
 from middleware.tracing import TracingMiddleware
-from routers import health
+from routers import admin, health, sessions, users
 
 
 def create_app() -> FastAPI:
@@ -57,6 +57,7 @@ def create_app() -> FastAPI:
         redis_client = await init_redis(str(settings.REDIS_URL))
         app.state.db_engine = db_engine
         app.state.redis_client = redis_client
+        app.state.db_session_factory = get_async_session(db_engine)
 
         # Init ARQ (async Redis queue) for background jobs
         arq_pool = await init_arq(str(settings.REDIS_URL))
@@ -140,6 +141,9 @@ def create_app() -> FastAPI:
 
     # ── Routers ──────────────────────────────────────────────────────────
     app.include_router(health.router, prefix="/v1", tags=["Health"])
+    app.include_router(admin.router)
+    app.include_router(users.router)
+    app.include_router(sessions.router)
 
     return app
 

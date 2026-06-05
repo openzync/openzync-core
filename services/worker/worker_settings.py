@@ -1,90 +1,176 @@
-"""ARQ worker configuration — shared settings for all background workers.
+"""Worker-specific configuration — loaded from pydantic-settings.
 
-Import these settings when creating an ARQ ``Worker`` or when defining the
-``WorkerSettings`` class that ARQ discovers via the ``--settings`` CLI flag.
+All worker configuration lives here rather than in ``core.config`` because the
+worker process is independently deployable and should not depend on API-specific
+settings.  Import the ``settings`` singleton rather than instantiating
+:class:`WorkerSettings` directly.
 
 Usage:
+    from services.worker.worker_settings import settings
 
-    # In a worker entry-point script:
-    from services.worker.worker_settings import WorkerSettings
-
-    from arq import create_worker
-    worker = create_worker(WorkerSettings)
-    worker.run()
-
-The ``functions`` list is intentionally empty here — it is populated in
-later phases (Phase 1+) as task functions are implemented.
+    arq_redis = await create_pool(RedisSettings.from_dsn(str(settings.REDIS_URL)))
+    queue = settings.high_queue_full
 """
 
 from __future__ import annotations
 
-from typing import ClassVar
+from typing import Literal
 
-from arq import cron
-from arq.connections import RedisSettings
+from pydantic import Field
+from pydantic.networks import RedisDsn
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from core.config import settings as app_settings
+
+def get_queue_name(env: str, queue_type: str) -> str:
+    """Generate a namespaced queue name.
+
+    Pattern: ``OpenZep:{env}:queue:{queue_type}``
+
+    Examples:
+        ``OpenZep:dev:queue:high``
+        ``OpenZep:prod:queue:low``
+
+    Args:
+        env: Environment name (e.g. ``dev``, ``staging``, ``prod``).
+        queue_type: Queue type — one of ``"high"`` (real-time ingestion) or
+            ``"low"`` (scheduled batch / background maintenance).
+
+    Returns:
+        Fully qualified queue name string.
+
+    Raises:
+        ValueError: If ``queue_type`` is not ``"high"`` or ``"low"``.
+    """
+    if queue_type not in ("high", "low"):
+        raise ValueError(f"queue_type must be 'high' or 'low', got {queue_type!r}")
+    return f"OpenZep:{env}:queue:{queue_type}"
 
 
-class WorkerSettings:
-    """ARQ worker configuration for OpenZep background jobs.
+class WorkerSettings(BaseSettings):
+    """Worker-specific configuration — loaded from environment variables.
 
-    All durations are in seconds unless otherwise noted.
+    All durations are in **seconds** unless otherwise noted.
 
-    Tweak via environment variables — see :class:`openzep.core.config.Settings`
-    for the full list.
+    Settings are read from environment variables (no ``MG_`` prefix — the worker
+    process has its own env-file contract).  Create the module-level ``settings``
+    singleton — do not instantiate this class directly.
     """
 
-    # ── Queue ──────────────────────────────────────────────────────────────
-    #: Redis connection details — derived from the app's ``REDIS_URL``.
-    redis_settings: ClassVar[RedisSettings] = RedisSettings.from_dsn(
-        str(app_settings.REDIS_URL),
+    model_config = SettingsConfigDict(
+        env_prefix="",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        frozen=True,
     )
 
-    # ── Concurrency ────────────────────────────────────────────────────────
-    #: Maximum number of jobs a worker runs concurrently.
-    max_jobs: ClassVar[int] = 4
+    # ── Redis ────────────────────────────────────────────────────────────────
+    REDIS_URL: RedisDsn = Field(
+        default="redis://localhost:6379",
+        description="Redis connection string for the ARQ job queue.",
+    )
 
-    #: Maximum time (seconds) a job is allowed to run before being killed.
-    job_timeout: ClassVar[int] = 300  # 5 minutes
+    # ── Environment ──────────────────────────────────────────────────────────
+    ENV: str = Field(
+        default="dev",
+        description=(
+            "Environment name used in queue name prefix: "
+            "``OpenZep:{env}:queue:{queue_name}``."
+        ),
+    )
 
-    #: Interval (seconds) between polls for new jobs when the queue is empty.
-    poll_delay: ClassVar[float] = 0.5
+    # ── Concurrency ──────────────────────────────────────────────────────────
+    MAX_WORKERS: int = Field(
+        default=4,
+        ge=1,
+        le=32,
+        description=(
+            "Maximum number of concurrent tasks a worker processes. "
+            "Set to CPU count for CPU-bound work, higher for I/O-bound tasks "
+            "(LLM API calls, DB queries, embedding)."
+        ),
+    )
 
-    # ── Result retention ───────────────────────────────────────────────────
-    #: Seconds to keep successful job results.
-    keep_result: ClassVar[int] = 3600  # 1 hour
+    # ── Job defaults ─────────────────────────────────────────────────────────
+    JOB_TIMEOUT_DEFAULT: int = Field(
+        default=300,
+        description=(
+            "Default job timeout in seconds. "
+            "Individual tasks may override this (see 02-task-definitions.md)."
+        ),
+    )
+    JOB_KEEP_RESULT_FOR: int = Field(
+        default=3_600,
+        description="Seconds to keep successful job results in Redis.",
+    )
+    JOB_KEEP_RESULT_FOR_FAILURE: int = Field(
+        default=86_400,
+        description=(
+            "Seconds to keep failed job results in Redis. "
+            "Longer than success TTL so failed jobs can be debugged."
+        ),
+    )
 
-    #: Seconds to keep failed job results (longer for debugging).
-    keep_result_failed: ClassVar[int] = 86400  # 24 hours
+    # ── Queue names ──────────────────────────────────────────────────────────
+    HIGH_QUEUE_NAME: str = Field(
+        default="high",
+        description="Queue name for real-time / priority tasks.",
+    )
+    LOW_QUEUE_NAME: str = Field(
+        default="low",
+        description="Queue name for batch / scheduled tasks.",
+    )
 
-    # ── Scheduled jobs (cron) ──────────────────────────────────────────────
-    #: Cron-style recurring jobs.  Populated in Phase 1+ as features require
-    #: periodic maintenance tasks (ephemeral summarisation, TTL cleanup, etc.).
-    cron_jobs: ClassVar[list[cron]] = []
+    # ── Polling ──────────────────────────────────────────────────────────────
+    POLL_DELAY: float = Field(
+        default=0.5,
+        description="Seconds between polls when the queue is empty.",
+    )
 
-    # ── Task registry ──────────────────────────────────────────────────────
-    #: List of async functions ARQ will route jobs to.
-    #: Populated in Phase 1+ as individual task modules are implemented.
-    functions: ClassVar[list] = []
+    # ── Health check ─────────────────────────────────────────────────────────
+    HEALTH_CHECK_INTERVAL: int = Field(
+        default=30,
+        description="Interval in seconds between Redis health pings.",
+    )
+    HEALTH_PORT: int = Field(
+        default=8081,
+        description="Port for the health check HTTP server (liveness / readiness).",
+    )
 
-    # ── Startup / shutdown hooks ───────────────────────────────────────────
+    # ── Logging ──────────────────────────────────────────────────────────────
+    LOG_LEVEL: str = Field(
+        default="INFO",
+        description="Minimum log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).",
+    )
+    STRUCTLOG_FORMAT: Literal["json", "console"] = Field(
+        default="json",
+        description=(
+            "Log format.  ``json`` for production (Loki ingestion), "
+            "``console`` for human-readable development output."
+        ),
+    )
 
-    @staticmethod
-    async def on_startup() -> None:
-        """Called once when the worker starts.
+    # ── Prometheus ───────────────────────────────────────────────────────────
+    PROMETHEUS_PORT: int = Field(
+        default=9090,
+        description=(
+            "Port for the Prometheus metrics HTTP server. "
+            "Separate from the health check port."
+        ),
+    )
 
-        Use this to initialise clients (DB, LLM, etc.) that the worker
-        functions depend on.
-        """
-        # Placeholder — expanded in later phases.
-        pass
+    # ── Derived properties ───────────────────────────────────────────────────
 
-    @staticmethod
-    async def on_shutdown() -> None:
-        """Called once before the worker stops.
+    @property
+    def high_queue_full(self) -> str:
+        """Fully qualified high-priority queue name (e.g. ``OpenZep:prod:queue:high``)."""
+        return get_queue_name(self.ENV, self.HIGH_QUEUE_NAME)
 
-        Use this to close clients gracefully.
-        """
-        # Placeholder — expanded in later phases.
-        pass
+    @property
+    def low_queue_full(self) -> str:
+        """Fully qualified low-priority queue name (e.g. ``OpenZep:prod:queue:low``)."""
+        return get_queue_name(self.ENV, self.LOW_QUEUE_NAME)
+
+
+# Module-level singleton — import this, never instantiate WorkerSettings directly.
+settings = WorkerSettings()

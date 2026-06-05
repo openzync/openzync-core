@@ -71,6 +71,7 @@ PUBLIC_ENDPOINTS: set[str] = {
     "/docs",
     "/openapi.json",
     "/redoc",
+    "/admin/organizations",
 }
 """Paths that are allowed without authentication.
 
