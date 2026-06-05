@@ -116,8 +116,17 @@ The developer-facing surface area.
 | 8.5 | [05-openapi-generation.md](08-api-gateway/05-openapi-generation.md) | Auto-generated OpenAPI 3.1, versioning, SDK generation from spec |
 | 9.1 | [01-shared-patterns.md](09-sdks/01-shared-patterns.md) | Retry, auth, error handling, pagination patterns shared across all SDKs |
 | 9.2 | [02-python-sdk.md](09-sdks/02-python-sdk.md) | Sync/async duality, PyPI packaging, full API reference, all CRUD operations |
-| 9.3 | [03-typescript-sdk.md](09-sdks/03-typescript-sdk.md) | Browser + Node.js, npm packaging, typed generics, tree-shakeable exports |
-| 9.4 | [04-go-sdk.md](09-sdks/04-go-sdk.md) | Idiomatic Go, context propagation, pkg.go.dev, interface-based design |
+| 9.3 | ~~[03-typescript-sdk.md](09-sdks/03-typescript-sdk.md)~~ | **POSTPONED — v1.1+.** Browser + Node.js, npm packaging, typed generics, tree-shakeable exports |
+| 9.4 | ~~[04-go-sdk.md](09-sdks/04-go-sdk.md)~~ | **POSTPONED — v1.1+.** Idiomatic Go, context propagation, pkg.go.dev, interface-based design |
+
+### Deferred SDKs (Post-v1.0)
+
+The following SDKs are **deferred to v1.1+** to focus v1.0 on the Python SDK (`memgraph-py`):
+
+| # | SDK | Planned Version | Key Features |
+|---|-----|----------------|--------------|
+| 9.3 | TypeScript SDK (`OpenZep-ts`) | v1.1+ | Browser + Node.js, npm packaging, typed generics, tree-shakeable exports |
+| 9.4 | Go SDK (`OpenZep-go`) | v1.1+ | Idiomatic Go, context propagation, pkg.go.dev, interface-based design |
 
 ---
 
@@ -172,9 +181,9 @@ Production readiness and developer experience.
 |-------|-------------------|
 | **Phase 0** Foundation | 1.1, 1.2, 1.3, 2.1, 2.2, 2.3, 2.4, 8.1, 8.2, 8.4, 12.1, 12.2, 12.3, 13.1, 13.4, 13.5, 14.2 |
 | **Phase 1** Core Memory | 3.1, 3.2, 3.3, 3.4, 3.5, 4.1, 4.2, 4.3, 5.2, 5.3, 6.1, 6.2, 6.3, 6.4, 6.5, 7.1, 7.2 |
-| **Phase 2** Full Parity | 4.4, 4.5, 5.1, 5.7, 6.6, 7.3, 8.3, 8.5, 9.1, 9.2, 10.1, 10.2, 10.3 |
+| **Phase 2** Python SDK Parity | 4.4, 4.5, 5.1, 5.7, 6.6, 7.3, 8.3, 8.5, 9.1, 9.2, 10.1, 10.2, 10.3 |
 | **Phase 3** NLP Enrichment | 5.4, 5.5, 5.6, 14.3 |
-| **Phase 4** Dashboard & SDKs | 9.3, 9.4, 11.1, 11.2, 11.3, 11.4, 12.4, 13.2, 13.3, 13.6 |
+| **Phase 4** Dashboard & SDKs | 11.1, 11.2, 11.3, 11.4, 12.4, 13.2, 13.3, 13.6 |
 | **Phase 5** Hardening | 13.7, 14.1, 14.4, 14.5, 14.6 |
 
 ---
@@ -187,7 +196,7 @@ The definitive project plan is at **[15-development-timeline/00-master-timeline.
 
 This single document synthesises inputs from all six specialist reviews and provides:
 
-- **Calibrated durations** (22 weeks, 8 phases — corrected from original 14 weeks)
+- **Calibrated durations** (20 weeks, 8 phases — optimised for proprietary control)
 - **Task-level breakdown** per phase with effort estimates (person-days)
 - **Parallel tracks** (A: API/Core, B: NLP/Workers, C: DevOps/Infra)
 - **Senior vs junior allocation** per task
@@ -196,6 +205,18 @@ This single document synthesises inputs from all six specialist reviews and prov
 - **Teaching sessions** scheduled before each phase
 - **Technical debt log** with incurrence and payback phases
 - **Resource ramp** showing team composition over time
+
+---
+
+## Proprietary Boundaries
+
+See **[16-proprietary-boundaries.md](16-proprietary-boundaries.md)** for the complete strategy on proprietary code protection, open-source boundaries, and commercial licensing.
+
+---
+
+## LLM BYOK Strategy
+
+See **[17-llm-byok-strategy.md](17-llm-byok-strategy.md)** for the bring-your-own-key LLM strategy covering supported providers, key rotation, and fallback behaviour.
 
 ---
 

@@ -1,3 +1,7 @@
+> **⚠️ POSTPONED TO v1.1+** — This SDK is not in the v1.0 scope. Python SDK (`memgraph-py`) is the only SDK for v1.0. This document remains as a reference for future implementation.
+
+---
+
 # Go SDK Implementation Guide — `OpenZep-go`
 
 > **Phase**: Phase 5 — Hardening (Week 13-14)
@@ -1494,4 +1498,10 @@ publish-go:
     # pkg.go.dev auto-indexes from public repos on tags.
     # Trigger re-index explicitly:
     - curl -X POST https://proxy.golang.org/github.com/thelinkAI/OpenZep-go/@v/${CI_COMMIT_TAG}.info
+
+---
+
+## Implementation Status
+
+**Status:** 🟡 Planned for v1.1. Not yet implemented.
 ```

@@ -1,4 +1,4 @@
-# Graphiti-Client — Backend-Agnostic Graph Abstraction Layer
+# Graphiti-Client — Backend-Agnostic Graph Abstraction Layer (FalkorDB-focused)
 
 ## 1. Overview
 
@@ -18,6 +18,8 @@ The `packages/graphiti-client/` package exists to solve two problems:
 |---------|---------------|---------------------------|
 | **OQ-01: Graphiti API stability** | §15, OQ-01 | If Graphiti's public API changes, only the wrapper adapts. Callers never import Graphiti directly. |
 | **PORT-02: Backend-agnostic** | §6.5, PORT-02 | FalkorDB and Neo4j share a single interface. Switching only requires changing an env var. |
+
+> **Note:** FalkorDB is the primary and only supported graph backend for v1.0. Neo4j support was documented during design but deferred to a future release. The abstraction interface remains clean enough to add Neo4j later without breaking changes.
 
 ### 1.2 Package Location
 

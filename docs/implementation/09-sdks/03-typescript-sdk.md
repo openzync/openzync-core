@@ -1,3 +1,7 @@
+> **⚠️ POSTPONED TO v1.1+** — This SDK is not in the v1.0 scope. Python SDK (`memgraph-py`) is the only SDK for v1.0. This document remains as a reference for future implementation.
+
+---
+
 # TypeScript SDK Implementation Guide — `OpenZep-ts`
 
 > **Phase**: Phase 4 — Dashboard & SDKs (Week 10-12)
@@ -1314,4 +1318,10 @@ Run tests:
 npm test
 # or
 npx vitest run
+
+---
+
+## Implementation Status
+
+**Status:** 🟡 Planned for v1.1. Not yet implemented.
 ```
