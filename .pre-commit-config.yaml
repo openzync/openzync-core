@@ -63,3 +63,14 @@ repos:
       - id: detect-secrets
         args: [--baseline, .secrets.baseline]
         stages: [manual]
+
+  # ── Local: hardcoded credential checker ─────────────────────────────────────
+  - repo: local
+    hooks:
+      - id: check-credentials
+        name: Check for hardcoded credentials
+        description: Scans staged files for inline passwords, secret keys, and API tokens.
+        entry: scripts/check-credentials.sh
+        language: script
+        types: [shell, yaml, python]
+        stages: [commit, push]

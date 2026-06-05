@@ -3,6 +3,7 @@
 > **Master Plan** — Synthesised from all specialist reviews: @architect, @senior-dev, @reviewer, @qa-engineer, @junior-mentor, @devops
 >
 > **Document Status:** Final | **Last Updated:** 2026-06-05 | **Total Duration:** 20 weeks (8 phases)
+> **Phase Status:** ✅ **Phase 0 — COMPLETE** | Phase 1 — In Progress | Phases 2–5b — Planned
 > **Original SRS estimate:** 14 weeks (6 phases) — recalibrated to **20 weeks** (+43%) based on production-grade rigour.
 
 ---
@@ -50,11 +51,12 @@ Foundation  Core Mem    Full Parity NLP Enrich  Dash+Infra  Hardening    Release
 
 ---
 
-## Phase 0 — Foundation (Weeks 1–2)
+## Phase 0 — Foundation (Weeks 1–2) ✅ COMPLETE
 
 **Theme:** *"Docker Compose up works on a laptop, auth works, data model is solid."*
 
 > **Components marked 🔒 are proprietary (core IP).**
+> **✅ All 8 exit criteria (G0.1–G0.8) verified and passing.**
 
 ### Team
 | Role | Person | Allocation |
@@ -65,78 +67,78 @@ Foundation  Core Mem    Full Parity NLP Enrich  Dash+Infra  Hardening    Release
 
 ### Tasks by Track
 
-**Track A — Core Infrastructure (Engineer A: Senior)**
+**Track A — Core Infrastructure (Engineer A: Senior) — ✅ Complete**
 
-| Week | Task | Est. Days | Depends On |
-|------|------|-----------|------------|
-| W1 | Monorepo scaffold: `services/api`, `services/worker`, `packages/core`, `packages/graphiti-client`, `tests/`, `docs/`, `infra/` | 1 | — |
-| W1 | 🔒 `core/config.py` — pydantic-settings with all env vars, validation, defaults | 1 | 0.1 |
-| W1 | 🔒 `core/db.py` — async engine + session factory, `pool_pre_ping=True`, `pool_size=20`, `expire_on_commit=False` | 1 | 0.2 |
-| W1 | PostgreSQL DDL: all 12 tables + 18 indexes + CHECK constraints + RLS migration | 3 | 0.3 |
-| W1–2 | Alembic baseline migration + parameterized `EMBEDDING_DIM` | 2 | 0.4 |
-| W2 | FastAPI `create_app()` factory: lifespan, middleware chain, router registration, `/health` + `/ready` | 2 | 0.3 |
-| W2 | Global exception handler: RFC 7807 Problem Details, error code catalogue (17 codes) | 1 | 0.6 |
+| Week | Task | Est. Days | Status |
+|------|------|-----------|--------|
+| W1 | Monorepo scaffold: `services/api`, `services/worker`, `packages/core`, `packages/graphiti-client`, `tests/`, `docs/`, `infra/` | 1 | ✅ |
+| W1 | 🔒 `core/config.py` — pydantic-settings with all env vars, validation, defaults | 1 | ✅ |
+| W1 | 🔒 `core/db.py` — async engine + session factory, `pool_pre_ping=True`, `pool_size=20`, `expire_on_commit=False` | 1 | ✅ |
+| W1 | PostgreSQL DDL: all 12 tables + 18 indexes + CHECK constraints + RLS migration | 3 | ✅ |
+| W1–2 | Alembic baseline migration + parameterized `EMBEDDING_DIM` | 2 | ✅ |
+| W2 | FastAPI `create_app()` factory: lifespan, middleware chain, router registration, `/health` + `/ready` | 2 | ✅ |
+| W2 | Global exception handler: RFC 7807 Problem Details, error code catalogue (17 codes) | 1 | ✅ |
 
-**Track B — Auth & Security (Engineer B: Mid)**
+**Track B — Auth & Security (Engineer B: Mid) — ✅ Complete**
 
-| Week | Task | Est. Days | Depends On |
-|------|------|-----------|------------|
-| W1 | API key auth: `api_keys` model, SHA-256 hashing (16-byte salt), create/validate/rotate/revoke | 3 | 0.3 |
-| W1–2 | JWT auth for dashboard: access token (15min), refresh token (7d, rotation on use) | 2 | 0.5 |
-| W2 | Multi-tenant RLS: `TenantSessionMiddleware`, `set_config('app.org_id')` on every request | 2 | 0.6 |
-| W2 | Rate limiting: per-IP (10 failed auth/min) + per-key (configurable), Redis sliding window | 1 | 0.7 |
-| W2 | 🔒 `core/exceptions.py` — AppError hierarchy, all typed exceptions | 1 | 0.6 |
-| W2 | 🔒 `core/logging.py` — structlog config, JSON formatter, PII redaction processor | 1 | 0.6 |
+| Week | Task | Est. Days | Status |
+|------|------|-----------|--------|
+| W1 | API key auth: `api_keys` model, SHA-256 hashing (16-byte salt), create/validate/rotate/revoke | 3 | ✅ |
+| W1–2 | JWT auth for dashboard: access token (15min), refresh token (7d, rotation on use) | 2 | ✅ |
+| W2 | Multi-tenant RLS: `TenantSessionMiddleware`, `set_config('app.org_id')` on every request | 2 | ✅ |
+| W2 | Rate limiting: per-IP (10 failed auth/min) + per-key (configurable), Redis sliding window | 1 | ✅ |
+| W2 | 🔒 `core/exceptions.py` — AppError hierarchy, all typed exceptions | 1 | ✅ |
+| W2 | 🔒 `core/logging.py` — structlog config, JSON formatter, PII redaction processor | 1 | ✅ |
 
-**Track C — Graph DB & BYOK LLM (shared)**
+**Track C — Graph DB & BYOK LLM (shared) — ✅ Complete**
 
-| Week | Task | Est. Days | Depends On |
-|------|------|-----------|------------|
-| W2 | Graphiti integration: version pinning (`graphiti-core==0.29.1`), async wrapper, circuit breaker scaffold | 3 | 0.3 |
-| W2 | **BYOK `LLMBackend` abstraction**: `LLMBackend` ABC with `OllamaBackend`, `OpenAIBackend`, `AzureBackend`, `AnthropicBackend` implementations. `EmbeddingClient` as part of BYOK stack — first-run auto-detects Ollama (local, zero-config) or prompts user to configure any provider. Dimension validation, batch embedding. **No default API key shipped.** | 3 | 0.3 |
-| W2 | Docker Compose dev: api, postgres+pgvector, falkordb, redis, alloy (optional ollama) | 1 | 0.1 |
+| Week | Task | Est. Days | Status |
+|------|------|-----------|--------|
+| W2 | Graphiti integration: version pinning (`graphiti-core==0.29.1`), async wrapper, circuit breaker scaffold | 3 | ✅ |
+| W2 | **BYOK `LLMBackend` abstraction**: `LLMBackend` ABC with `OllamaBackend`, `OpenAIBackend`, `AzureBackend`, `AnthropicBackend` implementations. `EmbeddingClient` as part of BYOK stack — first-run auto-detects Ollama (local, zero-config) or prompts user to configure any provider. Dimension validation, batch embedding. **No default API key shipped.** | 3 | ✅ |
+| W2 | Docker Compose dev: api, postgres+pgvector, falkordb, redis, alloy (optional ollama) | 1 | ✅ |
 
-### Phase 0 — Junior Ownership Map
+### Phase 0 — Junior Ownership Map — ✅ Complete
 
-| Task | Difficulty | Ownership | Why |
-|------|-----------|-----------|-----|
-| `core/config.py` — pydantic-settings | Low | Junior solo | Well-documented pattern, no business logic |
-| `TimestampMixin` in models/ | Low | Junior solo | Mechanical, teaches declarative base patterns |
-| `routers/health.py` — health + readiness | Low | Junior solo | Pure FastAPI, teaches lifespan DI |
-| Dev Docker Compose | Low-Med | Junior solo | `docker-compose.yml` with health checks |
-| Alembic baseline migration | Med | Junior+senior pair | Parameterized DDL — important to get right but docs exist |
-| `middleware/request_id.py` | Med | Junior+senior pair | First middleware, teaches `request.state` pattern |
+| Task | Difficulty | Ownership | Status |
+|------|-----------|-----------|--------|
+| `core/config.py` — pydantic-settings | Low | Junior solo | ✅ |
+| `TimestampMixin` in models/ | Low | Junior solo | ✅ |
+| `routers/health.py` — health + readiness | Low | Junior solo | ✅ |
+| Dev Docker Compose | Low-Med | Junior solo | ✅ |
+| Alembic baseline migration | Med | Junior+senior pair | ✅ |
+| `middleware/request_id.py` | Med | Junior+senior pair | ✅ |
 
-### Exit Criteria (ALL must pass)
+### Exit Criteria (ALL must pass) — ✅ All 8 verified
 
-| # | Criterion | Verification |
-|---|-----------|-------------|
-| **G0.1** | `docker compose up` boots all 5 services with green health checks | `docker compose ps` shows all healthy |
-| **G0.2** | Alembic baseline: `upgrade head` creates 12 tables + 18+ indexes; `downgrade -1` drops to empty | Integration test: `test_migrations.py` (3 tests) |
-| **G0.3** | API key create → hash → validate → rotate → revoke works end-to-end | Integration test: `test_auth.py` (5 tests) |
-| **G0.4** | RLS: 3-org × 2-user matrix — same-org returns 200, cross-org returns 404 | Cross-tenant test: `test_cross_tenant.py` (36 tests) |
-| **G0.5** | BYOK: Ollama auto-detected on fresh install; user prompted if no local LLM available; all 4 backends configurable via env. Dimension mismatch raises `ConfigurationError`. | Unit test + integration |
-| **G0.6** | No `VECTOR(1536)` literal in any DDL — dimension is config-driven | `grep -r "VECTOR(1536)" models/ schemas/` = empty |
-| **G0.7** | Every domain has: `services/{domain}_service.py`, `repositories/{domain}_repository.py`. No router imports model directly | Static analysis: grep patterns |
-| **G0.8** | structlog produces valid JSON. Every log includes `service`, `environment`, `trace_id` | Manual: check log output |
+| # | Criterion | Verification | Status |
+|---|-----------|-------------|--------|
+| **G0.1** | `docker compose up` boots all 5 services with green health checks | `docker compose ps` shows all healthy | ✅ |
+| **G0.2** | Alembic baseline: `upgrade head` creates 12 tables + 18+ indexes; `downgrade -1` drops to empty | Integration test: `test_migrations.py` (3 tests) | ✅ |
+| **G0.3** | API key create → hash → validate → rotate → revoke works end-to-end | Integration test: `test_auth.py` (5 tests) | ✅ |
+| **G0.4** | RLS: 3-org × 2-user matrix — same-org returns 200, cross-org returns 404 | Cross-tenant test: `test_cross_tenant.py` (36 tests) | ✅ |
+| **G0.5** | BYOK: Ollama auto-detected on fresh install; user prompted if no local LLM available; all 4 backends configurable via env. Dimension mismatch raises `ConfigurationError`. | Unit test + integration | ✅ |
+| **G0.6** | No `VECTOR(1536)` literal in any DDL — dimension is config-driven | `grep -r "VECTOR(1536)" models/ schemas/` = empty | ✅ |
+| **G0.7** | Every domain has: `services/{domain}_service.py`, `repositories/{domain}_repository.py`. No router imports model directly | Static analysis: grep patterns | ✅ |
+| **G0.8** | structlog produces valid JSON. Every log includes `service`, `environment`, `trace_id` | Manual: check log output | ✅ |
 
-### Risk Gate for Phase 1
+### Risk Gate for Phase 1 — ✅ Cleared
 
 > **Single biggest risk:** RLS policy correctness under concurrent pooled connections.
 > `set_config('app.org_id')` is transaction-local — it clears on pool return. A stale connection could serve cross-tenant data.
 > **Mitigation:** `TenantSessionMiddleware` sets `app.org_id` BEFORE every route handler runs. Integration test proves zero cross-tenant leaks under 100 concurrent connections.
-> **Must pass before Phase 1 starts.**
+> **✅ Passed before Phase 1 started.**
 
-### Teaching Sessions (Before Phase 0)
+### Teaching Sessions (Before Phase 0) — ✅ Delivered
 
-| Day | Session | Duration | Led By |
-|-----|---------|----------|--------|
-| Day 1 | System overview & architecture walkthrough | 90 min | Tech lead |
-| Day 1 | Dev environment setup | 60 min | Senior dev |
-| Day 2 | Coding standards workshop (DDD layering, PR checklist, async rules) | 60 min | Tech lead |
-| Day 2 | SQLAlchemy 2.x async deep-dive | 90 min | Senior dev |
-| Day 3 | FastAPI app factory + middleware chain | 60 min | Senior dev |
-| Day 4 | Auth & multi-tenancy design | 90 min | Tech lead |
+| Day | Session | Duration | Led By | Status |
+|-----|---------|----------|--------|--------|
+| Day 1 | System overview & architecture walkthrough | 90 min | Tech lead | ✅ |
+| Day 1 | Dev environment setup | 60 min | Senior dev | ✅ |
+| Day 2 | Coding standards workshop (DDD layering, PR checklist, async rules) | 60 min | Tech lead | ✅ |
+| Day 2 | SQLAlchemy 2.x async deep-dive | 90 min | Senior dev | ✅ |
+| Day 3 | FastAPI app factory + middleware chain | 60 min | Senior dev | ✅ |
+| Day 4 | Auth & multi-tenancy design | 90 min | Tech lead | ✅ |
 
 ---
 
@@ -640,7 +642,7 @@ DevOps          ██        ████████████              
 
 ## Key Recommendations
 
-1. **Do not start Phase 1 until Phase 0 exit criteria are met.** The exit criteria are concrete and measurable — if a gate fails, delay Phase 1.
+1. ~~**Do not start Phase 1 until Phase 0 exit criteria are met.**~~ ✅ **Phase 0 is complete.** All 8 exit criteria (G0.1–G0.8) are verified and passing. The server is running with full auth, database schema, and infrastructure.
 
 2. **Prompt engineering is on the critical path.** Entity extraction (1.6) and fact extraction (1.8) require LLM prompt iteration. Start prompt design in week 4, before the worker code is written. Use golden datasets to eval prompt quality before merging.
 
@@ -660,15 +662,15 @@ DevOps          ██        ████████████              
 
 ## Quick Reference: Transitioning Between Phases
 
-| Transition | Must Be True Before Moving |
-|-----------|---------------------------|
-| **Phase 0 → Phase 1** | All 8 G0 gates pass. RLS proven under 100 concurrent connections. Cross-tenant matrix committed. |
-| **Phase 1 → Phase 2** | All 10 G1 gates pass. Context assembly p99 ≤ 300ms (warm), ≤ 1500ms (cold). Cache hit rate ≥ 80%. |
-| **Phase 2 → Phase 3** | All 9 G2 gates pass. Graph query p99 ≤ 500ms for 15k nodes. Python SDK published. MCP server verified. |
-| **Phase 3 → Phase 4** | All 8 G3 gates pass. Cost controls operational. Eval suite runs on every merge. |
-| **Phase 4 → Phase 5a** | All 6 G4 gates pass. Helm chart deploys on 3-node cluster. Dashboard usable. |
-| **Phase 5a → Phase 5b** | All 9 G5a gates pass. Load test: 500 req/s × 5 min, all criteria met. Security: 0 critical/high. |
-| **Phase 5b → Release** | All 7 G5b gates pass. All quality gates across ALL phases passing. Tech lead + Security sign-off. |
+| Transition | Status | Must Be True Before Moving |
+|-----------|--------|---------------------------|
+| **Phase 0 → Phase 1** | ✅ **CLEARED** | All 8 G0 gates pass. RLS proven under 100 concurrent connections. Cross-tenant matrix committed. |
+| **Phase 1 → Phase 2** | ⏳ In Progress | All 10 G1 gates pass. Context assembly p99 ≤ 300ms (warm), ≤ 1500ms (cold). Cache hit rate ≥ 80%. |
+| **Phase 2 → Phase 3** | ⏳ Pending | All 9 G2 gates pass. Graph query p99 ≤ 500ms for 15k nodes. Python SDK published. MCP server verified. |
+| **Phase 3 → Phase 4** | ⏳ Pending | All 8 G3 gates pass. Cost controls operational. Eval suite runs on every merge. |
+| **Phase 4 → Phase 5a** | ⏳ Pending | All 6 G4 gates pass. Helm chart deploys on 3-node cluster. Dashboard usable. |
+| **Phase 5a → Phase 5b** | ⏳ Pending | All 9 G5a gates pass. Load test: 500 req/s × 5 min, all criteria met. Security: 0 critical/high. |
+| **Phase 5b → Release** | ⏳ Pending | All 7 G5b gates pass. All quality gates across ALL phases passing. Tech lead + Security sign-off. |
 
 ---
 
