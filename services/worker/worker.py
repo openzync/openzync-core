@@ -102,6 +102,7 @@ from workers.tasks.embed_episode import embed_episode
 from workers.tasks.extract_facts import extract_facts
 from workers.tasks.sync_to_graph import sync_to_graph
 from workers.tasks.embed_fact import embed_fact
+from workers.tasks.summarise_community import summarise_community
 
 HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     extract_entities,
@@ -113,6 +114,7 @@ HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
 
 LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     sync_to_graph,
+    summarise_community,
 ]
 """Tasks assigned to the low-priority queue (scheduled batch)."""
 
