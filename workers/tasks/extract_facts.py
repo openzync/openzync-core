@@ -20,12 +20,11 @@ from datetime import datetime, timezone
 import structlog
 from sqlalchemy import text
 
-from workers.tasks.base import ENRICHMENT_FACTS, with_retry
-
 # TechLead note: Import prompt_renderer at module level — it is a local
 # Jinja2 utility with no heavy dependencies, so eager import is safe
 # and avoids re-import overhead on every task invocation.
 from services.worker.prompt_renderer import render_prompt
+from workers.tasks.base import ENRICHMENT_FACTS, with_retry
 
 logger = structlog.get_logger()
 
@@ -120,8 +119,7 @@ async def extract_facts(
                 {
                     "role": "system",
                     "content": (
-                        "You are a fact extraction system. "
-                        "Output ONLY valid JSON."
+                        "You are a fact extraction system. Output ONLY valid JSON."
                     ),
                 },
                 {"role": "user", "content": prompt},
@@ -139,25 +137,40 @@ async def extract_facts(
     # ── 3. Parse JSON response ────────────────────────────────────────────────
     facts = _parse_facts_response(response.content)
 
-    # ── 4. Filter by confidence + quality heuristics ──────────────────────────
+    # ── 4. Filter, persist, and set enrichment bit in ONE session ────────────
     persisted = 0
-    if facts:
-        valid_facts = _filter_facts(facts)
-        if valid_facts:
-            engine = init_db_engine(str(settings.DATABASE_URL), pool_size=5, max_overflow=2)
-            session_factory = get_async_session(engine)
-            try:
-                async with session_factory() as db:
+    engine = init_db_engine(str(settings.DATABASE_URL), pool_size=5, max_overflow=2)
+    session_factory = get_async_session(engine)
+    try:
+        async with session_factory() as db:
+            # Always set enrichment bit 2 first (fact extraction attempted)
+            await db.execute(
+                text("UPDATE episodes SET enrichment_status = enrichment_status | :bit WHERE id = :id"),
+                {"bit": ENRICHMENT_FACTS, "id": episode_id},
+            )
+            await db.commit()
+
+            # Persist facts if any were found (separate transaction)
+            if facts:
+                valid_facts = _filter_facts(facts)
+                if valid_facts:
                     repo = FactRepository(db)
                     for fact in valid_facts:
-                        await repo.create(...)
+                        await repo.create(
+                            user_id=uuid.UUID(user_id),
+                            organization_id=uuid.UUID(org_id),
+                            content=f"{fact['subject']} {fact['predicate']} {fact['object']}",
+                            subject=fact["subject"],
+                            predicate=fact["predicate"],
+                            obj=fact["object"],
+                            confidence=fact["confidence"],
+                            source_episode_id=uuid.UUID(episode_id),
+                            valid_from=datetime.now(timezone.utc),
+                        )
                     persisted = len(valid_facts)
                     await db.commit()
-            finally:
-                await engine.dispose()
-
-    # ── 5. Always set enrichment_status bit 2 ────────────────────────────────
-    await _set_enrichment_bit(episode_id, ENRICHMENT_FACTS)
+    finally:
+        await engine.dispose()
 
     if persisted:
         logger.info("fact_extraction.completed", episode_id=episode_id, facts=persisted)
@@ -171,21 +184,26 @@ async def _set_enrichment_bit(episode_id: str, bit: int) -> None:
     Always runs, even if no data was found — marks the task as complete
     so the pipeline knows it has been attempted.
     """
-    from core.db import get_async_session, init_db_engine
-    from core.config import settings as app_settings
     from sqlalchemy import text
+
+    from core.config import settings as app_settings
+    from core.db import get_async_session, init_db_engine
 
     engine = init_db_engine(str(app_settings.DATABASE_URL), pool_size=2, max_overflow=1)
     session_factory = get_async_session(engine)
     try:
         async with session_factory() as db:
             await db.execute(
-                text("UPDATE episodes SET enrichment_status = enrichment_status | :bit WHERE id = :id"),
+                text(
+                    "UPDATE episodes SET enrichment_status = enrichment_status | :bit WHERE id = :id"
+                ),
                 {"bit": bit, "id": episode_id},
             )
             await db.commit()
     except Exception as exc:
-        logger.warning("enrichment_bit_failed", episode_id=episode_id, bit=bit, error=str(exc))
+        logger.warning(
+            "enrichment_bit_failed", episode_id=episode_id, bit=bit, error=str(exc)
+        )
     finally:
         await engine.dispose()
 
@@ -215,42 +233,62 @@ def _parse_facts_response(content: str) -> list[dict]:
     # Strip leading/trailing whitespace that may remain after fence removal
     content = content.strip()
 
-    # Strip deepseek-r1 thinking blocks: find first JSON object or array
-    json_start = content.find('{')
-    if json_start < 0:
-        json_start = content.find('[')
-    if json_start >= 0:
+    # Strip deepseek-r1 thinking blocks: find first JSON object or array.
+    # Only strip text that appears BEFORE the first [ or {, not the bracket itself.
+    first_array = content.find('[')
+    first_object = content.find('{')
+    if first_array >= 0 and (first_object < 0 or first_array < first_object):
+        json_start = first_array
+    elif first_object >= 0:
+        json_start = first_object
+    else:
+        json_start = -1
+    if json_start > 0:  # only strip if there's text before the bracket
         content = content[json_start:].strip()
-
-    if not content:
+    elif json_start == -1:
         return []
+
+    # Proactive handling: LLMs often return comma-separated JSON objects
+    # without an array wrapper:
+    #   {"subject":"Bob",...},
+    #   {"subject":"Bob",...}
+    # Detect this pattern and wrap in an array before the first parse attempt.
+    stripped = content.strip()
+    if stripped.startswith("{") and "},{" in stripped:
+        try:
+            data = json.loads(f"[{stripped}]")
+        except json.JSONDecodeError:
+            pass  # fall through to regular parse below
+        else:
+            logger.debug(
+                "fact_extraction.array_wrapped", content_preview=stripped[:100]
+            )
+            return (
+                data
+                if isinstance(data, list)
+                else data.get("facts", data.get("triples", []))
+            )
 
     try:
         data = json.loads(content)
     except json.JSONDecodeError:
-        # LLM may return comma-separated objects without an array wrapper:
-        #   {"subject":"Bob",...},
-        #   {"subject":"Bob",...}
-        # Wrap them in an array and retry.
-        if content.strip().startswith("{"):
+        # Fallback: maybe the content is a single dict with a "facts" key
+        if stripped.startswith("{"):
             try:
-                data = json.loads(f"[{content}]")
+                data = json.loads(content)
             except json.JSONDecodeError:
-                logger = structlog.get_logger()
-                logger.warning(
-                    "fact_extraction.parse_failed",
-                    content_preview=content[:200],
-                )
-                return []
-        else:
-            return []
+                pass
+        logger.warning(
+            "fact_extraction.parse_failed",
+            content_preview=content[:200],
+        )
+        return []
 
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
         return data.get("facts", data.get("triples", []))
 
-    logger = structlog.get_logger()
     logger.warning(
         "fact_extraction.unexpected_type",
         json_type=type(data).__name__,

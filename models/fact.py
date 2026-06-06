@@ -9,10 +9,11 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
-    ForeignKey,
+    ARRAY,
     Float,
+    ForeignKey,
     Index,
-    Integer,
+    TIMESTAMP,
     Text,
     func,
 )
@@ -88,12 +89,20 @@ class Fact(TimestampMixin, Base):
         ForeignKey("episodes.id", ondelete="SET NULL"),
         nullable=True,
     )
-    valid_from: Mapped[datetime | None] = mapped_column(nullable=True)
-    valid_to: Mapped[datetime | None] = mapped_column(nullable=True)
-    invalid_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    valid_from: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True,
+    )
+    valid_to: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True,
+    )
+    invalid_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True,
+    )
     # TechLead note: Text is a stand-in for ``vector(1536)``. The Alembic
     # migration will alter this column when pgvector is available.
-    embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        ARRAY(Float), nullable=True, default=None,
+    )
 
     __table_args__ = (
         Index("ix_fact_user_id", "user_id"),

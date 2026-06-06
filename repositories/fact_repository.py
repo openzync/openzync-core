@@ -74,6 +74,7 @@ class FactRepository:
             confidence=confidence,
             source_episode_id=source_episode_id,
             valid_from=valid_from or datetime.now(),
+            embedding=[],
         )
         self._db.add(fact)
         await self._db.flush()
