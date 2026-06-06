@@ -1,11 +1,11 @@
 """Graph service — business logic for knowledge-graph query operations.
 
-This service wraps ``FalkorDBBackend`` (via ``GraphBackend`` ABC) to provide
+This service wraps a ``GraphBackend`` implementation (e.g.
+``PostgresGraphBackend`` or legacy ``FalkorDBBackend``) to provide
 a clean service-layer interface for the graph query endpoints.
 
 Every method enforces org_id isolation. All methods gracefully degrade when
-the graph backend (Graphiti / FalkorDB) is not available — returning empty
-results rather than erroring.
+no graph backend is available — returning empty results rather than erroring.
 """
 
 from __future__ import annotations

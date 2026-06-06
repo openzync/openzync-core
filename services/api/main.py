@@ -29,7 +29,9 @@ from core.config import Settings
 from core.db import close_db_engine, get_async_session, init_db_engine
 from core.exceptions import register_exception_handlers
 from core.graph_backend import init_graph_backend
-from core.graphiti import close_graphiti
+# graphiti is only used when GRAPH_BACKEND=graphiti (legacy)
+# The factory handles the conditional import; this shutdown guard
+# avoids importing the 361-line module on every startup.
 from core.logging import setup_logging
 from core.redis import close_redis, init_redis
 from middleware.auth import AuthMiddleware
@@ -86,10 +88,12 @@ def create_app() -> FastAPI:
 
         # ── Shutdown (reverse order of initialisation) ────────────────────
         # Close Graphiti client if it was initialized by the factory
-        try:
-            await close_graphiti()
-        except Exception:
-            pass
+        if hasattr(app.state, 'graph_backend'):
+            from core.graphiti import close_graphiti
+            try:
+                await close_graphiti()
+            except Exception:
+                pass
         await close_arq()
         await close_redis(redis_client)
         await close_db_engine(db_engine)

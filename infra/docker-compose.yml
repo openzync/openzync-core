@@ -19,7 +19,6 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://memgraph:memgraph@postgres:5432/memgraph
       REDIS_URL: redis://redis:6379/0
-      FALKORDB_URL: redis://falkordb:6380
       OLLAMA_BASE_URL: http://ollama:11434
       OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
       LOG_LEVEL: DEBUG
@@ -27,8 +26,6 @@ services:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      falkordb:
         condition: service_healthy
     logging: *default-logging
     restart: unless-stopped
@@ -42,7 +39,6 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://memgraph:memgraph@postgres:5432/memgraph
       REDIS_URL: redis://redis:6379/0
-      FALKORDB_URL: redis://falkordb:6380
       LOG_LEVEL: DEBUG
     depends_on:
       api:
@@ -65,19 +61,6 @@ services:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U memgraph"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    logging: *default-logging
-    restart: unless-stopped
-
-  # ── FalkorDB (graph database for agent memory) ────────────────────────────
-  falkordb:
-    image: falkordb/falkordb:latest
-    ports:
-      - "6380:6380"
-    healthcheck:
-      test: ["CMD", "redis-cli", "-p", "6380", "PING"]
       interval: 5s
       timeout: 5s
       retries: 5

@@ -5,7 +5,7 @@ Rank Fusion (RRF) for robust context retrieval:
 
 1. **Vector search** (pgvector cosine similarity) — semantic matching.
 2. **BM25 search** (PostgreSQL ``ts_rank``) — keyword / lexical matching.
-3. **Graph BFS** (Graphiti / FalkorDB) — entity-relationship traversal.
+3. **Graph BFS** (PostgreSQL recursive CTE) — entity-relationship traversal.
 
 The RRF formula is: ``score(d) = Σ 1 / (60 + rank_s(d))`` across
 all three sources.  Results are deduplicated by source ID and the
@@ -377,7 +377,7 @@ class HybridRetriever:
                     "query": query,
                     "hint": (
                         "Graph BFS requires a configured graph backend. "
-                        "Set MG_GRAPH_BACKEND and ensure FalkorDB is running."
+                        "Set MG_GRAPH_BACKEND=postgres to use the native backend."
                     ),
                 },
             )

@@ -302,7 +302,7 @@ async def extract_entities(
                 await engine.dispose()
 
         logger.info(
-            "entity_extraction.graphiti_persisted",
+            "entity_extraction.persisted",
             episode_id=episode_id,
             entity_count=len(name_to_node),
             relationship_count=persisted_count,
