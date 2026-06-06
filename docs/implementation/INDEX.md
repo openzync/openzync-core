@@ -75,6 +75,7 @@ The heart of the system: memory ingestion, context assembly, and knowledge graph
 | 4.3 | [03-temporal-queries.md](04-knowledge-graph/03-temporal-queries.md) | Valid-time queries, bi-temporal patterns, fact versioning |
 | 4.4 | [04-community-detection.md](04-knowledge-graph/04-community-detection.md) | Louvain/Label Propagation, LLM summarisation worker, schedule |
 | 4.5 | [05-graph-client-abstraction.md](04-knowledge-graph/05-graph-client-abstraction.md) | Backend-agnostic wrapper: FalkorDB ↔ Neo4j, org_id enforcement |
+| 4.6 | [06-postgres-graph-backend.md](04-knowledge-graph/06-postgres-graph-backend.md) | PostgreSQL-native graph backend replacing Graphiti, recursive CTE BFS, migration plan |
 
 ---
 

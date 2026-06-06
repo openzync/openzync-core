@@ -107,12 +107,12 @@ HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     extract_entities,
     embed_episode,
     extract_facts,
+    embed_fact,
 ]
 """Tasks assigned to the high-priority queue (real-time ingestion)."""
 
 LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     sync_to_graph,
-    embed_fact,
 ]
 """Tasks assigned to the low-priority queue (scheduled batch)."""
 

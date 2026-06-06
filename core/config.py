@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic.networks import PostgresDsn, RedisDsn
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -42,21 +42,34 @@ class Settings(BaseSettings):
     )
 
     # ── Graph Backend ─────────────────────────────────────────────────────
-    FALKORDB_URL: RedisDsn = Field(
-        description="FalkorDB connection string (Redis with graph module).",
+    FALKORDB_URL: RedisDsn | None = Field(
+        default=None,
+        description="FalkorDB connection string (required only when GRAPH_BACKEND=graphiti).",
         validation_alias="MG_FALKORDB_URL",
     )
-    GRAPH_BACKEND: Literal["falkordb", "neo4j"] = Field(
-        default="falkordb",
-        description="Which graph database to use for knowledge-graph memory.",
+    GRAPH_BACKEND: Literal["postgres", "graphiti", "falkordb", "neo4j", "none"] = Field(
+        default="postgres",
+        description=(
+            "Graph backend to use: postgres (native), graphiti (FalkorDB), "
+            "or none (disable).  Accepts 'falkordb' as an alias for 'graphiti'."
+        ),
         validation_alias="MG_GRAPH_BACKEND",
+    )
+    GRAPH_MAX_TRAVERSAL_DEPTH: int = Field(
+        default=2,
+        ge=1,
+        le=10,
+        description="Maximum BFS traversal depth for the graph backend.",
+        validation_alias="MG_GRAPH_MAX_TRAVERSAL_DEPTH",
     )
 
     # ── LLM ───────────────────────────────────────────────────────────────
-    LLM_BACKEND: Literal["ollama", "openai", "azure", "anthropic", "openrouter"] = Field(
-        default="ollama",
-        description="LLM provider backend.",
-        validation_alias="MG_LLM_BACKEND",
+    LLM_BACKEND: Literal["ollama", "openai", "azure", "anthropic", "openrouter"] = (
+        Field(
+            default="ollama",
+            description="LLM provider backend.",
+            validation_alias="MG_LLM_BACKEND",
+        )
     )
     LLM_MODEL: str = Field(
         default="llama3.2:3b",
@@ -162,6 +175,22 @@ class Settings(BaseSettings):
     )
 
     # ── Rate Limiting ─────────────────────────────────────────────────────
+
+    @model_validator(mode="after")
+    def validate_graph_config(self) -> "Settings":
+        """Validate graph backend configuration.
+
+        Ensures FALKORDB_URL is set when using the graphiti backend.
+        Accepts 'falkordb' as a backward-compatible alias for 'graphiti'.
+        """
+        backend = self.GRAPH_BACKEND
+        if backend in ("falkordb", "neo4j"):
+            # Map legacy aliases — they all route to the graphiti code path
+            object.__setattr__(self, "GRAPH_BACKEND", "graphiti")
+        if self.GRAPH_BACKEND == "graphiti" and not self.FALKORDB_URL:
+            raise ValueError("FALKORDB_URL is required when GRAPH_BACKEND=graphiti")
+        return self
+
     RATE_LIMIT_IP_MAX: int = Field(
         default=10,
         ge=1,

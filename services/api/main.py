@@ -28,7 +28,8 @@ from core.arq import close_arq, init_arq
 from core.config import Settings
 from core.db import close_db_engine, get_async_session, init_db_engine
 from core.exceptions import register_exception_handlers
-from core.graphiti import close_graphiti, init_graphiti
+from core.graph_backend import init_graph_backend
+from core.graphiti import close_graphiti
 from core.logging import setup_logging
 from core.redis import close_redis, init_redis
 from middleware.auth import AuthMiddleware
@@ -36,7 +37,6 @@ from middleware.logging import LoggingMiddleware
 from middleware.rate_limit import RateLimitMiddleware
 from middleware.request_id import RequestIDMiddleware
 from middleware.tracing import TracingMiddleware
-from packages.graphiti_client.backends.falkordb import FalkorDBBackend
 from routers import admin, context, facts, graph, health, memory, search, sessions, users
 
 
@@ -64,35 +64,32 @@ def create_app() -> FastAPI:
         arq_pool = await init_arq(str(settings.REDIS_URL))
         app.state.arq_pool = arq_pool
 
-        # Init Graphiti (FalkorDB graph client) — optional in Phase 0
-        try:
-            graphiti_client = await init_graphiti(str(settings.FALKORDB_URL))
-            app.state.graphiti_client = graphiti_client
+        # Init graph backend — selected by GRAPH_BACKEND config
+        # Supports: postgres (default), graphiti (legacy FalkorDB), none
+        # For the postgres backend, we create a dedicated session that stays
+        # alive for the entire app lifetime (yield keeps the async with open).
+        session_factory = get_async_session(db_engine)
+        async with session_factory() as graph_session:
+            try:
+                app.state.graph_backend = await init_graph_backend(db=graph_session)
+            except Exception:
+                import structlog
 
-            # Wrap the underlying Graphiti SDK instance in FalkorDBBackend
-            # for the GraphBackend ABC interface.  graphiti_client.client
-            # returns the raw graphiti_core.Graphiti SDK instance.
-            if graphiti_client.is_ready:
-                from packages.graphiti_client.backends.falkordb import FalkorDBBackend
-                app.state.graph_backend = FalkorDBBackend(graphiti_client.client)
-            else:
+                structlog.get_logger().warning(
+                    "graph_backend.init_failed",
+                    error="Graph backend could not be initialised. "
+                    "Graph-backed memory features will be unavailable.",
+                )
                 app.state.graph_backend = None
-        except Exception:
-            # Graphiti is optional for Phase 0 — log a warning and continue.
-            import structlog
 
-            structlog.get_logger().warning(
-                "graphiti.init_failed",
-                error="Graphiti client could not be initialised. "
-                "Graph-backed memory features will be unavailable.",
-            )
-            app.state.graphiti_client = None
-            app.state.graph_backend = None
-
-        yield
+            yield
 
         # ── Shutdown (reverse order of initialisation) ────────────────────
-        await close_graphiti()
+        # Close Graphiti client if it was initialized by the factory
+        try:
+            await close_graphiti()
+        except Exception:
+            pass
         await close_arq()
         await close_redis(redis_client)
         await close_db_engine(db_engine)

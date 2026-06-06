@@ -16,7 +16,12 @@ logger = structlog.get_logger()
 
 
 @with_retry(max_retries=3, base_delay_s=2.0)
-async def embed_fact(ctx: object, fact_id: str, content: str) -> None:
+async def embed_fact(
+    ctx: object,
+    fact_id: str,
+    content: str | None = None,
+    **kwargs: object,  # noqa: ARG002 — accepts org_id, user_id from API caller
+) -> None:
     """Generate an embedding for a fact and store it in ``facts.embedding``.
 
     Resolution chain for the embedding model:
@@ -27,7 +32,8 @@ async def embed_fact(ctx: object, fact_id: str, content: str) -> None:
     Args:
         ctx: ARQ worker context (unused — required by ARQ contract).
         fact_id: UUID of the fact to embed.
-        content: Fact text content to embed.
+        content: Fact text content to embed. If not provided (e.g. when
+            called from ``fact_service``), it will be fetched from the DB.
 
     Raises:
         ValueError: If the embedding dimension does not match
@@ -41,6 +47,29 @@ async def embed_fact(ctx: object, fact_id: str, content: str) -> None:
     from sqlalchemy.ext.asyncio import create_async_engine
 
     logger.info("embed_fact.started", fact_id=fact_id)
+
+    # ── 0. Fetch content from DB if not provided ──────────────────────────
+    if content is None:
+        engine = create_async_engine(
+            str(settings.DATABASE_URL),
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=2,
+        )
+        session_factory = get_async_session(engine)
+        try:
+            async with session_factory() as db:
+                result = await db.execute(
+                    text("SELECT content FROM facts WHERE id = :id"),
+                    {"id": fact_id},
+                )
+                row = result.one_or_none()
+                if row is None:
+                    logger.error("embed_fact.fact_not_found", fact_id=fact_id)
+                    return
+                content = row[0]
+        finally:
+            await engine.dispose()
 
     # ── 1. Resolve the embedding backend ──────────────────────────────────
     provider = settings.EMBEDDING_BACKEND or None

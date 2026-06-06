@@ -171,46 +171,87 @@ async def extract_entities(
             relationships=len(relationships),
         )
 
-        # ── 4. Persist entities to Graphiti (if available) ────────────────────
-        entity_repo = EntityRepository()
+        # ── 4. Persist entities to graph (if available) ─────────────────────
+        # Create a temporary DB engine + session for the entity repository
+        from sqlalchemy.ext.asyncio import create_async_engine as _create_engine
+
+        _engine = _create_engine(
+            str(settings.DATABASE_URL),
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=2,
+        )
+        _session_factory = get_async_session(_engine)
+
         name_to_node: dict[str, dict] = {}
 
-        for entity in entities:
-            entity_name = entity.get("name", "")
-            entity_type = entity.get("type", "Custom")
-            mentions: list[str] = entity.get("mentions", [])
-            summary = (
-                f"{entity_name} ({entity_type}) — "
-                f"mentioned as: {', '.join(set(mentions))}"
-                if mentions
-                else f"{entity_name} ({entity_type})"
-            )
+        try:
+            async with _session_factory() as _db:
+                entity_repo = EntityRepository(db=_db)
 
-            node = await entity_repo.upsert_entity(
-                org_id=uuid.UUID(org_id),
-                name=entity_name,
-                entity_type=entity_type,
-                summary=summary,
-            )
-            if node is not None:
-                name_to_node[entity_name] = node
+                for entity in entities:
+                    entity_name = entity.get("name", "")
+                    entity_type = entity.get("type", "Custom")
+                    mentions: list[str] = entity.get("mentions", [])
+                    summary = (
+                        f"{entity_name} ({entity_type}) — "
+                        f"mentioned as: {', '.join(set(mentions))}"
+                        if mentions
+                        else f"{entity_name} ({entity_type})"
+                    )
 
-        # ── 5. Persist relationships to Graphiti ──────────────────────────────
-        for rel in relationships:
-            subject = rel.get("subject", "")
-            predicate = rel.get("predicate", "")
-            obj = rel.get("object", "")
+                    node = await entity_repo.upsert_entity(
+                        org_id=uuid.UUID(org_id),
+                        name=entity_name,
+                        entity_type=entity_type,
+                        summary=summary,
+                    )
+                    if node is not None:
+                        name_to_node[entity_name] = node
 
-            if not subject or not predicate or not obj:
-                continue
+                # ── 5. Persist relationships to graph ─────────────────────────
+                for rel in relationships:
+                    subject = rel.get("subject", "")
+                    predicate = rel.get("predicate", "")
+                    obj = rel.get("object", "")
 
-            if subject in name_to_node and obj in name_to_node:
-                await entity_repo.upsert_relationship(
-                    subject=subject, predicate=predicate, obj=obj,
-                    org_id=uuid.UUID(org_id),
-                )
+                    if not subject or not predicate or not obj:
+                        continue
 
-        # ── 6. Persist relationships as facts in PostgreSQL ───────────────────
+                    if subject in name_to_node and obj in name_to_node:
+                        await entity_repo.upsert_relationship(
+                            subject=subject, predicate=predicate, obj=obj,
+                            org_id=uuid.UUID(org_id),
+                        )
+
+                # ── 6. Link entities to this episode in graph_episode_entities ───
+                # This replaces the separate sync_to_graph ARQ task.  Linking
+                # happens inline so it's always consistent with entity extraction.
+                episode_uuid = uuid.UUID(episode_id)
+                for entity_name, entity_node in name_to_node.items():
+                    await _db.execute(
+                        text(
+                            """
+                            INSERT INTO graph_episode_entities
+                                (episode_id, entity_id, created_at)
+                            VALUES (:episode_id, :entity_id, now())
+                            ON CONFLICT (episode_id, entity_id) DO NOTHING
+                            """
+                        ),
+                        {
+                            "episode_id": episode_uuid,
+                            "entity_id": uuid.UUID(entity_node["id"]),
+                        },
+                    )
+
+                # ⚠️ Commit is required — SQLAlchemy AsyncSession does NOT
+                # auto-commit when the context manager exits. Without this,
+                # all entity/relationship writes are silently rolled back.
+                await _db.commit()
+        finally:
+            await _engine.dispose()
+
+        # ── 7. Persist relationships as facts in PostgreSQL ───────────────────
         if relationships:
             entity_type_map: dict[str, str] = {
                 e["name"]: e.get("type", "Custom") for e in entities

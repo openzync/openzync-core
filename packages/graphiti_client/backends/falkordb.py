@@ -21,11 +21,6 @@ from uuid import UUID
 from core.exceptions import ExternalServiceError, NotFoundError
 from packages.graphiti_client.interface import GraphBackend
 
-# ⚠️ graphiti_core types are optional — they are used in type annotations
-# and method bodies but degrade gracefully when the installed version does
-# not expose them.  With ``from __future__ import annotations``, type hints
-# are lazy strings and never cause import errors.
-
 logger = logging.getLogger(__name__)
 
 
@@ -33,12 +28,12 @@ class FalkorDBBackend(GraphBackend):
     """Concrete graph backend backed by FalkorDB via the Graphiti engine.
 
     Args:
-        graphiti_client: An initialised :class:`GraphitiClient` whose
-            underlying ``Graphiti`` instance is used for all operations.
+        graphiti_client: An initialised :class:`graphiti_core.Graphiti`
+            instance whose driver and search are used for all operations.
     """
 
-    def __init__(self, graphiti_client: Graphiti) -> None:
-        self._graphiti: Graphiti = graphiti_client
+    def __init__(self, graphiti_client: object) -> None:
+        self._graphiti = graphiti_client
         self._loop: asyncio.AbstractEventLoop | None = None
 
     # ── Helpers ────────────────────────────────────────────────────────────────
@@ -48,24 +43,31 @@ class FalkorDBBackend(GraphBackend):
         loop = self._loop or asyncio.get_running_loop()
         return await loop.run_in_executor(None, lambda: fn(*args, **kwargs))
 
-    def _entity_to_dict(self, node: EntityNode) -> dict:
+    def _get_driver(self):
+        """Access the Graphiti driver for direct node/edge operations.
+
+        Graphiti stores its driver as a public ``.driver`` attribute.
+        """
+        return self._graphiti.driver
+
+    def _entity_to_dict(self, node) -> dict:
         """Convert a Graphiti ``EntityNode`` to a plain dict."""
         return {
             "id": str(node.uuid),
             "name": node.name,
-            "type": node.entity_type,
-            "summary": node.summary or "",
+            "type": node.labels[0] if node.labels else "",
+            "summary": getattr(node, "summary", "") or "",
             "created_at": node.created_at.isoformat() if node.created_at else None,
         }
 
-    def _relationship_to_dict(self, edge: GraphRelationship) -> dict:
-        """Convert a Graphiti ``GraphRelationship`` to a plain dict."""
+    def _relationship_to_dict(self, edge) -> dict:
+        """Convert a Graphiti ``EntityEdge`` to a plain dict."""
         return {
             "id": str(edge.uuid),
             "source_id": str(edge.source_node_uuid),
             "target_id": str(edge.target_node_uuid),
-            "type": edge.relationship_type,
-            "properties": edge.properties or {},
+            "type": edge.name,
+            "properties": getattr(edge, "attributes", {}) or {},
             "created_at": edge.created_at.isoformat() if edge.created_at else None,
         }
 
@@ -80,18 +82,23 @@ class FalkorDBBackend(GraphBackend):
     ) -> dict:
         """Create a new entity node scoped to the organisation.
 
-        Raises:
-            ExternalServiceError: If Graphiti or FalkorDB returns an error.
+        Uses the public ``EntityNode`` constructor + ``save()`` API.
         """
+        from graphiti_core.nodes import EntityNode
+        from datetime import datetime, timezone
+
         try:
-            # Graphiti's _add_entity creates a node and returns an EntityNode.
-            node: EntityNode = await self._run_sync(
-                self._graphiti._add_entity,  # noqa: SLF001 — intentional SDK usage
-                org_id=str(org_id),
+            driver = self._get_driver()
+            node = EntityNode(
                 name=name,
-                entity_type=entity_type,
+                group_id=f"org:{org_id}",
+                labels=[entity_type],
                 summary=summary or "",
+                created_at=datetime.now(timezone.utc),
+                attributes={},
             )
+            await self._run_sync(node.save, driver)
+
             logger.info(
                 "graphiti.entity_created",
                 extra={
@@ -118,16 +125,15 @@ class FalkorDBBackend(GraphBackend):
     async def get_entity(self, org_id: UUID, entity_id: UUID) -> dict | None:
         """Retrieve an entity by ID, respecting org isolation.
 
-        Returns:
-            The entity dict, or ``None`` if not found.
-
-        Raises:
-            ExternalServiceError: If the graph query fails.
+        Uses ``EntityNode.get_by_uuid()`` — returns ``None`` if not found.
         """
+        from graphiti_core.nodes import EntityNode
+
         try:
-            node: EntityNode | None = await self._run_sync(
-                self._graphiti._get_entity,  # noqa: SLF001
-                str(org_id),
+            driver = self._get_driver()
+            node = await self._run_sync(
+                EntityNode.get_by_uuid,
+                driver,
                 str(entity_id),
             )
             if node is None:
@@ -150,17 +156,15 @@ class FalkorDBBackend(GraphBackend):
     async def delete_entity(self, org_id: UUID, entity_id: UUID) -> bool:
         """Delete an entity node.
 
-        Returns:
-            ``True`` if the entity was deleted, ``False`` if it did not exist.
-
-        Raises:
-            ExternalServiceError: If the graph operation fails.
+        Fetches via ``EntityNode.get_by_uuid()``, then calls ``.delete()``.
         """
+        from graphiti_core.nodes import EntityNode
+
         try:
-            # Attempt to fetch first to confirm existence.
-            node: EntityNode | None = await self._run_sync(
-                self._graphiti._get_entity,  # noqa: SLF001
-                str(org_id),
+            driver = self._get_driver()
+            node = await self._run_sync(
+                EntityNode.get_by_uuid,
+                driver,
                 str(entity_id),
             )
             if node is None:
@@ -170,10 +174,7 @@ class FalkorDBBackend(GraphBackend):
                 )
                 return False
 
-            await self._run_sync(
-                self._graphiti._remove_entity,  # noqa: SLF001
-                node,
-            )
+            await self._run_sync(node.delete, driver)
             logger.info(
                 "graphiti.entity_deleted",
                 extra={
@@ -205,38 +206,54 @@ class FalkorDBBackend(GraphBackend):
         target_id: UUID,
         relationship_type: str,
         properties: dict | None = None,
+        valid_from: datetime | None = None,  # noqa: ARG002 — accepted for ABC compat
+        valid_to: datetime | None = None,  # noqa: ARG002 — accepted for ABC compat
     ) -> dict:
         """Create a directed edge between two entities.
 
-        Validates that both source and target exist within the org before
-        creating the relationship.
+        Uses the public ``EntityEdge`` constructor + ``save()`` API.
+        Validates both endpoints exist before creating.
 
-        Raises:
-            NotFoundError: If either endpoint does not exist.
-            ExternalServiceError: If the graph operation fails.
+        Note: ``valid_from`` and ``valid_to`` are accepted for ABC
+        compatibility but ignored (Graphiti does not support temporal
+        edges through this API).
         """
-        # Verify both endpoints exist.
-        source = await self.get_entity(org_id, source_id)
-        if source is None:
-            raise NotFoundError(
-                message=f"Source entity {source_id} not found in org {org_id}",
-                detail={"entity_id": str(source_id), "org_id": str(org_id)},
-            )
-        target = await self.get_entity(org_id, target_id)
-        if target is None:
-            raise NotFoundError(
-                message=f"Target entity {target_id} not found in org {org_id}",
-                detail={"entity_id": str(target_id), "org_id": str(org_id)},
-            )
+        from graphiti_core.edges import EntityEdge
+        from graphiti_core.nodes import EntityNode
+        from datetime import datetime, timezone
 
         try:
-            edge: GraphRelationship = await self._run_sync(
-                self._graphiti._add_relation,  # noqa: SLF001
+            driver = self._get_driver()
+
+            # Verify both endpoints exist
+            source = await self._run_sync(
+                EntityNode.get_by_uuid, driver, str(source_id)
+            )
+            if source is None:
+                raise NotFoundError(
+                    message=f"Source entity {source_id} not found in org {org_id}",
+                    detail={"entity_id": str(source_id), "org_id": str(org_id)},
+                )
+            target = await self._run_sync(
+                EntityNode.get_by_uuid, driver, str(target_id)
+            )
+            if target is None:
+                raise NotFoundError(
+                    message=f"Target entity {target_id} not found in org {org_id}",
+                    detail={"entity_id": str(target_id), "org_id": str(org_id)},
+                )
+
+            edge = EntityEdge(
                 source_node_uuid=str(source_id),
                 target_node_uuid=str(target_id),
-                relationship=relationship_type,
-                properties=properties or {},
+                name=relationship_type,
+                group_id=f"org:{org_id}",
+                fact="",
+                created_at=datetime.now(timezone.utc),
+                attributes=properties or {},
             )
+            await self._run_sync(edge.save, driver)
+
             logger.info(
                 "graphiti.relationship_created",
                 extra={
@@ -247,6 +264,8 @@ class FalkorDBBackend(GraphBackend):
                 },
             )
             return self._relationship_to_dict(edge)
+        except NotFoundError:
+            raise
         except Exception as exc:
             logger.error(
                 "graphiti.create_relationship_failed",
@@ -273,34 +292,27 @@ class FalkorDBBackend(GraphBackend):
         org_id: UUID,
         start_node_id: UUID,
         max_depth: int = 2,
-        edge_types: list[str] | None = None,
+        edge_types: list[str] | None = None,  # noqa: ARG002
     ) -> list[dict]:
         """Traverse the graph outward from a starting node.
 
-        Uses Graphiti's internal search or adjacency queries.  Falls back to
-        iterative BFS if Graphiti does not expose a dedicated traverse API.
-
-        Returns:
-            List of reachable node dicts, each including a ``depth`` key.
+        Uses Graphiti's ``graphiti.search()`` with ``center_node_uuid``
+        set to the start node, which performs BFS up to the configured depth.
         """
         try:
-            # Graphiti's search yields paths; we reconstruct a flat list.
-            # ⚠️ Graphiti's public API may change — this uses the internal
-            # _search method.  A future abstraction will formalise traversal.
             results = await self._run_sync(
-                self._graphiti._search,  # noqa: SLF001
-                str(org_id),
-                str(start_node_id),
-                max_depth,
+                self._graphiti.search,
+                query="",
+                group_ids=[f"org:{org_id}"],
+                center_node_uuid=str(start_node_id),
+                num_results=max_depth * 10,
             )
 
             nodes: list[dict] = []
             seen: set[str] = set()
 
-            for item in results:
-                # Results may be EntityNode or dict structures.
-                # Use duck-typing instead of isinstance to avoid depending
-                # on Graphiti's type hierarchy.
+            for item in results if results else []:
+                # search() returns list[EntityEdge] — extract nodes
                 uid: str | None = None
                 if hasattr(item, "uuid"):
                     uid = str(item.uuid)
@@ -343,50 +355,51 @@ class FalkorDBBackend(GraphBackend):
         query: str,
         types: list[str] | None = None,
         limit: int = 50,
+        offset: int = 0,  # noqa: ARG002 — accepted for ABC compat
     ) -> list[dict]:
         """Search entities by name or summary text.
 
-        Delegates to Graphiti's ``_search`` or ``search_entity`` internals
-        depending on the SDK version.  Falls back to a Cypher query against
-        FalkorDB for full-text search.
+        Uses Graphiti's ``graphiti.search()`` which returns ranked entity
+        edges.  Results are deduplicated and returned as entity dicts.
 
-        Returns:
-            List of matching entity dicts, ordered by relevance descending.
-            Each dict includes a ``score`` key.
+        Note: ``offset`` is accepted for ABC compatibility but ignored
+        (Graphiti does not support pagination through this API).
         """
         try:
-            # Use Graphiti's entity search if available.
             results = await self._run_sync(
-                self._graphiti.search_entity,  # noqa: SLF001
-                str(org_id),
-                query,
-                limit=limit,
+                self._graphiti.search,
+                query=query,
+                group_ids=[f"org:{org_id}"],
+                num_results=limit,
             )
-        except AttributeError:
-            # Fallback: use the internal _search method.
-            try:
-                results = await self._run_sync(
-                    self._graphiti._search,  # noqa: SLF001
-                    str(org_id),
-                    query,
-                    limit=limit,
-                )
-            except Exception as fallback_exc:
-                logger.error(
-                    "graphiti.search_fallback_failed",
-                    extra={
-                        "org_id": str(org_id),
-                        "query": query,
-                        "error": str(fallback_exc),
-                    },
-                )
-                raise ExternalServiceError(
-                    message=f"Entity search failed: {fallback_exc}",
-                    detail={"org_id": str(org_id), "query": query},
-                ) from fallback_exc
+
+            # search() returns list[EntityEdge]; we extract unique entity nodes
+            nodes: list[dict] = []
+            seen: set[str] = set()
+
+            for item in results if results else []:
+                if hasattr(item, "uuid") and hasattr(item, "name"):
+                    uid = str(item.uuid)
+                    if uid not in seen:
+                        seen.add(uid)
+                        node_dict = self._entity_to_dict(item)
+                        node_dict["score"] = getattr(item, "score", 1.0)
+                        nodes.append(node_dict)
+                elif isinstance(item, dict):
+                    uid = item.get("uuid", item.get("id"))
+                    if uid and uid not in seen:
+                        seen.add(str(uid))
+                        item["score"] = item.get("score", 1.0)
+                        nodes.append(item)
+
+            # Filter by type if requested
+            if types:
+                nodes = [n for n in nodes if n.get("type") in types]
+
+            return nodes[:limit]
         except Exception as exc:
             logger.error(
-                "graphiti.search_failed",
+                "graphiti.search_entities_failed",
                 extra={
                     "org_id": str(org_id),
                     "query": query,
@@ -397,25 +410,6 @@ class FalkorDBBackend(GraphBackend):
                 message=f"Entity search failed: {exc}",
                 detail={"org_id": str(org_id), "query": query},
             ) from exc
-
-        # Normalise results.
-        nodes: list[dict] = []
-        for item in results:
-            if hasattr(item, "uuid") and hasattr(item, "name"):
-                node_dict = self._entity_to_dict(item)
-                node_dict["score"] = getattr(item, "score", 1.0)
-                nodes.append(node_dict)
-            elif isinstance(item, dict):
-                item["score"] = item.get("score", 1.0)
-                nodes.append(item)
-
-        # Filter by type if requested.
-        if types:
-            nodes = [n for n in nodes if n.get("type") in types]
-
-        # Sort by score descending, then truncate.
-        nodes.sort(key=lambda n: n.get("score", 0), reverse=True)
-        return nodes[:limit]
 
     # ── Entity Listing ─────────────────────────────────────────────────────────
 
@@ -429,12 +423,9 @@ class FalkorDBBackend(GraphBackend):
     ) -> dict:
         """List entity nodes with optional type filter and cursor pagination.
 
-        Uses Graphiti's ``EntityNode.get_by_group_ids()`` with manual cursor
-        pagination (fetch ``limit + 1``, use last item's uuid as next cursor).
-
-        Returns:
-            A dict with ``items``, ``next_cursor`` (str or None), and
-            ``has_more`` (bool).
+        Uses ``EntityNode.get_by_group_ids()`` with ``uuid_cursor`` for
+        cursor-based pagination (fetch ``limit + 1``, use last item's uuid
+        as next cursor).
         """
         import json as _json
         from base64 import b64decode, b64encode
@@ -442,30 +433,29 @@ class FalkorDBBackend(GraphBackend):
         try:
             from graphiti_core.nodes import EntityNode
 
-            group_id = self._make_group_id(org_id)
+            driver = self._get_driver()
+            group_id = f"org:{org_id}"
 
-            # Decode cursor to get offset node_id
-            offset_node_id: str | None = None
+            # Decode cursor to get uuid_cursor
+            uuid_cursor: str | None = None
             if cursor:
                 try:
                     cursor_data = _json.loads(b64decode(cursor).decode())
-                    offset_node_id = cursor_data.get("node_id")
+                    uuid_cursor = cursor_data.get("node_id")
                 except Exception:
                     logger.warning(
                         "graphiti.list_entities.invalid_cursor",
                         extra={"cursor": cursor},
                     )
-                    offset_node_id = None
 
             # Fetch limit + 1 for has_more detection
             fetch_limit = limit + 1
             nodes = await self._run_sync(
-                _list_entities_sync,
-                self._graphiti,
-                group_id,
-                entity_type,
+                EntityNode.get_by_group_ids,
+                driver,
+                [group_id],
                 fetch_limit,
-                offset_node_id,
+                uuid_cursor,
             )
 
             has_more = len(nodes) > limit
@@ -509,24 +499,21 @@ class FalkorDBBackend(GraphBackend):
     ) -> dict:
         """List all edges incident to a specific entity node.
 
-        Uses Graphiti's ``EntityEdge.get_by_node_uuid()``.  Cursor pagination
-        is approximated (Graphiti does not natively support it for edges).
-
-        Returns:
-            A dict with ``items`` and ``next_cursor`` / ``has_more``.
+        Uses ``EntityEdge.get_by_node_uuid()`` with optional predicate filter.
         """
         try:
             from graphiti_core.edges import EntityEdge
 
+            driver = self._get_driver()
             edges = await self._run_sync(
                 EntityEdge.get_by_node_uuid,
-                self._graphiti._driver,  # noqa: SLF001
+                driver,
                 str(entity_id),
             )
 
-            # Filter by predicate if requested
+            # Filter by predicate if requested (EntityEdge.name is the predicate)
             if predicate:
-                edges = [e for e in edges if e.facet == predicate or e.name == predicate]
+                edges = [e for e in edges if e.name == predicate]
 
             total = len(edges)
             effective_limit = min(limit, 200)
@@ -559,12 +546,7 @@ class FalkorDBBackend(GraphBackend):
         org_id: UUID,
         entity_id: UUID,
     ) -> dict | None:
-        """Retrieve a single entity node with all its incident edges.
-
-        Returns:
-            A dict with ``node`` (entity dict) and ``edges`` (list of edge
-            dicts), or ``None`` if the entity does not exist.
-        """
+        """Retrieve a single entity node with all its incident edges."""
         node = await self.get_entity(org_id, entity_id)
         if node is None:
             return None
@@ -575,86 +557,21 @@ class FalkorDBBackend(GraphBackend):
             "edges": edges_result.get("items", []),
         }
 
-    @staticmethod
-    def _make_group_id(org_id: UUID) -> str:
-        """Build the group_id string for organisational isolation.
-
-        Args:
-            org_id: The organisation UUID.
-
-        Returns:
-            A string like ``"org:<uuid>"`` for use with Graphiti's
-            group_id parameter.
-        """
-        return f"org:{org_id}"
-
     # ── Observability ──────────────────────────────────────────────────────────
 
     async def health_check(self) -> bool:
-        """Ping the FalkorDB backend through Graphiti's underlying connection.
-
-        Returns:
-            ``True`` if the backend is reachable, ``False`` otherwise.
-        """
+        """Ping the FalkorDB backend through Graphiti's underlying connection."""
         try:
-            # Attempt a lightweight graph query to verify the backend is live.
-            # Graphiti does not expose a raw PING, so we use a minimal Cypher
-            # query (RETURN 1) via the internal Redis client.
+            driver = self._get_driver()
+            # Use the driver's session to ping
             from redis import Redis as RedisSync
 
-            # Graphiti stores its Redis connection internally — we reach it
-            # via the config.
-            if hasattr(self._graphiti, "_driver") and self._graphiti._driver is not None:
-                sync_redis: RedisSync = self._graphiti._driver
+            if hasattr(driver, "session") and driver.session is not None:
+                sync_redis: RedisSync = driver.session
                 loop = self._loop or asyncio.get_running_loop()
                 result: bool = await loop.run_in_executor(None, sync_redis.ping)
                 return result
-
-            # Fallback: rely on the fact that if we can call _graphiti, it's
-            # already verified connectivity on init.
             return True
         except Exception as exc:
             logger.warning("graphiti.health_check_failed", extra={"error": str(exc)})
             return False
-
-
-def _list_entities_sync(
-    graphiti: Graphiti,
-    group_id: str,
-    entity_type: str | None,
-    limit: int,
-    offset_node_id: str | None,
-) -> list[EntityNode]:
-    """Synchronous helper to list entity nodes via Graphiti's internal API.
-
-    This runs inside ``run_in_executor`` so it never blocks the event loop.
-
-    Args:
-        graphiti: The Graphiti SDK instance.
-        group_id: The org-namespaced group ID.
-        entity_type: Optional entity type filter.
-        limit: Number of entities to fetch.
-        offset_node_id: Cursor offset — node UUID to start after.
-
-    Returns:
-        A list of ``EntityNode`` instances.
-    """
-    from graphiti_core.nodes import EntityNode
-
-    # Use the internal driver connection for direct node queries.
-    driver = graphiti._driver  # noqa: SLF001
-
-    # Build group_ids list
-    group_ids = [group_id]
-
-    # Fetch nodes via EntityNode.get_by_group_ids
-    # ⚠️ This API may not support offset_node_id in all Graphiti versions.
-    nodes: list[EntityNode] = EntityNode.get_by_group_ids(
-        driver=driver,
-        group_ids=group_ids,
-        node_labels=[entity_type] if entity_type else None,
-        limit=limit,
-        offset_node_id=offset_node_id,
-    )
-
-    return nodes

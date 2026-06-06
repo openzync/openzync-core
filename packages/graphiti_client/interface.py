@@ -1,10 +1,10 @@
 """Abstract interface for graph-database operations.
 
 The ``GraphBackend`` ABC defines the contract every graph backend must
-satisfy.  Currently shipped with a :class:`FalkorDBBackend
-<openzep.packages.graphiti_client.backends.falkordb.FalkorDBBackend>`
-implementation; future backends (Neo4j, Amazon Neptune, etc.) implement the
-same interface.
+satisfy.  Shipped implementations:
+
+- :class:`~.backends.falkordb.FalkorDBBackend` — Graphiti / FalkorDB (legacy)
+- :class:`~.backends.postgres.PostgresGraphBackend` — PostgreSQL-native
 
 Every method requires ``org_id`` as the first parameter — OpenZep enforces
 strict organisational isolation.  No cross-org graph traversal is possible.
@@ -13,6 +13,7 @@ strict organisational isolation.  No cross-org graph traversal is possible.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from datetime import datetime
 from uuid import UUID
 
 
@@ -86,6 +87,8 @@ class GraphBackend(ABC):
         target_id: UUID,
         relationship_type: str,
         properties: dict | None = None,
+        valid_from: datetime | None = None,
+        valid_to: datetime | None = None,
     ) -> dict:
         """Create a directed edge between two entity nodes.
 
@@ -96,6 +99,8 @@ class GraphBackend(ABC):
             relationship_type: Label for the edge (e.g. ``"mentions"``,
                 ``"authored_by"``).
             properties: Optional key-value metadata attached to the edge.
+            valid_from: Optional temporal validity start (ISO-8601).
+            valid_to: Optional temporal validity end (ISO-8601).
 
         Returns:
             A dictionary representing the created relationship with at
@@ -137,6 +142,7 @@ class GraphBackend(ABC):
         query: str,
         types: list[str] | None = None,
         limit: int = 50,
+        offset: int = 0,
     ) -> list[dict]:
         """Search entity nodes by name or summary text.
 
@@ -149,6 +155,7 @@ class GraphBackend(ABC):
             types: Optional filter — only return entities matching these
                 type labels.
             limit: Maximum number of results to return.
+            offset: Number of results to skip (for pagination).
 
         Returns:
             A list of matching entity dicts, ordered by relevance

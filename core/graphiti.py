@@ -21,7 +21,6 @@ from redis import Redis as RedisSync
 
 try:
     from graphiti_core import Graphiti
-    from graphiti_core.config import GraphitiConfig
     HAS_GRAPHITI = True
 except ImportError:
     HAS_GRAPHITI = False
@@ -98,17 +97,14 @@ class GraphitiClient:
             return
 
         self._loop = asyncio.get_running_loop()
-        config = GraphitiConfig(
-            falkordb_url=self._falkordb_url,
-            llm_client=self._llm_client,
-            embedder=self._embedder,
-        )
 
         try:
-            # Graphiti.__init__ and .initialize() are synchronous — offload.
+            # Build the FalkorDB driver and Graphiti instance.
+            # Graphiti 0.29.1 defaults to Neo4jDriver — for FalkorDB we must
+            # pass a FalkorDriver explicitly via the graph_driver parameter.
             self._graphiti = await self._loop.run_in_executor(
                 None,
-                lambda: self._build_graphiti(config),
+                lambda: self._build_graphiti(self._falkordb_url),
             )
         except Exception as exc:
             logger.error(
@@ -130,12 +126,89 @@ class GraphitiClient:
         logger.info("graphiti.initialized", extra={"falkordb_url": self._falkordb_url})
 
     @staticmethod
-    def _build_graphiti(config: Any) -> None:
+    def _build_graphiti(falkordb_url: str) -> object:
+        """Create a Graphiti instance connected to FalkorDB.
+
+        Since Graphiti 0.29.1 defaults to ``Neo4jDriver``, we explicitly
+        create a ``FalkorDriver`` and pass it as ``graph_driver``.
+
+        We also provide no-op implementations of ``LLMClient`` and
+        ``EmbedderClient`` so Graphiti does not require an OpenAI API key
+        to initialise.  OpenZep has its own entity-extraction and embedding
+        pipelines (the ARQ enrichment workers), so Graphiti's built-in LLM
+        calls are not needed.
+
+        Args:
+            falkordb_url: FalkorDB connection URL (redis://host:port).
+
+        Returns:
+            A configured ``graphiti_core.Graphiti`` instance.
+        """
         if not HAS_GRAPHITI:
             raise RuntimeError(
                 "graphiti-core is not installed. Install it with: pip install graphiti-core"
             )
-        return Graphiti(config)
+
+        from urllib.parse import urlparse
+
+        from graphiti_core.driver.falkordb_driver import FalkorDriver
+
+        parsed = urlparse(falkordb_url)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or 6379
+        password = parsed.password
+
+        falkordb_driver = FalkorDriver(
+            host=host,
+            port=port,
+            password=password,
+        )
+
+        # Create no-op clients so Graphiti doesn't need an OpenAI API key.
+        # OpenZep has its own entity-extraction, embedding, and reranker
+        # pipelines — Graphiti's built-in LLM calls are not needed.
+        from graphiti_core.llm_client.client import LLMClient as _LLMClient
+        from graphiti_core.embedder.client import EmbedderClient as _EmbedderClient
+
+        class _NoopLLMClient(_LLMClient):
+            def __init__(self) -> None:
+                super().__init__(config=None, cache=False)
+
+            async def _generate_response(
+                self,
+                messages: list[dict],  # noqa: ARG002
+                response_model: type | None = None,  # noqa: ARG002
+                max_tokens: int = 1024,  # noqa: ARG002
+                model_size: str = "medium",  # noqa: ARG002
+            ) -> dict:
+                return {}
+
+        class _NoopEmbedderClient(_EmbedderClient):
+            async def create(
+                self, input_data: str | list[str] | list[int] | list[list[int]]  # noqa: ARG002
+            ) -> list[float]:
+                return []
+
+        from graphiti_core.cross_encoder.client import CrossEncoderClient as _CrossEncoderClient
+
+        class _NoopCrossEncoder(_CrossEncoderClient):
+            """No-op cross-encoder — prevents Graphiti from requiring OpenAI keys."""
+
+            async def rank(
+                self, query: str, passages: list[str]  # noqa: ARG002
+            ) -> list[tuple[str, float]]:
+                return [(p, 0.0) for p in passages]
+
+        noop_llm = _NoopLLMClient()
+        noop_embedder = _NoopEmbedderClient()
+        noop_cross_encoder = _NoopCrossEncoder()
+
+        return Graphiti(
+            graph_driver=falkordb_driver,
+            llm_client=noop_llm,
+            embedder=noop_embedder,
+            cross_encoder=noop_cross_encoder,
+        )
 
     async def close(self) -> None:
         """Release all Graphiti resources (connections, threads)."""
@@ -159,24 +232,20 @@ class GraphitiClient:
     async def health_check(self) -> bool:
         """Ping the FalkorDB backend to confirm connectivity.
 
+        Uses a direct Redis PING against the FalkorDB URL.
+
         Returns:
             ``True`` if the backend is reachable, ``False`` otherwise.
         """
+        if self._graphiti is None:
+            return False
+
         try:
-            # Use a direct Redis PING against the backend since Graphiti does
-            # not expose a dedicated health endpoint.
-            async with httpx.AsyncClient(timeout=5) as client:
-                # FalkorDB speaks Redis protocol; we issue a raw PING via HTTP
-                # if using RedisJSON / REST gateway, or we can use a sync Redis
-                # client for a raw PING.  Prefer the sync redis-py call for a
-                # lightweight check.
-                sync_redis = RedisSync.from_url(self._falkordb_url, socket_timeout=5)
-                result: bool = await asyncio.get_running_loop().run_in_executor(
-                    None,
-                    sync_redis.ping,
-                )
-                sync_redis.close()
-                return result
+            sync_redis = RedisSync.from_url(self._falkordb_url, socket_timeout=5)
+            loop = self._loop or asyncio.get_running_loop()
+            result: bool = await loop.run_in_executor(None, sync_redis.ping)
+            sync_redis.close()
+            return result
         except Exception as exc:
             logger.warning("graphiti.ping_failed", extra={"error": str(exc)})
             return False
