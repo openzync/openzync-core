@@ -75,3 +75,37 @@ class ValidationErrorDetail(BaseModel):
     loc: list[str | int]
     msg: str
     type: str
+
+
+class SearchResultItem(BaseModel):
+    """A single search result item from a unified search.
+
+    Attributes:
+        id: The source record UUID.
+        type: Source type — ``"episode"`` or ``"fact"``.
+        content: The text content.
+        score: Relevance score (higher = more relevant).
+        metadata: Additional type-specific fields (role for episodes,
+            subject/predicate/object/confidence for facts).
+    """
+
+    id: str
+    type: str
+    content: str
+    score: float
+    metadata: dict | None = None
+
+
+class SearchResponse(BaseModel):
+    """Unified search response from a cross-source search.
+
+    Attributes:
+        results: Ranked list of search results (episodes + facts merged
+            and sorted by descending score).
+        total: Total number of results returned.
+        query: The original search query (echoed back for client reference).
+    """
+
+    results: list[SearchResultItem]
+    total: int
+    query: str | None = None

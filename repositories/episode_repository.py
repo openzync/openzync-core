@@ -332,6 +332,102 @@ class EpisodeRepository:
         )
         return result.rowcount  # type: ignore[return-value]
 
+    # ── Vector Search ─────────────────────────────────────────────────────────
+
+    async def search_by_vector(
+        self, embedding: list[float], user_id: UUID, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Search episodes by vector similarity (pgvector cosine distance).
+
+        Uses the ``<=>`` operator which computes cosine distance. The score
+        is inverted (``1 - distance``) so that higher = more similar.
+
+        Args:
+            embedding: The query embedding vector.
+            user_id: Scope results to this user.
+            limit: Maximum results (capped at 200).
+
+        Returns:
+            A list of dicts with keys ``id``, ``content``, ``role``,
+            ``created_at``, and ``score`` (0.0–1.0).
+        """
+        effective_limit = min(limit, 200)
+        result = await self._db.execute(
+            text(
+                """
+                SELECT id, content, role, created_at,
+                       1 - (embedding <=> :embedding) AS score
+                FROM episodes
+                WHERE user_id = :user_id
+                  AND is_deleted = false
+                  AND embedding IS NOT NULL
+                ORDER BY embedding <=> :embedding
+                LIMIT :limit
+                """
+            ),
+            {"embedding": embedding, "user_id": user_id, "limit": effective_limit},
+        )
+        return [
+            {
+                "id": str(r[0]),
+                "content": r[1],
+                "role": r[2],
+                "created_at": str(r[3]),
+                "score": float(r[4]),
+            }
+            for r in result.fetchall()
+        ]
+
+    # ── BM25 Full-Text Search ─────────────────────────────────────────────────
+
+    async def search_by_bm25(
+        self, query: str, user_id: UUID, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        """Search episodes by BM25 full-text (PostgreSQL ``ts_rank``).
+
+        Tokenises the query via ``plainto_tsquery`` and ranks results using
+        ``ts_rank`` over an English text search configuration.
+
+        Args:
+            query: Raw search text (no special syntax needed).
+            user_id: Scope results to this user.
+            limit: Maximum results (capped at 200).
+
+        Returns:
+            A list of dicts with keys ``id``, ``content``, ``role``,
+            ``created_at``, and ``score`` (higher = more relevant).
+        """
+        effective_limit = min(limit, 200)
+        result = await self._db.execute(
+            text(
+                """
+                SELECT id, content, role, created_at,
+                       ts_rank(
+                           to_tsvector('english', content),
+                           plainto_tsquery('english', :query)
+                       ) AS score
+                FROM episodes
+                WHERE user_id = :user_id
+                  AND is_deleted = false
+                  AND to_tsvector('english', content)
+                      @@ plainto_tsquery('english', :query)
+                ORDER BY score DESC
+                LIMIT :limit
+                """
+            ),
+            {"query": query, "user_id": user_id, "limit": effective_limit},
+        )
+        return [
+            {
+                "id": str(r[0]),
+                "content": r[1],
+                "role": r[2],
+                "created_at": str(r[3]),
+                "score": float(r[4]),
+            }
+            for r in result.fetchall()
+        ]
+
     # ── Count by User ────────────────────────────────────────────────────────
 
     async def count_by_user(self, user_id: UUID) -> int:
