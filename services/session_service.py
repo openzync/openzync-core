@@ -60,7 +60,7 @@ class SessionService:
         """
         # Check for duplicates before inserting.
         existing = await self._repo.get_by_external_id(
-            org_id, user_id, external_id
+            organization_id, user_id, external_id
         )
         if existing is not None:
             raise ConflictError(

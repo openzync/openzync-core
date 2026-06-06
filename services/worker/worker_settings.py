@@ -72,7 +72,7 @@ class WorkerSettings(BaseSettings):
 
     # ── Environment ──────────────────────────────────────────────────────────
     ENV: str = Field(
-        default="dev",
+        default="development",
         description=(
             "Environment name used in queue name prefix: "
             "``OpenZep:{env}:queue:{queue_name}``."

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import NotFoundError
@@ -70,6 +70,7 @@ async def get_context(
     ),
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_org_id),
+    response: Response = None,  # type: ignore[assignment]
     request: Request = None,  # type: ignore[assignment]
     # NOTE: ``request`` is injected via FastAPI's dependency resolver.
     # The default ``None`` is never used — it is always populated by
@@ -128,6 +129,10 @@ async def get_context(
         limit=limit,
         format=format,
     )
+
+    # Set X-Cache header for observability
+    is_cache_hit = result.get("metadata", {}).get("cache_hit", False) if result.get("metadata") else False
+    response.headers["X-Cache"] = "HIT" if is_cache_hit else "MISS"
 
     return ContextResponse(
         context=result["context"],

@@ -2,9 +2,14 @@
 
 Provides two endpoints:
 - ``POST /v1/users/{user_id}/memory`` — ingest messages into a user's memory.
+  The ``{user_id}`` is the user's internal UUID (returned from ``POST /v1/users``).
   Returns 202 with a ``Location`` header pointing to the job status endpoint.
 - ``DELETE /v1/users/{user_id}/memory`` — wipe all memory for a user
   (soft-delete episodes + facts). Returns 204.
+
+Note: Unlike ``POST /v1/users`` which accepts an ``external_id``, memory endpoints
+require the user's internal UUID (same as session endpoints). Users must be created
+via ``POST /v1/users`` before ingesting memory.
 
 Every handler is a thin adapter that:
 1. Extracts input from the request (path params, headers, body).
