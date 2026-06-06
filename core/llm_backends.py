@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any, ClassVar
 
@@ -53,8 +54,10 @@ class OllamaBackend(LLMBackend):
 
     def __init__(self, base_url: str = "http://localhost:11434") -> None:
         self._base_url = base_url.rstrip("/")
-        self._chat_model = self.DEFAULT_CHAT_MODEL
-        self._embed_model = self.DEFAULT_EMBED_MODEL
+        # Read model config from settings (lazy import to avoid circular deps)
+        from core.config import settings as _cfg
+        self._chat_model = getattr(_cfg, "LLM_MODEL", None) or self.DEFAULT_CHAT_MODEL
+        self._embed_model = getattr(_cfg, "EMBEDDING_MODEL", None) or self.DEFAULT_EMBED_MODEL
 
     # ── LLMBackend ─────────────────────────────────────────────────────────
 
@@ -77,6 +80,7 @@ class OllamaBackend(LLMBackend):
             "model": model,
             "messages": messages,
             "stream": False,
+            "num_predict": 2048,
             **kwargs,
         }
 
@@ -123,7 +127,7 @@ class OllamaBackend(LLMBackend):
         return ChatResponse(content=content, model=data.get("model", model), usage=usage)
 
     async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:
-        """Generate embeddings via Ollama's ``/api/embed`` endpoint.
+        """Generate embeddings via Ollama's ``/api/embeddings`` endpoint.
 
         Supported kwargs:
             ``model`` — override the embedding model.
@@ -131,12 +135,12 @@ class OllamaBackend(LLMBackend):
         model = kwargs.pop("model", self._embed_model)
         payload = {
             "model": model,
-            "input": texts,
+            "prompt": texts[0] if len(texts) == 1 else texts,
         }
 
         try:
             async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post(f"{self._base_url}/api/embed", json=payload)
+                resp = await client.post(f"{self._base_url}/api/embeddings", json=payload)
                 resp.raise_for_status()
                 data = resp.json()
         except httpx.HTTPStatusError as exc:
@@ -152,8 +156,20 @@ class OllamaBackend(LLMBackend):
             logger.error("ollama.embed_timeout", extra={"model": model})
             raise
 
-        embeddings: list[list[float]] = data.get("embeddings", [])
-        dim = len(embeddings[0]) if embeddings else self.DEFAULT_EMBED_DIM
+        # Handle both /api/embeddings (singular) and /api/embed (plural) response formats
+        raw = data.get("embeddings") or data.get("embedding")
+        if raw and isinstance(raw, list):
+            if raw and isinstance(raw[0], float):
+                # /api/embeddings returns a single embedding vector
+                embeddings = [raw]
+            else:
+                # /api/embed returns a list of embedding vectors
+                embeddings = raw
+        else:
+            embeddings = []
+        if not embeddings:
+            raise ValueError(f"Empty embedding response for model {model}. Response: {str(data)[:200]}")
+        dim = len(embeddings[0])
 
         logger.info(
             "llm.embed_completed",
@@ -571,6 +587,107 @@ class AnthropicBackend(LLMBackend):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# OpenRouter
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class OpenRouterBackend(LLMBackend):
+    """LLM backend powered by OpenRouter's unified API.
+
+    Uses the OpenAI-compatible client pointed at ``https://openrouter.ai/api/v1``.
+    Requires ``OPENROUTER_API_KEY`` environment variable or constructor argument.
+
+    Default model: ``openai/gpt-oss-120b:free`` (no-cost tier).
+
+    Does **not** support embeddings — use a different backend (Ollama, OpenAI,
+    or Azure) for pgvector embedding generation.
+    """
+
+    DEFAULT_CHAT_MODEL: ClassVar[str] = "openai/gpt-oss-120b:free"
+    BASE_URL: ClassVar[str] = "https://openrouter.ai/api/v1"
+
+    def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
+        import os
+
+        from openai import AsyncOpenAI
+
+        key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
+        if not key:
+            raise LLMConfigurationError(
+                "OPENROUTER_API_KEY is not set. "
+                "Set it in your environment or .env file."
+            )
+
+        self._client = AsyncOpenAI(
+            base_url=self.BASE_URL,
+            api_key=key,
+            default_headers={
+                "HTTP-Referer": "https://github.com/thelinkai/openzep",
+                "X-OpenRouter-Title": "OpenZep - Agent Memory Platform",
+            },
+        )
+        self._chat_model = model or self.DEFAULT_CHAT_MODEL
+
+    @property
+    def model_name(self) -> str:
+        return self._chat_model
+
+    @property
+    def embedding_dim(self) -> int:
+        raise NotImplementedError("OpenRouter does not support embeddings")
+
+    async def chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+        """Send a chat completion via OpenRouter."""
+        import time
+
+        model = kwargs.pop("model", self._chat_model)
+        temperature = kwargs.pop("temperature", 0.1)
+        max_tokens = kwargs.pop("max_tokens", 1024)
+
+        start = time.monotonic()
+        try:
+            response = await self._client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                **kwargs,
+            )
+        except Exception as exc:
+            raise
+
+        elapsed = time.monotonic() - start
+        choice = response.choices[0]
+        usage = TokenUsage(
+            prompt_tokens=response.usage.prompt_tokens if response.usage else 0,
+            completion_tokens=response.usage.completion_tokens if response.usage else 0,
+        )
+
+        logger.info(
+            "openrouter.chat_completed",
+            extra={
+                "model": response.model,
+                "duration_ms": round(elapsed * 1000),
+                "prompt_tokens": usage.prompt_tokens,
+                "completion_tokens": usage.completion_tokens,
+            },
+        )
+
+        return ChatResponse(
+            content=choice.message.content or "",
+            model=response.model,
+            usage=usage,
+        )
+
+    async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:
+        """Embeddings are not supported by OpenRouter."""
+        raise NotImplementedError(
+            "OpenRouter does not offer an embedding API. "
+            "Use a different backend (Ollama, OpenAI, or Azure) for embeddings."
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Auto-registration with the global registry
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -578,3 +695,4 @@ LLMBackendRegistry.register("ollama", OllamaBackend)
 LLMBackendRegistry.register("openai", OpenAIBackend)
 LLMBackendRegistry.register("azure", AzureBackend)
 LLMBackendRegistry.register("anthropic", AnthropicBackend)
+LLMBackendRegistry.register("openrouter", OpenRouterBackend)

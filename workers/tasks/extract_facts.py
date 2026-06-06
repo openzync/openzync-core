@@ -13,6 +13,7 @@ Bitmask:
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -137,63 +138,54 @@ async def extract_facts(
 
     # ── 3. Parse JSON response ────────────────────────────────────────────────
     facts = _parse_facts_response(response.content)
-    if not facts:
-        logger.info("fact_extraction.no_facts", episode_id=episode_id)
-        return
 
     # ── 4. Filter by confidence + quality heuristics ──────────────────────────
-    valid_facts = _filter_facts(facts)
-    if not valid_facts:
-        logger.info(
-            "fact_extraction.filtered_all",
-            episode_id=episode_id,
-            raw_count=len(facts),
-        )
-        return
+    persisted = 0
+    if facts:
+        valid_facts = _filter_facts(facts)
+        if valid_facts:
+            engine = init_db_engine(str(settings.DATABASE_URL), pool_size=5, max_overflow=2)
+            session_factory = get_async_session(engine)
+            try:
+                async with session_factory() as db:
+                    repo = FactRepository(db)
+                    for fact in valid_facts:
+                        await repo.create(...)
+                    persisted = len(valid_facts)
+                    await db.commit()
+            finally:
+                await engine.dispose()
 
-    # ── 5. Persist via repository ─────────────────────────────────────────────
-    engine = init_db_engine(
-        str(settings.DATABASE_URL),
-        pool_size=5,
-        max_overflow=2,
-    )
+    # ── 5. Always set enrichment_status bit 2 ────────────────────────────────
+    await _set_enrichment_bit(episode_id, ENRICHMENT_FACTS)
+
+    if persisted:
+        logger.info("fact_extraction.completed", episode_id=episode_id, facts=persisted)
+    else:
+        logger.info("fact_extraction.no_facts", episode_id=episode_id)
+
+
+async def _set_enrichment_bit(episode_id: str, bit: int) -> None:
+    """Set an enrichment_status bit for an episode.
+
+    Always runs, even if no data was found — marks the task as complete
+    so the pipeline knows it has been attempted.
+    """
+    from core.db import get_async_session, init_db_engine
+    from core.config import settings as app_settings
+    from sqlalchemy import text
+
+    engine = init_db_engine(str(app_settings.DATABASE_URL), pool_size=2, max_overflow=1)
     session_factory = get_async_session(engine)
-
     try:
         async with session_factory() as db:
-            repo = FactRepository(db)
-
-            for fact in valid_facts:
-                await repo.create(
-                    user_id=uuid.UUID(user_id),
-                    organization_id=uuid.UUID(org_id),
-                    content=(
-                        f"{fact['subject']} {fact['predicate']} {fact['object']}"
-                    ),
-                    subject=fact["subject"],
-                    predicate=fact["predicate"],
-                    obj=fact["object"],
-                    confidence=fact["confidence"],
-                    source_episode_id=uuid.UUID(episode_id),
-                    valid_from=datetime.now(timezone.utc),
-                )
-
-            # ── 6. Update enrichment_status bit 2 ─────────────────────────────
             await db.execute(
-                text(
-                    "UPDATE episodes "
-                    "SET enrichment_status = enrichment_status | :bit "
-                    "WHERE id = :id"
-                ),
-                {"bit": ENRICHMENT_FACTS, "id": episode_id},
+                text("UPDATE episodes SET enrichment_status = enrichment_status | :bit WHERE id = :id"),
+                {"bit": bit, "id": episode_id},
             )
             await db.commit()
-
-        logger.info(
-            "fact_extraction.completed",
-            episode_id=episode_id,
-            facts=len(valid_facts),
-        )
+    except Exception as exc:
+        logger.warning("enrichment_bit_failed", episode_id=episode_id, bit=bit, error=str(exc))
     finally:
         await engine.dispose()
 
@@ -223,18 +215,35 @@ def _parse_facts_response(content: str) -> list[dict]:
     # Strip leading/trailing whitespace that may remain after fence removal
     content = content.strip()
 
+    # Strip deepseek-r1 thinking blocks: find first JSON object or array
+    json_start = content.find('{')
+    if json_start < 0:
+        json_start = content.find('[')
+    if json_start >= 0:
+        content = content[json_start:].strip()
+
     if not content:
         return []
 
     try:
         data = json.loads(content)
     except json.JSONDecodeError:
-        logger = structlog.get_logger()
-        logger.warning(
-            "fact_extraction.parse_failed",
-            content_preview=content[:200],
-        )
-        return []
+        # LLM may return comma-separated objects without an array wrapper:
+        #   {"subject":"Bob",...},
+        #   {"subject":"Bob",...}
+        # Wrap them in an array and retry.
+        if content.strip().startswith("{"):
+            try:
+                data = json.loads(f"[{content}]")
+            except json.JSONDecodeError:
+                logger = structlog.get_logger()
+                logger.warning(
+                    "fact_extraction.parse_failed",
+                    content_preview=content[:200],
+                )
+                return []
+        else:
+            return []
 
     if isinstance(data, list):
         return data

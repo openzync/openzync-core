@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     )
 
     # ── LLM ───────────────────────────────────────────────────────────────
-    LLM_BACKEND: Literal["ollama", "openai", "azure", "anthropic"] = Field(
+    LLM_BACKEND: Literal["ollama", "openai", "azure", "anthropic", "openrouter"] = Field(
         default="ollama",
         description="LLM provider backend.",
         validation_alias="MG_LLM_BACKEND",
@@ -106,6 +106,11 @@ class Settings(BaseSettings):
         default="",
         description="OpenAI API key.  Required when LLM_BACKEND == 'openai'.",
         validation_alias="OPENAI_API_KEY",
+    )
+    OPENROUTER_API_KEY: str = Field(
+        default="",
+        description="OpenRouter API key.  Required when LLM_BACKEND == 'openrouter'.",
+        validation_alias="OPENROUTER_API_KEY",
     )
     AZURE_OPENAI_ENDPOINT: str = Field(
         default="",

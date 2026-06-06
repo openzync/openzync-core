@@ -190,14 +190,11 @@ class LLMBackendRegistry:
 
 # ── Concrete backend imports (register at module load) ─────────────────────
 
-# Late import to avoid circular dependencies — these modules register
-# themselves with LLMBackendRegistry when imported.
-from core.llm_backends import (  # noqa: E402, F401 — trigger registration
-    AnthropicBackend,
-    AzureBackend,
-    OllamaBackend,
-    OpenAIBackend,
-)
+# Use lazy import to avoid circular dependency: llm.py imports llm_backends.py
+# which imports llm.py.  importlib breaks the cycle by not requiring specific
+# names from the partially-initialised module.
+import importlib
+importlib.import_module("core.llm_backends")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -368,8 +365,19 @@ async def _create_backend(provider: str, config: dict | None = None) -> LLMBacke
             else "claude-sonnet-4-20250514"
         )
         instance = backend_cls(api_key=api_key, model=model)
+    elif provider == "openrouter":
+        api_key = (
+            config.get("api_key", settings.OPENROUTER_API_KEY)
+            if config
+            else settings.OPENROUTER_API_KEY
+        )
+        model = (
+            config.get("model", settings.LLM_MODEL)
+            if config
+            else settings.LLM_MODEL
+        )
+        instance = backend_cls(api_key=api_key, model=model)
     else:
-        # Should not be reachable if LLMBackendRegistry.get() validates.
         raise ValueError(f"Unknown provider: {provider}")
 
     return instance

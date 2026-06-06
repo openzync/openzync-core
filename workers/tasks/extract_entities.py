@@ -14,6 +14,7 @@ Bitmask:
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -152,194 +153,129 @@ async def extract_entities(
             )
             return
 
+    persisted_count = 0
+
     if data is None:
         logger.warning("entity_extraction.no_result", episode_id=episode_id)
-        return
+    else:
+        entities: list[dict] = data.get("entities", [])
+        relationships: list[dict] = data.get("relationships", [])
 
-    entities: list[dict] = data.get("entities", [])
-    relationships: list[dict] = data.get("relationships", [])
-
-    if not entities and not relationships:
-        logger.info("entity_extraction.empty", episode_id=episode_id)
-        return
-
-    logger.info(
-        "entity_extraction.parsed",
-        episode_id=episode_id,
-        entities=len(entities),
-        relationships=len(relationships),
-    )
-
-    # ── 4. Persist entities to Graphiti (if available) ────────────────────────
-    # Build a name→node mapping so we can reference entity IDs when creating
-    # relationships in Graphiti.
-    entity_repo = EntityRepository()
-    name_to_node: dict[str, dict] = {}
-
-    for entity in entities:
-        entity_name = entity.get("name", "")
-        entity_type = entity.get("type", "Custom")
-        # Build a summary from mentions for richer graph context
-        mentions: list[str] = entity.get("mentions", [])
-        summary = (
-            f"{entity_name} ({entity_type}) — "
-            f"mentioned as: {', '.join(set(mentions))}"
-            if mentions
-            else f"{entity_name} ({entity_type})"
-        )
-
-        node = await entity_repo.upsert_entity(
-            org_id=uuid.UUID(org_id),
-            name=entity_name,
-            entity_type=entity_type,
-            summary=summary,
-        )
-        if node is not None:
-            name_to_node[entity_name] = node
-
-        logger.debug(
-            "entity_extraction.entity_persisted",
-            entity_name=entity_name,
-            entity_type=entity_type,
-            graphiti_id=node.get("id") if node else None,
-        )
-
-    # ── 5. Persist relationships to Graphiti ──────────────────────────────────
-    for rel in relationships:
-        subject = rel.get("subject", "")
-        predicate = rel.get("predicate", "")
-        obj = rel.get("object", "")
-
-        if not subject or not predicate or not obj:
-            logger.warning(
-                "entity_extraction.incomplete_relationship",
-                episode_id=episode_id,
-                relationship=rel,
-            )
-            continue
-
-        # Only persist to Graphiti if both entities were successfully created
-        # there (name_to_node contains an entry).
-        if subject in name_to_node and obj in name_to_node:
-            await entity_repo.upsert_relationship(
-                subject=subject,
-                predicate=predicate,
-                obj=obj,
-                org_id=uuid.UUID(org_id),
-            )
-        else:
-            logger.debug(
-                "entity_extraction.skipping_graph_relation",
-                episode_id=episode_id,
-                subject=subject,
-                predicate=predicate,
-                obj=obj,
-                reason=(
-                    "subject_in_graph" if subject in name_to_node
-                    else "object_in_graph" if obj in name_to_node
-                    else "neither_in_graph"
-                ),
-            )
-
-    logger.info(
-        "entity_extraction.graphiti_persisted",
-        episode_id=episode_id,
-        entity_count=len(name_to_node),
-        relationship_count=len(relationships),
-    )
-
-    # ── 6. Persist relationships as facts in PostgreSQL ───────────────────────
-    # Build a lookup: entity name → type for subject_type / object_type.
-    entity_type_map: dict[str, str] = {
-        e["name"]: e.get("type", "Custom") for e in entities
-    }
-
-    engine = init_db_engine(
-        str(settings.DATABASE_URL),
-        pool_size=5,
-        max_overflow=2,
-    )
-    session_factory = get_async_session(engine)
-
-    try:
-        async with session_factory() as db:
-            episode_uuid = uuid.UUID(episode_id)
-            org_uuid = uuid.UUID(org_id)
-            user_uuid = uuid.UUID(user_id)
-            now = datetime.now(timezone.utc)
-
-            for rel in relationships:
-                subject = rel.get("subject", "")
-                predicate = rel.get("predicate", "")
-                obj = rel.get("object", "")
-
-                if not subject or not predicate or not obj:
-                    continue
-
-                subject_type = entity_type_map.get(subject, "literal")
-                object_type = entity_type_map.get(obj, "literal")
-
-                # TechLead note: Raw SQL insertion here rather than going
-                # through FactRepository because FactRepository currently
-                # only exposes soft_delete_by_user (a stub).  Once
-                # FactRepository.create() is added, this can be refactored
-                # to use the repository layer.  See Phase 2 fact-extraction
-                # task for the intended pattern.
-                await db.execute(
-                    text("""
-                        INSERT INTO facts
-                            (id, user_id, organization_id, content,
-                             subject, predicate, "object",
-                             subject_type, object_type,
-                             confidence, source_episode_id,
-                             valid_from, created_at, updated_at)
-                        VALUES
-                            (gen_random_uuid(), :user_id, :org_id, :content,
-                             :subject, :predicate, :object,
-                             :subject_type, :object_type,
-                             1.0, :episode_id,
-                             :valid_from, :valid_from, :valid_from)
-                    """),
-                    {
-                        "user_id": user_uuid,
-                        "org_id": org_uuid,
-                        "content": f"{subject} {predicate} {obj}",
-                        "subject": subject,
-                        "predicate": predicate,
-                        "object": obj,
-                        "subject_type": subject_type,
-                        "object_type": object_type,
-                        "episode_id": episode_uuid,
-                        "valid_from": now,
-                    },
-                )
-
-            # ── 7. Update enrichment_status bit 0 ─────────────────────────────
-            # ⚠️ RACE CONDITION: Two concurrent workers could both pass the
-            # enrichment check and run extraction simultaneously.  The
-            # enrichment_status bitwise OR is safe since setting an already-set
-            # bit is a no-op, but duplicate rows in ``facts`` would result.
-            # The unique constraint or application-level dedup in the caller
-            # should prevent this.  See idempotency_service.check_and_mark_worker
-            # for the proper SELECT FOR UPDATE pattern.
-            await db.execute(
-                text(
-                    "UPDATE episodes "
-                    "SET enrichment_status = enrichment_status | :bit "
-                    "WHERE id = :id"
-                ),
-                {"bit": ENRICHMENT_ENTITIES, "id": episode_uuid},
-            )
-            await db.commit()
+        if not entities and not relationships:
+            logger.info("entity_extraction.empty", episode_id=episode_id)
 
         logger.info(
-            "entity_extraction.completed",
+            "entity_extraction.parsed",
             episode_id=episode_id,
             entities=len(entities),
-            facts=len(relationships),
+            relationships=len(relationships),
         )
-    finally:
-        await engine.dispose()
+
+        # ── 4. Persist entities to Graphiti (if available) ────────────────────
+        entity_repo = EntityRepository()
+        name_to_node: dict[str, dict] = {}
+
+        for entity in entities:
+            entity_name = entity.get("name", "")
+            entity_type = entity.get("type", "Custom")
+            mentions: list[str] = entity.get("mentions", [])
+            summary = (
+                f"{entity_name} ({entity_type}) — "
+                f"mentioned as: {', '.join(set(mentions))}"
+                if mentions
+                else f"{entity_name} ({entity_type})"
+            )
+
+            node = await entity_repo.upsert_entity(
+                org_id=uuid.UUID(org_id),
+                name=entity_name,
+                entity_type=entity_type,
+                summary=summary,
+            )
+            if node is not None:
+                name_to_node[entity_name] = node
+
+        # ── 5. Persist relationships to Graphiti ──────────────────────────────
+        for rel in relationships:
+            subject = rel.get("subject", "")
+            predicate = rel.get("predicate", "")
+            obj = rel.get("object", "")
+
+            if not subject or not predicate or not obj:
+                continue
+
+            if subject in name_to_node and obj in name_to_node:
+                await entity_repo.upsert_relationship(
+                    subject=subject, predicate=predicate, obj=obj,
+                    org_id=uuid.UUID(org_id),
+                )
+
+        # ── 6. Persist relationships as facts in PostgreSQL ───────────────────
+        if relationships:
+            entity_type_map: dict[str, str] = {
+                e["name"]: e.get("type", "Custom") for e in entities
+            }
+            engine = init_db_engine(str(settings.DATABASE_URL), pool_size=5, max_overflow=2)
+            session_factory = get_async_session(engine)
+            try:
+                async with session_factory() as db:
+                    episode_uuid = uuid.UUID(episode_id)
+                    org_uuid = uuid.UUID(org_id)
+                    user_uuid = uuid.UUID(user_id)
+                    now = datetime.now(timezone.utc)
+
+                    for rel in relationships:
+                        subject = rel.get("subject", "")
+                        predicate = rel.get("predicate", "")
+                        obj = rel.get("object", "")
+                        if not subject or not predicate or not obj:
+                            continue
+                        await db.execute(
+                            text("""
+                                INSERT INTO facts
+                                    (id, user_id, organization_id, content,
+                                     subject, predicate, "object",
+                                     subject_type, object_type,
+                                     confidence, source_episode_id,
+                                     valid_from, created_at, updated_at)
+                                VALUES
+                                    (gen_random_uuid(), :user_id, :org_id, :content,
+                                     :subject, :predicate, :object,
+                                     :subject_type, :object_type,
+                                     1.0, :episode_id,
+                                     :valid_from, :valid_from, :valid_from)
+                            """),
+                            {
+                                "user_id": user_uuid, "org_id": org_uuid,
+                                "content": f"{subject} {predicate} {obj}",
+                                "subject": subject, "predicate": predicate,
+                                "object": obj,
+                                "subject_type": entity_type_map.get(subject, "literal"),
+                                "object_type": entity_type_map.get(obj, "literal"),
+                                "episode_id": episode_uuid, "valid_from": now,
+                            },
+                        )
+                    await db.commit()
+                    persisted_count = len(relationships)
+            finally:
+                await engine.dispose()
+
+        logger.info(
+            "entity_extraction.graphiti_persisted",
+            episode_id=episode_id,
+            entity_count=len(name_to_node),
+            relationship_count=persisted_count,
+        )
+
+    # ── 7. Always set enrichment_status bit 0 ────────────────────────────────
+    await _set_enrichment_bit(episode_id, ENRICHMENT_ENTITIES)
+
+    if persisted_count:
+        logger.info("entity_extraction.completed", episode_id=episode_id,
+                     entities=len(entities if data else []),
+                     facts=persisted_count)
+    else:
+        logger.info("entity_extraction.done", episode_id=episode_id)
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
@@ -367,6 +303,13 @@ def _parse_entity_response(content: str) -> dict | None:
     # Strip leading/trailing whitespace that may remain after fence removal
     content = content.strip()
 
+    # Strip deepseek-r1 thinking blocks: find first JSON object or array
+    json_start = content.find('{')
+    if json_start < 0:
+        json_start = content.find('[')
+    if json_start >= 0:
+        content = content[json_start:].strip()
+
     if not content:
         return None
 
@@ -393,3 +336,28 @@ def _parse_entity_response(content: str) -> dict | None:
         data["relationships"] = []
 
     return data
+
+
+async def _set_enrichment_bit(episode_id: str, bit: int) -> None:
+    """Set an enrichment_status bit for an episode.
+
+    Always runs, even if no data was found — marks the task as complete
+    so the pipeline knows it has been attempted.
+    """
+    from core.db import get_async_session, init_db_engine
+    from core.config import settings as app_settings
+    from sqlalchemy import text
+
+    engine = init_db_engine(str(app_settings.DATABASE_URL), pool_size=2, max_overflow=1)
+    session_factory = get_async_session(engine)
+    try:
+        async with session_factory() as db:
+            await db.execute(
+                text("UPDATE episodes SET enrichment_status = enrichment_status | :bit WHERE id = :id"),
+                {"bit": bit, "id": uuid.UUID(episode_id)},
+            )
+            await db.commit()
+    except Exception as exc:
+        logger.warning("enrichment_bit_failed", extra={"episode_id": episode_id, "bit": bit, "error": str(exc)})
+    finally:
+        await engine.dispose()

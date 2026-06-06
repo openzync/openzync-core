@@ -278,7 +278,7 @@ async def on_job_end(ctx: dict[str, Any]) -> None:
     task_type = ctx.get("task_type", "unknown")
     org_id = ctx.get("org_id", "unknown")
     trace_id = ctx.get("trace_id", "unknown")
-    duration_s: float = kwargs.get("runtime", 0.0)
+    duration_s: float = ctx.get("runtime", 0.0)
 
     logger.info(
         "job.completed",
