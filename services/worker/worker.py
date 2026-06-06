@@ -57,10 +57,13 @@ def setup_logging() -> None:
     * ``trace_id``, ``org_id``, ``task_type``, ``job_id`` — bound per-task
       via :func:`structlog.contextvars.bind_contextvars`.
     """
+    # Set root logger level so structlog's filter_by_level has something to read
+    logging.getLogger().setLevel(
+        logging.getLevelName(settings.LOG_LEVEL)
+    )
+
     shared_processors: list[structlog.types.Processor] = [
-        structlog.stdlib.filter_by_level(
-            logging.getLevelName(settings.LOG_LEVEL),
-        ),
+        structlog.stdlib.filter_by_level,
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.dev.set_exc_info,
@@ -91,37 +94,27 @@ logger: structlog.stdlib.BoundLogger = structlog.get_logger("OpenZep.worker")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Task registry (Phase 1b+)
+# Task registry
 # ═════════════════════════════════════════════════════════════════════════════
-# Task functions are imported here and registered in HIGH_QUEUE_TASKS /
-# LOW_QUEUE_TASKS.  During Phase 1a these lists are empty; they are populated
-# as task modules are implemented.
-#
-# Import pattern (uncomment when tasks exist):
-#   from services.worker.tasks.extract_entities import extract_entities
-#   from services.worker.tasks.embed_episode import embed_episode
-#   from services.worker.tasks.embed_entity import embed_entity
-#   from services.worker.tasks.extract_facts import extract_facts
-#   from services.worker.tasks.classify_dialog import classify_dialog
-#   from services.worker.tasks.extract_structured import extract_structured
-#   from services.worker.tasks.summarise_community import summarise_community
-#   from services.worker.tasks.ingest_business_data import ingest_business_data
-#   from services.worker.tasks.sync_to_graph import sync_to_graph
-#   from services.worker.tasks.delete_user_data import delete_user_data
-#   from services.worker.tasks.merge_duplicate_entities import merge_duplicate_entities
-#   from services.worker.tasks.refresh_context_cache import refresh_context_cache
 
-HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = []
-"""Tasks assigned to the high-priority queue (real-time ingestion).
+from workers.tasks.extract_entities import extract_entities
+from workers.tasks.embed_episode import embed_episode
+from workers.tasks.extract_facts import extract_facts
+from workers.tasks.sync_to_graph import sync_to_graph
+from workers.tasks.embed_fact import embed_fact
 
-See ``tasks/`` modules in Phase 1b.
-"""
+HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
+    extract_entities,
+    embed_episode,
+    extract_facts,
+]
+"""Tasks assigned to the high-priority queue (real-time ingestion)."""
 
-LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = []
-"""Tasks assigned to the low-priority queue (scheduled batch).
-
-See ``tasks/`` modules in Phase 1b.
-"""
+LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
+    sync_to_graph,
+    embed_fact,
+]
+"""Tasks assigned to the low-priority queue (scheduled batch)."""
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -255,13 +248,12 @@ def create_arq_worker(
         redis_settings=redis_settings,
         functions=functions,
         queue_name=get_queue_name(settings.ENV, queue_name),
-        concurrency=concurrency,
-        timeout=timeout,
+        max_jobs=concurrency,
+        job_timeout=timeout,
         keep_result=settings.JOB_KEEP_RESULT_FOR,
-        keep_result_failed=settings.JOB_KEEP_RESULT_FOR_FAILURE,
+        keep_result_forever=False,
         poll_delay=settings.POLL_DELAY,
-        on_job_complete=on_job_complete,
-        on_job_failed=on_job_failed,
+        on_job_end=on_job_end,
         on_shutdown=on_shutdown,
     )
 
@@ -271,16 +263,18 @@ def create_arq_worker(
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-async def on_job_complete(ctx: dict[str, Any], job_id: str, **kwargs: Any) -> None:
-    """Log and record Prometheus metrics when a job completes successfully.
+async def on_job_end(ctx: dict[str, Any]) -> None:
+    """Log and record Prometheus metrics when a job ends.
+
+    Called by ARQ after a job completes (success or failure).
+    The ``ctx`` dict may contain ``job_id`` depending on ARQ version,
+    but we always read it from the context.
 
     Args:
         ctx: ARQ worker context dict (includes ``task_type``, ``org_id``,
             ``trace_id`` — populated by each task function).
-        job_id: ARQ job identifier.
-        kwargs: Additional ARQ-provided metadata.  Contains ``runtime`` (float
-            seconds) when available.
     """
+    job_id = ctx.get("job_id", "unknown")
     task_type = ctx.get("task_type", "unknown")
     org_id = ctx.get("org_id", "unknown")
     trace_id = ctx.get("trace_id", "unknown")
@@ -303,43 +297,6 @@ async def on_job_complete(ctx: dict[str, Any], job_id: str, **kwargs: Any) -> No
         status="success",
     ).inc()
 
-
-async def on_job_failed(
-    ctx: dict[str, Any],
-    job_id: str,
-    exc: Exception,
-    **kwargs: Any,
-) -> None:
-    """Log and record Prometheus metrics when a job fails after exhausting retries.
-
-    Args:
-        ctx: ARQ worker context dict.
-        job_id: ARQ job identifier.
-        exc: The exception that caused the failure.
-        kwargs: Additional ARQ-provided metadata.  Contains ``retry_count``
-            after retries are exhausted.
-    """
-    task_type = ctx.get("task_type", "unknown")
-    org_id = ctx.get("org_id", "unknown")
-    trace_id = ctx.get("trace_id", "unknown")
-
-    logger.error(
-        "job.failed",
-        trace_id=trace_id,
-        org_id=org_id,
-        task_type=task_type,
-        job_id=job_id,
-        error=str(exc),
-        error_type=type(exc).__name__,
-        retry_count=kwargs.get("retry_count", -1),
-    )
-
-    worker_tasks_total.labels(task_type=task_type, status="failure").inc()
-    worker_tasks_per_org.labels(
-        org_id=org_id,
-        task_type=task_type,
-        status="failure",
-    ).inc()
 
 
 async def on_shutdown(_ctx: dict[str, Any]) -> None:
@@ -496,8 +453,8 @@ async def main() -> NoReturn:
     # ── Run workers ────────────────────────────────────────────────────
     try:
         await asyncio.gather(
-            high_worker.run(),
-            low_worker.run(),
+            high_worker.async_run(),
+            low_worker.async_run(),
         )
     except asyncio.CancelledError:
         logger.info("worker.run_cancelled")

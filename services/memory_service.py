@@ -242,12 +242,16 @@ class MemoryService:
 
         # ── Step 7: Generate job_id and enqueue ARQ tasks ────────────────
         job_id = str(uuid4())
+        episode_dicts = [
+            {"id": ep.id, "content": ep.content, "role": ep.role}
+            for ep in episodes
+        ]
         await self._enqueue_arq_tasks(
             job_id=job_id,
             org_id=str(org_id),
             user_id=str(user_id),
             session_id=str(session_id),
-            episode_ids=[str(eid) for eid in episode_ids],
+            episodes=episode_dicts,
         )
 
         # ── Step 8: Cache idempotency key and content hash ───────────────
@@ -517,7 +521,7 @@ class MemoryService:
         org_id: str,
         user_id: str,
         session_id: str,
-        episode_ids: list[str],
+        episodes: list[dict[str, Any]],
     ) -> None:
         """Enqueue ARQ background tasks for episode enrichment.
 
@@ -527,30 +531,35 @@ class MemoryService:
         - ``extract_facts``: LLM-based zero-shot fact extraction.
         - ``embed_episode``: Generates embeddings via the configured API.
 
-        If the ARQ pool is unavailable (Redis down), the episodes are
-        already committed to PostgreSQL and will be picked up by a
-        background reconciliation worker (see ``docs/implementation/
-        03-core-memory/01-message-ingestion.md`` §8.6).
+        One job per task per episode is enqueued. If the ARQ pool is
+        unavailable (Redis down), episodes are safe in PostgreSQL and will
+        be picked up by a reconciliation worker.
 
         Args:
             job_id: The composite job ID for this ingestion.
             org_id: The organization UUID string.
             user_id: The user UUID string.
             session_id: The session UUID string.
-            episode_ids: List of episode UUID strings.
+            episodes: List of episode dicts with ``id``, ``content``, ``role``.
         """
-        common_kwargs = {
-            "job_id": job_id,
-            "org_id": org_id,
-            "user_id": user_id,
-            "session_id": session_id,
-            "episode_ids": episode_ids,
-        }
-
         try:
             arq_pool = get_arq()
-            for task_name in ARQ_TASKS:
-                await arq_pool.enqueue(task_name, **common_kwargs)
+            qname = "OpenZep:dev:queue:high"
+            for episode in episodes:
+                ep_id = str(episode["id"])
+                content = episode["content"]
+                role = episode.get("role", "user")
+                common = {"episode_id": ep_id, "content": content, "org_id": org_id}
+
+                await arq_pool.enqueue("extract_entities", queue_name=qname,
+                    **common, user_id=user_id)
+                await arq_pool.enqueue("extract_facts", queue_name=qname,
+                    **common, user_id=user_id)
+                await arq_pool.enqueue("embed_episode", queue_name=qname,
+                    **common)
+                await arq_pool.enqueue("sync_to_graph", queue_name="OpenZep:dev:queue:low",
+                    **common, user_id=user_id, role=role)
+
             logger.info(
                 "memory.arq_tasks_enqueued",
                 extra={

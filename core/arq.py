@@ -96,18 +96,20 @@ class ARQPool:
 
     # ── Convenience ────────────────────────────────────────────────────────────
 
-    async def enqueue(self, task_name: str, **kwargs: Any) -> str | None:
+    async def enqueue(self, task_name: str, queue_name: str | None = None, **kwargs: Any) -> str | None:
         """Enqueue a background job.
 
         Args:
             task_name: Name of the registered worker function.
-            **kwargs: Keyword arguments passed to the worker function.
+            queue_name: Optional queue name (e.g. "high" or "low"). Passed
+                as ``_queue`` to ARQ's ``enqueue_job``.
 
         Returns:
             The enqueued job ID, or ``None`` if the pool is not available.
         """
         pool = self.pool  # raises RuntimeError if not initialised
-        job = await pool.enqueue_job(task_name, **kwargs)
+        enqueue_kwargs = {"_queue_name": queue_name} if queue_name else {}
+        job = await pool.enqueue_job(task_name, **kwargs, **enqueue_kwargs)
         if job is None:
             logger.warning("arq.enqueue_returned_none", extra={"task": task_name})
             return None

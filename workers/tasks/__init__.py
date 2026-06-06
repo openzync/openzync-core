@@ -4,8 +4,16 @@ Each module in this package exports one async function that is registered with
 the worker scheduler.
 """
 
+from workers.tasks.embed_episode import embed_episode
+from workers.tasks.embed_fact import embed_fact
+from workers.tasks.extract_entities import extract_entities
+from workers.tasks.extract_facts import extract_facts
 from workers.tasks.sync_to_graph import sync_to_graph
 
 __all__ = [
+    "embed_episode",
+    "embed_fact",
+    "extract_entities",
+    "extract_facts",
     "sync_to_graph",
 ]
