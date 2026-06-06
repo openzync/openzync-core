@@ -15,7 +15,7 @@ top-N by merged score are returned.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import Select, func, select, text
@@ -23,6 +23,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.episode import Episode
 from models.fact import Fact
+
+if TYPE_CHECKING:
+    from packages.graphiti_client.interface import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +52,12 @@ class HybridRetriever:
         db: AsyncSession,
         org_id: UUID,
         redis: object | None = None,
+        graph_backend: GraphBackend | None = None,
     ) -> None:
         self._db = db
         self._org_id = org_id
         self._redis = redis
+        self._graph_backend = graph_backend
 
     # ── Public API ──────────────────────────────────────────────────────────────
 
@@ -344,7 +349,7 @@ class HybridRetriever:
     async def _graph_bfs_search(
         self,
         query: str,
-        user_id: UUID,  # noqa: ARG002
+        user_id: UUID,
     ) -> list[dict[str, Any]]:
         """BFS traversal from entities matching the query text.
 
@@ -352,6 +357,10 @@ class HybridRetriever:
         then performs a breadth-first traversal to find related entities.
         This provides graph-aware context that pure vector/BM25 search
         would miss (e.g., indirect relationships).
+
+        Uses the configured ``GraphBackend`` (FalkorDBBackend / Graphiti)
+        when available.  Gracefully degrades to an empty list when the
+        graph backend is not configured.
 
         Args:
             query: Natural-language query for entity matching.
@@ -361,30 +370,96 @@ class HybridRetriever:
             A list of entity dicts with ``id``, ``name``, ``type``,
             ``summary``, and ``distance`` keys.
         """
-        # TechLead note: The graph BFS requires Graphiti or FalkorDB to be
-        # available.  This implementation returns an empty list until the
-        # graph backend integration is wired into the retrieval path.
-        #
-        # In production, the flow would be:
-        #   1. Use the entity repository to search for entity nodes
-        #      matching the query (name / summary fuzzy match).
-        #   2. For each matched entity, run a BFS up to depth 2 to
-        #      discover related entities.
-        #   3. Return deduplicated results with BFS distance.
-        #
-        # See: repositories/entity_repository.py
+        if self._graph_backend is None:
+            logger.debug(
+                "hybrid_retriever.graph_bfs_unavailable",
+                extra={
+                    "query": query,
+                    "hint": (
+                        "Graph BFS requires a configured graph backend. "
+                        "Set MG_GRAPH_BACKEND and ensure FalkorDB is running."
+                    ),
+                },
+            )
+            return []
 
-        logger.debug(
-            "hybrid_retriever.graph_bfs_placeholder",
-            extra={
-                "query": query,
-                "hint": (
-                    "Graph BFS is not yet wired.  Enable by configuring "
-                    "a Graphiti / FalkorDB backend."
-                ),
-            },
-        )
-        return []
+        try:
+            # Step 1: Search for entities matching the query
+            matched_entities = await self._graph_backend.search_entities(
+                org_id=self._org_id,
+                query=query,
+                limit=5,
+            )
+
+            if not matched_entities:
+                return []
+
+            # Step 2: BFS traverse from each matched entity
+            seen: set[str] = set()
+            results: list[dict[str, Any]] = []
+
+            for entity in matched_entities:
+                entity_id_str = entity.get("id", "")
+                if not entity_id_str or entity_id_str in seen:
+                    continue
+                seen.add(entity_id_str)
+
+                # Add the matched entity itself with distance 0
+                results.append({
+                    "id": entity_id_str,
+                    "name": entity.get("name", ""),
+                    "type": entity.get("type", ""),
+                    "summary": entity.get("summary", ""),
+                    "distance": 0,
+                })
+
+                # BFS up to depth 2
+                try:
+                    entity_id = UUID(entity_id_str)
+                except (ValueError, TypeError):
+                    continue
+
+                try:
+                    related = await self._graph_backend.traverse(
+                        org_id=self._org_id,
+                        start_node_id=entity_id,
+                        max_depth=2,
+                    )
+                except Exception:
+                    logger.warning(
+                        "hybrid_retriever.graph_bfs_traverse_failed",
+                        extra={
+                            "entity_id": entity_id_str,
+                            "query": query,
+                        },
+                        exc_info=True,
+                    )
+                    continue
+
+                for node in related:
+                    node_id = node.get("id", "")
+                    depth = node.get("depth", 1)
+                    if node_id and node_id not in seen:
+                        seen.add(node_id)
+                        results.append({
+                            "id": node_id,
+                            "name": node.get("name", ""),
+                            "type": node.get("type", ""),
+                            "summary": node.get("summary", ""),
+                            "distance": depth,
+                        })
+
+            # Sort by distance (closest first), limit to MAX_BFS_RESULTS
+            results.sort(key=lambda x: x.get("distance", 99))
+            return results[:MAX_BFS_RESULTS]
+
+        except Exception:
+            logger.warning(
+                "hybrid_retriever.graph_bfs_failed",
+                extra={"query": query},
+                exc_info=True,
+            )
+            return []
 
     # ── RRF Merge ──────────────────────────────────────────────────────────────
 

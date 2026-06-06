@@ -1,0 +1,320 @@
+"""Fact service — business logic for batch fact ingestion.
+
+Handles batch validation, deduplication via content hash, and enqueuing
+the embedding worker for each ingested fact.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+from typing import TYPE_CHECKING, Any
+from uuid import UUID, uuid4
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis as AsyncRedis
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.arq import get_arq
+from core.config import settings
+from core.exceptions import NotFoundError
+from repositories.fact_repository import FactRepository
+from repositories.session_repository import SessionRepository
+from repositories.user_repository import UserRepository
+from schemas.facts import FactBatchResponse, FactTriple
+
+logger = logging.getLogger(__name__)
+
+# ── Constants ──────────────────────────────────────────────────────────────────
+
+CONTENT_HASH_PREFIX = "fact_contenthash:"
+"""Redis key prefix for fact content-dedup hash entries."""
+
+IDEMPOTENCY_TTL = 172800  # 48 hours
+"""TTL for idempotency and dedup cache entries (seconds)."""
+
+ARQ_QUEUE = "high"
+"""ARQ queue name for fact embedding tasks."""
+
+
+class FactService:
+    """Service layer for batch fact ingestion.
+
+    Args:
+        db: An async SQLAlchemy session (request-scoped).
+        redis_client: An async Redis client for caching and dedup.
+        fact_repo: Repository for fact CRUD.
+        user_repo: Repository for user CRUD.
+        session_repo: Repository for session CRUD.
+    """
+
+    def __init__(
+        self,
+        db: AsyncSession,
+        redis_client: AsyncRedis,
+        fact_repo: FactRepository | None = None,
+        user_repo: UserRepository | None = None,
+        session_repo: SessionRepository | None = None,
+    ) -> None:
+        self._db = db
+        self._redis = redis_client
+        self._fact_repo = fact_repo or FactRepository(db)
+        self._user_repo = user_repo or UserRepository(db)
+        self._session_repo = session_repo or SessionRepository(db)
+
+    # ── Public API ──────────────────────────────────────────────────────────────
+
+    async def ingest_facts(
+        self,
+        org_id: UUID,
+        user_uuid: UUID,
+        facts: list[FactTriple],
+        session_external_id: str | None = None,
+    ) -> FactBatchResponse:
+        """Ingest a batch of facts for a user.
+
+        Flow:
+        1. Resolve the user by UUID.
+        2. Compute content hash for batch-level dedup.
+        3. Optional: resolve session if session_external_id provided.
+        4. Bulk-insert facts into PostgreSQL.
+        5. Enqueue ARQ embedding task for each fact.
+        6. Return 202 response with job_id.
+
+        Args:
+            org_id: The authenticated organization UUID.
+            user_uuid: The internal user UUID.
+            facts: List of validated fact triples.
+            session_external_id: Optional session external ID.
+
+        Returns:
+            A ``FactBatchResponse`` with job_id and accepted_count.
+
+        Raises:
+            NotFoundError: If the user does not exist.
+        """
+        # ── Step 1: Resolve user ──────────────────────────────────────────
+        user = await self._user_repo.get_by_uuid(org_id, user_uuid)
+        if user is None:
+            raise NotFoundError(
+                message=f"User {user_uuid} not found in organization {org_id}",
+                detail={"user_id": str(user_uuid), "org_id": str(org_id)},
+            )
+        user_id = user.id
+
+        # ── Step 2: Optional session resolution ───────────────────────────
+        session_id: UUID | None = None
+        if session_external_id is not None:
+            session = await self._session_repo.get_by_external_id(
+                org_id=org_id,
+                user_id=user_id,
+                external_id=session_external_id,
+            )
+            if session is None:
+                raise NotFoundError(
+                    message=f"Session '{session_external_id}' not found for user {user_uuid}",
+                    detail={
+                        "session_id": session_external_id,
+                        "user_id": str(user_uuid),
+                    },
+                )
+            session_id = session.id
+
+        # ── Step 3: Content-level dedup check ─────────────────────────────
+        content_hash = self._compute_batch_hash(user_id, facts)
+        existing_job_id = await self._check_dedup(content_hash)
+        if existing_job_id is not None:
+            logger.info(
+                "fact_service.content_dedup_hit",
+                extra={
+                    "content_hash": content_hash,
+                    "existing_job_id": existing_job_id,
+                    "user_id": str(user_id),
+                },
+            )
+            return FactBatchResponse(
+                job_id=existing_job_id,
+                accepted_count=len(facts),
+                status="accepted",
+                message="Facts already ingested; returning existing job_id",
+            )
+
+        # ── Step 4: Bulk-insert facts ─────────────────────────────────────
+        fact_dicts: list[dict[str, Any]] = []
+        for f in facts:
+            fact_dicts.append({
+                "subject": f.subject,
+                "predicate": f.predicate,
+                "object": f.object,
+                "content": f.content or f"{f.subject} {f.predicate} {f.object}",
+                "confidence": f.confidence,
+                "source_episode_id": None,
+                "valid_from": None,
+            })
+
+        created = await self._fact_repo.batch_create(
+            organization_id=org_id,
+            user_id=user_id,
+            facts=fact_dicts,
+        )
+
+        # ── Step 5: Generate job_id and enqueue embedding tasks ───────────
+        job_id = str(uuid4())
+
+        await self._enqueue_embedding_tasks(
+            job_id=job_id,
+            org_id=str(org_id),
+            user_id=str(user_id),
+            fact_ids=[str(fact.id) for fact in created],
+        )
+
+        # ── Step 6: Cache content hash for future dedup ───────────────────
+        await self._cache_dedup(content_hash, job_id)
+
+        logger.info(
+            "fact_service.facts_ingested",
+            extra={
+                "job_id": job_id,
+                "count": len(created),
+                "user_id": str(user_id),
+                "org_id": str(org_id),
+            },
+        )
+
+        return FactBatchResponse(
+            job_id=job_id,
+            accepted_count=len(created),
+            status="accepted",
+            message=f"{len(created)} facts accepted for processing",
+        )
+
+    # ── Internal helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _compute_batch_hash(
+        user_id: UUID,
+        facts: list[FactTriple],
+    ) -> str:
+        """Compute a SHA-256 hash of (user_id, sorted facts).
+
+        Used for content-level deduplication: identical fact batches from
+        different clients produce the same hash and return the same job_id.
+
+        Args:
+            user_id: The user's UUID.
+            facts: The fact triples to hash.
+
+        Returns:
+            A hex-encoded SHA-256 digest.
+        """
+        canonical = json.dumps(
+            {
+                "user_id": str(user_id),
+                "facts": sorted(
+                    [
+                        {
+                            "subject": f.subject,
+                            "predicate": f.predicate,
+                            "object": f.object,
+                            "confidence": f.confidence,
+                        }
+                        for f in facts
+                    ],
+                    key=lambda x: (x["subject"], x["predicate"], x["object"]),
+                ),
+            },
+            sort_keys=True,
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    async def _check_dedup(self, content_hash: str) -> str | None:
+        """Check if this exact fact batch has been ingested before.
+
+        Args:
+            content_hash: The SHA-256 content hash.
+
+        Returns:
+            The existing ``job_id`` if found, or ``None``.
+        """
+        existing = await self._redis.get(f"{CONTENT_HASH_PREFIX}{content_hash}")
+        return existing if existing else None
+
+    async def _cache_dedup(self, content_hash: str, job_id: str) -> None:
+        """Cache a content hash to prevent re-ingestion of identical facts.
+
+        Args:
+            content_hash: The SHA-256 content hash.
+            job_id: The job ID to associate with this content.
+        """
+        await self._redis.setex(
+            f"{CONTENT_HASH_PREFIX}{content_hash}",
+            IDEMPOTENCY_TTL,
+            job_id,
+        )
+
+    async def _enqueue_embedding_tasks(
+        self,
+        job_id: str,
+        org_id: str,
+        user_id: str,
+        fact_ids: list[str],
+    ) -> None:
+        """Enqueue ARQ embedding tasks for each ingested fact.
+
+        Args:
+            job_id: The composite job ID for this ingestion.
+            org_id: The organization UUID string.
+            user_id: The user UUID string.
+            fact_ids: List of fact UUIDs to embed.
+        """
+        try:
+            arq_pool = get_arq()
+            qname = _arq_queue_name(ARQ_QUEUE)
+
+            for fact_id in fact_ids:
+                await arq_pool.enqueue(
+                    "embed_fact",
+                    queue_name=qname,
+                    fact_id=fact_id,
+                    org_id=org_id,
+                    user_id=user_id,
+                )
+
+            logger.info(
+                "fact_service.embedding_tasks_enqueued",
+                extra={
+                    "job_id": job_id,
+                    "task_count": len(fact_ids),
+                    "org_id": org_id,
+                },
+            )
+        except Exception:
+            # ⚠️ Facts are already committed. ARQ failure does not
+            # roll back the insert. A reconciliation worker will pick
+            # up facts without embeddings.
+            logger.critical(
+                "fact_service.arq_enqueue_failed",
+                extra={
+                    "job_id": job_id,
+                    "org_id": org_id,
+                    "user_id": user_id,
+                    "fact_ids": fact_ids,
+                    "error": "ARQ pool unavailable — tasks not enqueued. "
+                    "Facts are safe in PostgreSQL; reconciliation needed.",
+                },
+            )
+
+
+def _arq_queue_name(queue_type: str) -> str:
+    """Build the full ARQ queue name matching the worker's config.
+
+    Args:
+        queue_type: Queue type suffix (e.g. ``"high"``, ``"low"``).
+
+    Returns:
+        Fully qualified queue name for the current environment.
+    """
+    env = settings.ENVIRONMENT if hasattr(settings, "ENVIRONMENT") else "development"
+    return f"OpenZep:{env}:queue:{queue_type}"

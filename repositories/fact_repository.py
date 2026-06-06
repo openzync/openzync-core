@@ -13,6 +13,7 @@ Key patterns:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from uuid import UUID
 
@@ -22,6 +23,8 @@ from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.fact import Fact
+
+logger = logging.getLogger(__name__)
 
 
 class FactRepository:
@@ -82,6 +85,88 @@ class FactRepository:
         await self._db.flush()
         await self._db.refresh(fact)
         return fact
+
+    # ── Batch Create ────────────────────────────────────────────────────────────
+
+    async def batch_create(
+        self,
+        organization_id: UUID,
+        user_id: UUID,
+        facts: list[dict],
+    ) -> list[Fact]:
+        """Bulk-insert facts using a single INSERT statement.
+
+        More efficient than per-row ``create()`` for batch ingestion.
+        Uses SQLAlchemy's ``insert()`` with ``returning()`` to fetch
+        the generated IDs.
+
+        Args:
+            organization_id: Denormalized org ID for RLS.
+            user_id: FK to the owning user.
+            facts: List of dicts, each with optional keys: ``subject``,
+                ``predicate``, ``object``, ``content``, ``confidence``,
+                ``source_episode_id``, ``valid_from``.
+
+        Returns:
+            A list of created ``Fact`` ORM instances with server-generated
+            fields populated.
+        """
+        if not facts:
+            return []
+
+        from datetime import datetime, timezone
+
+        now = datetime.now(timezone.utc)
+        rows = []
+        for f in facts:
+            subject = f.get("subject")
+            predicate = f.get("predicate")
+            obj = f.get("object")
+            content = f.get(
+                "content",
+                f"{subject} {predicate} {obj}" if subject and predicate and obj else "",
+            )
+            rows.append(
+                {
+                    "user_id": user_id,
+                    "organization_id": organization_id,
+                    "content": content,
+                    "subject": subject,
+                    "predicate": predicate,
+                    "object": obj,
+                    "subject_type": f.get("subject_type", "literal"),
+                    "object_type": f.get("object_type", "literal"),
+                    "confidence": f.get("confidence", 1.0),
+                    "source_episode_id": f.get("source_episode_id"),
+                    "valid_from": f.get("valid_from", now),
+                    "valid_to": f.get("valid_to"),
+                    "embedding": [],
+                }
+            )
+
+        # Bulk insert with RETURNING
+        from sqlalchemy import insert
+
+        stmt = insert(Fact).returning(Fact)
+        result = await self._db.execute(stmt, rows)
+        await self._db.flush()
+
+        created = list(result.scalars().all())
+
+        # Refresh each to populate server defaults (created_at, etc.)
+        for fact in created:
+            await self._db.refresh(fact)
+
+        logger.info(
+            "fact_repository.batch_created",
+            extra={
+                "count": len(created),
+                "user_id": str(user_id),
+                "organization_id": str(organization_id),
+            },
+        )
+
+        return created
 
     # ── Soft Delete by User ──────────────────────────────────────────────────
 

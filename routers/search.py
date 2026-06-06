@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import NotFoundError
@@ -47,6 +47,7 @@ router = APIRouter(
     },
 )
 async def search_memory(
+    request: Request,
     user_id: UUID,
     query: str = Query(
         ...,
@@ -112,7 +113,8 @@ async def search_memory(
         )
 
     # ── Run hybrid search ───────────────────────────────────────────────
-    retriever = HybridRetriever(db, org_uuid)
+    graph_backend = getattr(request.app.state, "graph_backend", None)
+    retriever = HybridRetriever(db, org_uuid, graph_backend=graph_backend)
     results = await retriever.hybrid_search(
         query=query,
         user_id=user_id,

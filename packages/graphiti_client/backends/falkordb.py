@@ -18,12 +18,13 @@ import asyncio
 import logging
 from uuid import UUID
 
-from graphiti_core import Graphiti
-from graphiti_core.edges import GraphRelationship
-from graphiti_core.nodes import EntityNode
-
 from core.exceptions import ExternalServiceError, NotFoundError
 from packages.graphiti_client.interface import GraphBackend
+
+# ⚠️ graphiti_core types are optional — they are used in type annotations
+# and method bodies but degrade gracefully when the installed version does
+# not expose them.  With ``from __future__ import annotations``, type hints
+# are lazy strings and never cause import errors.
 
 logger = logging.getLogger(__name__)
 
@@ -297,20 +298,23 @@ class FalkorDBBackend(GraphBackend):
             seen: set[str] = set()
 
             for item in results:
-                # results may be EntityNode or dict structures.
-                if isinstance(item, EntityNode):
+                # Results may be EntityNode or dict structures.
+                # Use duck-typing instead of isinstance to avoid depending
+                # on Graphiti's type hierarchy.
+                uid: str | None = None
+                if hasattr(item, "uuid"):
                     uid = str(item.uuid)
-                    if uid not in seen:
-                        seen.add(uid)
-                        node_dict = self._entity_to_dict(item)
-                        # Depth is tracked by Graphiti internally — we
-                        # approximate from the search result if available.
-                        node_dict["depth"] = getattr(item, "depth", 0)
-                        nodes.append(node_dict)
                 elif isinstance(item, dict):
                     uid = item.get("uuid", item.get("id"))
-                    if uid and uid not in seen:
-                        seen.add(str(uid))
+                    uid = str(uid) if uid else None
+
+                if uid is not None and uid not in seen:
+                    seen.add(uid)
+                    if hasattr(item, "uuid") and hasattr(item, "name"):
+                        node_dict = self._entity_to_dict(item)
+                        node_dict["depth"] = getattr(item, "depth", 0)
+                        nodes.append(node_dict)
+                    elif isinstance(item, dict):
                         item["depth"] = item.get("depth", 0)
                         nodes.append(item)
 
@@ -397,7 +401,7 @@ class FalkorDBBackend(GraphBackend):
         # Normalise results.
         nodes: list[dict] = []
         for item in results:
-            if isinstance(item, EntityNode):
+            if hasattr(item, "uuid") and hasattr(item, "name"):
                 node_dict = self._entity_to_dict(item)
                 node_dict["score"] = getattr(item, "score", 1.0)
                 nodes.append(node_dict)
@@ -412,6 +416,177 @@ class FalkorDBBackend(GraphBackend):
         # Sort by score descending, then truncate.
         nodes.sort(key=lambda n: n.get("score", 0), reverse=True)
         return nodes[:limit]
+
+    # ── Entity Listing ─────────────────────────────────────────────────────────
+
+    async def list_entities(
+        self,
+        org_id: UUID,
+        *,
+        entity_type: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> dict:
+        """List entity nodes with optional type filter and cursor pagination.
+
+        Uses Graphiti's ``EntityNode.get_by_group_ids()`` with manual cursor
+        pagination (fetch ``limit + 1``, use last item's uuid as next cursor).
+
+        Returns:
+            A dict with ``items``, ``next_cursor`` (str or None), and
+            ``has_more`` (bool).
+        """
+        import json as _json
+        from base64 import b64decode, b64encode
+
+        try:
+            from graphiti_core.nodes import EntityNode
+
+            group_id = self._make_group_id(org_id)
+
+            # Decode cursor to get offset node_id
+            offset_node_id: str | None = None
+            if cursor:
+                try:
+                    cursor_data = _json.loads(b64decode(cursor).decode())
+                    offset_node_id = cursor_data.get("node_id")
+                except Exception:
+                    logger.warning(
+                        "graphiti.list_entities.invalid_cursor",
+                        extra={"cursor": cursor},
+                    )
+                    offset_node_id = None
+
+            # Fetch limit + 1 for has_more detection
+            fetch_limit = limit + 1
+            nodes = await self._run_sync(
+                _list_entities_sync,
+                self._graphiti,
+                group_id,
+                entity_type,
+                fetch_limit,
+                offset_node_id,
+            )
+
+            has_more = len(nodes) > limit
+            if has_more:
+                nodes = nodes[:limit]
+
+            items = [self._entity_to_dict(n) for n in nodes]
+
+            next_cursor: str | None = None
+            if has_more and nodes:
+                cursor_data = _json.dumps({"node_id": str(nodes[-1].uuid)})
+                next_cursor = b64encode(cursor_data.encode()).decode()
+
+            return {
+                "items": items,
+                "next_cursor": next_cursor,
+                "has_more": has_more,
+            }
+        except Exception as exc:
+            logger.error(
+                "graphiti.list_entities_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "entity_type": entity_type,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to list entities: {exc}",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+    async def list_entity_edges(
+        self,
+        org_id: UUID,
+        entity_id: UUID,
+        *,
+        predicate: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,  # noqa: ARG002
+    ) -> dict:
+        """List all edges incident to a specific entity node.
+
+        Uses Graphiti's ``EntityEdge.get_by_node_uuid()``.  Cursor pagination
+        is approximated (Graphiti does not natively support it for edges).
+
+        Returns:
+            A dict with ``items`` and ``next_cursor`` / ``has_more``.
+        """
+        try:
+            from graphiti_core.edges import EntityEdge
+
+            edges = await self._run_sync(
+                EntityEdge.get_by_node_uuid,
+                self._graphiti._driver,  # noqa: SLF001
+                str(entity_id),
+            )
+
+            # Filter by predicate if requested
+            if predicate:
+                edges = [e for e in edges if e.facet == predicate or e.name == predicate]
+
+            total = len(edges)
+            effective_limit = min(limit, 200)
+            page = edges[:effective_limit]
+            has_more = total > effective_limit
+
+            items = [self._relationship_to_dict(e) for e in page]
+
+            return {
+                "items": items,
+                "next_cursor": None,
+                "has_more": has_more,
+            }
+        except Exception as exc:
+            logger.error(
+                "graphiti.list_entity_edges_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "entity_id": str(entity_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to list edges for entity {entity_id}: {exc}",
+                detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+            ) from exc
+
+    async def get_entity_with_edges(
+        self,
+        org_id: UUID,
+        entity_id: UUID,
+    ) -> dict | None:
+        """Retrieve a single entity node with all its incident edges.
+
+        Returns:
+            A dict with ``node`` (entity dict) and ``edges`` (list of edge
+            dicts), or ``None`` if the entity does not exist.
+        """
+        node = await self.get_entity(org_id, entity_id)
+        if node is None:
+            return None
+
+        edges_result = await self.list_entity_edges(org_id, entity_id)
+        return {
+            "node": node,
+            "edges": edges_result.get("items", []),
+        }
+
+    @staticmethod
+    def _make_group_id(org_id: UUID) -> str:
+        """Build the group_id string for organisational isolation.
+
+        Args:
+            org_id: The organisation UUID.
+
+        Returns:
+            A string like ``"org:<uuid>"`` for use with Graphiti's
+            group_id parameter.
+        """
+        return f"org:{org_id}"
 
     # ── Observability ──────────────────────────────────────────────────────────
 
@@ -441,3 +616,45 @@ class FalkorDBBackend(GraphBackend):
         except Exception as exc:
             logger.warning("graphiti.health_check_failed", extra={"error": str(exc)})
             return False
+
+
+def _list_entities_sync(
+    graphiti: Graphiti,
+    group_id: str,
+    entity_type: str | None,
+    limit: int,
+    offset_node_id: str | None,
+) -> list[EntityNode]:
+    """Synchronous helper to list entity nodes via Graphiti's internal API.
+
+    This runs inside ``run_in_executor`` so it never blocks the event loop.
+
+    Args:
+        graphiti: The Graphiti SDK instance.
+        group_id: The org-namespaced group ID.
+        entity_type: Optional entity type filter.
+        limit: Number of entities to fetch.
+        offset_node_id: Cursor offset — node UUID to start after.
+
+    Returns:
+        A list of ``EntityNode`` instances.
+    """
+    from graphiti_core.nodes import EntityNode
+
+    # Use the internal driver connection for direct node queries.
+    driver = graphiti._driver  # noqa: SLF001
+
+    # Build group_ids list
+    group_ids = [group_id]
+
+    # Fetch nodes via EntityNode.get_by_group_ids
+    # ⚠️ This API may not support offset_node_id in all Graphiti versions.
+    nodes: list[EntityNode] = EntityNode.get_by_group_ids(
+        driver=driver,
+        group_ids=group_ids,
+        node_labels=[entity_type] if entity_type else None,
+        limit=limit,
+        offset_node_id=offset_node_id,
+    )
+
+    return nodes

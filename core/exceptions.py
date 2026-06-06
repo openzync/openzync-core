@@ -171,6 +171,48 @@ class PayloadTooLargeError(AppError):
         super().__init__(message=message, detail=detail)
 
 
+class EntityNotFoundError(AppError):
+    """Requested graph entity node does not exist."""
+
+    status_code: int = 404
+    code: str = "entity_not_found"
+
+    def __init__(
+        self,
+        message: str = "The requested entity was not found in the knowledge graph.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class EdgeNotFoundError(AppError):
+    """Requested graph edge does not exist."""
+
+    status_code: int = 404
+    code: str = "edge_not_found"
+
+    def __init__(
+        self,
+        message: str = "The requested edge was not found in the knowledge graph.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class GraphTimeoutError(AppError):
+    """Graph database operation exceeded the configured timeout."""
+
+    status_code: int = 504
+    code: str = "graph_timeout"
+
+    def __init__(
+        self,
+        message: str = "The graph database operation timed out.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RFC 7807 Problem Details
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -218,6 +260,9 @@ def register_exception_handlers(app: FastAPI) -> None:
         InsufficientCreditsError: 402,
         ExternalServiceError: 502,
         PayloadTooLargeError: 413,
+        EntityNotFoundError: 404,
+        EdgeNotFoundError: 404,
+        GraphTimeoutError: 504,
     }
 
     for exc_type, _status in handlers.items():

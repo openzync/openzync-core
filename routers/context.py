@@ -122,7 +122,8 @@ async def get_context(
 
     # ── Assemble context ────────────────────────────────────────────────
     redis = getattr(request.app.state, "redis_client", None) if request else None
-    service = ContextService(db, org_uuid, redis)
+    graph_backend = getattr(request.app.state, "graph_backend", None)
+    service = ContextService(db, org_uuid, redis, graph_backend=graph_backend)
     result = await service.assemble(
         user_id=user_id,
         query=query,

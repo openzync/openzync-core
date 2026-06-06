@@ -156,6 +156,74 @@ class GraphBackend(ABC):
         """
         ...
 
+    # ── Entity Listing ──────────────────────────────────────────────────────────
+
+    @abstractmethod
+    async def list_entities(
+        self,
+        org_id: UUID,
+        *,
+        entity_type: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> dict:
+        """List entity nodes with optional type filter and cursor pagination.
+
+        Args:
+            org_id: Organisational scope.
+            entity_type: Optional filter by entity type (e.g. ``"Person"``).
+            limit: Maximum results per page (max 200).
+            cursor: Opaque cursor for cursor-based pagination.
+
+        Returns:
+            A dict with ``items`` (list of entity dicts), ``next_cursor``
+            (str or None), and ``has_more`` (bool).
+        """
+        ...
+
+    @abstractmethod
+    async def list_entity_edges(
+        self,
+        org_id: UUID,
+        entity_id: UUID,
+        *,
+        predicate: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> dict:
+        """List all edges incident to a specific entity node.
+
+        Args:
+            org_id: Organisational scope.
+            entity_id: UUID of the entity node whose edges to list.
+            predicate: Optional filter by edge label.
+            limit: Maximum results per page (max 200).
+            cursor: Opaque cursor for cursor-based pagination.
+
+        Returns:
+            A dict with ``items`` (list of edge dicts), ``next_cursor``
+            (str or None), and ``has_more`` (bool).
+        """
+        ...
+
+    @abstractmethod
+    async def get_entity_with_edges(
+        self,
+        org_id: UUID,
+        entity_id: UUID,
+    ) -> dict | None:
+        """Retrieve a single entity node with all its incident edges.
+
+        Args:
+            org_id: Organisational scope.
+            entity_id: UUID of the entity to fetch.
+
+        Returns:
+            A dict with ``node`` (entity dict) and ``edges`` (list of edge
+            dicts), or ``None`` if the entity does not exist.
+        """
+        ...
+
     # ── Observability ──────────────────────────────────────────────────────────
 
     @abstractmethod

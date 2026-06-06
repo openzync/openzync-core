@@ -36,7 +36,8 @@ from middleware.logging import LoggingMiddleware
 from middleware.rate_limit import RateLimitMiddleware
 from middleware.request_id import RequestIDMiddleware
 from middleware.tracing import TracingMiddleware
-from routers import admin, context, health, memory, search, sessions, users
+from packages.graphiti_client.backends.falkordb import FalkorDBBackend
+from routers import admin, context, facts, graph, health, memory, search, sessions, users
 
 
 def create_app() -> FastAPI:
@@ -67,6 +68,15 @@ def create_app() -> FastAPI:
         try:
             graphiti_client = await init_graphiti(str(settings.FALKORDB_URL))
             app.state.graphiti_client = graphiti_client
+
+            # Wrap the underlying Graphiti SDK instance in FalkorDBBackend
+            # for the GraphBackend ABC interface.  graphiti_client.client
+            # returns the raw graphiti_core.Graphiti SDK instance.
+            if graphiti_client.is_ready:
+                from packages.graphiti_client.backends.falkordb import FalkorDBBackend
+                app.state.graph_backend = FalkorDBBackend(graphiti_client.client)
+            else:
+                app.state.graph_backend = None
         except Exception:
             # Graphiti is optional for Phase 0 — log a warning and continue.
             import structlog
@@ -77,6 +87,7 @@ def create_app() -> FastAPI:
                 "Graph-backed memory features will be unavailable.",
             )
             app.state.graphiti_client = None
+            app.state.graph_backend = None
 
         yield
 
@@ -147,6 +158,8 @@ def create_app() -> FastAPI:
     app.include_router(memory.router)
     app.include_router(context.router)
     app.include_router(search.router)
+    app.include_router(graph.router)
+    app.include_router(facts.router)
 
     return app
 

@@ -8,6 +8,7 @@ from workers.tasks.embed_episode import embed_episode
 from workers.tasks.embed_fact import embed_fact
 from workers.tasks.extract_entities import extract_entities
 from workers.tasks.extract_facts import extract_facts
+from workers.tasks.ingest_business_data import ingest_business_data
 from workers.tasks.sync_to_graph import sync_to_graph
 
 __all__ = [
@@ -15,5 +16,6 @@ __all__ = [
     "embed_fact",
     "extract_entities",
     "extract_facts",
+    "ingest_business_data",
     "sync_to_graph",
 ]
