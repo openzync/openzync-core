@@ -126,6 +126,7 @@ class UserRepository:
 
     async def update(
         self,
+        organization_id: UUID,
         user_id: UUID,
         name: str | None = None,
         email: str | None = None,
@@ -137,6 +138,7 @@ class UserRepository:
         Keys set to ``None`` in the merge dict are removed from metadata.
 
         Args:
+            organization_id: Tenant scope (always applied).
             user_id: The internal OpenZep user UUID.
             name: New display name. ``None`` means *do not update*.
             email: New email address. ``None`` means *do not update*.
@@ -146,7 +148,10 @@ class UserRepository:
             The updated User, or ``None`` if not found.
         """
         result = await self._db.execute(
-            select(User).where(User.id == user_id)
+            select(User).where(
+                User.id == user_id,
+                User.organization_id == organization_id,
+            )
         )
         user = result.scalar_one_or_none()
         if user is None:
@@ -175,20 +180,26 @@ class UserRepository:
 
     # ── Soft Delete ─────────────────────────────────────────────────────────
 
-    async def soft_delete(self, user_id: UUID) -> User | None:
+    async def soft_delete(
+        self, organization_id: UUID, user_id: UUID
+    ) -> User | None:
         """Set ``is_deleted = True`` on the user.
 
         Called on the DELETE endpoint as part of the GDPR two-phase
         deletion workflow (soft -> hard purge after 30 days).
 
         Args:
+            organization_id: Tenant scope (always applied).
             user_id: The internal OpenZep user UUID.
 
         Returns:
             The soft-deleted User, or ``None`` if not found.
         """
         result = await self._db.execute(
-            select(User).where(User.id == user_id)
+            select(User).where(
+                User.id == user_id,
+                User.organization_id == organization_id,
+            )
         )
         user = result.scalar_one_or_none()
         if user is None:
@@ -200,7 +211,9 @@ class UserRepository:
 
     # ── Hard Delete ─────────────────────────────────────────────────────────
 
-    async def hard_delete(self, user_id: UUID) -> bool:
+    async def hard_delete(
+        self, organization_id: UUID, user_id: UUID
+    ) -> bool:
         """Permanently remove a user row.
 
         Used by the GDPR purge worker after the 30-day grace period.
@@ -208,13 +221,17 @@ class UserRepository:
         episodes, facts).
 
         Args:
+            organization_id: Tenant scope (always applied).
             user_id: The internal OpenZep user UUID.
 
         Returns:
             ``True`` if a row was deleted, ``False`` if not found.
         """
         result = await self._db.execute(
-            select(User).where(User.id == user_id)
+            select(User).where(
+                User.id == user_id,
+                User.organization_id == organization_id,
+            )
         )
         user = result.scalar_one_or_none()
         if user is None:

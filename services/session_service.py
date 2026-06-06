@@ -18,79 +18,10 @@ from schemas.sessions import (
 )
 
 from core.exceptions import ConflictError, NotFoundError, ValidationError
-from models.episode import Episode
-from models.session import Session
+from repositories.mappers import episode_to_dict, session_to_dict, session_to_list_dict
 from repositories.session_repository import SessionRepository
 
 logger = logging.getLogger(__name__)
-
-
-# ── ORM → dict helpers ─────────────────────────────────────────────────────
-# The Session and Episode ORM models use ``metadata_`` as the Python attribute
-# name (because ``metadata`` is reserved by SQLAlchemy's DeclarativeBase).
-# The Pydantic schemas use ``metadata`` for the JSON field.  These helpers
-# bridge the naming gap so we can pass a plain dict to model_validate().
-
-def _session_to_dict(
-    session: Session,
-    *,
-    message_count: int = 0,
-    fact_count: int = 0,
-) -> dict[str, Any]:
-    """Convert a Session ORM model to a flat dict for schema construction.
-
-    Handles the ``metadata_`` → ``metadata`` field-name mapping.
-    """
-    return {
-        "id": session.id,
-        "user_id": session.user_id,
-        "external_id": session.external_id,
-        "metadata": session.metadata_ or {},
-        "is_active": session.is_active,
-        "closed_at": session.closed_at,
-        "created_at": session.created_at,
-        "updated_at": session.updated_at,
-        "message_count": message_count,
-        "fact_count": fact_count,
-    }
-
-
-def _session_to_list_dict(
-    session: Session,
-    *,
-    message_count: int = 0,
-    fact_count: int = 0,
-) -> dict[str, Any]:
-    """Convert a Session ORM model to a lightweight list-item dict.
-
-    Matches the ``SessionListResponse`` schema (excludes metadata and
-    updated_at for compact list responses).
-    """
-    return {
-        "id": session.id,
-        "user_id": session.user_id,
-        "external_id": session.external_id,
-        "is_active": session.is_active,
-        "message_count": message_count,
-        "fact_count": fact_count,
-        "created_at": session.created_at,
-    }
-
-
-def _episode_to_dict(episode: Episode) -> dict[str, Any]:
-    """Convert an Episode ORM model to a flat dict for schema construction.
-
-    Handles the ``metadata_`` → ``metadata`` field-name mapping.
-    """
-    return {
-        "id": episode.id,
-        "role": episode.role,
-        "content": episode.content,
-        "metadata": episode.metadata_ or {},
-        "token_count": episode.token_count,
-        "sequence_number": episode.sequence_number,
-        "created_at": episode.created_at,
-    }
 
 
 class SessionService:
@@ -115,6 +46,7 @@ class SessionService:
         """Create a new session for a user.
 
         Args:
+            organization_id: The organization UUID for tenant isolation.
             user_id: The owning user's UUID.
             external_id: Caller-defined session identifier (unique per user).
             metadata: Optional session metadata.
@@ -127,7 +59,9 @@ class SessionService:
                 exists for the given user.
         """
         # Check for duplicates before inserting.
-        existing = await self._repo.get_by_external_id(user_id, external_id)
+        existing = await self._repo.get_by_external_id(
+            org_id, user_id, external_id
+        )
         if existing is not None:
             raise ConflictError(
                 f"Session '{external_id}' already exists for user {user_id}"
@@ -150,15 +84,18 @@ class SessionService:
         )
 
         return SessionResponse.model_validate(
-            _session_to_dict(session, message_count=0, fact_count=0)
+            session_to_dict(session, message_count=0, fact_count=0)
         )
 
     # ── Get ─────────────────────────────────────────────────────────────────
 
-    async def get_session(self, session_id: UUID) -> SessionResponse:
+    async def get_session(
+        self, org_id: UUID, session_id: UUID
+    ) -> SessionResponse:
         """Get session by UUID with aggregate statistics.
 
         Args:
+            org_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
 
         Returns:
@@ -167,14 +104,14 @@ class SessionService:
         Raises:
             NotFoundError: Session not found or soft-deleted.
         """
-        session = await self._repo.get_by_uuid(session_id)
+        session = await self._repo.get_by_uuid(org_id, session_id)
         if session is None:
             raise NotFoundError(f"Session {session_id} not found")
 
         stats = await self._repo.get_stats(session_id)
 
         return SessionResponse.model_validate(
-            _session_to_dict(
+            session_to_dict(
                 session,
                 message_count=stats["message_count"],
                 fact_count=stats["fact_count"],
@@ -182,11 +119,12 @@ class SessionService:
         )
 
     async def get_session_by_external_id(
-        self, user_id: UUID, external_id: str
+        self, org_id: UUID, user_id: UUID, external_id: str
     ) -> SessionResponse:
         """Get a session for a user by its external_id.
 
         Args:
+            org_id: The organization UUID for tenant isolation.
             user_id: The owning user's UUID.
             external_id: The caller-defined session identifier.
 
@@ -196,7 +134,7 @@ class SessionService:
         Raises:
             NotFoundError: Session not found or soft-deleted.
         """
-        session = await self._repo.get_by_external_id(user_id, external_id)
+        session = await self._repo.get_by_external_id(org_id, user_id, external_id)
         if session is None:
             raise NotFoundError(
                 f"Session external_id={external_id!r} not found "
@@ -206,20 +144,23 @@ class SessionService:
         stats = await self._repo.get_stats(session.id)
 
         return SessionResponse.model_validate(
-            _session_to_dict(
+            session_to_dict(
                 session,
                 message_count=stats["message_count"],
                 fact_count=stats["fact_count"],
             )
         )
 
-    async def get_session_by_uuid(self, session_id: UUID) -> SessionResponse:
+    async def get_session_by_uuid(
+        self, org_id: UUID, session_id: UUID
+    ) -> SessionResponse:
         """Get a session by its internal UUID (alias for ``get_session``).
 
         Provided for callers that already have the UUID and don't need
         external_id resolution.
 
         Args:
+            org_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
 
         Returns:
@@ -228,12 +169,13 @@ class SessionService:
         Raises:
             NotFoundError: Session not found or soft-deleted.
         """
-        return await self.get_session(session_id)
+        return await self.get_session(org_id, session_id)
 
     # ── List ────────────────────────────────────────────────────────────────
 
     async def list_sessions(
         self,
+        org_id: UUID,
         user_id: UUID,
         limit: int = 50,
         cursor: str | None = None,
@@ -245,6 +187,7 @@ class SessionService:
         excluding the ``__default__`` auto-created session.
 
         Args:
+            org_id: The organization UUID for tenant isolation.
             user_id: The owning user's UUID.
             limit: Maximum items per page (1–200).
             cursor: Opaque base64 cursor from a previous page.
@@ -260,6 +203,7 @@ class SessionService:
             raise ValidationError("limit must be between 1 and 200")
 
         sessions, next_cursor = await self._repo.list(
+            org_id=org_id,
             user_id=user_id,
             limit=limit,
             cursor=cursor,
@@ -272,7 +216,7 @@ class SessionService:
         # accurate counts.
         items = [
             SessionListResponse.model_validate(
-                _session_to_list_dict(s)
+                session_to_list_dict(s)
             )
             for s in sessions
         ]
@@ -287,6 +231,7 @@ class SessionService:
 
     async def get_messages(
         self,
+        org_id: UUID,
         session_id: UUID,
         limit: int = 100,
         cursor: str | None = None,
@@ -297,6 +242,7 @@ class SessionService:
         tie-free ordering.
 
         Args:
+            org_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
             limit: Maximum items per page (1–500).
             cursor: Opaque base64 cursor from a previous page.
@@ -312,18 +258,19 @@ class SessionService:
             raise ValidationError("limit must be between 1 and 500")
 
         # Verify the session exists before fetching messages.
-        session = await self._repo.get_by_uuid(session_id)
+        session = await self._repo.get_by_uuid(org_id, session_id)
         if session is None:
             raise NotFoundError(f"Session {session_id} not found")
 
         messages, next_cursor = await self._repo.get_messages(
+            org_id=org_id,
             session_id=session_id,
             limit=limit,
             cursor=cursor,
         )
 
         items = [
-            MessageResponse.model_validate(_episode_to_dict(m))
+            MessageResponse.model_validate(episode_to_dict(m))
             for m in messages
         ]
 
@@ -335,19 +282,22 @@ class SessionService:
 
     # ── Delete ──────────────────────────────────────────────────────────────
 
-    async def delete_session(self, session_id: UUID) -> None:
-        """Soft-delete a session.
+    async def delete_session(
+        self, org_id: UUID, session_id: UUID
+    ) -> None:
+        """Soft-delete a session, scoped to org.
 
         Episodes are unlinked (``session_id`` set to ``NULL``) but
         preserved as orphaned history for audit purposes.
 
         Args:
+            org_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
 
         Raises:
             NotFoundError: Session not found or already deleted.
         """
-        session = await self._repo.soft_delete(session_id)
+        session = await self._repo.soft_delete(org_id, session_id)
         if session is None:
             raise NotFoundError(f"Session {session_id} not found")
 

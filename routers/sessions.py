@@ -84,7 +84,7 @@ async def create_session(
 async def list_sessions(
     user_id: UUID,
     service: SessionService = Depends(get_session_service),
-    _org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_id),
     limit: int = Query(
         default=50,
         ge=1,
@@ -107,6 +107,7 @@ async def list_sessions(
     closed sessions.  Set ``include_closed=true`` to include them.
     """
     return await service.list_sessions(
+        org_id=UUID(org_id) if isinstance(org_id, str) else org_id,
         user_id=user_id,
         limit=limit,
         cursor=cursor,
@@ -130,13 +131,16 @@ async def get_session(
     user_id: UUID,
     session_id: UUID,
     service: SessionService = Depends(get_session_service),
-    _org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_id),
 ) -> SessionResponse:
     """Get session details including aggregate statistics.
 
     Returns message count, fact count, and session metadata.
     """
-    return await service.get_session(session_id=session_id)
+    return await service.get_session(
+        org_id=UUID(org_id) if isinstance(org_id, str) else org_id,
+        session_id=session_id,
+    )
 
 
 @router.get(
@@ -155,7 +159,7 @@ async def get_session_messages(
     user_id: UUID,
     session_id: UUID,
     service: SessionService = Depends(get_session_service),
-    _org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_id),
     limit: int = Query(
         default=100,
         ge=1,
@@ -174,6 +178,7 @@ async def get_session_messages(
     ordering (not by ``created_at``, which can have ties).
     """
     return await service.get_messages(
+        org_id=UUID(org_id) if isinstance(org_id, str) else org_id,
         session_id=session_id,
         limit=limit,
         cursor=cursor,
@@ -196,11 +201,14 @@ async def delete_session(
     user_id: UUID,
     session_id: UUID,
     service: SessionService = Depends(get_session_service),
-    _org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_id),
 ) -> None:
     """Delete (soft-delete) a session.
 
     Sets ``is_deleted = True`` and unlinks episodes from the session.
     Episodes are preserved as orphaned history for audit purposes.
     """
-    await service.delete_session(session_id=session_id)
+    await service.delete_session(
+        org_id=UUID(org_id) if isinstance(org_id, str) else org_id,
+        session_id=session_id,
+    )

@@ -30,6 +30,7 @@ if TYPE_CHECKING:
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import get_arq
+from core.config import settings
 from core.exceptions import NotFoundError
 from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
@@ -66,6 +67,22 @@ ARQ_TASKS = [
 
 ARQ_QUEUE = "high"
 """ARQ queue name for ingestion-related background tasks."""
+
+
+def _arq_queue_name(queue_type: str) -> str:
+    """Build the full ARQ queue name matching the worker's config.
+
+    Worker uses: ``get_queue_name(settings.ENVIRONMENT, queue_type)``
+    which produces: ``OpenZep:{env}:queue:{queue_type}``
+
+    Args:
+        queue_type: Queue type suffix (e.g. ``"high"``, ``"low"``).
+
+    Returns:
+        Fully qualified queue name for the current environment.
+    """
+    env = settings.ENVIRONMENT if hasattr(settings, "ENVIRONMENT") else "development"
+    return f"OpenZep:{env}:queue:{queue_type}"
 
 
 class MemoryService:
@@ -392,6 +409,7 @@ class MemoryService:
 
         if session_external_id is not None:
             session = await self._session_repo.get_by_external_id(
+                org_id=organization_id,
                 user_id=user_id,
                 external_id=session_external_id,
             )
@@ -402,15 +420,10 @@ class MemoryService:
             return session
 
         # Auto-create or get existing "__default__" session
-        # ⚠️ RACE CONDITION: The SessionRepository.get_or_create_default()
-        # does not pass organization_id. The column exists in the schema
-        # but the current Session model initialiser skips it. The unique
-        # constraint on (user_id, external_id) prevents actual duplicates,
-        # but the default session gets org_id = NULL if created via the
-        # current code path.
-        # TechLead note: Once the Session model maps organization_id
-        # properly, update get_or_create_default to pass it.
-        return await self._session_repo.get_or_create_default(user_id=user_id)
+        return await self._session_repo.get_or_create_default(
+            org_id=organization_id,
+            user_id=user_id,
+        )
 
     # ── Idempotency ──────────────────────────────────────────────────────────
 
@@ -544,7 +557,7 @@ class MemoryService:
         """
         try:
             arq_pool = get_arq()
-            qname = "OpenZep:dev:queue:high"
+            qname = _arq_queue_name("high")
             for episode in episodes:
                 ep_id = str(episode["id"])
                 content = episode["content"]
@@ -557,7 +570,7 @@ class MemoryService:
                     **common, user_id=user_id)
                 await arq_pool.enqueue("embed_episode", queue_name=qname,
                     **common)
-                await arq_pool.enqueue("sync_to_graph", queue_name="OpenZep:dev:queue:low",
+                await arq_pool.enqueue("sync_to_graph", queue_name=_arq_queue_name("low"),
                     **common, user_id=user_id, role=role)
 
             logger.info(

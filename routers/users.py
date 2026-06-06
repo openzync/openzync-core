@@ -127,6 +127,7 @@ async def update_user(
     user_id: UUID,
     body: UpdateUserRequest,
     service: UserService = Depends(get_user_service),
+    org_id: str = Depends(require_org_id),
 ) -> UserResponse:
     """Update user fields.
 
@@ -136,6 +137,7 @@ async def update_user(
     - At least one field must be provided.
     """
     return await service.update_user(
+        organization_id=UUID(org_id),
         user_id=user_id,
         name=body.name,
         email=body.email,
@@ -147,6 +149,7 @@ async def update_user(
 async def delete_user(
     user_id: UUID,
     service: UserService = Depends(get_user_service),
+    org_id: str = Depends(require_org_id),
 ) -> None:
     """Delete a user and all associated data.
 
@@ -160,4 +163,4 @@ async def delete_user(
     If you re-create a user with the same ``external_id`` within the 30-day
     grace period, it will be treated as a new user.
     """
-    await service.delete_user(user_id=user_id)
+    await service.delete_user(organization_id=UUID(org_id), user_id=user_id)

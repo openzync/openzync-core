@@ -205,6 +205,7 @@ class UserService:
 
     async def update_user(
         self,
+        organization_id: UUID,
         user_id: UUID,
         name: str | None = None,
         email: str | None = None,
@@ -213,6 +214,7 @@ class UserService:
         """Update user fields. Metadata is deep-merged, not replaced.
 
         Args:
+            organization_id: Tenant scope (must match the user's org).
             user_id: The internal OpenZep user UUID.
             name: New display name. ``None`` means *do not update*.
             email: New email address. ``None`` means *do not update*.
@@ -224,7 +226,7 @@ class UserService:
         Raises:
             ValidationError: If **all** fields are ``None`` — at least one
                 field must be provided for an update.
-            NotFoundError: No user with this UUID.
+            NotFoundError: No user with this UUID in this organization.
         """
         from schemas.users import UserResponse
 
@@ -236,19 +238,22 @@ class UserService:
             )
 
         user = await self._repo.update(
+            organization_id=organization_id,
             user_id=user_id,
             name=name,
             email=email,
             metadata=metadata,
         )
         if user is None:
-            raise NotFoundError(f"User {user_id} not found")
+            raise NotFoundError(f"User {user_id} not found in organization {organization_id}")
 
         return UserResponse.model_validate(self._user_to_dict(user))
 
     # ── Delete ──────────────────────────────────────────────────────────────
 
-    async def delete_user(self, user_id: UUID) -> None:
+    async def delete_user(
+        self, organization_id: UUID, user_id: UUID
+    ) -> None:
         """Soft-delete a user.
 
         Immediately sets ``is_deleted = True`` (user becomes invisible to
@@ -256,18 +261,23 @@ class UserService:
         hard-delete after the configured delay (default 30 days).
 
         Args:
+            organization_id: Tenant scope (must match the user's org).
             user_id: The internal OpenZep user UUID.
 
         Raises:
-            NotFoundError: No user with this UUID.
+            NotFoundError: No user with this UUID in this organization.
 
         .. todo::
             Phase 2 — Wire up the ARQ/worker GDPR purge task:
             ``from workers.gdpr_jobs import schedule_user_purge``
         """
-        user = await self._repo.soft_delete(user_id)
+        user = await self._repo.soft_delete(
+            organization_id=organization_id, user_id=user_id
+        )
         if user is None:
-            raise NotFoundError(f"User {user_id} not found")
+            raise NotFoundError(
+                f"User {user_id} not found in organization {organization_id}"
+            )
 
         # TODO(phase2): Enqueue GDPR purge task for 30 days later
         # from workers.gdpr_jobs import schedule_user_purge
