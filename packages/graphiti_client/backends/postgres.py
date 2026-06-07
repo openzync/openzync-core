@@ -15,17 +15,17 @@ from __future__ import annotations
 
 import base64
 import json
-import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import ExternalServiceError
 from packages.graphiti_client.interface import GraphBackend
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────
 

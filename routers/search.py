@@ -17,12 +17,13 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import NotFoundError
 from dependencies.auth import require_org_id
 from dependencies.db import get_db
+from packages.graphiti_client.backends.postgres import PostgresGraphBackend
 from repositories.user_repository import UserRepository
 from services.hybrid_retriever import HybridRetriever
 
@@ -47,7 +48,6 @@ router = APIRouter(
     },
 )
 async def search_memory(
-    request: Request,
     user_id: UUID,
     query: str = Query(
         ...,
@@ -113,7 +113,7 @@ async def search_memory(
         )
 
     # ── Run hybrid search ───────────────────────────────────────────────
-    graph_backend = getattr(request.app.state, "graph_backend", None)
+    graph_backend = PostgresGraphBackend(db=db)
     retriever = HybridRetriever(db, org_uuid, graph_backend=graph_backend)
     results = await retriever.hybrid_search(
         query=query,

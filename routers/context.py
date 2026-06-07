@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.exceptions import NotFoundError
 from dependencies.auth import require_org_id
 from dependencies.db import get_db
+from packages.graphiti_client.backends.postgres import PostgresGraphBackend
 from repositories.user_repository import UserRepository
 from schemas.context import ContextResponse
 from services.context_service import ContextService
@@ -122,7 +123,7 @@ async def get_context(
 
     # ── Assemble context ────────────────────────────────────────────────
     redis = getattr(request.app.state, "redis", None) if request else None
-    graph_backend = getattr(request.app.state, "graph_backend", None)
+    graph_backend = PostgresGraphBackend(db=db)
     service = ContextService(db, org_uuid, redis, graph_backend=graph_backend)
     result = await service.assemble(
         user_id=user_id,

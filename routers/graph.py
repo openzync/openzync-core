@@ -19,12 +19,13 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import NotFoundError
 from dependencies.auth import require_org_id
 from dependencies.db import get_db
+from packages.graphiti_client.backends.postgres import PostgresGraphBackend
 from repositories.user_repository import UserRepository
 from schemas.graph import (
     GraphCommunitiesListResponse,
@@ -50,14 +51,16 @@ router = APIRouter(
 
 
 async def get_graph_service(
-    request: Request,
+    db: AsyncSession = Depends(get_db),
 ) -> GraphService:
     """FastAPI dependency that yields an initialised :class:`GraphService`.
 
-    The graph backend is read from ``request.app.state.graph_backend``
-    (initialised during the application lifespan).
+    Creates a request-scoped ``PostgresGraphBackend`` using the
+    already-injected request-scoped DB session.  Each request gets its
+    own session so that a transactional failure in one request cannot
+    poison subsequent requests (avoiding ``InFailedSqlTransaction``).
     """
-    graph_backend = getattr(request.app.state, "graph_backend", None)
+    graph_backend = PostgresGraphBackend(db=db)
     return GraphService(graph_backend=graph_backend)
 
 
