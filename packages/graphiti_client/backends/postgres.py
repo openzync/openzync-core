@@ -471,7 +471,7 @@ class PostgresGraphBackend(GraphBackend):
         params: dict[str, object] = {
             "org_id": str(org_id),
             "entity_id": str(entity_id),
-            "at_time": at_time.isoformat(),
+            "at_time": at_time,
             "limit": 201,
         }
         if relationship_type:
