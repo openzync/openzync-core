@@ -12,6 +12,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from core.config import settings
 from core.db import get_async_session
@@ -19,12 +20,15 @@ from core.db import get_async_session
 
 @pytest_asyncio.fixture(scope="session")
 async def engine():
-    """Session-scoped async engine connected to the real test DB."""
+    """Session-scoped async engine connected to the real test DB.
+
+    Uses ``NullPool`` so every session gets a fresh asyncpg connection.
+    This avoids ``asyncpg``'s "attached to a different loop" error when
+    ``pytest-asyncio`` creates a new event loop per test (``asyncio_mode = "auto"``).
+    """
     e = create_async_engine(
         str(settings.DATABASE_URL),
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=2,
+        poolclass=NullPool,
     )
     yield e
     await e.dispose()

@@ -24,11 +24,13 @@ logger = logging.getLogger(__name__)
 #   bit 1 = embedding generation (embed_episode)
 #   bit 2 = fact extraction (extract_facts)
 #   bit 3 = graphiti node sync (sync_to_graph)
+#   bit 4 = dialog classification (classify_dialog)
 
 ENRICHMENT_ENTITIES: int = 1 << 0  # bit 0
 ENRICHMENT_EMBEDDING: int = 1 << 1  # bit 1
 ENRICHMENT_FACTS: int = 1 << 2  # bit 2
 ENRICHMENT_SYNC_GRAPH: int = 1 << 3  # bit 3
+ENRICHMENT_CLASSIFICATION: int = 1 << 4  # bit 4
 
 # ── Default retry configuration ──────────────────────────────────────────────
 DEFAULT_MAX_RETRIES: int = 3

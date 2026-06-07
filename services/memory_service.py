@@ -58,6 +58,7 @@ CONTEXT_CACHE_PATTERN = "ctx:{org_id}:{user_id}:*"
 """Redis key pattern for context cache entries to invalidate."""
 
 ARQ_TASKS = [
+    "classify_dialog",
     "sync_to_graph",
     "extract_entities",
     "extract_facts",
@@ -565,6 +566,8 @@ class MemoryService:
                 role = episode.get("role", "user")
                 common = {"episode_id": ep_id, "content": content, "org_id": org_id}
 
+                await arq_pool.enqueue("classify_dialog", queue_name=qname,
+                    **common)
                 await arq_pool.enqueue("extract_entities", queue_name=qname,
                     **common, user_id=user_id)
                 await arq_pool.enqueue("extract_facts", queue_name=qname,

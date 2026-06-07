@@ -6,6 +6,8 @@ discrete labels (intent, emotion, valence, arousal) alongside confidence
 scores and raw classifier output.
 """
 
+from __future__ import annotations
+
 import uuid
 
 from sqlalchemy import Float, ForeignKey, Text, func
@@ -20,6 +22,7 @@ class DialogClassification(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key.
+        organization_id: Foreign key to the owning organization (tenant isolation).
         episode_id: Foreign key to the classified episode.
         intent: Predicted intent label (e.g., ``greeting``, ``question``,
             ``command``).
@@ -38,6 +41,10 @@ class DialogClassification(TimestampMixin, Base):
         primary_key=True,
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
+    )
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
     )
     episode_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("episodes.id", ondelete="CASCADE"),
