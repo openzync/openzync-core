@@ -243,7 +243,7 @@ async def classify_dialog(
                          created_at, updated_at)
                     VALUES
                         (:org_id, :episode_id, :intent, :emotion,
-                         :valence, :arousal, :confidence, :raw::jsonb,
+                         :valence, :arousal, :confidence, CAST(:raw AS jsonb),
                          now(), now())
                 """),
                 {
