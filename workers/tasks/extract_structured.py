@@ -232,9 +232,36 @@ async def extract_structured(
                         )
                         continue
 
+                    # ── Strip null values before validation ────────────────────
+                    # The LLM sometimes sets absent fields to null instead of
+                    # omitting them.  Strip nulls, then fill any missing required
+                    # fields with type-appropriate defaults so the row is not
+                    # silently dropped when the LLM can't infer a required value.
+                    # ════════════════════════════════════════════════════════════
+                    cleaned: dict[str, object] = {
+                        k: v for k, v in data.items() if v is not None
+                    }
+
+                    # ── Fill missing required fields with type defaults ──────
+                    TYPE_DEFAULTS: dict[str, object] = {
+                        "string": "unknown",
+                        "number": 0,
+                        "integer": 0,
+                        "boolean": False,
+                    }
+                    schema_obj: dict[str, object] = schema_info["json_schema"]
+                    for field in schema_obj.get("required", []):
+                        if field not in cleaned:
+                            ftype: str = (
+                                schema_obj.get("properties", {})
+                                .get(field, {})
+                                .get("type", "string")
+                            )
+                            cleaned[field] = TYPE_DEFAULTS.get(ftype, "unknown")
+
                     # Validate against JSON Schema
                     try:
-                        _validate_against_schema(data, schema_info["json_schema"])
+                        _validate_against_schema(cleaned, schema_info["json_schema"])
                     except Exception as exc:
                         logger.warning(
                             "structured_extraction.validation_failed",
@@ -266,7 +293,7 @@ async def extract_structured(
                             "session_id": uuid.UUID(session_id),
                             "episode_id": uuid.UUID(episode_id),
                             "schema_id": uuid.UUID(schema_info["id"]),
-                            "data": json.dumps(data),
+                            "data": json.dumps(cleaned),
                         },
                     )
                     inserted_count += 1

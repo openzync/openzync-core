@@ -17,8 +17,8 @@ Schema definitions provided below. Return the result **only** as valid JSON.
 
 Below are the JSON Schema definitions for the data you must extract.
 For each schema whose fields have matching data in the conversation, populate
-the corresponding object.  If a schema has no matching data, set its value
-to ``null``.
+the corresponding object.  If no field in a schema has matching data, set its
+value to ``null``.
 
 {% for schema in schemas %}
 ### Schema {{ loop.index }}: "{{ schema.name }}"
@@ -43,8 +43,13 @@ Return a **single** JSON object with one key per schema:
 ### Rules
 1. Populate **only** fields defined in each schema's JSON Schema.
 2. If the conversation contains no data matching a schema, set its value to ``null``.
-3. Do **not** invent or hallucinate data — if a field's value is not present, omit it
-   or use ``null`` depending on whether the schema marks it as ``required``.
+3. Do **not** invent or hallucinate data.
+   - For fields **not** listed in the schema's ``required`` array: if the value is
+     not present in the conversation, **omit them entirely**. Never set them
+     to ``null``.
+   - For fields listed in the schema's ``required`` array: if the value cannot
+     be inferred from the conversation, set it to **``"unknown"``** (for
+     strings) or the type-appropriate default. Never omit a required field.
 4. For array fields, include **all** matching items found in the conversation.
 5. Output **only** a single JSON object — no markdown fences, no extra text,
    no code blocks.
@@ -98,8 +103,7 @@ User: Book a ticket from New York to Boston for next Monday. My name is Alice Sm
   },
   "contact": {
     "name": "Alice Smith",
-    "email": "alice@example.com",
-    "phone": null
+    "email": "alice@example.com"
   }
 }
 ```
