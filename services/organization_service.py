@@ -7,9 +7,9 @@ authentication requirement and runs before any user exists.
 
 from __future__ import annotations
 
-import logging
 from uuid import UUID
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.api_key import ApiKey
@@ -17,7 +17,7 @@ from models.organization import Organization
 from schemas.organizations import CreateOrgRequest, CreateOrgResponse
 from utils.crypto import compute_lookup_hash, generate_api_key, hash_api_key
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class OrganizationService:

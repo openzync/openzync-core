@@ -462,15 +462,13 @@ class SessionRepository:
 
         session.is_deleted = True
 
-        # ⚠️ Unlink episodes: set session_id to NULL.
-        # The FK on episodes uses ondelete=SET NULL for this operation.
-        # If the FK uses ondelete=CASCADE, this explicit update is still
-        # needed to avoid hard-deleting audit data.
-        await self._db.execute(
-            Episode.__table__.update()
-            .where(Episode.session_id == session_id)
-            .values(session_id=None)
-        )
+        # TechLead: The unlink step was removed because the episodes FK
+        # uses ondelete=CASCADE + nullable=False — setting session_id=NULL
+        # violates the NOT NULL constraint. Episodes remain linked to the
+        # soft-deleted session, which is safe since queries filter on
+        # session.is_deleted. A follow-up migration (SET NULL + nullable)
+        # can restore the unlink intent if GDPR/orphaning requirements
+        # demand it.
 
         await self._db.flush()
         await self._db.refresh(session)
