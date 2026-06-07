@@ -73,7 +73,7 @@ async def _check_redis_health(request: Request) -> bool:
     """Ping the Redis server via the application's client."""
     from core.redis import check_redis_health as _check
 
-    return await _check(request.app.state.redis_client)
+    return await _check(request.app.state.redis)
 
 
 async def _check_graphiti_health() -> bool:

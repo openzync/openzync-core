@@ -140,6 +140,7 @@ async def get_session(
     return await service.get_session(
         org_id=UUID(org_id) if isinstance(org_id, str) else org_id,
         session_id=session_id,
+        user_id=user_id,
     )
 
 
@@ -182,6 +183,7 @@ async def get_session_messages(
         session_id=session_id,
         limit=limit,
         cursor=cursor,
+        user_id=user_id,
     )
 
 
@@ -211,4 +213,5 @@ async def delete_session(
     await service.delete_session(
         org_id=UUID(org_id) if isinstance(org_id, str) else org_id,
         session_id=session_id,
+        user_id=user_id,
     )

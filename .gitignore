@@ -65,3 +65,4 @@ docker-compose.override.yml
 # ── Generated ─────────────────────────────────────────────────────────────────
 generated/
 *.generated.py
+graphify-out/

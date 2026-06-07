@@ -32,11 +32,6 @@ class Session(TimestampMixin, Base):
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
     )
-    user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
-        # index defined explicitly in __table_args__ below
-    )
     external_id: Mapped[str] = mapped_column(Text, nullable=False)
     # 'metadata' is reserved by SQLAlchemy — use trailing underscore for the
     # Python attribute and map to the DB column via name="metadata".

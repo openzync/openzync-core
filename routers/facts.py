@@ -40,13 +40,13 @@ async def get_fact_service(
     """FastAPI dependency that yields an initialised :class:`FactService`.
 
     Wires up repositories and Redis with the request-scoped DB session.
-    The Redis client is read from ``request.app.state.redis_client``
+    The Redis client is read from ``request.app.state.redis``
     (initialised during the application lifespan).
     """
-    redis_client = getattr(request.app.state, "redis_client", None)
+    redis_client = getattr(request.app.state, "redis", None)
     if redis_client is None:
         raise RuntimeError(
-            "redis_client not found on app.state. "
+            "Redis client not found on app.state. "
             "Ensure init_redis() was called during the application lifespan."
         )
 

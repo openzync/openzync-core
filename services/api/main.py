@@ -59,7 +59,7 @@ def create_app() -> FastAPI:
         db_engine = init_db_engine(str(settings.DATABASE_URL))
         redis_client = await init_redis(str(settings.REDIS_URL))
         app.state.db_engine = db_engine
-        app.state.redis_client = redis_client
+        app.state.redis = redis_client
         app.state.db_session_factory = get_async_session(db_engine)
 
         # Init ARQ (async Redis queue) for background jobs

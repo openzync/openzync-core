@@ -100,7 +100,7 @@ async def get_context(
         db: An async SQLAlchemy session (injected).
         org_id: The authenticated organization ID (injected).
         request: The FastAPI request object — used to access
-            ``request.app.state.redis_client``.
+            ``request.app.state.redis``.
 
     Returns:
         A ``ContextResponse`` with the assembled context string and
@@ -121,7 +121,7 @@ async def get_context(
         )
 
     # ── Assemble context ────────────────────────────────────────────────
-    redis = getattr(request.app.state, "redis_client", None) if request else None
+    redis = getattr(request.app.state, "redis", None) if request else None
     graph_backend = getattr(request.app.state, "graph_backend", None)
     service = ContextService(db, org_uuid, redis, graph_backend=graph_backend)
     result = await service.assemble(

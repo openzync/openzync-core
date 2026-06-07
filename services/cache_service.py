@@ -174,9 +174,9 @@ class CacheService:
                 from redis.asyncio import Redis as AsyncRedis
 
                 r: AsyncRedis = self._redis  # type: ignore[assignment]
-                acquired = await r.setnx(lock_key, "1")
+                acquired = await r.set(lock_key, "1", nx=True, ex=STAMPEDE_LOCK_TTL)
                 if acquired:
-                    await r.expire(lock_key, STAMPEDE_LOCK_TTL)
+                    pass  # Lock set atomically with TTL
                 else:
                     # Another process is computing — wait briefly and
                     # retry the cache read.

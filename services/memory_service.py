@@ -555,6 +555,7 @@ class MemoryService:
             session_id: The session UUID string.
             episodes: List of episode dicts with ``id``, ``content``, ``role``.
         """
+        episode_ids = [ep["id"] for ep in episodes]
         try:
             arq_pool = get_arq()
             qname = _arq_queue_name("high")

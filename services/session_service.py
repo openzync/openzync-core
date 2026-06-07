@@ -90,13 +90,14 @@ class SessionService:
     # ── Get ─────────────────────────────────────────────────────────────────
 
     async def get_session(
-        self, org_id: UUID, session_id: UUID
+        self, org_id: UUID, session_id: UUID, user_id: UUID | None = None
     ) -> SessionResponse:
         """Get session by UUID with aggregate statistics.
 
         Args:
             org_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
+            user_id: Optional user UUID for intra-org isolation.
 
         Returns:
             The session response with message/fact counts.
@@ -104,7 +105,7 @@ class SessionService:
         Raises:
             NotFoundError: Session not found or soft-deleted.
         """
-        session = await self._repo.get_by_uuid(org_id, session_id)
+        session = await self._repo.get_by_uuid(org_id, session_id, user_id=user_id)
         if session is None:
             raise NotFoundError(f"Session {session_id} not found")
 
@@ -235,6 +236,7 @@ class SessionService:
         session_id: UUID,
         limit: int = 100,
         cursor: str | None = None,
+        user_id: UUID | None = None,
     ) -> PaginatedResponse[MessageResponse]:
         """Get paginated messages for a session.
 
@@ -246,6 +248,7 @@ class SessionService:
             session_id: The session's UUID.
             limit: Maximum items per page (1–500).
             cursor: Opaque base64 cursor from a previous page.
+            user_id: Optional user UUID for intra-org isolation.
 
         Returns:
             A paginated response with message items.
@@ -258,7 +261,7 @@ class SessionService:
             raise ValidationError("limit must be between 1 and 500")
 
         # Verify the session exists before fetching messages.
-        session = await self._repo.get_by_uuid(org_id, session_id)
+        session = await self._repo.get_by_uuid(org_id, session_id, user_id=user_id)
         if session is None:
             raise NotFoundError(f"Session {session_id} not found")
 
@@ -283,9 +286,9 @@ class SessionService:
     # ── Delete ──────────────────────────────────────────────────────────────
 
     async def delete_session(
-        self, org_id: UUID, session_id: UUID
+        self, org_id: UUID, session_id: UUID, user_id: UUID | None = None
     ) -> None:
-        """Soft-delete a session, scoped to org.
+        """Soft-delete a session, scoped to org and optionally user.
 
         Episodes are unlinked (``session_id`` set to ``NULL``) but
         preserved as orphaned history for audit purposes.
@@ -293,11 +296,12 @@ class SessionService:
         Args:
             org_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
+            user_id: Optional user UUID for intra-org isolation.
 
         Raises:
             NotFoundError: Session not found or already deleted.
         """
-        session = await self._repo.soft_delete(org_id, session_id)
+        session = await self._repo.soft_delete(org_id, session_id, user_id=user_id)
         if session is None:
             raise NotFoundError(f"Session {session_id} not found")
 

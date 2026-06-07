@@ -385,9 +385,8 @@ class IdempotencyService:
         # the hash.  The second caller will see EXISTS=0, attempt SETNX,
         # and get back 0 (key already set).  This is safe — no duplicate
         # ingestion.
-        set_ok = await self._redis.setnx(cache_key, content_hash)
+        set_ok = await self._redis.set(cache_key, content_hash, nx=True, ex=self._content_ttl)
         if set_ok:
-            await self._redis.expire(cache_key, self._content_ttl)
             logger.debug(
                 "idempotency.content_hash_stored",
                 extra={

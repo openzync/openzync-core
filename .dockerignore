@@ -1,0 +1,44 @@
+# Dependencies
+.venv
+venv
+*.egg-info
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.whl
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.hypothesis
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Build artifacts
+dist
+build
+*.so
+
+# Graph analytics
+graphify-out/
+
+# OS files
+.DS_Store
+Thumbs.db

@@ -139,18 +139,20 @@ class SessionRepository:
         return result.scalar_one_or_none()
 
     async def get_by_uuid(
-        self, org_id: UUID, session_id: UUID
+        self, org_id: UUID, session_id: UUID, user_id: UUID | None = None
     ) -> Session | None:
-        """Look up a session by its internal UUID, scoped to org.
+        """Look up a session by its internal UUID, scoped to org and optionally user.
 
         Args:
             org_id: The organization UUID for tenant isolation.
             session_id: The session's UUID primary key.
+            user_id: Optional user UUID for intra-org isolation. When provided,
+                only sessions belonging to this user are returned.
 
         Returns:
             The Session if found and not soft-deleted, ``None`` otherwise.
         """
-        result = await self._db.execute(
+        query = (
             select(Session)
             .join(User, Session.user_id == User.id)
             .where(
@@ -159,6 +161,10 @@ class SessionRepository:
                 Session.is_deleted.is_(False),
             )
         )
+        if user_id is not None:
+            query = query.where(Session.user_id == user_id)
+
+        result = await self._db.execute(query)
         return result.scalar_one_or_none()
 
     # ── List ────────────────────────────────────────────────────────────────
@@ -422,9 +428,9 @@ class SessionRepository:
     # ── Soft Delete ─────────────────────────────────────────────────────────
 
     async def soft_delete(
-        self, org_id: UUID, session_id: UUID
+        self, org_id: UUID, session_id: UUID, user_id: UUID | None = None
     ) -> Session | None:
-        """Soft-delete a session, scoped to org.
+        """Soft-delete a session, scoped to org and optionally user.
 
         Sets ``is_deleted = True`` and unlinks episodes from the session
         (episodes are preserved as orphaned history for audit, then
@@ -433,11 +439,12 @@ class SessionRepository:
         Args:
             org_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
+            user_id: Optional user UUID for intra-org isolation.
 
         Returns:
             The updated Session, or ``None`` if not found or already deleted.
         """
-        result = await self._db.execute(
+        query = (
             select(Session)
             .join(User, Session.user_id == User.id)
             .where(
@@ -446,6 +453,9 @@ class SessionRepository:
                 Session.is_deleted.is_(False),
             )
         )
+        if user_id is not None:
+            query = query.where(Session.user_id == user_id)
+        result = await self._db.execute(query)
         session = result.scalar_one_or_none()
         if session is None:
             return None
