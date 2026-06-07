@@ -150,6 +150,14 @@ class WorkerSettings(BaseSettings):
         ),
     )
 
+    # ── Structured Extraction ─────────────────────────────────────────────────
+    STRUCTURED_EXTRACTION_MAX_TOKENS: int = Field(
+        default=2000,
+        ge=256,
+        le=16384,
+        description="Max tokens for structured extraction LLM calls.",
+    )
+
     # ── Prometheus ───────────────────────────────────────────────────────────
     PROMETHEUS_PORT: int = Field(
         default=9090,

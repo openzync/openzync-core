@@ -63,6 +63,7 @@ ARQ_TASKS = [
     "extract_entities",
     "extract_facts",
     "embed_episode",
+    "extract_structured",
 ]
 """ARQ worker task names enqueued after a successful ingestion."""
 
@@ -576,6 +577,8 @@ class MemoryService:
                     **common)
                 await arq_pool.enqueue("sync_to_graph", queue_name=_arq_queue_name("low"),
                     **common, user_id=user_id, role=role)
+                await arq_pool.enqueue("extract_structured", queue_name=qname,
+                    **common, user_id=user_id, session_id=session_id)
 
             logger.info(
                 "memory.arq_tasks_enqueued",

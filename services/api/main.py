@@ -39,7 +39,20 @@ from middleware.logging import LoggingMiddleware
 from middleware.rate_limit import RateLimitMiddleware
 from middleware.request_id import RequestIDMiddleware
 from middleware.tracing import TracingMiddleware
-from routers import admin, admin_schemas, classifications, context, facts, graph, health, memory, search, sessions, users
+from routers import (
+    admin,
+    admin_schemas,
+    classifications,
+    context,
+    facts,
+    graph,
+    health,
+    memory,
+    search,
+    sessions,
+    structured_extractions,
+    users,
+)
 
 
 def create_app() -> FastAPI:
@@ -158,6 +171,7 @@ def create_app() -> FastAPI:
     app.include_router(users.router)
     app.include_router(sessions.router)
     app.include_router(classifications.router)
+    app.include_router(structured_extractions.router)
     app.include_router(memory.router)
     app.include_router(context.router)
     app.include_router(search.router)

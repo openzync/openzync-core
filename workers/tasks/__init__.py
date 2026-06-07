@@ -9,6 +9,7 @@ from workers.tasks.embed_episode import embed_episode
 from workers.tasks.embed_fact import embed_fact
 from workers.tasks.extract_entities import extract_entities
 from workers.tasks.extract_facts import extract_facts
+from workers.tasks.extract_structured import extract_structured
 from workers.tasks.ingest_business_data import ingest_business_data
 from workers.tasks.summarise_community import summarise_community
 from workers.tasks.sync_to_graph import sync_to_graph
@@ -19,6 +20,7 @@ __all__ = [
     "embed_fact",
     "extract_entities",
     "extract_facts",
+    "extract_structured",
     "ingest_business_data",
     "summarise_community",
     "sync_to_graph",
