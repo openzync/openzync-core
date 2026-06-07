@@ -244,20 +244,25 @@ async def extract_structured(
                         )
                         continue
 
-                    # Insert row
+                    # ══════════════════════════════════════════════════════════════
+                    # ⚠️  This INSERT must include organization_id because the
+                    #     column is NOT NULL.  The org_id comes from the ARQ
+                    #     job parameter — do not rely on RLS to fill it.
+                    # ══════════════════════════════════════════════════════════════
                     await db.execute(
                         text("""
                             INSERT INTO structured_extractions
-                                (session_id, episode_id, schema_id, data,
+                                (organization_id, session_id, episode_id, schema_id, data,
                                  created_at, updated_at)
                             VALUES
-                                (:session_id, :episode_id, :schema_id, CAST(:data AS jsonb),
+                                (:org_id, :session_id, :episode_id, :schema_id, CAST(:data AS jsonb),
                                  now(), now())
                             ON CONFLICT (episode_id, schema_id)
                             DO UPDATE SET data = CAST(:data AS jsonb),
                                           updated_at = now()
                         """),
                         {
+                            "org_id": uuid.UUID(org_id),
                             "session_id": uuid.UUID(session_id),
                             "episode_id": uuid.UUID(episode_id),
                             "schema_id": uuid.UUID(schema_info["id"]),

@@ -271,6 +271,11 @@ check_http 204 "$DEL_CODE" "DELETE /v1/admin/schemas/\$SCHEMA2_ID → 204"
 step "1.5i — DB verify: schema soft-deleted"
 db_check "schema is_active=false" "SELECT 1 FROM extraction_schemas WHERE id='$SCHEMA2_ID' AND is_active=false"
 
+step "1.5j — Reactivate structured extraction schema for enrichment"
+psql "$DSN" -c "UPDATE extraction_schemas SET is_active=true, updated_at=now() WHERE id='$SCHEMA2_ID'" 2>/dev/null && \
+  ok "Schema $SCHEMA2_ID reactivated for enrichment" || \
+  warn "Could not reactivate schema"
+
 # ── Phase 2: User CRUD ──────────────────────────────────────────────────────
 title "PHASE 2: User CRUD"
 
@@ -379,10 +384,10 @@ INGEST_RESPONSE=$(curl_retry -X POST "$BASE_URL/v1/users/$USER_ID/memory" \
   -d '{
     "session_id": "e2e_support_ticket",
     "messages": [
-      {"role":"user","content":"Hi, I am unable to log in to my dashboard since this morning. I keep getting a 503 error whenever I click the login button. Can you help?","created_at":"2026-06-07T09:00:00Z","metadata":{"source":"web","browser":"Chrome 125"}},
+      {"role":"user","content":"Hi, I am unable to log in to my dashboard since this morning. I keep getting a 503 error trying to access order #ORD-2026-98765. Can you help?","created_at":"2026-06-07T09:00:00Z","metadata":{"source":"web","browser":"Chrome 125"}},
       {"role":"assistant","content":"I am sorry to hear that! Let me look into this. Have you tried clearing your browser cache or using an incognito window? Also, could you tell me if you are seeing any error code on the page?","created_at":"2026-06-07T09:00:15Z","metadata":{"agent":"support-bot-v2"}},
-      {"role":"user","content":"Yes I tried incognito and clearing cache, still the same 503 error. The page says something like \"upstream connect error\" in the bottom corner.","created_at":"2026-06-07T09:01:30Z","metadata":{"source":"web"}},
-      {"role":"assistant","content":"Thank you for checking. The 503 with upstream connect error suggests our load balancer is having trouble reaching the backend service. I have escalated this to our infrastructure team. In the meantime, I can enable a fallback login mechanism for your account. Would you like me to do that?","created_at":"2026-06-07T09:02:00Z","metadata":{"agent":"support-bot-v2","escalation_level":2}},
+      {"role":"user","content":"Yes I tried incognito and clearing cache, still the same 503 error. The order #ORD-2026-98765 page says something like \"upstream connect error\" in the bottom corner.","created_at":"2026-06-07T09:01:30Z","metadata":{"source":"web"}},
+      {"role":"assistant","content":"Thank you for checking order #ORD-2026-98765. The 503 with upstream connect error suggests our load balancer is having trouble reaching the backend service. I have escalated this to our infrastructure team. In the meantime, I can enable a fallback login mechanism for your account. Would you like me to do that?","created_at":"2026-06-07T09:02:00Z","metadata":{"agent":"support-bot-v2","escalation_level":2}},
       {"role":"user","content":"Yes please, that would be great. Also, can you notify me via email when this is resolved?","created_at":"2026-06-07T09:03:00Z","metadata":{"source":"web"}}
     ]
   }')
@@ -442,16 +447,57 @@ for i in $(seq 15 -1 1); do
 done
 echo " done!"
 
-step "4.6 — Check enrichment status"
+step "4.6 — Check enrichment status (expect 63=all 6 bits)"
 ENRICH_STATUS=$(psql "$DSN" -t -A -c "
   SELECT enrichment_status FROM episodes
   WHERE session_id='$SESSION_ID' AND is_deleted=false
   LIMIT 1;" 2>/dev/null || echo "-1")
 if [ "$ENRICH_STATUS" != "-1" ] && [ "$ENRICH_STATUS" != "" ]; then
-  ok "Enrichment status=$ENRICH_STATUS (expect 31=all 5 bits)"
-  [ "$ENRICH_STATUS" = "31" ] && ok "All enrichment steps completed" || warn "Partial enrichment: status=$ENRICH_STATUS"
+  ok "Enrichment status=$ENRICH_STATUS (expect 63=all 6 bits)"
+  [ "$ENRICH_STATUS" = "63" ] && ok "All 6 enrichment steps completed (bits 0-5=63)" \
+    || warn "Partial enrichment: status=$ENRICH_STATUS (expected 63)"
 else
   warn "Could not check enrichment status"
+fi
+
+step "4.7 — Query structured extractions"
+EXTRACT_COUNT=$(psql "$DSN" -t -A -c "
+  SELECT COUNT(*) FROM structured_extractions se
+  JOIN episodes e ON e.id = se.episode_id
+  WHERE e.session_id='$SESSION_ID';" 2>/dev/null || echo "-1")
+if [ "$EXTRACT_COUNT" != "-1" ]; then
+  [ "$EXTRACT_COUNT" -ge 1 ] && ok "Structured extractions: $EXTRACT_COUNT returned" \
+    || warn "No structured extractions (expected ≥1 for e2e_extraction_fields schema)"
+else
+  warn "Could not check structured extractions"
+fi
+
+step "4.8 — GET structured extractions via API"
+SE_HTTP=$(curl_retry -o /dev/null -w "%{http_code}" \
+  "$BASE_URL/v1/users/$USER_ID/sessions/$SESSION_ID/structured-extractions" \
+  -H "$AUTH")
+check_http 200 "$SE_HTTP" "GET structured-extractions list"
+
+step "4.9 — GET structured extractions per episode"
+EP_ID=$(psql "$DSN" -t -A -c "
+  SELECT id FROM episodes
+  WHERE session_id='$SESSION_ID' AND is_deleted=false
+  LIMIT 1;" 2>/dev/null)
+if [ -n "$EP_ID" ]; then
+  SE_EP_HTTP=$(curl_retry -o /dev/null -w "%{http_code}" \
+    "$BASE_URL/v1/users/$USER_ID/sessions/$SESSION_ID/structured-extractions/$EP_ID" \
+    -H "$AUTH")
+  check_http 200 "$SE_EP_HTTP" "GET structured-extractions/\$EP_ID"
+  SE_DATA=$(curl_retry -s \
+    "$BASE_URL/v1/users/$USER_ID/sessions/$SESSION_ID/structured-extractions/$EP_ID" \
+    -H "$AUTH")
+  SE_COUNT=$(echo "$SE_DATA" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print(len(d.get('extractions',[])))
+" 2>/dev/null || echo "0")
+  [ "$SE_COUNT" -ge 0 ] && ok "Structured extractions for episode: $SE_COUNT" \
+    || warn "Could not parse extraction count"
 fi
 
 # ── Phase 5: Context & Search ───────────────────────────────────────────────

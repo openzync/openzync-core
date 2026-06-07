@@ -65,6 +65,147 @@ def parse_classification_response(raw: str) -> dict | None:
         return None
 
 
+def parse_structured_response(raw: str) -> dict | None:
+    """Parse an LLM structured extraction response, handling formatting quirks.
+
+    Strips markdown code fences, finds the first JSON object, and parses it.
+    """
+    if "```json" in raw:
+        raw = raw.split("```json", 1)[1].split("```", 1)[0].strip()
+    elif "```" in raw:
+        raw = raw.split("```", 1)[1].split("```", 1)[0].strip()
+
+    raw = raw.strip()
+    json_start = raw.find("{")
+    if json_start < 0:
+        return None
+    raw = raw[json_start:]
+
+    depth = 0
+    for i, ch in enumerate(raw):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                raw = raw[: i + 1]
+                break
+
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def _deep_compare_fields(
+    predicted: dict, expected: dict, path: str = ""
+) -> list[str]:
+    """Recursively compare predicted vs expected values.
+
+    Returns a list of mismatch descriptions.  Considers None and missing
+    keys as equivalent.  String comparisons are case-insensitive.
+    """
+    mismatches: list[str] = []
+
+    for key, exp_val in expected.items():
+        current_path = f"{path}.{key}" if path else key
+        pred_val = predicted.get(key)
+
+        if exp_val is None:
+            # Expected null — predicted should also be null or missing
+            if pred_val is not None:
+                mismatches.append(
+                    f"{current_path}: expected null, got '{pred_val}'"
+                )
+            continue
+
+        if isinstance(exp_val, dict):
+            if not isinstance(pred_val, dict):
+                mismatches.append(
+                    f"{current_path}: expected dict, got {type(pred_val).__name__}"
+                )
+            else:
+                mismatches.extend(
+                    _deep_compare_fields(pred_val, exp_val, current_path)
+                )
+        elif isinstance(exp_val, list):
+            if not isinstance(pred_val, list):
+                mismatches.append(
+                    f"{current_path}: expected list, got {type(pred_val).__name__}"
+                )
+            elif len(pred_val) != len(exp_val):
+                mismatches.append(
+                    f"{current_path}: expected {len(exp_val)} items, "
+                    f"got {len(pred_val)}"
+                )
+            else:
+                for i, (p_item, e_item) in enumerate(zip(pred_val, exp_val)):
+                    if isinstance(e_item, dict):
+                        mismatches.extend(
+                            _deep_compare_fields(
+                                p_item, e_item, f"{current_path}[{i}]"
+                            )
+                        )
+                    else:
+                        if str(p_item).strip().lower() != str(e_item).strip().lower():
+                            mismatches.append(
+                                f"{current_path}[{i}]: expected "
+                                f"'{e_item}', got '{p_item}'"
+                            )
+        else:
+            # Scalar comparison — case insensitive for strings
+            if str(pred_val).strip().lower() != str(exp_val).strip().lower():
+                mismatches.append(
+                    f"{current_path}: expected '{exp_val}', got '{pred_val}'"
+                )
+
+    return mismatches
+
+
+def evaluate_structured_match(
+    predicted: dict, expected: dict
+) -> tuple[bool, str]:
+    """Compare predicted structured extraction against expected.
+
+    For each schema key in ``expected``:
+      - If expected value is ``None``, predicted should also be ``None``
+        (or missing).
+      - Otherwise, recursively compare nested fields.
+
+    Extra keys in predicted that are not in expected are ignored (the LLM
+    may output schemas that don't have matching data — that's fine).
+
+    Returns ``(is_match, detail_string)``.
+    """
+    mismatches: list[str] = []
+
+    for schema_name, exp_val in expected.items():
+        pred_val = predicted.get(schema_name)
+
+        if exp_val is None:
+            if pred_val is not None:
+                mismatches.append(
+                    f"'{schema_name}': expected null, got non-null"
+                )
+            continue
+
+        if not isinstance(pred_val, dict):
+            mismatches.append(
+                f"'{schema_name}': expected dict, got "
+                f"{type(pred_val).__name__ if pred_val is not None else 'null'}"
+            )
+            continue
+
+        mismatches.extend(
+            _deep_compare_fields(pred_val, exp_val, schema_name)
+        )
+
+    if mismatches:
+        return False, "; ".join(mismatches)
+
+    return True, "exact match"
+
+
 def evaluate_classification_match(
     predicted: dict, expected: dict
 ) -> tuple[bool, str]:

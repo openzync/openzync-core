@@ -1,0 +1,621 @@
+[
+  {
+    "id": "se_001",
+    "conversation": "Book a flight from London to Paris tomorrow at 3pm",
+    "schemas": [
+      {
+        "name": "booking",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "origin": {"type": "string"},
+            "destination": {"type": "string"},
+            "date": {"type": "string"},
+            "time": {"type": "string"},
+            "class": {"type": "string", "enum": ["economy", "business", "first"]}
+          },
+          "required": ["origin", "destination"]
+        }
+      }
+    ],
+    "expected": {
+      "booking": {
+        "origin": "London",
+        "destination": "Paris",
+        "date": "tomorrow",
+        "time": "3pm"
+      }
+    },
+    "tags": ["booking", "simple", "single-schema"]
+  },
+  {
+    "id": "se_002",
+    "conversation": "I need a hotel in New York for 3 nights starting next Monday. My budget is $200 per night.",
+    "schemas": [
+      {
+        "name": "hotel_booking",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "city": {"type": "string"},
+            "check_in": {"type": "string"},
+            "nights": {"type": "integer"},
+            "budget_per_night": {"type": "number"}
+          },
+          "required": ["city"]
+        }
+      }
+    ],
+    "expected": {
+      "hotel_booking": {
+        "city": "New York",
+        "check_in": "next Monday",
+        "nights": 3,
+        "budget_per_night": 200
+      }
+    },
+    "tags": ["hotel", "simple", "single-schema"]
+  },
+  {
+    "id": "se_003",
+    "conversation": "What's the weather like today?",
+    "schemas": [
+      {
+        "name": "booking",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "origin": {"type": "string"},
+            "destination": {"type": "string"},
+            "date": {"type": "string"}
+          },
+          "required": ["destination"]
+        }
+      }
+    ],
+    "expected": {
+      "booking": null
+    },
+    "tags": ["no-match", "single-schema"]
+  },
+  {
+    "id": "se_004",
+    "conversation": "Hi, how are you doing today?",
+    "schemas": [
+      {
+        "name": "contact",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"},
+            "email": {"type": "string"},
+            "phone": {"type": "string"}
+          }
+        }
+      },
+      {
+        "name": "booking",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "origin": {"type": "string"},
+            "destination": {"type": "string"},
+            "date": {"type": "string"}
+          },
+          "required": ["destination"]
+        }
+      }
+    ],
+    "expected": {
+      "contact": null,
+      "booking": null
+    },
+    "tags": ["no-match", "multi-schema"]
+  },
+  {
+    "id": "se_005",
+    "conversation": "Book a flight from London to Paris tomorrow at 3pm. My name is Alice Smith and my email is alice@example.com.",
+    "schemas": [
+      {
+        "name": "booking",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "origin": {"type": "string"},
+            "destination": {"type": "string"},
+            "date": {"type": "string"},
+            "time": {"type": "string"}
+          },
+          "required": ["origin", "destination"]
+        }
+      },
+      {
+        "name": "contact",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"},
+            "email": {"type": "string"},
+            "phone": {"type": "string"}
+          }
+        }
+      }
+    ],
+    "expected": {
+      "booking": {
+        "origin": "London",
+        "destination": "Paris",
+        "date": "tomorrow",
+        "time": "3pm"
+      },
+      "contact": {
+        "name": "Alice Smith",
+        "email": "alice@example.com"
+      }
+    },
+    "tags": ["multi-schema", "booking", "contact"]
+  },
+  {
+    "id": "se_006",
+    "conversation": "Cancel my reservation for table at 8pm tonight. The confirmation number is ABC123.",
+    "schemas": [
+      {
+        "name": "reservation",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "action": {"type": "string", "enum": ["book", "cancel", "modify"]},
+            "confirmation_number": {"type": "string"},
+            "time": {"type": "string"},
+            "date": {"type": "string"}
+          },
+          "required": ["action"]
+        }
+      }
+    ],
+    "expected": {
+      "reservation": {
+        "action": "cancel",
+        "confirmation_number": "ABC123",
+        "time": "8pm",
+        "date": "tonight"
+      }
+    },
+    "tags": ["reservation", "cancel", "single-schema"]
+  },
+  {
+    "id": "se_007",
+    "conversation": "My phone number is 555-0123 and I live at 123 Main Street, Springfield.",
+    "schemas": [
+      {
+        "name": "contact",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"},
+            "email": {"type": "string"},
+            "phone": {"type": "string"}
+          }
+        }
+      },
+      {
+        "name": "address",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "street": {"type": "string"},
+            "city": {"type": "string"},
+            "zip_code": {"type": "string"}
+          },
+          "required": ["street", "city"]
+        }
+      }
+    ],
+    "expected": {
+      "contact": {
+        "phone": "555-0123"
+      },
+      "address": {
+        "street": "123 Main Street",
+        "city": "Springfield"
+      }
+    },
+    "tags": ["multi-schema", "contact", "address"]
+  },
+  {
+    "id": "se_008",
+    "conversation": "I'd like to order 2 large pepperoni pizzas and 1 order of garlic bread for delivery to 456 Oak Avenue.",
+    "schemas": [
+      {
+        "name": "food_order",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {"type": "string"},
+                  "quantity": {"type": "integer"},
+                  "size": {"type": "string"}
+                }
+              }
+            },
+            "delivery_address": {"type": "string"}
+          },
+          "required": ["items"]
+        }
+      }
+    ],
+    "expected": {
+      "food_order": {
+        "items": [
+          {"name": "pepperoni pizzas", "quantity": 2, "size": "large"},
+          {"name": "garlic bread", "quantity": 1}
+        ],
+        "delivery_address": "456 Oak Avenue"
+      }
+    },
+    "tags": ["food-order", "array", "single-schema"]
+  },
+  {
+    "id": "se_009",
+    "conversation": "Please add milk, eggs, and bread to my shopping list.",
+    "schemas": [
+      {
+        "name": "shopping_list",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "items": {
+              "type": "array",
+              "items": {"type": "string"}
+            }
+          },
+          "required": ["items"]
+        }
+      }
+    ],
+    "expected": {
+      "shopping_list": {
+        "items": ["milk", "eggs", "bread"]
+      }
+    },
+    "tags": ["shopping", "array", "single-schema"]
+  },
+  {
+    "id": "se_010",
+    "conversation": "Transfer $500 from my checking account to savings account 9876.",
+    "schemas": [
+      {
+        "name": "bank_transfer",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "amount": {"type": "number"},
+            "from_account": {"type": "string"},
+            "to_account": {"type": "string"},
+            "currency": {"type": "string"}
+          },
+          "required": ["amount", "from_account"]
+        }
+      }
+    ],
+    "expected": {
+      "bank_transfer": {
+        "amount": 500,
+        "from_account": "checking",
+        "to_account": "savings account 9876",
+        "currency": "USD"
+      }
+    },
+    "tags": ["finance", "transfer", "single-schema"]
+  },
+  {
+    "id": "se_011",
+    "conversation": "My email is john@example.com and I want to subscribe to the premium plan.",
+    "schemas": [
+      {
+        "name": "contact",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"},
+            "email": {"type": "string"}
+          }
+        }
+      },
+      {
+        "name": "subscription",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "plan": {"type": "string"},
+            "billing_cycle": {"type": "string", "enum": ["monthly", "yearly"]}
+          },
+          "required": ["plan"]
+        }
+      }
+    ],
+    "expected": {
+      "contact": {
+        "email": "john@example.com"
+      },
+      "subscription": {
+        "plan": "premium"
+      }
+    },
+    "tags": ["multi-schema", "contact", "subscription"]
+  },
+  {
+    "id": "se_012",
+    "conversation": "Set an alarm for 6am tomorrow morning called 'Morning Workout'.",
+    "schemas": [
+      {
+        "name": "alarm",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "time": {"type": "string"},
+            "date": {"type": "string"},
+            "label": {"type": "string"},
+            "repeat": {"type": "string"}
+          },
+          "required": ["time"]
+        }
+      }
+    ],
+    "expected": {
+      "alarm": {
+        "time": "6am",
+        "date": "tomorrow",
+        "label": "Morning Workout"
+      }
+    },
+    "tags": ["alarm", "single-schema"]
+  },
+  {
+    "id": "se_013",
+    "conversation": "What is the capital of France?",
+    "schemas": [
+      {
+        "name": "booking",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "origin": {"type": "string"},
+            "destination": {"type": "string"},
+            "date": {"type": "string"}
+          },
+          "required": ["destination"]
+        }
+      },
+      {
+        "name": "contact",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"},
+            "email": {"type": "string"}
+          }
+        }
+      }
+    ],
+    "expected": {
+      "booking": null,
+      "contact": null
+    },
+    "tags": ["no-match", "multi-schema", "question"]
+  },
+  {
+    "id": "se_014",
+    "conversation": "My name is Bob. Schedule a meeting with Alice for next Tuesday at 2pm in Conference Room B.",
+    "schemas": [
+      {
+        "name": "meeting",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "attendees": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "date": {"type": "string"},
+            "time": {"type": "string"},
+            "location": {"type": "string"}
+          },
+          "required": ["date"]
+        }
+      },
+      {
+        "name": "contact",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"},
+            "email": {"type": "string"}
+          }
+        }
+      }
+    ],
+    "expected": {
+      "meeting": {
+        "attendees": ["Alice"],
+        "date": "next Tuesday",
+        "time": "2pm",
+        "location": "Conference Room B"
+      },
+      "contact": {
+        "name": "Bob"
+      }
+    },
+    "tags": ["multi-schema", "meeting", "contact"]
+  },
+  {
+    "id": "se_015",
+    "conversation": "I want to return item #RT456 for a refund. I purchased it on January 15th.",
+    "schemas": [
+      {
+        "name": "return_request",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "item_id": {"type": "string"},
+            "reason": {"type": "string"},
+            "purchase_date": {"type": "string"},
+            "action": {"type": "string", "enum": ["refund", "exchange", "store_credit"]}
+          },
+          "required": ["item_id", "action"]
+        }
+      }
+    ],
+    "expected": {
+      "return_request": {
+        "item_id": "RT456",
+        "action": "refund",
+        "purchase_date": "January 15th"
+      }
+    },
+    "tags": ["return", "ecommerce", "single-schema"]
+  },
+  {
+    "id": "se_016",
+    "conversation": "Help me troubleshoot why my wifi is not working. I've already restarted the router.",
+    "schemas": [
+      {
+        "name": "troubleshoot",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "issue": {"type": "string"},
+            "steps_taken": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "device": {"type": "string"}
+          },
+          "required": ["issue"]
+        }
+      }
+    ],
+    "expected": {
+      "troubleshoot": {
+        "issue": "wifi not working",
+        "steps_taken": ["restarted the router"],
+        "device": "router"
+      }
+    },
+    "tags": ["tech-support", "troubleshoot", "single-schema"]
+  },
+  {
+    "id": "se_017",
+    "conversation": "Rate this product 5 stars. It's amazing!",
+    "schemas": [
+      {
+        "name": "product_review",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "rating": {"type": "integer", "minimum": 1, "maximum": 5},
+            "review_text": {"type": "string"},
+            "product_id": {"type": "string"}
+          },
+          "required": ["rating"]
+        }
+      }
+    ],
+    "expected": {
+      "product_review": {
+        "rating": 5,
+        "review_text": "It's amazing!"
+      }
+    },
+    "tags": ["review", "rating", "single-schema"]
+  },
+  {
+    "id": "se_018",
+    "conversation": "Please provide my account statement for December 2024. My account number is ACC-998877.",
+    "schemas": [
+      {
+        "name": "account_request",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "account_number": {"type": "string"},
+            "document_type": {"type": "string"},
+            "period": {"type": "string"}
+          },
+          "required": ["account_number"]
+        }
+      }
+    ],
+    "expected": {
+      "account_request": {
+        "account_number": "ACC-998877",
+        "document_type": "account statement",
+        "period": "December 2024"
+      }
+    },
+    "tags": ["finance", "account", "single-schema"]
+  },
+  {
+    "id": "se_019",
+    "conversation": "Please schedule a doctor appointment for next Thursday at 10am with Dr. Smith.",
+    "schemas": [
+      {
+        "name": "appointment",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "doctor_name": {"type": "string"},
+            "date": {"type": "string"},
+            "time": {"type": "string"},
+            "reason": {"type": "string"}
+          },
+          "required": ["doctor_name", "date"]
+        }
+      }
+    ],
+    "expected": {
+      "appointment": {
+        "doctor_name": "Dr. Smith",
+        "date": "next Thursday",
+        "time": "10am"
+      }
+    },
+    "tags": ["healthcare", "appointment", "single-schema"]
+  },
+  {
+    "id": "se_020",
+    "conversation": "The weather is nice. I think I'll go for a walk.",
+    "schemas": [
+      {
+        "name": "booking",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "origin": {"type": "string"},
+            "destination": {"type": "string"}
+          },
+          "required": ["destination"]
+        }
+      },
+      {
+        "name": "contact",
+        "json_schema": {
+          "type": "object",
+          "properties": {
+            "name": {"type": "string"},
+            "email": {"type": "string"}
+          }
+        }
+      }
+    ],
+    "expected": {
+      "booking": null,
+      "contact": null
+    },
+    "tags": ["no-match", "multi-schema"]
+  }
+]
