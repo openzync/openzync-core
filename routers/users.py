@@ -16,6 +16,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import ValidationError
 from dependencies.auth import require_org_id
 from dependencies.db import get_db
 from repositories.user_repository import UserRepository
@@ -135,13 +136,20 @@ async def update_user(
     - Set a metadata key to ``null`` to remove it.
     - Send ``name: null`` or ``email: null`` to clear those fields.
     - At least one field must be provided.
+
+    Uses ``model_dump(exclude_unset=True)`` so that ``None`` means
+    "set to null" and an absent key means "do not update."
     """
+    update_fields = body.model_dump(exclude_unset=True)
+    if not update_fields:
+        raise ValidationError(
+            "At least one field (name, email, metadata) must be "
+            "provided for update",
+        )
     return await service.update_user(
         organization_id=UUID(org_id),
         user_id=user_id,
-        name=body.name,
-        email=body.email,
-        metadata=body.metadata,
+        update_fields=update_fields,
     )
 
 

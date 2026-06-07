@@ -207,42 +207,33 @@ class UserService:
         self,
         organization_id: UUID,
         user_id: UUID,
-        name: str | None = None,
-        email: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        update_fields: dict[str, Any],
     ) -> UserResponse:
-        """Update user fields. Metadata is deep-merged, not replaced.
+        """Update user fields using the new sentinel-safe pattern.
+
+        The router passes only explicitly-set fields via
+        ``model_dump(exclude_unset=True)``. A key in ``update_fields``
+        with value ``None`` means "set to null" (clear the field).
+        An absent key means "do not update".
 
         Args:
             organization_id: Tenant scope (must match the user's org).
             user_id: The internal OpenZep user UUID.
-            name: New display name. ``None`` means *do not update*.
-            email: New email address. ``None`` means *do not update*.
-            metadata: Metadata keys to merge. ``None`` means *do not update*.
+            update_fields: Only the fields the client explicitly set.
+                Valid keys: ``name``, ``email``, ``metadata``.
 
         Returns:
             The updated :class:`UserResponse`.
 
         Raises:
-            ValidationError: If **all** fields are ``None`` — at least one
-                field must be provided for an update.
             NotFoundError: No user with this UUID in this organization.
         """
         from schemas.users import UserResponse
 
-        # Validate: at least one field must be provided
-        if name is None and email is None and metadata is None:
-            raise ValidationError(
-                "At least one field (name, email, metadata) must be "
-                "provided for update"
-            )
-
         user = await self._repo.update(
             organization_id=organization_id,
             user_id=user_id,
-            name=name,
-            email=email,
-            metadata=metadata,
+            update_fields=update_fields,
         )
         if user is None:
             raise NotFoundError(f"User {user_id} not found in organization {organization_id}")

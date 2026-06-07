@@ -128,11 +128,13 @@ class UserRepository:
         self,
         organization_id: UUID,
         user_id: UUID,
-        name: str | None = None,
-        email: str | None = None,
-        metadata: dict[str, Any] | None = None,
+        update_fields: dict[str, Any],
     ) -> User | None:
-        """Update user fields. Only non-``None`` fields are applied.
+        """Update user fields. Only keys present in ``update_fields`` are applied.
+
+        Uses key-presence semantics so that a value of ``None`` means
+        "set to null" (clear the field) and an absent key means
+        "do not update."
 
         For ``metadata``, performs a JSONB deep-merge (not replace).
         Keys set to ``None`` in the merge dict are removed from metadata.
@@ -140,9 +142,8 @@ class UserRepository:
         Args:
             organization_id: Tenant scope (always applied).
             user_id: The internal OpenZep user UUID.
-            name: New display name. ``None`` means *do not update*.
-            email: New email address. ``None`` means *do not update*.
-            metadata: Metadata keys to merge. ``None`` means *do not update*.
+            update_fields: Dict of fields to update. Valid keys: ``name``,
+                ``email``, ``metadata``.
 
         Returns:
             The updated User, or ``None`` if not found.
@@ -157,14 +158,15 @@ class UserRepository:
         if user is None:
             return None
 
-        if name is not None:
-            user.name = name
-        if email is not None:
-            user.email = email
-        if metadata is not None:
+        if "name" in update_fields:
+            user.name = update_fields["name"]
+        if "email" in update_fields:
+            user.email = update_fields["email"]
+        if "metadata" in update_fields:
             # Deep merge: new keys override, None values remove
             existing = dict(user.metadata_ or {})
-            for k, v in metadata.items():
+            new_meta = update_fields["metadata"] or {}
+            for k, v in new_meta.items():
                 if v is None:
                     existing.pop(k, None)
                 elif isinstance(v, dict) and isinstance(existing.get(k), dict):
