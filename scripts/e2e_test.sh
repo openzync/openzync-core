@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # OpenZep E2E Test Suite
-# Tests all 23 endpoints in a single run with DB verification.
+# Tests all endpoint groups in a single run with DB verification.
 #
 # Usage:
 #   ./scripts/e2e_test.sh                    # Default: localhost:8000
@@ -190,6 +190,87 @@ AUTH="Authorization: Bearer $API_KEY"
 step "1.4 — DB verification: organization created"
 db_check "organizations table" "SELECT 1 FROM organizations WHERE id='$ORG_ID'"
 
+# ── Phase 1.5: Admin Schema CRUD ─────────────────────────────────────────────
+title "PHASE 1.5: Admin Schema CRUD"
+
+step "1.5a — Create classification schema"
+SCHEMA_CREATE=$(curl_retry -X POST "$BASE_URL/v1/admin/schemas" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{
+    "name": "e2e_intent_labels",
+    "type": "classification",
+    "json_schema": {
+      "intent": ["question", "command", "complaint", "chit-chat", "greeting", "farewell", "request", "confirmation"],
+      "emotion": ["joy", "frustration", "sadness", "anger", "neutral", "surprise", "fear", "disgust"],
+      "valence": ["positive", "negative", "neutral"],
+      "arousal": ["low", "medium", "high"]
+    }
+  }')
+SCHEMA_ID=$(echo "$SCHEMA_CREATE" | extract_var 'd.get("id","")')
+SCHEMA_TYPE=$(echo "$SCHEMA_CREATE" | extract_var 'd.get("type","")')
+if [ -n "$SCHEMA_ID" ] && [ "$SCHEMA_TYPE" = "classification" ]; then
+  ok "POST /v1/admin/schemas — classification schema=$SCHEMA_ID"
+else
+  fail "POST /v1/admin/schemas — could not create schema"
+  echo "$SCHEMA_CREATE" | python3 -m json.tool 2>/dev/null
+fi
+
+step "1.5b — Create structured extraction schema"
+SCHEMA2_CREATE=$(curl_retry -X POST "$BASE_URL/v1/admin/schemas" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{
+    "name": "e2e_extraction_fields",
+    "type": "structured",
+    "json_schema": {
+      "type": "object",
+      "properties": {
+        "order_id": {"type": "string"},
+        "amount": {"type": "number"},
+        "issue_category": {"type": "string"}
+      },
+      "required": ["order_id", "issue_category"]
+    }
+  }')
+SCHEMA2_ID=$(echo "$SCHEMA2_CREATE" | extract_var 'd.get("id","")')
+[ -n "$SCHEMA2_ID" ] && ok "POST /v1/admin/schemas — extraction schema=$SCHEMA2_ID" \
+  || fail "POST /v1/admin/schemas — could not create extraction schema"
+
+step "1.5c — List schemas"
+SCHEMA_LIST=$(curl_retry -s "$BASE_URL/v1/admin/schemas" -H "$AUTH")
+SCHEMA_TOTAL=$(echo "$SCHEMA_LIST" | extract_var 'd.get("total",0)')
+[ "$SCHEMA_TOTAL" -ge 2 ] && ok "GET /v1/admin/schemas — total=$SCHEMA_TOTAL" \
+  || fail "GET /v1/admin/schemas — expected ≥2, got $SCHEMA_TOTAL"
+
+step "1.5d — Get single schema by ID"
+SCHEMA_GET=$(curl_retry -s "$BASE_URL/v1/admin/schemas/$SCHEMA_ID" -H "$AUTH")
+GOT_ID=$(echo "$SCHEMA_GET" | extract_var 'd.get("id","")')
+[ "$GOT_ID" = "$SCHEMA_ID" ] && ok "GET /v1/admin/schemas/\$SCHEMA_ID — matched" \
+  || fail "GET /v1/admin/schemas/\$SCHEMA_ID — id mismatch"
+
+step "1.5e — Update schema name"
+SCHEMA_UPDATE=$(curl_retry -X PUT "$BASE_URL/v1/admin/schemas/$SCHEMA_ID" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"name": "e2e_intent_labels_v2"}')
+UPDATED_NAME=$(echo "$SCHEMA_UPDATE" | extract_var 'd.get("name","")')
+[ "$UPDATED_NAME" = "e2e_intent_labels_v2" ] && ok "PUT /v1/admin/schemas/\$SCHEMA_ID — renamed" \
+  || fail "PUT /v1/admin/schemas/\$SCHEMA_ID — name='$UPDATED_NAME'"
+
+step "1.5f — DB verify: schemas stored"
+db_check "extraction_schemas" "SELECT 1 FROM extraction_schemas WHERE organization_id='$ORG_ID'"
+
+step "1.5g — Duplicate name rejected"
+DUP_CODE=$(curl_retry -o /dev/null -w "%{http_code}" -X POST "$BASE_URL/v1/admin/schemas" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"name":"e2e_intent_labels_v2","type":"classification","json_schema":{"intent":["a"]}}')
+check_http 409 "$DUP_CODE" "POST duplicate name → 409"
+
+step "1.5h — Delete schema (soft)"
+DEL_CODE=$(curl_retry -o /dev/null -w "%{http_code}" -X DELETE "$BASE_URL/v1/admin/schemas/$SCHEMA2_ID" -H "$AUTH")
+check_http 204 "$DEL_CODE" "DELETE /v1/admin/schemas/\$SCHEMA2_ID → 204"
+
+step "1.5i — DB verify: schema soft-deleted"
+db_check "schema is_active=false" "SELECT 1 FROM extraction_schemas WHERE id='$SCHEMA2_ID' AND is_active=false"
+
 # ── Phase 2: User CRUD ──────────────────────────────────────────────────────
 title "PHASE 2: User CRUD"
 
@@ -367,8 +448,8 @@ ENRICH_STATUS=$(psql "$DSN" -t -A -c "
   WHERE session_id='$SESSION_ID' AND is_deleted=false
   LIMIT 1;" 2>/dev/null || echo "-1")
 if [ "$ENRICH_STATUS" != "-1" ] && [ "$ENRICH_STATUS" != "" ]; then
-  ok "Enrichment status=$ENRICH_STATUS (expect 15=all bits)"
-  [ "$ENRICH_STATUS" = "15" ] && ok "All enrichment steps completed" || warn "Partial enrichment: status=$ENRICH_STATUS"
+  ok "Enrichment status=$ENRICH_STATUS (expect 31=all 5 bits)"
+  [ "$ENRICH_STATUS" = "31" ] && ok "All enrichment steps completed" || warn "Partial enrichment: status=$ENRICH_STATUS"
 else
   warn "Could not check enrichment status"
 fi
@@ -486,6 +567,41 @@ if [ -n "${NODE_ID:-}" ]; then
 else
   warn "Skipping edges test (no node_id available)"
 fi
+
+# ── Phase 7.5: Classification Query ──────────────────────────────────────────
+title "PHASE 7.5: Classification Query"
+
+step "7.5a — List classifications for session"
+CLASS_LIST=$(curl_retry -s "$BASE_URL/v1/users/$USER_ID/sessions/$SESSION_ID/classifications" -H "$AUTH")
+CLASS_COUNT=$(echo "$CLASS_LIST" | extract_var 'd.get("total",-1)')
+if [ "$CLASS_COUNT" -ge 0 ] 2>/dev/null; then
+  ok "GET /v1/users/\$USER_ID/sessions/\$SESSION_ID/classifications — total=$CLASS_COUNT"
+  # Grab first episode_id if any classifications exist
+  CLASS_EP_ID=$(echo "$CLASS_LIST" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+items = d.get('data', [])
+if items:
+    print(items[0].get('episode_id', ''))
+" 2>/dev/null || echo "")
+else
+  fail "GET classifications — could not parse response"
+  echo "$CLASS_LIST" | python3 -m json.tool 2>/dev/null
+fi
+
+step "7.5b — Get single classification"
+CLASS_SINGLE=$(curl_retry -s "$BASE_URL/v1/users/$USER_ID/sessions/$SESSION_ID/classifications/$CLASS_EP_ID" -H "$AUTH")
+SINGLE_INTENT=$(echo "$CLASS_SINGLE" | extract_var 'd.get("intent","")')
+[ -n "$SINGLE_INTENT" ] && ok "GET single classification — intent=$SINGLE_INTENT" \
+  || ok "GET single classification — 200 (intent may be null: '$SINGLE_INTENT')"
+
+step "7.5c — DB verify: classification data (via episode join)"
+db_check "dialog_classifications" "SELECT 1 FROM dialog_classifications dc JOIN episodes e ON dc.episode_id = e.id WHERE e.session_id='$SESSION_ID' AND dc.organization_id='$ORG_ID'"
+
+step "7.5d — No auth → 401"
+CLASS_NOAUTH_CODE=$(curl_retry -o /dev/null -w "%{http_code}" \
+  "$BASE_URL/v1/users/$USER_ID/sessions/$SESSION_ID/classifications")
+check_http 401 "$CLASS_NOAUTH_CODE" "GET classifications (no auth) → 401"
 
 # ── Phase 8: Delete Operations ─────────────────────────────────────────────
 title "PHASE 8: Delete Operations"
