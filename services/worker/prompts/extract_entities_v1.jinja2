@@ -13,6 +13,18 @@ a conversation history and return them **only** as valid JSON.
 ---
 ## ENTITY TYPES
 
+{% if entity_types is defined and entity_types %}
+Use only these types:
+
+| Type | Description |
+|------|-------------|
+{% for t in entity_types %}
+| `{{ t }}` | Domain-specific entity type from organization ontology |
+{% endfor %}
+
+Available entity types: {{ entity_types|join(', ') }}
+
+{% else %}
 Use only these types:
 
 | Type         | Description                                           |
@@ -23,6 +35,7 @@ Use only these types:
 | `Location`   | Cities, countries, regions, addresses                 |
 | `Date`       | Absolute dates ("March 2024"), relative ("last week") |
 | `Custom`     | Anything else that does not fit the above             |
+{% endif %}
 
 ---
 ## OUTPUT SCHEMA
@@ -34,7 +47,7 @@ Return a JSON object with two arrays — `entities` and `relationships`:
   "entities": [
     {
       "name": "<canonical display name>",
-      "type": "<Person | Organization | Product | Location | Date | Custom>",
+      "type": "<one of the entity types above>",
       "mentions": ["<exact text as it appeared>"]
     }
   ],
@@ -56,6 +69,8 @@ Return a JSON object with two arrays — `entities` and `relationships`:
 4. If the conversation has zero extractable entities, return `{"entities": [], "relationships": []}`.
 5. Do **not** add fields beyond the schema.
 6. Do **not** wrap the JSON in markdown code fences or any other text.
+7. Assign **only** entity types from the available set above. If an entity does not fit
+   any defined type, use `"Custom"`.
 
 ---
 ## FEW-SHOT EXAMPLES

@@ -49,13 +49,17 @@ async def extract_entities(
     a short-lived DB engine per invocation).
 
     Pipeline:
-        1. Render the ``extract_entities_v1.jinja2`` prompt with the
-           conversation content.
-        2. Call the LLM backend (via ``resolve_backend()``, temperature 0.1).
-        3. Parse the JSON response (handles markdown fence wrapping).
-        4. Persist entity nodes to Graphiti via ``EntityRepository``.
-        5. Persist relationships as facts in PostgreSQL.
-        6. Update ``episodes.enrichment_status`` bit 0.
+        1. Fetch organization's entity type ontology from
+           ``extraction_schemas (type='entity_type')``.
+        2. Render the ``extract_entities_v1.jinja2`` prompt with the
+           conversation content and entity types injected.
+        3. Call the LLM backend (via ``resolve_backend()``, temperature 0.1).
+        4. Parse the JSON response (handles markdown fence wrapping).
+        5. Validate entity types against the allowed ontology (reassign
+           invalid types to ``"Custom"``).
+        6. Persist entity nodes to Graphiti via ``EntityRepository``.
+        7. Persist relationships as facts in PostgreSQL.
+        8. Update ``episodes.enrichment_status`` bit 0.
 
     Args:
         ctx: ARQ worker context (unused — required by ARQ contract).
@@ -82,9 +86,22 @@ async def extract_entities(
         content_length=len(content),
     )
 
-    # ── 1. Render prompt ──────────────────────────────────────────────────────
+    # ── 1. Fetch org entity types (ontology) ──────────────────────────────────
+    entity_types = await _fetch_entity_types(org_id)
+    logger.debug(
+        "entity_extraction.entity_types",
+        episode_id=episode_id,
+        org_id=org_id,
+        entity_types=entity_types,
+    )
+
+    # ── 2. Render prompt ──────────────────────────────────────────────────────
     try:
-        prompt = render_prompt("extract_entities_v1", conversation=content)
+        prompt = render_prompt(
+            "extract_entities_v1",
+            conversation=content,
+            entity_types=entity_types,
+        )
     except FileNotFoundError:
         logger.error(
             "entity_extraction.prompt_missing",
@@ -93,7 +110,7 @@ async def extract_entities(
         )
         return
 
-    # ── 2. Call LLM ───────────────────────────────────────────────────────────
+    # ── 3. Call LLM ───────────────────────────────────────────────────────────
     try:
         llm = await resolve_backend()
         response = await llm.chat(
@@ -117,7 +134,7 @@ async def extract_entities(
         )
         raise  # Let the @with_retry decorator handle transient failures
 
-    # ── 3. Parse JSON response with recovery for malformed output ────────────
+    # ── 4. Parse JSON response with recovery for malformed output ────────────
     data = _parse_entity_response(response.content)
 
     # Recovery attempt: if the first parse failed, retry with a stricter
@@ -171,7 +188,22 @@ async def extract_entities(
             relationships=len(relationships),
         )
 
-        # ── 4. Persist entities to graph (if available) ─────────────────────
+        # ── 5. Validate entity types against allowed ontology ────────────────
+        allowed_types: set[str] = set(entity_types) | {"Custom"}
+        for entity in entities:
+            raw_type = entity.get("type")
+            if not raw_type or raw_type not in allowed_types:
+                logger.warning(
+                    "entity_extraction.invalid_type",
+                    episode_id=episode_id,
+                    name=entity.get("name"),
+                    original_type=raw_type,
+                    reassigned_to="Custom",
+                    allowed=sorted(allowed_types),
+                )
+                entity["type"] = "Custom"
+
+        # ── 6. Persist entities to graph (if available) ─────────────────────
         # Create a temporary DB engine + session for the entity repository
         from sqlalchemy.ext.asyncio import create_async_engine as _create_engine
 
@@ -209,7 +241,7 @@ async def extract_entities(
                     if node is not None:
                         name_to_node[entity_name] = node
 
-                # ── 5. Persist relationships to graph ─────────────────────────
+                # ── 7. Persist relationships to graph ─────────────────────────
                 for rel in relationships:
                     subject = rel.get("subject", "")
                     predicate = rel.get("predicate", "")
@@ -224,7 +256,7 @@ async def extract_entities(
                             org_id=uuid.UUID(org_id),
                         )
 
-                # ── 6. Link entities to this episode in graph_episode_entities ───
+                # ── 8. Link entities to this episode in graph_episode_entities ───
                 # This replaces the separate sync_to_graph ARQ task.  Linking
                 # happens inline so it's always consistent with entity extraction.
                 episode_uuid = uuid.UUID(episode_id)
@@ -251,7 +283,7 @@ async def extract_entities(
         finally:
             await _engine.dispose()
 
-        # ── 7. Persist relationships as facts in PostgreSQL ───────────────────
+        # ── 9. Persist relationships as facts in PostgreSQL ───────────────────
         if relationships:
             entity_type_map: dict[str, str] = {
                 e["name"]: e.get("type", "Custom") for e in entities
@@ -308,7 +340,7 @@ async def extract_entities(
             relationship_count=persisted_count,
         )
 
-    # ── 7. Always set enrichment_status bit 0 ────────────────────────────────
+    # ── 10. Always set enrichment_status bit 0 ────────────────────────────────
     await _set_enrichment_bit(episode_id, ENRICHMENT_ENTITIES)
 
     if persisted_count:
@@ -320,6 +352,55 @@ async def extract_entities(
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
+
+
+async def _fetch_entity_types(org_id: str) -> list[str]:
+    """Fetch entity type ontology from the organization's extraction schemas.
+
+    Queries ``extraction_schemas`` where ``type='entity_type'`` and
+    ``is_active=true``.  The ``json_schema`` field is expected to contain
+    ``{"types": ["Type1", "Type2", ...]}``.
+
+    Falls back to the default type set if no schemas are configured.
+
+    Returns:
+        A list of allowed entity type names.
+
+    Raises:
+        Exception: Re-raises DB errors so the caller's ``@with_retry``
+            decorator can handle transient failures.
+    """
+    from core.config import settings
+    from core.db import get_async_session, init_db_engine
+
+    _engine = init_db_engine(
+        str(settings.DATABASE_URL), pool_size=2, max_overflow=1
+    )
+    _session_factory = get_async_session(_engine)
+    try:
+        async with _session_factory() as _db:
+            result = await _db.execute(
+                text("""
+                    SELECT json_schema FROM extraction_schemas
+                    WHERE organization_id = :org_id
+                      AND type = 'entity_type'
+                      AND is_active = true
+                """),
+                {"org_id": uuid.UUID(org_id)},
+            )
+            schemas = result.all()
+            if not schemas:
+                return ["Person", "Organization", "Product", "Location", "Date", "Custom"]
+
+            types: list[str] = []
+            for row in schemas:
+                schema: dict = row[0]
+                if isinstance(schema, dict) and "types" in schema and isinstance(schema["types"], list):
+                    types.extend(schema["types"])
+
+            return types or ["Person", "Organization", "Product", "Location", "Date", "Custom"]
+    finally:
+        await _engine.dispose()
 
 
 def _parse_entity_response(content: str) -> dict | None:

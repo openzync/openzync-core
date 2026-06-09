@@ -372,6 +372,97 @@ print(len(d.get('data', [])))
 " 2>/dev/null || echo "err")
 [ "$MSG_COUNT" = "0" ] && ok "Messages list is empty" || fail "Messages not empty: count=$MSG_COUNT"
 
+# ── Phase 3.5: PII Detection & Redaction ────────────────────────────────────
+title "PHASE 3.5: PII Detection & Redaction"
+
+step "3.6 — Enable PII masking on the organization"
+psql "$DSN" -c "
+  UPDATE organizations
+  SET quotas = jsonb_set(COALESCE(quotas, '{}'::jsonb), '{pii}',
+    '{\"mode\":\"mask\",\"enabled_types\":[\"email\",\"phone\",\"ssn\",\"credit_card\"],\"min_confidence\":0.5}'::jsonb)
+  WHERE id='$ORG_ID'" 2>/dev/null && \
+  ok "PII masking enabled on org" || \
+  fail "Could not set PII config on org"
+
+step "3.7 — Ingest PII-rich message (expect masking)"
+# Create a dedicated session first — _resolve_session does NOT auto-create
+# arbitrary external_ids, only __default__.
+PII_SESSION_RESPONSE=$(curl_retry -X POST "$BASE_URL/v1/users/$USER_ID/sessions" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"external_id":"e2e_pii_session","metadata":{"test":"pii"}}')
+PII_SESSION_EXTERNAL_ID=$(echo "$PII_SESSION_RESPONSE" | extract_var 'd.get("external_id","")')
+if [ "$PII_SESSION_EXTERNAL_ID" = "e2e_pii_session" ]; then
+  ok "PII test session created — external_id=e2e_pii_session"
+else
+  fail "Could not create PII test session"
+fi
+PII_IDEM_KEY="e2e-pii-$(date +%s)"
+PII_HTTP_CODE=$(curl_retry -o /tmp/e2e_pii_ingest.json -w "%{http_code}" \
+  -X POST "$BASE_URL/v1/users/$USER_ID/memory" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $PII_IDEM_KEY" \
+  -d '{
+    "session_id": "e2e_pii_session",
+    "messages": [
+      {"role":"user","content":"Hi, my email is jane.doe@example.com and my SSN is 987-65-4321. Please call me at +1-555-987-6543.","created_at":"2026-06-07T10:00:00Z"},
+      {"role":"assistant","content":"I have recorded your contact information. Your case has been updated.","created_at":"2026-06-07T10:00:15Z"}
+    ]
+  }')
+# PII masking should succeed (mask mode) → HTTP 202; DB verification follows below
+if [ "$PII_HTTP_CODE" = "202" ]; then
+  ok "POST PII message (mask mode) — HTTP 202"
+else
+  fail "POST PII message — expected 202, got $PII_HTTP_CODE"
+fi
+
+step "3.8 — DB verify: PII masked in stored content"
+# PII masking happens inline in memory_service.py (step 7) BEFORE batch insert,
+# so the DB is already updated when the POST returns — no worker wait needed.
+# Also: the session_id "e2e_support_ticket" from step 4.1 also has 5 messages,
+# but those don't contain PII patterns so they won't hit our LIKE clauses.
+PII_RAW=$(psql "$DSN" -t -A -c "
+  SELECT COUNT(*) FROM episodes e
+  JOIN sessions s ON e.session_id = s.id
+  WHERE e.user_id='$USER_ID'
+  AND s.external_id='e2e_pii_session'
+  AND e.content LIKE '%jane.doe%';" 2>/dev/null || echo "-1")
+PII_REDACTED=$(psql "$DSN" -t -A -c "
+  SELECT COUNT(*) FROM episodes e
+  JOIN sessions s ON e.session_id = s.id
+  WHERE e.user_id='$USER_ID'
+  AND s.external_id='e2e_pii_session'
+  AND e.content LIKE '%REDACTED:%';" 2>/dev/null || echo "-1")
+if [ "$PII_RAW" = "0" ] && [ "$PII_REDACTED" -ge 1 ] 2>/dev/null; then
+  ok "PII masking verified — raw_plaintext=$PII_RAW, redacted_count=$PII_REDACTED"
+else
+  warn "PII masking: raw=$PII_RAW, redacted=$PII_REDACTED (expected raw=0, redacted>=1)"
+fi
+
+step "3.9 — Test PII block mode"
+psql "$DSN" -c "
+  UPDATE organizations
+  SET quotas = jsonb_set(quotas, '{pii,mode}', '\"block\"')
+  WHERE id='$ORG_ID'" 2>/dev/null && \
+  ok "PII block mode enabled" || \
+  fail "Could not set PII block mode"
+BLOCK_CODE=$(curl_retry -o /dev/null -w "%{http_code}" \
+  -X POST "$BASE_URL/v1/users/$USER_ID/memory" \
+  -H "$AUTH" -H "Content-Type: application/json" \
+  -d '{"messages":[{"role":"user","content":"My credit card is 4111-1111-1111-1111 and my email is test@block.com"}]}')
+# Block mode raises ValidationError → HTTP 422
+if [ "$BLOCK_CODE" = "422" ]; then
+  ok "PII block mode — HTTP 422 (message rejected as expected)"
+else
+  warn "PII block mode — HTTP $BLOCK_CODE (expected 422)"
+fi
+# Reset PII to mask mode for remaining tests
+psql "$DSN" -c "
+  UPDATE organizations
+  SET quotas = jsonb_set(quotas, '{pii,mode}', '\"mask\"')
+  WHERE id='$ORG_ID'" 2>/dev/null && \
+  ok "PII reset to mask mode" || \
+  warn "Could not reset PII mode"
+
 # ── Phase 4: Memory Ingestion ──────────────────────────────────────────────
 title "PHASE 4: Memory Ingestion"
 
@@ -480,8 +571,9 @@ check_http 200 "$SE_HTTP" "GET structured-extractions list"
 
 step "4.9 — GET structured extractions per episode"
 EP_ID=$(psql "$DSN" -t -A -c "
-  SELECT id FROM episodes
-  WHERE session_id='$SESSION_ID' AND is_deleted=false
+  SELECT e.id FROM episodes e
+  JOIN sessions s ON e.session_id = s.id
+  WHERE s.id='$SESSION_ID' AND e.is_deleted=false
   LIMIT 1;" 2>/dev/null)
 if [ -n "$EP_ID" ]; then
   SE_EP_HTTP=$(curl_retry -o /dev/null -w "%{http_code}" \
@@ -614,6 +706,16 @@ else
   warn "Skipping edges test (no node_id available)"
 fi
 
+step "7.4 — Query graph nodes with entity_type filter"
+if [ -n "${NODE_ID:-}" ]; then
+  ET_HTTP=$(curl_retry -o /tmp/e2e_graph_type.json -w "%{http_code}" \
+    "$BASE_URL/v1/users/$USER_ID/graph/nodes?entity_type=Person&limit=10" -H "$AUTH")
+  check_http 200 "$ET_HTTP" "GET /v1/users/\$USER_ID/graph/nodes?entity_type=Person"
+  db_check "graph_entities with entity_type" "SELECT 1 FROM graph_entities WHERE organization_id='$ORG_ID' AND entity_type IS NOT NULL AND entity_type != '' AND is_merged=false"
+else
+  warn "Skipping entity_type filter test (no node_id available)"
+fi
+
 # ── Phase 7.5: Classification Query ──────────────────────────────────────────
 title "PHASE 7.5: Classification Query"
 
@@ -648,6 +750,81 @@ step "7.5d — No auth → 401"
 CLASS_NOAUTH_CODE=$(curl_retry -o /dev/null -w "%{http_code}" \
   "$BASE_URL/v1/users/$USER_ID/sessions/$SESSION_ID/classifications")
 check_http 401 "$CLASS_NOAUTH_CODE" "GET classifications (no auth) → 401"
+
+# ── Phase 7.6: Entity Merge Dedup ────────────────────────────────────────────
+title "PHASE 7.6: Entity Merge Dedup"
+
+step "7.6a — DB verify: is_merged column exists on graph_entities"
+IS_MERGED_EXISTS=$(psql "$DSN" -t -A -c "
+  SELECT COUNT(*) FROM information_schema.columns
+  WHERE table_name='graph_entities' AND column_name='is_merged';" 2>/dev/null || echo "-1")
+[ "$IS_MERGED_EXISTS" = "1" ] && ok "graph_entities.is_merged column exists" \
+  || fail "is_merged column not found (count=$IS_MERGED_EXISTS)"
+
+step "7.6b — Create duplicate entities for merge testing"
+DUP1_ID="11111111-1111-4111-a111-111111111111"
+DUP2_ID="22222222-2222-4222-a222-222222222222"
+# Insert two entities with same name but different IDs
+# Note: column is 'attributes' (JSONB), not 'metadata'.
+# is_merged is NOT NULL with no default — must be set explicitly.
+psql "$DSN" -c "
+  INSERT INTO graph_entities (id, organization_id, name, entity_type, summary, attributes, is_merged, created_at, updated_at)
+  VALUES
+    ('$DUP1_ID', '$ORG_ID', 'Acme Corp Duplicate', 'Organization', 'Duplicate entity 1', '{}'::jsonb, false, now(), now()),
+    ('$DUP2_ID', '$ORG_ID', 'Acme Corp Duplicate', 'Organization', 'Duplicate entity 2', '{}'::jsonb, false, now(), now())
+  ON CONFLICT (id) DO NOTHING;" 2>/dev/null && \
+  ok "Created 2 duplicate graph entities" || \
+  fail "Could not create duplicate entities"
+# Give DUP1 a relationship so it becomes canonical (most relationships wins)
+psql "$DSN" -c "
+  INSERT INTO graph_relationships (id, organization_id, subject_id, predicate, object_id, metadata, created_at, updated_at)
+  VALUES (gen_random_uuid(), '$ORG_ID', '$DUP1_ID', 'related_to', '$DUP2_ID', '{}'::jsonb, now(), now())
+  ON CONFLICT DO NOTHING;" 2>/dev/null || true
+
+step "7.6c — Trigger entity merge worker"
+# Run merge worker, stderr goes to /tmp to keep stdout clean for JSON parsing
+ORG_ID="$ORG_ID" python3 << 'PYEOF' 2>/tmp/e2e_merge_stderr.log > /tmp/e2e_merge_stdout.json
+import asyncio, os, sys
+sys.path.insert(0, os.getcwd())
+os.environ.setdefault("MG_DATABASE_URL", "postgresql+asyncpg://openzep:openzep@localhost:5432/openzep")
+import core.config  # noqa: F401 — trigger settings load
+from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
+org_id = os.environ["ORG_ID"]
+result = asyncio.run(merge_duplicate_entities(None, org_id=org_id))
+import json; sys.stdout.write(json.dumps(result))
+PYEOF
+MERGE_STATUS=$(python3 -c "
+import json
+with open('/tmp/e2e_merge_stdout.json') as f:
+    content = f.read().strip()
+if not content:
+    print('no-output')
+else:
+    d = json.loads(content)
+    print(d.get('status','unknown'))
+" 2>/dev/null || echo "error")
+if [ "$MERGE_STATUS" = "success" ] || [ "$MERGE_STATUS" = "partial" ]; then
+  ok "Entity merge worker completed — status=$MERGE_STATUS"
+else
+  warn "Entity merge worker: status=$MERGE_STATUS"
+fi
+
+step "7.6d — DB verify: duplicates merged (one canonical, one is_merged=true)"
+DUP1_MERGED=$(psql "$DSN" -t -A -c \
+  "SELECT is_merged FROM graph_entities WHERE id='$DUP1_ID';" 2>/dev/null || echo "error")
+DUP2_MERGED=$(psql "$DSN" -t -A -c \
+  "SELECT is_merged FROM graph_entities WHERE id='$DUP2_ID';" 2>/dev/null || echo "error")
+# One entity should be canonical (is_merged=false), the other merged (is_merged=true)
+if { [ "$DUP1_MERGED" = "f" ] && [ "$DUP2_MERGED" = "t" ]; } || \
+   { [ "$DUP1_MERGED" = "t" ] && [ "$DUP2_MERGED" = "f" ]; }; then
+  ok "Entity merge verified — DUP1=$DUP1_MERGED, DUP2=$DUP2_MERGED"
+else
+  warn "Entity merge state — DUP1=$DUP1_MERGED, DUP2=$DUP2_MERGED (expected one t, one f)"
+fi
+# Clean up test entities
+psql "$DSN" -c "DELETE FROM graph_relationships WHERE subject_id IN ('$DUP1_ID','$DUP2_ID')" 2>/dev/null || true
+psql "$DSN" -c "DELETE FROM graph_entities WHERE id IN ('$DUP1_ID','$DUP2_ID')" 2>/dev/null || true
+ok "Cleanup of test entities complete"
 
 # ── Phase 8: Delete Operations ─────────────────────────────────────────────
 title "PHASE 8: Delete Operations"

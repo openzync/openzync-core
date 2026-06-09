@@ -27,11 +27,12 @@ if TYPE_CHECKING:
     from models.session import Session
     from models.user import User
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import get_arq
 from core.config import settings
-from core.exceptions import NotFoundError
+from core.exceptions import NotFoundError, ValidationError
 from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
 from repositories.session_repository import SessionRepository
@@ -140,12 +141,16 @@ class MemoryService:
         2. Resolve or auto-create the user via ``get_or_create``.
         3. Resolve or auto-create the session (``__default__`` if omitted).
         4. Compute content hash for content-level dedup.
-        5. Batch-insert episodes into PostgreSQL.
-        6. Enqueue ARQ enrichment tasks (sync_to_graph, extract_entities,
+        5. Get next sequence number for ordered insertion.
+        6. Build episode dicts from validated messages.
+        7. PII detection & redaction (if enabled in org quotas) — mask or
+           block based on org config.
+        8. Batch-insert episodes into PostgreSQL.
+        9. Enqueue ARQ enrichment tasks (sync_to_graph, extract_entities,
            extract_facts, embed_episode).
-        7. Cache idempotency key and content hash for future dedup.
-        8. Invalidate context cache for this user.
-        9. Return 202 ``IngestMemoryResponse``.
+        10. Cache idempotency key and content hash for future dedup.
+        11. Invalidate context cache for this user.
+        12. Return 202 ``IngestMemoryResponse``.
 
         Args:
             org_id: The authenticated organization UUID.
@@ -230,7 +235,7 @@ class MemoryService:
         # correctly even if multiple batches arrive concurrently.
         start_seq = await self._episode_repo.get_next_sequence(session_id)
 
-        # ── Step 6: Batch-insert episodes ────────────────────────────────
+        # ── Step 6: Build episode dicts ───────────────────────────────────
         episode_dicts = [
             {
                 "role": msg.role,
@@ -242,6 +247,30 @@ class MemoryService:
             for i, msg in enumerate(messages)
         ]
 
+        # ── Step 7: PII detection & redaction ─────────────────────────────
+        pii_config_raw = await self._get_org_pii_config(org_id)
+        pii_mode = (
+            pii_config_raw.get("mode", "off")
+            if isinstance(pii_config_raw, dict)
+            else "off"
+        )
+
+        if pii_mode != "off":
+            from services.pii_service import PIIService
+
+            pii_service = PIIService(pii_config_raw)
+            for msg_dict in episode_dicts:
+                content = msg_dict["content"]
+                redacted, detections, was_blocked = (
+                    await pii_service.process_message(content)
+                )
+
+                # In block mode, process_message raises ValidationError
+                # so we only reach here in mask mode
+                if redacted != content:
+                    msg_dict["content"] = redacted
+
+        # ── Step 8: Batch-insert episodes ────────────────────────────────
         episodes = await self._episode_repo.batch_create(
             organization_id=org_id,
             session_id=session_id,
@@ -259,7 +288,7 @@ class MemoryService:
             },
         )
 
-        # ── Step 7: Generate job_id and enqueue ARQ tasks ────────────────
+        # ── Step 8: Generate job_id and enqueue ARQ tasks ────────────────
         job_id = str(uuid4())
         episode_dicts = [
             {"id": ep.id, "content": ep.content, "role": ep.role}
@@ -273,7 +302,7 @@ class MemoryService:
             episodes=episode_dicts,
         )
 
-        # ── Step 8: Cache idempotency key and content hash ───────────────
+        # ── Step 9: Cache idempotency key and content hash ───────────────
         response = IngestMemoryResponse(
             job_id=job_id,
             episode_count=len(episodes),
@@ -286,7 +315,7 @@ class MemoryService:
 
         await self._cache_content_hash(content_hash, job_id)
 
-        # ── Step 9: Invalidate context cache for this user ───────────────
+        # ── Step 10: Invalidate context cache for this user ──────────────
         await self._invalidate_context_cache(str(org_id), str(user_id))
 
         return response
@@ -527,6 +556,32 @@ class MemoryService:
             IDEMPOTENCY_TTL,
             job_id,
         )
+
+    # ── PII Config ────────────────────────────────────────────────────────────
+
+    async def _get_org_pii_config(self, org_id: UUID) -> dict:
+        """Fetch PII configuration for an org from their quotas JSONB.
+
+        The PII config lives at ``organizations.quotas -> 'pii'``.  We use a
+        raw ``text()`` query instead of a full repository to avoid scope creep —
+        this is the only org-level query that ``MemoryService`` needs.
+
+        Args:
+            org_id: The organization UUID.
+
+        Returns:
+            The PII config dict (possibly empty).  Returns ``{}`` if the
+            organization does not exist or has no PII config.
+        """
+        result = await self._db.execute(
+            text("SELECT quotas->'pii' AS pii_config FROM organizations WHERE id = :org_id"),
+            {"org_id": org_id},
+        )
+        row = result.one_or_none()
+        if row is None:
+            return {}
+        pii_config = row[0]
+        return pii_config if isinstance(pii_config, dict) else {}
 
     # ── ARQ Task Enqueue ─────────────────────────────────────────────────────
 

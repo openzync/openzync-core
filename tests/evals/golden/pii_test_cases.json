@@ -1,0 +1,498 @@
+[
+  {
+    "id": "pii-001",
+    "description": "Simple email address in body text",
+    "content": "Contact me at john.doe@example.com for more information.",
+    "expected_detections": [
+      {"type": "email", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-002",
+    "description": "Multiple email addresses",
+    "content": "Reach out to alice@acme.com or bob@corp.org or carol@startup.io.",
+    "expected_detections": [
+      {"type": "email", "count": 3}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-003",
+    "description": "Email with plus-addressing",
+    "content": "Send to user+tag@domain.co.uk for filtering.",
+    "expected_detections": [
+      {"type": "email", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-004",
+    "description": "Email with subdomain",
+    "content": "My dev email is admin@internal-staging.company.org.",
+    "expected_detections": [
+      {"type": "email", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-005",
+    "description": "US phone number with dashes",
+    "content": "Call me at 555-123-4567 for details.",
+    "expected_detections": [
+      {"type": "phone", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-006",
+    "description": "US phone number with dots",
+    "content": "Our office line is 800.555.0199.",
+    "expected_detections": [
+      {"type": "phone", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-007",
+    "description": "US phone number with spaces",
+    "content": "The support number is 888 555 0123.",
+    "expected_detections": [
+      {"type": "phone", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-008",
+    "description": "International phone number with country code",
+    "content": "Our London office can be reached at +44 20 7946 0958.",
+    "expected_detections": [
+      {"type": "phone", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-009",
+    "description": "International phone E.164 format",
+    "content": "Reach the Paris team at +33142537182.",
+    "expected_detections": [
+      {"type": "phone", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-010",
+    "description": "Phone number in parentheses",
+    "content": "Contact our sales team (415) 555-2671 ext 101.",
+    "expected_detections": [
+      {"type": "phone", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-011",
+    "description": "Standard SSN format",
+    "content": "My social security number is 987-65-4321.",
+    "expected_detections": [
+      {"type": "ssn", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-012",
+    "description": "SSN in the middle of text",
+    "content": "Employee record: 123-45-6789 is the SSN on file.",
+    "expected_detections": [
+      {"type": "ssn", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-013",
+    "description": "Credit card with dashes",
+    "content": "My card number is 4111-1111-1111-1111.",
+    "expected_detections": [
+      {"type": "credit_card", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-014",
+    "description": "Credit card with spaces",
+    "content": "Please charge 5500 0000 0000 0004 for the order.",
+    "expected_detections": [
+      {"type": "credit_card", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-015",
+    "description": "Credit card without separators",
+    "content": "Payment ref: 4532015112830366 processed successfully.",
+    "expected_detections": [
+      {"type": "credit_card", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-016",
+    "description": "Multiple credit cards",
+    "content": "Cards on file: 4111-1111-1111-1111 and 5500-0000-0000-0004.",
+    "expected_detections": [
+      {"type": "credit_card", "count": 2}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-017",
+    "description": "IPv4 address",
+    "content": "The server is at 192.168.1.1 and the backup is at 10.0.0.5.",
+    "expected_detections": [
+      {"type": "ip_address", "count": 2}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-018",
+    "description": "IPv4 address in log output",
+    "content": "2024-03-15 14:22:01 access from 203.0.113.42 to endpoint /api/v1/users",
+    "expected_detections": [
+      {"type": "ip_address", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-019",
+    "description": "Private IP range addresses",
+    "content": "Internal ranges: 172.16.0.1, 192.168.0.1, and 10.0.0.1 are all reserved.",
+    "expected_detections": [
+      {"type": "ip_address", "count": 3}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-020",
+    "description": "OpenAI API key",
+    "content": "My key is sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz1234567890.",
+    "expected_detections": [
+      {"type": "api_key", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-021",
+    "description": "GitHub personal access token",
+    "content": "Use ghp_abc123def456ghi789jkl012mno345pqr678stuv901 for auth.",
+    "expected_detections": [
+      {"type": "api_key", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-022",
+    "description": "AWS access key",
+    "content": "Configure with AKIAIOSFODNN7EXAMPLE as the access key.",
+    "expected_detections": [
+      {"type": "api_key", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-023",
+    "description": "Multiple API keys",
+    "content": "Keys found: sk-proj-abc123def4567890abc123def4567890, ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx, and AKIAIOSFODNN7EXAMPLE.",
+    "expected_detections": [
+      {"type": "api_key", "count": 3}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-024",
+    "description": "Ethereum wallet address",
+    "content": "Send ETH to 0x742d35Cc6634C0532925a3b844Bc454e4438f44e for refund.",
+    "expected_detections": [
+      {"type": "crypto_wallet", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-025",
+    "description": "Bitcoin wallet address",
+    "content": "BTC donations: bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf7p7q.",
+    "expected_detections": [
+      {"type": "crypto_wallet", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-026",
+    "description": "Multiple crypto addresses",
+    "content": "ETH: 0xAb5801a7D398351b8bE11C439e05C5B3259aeC9B, BTC: bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh.",
+    "expected_detections": [
+      {"type": "crypto_wallet", "count": 2}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-027",
+    "description": "Mixed PII - email and phone",
+    "content": "User jane@example.com can be reached at 555-123-4567.",
+    "expected_detections": [
+      {"type": "email", "count": 1},
+      {"type": "phone", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-028",
+    "description": "Mixed PII - SSN and credit card",
+    "content": "ID: 123-45-6789, Card: 4111-1111-1111-1111, Email: user@test.com",
+    "expected_detections": [
+      {"type": "ssn", "count": 1},
+      {"type": "credit_card", "count": 1},
+      {"type": "email", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-029",
+    "description": "Mixed PII - API key and IP address",
+    "content": "Server 10.20.30.40 uses sk-proj-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx for OpenAI.",
+    "expected_detections": [
+      {"type": "ip_address", "count": 1},
+      {"type": "api_key", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-030",
+    "description": "All common PII types in one message",
+    "content": "User: test@demo.com, Phone: +1-555-123-4567, SSN: 987-65-4321, CC: 4532-0115-1128-3036, IP: 192.168.0.1, Key: sk-proj-testkey1234567890abcdefghijklmnop.",
+    "expected_detections": [
+      {"type": "email", "count": 1},
+      {"type": "phone", "count": 1},
+      {"type": "ssn", "count": 1},
+      {"type": "credit_card", "count": 1},
+      {"type": "ip_address", "count": 1},
+      {"type": "api_key", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-031",
+    "description": "Clean message - basic greeting",
+    "content": "Hello, how are you doing today?",
+    "expected_detections": [],
+    "expected_no_false_positives": true
+  },
+  {
+    "id": "pii-032",
+    "description": "Clean message - technical question",
+    "content": "What is the best way to implement pagination in FastAPI?",
+    "expected_detections": [],
+    "expected_no_false_positives": true
+  },
+  {
+    "id": "pii-033",
+    "description": "Clean message - code snippet (no PII)",
+    "content": "def fibonacci(n):\n    if n <= 1:\n        return n\n    return fibonacci(n-1) + fibonacci(n-2)",
+    "expected_detections": [],
+    "expected_no_false_positives": true
+  },
+  {
+    "id": "pii-034",
+    "description": "Clean message - numbers but not PII",
+    "content": "The answer to life, the universe and everything is 42.",
+    "expected_detections": [],
+    "expected_no_false_positives": true
+  },
+  {
+    "id": "pii-035",
+    "description": "Clean message - year numbers not SSN",
+    "content": "My birth year is 1990 and I graduated in 2012.",
+    "expected_detections": [],
+    "expected_no_false_positives": true
+  },
+  {
+    "id": "pii-036",
+    "description": "Product codes with mixed chars (not credit cards)",
+    "content": "Order reference: PROD-A2B3-C4D5-E6F7-G8H9 is ready for pickup.",
+    "expected_detections": [],
+    "expected_no_false_positives": true
+  },
+  {
+    "id": "pii-037",
+    "description": "Version numbers with mixed notation (not all IP-like)",
+    "content": "The API version is v1.2.3 and we are upgrading to v2.0.",
+    "expected_detections": [],
+    "expected_no_false_positives": true
+  },
+  {
+    "id": "pii-038",
+    "description": "Clean message - general conversation",
+    "content": "I think we should schedule a meeting for next Tuesday to discuss the roadmap.",
+    "expected_detections": [],
+    "expected_no_false_positives": true
+  },
+  {
+    "id": "pii-039",
+    "description": "PII in JSON string",
+    "content": "The payload was {\"email\": \"user@example.com\", \"phone\": \"555-123-4567\"}.",
+    "expected_detections": [
+      {"type": "email", "count": 1},
+      {"type": "phone", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-040",
+    "description": "Email in URL",
+    "content": "The user profile is at https://example.com/users/john.doe@example.com/settings.",
+    "expected_detections": [
+      {"type": "email", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-041",
+    "description": "PII in markdown code block",
+    "content": "Here is the config:\n```\nemail: admin@server.com\napi_key: sk-proj-testkeyhere1234567890abcdefgh\n```\nPlease review.",
+    "expected_detections": [
+      {"type": "email", "count": 1},
+      {"type": "api_key", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-042",
+    "description": "Phone number in file path",
+    "content": "The file is at /data/contacts/555-123-4567/info.txt.",
+    "expected_detections": [
+      {"type": "phone", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-043",
+    "description": "Email with special characters in local part",
+    "content": "Valid but unusual email: test.name+label-123@my-corporate.domain.com.",
+    "expected_detections": [
+      {"type": "email", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-044",
+    "description": "Short message with only PII",
+    "content": "jdoe@example.com",
+    "expected_detections": [
+      {"type": "email", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-045",
+    "description": "PII with surrounding punctuation",
+    "content": "Contact: john@example.com! Or call 555-123-4567? (or use +44-20-7946-0958)",
+    "expected_detections": [
+      {"type": "email", "count": 1},
+      {"type": "phone", "count": 2}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-046",
+    "description": "Phone numbers in a list",
+    "content": "List of contacts:\n- Alice: 555-123-4567\n- Bob: 555-987-6543\n- Charlie: 555-555-5555",
+    "expected_detections": [
+      {"type": "phone", "count": 3}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-047",
+    "description": "SSN variant with spaces instead of dashes",
+    "content": "ID number: 123 45 6789 needs verification.",
+    "expected_detections": [
+      {"type": "ssn", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-048",
+    "description": "Credit card in continuous text block",
+    "content": "Your order has been confirmed. Payment method: Visa ending in 1111. Auth code: A1B2C3. Transaction ref: 4532015112830366 was used.",
+    "expected_detections": [
+      {"type": "credit_card", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-049",
+    "description": "Multiple mixed PII with crypto wallets",
+    "content": "User wallet: 0x1234567890abcdef1234567890abcdef12345678\nEmail: crypto@trader.io\nKey: sk-proj-walletkey1234567890abcdefghijklmn",
+    "expected_detections": [
+      {"type": "crypto_wallet", "count": 1},
+      {"type": "email", "count": 1},
+      {"type": "api_key", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-050",
+    "description": "IP followed by port number (port should not break detection)",
+    "content": "Connect to 192.168.1.1:8080 for the admin interface.",
+    "expected_detections": [
+      {"type": "ip_address", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-051",
+    "description": "Clean message - UUIDs not SSN/phone",
+    "content": "The user UUID is 550e8400-e29b-41d4-a716-44aa55bbccdd.",
+    "expected_detections": [],
+    "expected_no_false_positives": true
+  },
+  {
+    "id": "pii-052",
+    "description": "Clean message - date-like strings",
+    "content": "The event happened on 2024-03-15 and we expect results by 2024-04-01.",
+    "expected_detections": [],
+    "expected_no_false_positives": true
+  },
+  {
+    "id": "pii-053",
+    "description": "Clean message - coordinates not phone numbers",
+    "content": "GPS coordinates: 37.7749, -122.4194 for San Francisco.",
+    "expected_detections": [],
+    "expected_no_false_positives": true
+  },
+  {
+    "id": "pii-054",
+    "description": "Email with quoted local part",
+    "content": "Address like \"test.user@example.com\" should also be detected.",
+    "expected_detections": [
+      {"type": "email", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-055",
+    "description": "PII in multiline string with mixed content",
+    "content": "Hey,\n\nMy new details:\n- Email: john.new@example.com\n- Phone: +91-9876543210\n- SSN: 111-22-3333\n\nPlease update your records.\n\nThanks,\nJohn",
+    "expected_detections": [
+      {"type": "email", "count": 1},
+      {"type": "phone", "count": 1},
+      {"type": "ssn", "count": 1}
+    ],
+    "expected_no_false_positives": false
+  },
+  {
+    "id": "pii-056",
+    "description": "Short hex string not a crypto wallet",
+    "content": "The commit hash is 0xabcd1234 and the build passed all checks.",
+    "expected_detections": [],
+    "expected_no_false_positives": true
+  }
+]

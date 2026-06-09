@@ -14,7 +14,7 @@ Two separate ARQ worker pools run in a single process:
 * **High-priority queue** — real-time ingestion tasks
   (entity extraction, embedding, classification, graph sync).
 * **Low-priority queue** — batch / scheduled tasks
-  (community summarisation, data ingestion, entity merging).
+  (community summarisation, data ingestion, entity merge dedup).
 
 Each pool has independent concurrency and timeout settings.  The worker also
 exposes a Prometheus metrics endpoint and an aiohttp health-check server for
@@ -105,6 +105,7 @@ from workers.tasks.extract_structured import extract_structured
 from workers.tasks.sync_to_graph import sync_to_graph
 from workers.tasks.embed_fact import embed_fact
 from workers.tasks.summarise_community import summarise_community
+from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
 
 HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     classify_dialog,
@@ -119,6 +120,7 @@ HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
 LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     sync_to_graph,
     summarise_community,
+    merge_duplicate_entities,
 ]
 """Tasks assigned to the low-priority queue (scheduled batch)."""
 

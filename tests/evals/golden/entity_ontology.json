@@ -1,0 +1,360 @@
+[
+  {
+    "id": "healthcare-001",
+    "org_name": "Healthcare Provider",
+    "entity_types": ["Patient", "Diagnosis", "Medication", "Procedure", "Provider"],
+    "conversation": "Dr. Smith prescribed Amoxicillin to patient John Doe for strep throat.",
+    "expected_entities": [
+      {"name": "Dr. Smith", "type": "Provider"},
+      {"name": "Amoxicillin", "type": "Medication"},
+      {"name": "John Doe", "type": "Patient"},
+      {"name": "strep throat", "type": "Diagnosis"}
+    ]
+  },
+  {
+    "id": "healthcare-002",
+    "org_name": "Healthcare Provider",
+    "entity_types": ["Patient", "Diagnosis", "Medication", "Procedure", "Provider"],
+    "conversation": "The MRI scan on patient Jane showed a torn ACL. Dr. Lee recommended arthroscopic surgery.",
+    "expected_entities": [
+      {"name": "Jane", "type": "Patient"},
+      {"name": "MRI scan", "type": "Procedure"},
+      {"name": "torn ACL", "type": "Diagnosis"},
+      {"name": "Dr. Lee", "type": "Provider"},
+      {"name": "arthroscopic surgery", "type": "Procedure"}
+    ]
+  },
+  {
+    "id": "healthcare-003",
+    "org_name": "Healthcare Provider",
+    "entity_types": ["Patient", "Diagnosis", "Medication", "Procedure", "Provider"],
+    "conversation": "Nurse Rodriguez administered 50mg of Metoprolol to Mr. Henderson for his hypertension.",
+    "expected_entities": [
+      {"name": "Nurse Rodriguez", "type": "Provider"},
+      {"name": "Metoprolol", "type": "Medication"},
+      {"name": "Mr. Henderson", "type": "Patient"},
+      {"name": "hypertension", "type": "Diagnosis"}
+    ]
+  },
+  {
+    "id": "healthcare-004",
+    "org_name": "Healthcare Provider",
+    "entity_types": ["Patient", "Diagnosis", "Medication", "Procedure", "Provider"],
+    "conversation": "I'm scheduling a colonoscopy for next month. The new patient Alice Wang has a family history of colorectal cancer.",
+    "expected_entities": [
+      {"name": "colonoscopy", "type": "Procedure"},
+      {"name": "Alice Wang", "type": "Patient"},
+      {"name": "colorectal cancer", "type": "Diagnosis"}
+    ]
+  },
+  {
+    "id": "healthcare-005",
+    "org_name": "Healthcare Provider",
+    "entity_types": ["Patient", "Diagnosis", "Medication", "Procedure", "Provider"],
+    "conversation": "Dr. Gupta adjusted the insulin dosage for diabetic patient Robert. He'll need a follow-up HbA1c test.",
+    "expected_entities": [
+      {"name": "Dr. Gupta", "type": "Provider"},
+      {"name": "insulin", "type": "Medication"},
+      {"name": "Robert", "type": "Patient"},
+      {"name": "HbA1c test", "type": "Procedure"}
+    ]
+  },
+  {
+    "id": "healthcare-006",
+    "org_name": "Healthcare Provider",
+    "entity_types": ["Patient", "Diagnosis", "Medication", "Procedure", "Provider"],
+    "conversation": "Can you refill my ibuprofen prescription? My back pain has been worse since I started physical therapy.",
+    "expected_entities": [
+      {"name": "ibuprofen", "type": "Medication"},
+      {"name": "back pain", "type": "Diagnosis"},
+      {"name": "physical therapy", "type": "Procedure"}
+    ]
+  },
+  {
+    "id": "ecommerce-001",
+    "org_name": "E-commerce Platform",
+    "entity_types": ["Customer", "Product", "Order", "Category", "Vendor"],
+    "conversation": "I ordered a pair of Nike running shoes from the Sports category last week but the order is still pending.",
+    "expected_entities": [
+      {"name": "Nike running shoes", "type": "Product"},
+      {"name": "Sports", "type": "Category"},
+      {"name": "Nike", "type": "Vendor"}
+    ]
+  },
+  {
+    "id": "ecommerce-002",
+    "org_name": "E-commerce Platform",
+    "entity_types": ["Customer", "Product", "Order", "Category", "Vendor"],
+    "conversation": "Customer Sarah Johnson wants to return her Samsung TV from order #ORD-2024-892. The Electronics vendor needs to process it.",
+    "expected_entities": [
+      {"name": "Sarah Johnson", "type": "Customer"},
+      {"name": "Samsung TV", "type": "Product"},
+      {"name": "order #ORD-2024-892", "type": "Order"},
+      {"name": "Electronics", "type": "Category"},
+      {"name": "Samsung", "type": "Vendor"}
+    ]
+  },
+  {
+    "id": "ecommerce-003",
+    "org_name": "E-commerce Platform",
+    "entity_types": ["Customer", "Product", "Order", "Category", "Vendor"],
+    "conversation": "The customer bought an iPhone case from Tech accessories. Apple is the vendor for the MagSafe charger she also ordered.",
+    "expected_entities": [
+      {"name": "iPhone case", "type": "Product"},
+      {"name": "Tech accessories", "type": "Category"},
+      {"name": "Apple", "type": "Vendor"},
+      {"name": "MagSafe charger", "type": "Product"}
+    ]
+  },
+  {
+    "id": "ecommerce-004",
+    "org_name": "E-commerce Platform",
+    "entity_types": ["Customer", "Product", "Order", "Category", "Vendor"],
+    "conversation": "Vendor Patagonia has shipped the down jacket to customer Mike. The order ORD-3030 includes items from Outdoor gear.",
+    "expected_entities": [
+      {"name": "Patagonia", "type": "Vendor"},
+      {"name": "down jacket", "type": "Product"},
+      {"name": "Mike", "type": "Customer"},
+      {"name": "ORD-3030", "type": "Order"},
+      {"name": "Outdoor gear", "type": "Category"}
+    ]
+  },
+  {
+    "id": "ecommerce-005",
+    "org_name": "E-commerce Platform",
+    "entity_types": ["Customer", "Product", "Order", "Category", "Vendor"],
+    "conversation": "Can I get a refund for the blender I bought from Kitchen & Home? The vendor KitchenAid says it was delivered but I never received it.",
+    "expected_entities": [
+      {"name": "blender", "type": "Product"},
+      {"name": "Kitchen & Home", "type": "Category"},
+      {"name": "KitchenAid", "type": "Vendor"}
+    ]
+  },
+  {
+    "id": "ecommerce-006",
+    "org_name": "E-commerce Platform",
+    "entity_types": ["Customer", "Product", "Order", "Category", "Vendor"],
+    "conversation": "Customer Priya ordered The Alchemist from Books & Media. The vendor Penguin delivered it but the cover is damaged.",
+    "expected_entities": [
+      {"name": "Priya", "type": "Customer"},
+      {"name": "The Alchemist", "type": "Product"},
+      {"name": "Books & Media", "type": "Category"},
+      {"name": "Penguin", "type": "Vendor"}
+    ]
+  },
+  {
+    "id": "saas-001",
+    "org_name": "SaaS Platform",
+    "entity_types": ["User", "Feature", "Bug", "Integration", "Team"],
+    "conversation": "User Alex reported that the Dashboard export feature is broken. The Salesforce integration is down too.",
+    "expected_entities": [
+      {"name": "Alex", "type": "User"},
+      {"name": "Dashboard export", "type": "Feature"},
+      {"name": "Salesforce integration", "type": "Integration"}
+    ]
+  },
+  {
+    "id": "saas-002",
+    "org_name": "SaaS Platform",
+    "entity_types": ["User", "Feature", "Bug", "Integration", "Team"],
+    "conversation": "Team Alpha requested a new role-based access control feature. The Slack integration is already working in staging.",
+    "expected_entities": [
+      {"name": "Team Alpha", "type": "Team"},
+      {"name": "role-based access control", "type": "Feature"},
+      {"name": "Slack integration", "type": "Integration"}
+    ]
+  },
+  {
+    "id": "saas-003",
+    "org_name": "SaaS Platform",
+    "entity_types": ["User", "Feature", "Bug", "Integration", "Team"],
+    "conversation": "BUG-442: User session expires prematurely. User Maria from Team Beta noticed it after the last deployment.",
+    "expected_entities": [
+      {"name": "BUG-442", "type": "Bug"},
+      {"name": "Maria", "type": "User"},
+      {"name": "Team Beta", "type": "Team"}
+    ]
+  },
+  {
+    "id": "saas-004",
+    "org_name": "SaaS Platform",
+    "entity_types": ["User", "Feature", "Bug", "Integration", "Team"],
+    "conversation": "The Zapier integration needs OAuth reconfiguration. User James said his automated workflows stopped working yesterday.",
+    "expected_entities": [
+      {"name": "Zapier integration", "type": "Integration"},
+      {"name": "James", "type": "User"}
+    ]
+  },
+  {
+    "id": "saas-005",
+    "org_name": "SaaS Platform",
+    "entity_types": ["User", "Feature", "Bug", "Integration", "Team"],
+    "conversation": "Team Gamma shipped the real-time collaboration feature. There is a minor bug where cursors desync on mobile.",
+    "expected_entities": [
+      {"name": "Team Gamma", "type": "Team"},
+      {"name": "real-time collaboration", "type": "Feature"},
+      {"name": "cursors desync on mobile", "type": "Bug"}
+    ]
+  },
+  {
+    "id": "saas-006",
+    "org_name": "SaaS Platform",
+    "entity_types": ["User", "Feature", "Bug", "Integration", "Team"],
+    "conversation": "User Tina wants SSO integration with Okta. The audit log feature needs to support it first. Team Delta is handling this.",
+    "expected_entities": [
+      {"name": "Tina", "type": "User"},
+      {"name": "SSO integration", "type": "Integration"},
+      {"name": "Okta", "type": "Integration"},
+      {"name": "audit log", "type": "Feature"},
+      {"name": "Team Delta", "type": "Team"}
+    ]
+  },
+  {
+    "id": "finance-001",
+    "org_name": "Financial Services",
+    "entity_types": ["Client", "Account", "Transaction", "Instrument", "Market"],
+    "conversation": "Client Acme Corp transferred $50,000 from account CHK-1001 to account SAV-2002 in a single wire transaction.",
+    "expected_entities": [
+      {"name": "Acme Corp", "type": "Client"},
+      {"name": "CHK-1001", "type": "Account"},
+      {"name": "SAV-2002", "type": "Account"},
+      {"name": "wire", "type": "Transaction"}
+    ]
+  },
+  {
+    "id": "finance-002",
+    "org_name": "Financial Services",
+    "entity_types": ["Client", "Account", "Transaction", "Instrument", "Market"],
+    "conversation": "The S&P 500 rose 2% today. Client Jane bought 100 shares of Apple (AAPL) as a market order through her brokerage account.",
+    "expected_entities": [
+      {"name": "S&P 500", "type": "Market"},
+      {"name": "Jane", "type": "Client"},
+      {"name": "Apple (AAPL)", "type": "Instrument"},
+      {"name": "market order", "type": "Transaction"},
+      {"name": "brokerage account", "type": "Account"}
+    ]
+  },
+  {
+    "id": "finance-003",
+    "org_name": "Financial Services",
+    "entity_types": ["Client", "Account", "Transaction", "Instrument", "Market"],
+    "conversation": "Client XYZ Pension Fund deposited $2M into their institutional account. They want to buy US Treasury bonds and corporate debt instruments.",
+    "expected_entities": [
+      {"name": "XYZ Pension Fund", "type": "Client"},
+      {"name": "institutional account", "type": "Account"},
+      {"name": "US Treasury bonds", "type": "Instrument"},
+      {"name": "corporate debt", "type": "Instrument"}
+    ]
+  },
+  {
+    "id": "finance-004",
+    "org_name": "Financial Services",
+    "entity_types": ["Client", "Account", "Transaction", "Instrument", "Market"],
+    "conversation": "BTC dropped 5% on the crypto market. Client Mike's margin account has a pending liquidation transaction if it drops another 3%.",
+    "expected_entities": [
+      {"name": "BTC", "type": "Instrument"},
+      {"name": "crypto market", "type": "Market"},
+      {"name": "Mike", "type": "Client"},
+      {"name": "margin account", "type": "Account"},
+      {"name": "liquidation", "type": "Transaction"}
+    ]
+  },
+  {
+    "id": "finance-005",
+    "org_name": "Financial Services",
+    "entity_types": ["Client", "Account", "Transaction", "Instrument", "Market"],
+    "conversation": "The NASDAQ is volatile. Client TechVentures wants to convert their USD account to EUR for international transactions.",
+    "expected_entities": [
+      {"name": "NASDAQ", "type": "Market"},
+      {"name": "TechVentures", "type": "Client"},
+      {"name": "USD account", "type": "Account"},
+      {"name": "EUR", "type": "Instrument"},
+      {"name": "conversion", "type": "Transaction"}
+    ]
+  },
+  {
+    "id": "finance-006",
+    "org_name": "Financial Services",
+    "entity_types": ["Client", "Account", "Transaction", "Instrument", "Market"],
+    "conversation": "Client Sarah executed a limit order for MSFT stock through her retirement account. The Dow Jones index is up 1.5% this quarter.",
+    "expected_entities": [
+      {"name": "Sarah", "type": "Client"},
+      {"name": "limit order", "type": "Transaction"},
+      {"name": "MSFT", "type": "Instrument"},
+      {"name": "retirement account", "type": "Account"},
+      {"name": "Dow Jones", "type": "Market"}
+    ]
+  },
+  {
+    "id": "default-001",
+    "org_name": "General Chat",
+    "entity_types": [],
+    "conversation": "John works at Google in Mountain View and uses Gmail every day. He visited London last March.",
+    "expected_entities": [
+      {"name": "John", "type": "Person"},
+      {"name": "Google", "type": "Organization"},
+      {"name": "Mountain View", "type": "Location"},
+      {"name": "Gmail", "type": "Product"},
+      {"name": "London", "type": "Location"},
+      {"name": "March", "type": "Date"}
+    ]
+  },
+  {
+    "id": "default-002",
+    "org_name": "General Chat",
+    "entity_types": [],
+    "conversation": "Microsoft acquired Activision Blizzard in October 2023. The deal closed after regulatory approval from the FTC.",
+    "expected_entities": [
+      {"name": "Microsoft", "type": "Organization"},
+      {"name": "Activision Blizzard", "type": "Organization"},
+      {"name": "October 2023", "type": "Date"},
+      {"name": "FTC", "type": "Organization"}
+    ]
+  },
+  {
+    "id": "default-003",
+    "org_name": "General Chat",
+    "entity_types": [],
+    "conversation": "Can you recommend a good Italian restaurant in Boston for next Friday? My friend Alice is visiting from Paris.",
+    "expected_entities": [
+      {"name": "Boston", "type": "Location"},
+      {"name": "next Friday", "type": "Date"},
+      {"name": "Alice", "type": "Person"},
+      {"name": "Paris", "type": "Location"}
+    ]
+  },
+  {
+    "id": "default-004",
+    "org_name": "General Chat",
+    "entity_types": [],
+    "conversation": "The Django REST Framework is the best choice for building APIs. Better than Flask for large projects.",
+    "expected_entities": [
+      {"name": "Django REST Framework", "type": "Product"},
+      {"name": "Flask", "type": "Product"}
+    ]
+  },
+  {
+    "id": "default-005",
+    "org_name": "General Chat",
+    "entity_types": [],
+    "conversation": "Tesla's stock price dropped yesterday when Elon Musk announced layoffs at the Austin factory.",
+    "expected_entities": [
+      {"name": "Tesla", "type": "Organization"},
+      {"name": "yesterday", "type": "Date"},
+      {"name": "Elon Musk", "type": "Person"},
+      {"name": "Austin", "type": "Location"}
+    ]
+  },
+  {
+    "id": "default-006",
+    "org_name": "General Chat",
+    "entity_types": [],
+    "conversation": "The PyCon US 2025 conference is happening in Pittsburgh this May. The keynote speaker is Guido van Rossum.",
+    "expected_entities": [
+      {"name": "PyCon US 2025", "type": "Product"},
+      {"name": "Pittsburgh", "type": "Location"},
+      {"name": "this May", "type": "Date"},
+      {"name": "Guido van Rossum", "type": "Person"}
+    ]
+  }
+]
