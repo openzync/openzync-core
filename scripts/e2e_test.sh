@@ -570,11 +570,21 @@ SE_HTTP=$(curl_retry -o /dev/null -w "%{http_code}" \
 check_http 200 "$SE_HTTP" "GET structured-extractions list"
 
 step "4.9 — GET structured extractions per episode"
+# Pick an episode that actually has extractions (list endpoint confirmed ≥1)
 EP_ID=$(psql "$DSN" -t -A -c "
-  SELECT e.id FROM episodes e
+  SELECT se.episode_id FROM structured_extractions se
+  JOIN episodes e ON e.id = se.episode_id
   JOIN sessions s ON e.session_id = s.id
-  WHERE s.id='$SESSION_ID' AND e.is_deleted=false
+  WHERE s.id='$SESSION_ID'
   LIMIT 1;" 2>/dev/null)
+if [ -z "$EP_ID" ]; then
+  # Fallback: first episode in session (may have no extractions yet)
+  EP_ID=$(psql "$DSN" -t -A -c "
+    SELECT e.id FROM episodes e
+    JOIN sessions s ON e.session_id = s.id
+    WHERE s.id='$SESSION_ID' AND e.is_deleted=false
+    LIMIT 1;" 2>/dev/null)
+fi
 if [ -n "$EP_ID" ]; then
   SE_EP_HTTP=$(curl_retry -o /dev/null -w "%{http_code}" \
     "$BASE_URL/v1/users/$USER_ID/sessions/$SESSION_ID/structured-extractions/$EP_ID" \
@@ -796,14 +806,17 @@ PYEOF
 MERGE_STATUS=$(python3 -c "
 import json
 with open('/tmp/e2e_merge_stdout.json') as f:
-    content = f.read().strip()
-if not content:
+    # The last line is the JSON result; preceding lines are log output.
+    for line in f:
+        pass  # read to end
+    last_line = line.strip() if line else ''
+if not last_line:
     print('no-output')
 else:
-    d = json.loads(content)
+    d = json.loads(last_line)
     print(d.get('status','unknown'))
 " 2>/dev/null || echo "error")
-if [ "$MERGE_STATUS" = "success" ] || [ "$MERGE_STATUS" = "partial" ]; then
+if [ "$MERGE_STATUS" = "success" ] || [ "$MERGE_STATUS" = "partial" ] || [ "$MERGE_STATUS" = "completed" ]; then
   ok "Entity merge worker completed — status=$MERGE_STATUS"
 else
   warn "Entity merge worker: status=$MERGE_STATUS"

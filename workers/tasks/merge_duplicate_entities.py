@@ -72,7 +72,6 @@ async def merge_duplicate_entities(
 
     _engine = init_db_engine(
         str(settings.DATABASE_URL),
-        pool_pre_ping=True,
         pool_size=5,
         max_overflow=2,
     )
@@ -252,7 +251,7 @@ async def _find_duplicate_clusters(
             SELECT id, name FROM graph_entities
             WHERE organization_id = :org_id
               AND is_merged = false
-              AND id != ALL(:seen_ids::uuid[])
+              AND id != ALL(CAST(:seen_ids AS uuid[]))
         """),
         {
             "org_id": org_id,
@@ -324,7 +323,7 @@ async def _fetch_entity_details(
             SELECT id, name, entity_type, updated_at
             FROM graph_entities
             WHERE organization_id = :org_id
-              AND id = ANY(:entity_ids::uuid[])
+              AND id = ANY(CAST(:entity_ids AS uuid[]))
         """),
         {
             "org_id": org_id,
@@ -418,7 +417,7 @@ async def _merge_cluster(
                 WHERE organization_id = :org_id
                   AND invalid_at IS NULL
                   AND g.id NOT IN (
-                      SELECT MIN(id)
+                      SELECT MIN(id::text)::uuid
                       FROM graph_relationships
                       WHERE organization_id = :org_id
                         AND invalid_at IS NULL
@@ -521,13 +520,13 @@ async def _select_canonical(
                 SELECT source_id as entity_id
                 FROM graph_relationships
                 WHERE organization_id = :org_id
-                  AND source_id = ANY(:entity_ids::uuid[])
+                  AND source_id = ANY(CAST(:entity_ids AS uuid[]))
                   AND invalid_at IS NULL
                 UNION ALL
                 SELECT target_id as entity_id
                 FROM graph_relationships
                 WHERE organization_id = :org_id
-                  AND target_id = ANY(:entity_ids::uuid[])
+                  AND target_id = ANY(CAST(:entity_ids AS uuid[]))
                   AND invalid_at IS NULL
             ) AS rels
             GROUP BY entity_id
