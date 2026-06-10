@@ -174,6 +174,22 @@ class Settings(BaseSettings):
         validation_alias="MG_MAX_WORKERS",
     )
 
+    # ── JWT ────────────────────────────────────────────────────────────────
+    JWT_ACCESS_TOKEN_TTL_MINUTES: int = Field(
+        default=30,
+        ge=1,
+        le=1440,
+        description="Access token TTL in minutes (default 30).",
+        validation_alias="MG_JWT_ACCESS_TOKEN_TTL_MINUTES",
+    )
+    JWT_REFRESH_TOKEN_TTL_DAYS: int = Field(
+        default=7,
+        ge=1,
+        le=90,
+        description="Refresh token TTL in days (default 7).",
+        validation_alias="MG_JWT_REFRESH_TOKEN_TTL_DAYS",
+    )
+
     # ── Rate Limiting ─────────────────────────────────────────────────────
 
     @model_validator(mode="after")

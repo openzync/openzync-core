@@ -1,33 +1,26 @@
-"""API key authentication middleware with Redis caching and RLS integration.
+"""Authentication middleware supporting both API keys and JWT tokens.
 
-Flow for every incoming request:
+Dual-mode authentication flow:
 
-1. If no ``Authorization: Bearer <key>`` header → set ``org_id = None`` for
-   public endpoints and pass through.
-2. Extract the bearer token and compute an unsalted **lookup hash** via
-   :func:`~memgraph.utils.crypto.compute_lookup_hash`.
+**API key mode** (for SDK clients):
+1. Bearer token starts with ``mg_live_`` or ``mg_test_`` prefix.
+2. Compute unsalted lookup hash via ``compute_lookup_hash``.
 3. Check Redis cache at ``auth:key:{lookup_hash}`` (TTL: 300 s).
-4. On cache hit → parse cached data and set ``request.state``.
-5. On cache miss → query ``api_keys`` table by ``lookup_hash``, verify the
-   key against the stored salted hash, and populate the cache.
-6. Validate that the key is not revoked and hasn't expired.
-7. Set ``request.state.org_id`` and ``request.state.api_key_scopes``.
-8. Set PostgreSQL session config for Row-Level Security (RLS):
-   ``set_config('app.org_id', org_id, true)``
-   ``set_config('app.bypass_rls', 'false', true)``
+4. On miss, query ``api_keys`` table, verify salted hash.
+5. Set ``request.state.org_id``, ``request.state.api_key_scopes``.
+6. Set PostgreSQL RLS context.
 
-RFC 7807 error bodies are returned for 401 responses.
+**JWT mode** (for dashboard users):
+1. Bearer token is a three-segment JWT (starts with ``eyJ``).
+2. Verify signature with ``MG_SECRET_KEY`` (HS256).
+3. Extract ``sub`` (user_id), ``org_id``, ``role`` claims.
+4. Set ``request.state.org_id``, ``request.state.user_id``,
+   ``request.state.role``, ``request.state.auth_type = "jwt"``.
 
-Model dependency:
-    ``models.api_key.ApiKey`` is expected to exist with the following fields:
-    - ``lookup_hash: Mapped[str]`` — indexed, unsalted SHA-256 hex digest
-    - ``key_hash: Mapped[str]`` — salted SHA-256 hex digest
-    - ``salt: Mapped[str]`` — hex-encoded 16-byte salt
-    - ``prefix: Mapped[str]`` — first few chars for display
-    - ``organization_id: Mapped[uuid.UUID]`` — FK to ``organizations``
-    - ``scopes: Mapped[list[str]]`` — JSON array of permission scopes
-    - ``is_revoked: Mapped[bool]`` — soft revocation flag
-    - ``expires_at: Mapped[datetime | None]`` — optional expiry
+Public endpoints (``/health``, ``/docs``, ``/v1/auth/*``, etc.) pass
+through without authentication.
+
+RFC 7807 error bodies are returned for all 401/403 responses.
 """
 
 from __future__ import annotations
@@ -72,6 +65,9 @@ PUBLIC_ENDPOINTS: set[str] = {
     "/openapi.json",
     "/redoc",
     "/admin/organizations",
+    "/v1/auth/signup",
+    "/v1/auth/login",
+    "/v1/auth/refresh",
 }
 """Paths that are allowed without authentication.
 
@@ -79,11 +75,14 @@ These endpoints do not require an ``Authorization`` header.  The set may be
 extended at the application level.  Paths are matched suffix-wise so that
 versioned routes (e.g. ``/v1/health``) are also recognised.
 """
-"""Paths that are allowed without authentication.
 
-These endpoints do not require an ``Authorization`` header.  The set may be
-extended at the application level.
-"""
+# ═══════════════════════════════════════════════════════════════════════════════
+# JWT constants
+# ═══════════════════════════════════════════════════════════════════════════════
+
+API_KEY_PREFIXES: tuple[str, ...] = ("mg_live_", "mg_test_")
+"""Recognised API key prefixes.  Tokens not starting with one of these
+are attempted as JWT first."""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -260,12 +259,102 @@ async def _set_rls_context(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# JWT helper
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _is_jwt_token(token: str) -> bool:
+    """Check if a bearer token looks like a JWT (three base64url segments).
+
+    JWT tokens have exactly two dots separating three URL-safe base64
+    segments.  This is a cheap heuristic check before attempting
+    cryptographic verification.
+
+    Args:
+        token: The raw bearer token string.
+
+    Returns:
+        ``True`` if the token has two dots (likely a JWT).
+    """
+    return token.count(".") == 2
+
+
+def _verify_jwt_and_set_state(
+    request: Request,
+    token: str,
+) -> JSONResponse | None:
+    """Verify a JWT token and set ``request.state``.
+
+    Extracts ``sub`` (user_id), ``org_id``, and ``role`` from the JWT
+    claims and populates ``request.state`` accordingly.
+
+    Args:
+        request: The incoming HTTP request (state is mutated in-place).
+        token: The raw JWT string.
+
+    Returns:
+        ``None`` on success, or an RFC 7807 ``JSONResponse`` on failure.
+    """
+    from core.config import settings
+    from utils.crypto import verify_jwt_token
+
+    try:
+        payload = verify_jwt_token(token, settings.SECRET_KEY)
+    except Exception as exc:
+        logger.warning("JWT verification failed", exc_info=exc)
+        return _rfc7807_response(
+            status=401,
+            title="Invalid Token",
+            detail="The JWT token is invalid or expired.",
+            path=request.url.path,
+        )
+
+    # Validate required claims
+    user_id: str | None = payload.get("sub")
+    org_id: str | None = payload.get("org_id")
+    role: str | None = payload.get("role", "member")
+    token_type: str | None = payload.get("type")
+
+    if token_type != "access":
+        return _rfc7807_response(
+            status=401,
+            title="Invalid Token Type",
+            detail="Only access tokens are accepted for API authentication.",
+            path=request.url.path,
+        )
+
+    if not user_id or not org_id:
+        return _rfc7807_response(
+            status=401,
+            title="Invalid Token Claims",
+            detail="JWT must contain 'sub' (user_id) and 'org_id' claims.",
+            path=request.url.path,
+        )
+
+    request.state.auth_type = "jwt"  # type: ignore[attr-defined]
+    request.state.org_id = org_id  # type: ignore[attr-defined]
+    request.state.user_id = user_id  # type: ignore[attr-defined]
+    request.state.role = role  # type: ignore[attr-defined]
+    request.state.api_key_scopes = ["read", "write", "admin"]  # type: ignore[attr-defined]
+    # JWT users get full scopes — fine-grained RBAC can be added later.
+
+    return None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Auth middleware
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 class AuthMiddleware(BaseHTTPMiddleware):
-    """Authenticate requests via ``Authorization: Bearer <api_key>``.
+    """Authenticate requests via ``Authorization: Bearer <api_key|jwt>``.
+
+    Supports two authentication methods:
+
+    - **API key** (SDK clients): Identified by ``mg_live_`` / ``mg_test_``
+      prefix.  Validated against the ``api_keys`` table with Redis caching.
+    - **JWT** (dashboard users):  Identified by a three-segment JWT string.
+      Validated with ``MG_SECRET_KEY`` via HS256.
 
     This middleware depends on:
     - ``request.app.state.redis`` — an ``aioredis.Redis`` client initialised
@@ -275,6 +364,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     It sets the following attributes on ``request.state``:
     - ``org_id`` — the authenticated organization's UUID (or ``None``).
+    - ``user_id`` — the authenticated user's UUID (JWT only; ``None`` for API key).
+    - ``role`` — user role string (JWT only; empty for API key).
+    - ``auth_type`` — ``"jwt"`` or ``"api_key"``.
     - ``api_key_scopes`` — list of permission strings (or ``[]``).
     """
 
@@ -286,7 +378,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
             **kwargs: Additional arguments for ``BaseHTTPMiddleware``.
         """
         super().__init__(app, **kwargs)
-        # Cache of model attribute names to avoid repeated lookups.
         self._public_endpoints: set[str] = PUBLIC_ENDPOINTS
 
     async def dispatch(
@@ -305,6 +396,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
         """
         # ── Initialise state defaults ────────────────────────────────────
         request.state.org_id = None  # type: ignore[attr-defined]
+        request.state.user_id = None  # type: ignore[attr-defined]
+        request.state.role = None  # type: ignore[attr-defined]
+        request.state.auth_type = None  # type: ignore[attr-defined]
         request.state.api_key_scopes = []  # type: ignore[attr-defined]
 
         # ── Public endpoints pass through ────────────────────────────────
@@ -317,7 +411,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
             return _rfc7807_response(
                 status=401,
                 title="Authentication Required",
-                detail="Missing Authorization header. Use: Bearer <api_key>",
+                detail="Missing Authorization header. Use: Bearer <api_key or jwt>",
                 path=request.url.path,
             )
 
@@ -341,7 +435,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 path=request.url.path,
             )
 
-        # ── Compute lookup hash ──────────────────────────────────────────
+        # ── Route to JWT or API key flow ─────────────────────────────────
+        # JWT tokens have 2 dots.  API keys have a known prefix.
+        # If the token doesn't have an API key prefix, try JWT first.
+        if not raw_key.startswith(API_KEY_PREFIXES) and _is_jwt_token(raw_key):
+            jwt_result = _verify_jwt_and_set_state(request, raw_key)
+            if jwt_result is not None:
+                return jwt_result
+            return await call_next(request)
+
+        # ── API key flow ─────────────────────────────────────────────────
         lookup_hash: str = compute_lookup_hash(raw_key)
 
         # ── Check Redis cache ────────────────────────────────────────────
@@ -350,11 +453,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             try:
                 cached = await _lookup_key_in_redis(redis, lookup_hash)
                 if cached is not None:
+                    request.state.auth_type = "api_key"  # type: ignore[attr-defined]
                     request.state.org_id = cached["org_id"]  # type: ignore[attr-defined]
                     request.state.api_key_scopes = cached.get("scopes", [])  # type: ignore[attr-defined]
-                    # Set RLS context (best-effort, no await here to avoid
-                    # delaying the response — RLS is set more reliably in
-                    # the DB dependency).
                     return await call_next(request)
             except Exception:
                 # Graceful degradation — if Redis is down, fall through to DB.
@@ -420,7 +521,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
             from datetime import datetime, timezone
 
             expires = key_data["expires_at"]
-            # Handle both datetime with and without tzinfo.
             if expires.tzinfo is None:
                 expires = expires.replace(tzinfo=timezone.utc)
             if expires < datetime.now(timezone.utc):
@@ -435,6 +535,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         org_id: str = key_data["org_id"]
         scopes: list[str] = key_data["scopes"]
 
+        request.state.auth_type = "api_key"  # type: ignore[attr-defined]
         request.state.org_id = org_id  # type: ignore[attr-defined]
         request.state.api_key_scopes = scopes  # type: ignore[attr-defined]
 
@@ -453,7 +554,6 @@ class AuthMiddleware(BaseHTTPMiddleware):
         try:
             await _set_rls_context(db_factory, org_id, bypass_rls=False)
         except Exception:
-            # Non-fatal — RLS is a defence-in-depth measure.
             logger.warning("Failed to set RLS session config", exc_info=True)
 
         return await call_next(request)

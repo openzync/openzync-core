@@ -1,20 +1,21 @@
 """FastAPI dependencies for authentication and authorization.
 
-Provides three levels of auth dependency:
+Provides four levels of auth dependency:
 
 1. ``get_org_id`` — Optional auth.  Returns the org ID if authenticated,
-   ``None`` otherwise.  Use for endpoints that behave differently for
-   authenticated vs. anonymous users.
+   ``None`` otherwise.  Works with both API keys and JWT tokens.
 
 2. ``require_org_id`` — Mandatory auth.  Raises 401 if not authenticated.
-   Use for all endpoints that require a valid API key / session.
 
 3. ``require_scope(scope_name)`` — Dependency factory.  Checks that the
    authenticated API key has a specific scope.  Raises 403 if missing.
+   For JWT-authenticated users, scopes are implicitly granted.
 
-All dependencies rely on ``request.state.org_id`` and
-``request.state.api_key_scopes`` set by :class:`AuthMiddleware
-<memgraph.middleware.auth.AuthMiddleware>`.
+4. ``get_dashboard_user`` — Returns ``request.state.user_id`` if the
+   request is authenticated via JWT (dashboard session), ``None`` otherwise.
+
+All dependencies rely on ``request.state`` attributes set by
+:class:`AuthMiddleware <memgraph.middleware.auth.AuthMiddleware>`.
 """
 
 from __future__ import annotations
@@ -48,8 +49,8 @@ async def get_org_id(
     """Extract the authenticated organization ID from the request state.
 
     The ``org_id`` is set by :class:`AuthMiddleware` after verifying the
-    API key.  If no authentication was provided (public endpoint), this
-    returns ``None``.
+    API key or JWT token.  If no authentication was provided (public
+    endpoint), this returns ``None``.
 
     The ``credentials`` parameter is included to ensure FastAPI parses the
     ``Authorization`` header and adds it to the OpenAPI schema.  Actual
@@ -70,9 +71,8 @@ async def require_org_id(
 ) -> str:
     """Require a valid authenticated organization ID.
 
-    This dependency **must** be used on any endpoint that requires
-    authentication.  It raises a 401 error if the request has no valid
-    API key.
+    Works with both API keys and JWT tokens.  Raises a 401 error if the
+    request has no valid authentication.
 
     Args:
         org_id: The organization ID from :func:`get_org_id`.
@@ -91,8 +91,8 @@ async def require_org_id(
                 "title": "Authentication Required",
                 "status": 401,
                 "detail": (
-                    "A valid API key is required for this endpoint. "
-                    "Provide it via the Authorization: Bearer <key> header."
+                    "A valid API key or JWT token is required for this endpoint. "
+                    "Provide it via the Authorization: Bearer <token> header."
                 ),
             },
         )
@@ -101,6 +101,10 @@ async def require_org_id(
 
 def require_scope(required_scope: str):
     """Dependency factory that checks for a specific API key scope.
+
+    For JWT-authenticated dashboard users, all scopes are implicitly
+    granted (they have full access to their organization).  For API-key
+    authenticated requests, the key's scopes are checked.
 
     Use this to protect endpoints that require elevated permissions:
 
@@ -137,6 +141,12 @@ def require_scope(required_scope: str):
         Raises:
             HTTPException: 403 if the required scope is missing.
         """
+        auth_type: str | None = getattr(request.state, "auth_type", None)
+
+        # JWT-authenticated dashboard users have full access
+        if auth_type == "jwt":
+            return org_id
+
         scopes: list[str] = getattr(request.state, "api_key_scopes", [])
         if required_scope not in scopes:
             raise HTTPException(
@@ -154,3 +164,56 @@ def require_scope(required_scope: str):
         return org_id
 
     return _scope_checker
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Dashboard-specific dependencies
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+async def get_dashboard_user(
+    request: Request,
+    org_id: str = Depends(require_org_id),
+) -> str:
+    """Require a JWT-authenticated dashboard user.
+
+    Returns the ``user_id`` from the JWT claims.  Raises 401 if the
+    request is authenticated via API key instead of JWT.
+
+    Args:
+        request: The incoming HTTP request.
+        org_id: The authenticated organization ID (from ``require_org_id``).
+
+    Returns:
+        The dashboard user's UUID string.
+
+    Raises:
+        HTTPException: 401 if not a JWT-authenticated session.
+    """
+    auth_type: str | None = getattr(request.state, "auth_type", None)
+    if auth_type != "jwt":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "type": "https://errors.memgraph.dev/authentication_error",
+                "title": "Dashboard Authentication Required",
+                "status": 401,
+                "detail": (
+                    "This endpoint requires a JWT token (dashboard session). "
+                    "API key authentication is not sufficient."
+                ),
+            },
+        )
+
+    user_id: str | None = getattr(request.state, "user_id", None)
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "type": "https://errors.memgraph.dev/authentication_error",
+                "title": "Invalid Session",
+                "status": 401,
+                "detail": "The JWT token does not contain a valid user identifier.",
+            },
+        )
+    return user_id

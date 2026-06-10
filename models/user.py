@@ -7,7 +7,7 @@ Users are identified by an ``external_id`` chosen by the calling application
 
 import uuid
 
-from sqlalchemy import Boolean, ForeignKey, Index, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, ForeignKey, Index, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -52,6 +52,17 @@ class User(TimestampMixin, Base):
         default=dict,
         server_default="{}",
     )
+    role: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        default="member",
+        server_default="member",
+    )
+    password_hash: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="bcrypt hash — set only for dashboard users (email/password auth).",
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -72,6 +83,7 @@ class User(TimestampMixin, Base):
             name="uq_user_organization_external",
         ),
         Index("ix_user_organization_id", "organization_id"),
+        Index("ix_user_email_unique", "email", postgresql_where=email.isnot(None)),
     )
 
     def __repr__(self) -> str:
