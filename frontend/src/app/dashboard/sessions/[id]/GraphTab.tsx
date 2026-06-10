@@ -10,7 +10,7 @@ import {
   TextField,
   Button,
 } from "@mui/material";
-import { listGraphNodes, ApiError } from "@/lib/api/client";
+import { listGraphNodes, listGraphEdges, ApiError } from "@/lib/api/client";
 import type { components } from "@/lib/api/schema";
 
 type GraphNode = components["schemas"]["GraphNode"];
@@ -21,6 +21,13 @@ interface GraphNodeRow {
   type: string;
   summary: string | null;
   created_at: string;
+}
+
+interface EdgeData {
+  id: string;
+  source_id: string;
+  target_id: string;
+  type: string;
 }
 
 // ─── Component Props ──────────────────────────────────────────────────────────
@@ -34,223 +41,232 @@ interface GraphTabProps {
 
 export default function GraphTab({ userId }: GraphTabProps) {
   const [nodes, setNodes] = useState<GraphNodeRow[]>([]);
+  const [edges, setEdges] = useState<EdgeData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [edgeLoading, setEdgeLoading] = useState(false);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [entityFilter, setEntityFilter] = useState("");
   const canvasRef = useRef<HTMLDivElement>(null);
   const graphInstance = useRef<{ destroy: () => void } | null>(null);
 
-  // ── Fetch nodes ─────────────────────────────────────────────────────────────
+  // ── Canvas rendering ────────────────────────────────────────────────────────
 
-  const buildGraphData = useCallback(
-    (nodeList: GraphNodeRow[]) => {
+  const TYPE_COLORS: Record<string, string> = {
+    person: "#1565C0",
+    organization: "#388E3C",
+    location: "#F57C00",
+    event: "#7B1FA2",
+    concept: "#C62828",
+    literal: "#6A1B9A",
+  };
+
+  function getColor(type: string): string {
+    return TYPE_COLORS[type.toLowerCase()] || "#757575";
+  }
+
+  const buildGraph = useCallback(
+    (nodeList: GraphNodeRow[], edgeList: EdgeData[]) => {
       if (!canvasRef.current) return;
 
-      // Clean up previous graph
       if (graphInstance.current) {
         graphInstance.current.destroy();
         graphInstance.current = null;
       }
-      // Clear canvas
       canvasRef.current.innerHTML = "";
-
       if (nodeList.length === 0) return;
 
-      // Build nodes and edges for the force graph
-      const graphNodes = nodeList.map((n, i) => ({
+      const container = canvasRef.current;
+      const width = container.clientWidth || 800;
+      const height = 500;
+
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      container.appendChild(canvas);
+
+      const ctx = canvas.getContext("2d")!;
+
+      const simNodes = nodeList.map((n) => ({
         id: n.id,
         name: n.name,
         type: n.type,
-        val: 5,
+        x: Math.random() * width,
+        y: Math.random() * height,
+        vx: 0,
+        vy: 0,
       }));
 
-      // Since we don't have edges from the list endpoint directly,
-      // create a simple force layout with nodes grouped by type
-      // Edges will be shown connecting nodes of the same type loosely
-      const graphEdges: { source: string; target: string }[] = [];
-      const typeGroups: Record<string, string[]> = {};
-      for (const n of nodeList) {
-        if (!typeGroups[n.type]) typeGroups[n.type] = [];
-        typeGroups[n.type].push(n.id);
-      }
-
-      // Add edges within type groups to show clustering
-      for (const ids of Object.values(typeGroups)) {
-        for (let i = 0; i < ids.length - 1; i++) {
-          graphEdges.push({ source: ids[i], target: ids[i + 1] });
+      // Build real edges from API, deduplicated
+      const nodeIndex = new Map(simNodes.map((n, i) => [n.id, i]));
+      const seenEdges = new Set<string>();
+      const simEdges: { source: number; target: number; type: string }[] = [];
+      for (const e of edgeList) {
+        const key = [e.source_id, e.target_id].sort().join("|");
+        if (seenEdges.has(key)) continue;
+        seenEdges.add(key);
+        const si = nodeIndex.get(e.source_id);
+        const ti = nodeIndex.get(e.target_id);
+        if (si !== undefined && ti !== undefined) {
+          simEdges.push({ source: si, target: ti, type: e.type });
         }
       }
 
-      // Dynamically import ForceGraph2D (SSR-safe)
-      import("react-force-graph-2d").then((mod) => {
-        const ForceGraph2D = mod.default;
-        // We need to use React to render, so let's use a different approach
-        // Create a canvas-based rendering directly
-        const container = canvasRef.current;
-        if (!container) return;
+      // ── Hover / click state ──────────────────────────────────────────────
+      let hoveredNode: number | null = null;
+      let selectedNodeId: string | null = null;
 
-        const width = container.clientWidth || 800;
-        const height = 500;
+      let animFrame: number;
 
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        container.appendChild(canvas);
+      function step() {
+        const repulsion = 8000;
+        const attraction = 0.003;
+        const damping = 0.9;
+        const centerForce = 0.008;
+        const cx = width / 2;
+        const cy = height / 2;
 
-        // Simple force-directed layout simulation
-        const simNodes = graphNodes.map((n) => ({
-          ...n,
-          x: Math.random() * width,
-          y: Math.random() * height,
-          vx: 0,
-          vy: 0,
-        }));
+        for (let i = 0; i < simNodes.length; i++) {
+          const n = simNodes[i];
 
-        const simEdges = graphEdges.map((e) => ({
-          source: simNodes.findIndex((n) => n.id === e.source),
-          target: simNodes.findIndex((n) => n.id === e.target),
-        }));
+          n.vx += (cx - n.x) * centerForce;
+          n.vy += (cy - n.y) * centerForce;
 
-        let animFrame: number;
-        const ctx = canvas.getContext("2d")!;
-
-        const typeColors: Record<string, string> = {
-          person: "#1565C0",
-          organization: "#388E3C",
-          location: "#F57C00",
-          event: "#7B1FA2",
-          concept: "#C62828",
-          literal: "#6A1B9A",
-        };
-
-        function getColor(type: string): string {
-          return typeColors[type.toLowerCase()] || "#757575";
-        }
-
-        function simulationStep() {
-          // Simple force simulation
-          const repulsion = 5000;
-          const attraction = 0.005;
-          const damping = 0.9;
-          const centerForce = 0.01;
-
-          // Center
-          const cx = width / 2;
-          const cy = height / 2;
-
-          for (let i = 0; i < simNodes.length; i++) {
-            const n = simNodes[i];
-
-            // Center force
-            n.vx += (cx - n.x) * centerForce;
-            n.vy += (cy - n.y) * centerForce;
-
-            // Repulsion between all nodes
-            for (let j = i + 1; j < simNodes.length; j++) {
-              const other = simNodes[j];
-              const dx = n.x - other.x;
-              const dy = n.y - other.y;
-              const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-              const force = repulsion / (dist * dist);
-              const fx = (dx / dist) * force;
-              const fy = (dy / dist) * force;
-              n.vx += fx;
-              n.vy += fy;
-              other.vx -= fx;
-              other.vy -= fy;
-            }
-
-            // Attraction along edges
-            for (const edge of simEdges) {
-              if (edge.source === i) {
-                const target = simNodes[edge.target];
-                const dx = target.x - n.x;
-                const dy = target.y - n.y;
-                n.vx += dx * attraction;
-                n.vy += dy * attraction;
-                target.vx -= dx * attraction;
-                target.vy -= dy * attraction;
-              }
-            }
+          for (let j = i + 1; j < simNodes.length; j++) {
+            const other = simNodes[j];
+            const dx = n.x - other.x;
+            const dy = n.y - other.y;
+            const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
+            const force = repulsion / (dist * dist);
+            const fx = (dx / dist) * force;
+            const fy = (dy / dist) * force;
+            n.vx += fx;
+            n.vy += fy;
+            other.vx -= fx;
+            other.vy -= fy;
           }
 
-          // Apply velocity
-          let totalVelocity = 0;
-          for (const n of simNodes) {
-            n.vx *= damping;
-            n.vy *= damping;
-            n.x += n.vx;
-            n.y += n.vy;
-            totalVelocity += Math.abs(n.vx) + Math.abs(n.vy);
-          }
-
-          // Draw
-          ctx.clearRect(0, 0, width, height);
-
-          // Edges
-          ctx.strokeStyle = "rgba(0,0,0,0.08)";
-          ctx.lineWidth = 1;
           for (const edge of simEdges) {
-            const s = simNodes[edge.source];
-            const t = simNodes[edge.target];
-            ctx.beginPath();
-            ctx.moveTo(s.x, s.y);
-            ctx.lineTo(t.x, t.y);
-            ctx.stroke();
-          }
-
-          // Nodes
-          for (const n of simNodes) {
-            const color = getColor(n.type);
-            const radius = 8;
-
-            // Glow
-            ctx.beginPath();
-            ctx.arc(n.x, n.y, radius + 4, 0, 2 * Math.PI);
-            ctx.fillStyle = color + "20";
-            ctx.fill();
-
-            // Main circle
-            ctx.beginPath();
-            ctx.arc(n.x, n.y, radius, 0, 2 * Math.PI);
-            ctx.fillStyle = color;
-            ctx.fill();
-            ctx.strokeStyle = "#fff";
-            ctx.lineWidth = 2;
-            ctx.stroke();
-
-            // Label
-            ctx.fillStyle = "#333";
-            ctx.font = "11px Inter, system-ui, sans-serif";
-            ctx.textAlign = "center";
-            ctx.fillText(n.name, n.x, n.y + radius + 16);
-
-            // Type badge
-            ctx.fillStyle = "rgba(0,0,0,0.4)";
-            ctx.font = "9px Inter, system-ui, sans-serif";
-            ctx.fillText(n.type, n.x, n.y + radius + 28);
-          }
-
-          if (totalVelocity > 0.1) {
-            animFrame = requestAnimationFrame(simulationStep);
+            if (edge.source === i) {
+              const target = simNodes[edge.target];
+              const dx = target.x - n.x;
+              const dy = target.y - n.y;
+              n.vx += dx * attraction;
+              n.vy += dy * attraction;
+              target.vx -= dx * attraction;
+              target.vy -= dy * attraction;
+            }
           }
         }
 
-        animFrame = requestAnimationFrame(simulationStep);
+        let totalVel = 0;
+        for (const n of simNodes) {
+          n.vx *= damping;
+          n.vy *= damping;
+          n.x += n.vx;
+          n.y += n.vy;
+          totalVel += Math.abs(n.vx) + Math.abs(n.vy);
+        }
 
-        graphInstance.current = {
-          destroy: () => {
-            cancelAnimationFrame(animFrame);
-          },
-        };
-      });
+        ctx.clearRect(0, 0, width, height);
+
+        // ── Draw edges ────────────────────────────────────────────────────
+        for (const edge of simEdges) {
+          const s = simNodes[edge.source];
+          const t = simNodes[edge.target];
+
+          const isHighlighted =
+            hoveredNode !== null &&
+            (edge.source === hoveredNode || edge.target === hoveredNode);
+
+          ctx.strokeStyle = isHighlighted
+            ? "rgba(0,0,0,0.45)"
+            : "rgba(0,0,0,0.2)";
+          ctx.lineWidth = isHighlighted ? 2 : 1;
+          ctx.beginPath();
+          ctx.moveTo(s.x, s.y);
+          ctx.lineTo(t.x, t.y);
+          ctx.stroke();
+
+          // Edge label
+          const midX = (s.x + t.x) / 2;
+          const midY = (s.y + t.y) / 2;
+          ctx.fillStyle = "rgba(0,0,0,0.35)";
+          ctx.font = "9px Inter, system-ui, sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(edge.type, midX, midY - 4);
+        }
+
+        // ── Draw nodes ────────────────────────────────────────────────────
+        for (const n of simNodes) {
+          const color = getColor(n.type);
+          const isSelected = n.id === selectedNodeId;
+          const isHovered = hoveredNode === simNodes.indexOf(n);
+          const radius = isSelected ? 12 : isHovered ? 10 : 8;
+          const glow = isSelected ? 6 : 4;
+
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, radius + glow, 0, 2 * Math.PI);
+          ctx.fillStyle = color + (isSelected || isHovered ? "30" : "15");
+          ctx.fill();
+
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, radius, 0, 2 * Math.PI);
+          ctx.fillStyle = color;
+          ctx.fill();
+          ctx.strokeStyle = isSelected || isHovered ? "#fff" : "transparent";
+          ctx.lineWidth = 3;
+          ctx.stroke();
+
+          ctx.fillStyle = "#333";
+          ctx.font = "11px Inter, system-ui, sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(n.name, n.x, n.y + radius + 16);
+        }
+
+        if (totalVel > 0.1) {
+          animFrame = requestAnimationFrame(step);
+        }
+      }
+
+      // Hover detection
+      canvas.onmousemove = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const found = simNodes.findIndex((n) => {
+          const dx = mx - n.x;
+          const dy = my - n.y;
+          return Math.sqrt(dx * dx + dy * dy) < 15;
+        });
+        hoveredNode = found >= 0 ? found : null;
+        canvas.style.cursor = hoveredNode !== null ? "pointer" : "default";
+      };
+
+      canvas.onclick = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const found = simNodes.find((n) => {
+          const dx = mx - n.x;
+          const dy = my - n.y;
+          return Math.sqrt(dx * dx + dy * dy) < 15;
+        });
+        selectedNodeId = found?.id ?? null;
+      };
+
+      animFrame = requestAnimationFrame(step);
+
+      graphInstance.current = {
+        destroy: () => cancelAnimationFrame(animFrame),
+      };
     },
     [],
   );
 
-  const fetchNodes = useCallback(async () => {
+  // ── Fetch nodes + edges ─────────────────────────────────────────────────────
+
+  const fetchGraph = useCallback(async () => {
     setLoading(true);
     try {
       const params: Record<string, string | number | boolean | undefined | null> = {
@@ -264,18 +280,46 @@ export default function GraphTab({ userId }: GraphTabProps) {
       setNodes(nodeList);
       setCursor(result.data?.next_cursor ?? null);
       setHasMore(result.data?.has_more ?? false);
-      // Build graph after state is updated
-      setTimeout(() => buildGraphData(nodeList), 0);
+
+      // Fetch real edges for all nodes
+      setEdgeLoading(true);
+      const allEdges: EdgeData[] = [];
+      const seen = new Set<string>();
+      const batchSize = 5;
+      for (let i = 0; i < nodeList.length; i += batchSize) {
+        const batch = nodeList.slice(i, i + batchSize);
+        const results = await Promise.allSettled(
+          batch.map((n) =>
+            listGraphEdges(userId, { subject_id: n.id, limit: 50 }).catch(
+              () => ({ data: { items: [] } }),
+            ),
+          ),
+        );
+        for (const r of results) {
+          if (r.status === "fulfilled") {
+            const items = ((r.value.data as { items?: EdgeData[] })?.items ?? []) as EdgeData[];
+            for (const e of items) {
+              const key = [e.source_id, e.target_id].sort().join("|");
+              if (!seen.has(key)) {
+                seen.add(key);
+                allEdges.push(e);
+              }
+            }
+          }
+        }
+      }
+      setEdges(allEdges);
+      setEdgeLoading(false);
     } catch (err) {
-      console.error("Failed to load graph nodes", err);
+      console.error("Failed to load graph", err);
     } finally {
       setLoading(false);
     }
-  }, [userId, entityFilter, buildGraphData]);
+  }, [userId, entityFilter, buildGraph]);
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || !cursor) return;
-    setLoadingMore(true);
+    if (loading || !cursor) return;
+    setLoading(true);
     try {
       const result = await listGraphNodes(userId, {
         limit: 100,
@@ -287,22 +331,52 @@ export default function GraphTab({ userId }: GraphTabProps) {
       setNodes(combined);
       setCursor(result.data?.next_cursor ?? null);
       setHasMore(result.data?.has_more ?? false);
-      setTimeout(() => buildGraphData(combined), 0);
+      // Fetch edges for new nodes too
+      const allEdges = [...edges];
+      const seen = new Set(allEdges.map((e) => [e.source_id, e.target_id].sort().join("|")));
+      for (const n of newNodes) {
+        try {
+          const r = await listGraphEdges(userId, { subject_id: n.id, limit: 50 });
+          const items = ((r.data as { items?: EdgeData[] })?.items ?? []) as EdgeData[];
+          for (const e of items) {
+            const key = [e.source_id, e.target_id].sort().join("|");
+            if (!seen.has(key)) {
+              seen.add(key);
+              allEdges.push(e);
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+      setEdges(allEdges);
     } catch (err) {
       console.error("Failed to load more nodes", err);
     } finally {
-      setLoadingMore(false);
+      setLoading(false);
     }
-  }, [loadingMore, cursor, userId, entityFilter, nodes, buildGraphData]);
+  }, [loading, cursor, userId, entityFilter, nodes, edges, buildGraph]);
 
+  // Rebuild canvas whenever nodes/edges/loading settle
   useEffect(() => {
-    fetchNodes();
+    if (!loading && nodes.length > 0) {
+      buildGraph(nodes, edges);
+    }
     return () => {
       if (graphInstance.current) {
         graphInstance.current.destroy();
       }
     };
-  }, [fetchNodes]);
+  }, [nodes, edges, loading, buildGraph]);
+
+  useEffect(() => {
+    fetchGraph();
+    return () => {
+      if (graphInstance.current) {
+        graphInstance.current.destroy();
+      }
+    };
+  }, [fetchGraph]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -325,11 +399,12 @@ export default function GraphTab({ userId }: GraphTabProps) {
           onChange={(e) => setEntityFilter(e.target.value)}
           sx={{ minWidth: 200 }}
         />
-        <Button variant="outlined" size="small" onClick={fetchNodes}>
+        <Button variant="outlined" size="small" onClick={fetchGraph}>
           Refresh
         </Button>
         <Typography variant="caption" color="text.secondary">
-          {nodes.length} entities
+          {nodes.length} entities · {edges.length} relationships
+          {edgeLoading && " (loading edges...)"}
         </Typography>
       </Box>
 
@@ -360,23 +435,19 @@ export default function GraphTab({ userId }: GraphTabProps) {
               Legend
             </Typography>
             <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
-              {[
-                { type: "person", label: "Person", color: "#1565C0" },
-                { type: "organization", label: "Organization", color: "#388E3C" },
-                { type: "location", label: "Location", color: "#F57C00" },
-                { type: "event", label: "Event", color: "#7B1FA2" },
-                { type: "concept", label: "Concept", color: "#C62828" },
-              ].map((item) => (
-                <Box key={item.type} sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+              {Object.entries(TYPE_COLORS).map(([type, color]) => (
+                <Box key={type} sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
                   <Box
                     sx={{
                       width: 12,
                       height: 12,
                       borderRadius: "50%",
-                      bgcolor: item.color,
+                      bgcolor: color,
                     }}
                   />
-                  <Typography variant="caption">{item.label}</Typography>
+                  <Typography variant="caption" sx={{ textTransform: "capitalize" }}>
+                    {type}
+                  </Typography>
                 </Box>
               ))}
             </Box>
@@ -387,10 +458,10 @@ export default function GraphTab({ userId }: GraphTabProps) {
               <Button
                 variant="outlined"
                 onClick={loadMore}
-                disabled={loadingMore}
-                startIcon={loadingMore ? <CircularProgress size={16} /> : undefined}
+                disabled={loading}
+                startIcon={loading ? <CircularProgress size={16} /> : undefined}
               >
-                {loadingMore ? "Loading..." : "Load More Entities"}
+                {loading ? "Loading..." : "Load More Entities"}
               </Button>
             </Box>
           )}

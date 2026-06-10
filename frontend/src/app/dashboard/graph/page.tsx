@@ -106,32 +106,18 @@ export default function GraphPage() {
         vy: 0,
       }));
 
-      // Build edge index
+      // Build edge index from API data, deduplicated
       const nodeIndex = new Map(simNodes.map((n, i) => [n.id, i]));
-      const simEdges = edgeList
-        .map((e) => ({
-          source: nodeIndex.get(e.source_id),
-          target: nodeIndex.get(e.target_id),
-          type: e.type,
-        }))
-        .filter((e) => e.source !== undefined && e.target !== undefined) as {
-        source: number;
-        target: number;
-        type: string;
-      }[];
-
-      // Add some edges between same-type nodes if no real edges exist
-      if (simEdges.length === 0) {
-        const typeGroups: Record<string, number[]> = {};
-        for (let i = 0; i < simNodes.length; i++) {
-          const t = simNodes[i].type;
-          if (!typeGroups[t]) typeGroups[t] = [];
-          typeGroups[t].push(i);
-        }
-        for (const ids of Object.values(typeGroups)) {
-          for (let i = 0; i < ids.length - 1; i++) {
-            simEdges.push({ source: ids[i], target: ids[i + 1], type: "related" });
-          }
+      const seenPairs = new Set<string>();
+      const simEdges: { source: number; target: number; type: string }[] = [];
+      for (const e of edgeList) {
+        const key = [e.source_id, e.target_id].sort().join("|");
+        if (seenPairs.has(key)) continue;
+        seenPairs.add(key);
+        const si = nodeIndex.get(e.source_id);
+        const ti = nodeIndex.get(e.target_id);
+        if (si !== undefined && ti !== undefined) {
+          simEdges.push({ source: si, target: ti, type: e.type });
         }
       }
 
@@ -196,12 +182,28 @@ export default function GraphPage() {
         for (const edge of simEdges) {
           const s = simNodes[edge.source];
           const t = simNodes[edge.target];
-          ctx.strokeStyle = "rgba(0,0,0,0.06)";
-          ctx.lineWidth = 1;
+
+          const isHighlighted =
+            selectedNode !== null &&
+            (simNodes[edge.source].id === selectedNode.id ||
+             simNodes[edge.target].id === selectedNode.id);
+
+          ctx.strokeStyle = isHighlighted
+            ? "rgba(0,0,0,0.5)"
+            : "rgba(0,0,0,0.25)";
+          ctx.lineWidth = isHighlighted ? 2 : 1;
           ctx.beginPath();
           ctx.moveTo(s.x!, s.y!);
           ctx.lineTo(t.x!, t.y!);
           ctx.stroke();
+
+          // Edge type label
+          const midX = (s.x! + t.x!) / 2;
+          const midY = (s.y! + t.y!) / 2;
+          ctx.fillStyle = "rgba(0,0,0,0.35)";
+          ctx.font = "9px Inter, system-ui, sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText(edge.type, midX, midY - 4);
         }
 
         // Nodes
@@ -285,23 +287,37 @@ export default function GraphPage() {
       const nodeResult = await listGraphNodes(userId, params);
       const nodeList = (nodeResult.data?.items as NodeData[]) ?? [];
 
-      // Fetch edges for first batch of nodes
+      // Fetch real edges for all nodes, deduplicated
       let edgeList: EdgeData[] = [];
+      const seenEdges = new Set<string>();
       if (nodeList.length > 0) {
-        const edgePromises = nodeList.slice(0, 10).map((n) =>
-          listGraphEdges(userId, { subject_id: n.id, limit: 50 }).catch(
-            () => ({ data: { items: [] } }),
-          ),
-        );
-        const edgeResults = await Promise.all(edgePromises);
-        edgeList = edgeResults.flatMap(
-          (r) => (r.data?.items as EdgeData[]) ?? [],
-        );
+        const batchSize = 5;
+        for (let i = 0; i < nodeList.length; i += batchSize) {
+          const batch = nodeList.slice(i, i + batchSize);
+          const results = await Promise.allSettled(
+            batch.map((n) =>
+              listGraphEdges(userId, { subject_id: n.id, limit: 50 }).catch(
+                () => ({ data: { items: [] } }),
+              ),
+            ),
+          );
+          for (const r of results) {
+            if (r.status === "fulfilled") {
+              const items = ((r.value.data as { items?: EdgeData[] })?.items ?? []) as EdgeData[];
+              for (const e of items) {
+                const key = [e.source_id, e.target_id].sort().join("|");
+                if (!seenEdges.has(key)) {
+                  seenEdges.add(key);
+                  edgeList.push(e);
+                }
+              }
+            }
+          }
+        }
       }
 
       setNodes(nodeList);
       setEdges(edgeList);
-      setTimeout(() => buildGraph(nodeList, edgeList), 0);
     } catch (err) {
       console.error("Failed to load graph", err);
     } finally {
@@ -315,6 +331,16 @@ export default function GraphPage() {
       if (graphInstance.current) graphInstance.current.destroy();
     };
   }, [fetchGraph]);
+
+  // Rebuild canvas whenever nodes/edges change
+  useEffect(() => {
+    if (!loading && nodes.length > 0) {
+      buildGraph(nodes, edges);
+    }
+    return () => {
+      if (graphInstance.current) graphInstance.current.destroy();
+    };
+  }, [nodes, edges, loading, buildGraph]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
