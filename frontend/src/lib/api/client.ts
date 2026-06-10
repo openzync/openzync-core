@@ -210,3 +210,88 @@ export async function updateUser(
 export async function deleteUser(userId: string): Promise<void> {
   return api.delete(`/v1/users/${userId}`);
 }
+
+// ---- Sessions ----
+
+export async function listSessions(
+  userId: string,
+  params?: {
+    limit?: number;
+    cursor?: string | null;
+    include_closed?: boolean;
+  },
+): Promise<Schema["PaginatedResponse_SessionListResponse_"]> {
+  return api.get(`/v1/users/${userId}/sessions`, params as Record<string, string | number | boolean | undefined | null>);
+}
+
+export async function createSession(
+  userId: string,
+  payload: Schema["CreateSessionRequest"],
+): Promise<Schema["SessionResponse"]> {
+  return api.post(`/v1/users/${userId}/sessions`, payload);
+}
+
+export async function getSession(
+  userId: string,
+  sessionId: string,
+): Promise<Schema["SessionResponse"]> {
+  return api.get(`/v1/users/${userId}/sessions/${sessionId}`);
+}
+
+export async function deleteSession(userId: string, sessionId: string): Promise<void> {
+  return api.delete(`/v1/users/${userId}/sessions/${sessionId}`);
+}
+
+export async function getSessionMessages(
+  userId: string,
+  sessionId: string,
+  params?: {
+    limit?: number;
+    cursor?: string | null;
+  },
+): Promise<Schema["PaginatedResponse_MessageResponse_"]> {
+  return api.get(`/v1/users/${userId}/sessions/${sessionId}/messages`, params as Record<string, string | number | boolean | undefined | null>);
+}
+
+export async function getSessionFacts(
+  userId: string,
+  sessionId: string,
+  params?: {
+    limit?: number;
+    cursor?: string | null;
+  },
+): Promise<Schema["PaginatedResponse_FactResponse_"]> {
+  return api.get(`/v1/users/${userId}/sessions/${sessionId}/facts`, params as Record<string, string | number | boolean | undefined | null>);
+}
+
+// ---- Graph ----
+
+export async function listGraphNodes(
+  userId: string,
+  params?: {
+    limit?: number;
+    cursor?: string | null;
+    entity_type?: string | null;
+  },
+): Promise<Schema["GraphNodesListResponse"]> {
+  return api.get(`/v1/users/${userId}/graph/nodes`, params as Record<string, string | number | boolean | undefined | null>);
+}
+
+export async function getGraphNode(
+  userId: string,
+  nodeId: string,
+): Promise<Schema["GraphNodeDetailResponse"]> {
+  return api.get(`/v1/users/${userId}/graph/nodes/${nodeId}`);
+}
+
+export async function listGraphEdges(
+  userId: string,
+  params: {
+    subject_id: string;
+    predicate?: string | null;
+    limit?: number;
+    cursor?: string | null;
+  },
+): Promise<Schema["GraphEdgesListResponse"]> {
+  return api.get(`/v1/users/${userId}/graph/edges`, params as Record<string, string | number | boolean | undefined | null>);
+}

@@ -469,6 +469,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/users/{user_id}/sessions/{session_id}/facts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get session facts
+         * @description Get paginated facts extracted from messages in a session. Ordered by creation time (newest first).
+         */
+        get: operations["get_session_facts_v1_users__user_id__sessions__session_id__facts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/users/{user_id}/sessions/{session_id}/classifications": {
         parameters: {
             query?: never;
@@ -1311,6 +1331,79 @@ export interface components {
             message: string;
         };
         /**
+         * FactResponse
+         * @description A single extracted fact, returned from list endpoints.
+         *
+         *     Attributes:
+         *         id: Internal fact UUID.
+         *         content: Human-readable fact statement.
+         *         subject: Subject entity name.
+         *         predicate: Relationship verb.
+         *         object: Object entity name.
+         *         confidence: Extraction confidence score (0.0–1.0).
+         *         source_episode_id: Optional FK to the source episode.
+         *         subject_type: Entity type of the subject.
+         *         object_type: Entity type of the object.
+         *         created_at: Fact creation timestamp.
+         */
+        FactResponse: {
+            /**
+             * Id
+             * Format: uuid
+             * @description Internal fact UUID.
+             */
+            id: string;
+            /**
+             * Content
+             * @description Human-readable fact statement.
+             */
+            content: string;
+            /**
+             * Subject
+             * @description Subject entity name.
+             */
+            subject?: string | null;
+            /**
+             * Predicate
+             * @description Relationship verb.
+             */
+            predicate?: string | null;
+            /**
+             * Object
+             * @description Object entity name.
+             */
+            object?: string | null;
+            /**
+             * Confidence
+             * @description Extraction confidence (0.0–1.0).
+             * @default 1
+             */
+            confidence: number;
+            /**
+             * Source Episode Id
+             * @description Optional FK to the source episode.
+             */
+            source_episode_id?: string | null;
+            /**
+             * Subject Type
+             * @description Entity type of the subject.
+             * @default literal
+             */
+            subject_type: string;
+            /**
+             * Object Type
+             * @description Entity type of the object.
+             * @default literal
+             */
+            object_type: string;
+            /**
+             * Created At
+             * Format: date-time
+             * @description Fact creation timestamp (UTC).
+             */
+            created_at: string;
+        };
+        /**
          * FactTriple
          * @description A single fact triple for batch ingestion.
          *
@@ -1810,6 +1903,20 @@ export interface components {
              * @default false
              */
             has_more: boolean;
+        };
+        /** PaginatedResponse[FactResponse] */
+        PaginatedResponse_FactResponse_: {
+            /** Data */
+            data: components["schemas"]["FactResponse"][];
+            /** Next Cursor */
+            next_cursor?: string | null;
+            /**
+             * Has More
+             * @default false
+             */
+            has_more: boolean;
+            /** Total */
+            total?: number | null;
         };
         /** PaginatedResponse[MessageResponse] */
         PaginatedResponse_MessageResponse_: {
@@ -3282,6 +3389,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PaginatedResponse_MessageResponse_"];
+                };
+            };
+            /** @description Missing or invalid authentication. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Session not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_session_facts_v1_users__user_id__sessions__session_id__facts_get: {
+        parameters: {
+            query?: {
+                /** @description Maximum number of facts to return (1–200). */
+                limit?: number;
+                /** @description Opaque cursor from a previous facts response. */
+                cursor?: string | null;
+            };
+            header?: never;
+            path: {
+                user_id: string;
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Paginated list of facts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaginatedResponse_FactResponse_"];
                 };
             };
             /** @description Missing or invalid authentication. */

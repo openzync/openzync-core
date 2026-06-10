@@ -28,6 +28,7 @@ import SettingsIcon from "@mui/icons-material/Settings";
 import BarChartIcon from "@mui/icons-material/BarChart";
 import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import SchemaIcon from "@mui/icons-material/Schema";
+import ChatIcon from "@mui/icons-material/Chat";
 import LogoutIcon from "@mui/icons-material/Logout";
 import { useAuth } from "@/lib/auth/useAuth";
 import { AuthGuard } from "@/lib/auth/AuthGuard";
@@ -37,6 +38,7 @@ const DRAWER_WIDTH = 240;
 const NAV_ITEMS = [
   { label: "Overview", path: "/dashboard", icon: <DashboardIcon /> },
   { label: "Users", path: "/dashboard/users", icon: <PeopleIcon /> },
+  { label: "Sessions", path: "/dashboard/sessions", icon: <ChatIcon /> },
   { label: "API Keys", path: "/dashboard/api-keys", icon: <VpnKeyIcon /> },
   { label: "Analytics", path: "/dashboard/analytics", icon: <BarChartIcon /> },
   { label: "Graph", path: "/dashboard/graph", icon: <AccountTreeIcon /> },

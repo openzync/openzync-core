@@ -57,12 +57,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setStoredRefreshToken(refreshToken);
   }, [refreshToken]);
 
-  // API client token provider
-  useEffect(() => {
-    api.setTokenProvider(() => accessToken);
-  }, [accessToken]);
-
-  // On unauthorized, force logout
+  // Set unauthorized handler on mount
   useEffect(() => {
     api.setOnUnauthorized(() => {
       logout();
@@ -73,16 +68,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Try to restore session on mount
   useEffect(() => {
     if (refreshToken) {
-      doRefresh(refreshToken).catch(() => {
-        // Refresh failed — clear everything
-        setAccessToken(null);
-        setRefreshToken(null);
-        setUser(null);
-      });
+      doRefresh(refreshToken)
+        .then(() => setIsLoading(false))
+        .catch(() => {
+          // Refresh failed — clear everything
+          api.setTokenProvider(null);
+          setAccessToken(null);
+          setRefreshToken(null);
+          setUser(null);
+          setIsLoading(false);
+        });
     } else {
       setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** Synchronously update the API client's token provider and React state. */
+  const setTokens = useCallback((access: string | null, refresh: string | null) => {
+    api.setTokenProvider(() => access);
+    setAccessToken(access);
+    setRefreshToken(refresh);
   }, []);
 
   const doRefresh = useCallback(async (token: string) => {
@@ -90,8 +96,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!refreshPromise.current) {
       refreshPromise.current = (async () => {
         const res = await apiRefresh({ refresh_token: token });
-        setAccessToken(res.access_token);
-        setRefreshToken(res.refresh_token);
+        setTokens(res.access_token, res.refresh_token);
         const profile = await getProfile();
         setUser(profile);
       })().finally(() => {
@@ -99,28 +104,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
     }
     return refreshPromise.current;
-  }, []);
+  }, [setTokens]);
 
   const loginFn = useCallback(async (email: string, password: string) => {
     const res = await apiLogin({ email, password });
-    setAccessToken(res.access_token);
-    setRefreshToken(res.refresh_token);
+    setTokens(res.access_token, res.refresh_token);
     const profile = await getProfile();
     setUser(profile);
-  }, []);
+    setIsLoading(false);
+  }, [setTokens]);
 
   const signupFn = useCallback(
     async (email: string, password: string, organizationName: string) => {
       const res = await apiSignup({ email, password, organization_name: organizationName });
-      setAccessToken(res.access_token);
-      setRefreshToken(res.refresh_token);
+      setTokens(res.access_token, res.refresh_token);
       const profile = await getProfile();
       setUser(profile);
+      setIsLoading(false);
     },
-    [],
+    [setTokens],
   );
 
   const logout = useCallback(() => {
+    api.setTokenProvider(null);
     setAccessToken(null);
     setRefreshToken(null);
     setUser(null);
