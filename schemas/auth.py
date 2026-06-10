@@ -99,3 +99,36 @@ class DashboardUserResponse(BaseModel):
     name: str | None = Field(default=None, description="Display name.")
     role: str = Field(default="member", description="User role.")
     organization_id: UUID = Field(..., description="Owning organization ID.")
+
+    model_config = {"from_attributes": True}
+
+
+class UpdateProfileRequest(BaseModel):
+    """Request body for ``PATCH /v1/auth/me``.
+
+    All fields are optional. Only provided fields are updated.
+    To change the password, provide both ``current_password`` and
+    ``new_password``.
+    """
+
+    name: str | None = Field(
+        default=None,
+        description="New display name. Set to ``null`` to clear.",
+        max_length=512,
+    )
+    email: str | None = Field(
+        default=None,
+        description="New email address.",
+        max_length=320,
+    )
+    current_password: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Current password — required when setting a new password.",
+    )
+    new_password: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=128,
+        description="New password (min 8 chars). Requires ``current_password``.",
+    )

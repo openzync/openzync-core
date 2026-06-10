@@ -41,6 +41,7 @@ from middleware.request_id import RequestIDMiddleware
 from middleware.tracing import TracingMiddleware
 from routers import (
     admin,
+    admin_api_keys,
     admin_schemas,
     admin_stats,
     auth,
@@ -169,6 +170,7 @@ def create_app() -> FastAPI:
     # ── Routers ──────────────────────────────────────────────────────────
     app.include_router(health.router, prefix="/v1", tags=["Health"])
     app.include_router(admin.router)
+    app.include_router(admin_api_keys.router)
     app.include_router(admin_schemas.router)
     app.include_router(admin_stats.router)
     app.include_router(auth.router)

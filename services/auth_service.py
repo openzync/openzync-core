@@ -18,9 +18,15 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from core.config import settings
-from core.exceptions import AuthenticationError, ConflictError, ValidationError
+from core.exceptions import AuthenticationError, ConflictError, NotFoundError, ValidationError
 from repositories.auth_repository import AuthRepository
-from schemas.auth import LoginRequest, SignupRequest, TokenResponse
+from schemas.auth import (
+    DashboardUserResponse,
+    LoginRequest,
+    SignupRequest,
+    TokenResponse,
+    UpdateProfileRequest,
+)
 from utils.crypto import create_jwt_token
 from utils.password import hash_password, verify_password
 
@@ -251,6 +257,102 @@ class AuthService:
             Hex-encoded SHA-256 digest.
         """
         return hashlib.sha256(raw.encode()).hexdigest()
+
+    # ── Profile ──────────────────────────────────────────────────────────────
+
+    async def get_profile(self, user_id: uuid.UUID) -> DashboardUserResponse:
+        """Get the dashboard user's own profile.
+
+        Args:
+            user_id: The authenticated user's UUID (from JWT sub claim).
+
+        Returns:
+            The user's public profile.
+
+        Raises:
+            NotFoundError: If the user no longer exists.
+        """
+        user = await self._repo.get_user_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+        return DashboardUserResponse(
+            id=user.id,
+            email=user.email or "",
+            name=user.name,
+            role=user.role or "member",
+            organization_id=user.organization_id,
+        )
+
+    async def update_profile(
+        self,
+        user_id: uuid.UUID,
+        payload: UpdateProfileRequest,
+    ) -> DashboardUserResponse:
+        """Update the dashboard user's profile and/or password.
+
+        Args:
+            user_id: The authenticated user's UUID.
+            payload: Fields to update. Only non-``None`` fields are applied.
+
+        Returns:
+            Updated user profile.
+
+        Raises:
+            NotFoundError: If the user no longer exists.
+            ValidationError: If password change is requested without
+                valid current password.
+            ConflictError: If the new email is already taken.
+        """
+        user = await self._repo.get_user_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+
+        has_profile_changes = False
+        has_password_change = False
+
+        # Profile fields
+        if payload.name is not None:
+            user.name = payload.name
+            has_profile_changes = True
+
+        if payload.email is not None:
+            # Check email uniqueness
+            existing = await self._repo.find_user_by_email(payload.email)
+            if existing is not None and existing.id != user_id:
+                raise ConflictError(
+                    f"Email '{payload.email}' is already in use."
+                )
+            user.email = payload.email
+            user.external_id = payload.email
+            has_profile_changes = True
+
+        # Password change
+        if payload.new_password is not None:
+            if not payload.current_password:
+                raise ValidationError(
+                    "Current password is required to set a new password."
+                )
+            if user.password_hash is None:
+                raise ValidationError(
+                    "This account does not have a password set."
+                )
+            if not verify_password(payload.current_password, user.password_hash):
+                raise AuthenticationError("Current password is incorrect.")
+            self._validate_password(payload.new_password)
+            user.password_hash = hash_password(payload.new_password)
+            has_password_change = True
+
+        if has_profile_changes or has_password_change:
+            await self._repo._db.flush()
+            await self._repo._db.refresh(user)
+
+        return DashboardUserResponse(
+            id=user.id,
+            email=user.email or "",
+            name=user.name,
+            role=user.role or "member",
+            organization_id=user.organization_id,
+        )
 
     @staticmethod
     def _validate_password(password: str) -> None:
