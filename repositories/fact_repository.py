@@ -193,6 +193,127 @@ class FactRepository:
         await self._db.flush()
         return result.rowcount  # type: ignore[return-value]
 
+    # ── List by Session ────────────────────────────────────────────────────────
+
+    async def list_by_session(
+        self,
+        organization_id: UUID,
+        session_id: UUID,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """List non-invalidated facts for episodes in a session.
+
+        Paginated by ``created_at DESC, id ASC`` using an opaque base64
+        cursor.  Facts without a ``source_episode_id`` are excluded since
+        they cannot be scoped to a session.
+
+        Args:
+            organization_id: Tenant scope.
+            session_id: The session to fetch facts for.
+            limit: Max results (1–200).
+            cursor: Opaque base64 cursor from a previous page.
+
+        Returns:
+            Tuple of (list of fact dicts, next_cursor or None).
+        """
+        import base64
+        from sqlalchemy import select, text as sql_text
+
+        effective_limit = min(limit, 200) + 1  # +1 to detect has_more
+
+        # Decode cursor
+        cursor_created: datetime | None = None
+        cursor_id: UUID | None = None
+        if cursor:
+            try:
+                decoded = base64.urlsafe_b64decode(cursor).decode()
+                parts = decoded.split("|")
+                if len(parts) == 2:
+                    cursor_created = datetime.fromisoformat(parts[0])
+                    cursor_id = UUID(parts[1])
+            except (ValueError, TypeError):
+                pass
+
+        base_query = """
+            SELECT f.id, f.content, f.subject, f.predicate,
+                   f."object", f.confidence, f.source_episode_id,
+                   f.created_at, f.subject_type, f.object_type
+            FROM facts f
+            WHERE f.organization_id = :org_id
+              AND f.source_episode_id IN (
+                  SELECT e.id FROM episodes e
+                  WHERE e.session_id = :session_id AND e.is_deleted = false
+              )
+              AND f.invalid_at IS NULL
+        """
+
+        if cursor_id is not None:
+            stmt = sql_text(
+                base_query
+                + """
+                AND (f.created_at, f.id) < (:cursor_created, :cursor_id)
+                ORDER BY f.created_at DESC, f.id DESC
+                LIMIT :limit
+                """
+            )
+            result = await self._db.execute(
+                stmt,
+                {
+                    "org_id": organization_id,
+                    "session_id": session_id,
+                    "cursor_created": cursor_created,
+                    "cursor_id": cursor_id,
+                    "limit": effective_limit,
+                },
+            )
+        else:
+            stmt = sql_text(
+                base_query
+                + """
+                ORDER BY f.created_at DESC, f.id DESC
+                LIMIT :limit
+                """
+            )
+            result = await self._db.execute(
+                stmt,
+                {
+                    "org_id": organization_id,
+                    "session_id": session_id,
+                    "limit": effective_limit,
+                },
+            )
+
+        rows = result.fetchall()
+        has_more = len(rows) == effective_limit
+        if has_more:
+            rows = rows[: effective_limit - 1]
+
+        facts = []
+        for r in rows:
+            facts.append(
+                {
+                    "id": str(r[0]),
+                    "content": r[1],
+                    "subject": r[2],
+                    "predicate": r[3],
+                    "object": r[4],
+                    "confidence": float(r[5]) if r[5] is not None else 0.0,
+                    "source_episode_id": str(r[6]) if r[6] else None,
+                    "created_at": r[7].isoformat() if r[7] else None,
+                    "subject_type": r[8],
+                    "object_type": r[9],
+                }
+            )
+
+        next_cursor: str | None = None
+        if has_more and facts:
+            last = facts[-1]
+            raw = f"{last['created_at']}|{last['id']}"
+            next_cursor = base64.urlsafe_b64encode(raw.encode()).decode()
+
+        return facts, next_cursor
+
     # ── Vector Search ─────────────────────────────────────────────────────────
 
     async def search_by_vector(

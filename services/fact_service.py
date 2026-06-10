@@ -307,14 +307,42 @@ class FactService:
             )
 
 
-def _arq_queue_name(queue_type: str) -> str:
-    """Build the full ARQ queue name matching the worker's config.
+    # ── List by session ──────────────────────────────────────────────────────
 
-    Args:
-        queue_type: Queue type suffix (e.g. ``"high"``, ``"low"``).
+    async def list_facts_by_session(
+        self,
+        organization_id: UUID,
+        session_id: UUID,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """List non-invalidated facts extracted from a session's messages.
 
-    Returns:
-        Fully qualified queue name for the current environment.
-    """
-    env = settings.ENVIRONMENT if hasattr(settings, "ENVIRONMENT") else "development"
-    return f"OpenZep:{env}:queue:{queue_type}"
+        Args:
+            organization_id: Tenant scope.
+            session_id: The session to fetch facts for.
+            limit: Max results per page (1–200).
+            cursor: Opaque base64 cursor from a previous page.
+
+        Returns:
+            Tuple of (list of fact dicts, next_cursor or None).
+        """
+        return await self._fact_repo.list_by_session(
+            organization_id=organization_id,
+            session_id=session_id,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    @staticmethod
+    def _arq_queue_name(queue_type: str) -> str:
+        """Build the full ARQ queue name matching the worker's config.
+
+        Args:
+            queue_type: Queue type suffix (e.g. ``"high"``, ``"low"``).
+
+        Returns:
+            Fully qualified queue name for the current environment.
+        """
+        env = settings.ENVIRONMENT if hasattr(settings, "ENVIRONMENT") else "development"
+        return f"OpenZep:{env}:queue:{queue_type}"

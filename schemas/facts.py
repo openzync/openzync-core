@@ -5,6 +5,9 @@ Schemas must never import from ``models/``, ``services/``, or ``routers/``.
 
 from __future__ import annotations
 
+from datetime import datetime
+from uuid import UUID
+
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -104,4 +107,64 @@ class FactBatchResponse(BaseModel):
     message: str = Field(
         default="Facts accepted for processing.",
         description="Human-readable status message.",
+    )
+
+
+class FactResponse(BaseModel):
+    """A single extracted fact, returned from list endpoints.
+
+    Attributes:
+        id: Internal fact UUID.
+        content: Human-readable fact statement.
+        subject: Subject entity name.
+        predicate: Relationship verb.
+        object: Object entity name.
+        confidence: Extraction confidence score (0.0–1.0).
+        source_episode_id: Optional FK to the source episode.
+        subject_type: Entity type of the subject.
+        object_type: Entity type of the object.
+        created_at: Fact creation timestamp.
+    """
+
+    id: UUID = Field(..., description="Internal fact UUID.")
+    content: str = Field(..., description="Human-readable fact statement.")
+    subject: str | None = Field(None, description="Subject entity name.")
+    predicate: str | None = Field(None, description="Relationship verb.")
+    object: str | None = Field(None, description="Object entity name.")
+    confidence: float = Field(
+        default=1.0, ge=0.0, le=1.0, description="Extraction confidence (0.0–1.0)."
+    )
+    source_episode_id: UUID | None = Field(
+        None, description="Optional FK to the source episode."
+    )
+    subject_type: str = Field(
+        default="literal", description="Entity type of the subject."
+    )
+    object_type: str = Field(
+        default="literal", description="Entity type of the object."
+    )
+    created_at: datetime = Field(
+        ..., description="Fact creation timestamp (UTC)."
+    )
+
+    model_config = {"from_attributes": True}
+
+
+class PaginatedFactsResponse(BaseModel):
+    """Paginated response for the facts list endpoint.
+
+    Attributes:
+        data: List of fact responses for the current page.
+        next_cursor: Opaque cursor for the next page, or None.
+        has_more: Whether additional pages exist.
+    """
+
+    data: list[FactResponse] = Field(
+        ..., description="List of facts for the current page."
+    )
+    next_cursor: str | None = Field(
+        None, description="Opaque cursor for the next page."
+    )
+    has_more: bool = Field(
+        default=False, description="Whether additional pages exist."
     )

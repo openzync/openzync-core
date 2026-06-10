@@ -129,19 +129,25 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
 
     # ── Middleware stack (order matters!) ─────────────────────────────────
-    # 1. Request ID — must be first so every downstream component has an ID.
+    # Starlette middleware is LIFO — the last `add_middleware()` call wraps
+    # the outermost layer and runs first on every request.  Auth must come
+    # BEFORE CORS in registration order so that CORS (registered last) runs
+    # first and handles OPTIONS preflights before auth checks.
+    #
+    # Execution order (outermost → innermost):
+    #   1. CORS              — intercept OPTIONS preflight immediately
+    #   2. LoggingMiddleware  — log request/response lifecycle
+    #   3. TracingMiddleware  — OpenTelemetry span management
+    #   4. RateLimitMiddleware — per-IP / per-token sliding window
+    #   5. AuthMiddleware     — extract/validate JWT & API key
+    #   6. GZipMiddleware     — compress responses >= 1 KB
+    #   7. TrustedHost        — prevent host-header attacks
+    #   8. RequestID          — assign request_id (innermost, closest to router)
+
+    # 8 (innermost) — Request ID: must be first so every downstream component has an ID.
     app.add_middleware(RequestIDMiddleware)
 
-    # 2. CORS — validate origin headers.
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS.split(","),
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-
-    # 3. Trusted Host — prevent host-header attacks in production.
+    # 7 — Trusted Host: prevent host-header attacks in production.
     allowed_hosts = (
         settings.CORS_ORIGINS.split(",")
         if settings.ENVIRONMENT == "production"
@@ -152,20 +158,30 @@ def create_app() -> FastAPI:
         allowed_hosts=allowed_hosts,
     )
 
-    # 4. GZip compression — compress responses >= 1 KB.
+    # 6 — GZip compression
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-    # 5. Auth — extract and validate JWT, set org_id/user_id on request state.
+    # 5 — Auth: extract and validate JWT/API key, set org_id/user_id on request state.
     app.add_middleware(AuthMiddleware)
 
-    # 6. Rate limiting — per-IP / per-token sliding window.
+    # 4 — Rate limiting
     app.add_middleware(RateLimitMiddleware)
 
-    # 7. Tracing — OpenTelemetry span management and propagation.
+    # 3 — Tracing
     app.add_middleware(TracingMiddleware)
 
-    # 8. Structured logging — log request/response lifecycle.
+    # 2 — Structured logging
     app.add_middleware(LoggingMiddleware)
+
+    # 1 (outermost) — CORS: MUST be outermost so it intercepts OPTIONS
+    # preflight requests BEFORE AuthMiddleware rejects them.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.CORS_ORIGINS.split(","),
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # ── Routers ──────────────────────────────────────────────────────────
     app.include_router(health.router, prefix="/v1", tags=["Health"])

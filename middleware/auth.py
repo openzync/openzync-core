@@ -401,6 +401,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.auth_type = None  # type: ignore[attr-defined]
         request.state.api_key_scopes = []  # type: ignore[attr-defined]
 
+        # ── CORS preflight pass-through ──────────────────────────────────
+        # Browsers never send Authorization on OPTIONS preflight, so we
+        # must let them through regardless of path. The CORSMiddleware
+        # (registered outermost) should catch these first, but this is a
+        # defense-in-depth guard in case middleware ordering changes.
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         # ── Public endpoints pass through ────────────────────────────────
         if _is_public_path(request.url.path):
             return await call_next(request)

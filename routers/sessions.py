@@ -14,17 +14,24 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.auth import require_org_id
+from dependencies.db import get_db
 from dependencies.services import get_session_service
+from repositories.fact_repository import FactRepository
+from repositories.session_repository import SessionRepository
+from repositories.user_repository import UserRepository
 from schemas.common import PaginatedResponse
+from schemas.facts import FactResponse
 from schemas.sessions import (
     CreateSessionRequest,
     MessageResponse,
     SessionListResponse,
     SessionResponse,
 )
+from services.fact_service import FactService
 from services.session_service import SessionService
 
 router = APIRouter(
@@ -184,6 +191,82 @@ async def get_session_messages(
         limit=limit,
         cursor=cursor,
         user_id=user_id,
+    )
+
+
+# ── Dependency factory for FactService ─────────────────────────────────────
+
+
+async def get_fact_service_for_session(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> FactService:
+    """FastAPI dependency that yields a FactService scoped to a session."""
+    redis_client = getattr(request.app.state, "redis", None)
+    return FactService(
+        db=db,
+        redis_client=redis_client,
+        fact_repo=FactRepository(db),
+        user_repo=UserRepository(db),
+        session_repo=SessionRepository(db),
+    )
+
+
+@router.get(
+    "/{session_id}/facts",
+    response_model=PaginatedResponse[FactResponse],
+    summary="Get session facts",
+    description="Get paginated facts extracted from messages in a session. "
+    "Ordered by creation time (newest first).",
+    responses={
+        200: {"description": "Paginated list of facts."},
+        401: {"description": "Missing or invalid authentication."},
+        404: {"description": "Session not found."},
+    },
+)
+async def get_session_facts(
+    user_id: UUID,
+    session_id: UUID,
+    service: SessionService = Depends(get_session_service),
+    fact_service: FactService = Depends(get_fact_service_for_session),
+    org_id: str = Depends(require_org_id),
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum number of facts to return (1–200).",
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous facts response.",
+    ),
+) -> PaginatedResponse[FactResponse]:
+    """Get paginated facts for a session.
+
+    Returns facts extracted from messages in this session, ordered by
+    creation time (newest first).  Only non-invalidated facts are included.
+    """
+    org_uuid = UUID(org_id) if isinstance(org_id, str) else org_id
+
+    # Verify the session exists before fetching facts.
+    try:
+        await service.get_session(org_uuid, session_id, user_id=user_id)
+    except Exception as exc:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found") from exc
+
+    facts, next_cursor = await fact_service.list_facts_by_session(
+        organization_id=org_uuid,
+        session_id=session_id,
+        limit=limit,
+        cursor=cursor,
+    )
+
+    items = [FactResponse.model_validate(f) for f in facts]
+
+    return PaginatedResponse[FactResponse](
+        data=items,
+        next_cursor=next_cursor,
+        has_more=next_cursor is not None,
     )
 
 
