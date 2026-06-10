@@ -161,16 +161,32 @@ class AuthService:
                 "Refresh token is invalid or has expired."
             )
 
-        # Revoke the old token (rotation)
-        await self._repo.revoke_refresh_token(stored.id)
-
-        # Issue new tokens
+        # Look up the user to get the actual role
         user_id = uuid.UUID(stored.user_id)
-        return await self._issue_tokens(
+        user = await self._repo.get_user_by_id(user_id)
+        if user is None:
+            raise AuthenticationError("User no longer exists.")
+        role = user.role or "member"
+
+        # Issue new tokens first, then revoke + chain the old one
+        new_tokens = await self._issue_tokens(
             user_id=user_id,
             organization_id=stored.organization_id,
-            role="admin",  # role is looked up from user in _issue_tokens below
+            role=role,
         )
+
+        # Find the newly created refresh token to build the rotation chain
+        new_refresh_hash = self._hash_refresh_token(new_tokens.refresh_token)
+        new_stored = await self._repo.find_refresh_token(new_refresh_hash)
+        new_id = new_stored.id if new_stored else None
+
+        # Revoke the old token and set rotation chain
+        await self._repo.revoke_refresh_token(
+            stored.id,
+            rotated_by=str(new_id) if new_id else None,
+        )
+
+        return new_tokens
 
     # ── Internal helpers ────────────────────────────────────────────────────
 
@@ -190,7 +206,9 @@ class AuthService:
         Returns:
             A ``TokenResponse`` with fresh tokens.
         """
-        now = datetime.now(timezone.utc)
+        # Use naive UTC datetime for DB storage (refresh_token.expires_at
+        # is TIMESTAMP WITHOUT TIME ZONE).
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
 
         # Access token
         access_token = create_jwt_token(
