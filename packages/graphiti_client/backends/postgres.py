@@ -154,6 +154,10 @@ class PostgresGraphBackend(GraphBackend):
             ExternalServiceError: If the insert fails.
         """
         try:
+            # Normalise to lowercase so the case-sensitive unique constraint
+            # (organization_id, name) correctly deduplicates "Nikita" ↔ "nikita".
+            name = name.lower().strip()
+
             result = await self._db.execute(
                 text(
                     """
@@ -755,7 +759,11 @@ class PostgresGraphBackend(GraphBackend):
             entities = []
             for row in result.all():
                 entity = self._row_to_entity(row)
-                entity["score"] = float(row.score) if hasattr(row, "score") and row.score is not None else 0.0
+                entity["score"] = (
+                    float(row.score)
+                    if hasattr(row, "score") and row.score is not None
+                    else 0.0
+                )
                 entities.append(entity)
             return entities
         except Exception as exc:
@@ -807,7 +815,9 @@ class PostgresGraphBackend(GraphBackend):
                 params["cursor_ts"] = cursor_created_at
                 params["cursor_id"] = cursor_id
             except Exception:
-                logger.warning("pg_graph.list_entities.invalid_cursor", extra={"cursor": cursor})
+                logger.warning(
+                    "pg_graph.list_entities.invalid_cursor", extra={"cursor": cursor}
+                )
 
         try:
             query = LIST_ENTITIES_SQL.format(where_clause=where_clause)
@@ -819,16 +829,18 @@ class PostgresGraphBackend(GraphBackend):
             next_cursor = None
             if has_more and items:
                 last = items[-1]
-                cursor_payload = json.dumps(
-                    {"c": last["created_at"], "i": last["id"]}
-                )
+                cursor_payload = json.dumps({"c": last["created_at"], "i": last["id"]})
                 next_cursor = base64.b64encode(cursor_payload.encode()).decode()
 
             return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
         except Exception as exc:
             logger.error(
                 "pg_graph.list_entities_failed",
-                extra={"org_id": str(org_id), "entity_type": entity_type, "error": str(exc)},
+                extra={
+                    "org_id": str(org_id),
+                    "entity_type": entity_type,
+                    "error": str(exc),
+                },
             )
             raise ExternalServiceError(
                 message=f"Failed to list entities: {exc}",
@@ -864,11 +876,16 @@ class PostgresGraphBackend(GraphBackend):
         if cursor:
             try:
                 decoded = json.loads(base64.b64decode(cursor))
-                conditions += " AND (r.created_at, r.id) > (:cursor_ts, :cursor_id::uuid)"
+                conditions += (
+                    " AND (r.created_at, r.id) > (:cursor_ts, :cursor_id::uuid)"
+                )
                 params["cursor_ts"] = decoded["c"]
                 params["cursor_id"] = decoded["i"]
             except Exception:
-                logger.warning("pg_graph.list_entity_edges.invalid_cursor", extra={"cursor": cursor})
+                logger.warning(
+                    "pg_graph.list_entity_edges.invalid_cursor",
+                    extra={"cursor": cursor},
+                )
 
         try:
             query = LIST_RELATIONSHIPS_SQL.format(where_clause=conditions)
@@ -880,9 +897,7 @@ class PostgresGraphBackend(GraphBackend):
             next_cursor = None
             if has_more and items:
                 last = items[-1]
-                cursor_payload = json.dumps(
-                    {"c": last["created_at"], "i": last["id"]}
-                )
+                cursor_payload = json.dumps({"c": last["created_at"], "i": last["id"]})
                 next_cursor = base64.b64encode(cursor_payload.encode()).decode()
 
             return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
@@ -933,7 +948,9 @@ class PostgresGraphBackend(GraphBackend):
             "type": row.entity_type,
             "summary": row.summary or "",
             "attributes": (
-                dict(row.attributes) if hasattr(row, "attributes") and row.attributes else {}
+                dict(row.attributes)
+                if hasattr(row, "attributes") and row.attributes
+                else {}
             ),
             "created_at": row.created_at.isoformat() if row.created_at else None,
         }
