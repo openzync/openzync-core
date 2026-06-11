@@ -73,6 +73,11 @@ do NOT re-emit it.  Only extract genuinely new nodes.
   Known Entities table.
 - **relationships[]**: edges between known and/or new nodes.  Use canonical
   names — not the conversation's casing.
+- **❗ Every name** in a relationship's `subject` or `object` field **must
+  also** appear in `entities[]` **or** in the Known Entities table above.
+  If a name appears in a relationship but is not known, add it to
+  `entities[]` even if it is a minor mention — a complete graph requires
+  both endpoints of every edge.
 - If no new nodes, output `{"entities":[],"relationships":[]}`.
 
 ---

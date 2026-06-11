@@ -190,7 +190,7 @@ class GraphService:
         Returns:
             An empty list (community detection not yet implemented).
         """
-        # TechLead note: Community detection runs as a nightly ARQ task
+        # note: Community detection runs as a nightly ARQ task
         # (summarise_community worker). Once implemented, this method will
         # query CommunityNode instances via the graph backend.
         logger.debug("graph_service.communities_not_implemented")

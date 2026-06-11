@@ -96,7 +96,7 @@ async def _get_org_rate_limit(
     Returns:
         Tuple of ``(max_requests, window_seconds)``.
     """
-    # TechLead note: Org rate limits could be cached from the organizations
+    # note: Org rate limits could be cached from the organizations
     # table.  For now we use a Redis hash per org that is set during org
     # provisioning.  This avoids a DB query on every request.
     try:

@@ -219,7 +219,7 @@ class HybridRetriever:
             A list of result dicts with ``id``, ``content``, ``role``,
             ``score``, and ``created_at`` keys.
         """
-        # TechLead note: This implementation returns an empty list because
+        # note: This implementation returns an empty list because
         # pgvector's ``<=>`` operator requires a proper vector column that
         # is populated by the enrichment worker.  In production, the query
         # would be:

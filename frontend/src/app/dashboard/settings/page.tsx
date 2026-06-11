@@ -61,7 +61,7 @@ export default function SettingsPage() {
   );
 
   // ── Save Profile ────────────────────────────────────────────────────────────
-  // TechLead note: updateProfile returns the updated DashboardUserResponse.
+  // note: updateProfile returns the updated DashboardUserResponse.
   // The AuthContext doesn't expose a setUser, so the local `user` remains
   // stale until the next page refresh or token refresh. A future improvement
   // would expose a refreshProfile() method from useAuth.

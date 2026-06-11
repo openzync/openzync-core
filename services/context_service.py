@@ -123,7 +123,7 @@ class ContextService:
         # ═══════════════════════════════════════════════════════════════════
         # Step 2 — Run hybrid search
         # ═══════════════════════════════════════════════════════════════════
-        # TechLead note: The hybrid search may raise if the DB connection
+        # note: The hybrid search may raise if the DB connection
         # is broken.  We let the exception propagate to the global exception
         # handler which maps it to a 502 (ExternalServiceError).
         results = await self._retriever.hybrid_search(query, user_id, limit)

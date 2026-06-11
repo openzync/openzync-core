@@ -95,7 +95,9 @@ class EntityRepository:
                     "entity_type": entity_type,
                     "entity_id": entity.get("id"),
                     "action": action,
-                    "changed_fields": ",".join(changed_fields) if changed_fields else None,
+                    "changed_fields": ",".join(changed_fields)
+                    if changed_fields
+                    else None,
                 },
             )
             return entity
@@ -109,6 +111,7 @@ class EntityRepository:
                     "action": action,
                     "error": str(exc),
                 },
+                exc_info=True,
             )
             return None
 
@@ -150,6 +153,7 @@ class EntityRepository:
             logger.warning(
                 "entity_repository.search_failed",
                 extra={"org_id": str(org_id), "entity_name": name, "error": str(exc)},
+                exc_info=True,
             )
             return None
 
@@ -172,6 +176,7 @@ class EntityRepository:
                     "entity_id": str(entity_id),
                     "error": str(exc),
                 },
+                exc_info=True,
             )
             return None
 
@@ -240,5 +245,6 @@ class EntityRepository:
                     "object": obj,
                     "error": str(exc),
                 },
+                exc_info=True,
             )
             return None

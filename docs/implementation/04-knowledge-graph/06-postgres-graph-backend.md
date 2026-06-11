@@ -428,7 +428,7 @@ class PostgresGraphBackend(GraphBackend):
                 GraphEntity.created_at,
             )
         )
-        # TechLead note: We use raw SQL for the return to avoid ORM
+        # note: We use raw SQL for the return to avoid ORM
         # overhead. The GraphEntity model import is optional — callers
         # can pass ``async with db.execute(text(...))`` directly.
         result = await self._db.execute(
@@ -924,7 +924,7 @@ class PostgresGraphBackend(GraphBackend):
         }
 ```
 
-> **TechLead note:** The raw-SQL approach above avoids coupling to SQLAlchemy ORM models and keeps the backend lightweight. A future enhancement could add SQLAlchemy models for type safety — but the perf cost of ORM overhead on every graph operation makes raw SQL the right call for v1. The edge operations already use raw `text()` in the existing codebase.
+> **note:** The raw-SQL approach above avoids coupling to SQLAlchemy ORM models and keeps the backend lightweight. A future enhancement could add SQLAlchemy models for type safety — but the perf cost of ORM overhead on every graph operation makes raw SQL the right call for v1. The edge operations already use raw `text()` in the existing codebase.
 
 ### 3.3 Registering the Backend
 

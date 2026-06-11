@@ -14,11 +14,12 @@ from __future__ import annotations
 import structlog
 from sqlalchemy import text
 
-from workers.tasks.base import ENRICHMENT_SYNC_GRAPH
+from workers.tasks.base import ENRICHMENT_SYNC_GRAPH, with_retry
 
 logger = structlog.get_logger()
 
 
+@with_retry(max_retries=3, base_delay_s=2.0)
 async def sync_to_graph(
     ctx: object,
     episode_id: str,
@@ -51,13 +52,15 @@ async def sync_to_graph(
         RuntimeError: If Graphiti is required but not installed or
             initialised.
     """
+    from datetime import datetime, timezone
+    from uuid import UUID
+
+    from sqlalchemy import select, update
+    from sqlalchemy.ext.asyncio import create_async_engine
+
     from core.config import settings
     from core.db import get_async_session
     from models.episode import Episode
-    from sqlalchemy import select, update
-    from sqlalchemy.ext.asyncio import create_async_engine
-    from uuid import UUID
-    from datetime import datetime, timezone
 
     engine = create_async_engine(
         str(settings.DATABASE_URL),
@@ -84,20 +87,26 @@ async def sync_to_graph(
             # Extract potential entity names from content (simple keyword split)
             # and search the graph_entities table for matches.
             words = set(
-                w.strip().rstrip(".,!?:;") for w in content.split()
+                w.strip().rstrip(".,!?:;")
+                for w in content.split()
                 if len(w.strip()) > 2 and w.strip()[0].isupper()
             )
 
+            words_matched: int = 0
+            entities_found_per_word: list[int] = []
             linked = 0
             for word in words:
                 if not word:
                     continue
-                # Search for entities whose name matches (fuzzy via pg_trgm)
+                # Search for entities whose name matches (fuzzy via pg_trgm).
+                # Skip merged/deprecated entities so episodes are only linked
+                # to active entities.
                 entity_result = await db.execute(
                     text(
                         """
                         SELECT id FROM graph_entities
                         WHERE organization_id = :org_id
+                          AND is_merged = false
                           AND (name ILIKE :word
                                OR similarity(name, :word) > 0.3)
                         LIMIT 5
@@ -106,6 +115,9 @@ async def sync_to_graph(
                     {"org_id": UUID(org_id), "word": f"%{word}%"},
                 )
                 entity_rows = entity_result.all()
+                if entity_rows:
+                    words_matched += 1
+                    entities_found_per_word.append(len(entity_rows))
                 for entity_row in entity_rows:
                     entity_id = str(entity_row[0])
                     # Link entity to episode via graph_episode_entities
@@ -138,17 +150,20 @@ async def sync_to_graph(
             )
             await db.commit()
 
-            if linked:
-                logger.info(
-                    "sync_to_graph.completed",
-                    episode_id=episode_id,
-                    entities_linked=linked,
-                )
-            else:
-                logger.debug(
-                    "sync_to_graph.no_entities_found",
-                    episode_id=episode_id,
-                )
+            logger.info(
+                "sync_to_graph.completed",
+                episode_id=episode_id,
+                entities_linked=linked,
+                words_analyzed=len(words),
+                words_matched=words_matched,
+                avg_entities_per_match=(
+                    round(
+                        sum(entities_found_per_word) / len(entities_found_per_word), 2
+                    )
+                    if entities_found_per_word
+                    else 0
+                ),
+            )
 
     finally:
         await engine.dispose()

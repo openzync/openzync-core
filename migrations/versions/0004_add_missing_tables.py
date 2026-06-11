@@ -17,7 +17,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TechLead note: ⚠️  CRITICAL CONFLICT
+# note: ⚠️  CRITICAL CONFLICT
 # ═══════════════════════════════════════════════════════════════════════════════
 # The tables created by this migration (extraction_schemas, refresh_tokens,
 # audit_logs, llm_usage) ALREADY EXIST in migration 0001_initial_schema.py

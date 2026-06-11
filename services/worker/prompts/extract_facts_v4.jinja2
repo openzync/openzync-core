@@ -14,11 +14,14 @@ Is the OBJECT a real node in the graph?
   → A proper name?  A named thing with its own identity?
      → Yes → it's an entity-type fact.  Output `subject_type: "entity"` and
        `object_type: "entity"`.
-  → A role ("python developer")?  A skill ("NLP")?  A number ("3")?
-    A description ("a great engineer")?
-     → No → it's a literal-typed fact — the object is an ATTRIBUTE of the
-       subject, not a node of its own.  But only output it if it carries
-       genuinely useful information about the subject's attributes.
+   → A role ("python developer", "AI Engineer", "Tech Lead")?
+     → A person's professional identity is the HIGHEST-VALUE fact about
+       them.  Output it with predicate "works_as" (never "is" or "am").
+       object_type: "literal".
+
+   → A skill ("NLP")?  A number ("3")?  A description ("a great engineer")?
+     → These are literal-typed attributes.  Output them only if they carry
+       genuinely useful information about the subject.
        Output `object_type: "literal"`.
 ```
 
@@ -100,9 +103,11 @@ these are the same edge with different words.
 ```
 → "I" resolves to Alice (known Person entity).
 → "Alice works_at Acme Corp" already in the graph → skip.
-→ "python developer" — is this a node?  No, it's a role descriptor (attribute).
-   It has no independent existence in the graph.  Skip.
-Output: []
+→ "python developer" is a professional identity — a literal-typed attribute.
+   Even though it's not a node, it's the highest-value fact about a person.
+   Output it with predicate "works_as".
+Output: [{"subject":"Alice","predicate":"works_as","object":"python developer",
+          "confidence":0.95,"subject_type":"entity","object_type":"literal"}]
 ```
 
 **Message:** "Nikita is a python developer who studied at FIEM College."
@@ -110,11 +115,14 @@ Output: []
 
 ```
 → "Nikita" — a person.  Node. ✓
-→ "python developer" — a role.  Attribute.  Not a valid edge target.  Skip.
+→ "python developer" — a professional identity.  Highest-value fact.
+   Output as literal-typed attribute with predicate "works_as".
 → "FIEM College" — an institution.  Node. ✓
 → Edge: Nikita→studied_at→FIEM College.  Both sides are nodes. ✓
 Output: [{"subject":"Nikita","predicate":"studied_at","object":"FIEM College",
-          "confidence":0.95,"subject_type":"entity","object_type":"entity"}]
+          "confidence":0.95,"subject_type":"entity","object_type":"entity"},
+         {"subject":"Nikita","predicate":"works_as","object":"python developer",
+          "confidence":0.95,"subject_type":"entity","object_type":"literal"}]
 ```
 
 **Message:** "Alice still works at Acme Corp."

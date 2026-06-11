@@ -36,18 +36,18 @@ services:
         limits:
           cpus: "2"
           memory: "4G"
-    # TechLead note: In production, prefer a managed PostgreSQL (RDS, Cloud SQL)
+    # note: In production, prefer a managed PostgreSQL (RDS, Cloud SQL)
     # or configure WAL archiving + point-in-time recovery.  The stock pgvector
     # image is suitable for dev/staging only.
 
   redis:
     deploy:
       replicas: 1
-    # TechLead note: For production HA, replace with Redis Sentinel / Redis
+    # note: For production HA, replace with Redis Sentinel / Redis
     # Cluster, or use a managed service (ElastiCache, Upstash).  The single
     # replica here is suitable for staging only.
 
-  # TechLead note: Add pgBouncer or PgCat for connection pooling in front of
+  # note: Add pgBouncer or PgCat for connection pooling in front of
   # PostgreSQL when the number of worker connections exceeds ~50.  The SQLAlchemy
   # pool is configured with ``pool_size=20, max_overflow=10``, so pgBouncer
   # transaction-mode pooling is recommended.

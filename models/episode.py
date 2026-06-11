@@ -76,7 +76,7 @@ class Episode(TimestampMixin, Base):
         default=dict,
         server_default="{}",
     )
-    # TechLead note: Embedding uses Text as a stand-in type because pgvector
+    # note: Embedding uses Text as a stand-in type because pgvector
     # may not be installed in the dev/test environment. The actual DDL must
     # use ``vector(1536)`` — the Alembic migration will handle this.
     embedding: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -116,7 +116,7 @@ class Fact(TimestampMixin, Base):
     invalid_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True,
     )
-    # TechLead note: Text is a stand-in for ``vector(1536)``. The Alembic
+    # note: Text is a stand-in for ``vector(1536)``. The Alembic
     # migration will alter this column when pgvector is available.
     embedding: Mapped[list[float] | None] = mapped_column(
         ARRAY(Float), nullable=True, default=None,

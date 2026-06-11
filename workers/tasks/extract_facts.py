@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 import structlog
 from sqlalchemy import text
 
-# TechLead note: Import prompt_renderer at module level — it is a local
+# note: Import prompt_renderer at module level — it is a local
 # Jinja2 utility with no heavy dependencies, so eager import is safe
 # and avoids re-import overhead on every task invocation.
 from services.worker.prompt_renderer import render_prompt
@@ -34,46 +34,7 @@ from workers.tasks.base import ENRICHMENT_FACTS, with_retry
 logger = structlog.get_logger()
 
 # ── Quality-heuristic constants ───────────────────────────────────────────────
-# Bare copular verbs are generally not informative as extracted predicates.
-# The LLM should prefer richer verbs like "works_at", "prefers", "uses".
-_BARE_COPULARS: frozenset[str] = frozenset(
-    {"is", "are", "was", "were", "be", "been", "being", "am"}
-)
-_IGNORE_PREDICATE_PREFIXES: tuple[str, ...] = (
-    "instruction",
-    "ignore",
-    "disregard",
-    "pretend",
-    "you are",
-    "you should",
-)
-_IGNORE_SUBJECT_PREFIXES: tuple[str, ...] = (
-    "ignore",
-    "instruction",
-    "system",
-)
 _CONFIDENCE_THRESHOLD: float = 0.3
-
-# ── Meta-fact / uninformative fact filters ──────────────────────────────────
-# These predicates describe the conversation itself rather than the user's
-# domain knowledge.  Facts with these predicates add no value and should be
-# filtered out.
-_META_PREDICATES: frozenset[str] = frozenset({
-    "refers_to", "stands_for", "means", "describes", "explains",
-    "is_about", "talks_about", "mentions", "refers", "implies",
-    "indicates", "signifies", "represents", "corresponds_to",
-    "is_short_for", "is_abbreviation_for", "is_known_as",
-    "also_known_as", "aka",
-})
-# Self-referential patterns: subject == object with certain predicates
-# indicates a fact the LLM extracted about itself rather than domain knowledge.
-_SELF_REFERENTIAL_PREDICATES: frozenset[str] = frozenset({
-    "refers_to", "is", "are", "identifies_as",
-})
-# Uninformative predicates that convey no actionable information
-_UNINFORMATIVE_PREDICATES: frozenset[str] = frozenset({
-    "name", "called", "named", "has_name",
-})
 
 # ── Session context constants ─────────────────────────────────────────────────
 _RECENT_EPISODE_WINDOW: int = 10
@@ -126,12 +87,13 @@ async def extract_facts(
     """
     # Lazy imports to keep the module importable without the full async
     # stack at definition time — ARQ workers run in a separate process.
+    from sqlalchemy import select
+
     from core.config import settings
     from core.db import get_async_session, init_db_engine
     from core.llm import resolve_backend
-    from repositories.fact_repository import FactRepository
     from models.episode import Episode
-    from sqlalchemy import select
+    from repositories.fact_repository import FactRepository
 
     logger.info(
         "fact_extraction.started",
@@ -255,7 +217,7 @@ async def extract_facts(
             # transaction so that a persistence failure does NOT leave a
             # falsely-completed enrichment marker.
             #
-            # TechLead note: The enrichment bit is set AFTER fact persistence
+            # note: The enrichment bit is set AFTER fact persistence
             # inside the same transaction.  If the fact inserts fail the
             # transaction rolls back and the bit is NOT set, allowing the
             # retry mechanism to re-attempt the work.
@@ -263,22 +225,24 @@ async def extract_facts(
                 valid_facts = _filter_facts(facts)
                 if valid_facts:
                     # Resolve subject/object pronouns against known entities
-                    resolved_facts = _resolve_fact_entities(
-                        valid_facts, known_entities
-                    )
+                    resolved_facts = _resolve_fact_entities(valid_facts, known_entities)
 
                     # ── Deduplicate against existing facts ──────────────────
                     # Filters out facts that already exist in the session
                     # (same normalized triple) to prevent re-extraction from
                     # assistant echo messages or overlapping extractions.
                     resolved_facts = _deduplicate_facts(
-                        resolved_facts, existing_facts,
+                        resolved_facts,
+                        existing_facts,
                     )
 
                     if resolved_facts:
                         repo = FactRepository(db)
                         # Also init entity repo for graph relationship upserts
-                        from repositories.entity_repository import EntityRepository as _EntityRepo
+                        from repositories.entity_repository import (
+                            EntityRepository as _EntityRepo,
+                        )
+
                         entity_repo = _EntityRepo(db=db)
 
                         for fact in resolved_facts:
@@ -303,6 +267,44 @@ async def extract_facts(
                             # the relationship in the graph for traversal queries.
                             subj_id = fact.get("subject_entity_id")
                             obj_id = fact.get("object_entity_id")
+
+                            # ── Live entity lookup fallback ────────────────
+                            # If entity IDs weren't resolved from the session
+                            # snapshot (race condition: extract_entities may
+                            # not have committed yet, or known_entities was
+                            # fetched before entity extraction completed),
+                            # attempt a fresh DB lookup so graph edges are
+                            # created even when the snapshot is stale.
+                            if subj_id is None:
+                                subj_node = await entity_repo.get_entity_by_name(
+                                    org_id=uuid.UUID(org_id),
+                                    name=fact["subject"],
+                                )
+                                if subj_node is not None:
+                                    subj_id = uuid.UUID(subj_node["id"])
+                                    fact["subject_entity_id"] = subj_id
+                                    logger.info(
+                                        "fact_extraction.live_entity_resolved",
+                                        episode_id=episode_id,
+                                        entity_name=fact["subject"],
+                                        role="subject",
+                                    )
+
+                            if obj_id is None:
+                                obj_node = await entity_repo.get_entity_by_name(
+                                    org_id=uuid.UUID(org_id),
+                                    name=fact["object"],
+                                )
+                                if obj_node is not None:
+                                    obj_id = uuid.UUID(obj_node["id"])
+                                    fact["object_entity_id"] = obj_id
+                                    logger.info(
+                                        "fact_extraction.live_entity_resolved",
+                                        episode_id=episode_id,
+                                        entity_name=fact["object"],
+                                        role="object",
+                                    )
+
                             if subj_id is not None and obj_id is not None:
                                 try:
                                     await entity_repo.upsert_relationship(
@@ -320,13 +322,16 @@ async def extract_facts(
                                         subject=fact["subject"],
                                         predicate=fact["predicate"],
                                         object=fact["object"],
+                                        exc_info=True,
                                     )
                     persisted = len(resolved_facts)
 
             # Set enrichment bit after fact persistence, inside the same
             # transaction — rollback-safe.
             await db.execute(
-                text("UPDATE episodes SET enrichment_status = enrichment_status | :bit WHERE id = :id"),
+                text(
+                    "UPDATE episodes SET enrichment_status = enrichment_status | :bit WHERE id = :id"
+                ),
                 {"bit": ENRICHMENT_FACTS, "id": episode_id},
             )
             await db.commit()
@@ -396,8 +401,8 @@ def _parse_facts_response(content: str) -> list[dict]:
 
     # Strip deepseek-r1 thinking blocks: find first JSON object or array.
     # Only strip text that appears BEFORE the first [ or {, not the bracket itself.
-    first_array = content.find('[')
-    first_object = content.find('{')
+    first_array = content.find("[")
+    first_object = content.find("{")
     if first_array >= 0 and (first_object < 0 or first_array < first_object):
         json_start = first_array
     elif first_object >= 0:
@@ -458,25 +463,17 @@ def _parse_facts_response(content: str) -> list[dict]:
 
 
 def _filter_facts(facts: list[dict]) -> list[dict]:
-    """Apply confidence threshold and quality heuristics.
+    """Apply confidence threshold and reject incomplete triples.
 
-    Filters out:
-    - Facts below the confidence threshold (0.3).
-    - Triples with empty subject, predicate, or object.
-    - Bare copular predicates (is, are, was, …).
-    - Predicates or subjects that suggest instruction-following content.
-    - **Meta-conversation facts**: predicates that describe the conversation
-      itself rather than domain knowledge (refers_to, stands_for, means, …).
-    - **Self-referential facts**: subject == object with identity predicates
-      (e.g. ``"nikita refers_to nikita"``).
-    - **Uninformative predicates**: trivial facts that add no value
-      (e.g. ``"Rohan name Rohan"``).
+    Filters out facts below the confidence threshold and triples with empty
+    subject, predicate, or object.  All predicate-level filtering is delegated
+    to the prompt layer — the LLM should produce quality facts directly.
 
     Args:
         facts: Raw fact triples from the LLM.
 
     Returns:
-        Filtered list of fact dicts meeting all quality criteria.
+        Filtered list of fact dicts meeting minimum quality criteria.
     """
     valid: list[dict] = []
 
@@ -493,47 +490,6 @@ def _filter_facts(facts: list[dict]) -> list[dict]:
 
         # Reject incomplete triples
         if not subject or not predicate or not obj:
-            continue
-
-        # Reject bare copular verbs — they add no information
-        if predicate.lower() in _BARE_COPULARS:
-            continue
-
-        # ⚠️ Anti-injection guard: reject triples that sound like they
-        # are describing the model's own instructions rather than the
-        # user's data.
-        if predicate.lower().startswith(_IGNORE_PREDICATE_PREFIXES):
-            continue
-        if subject.lower().startswith(_IGNORE_SUBJECT_PREFIXES):
-            continue
-
-        # ── Meta-fact filter — skip conversation-about-conversation ──────────
-        pred_lower = predicate.lower()
-        subj_lower = subject.lower()
-        obj_lower = obj.lower()
-
-        # Meta-predicates describe the conversation itself
-        if pred_lower in _META_PREDICATES:
-            logger.debug(
-                "fact_filter.meta_predicate_skipped",
-                subject=subject, predicate=predicate, object=obj,
-            )
-            continue
-
-        # Self-referential: subject == object with identity predicate
-        if subj_lower == obj_lower and pred_lower in _SELF_REFERENTIAL_PREDICATES:
-            logger.debug(
-                "fact_filter.self_referential_skipped",
-                subject=subject, predicate=predicate, object=obj,
-            )
-            continue
-
-        # Uninformative: trivial name declarations
-        if pred_lower in _UNINFORMATIVE_PREDICATES:
-            logger.debug(
-                "fact_filter.uninformative_skipped",
-                subject=subject, predicate=predicate, object=obj,
-            )
             continue
 
         valid.append(
@@ -610,7 +566,11 @@ def _resolve_fact_entities(
 
 
 _FIRST_PERSON_PRONOUNS: set[str] = {
-    "i", "me", "my", "mine", "myself",
+    "i",
+    "me",
+    "my",
+    "mine",
+    "myself",
 }
 
 

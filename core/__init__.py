@@ -1,6 +1,6 @@
 """OpenZep core — shared infrastructure for the agent memory platform.
 
-TechLead note: The canonical import path for this module is
+note: The canonical import path for this module is
 ``from core.config import Settings`` when the package is installed.
 During development / testing, import directly from the source tree:
 

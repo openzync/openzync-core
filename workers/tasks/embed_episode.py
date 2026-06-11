@@ -52,7 +52,7 @@ async def embed_episode(
     logger.info("embed_episode.started", episode_id=episode_id)
 
     # ── 1. Resolve the embedding backend ──────────────────────────────────
-    # TechLead note: EMBEDDING_BACKEND is a separate config from LLM_BACKEND
+    # note: EMBEDDING_BACKEND is a separate config from LLM_BACKEND
     # because many deployments use a dedicated embedding service (e.g.
     # nomic-embed-text on Ollama) alongside a chat LLM (e.g. GPT-4o). When
     # EMBEDDING_BACKEND is empty we fall back to the chat LLM provider.
@@ -85,7 +85,7 @@ async def embed_episode(
         )
 
     # ── 4. Store in pgvector and update enrichment_status ─────────────────
-    # TechLead note: We create a short-lived engine here because ARQ workers
+    # note: We create a short-lived engine here because ARQ workers
     # run in a separate process and may not share the app's engine. For
     # higher throughput, consider passing the engine from the worker
     # initialisation context instead.

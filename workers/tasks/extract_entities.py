@@ -21,7 +21,9 @@ from datetime import datetime, timezone
 import structlog
 from sqlalchemy import text
 
-# TechLead note: Import prompt_renderer at module level — it is a local
+from core.exceptions import ExternalServiceError
+
+# note: Import prompt_renderer at module level — it is a local
 # Jinja2 utility with no heavy dependencies, so eager import is safe
 # and avoids re-import overhead on every task invocation.
 from services.worker.prompt_renderer import render_prompt
@@ -360,6 +362,11 @@ async def extract_entities(
 
         name_to_node: dict[str, dict] = {}
 
+        # ── Failure counters for enrichment-bit gating ──────────────────────
+        entity_failure_count: int = 0
+        relationship_failure_count: int = 0
+        relationship_skip_count: int = 0
+
         try:
             async with _session_factory() as _db:
                 entity_repo = EntityRepository(db=_db)
@@ -404,6 +411,14 @@ async def extract_entities(
                         # that might use the raw LLM output
                         if normalized_name != entity_name:
                             name_to_node[entity_name] = node
+                    else:
+                        entity_failure_count += 1
+                        logger.warning(
+                            "entity_extraction.entity_upsert_skipped",
+                            episode_id=episode_id,
+                            entity_name=normalized_name,
+                            entity_type=entity_type,
+                        )
 
                 # ── 7. Persist relationships to graph ─────────────────────────
                 for rel in relationships:
@@ -414,12 +429,49 @@ async def extract_entities(
                     if not subject or not predicate or not obj:
                         continue
 
+                    # ── On-the-fly entity recovery pass ─────────────────────
+                    # If the LLM included a name in a relationship but didn't
+                    # declare it in the entities array, auto-create it as a
+                    # "Custom" type entity so the graph edge is not lost.
+                    for name in (subject, obj):
+                        if name not in name_to_node:
+                            fallback_node = await entity_repo.upsert_entity(
+                                org_id=uuid.UUID(org_id),
+                                name=name,
+                                entity_type="Custom",
+                                summary=(
+                                    f"Auto-created from relationship: "
+                                    f"{subject} {predicate} {obj}"
+                                ),
+                            )
+                            if fallback_node is not None:
+                                name_to_node[name] = fallback_node
+                                logger.info(
+                                    "entity_extraction.relationship_entity_recovered",
+                                    episode_id=episode_id,
+                                    entity_name=name,
+                                    relationship=f"{subject} {predicate} {obj}",
+                                )
+
                     if subject in name_to_node and obj in name_to_node:
-                        await entity_repo.upsert_relationship(
+                        result = await entity_repo.upsert_relationship(
                             subject=subject,
                             predicate=predicate,
                             obj=obj,
                             org_id=uuid.UUID(org_id),
+                        )
+                        if result is None:
+                            relationship_failure_count += 1
+                    else:
+                        relationship_skip_count += 1
+                        logger.warning(
+                            "entity_extraction.relationship_skipped_missing_entity",
+                            episode_id=episode_id,
+                            subject=subject,
+                            predicate=predicate,
+                            object=obj,
+                            subject_in_graph=subject in name_to_node,
+                            object_in_graph=obj in name_to_node,
                         )
 
                 # ── 8. Link entities to this episode in graph_episode_entities ───
@@ -448,6 +500,30 @@ async def extract_entities(
                 await _db.commit()
         finally:
             await _engine.dispose()
+
+        # ── 8b. Guard enrichment bit against persistence failures ────────────
+        # If entities failed to persist, raise so @with_retry can retry.
+        # Enrichment bit will NOT be set on this attempt (line 524 won't run).
+        if entity_failure_count > 0:
+            logger.error(
+                "entity_extraction.entity_persistence_failures",
+                episode_id=episode_id,
+                entity_failure_count=entity_failure_count,
+                entity_success_count=len(name_to_node),
+                relationship_failure_count=relationship_failure_count,
+                relationship_skip_count=relationship_skip_count,
+            )
+            raise ExternalServiceError(
+                message=f"Failed to persist {entity_failure_count} entities to graph "
+                f"(backend returned None). {len(name_to_node)} entities succeeded.",
+                detail={
+                    "episode_id": episode_id,
+                    "entity_failure_count": entity_failure_count,
+                    "entity_success_count": len(name_to_node),
+                    "relationship_failure_count": relationship_failure_count,
+                    "relationship_skip_count": relationship_skip_count,
+                },
+            )
 
         # ── 9. Persist relationships as facts in PostgreSQL ───────────────────
         if relationships:
@@ -518,9 +594,15 @@ async def extract_entities(
             episode_id=episode_id,
             entity_count=len(name_to_node),
             relationship_count=persisted_count,
+            entity_failure_count=entity_failure_count,
+            relationship_failure_count=relationship_failure_count,
+            relationship_skip_count=relationship_skip_count,
         )
 
-    # ── 10. Always set enrichment_status bit 0 ────────────────────────────────
+    # ── 10. Set enrichment_status bit 0 ──────────────────────────────────────
+    # Only reached if entity persistence succeeded (no ExternalServiceError
+    # raised by the guard at step 8b) — enrichment bit is NOT set when
+    # entities were silently dropped, allowing @with_retry to re-attempt.
     await _set_enrichment_bit(episode_id, ENRICHMENT_ENTITIES)
 
     if persisted_count:

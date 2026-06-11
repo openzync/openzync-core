@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # Each bit represents one enrichment step.  Workers check their bit before
 # running and set it after completion (or after a permanent failure).
 
-# TechLead note: Bit positions are shared across the team and must not be
+# note: Bit positions are shared across the team and must not be
 # reassigned without updating all workers.  Current allocation:
 #   bit 0 = entity extraction (extract_entities)
 #   bit 1 = embedding generation (embed_episode)
