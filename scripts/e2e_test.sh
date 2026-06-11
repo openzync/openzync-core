@@ -774,16 +774,18 @@ IS_MERGED_EXISTS=$(psql "$DSN" -t -A -c "
 step "7.6b — Create duplicate entities for merge testing"
 DUP1_ID="11111111-1111-4111-a111-111111111111"
 DUP2_ID="22222222-2222-4222-a222-222222222222"
-# Insert two entities with same name but different IDs
+# Insert two entities with same LOWER name but different casing — unique
+# constraint uq_graph_entities_org_name is case-sensitive so this works,
+# and the merge worker's LOWER(name) exact-match grouping finds them.
 # Note: column is 'attributes' (JSONB), not 'metadata'.
 # is_merged is NOT NULL with no default — must be set explicitly.
 psql "$DSN" -c "
   INSERT INTO graph_entities (id, organization_id, name, entity_type, summary, attributes, is_merged, created_at, updated_at)
   VALUES
     ('$DUP1_ID', '$ORG_ID', 'Acme Corp Duplicate', 'Organization', 'Duplicate entity 1', '{}'::jsonb, false, now(), now()),
-    ('$DUP2_ID', '$ORG_ID', 'Acme Corp Duplicate', 'Organization', 'Duplicate entity 2', '{}'::jsonb, false, now(), now())
+    ('$DUP2_ID', '$ORG_ID', 'acme corp duplicate', 'Organization', 'Duplicate entity 2', '{}'::jsonb, false, now(), now())
   ON CONFLICT (id) DO NOTHING;" 2>/dev/null && \
-  ok "Created 2 duplicate graph entities" || \
+  ok "Created 2 duplicate graph entities (different casing)" || \
   fail "Could not create duplicate entities"
 # Give DUP1 a relationship so it becomes canonical (most relationships wins)
 psql "$DSN" -c "

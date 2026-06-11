@@ -7,7 +7,7 @@ Users are identified by an ``external_id`` chosen by the calling application
 
 import uuid
 
-from sqlalchemy import Boolean, ForeignKey, Index, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, ForeignKey, Index, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -83,7 +83,7 @@ class User(TimestampMixin, Base):
             name="uq_user_organization_external",
         ),
         Index("ix_user_organization_id", "organization_id"),
-        Index("ix_user_email_unique", "email", postgresql_where=email.isnot(None)),
+        Index("ix_user_email_unique", "email", postgresql_where=text("email IS NOT NULL AND is_deleted = false")),
     )
 
     def __repr__(self) -> str:

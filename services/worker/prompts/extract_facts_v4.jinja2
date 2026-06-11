@@ -1,0 +1,144 @@
+You are building a **semantic knowledge graph** — a web of THINGS and how they
+RELATE.  Not an annotation of the text.  A graph of the world.
+
+---
+## THE PRINCIPLE
+
+Every line you output is either a NODE (entity) or an EDGE (relationship).
+
+**A valid edge has a real node on BOTH sides.**
+
+Before you write any fact, ask:
+```
+Is the OBJECT a real node in the graph?
+  → A proper name?  A named thing with its own identity?
+     → Yes → it's an entity-type fact.  Output `subject_type: "entity"` and
+       `object_type: "entity"`.
+  → A role ("python developer")?  A skill ("NLP")?  A number ("3")?
+    A description ("a great engineer")?
+     → No → it's a literal-typed fact — the object is an ATTRIBUTE of the
+       subject, not a node of its own.  But only output it if it carries
+       genuinely useful information about the subject's attributes.
+       Output `object_type: "literal"`.
+```
+
+```
+Is the PREDICATE describing the conversation or the world?
+  → "refers_to", "stands_for", "describes", "talks_about", "is_about",
+    "means", "implies", "indicates", "signifies"
+     → These describe how language works, not how the world works.
+       Do NOT output them — they pollute the graph.
+```
+
+```
+Is the SUBJECT the same THING as the OBJECT?
+  → Yes?  Then delete it.  A node connected to itself is not an edge.
+    "nikita refers_to nikita", "nikita is nikita", "Rohan name Rohan"
+    → Never.
+```
+
+---
+## KNOWN ENTITIES (already in the graph — use their canonical names)
+
+{% if known_entities is defined and known_entities %}
+| Name | Type |
+|------|------|
+{% for ent in known_entities %}
+| {{ ent.name }} | {{ ent.entity_type }} |
+{% endfor %}
+
+**Canonical identity rule:** The graph has ONE canonical name per node.
+When you reference a known entity, use the EXACT name from the table above
+— letter for letter.  The conversation may use different casing ("nikita"
+vs "Nikita") — you use the graph's spelling, not the text's.
+{% endif %}
+
+---
+## EXISTING FACTS (already in the graph — do not duplicate)
+
+{% if existing_facts is defined and existing_facts %}
+| Subject | Predicate | Object |
+|---------|-----------|--------|
+{% for f in existing_facts %}
+| {{ f.subject }} | {{ f.predicate }} | {{ f.object }} |
+{% endfor %}
+
+**Deduplication rule:** The graph can only have one edge between the same
+pair of nodes with the same relationship type.  If a fact already exists,
+do not add another.  Check not just exact matches but also synonym
+predicates (works_at ≈ employed_by, studied_at ≈ attended, likes ≈ enjoys,
+colleague_of ≈ coworker_of, friend_of ≈ shares_friend_with, etc.) —
+these are the same edge with different words.
+{% endif %}
+
+---
+## OUTPUT SCHEMA
+
+```json
+[
+  {
+    "subject": "<canonical entity name or literal>",
+    "predicate": "<present-tense verb, lowercase>",
+    "object": "<canonical entity name or literal value>",
+    "confidence": 0.95,
+    "subject_type": "entity" | "literal",
+    "object_type": "entity" | "literal"
+  }
+]
+```
+
+- **subject_type** and **object_type** are "entity" when the value is a
+  named node in the graph, "literal" when it's an attribute/description.
+- If no new facts can be added to the graph, output `[]`.
+
+---
+## FEW-SHOT ILLUSTRATIONS
+
+**Message:** "I work at Acme Corp and I'm a python developer."
+**Graph already has:** Alice→works_at→Acme Corp
+
+```
+→ "I" resolves to Alice (known Person entity).
+→ "Alice works_at Acme Corp" already in the graph → skip.
+→ "python developer" — is this a node?  No, it's a role descriptor (attribute).
+   It has no independent existence in the graph.  Skip.
+Output: []
+```
+
+**Message:** "Nikita is a python developer who studied at FIEM College."
+**Graph has no entities yet.**
+
+```
+→ "Nikita" — a person.  Node. ✓
+→ "python developer" — a role.  Attribute.  Not a valid edge target.  Skip.
+→ "FIEM College" — an institution.  Node. ✓
+→ Edge: Nikita→studied_at→FIEM College.  Both sides are nodes. ✓
+Output: [{"subject":"Nikita","predicate":"studied_at","object":"FIEM College",
+          "confidence":0.95,"subject_type":"entity","object_type":"entity"}]
+```
+
+**Message:** "Alice still works at Acme Corp."
+**Graph already has:** Alice→works_at→Acme Corp
+
+```
+→ Edge already exists.  Skip.
+Output: []
+```
+
+**Message (assistant):** "Sounds like Nikita is a Python backend dev at TheLinkAI!"
+**Graph already has:** nikita→works_at→TheLinkAI
+
+```
+→ Assistant is echoing.  Edge already exists.  Skip.
+Output: []
+```
+
+---
+## NOW EXTRACT
+
+Message:
+```
+{{ conversation }}
+```
+
+Output only valid JSON.

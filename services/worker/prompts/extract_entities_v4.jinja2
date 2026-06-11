@@ -1,0 +1,123 @@
+You are building a **semantic knowledge graph** — a web of THINGS and how they
+RELATE.  Your job is to identify NODES (entities) in the graph.  Only a real
+THING — a named node with its own identity — gets a node.
+
+---
+## THE PRINCIPLE
+
+A node exists because the thing itself is worth tracking, not because the
+word appeared in the text.
+
+Ask before extracting:
+```
+Is this a DISTINCT THING with its own identity?
+  → Is it a named PERSON?  ("Alice", "Rohan Shaw", "Nikita")
+  → Is it a named ORGANIZATION?  ("Acme Corp", "TheLinkAI", "Google")
+  → Is it a named PRODUCT/TOOL?  ("PostgreSQL", "Python", "FastAPI")
+  → Is it a LOCATION?  ("Kolkata", "FIEM College")
+  → Is it any other named thing with its own persistent identity?
+
+OR is it an ATTRIBUTE of something else?
+  → "python developer" → attribute of a person, not its own thing
+  → "backend engineer" → attribute of a person, not its own thing
+  → "NLP", "AI" → skills/technologies, not entities
+  → "3", "5 years" → numbers, not entities
+  → "team", "company", "colleague" → common nouns, not proper names
+  → "a great engineer" → qualitative description, not an entity
+
+If it's an attribute → DO NOT create a node.  The attribute is captured
+as a fact about the person/node it belongs to.
+```
+
+---
+## KNOWN ENTITIES (already in the graph — do not re-extract)
+
+{% if known_entities is defined and known_entities %}
+| Name | Type |
+|------|------|
+{% for ent in known_entities %}
+| {{ ent.name }} | {{ ent.entity_type }} |
+{% endfor %}
+
+**Canonical identity rule:** The graph has ONE canonical name per node.
+When you reference a known entity in a relationship, use the EXACT name
+from the table above — not the casing from the current message.
+
+**Delta rule:** If a mention in the conversation matches a known entity,
+do NOT re-emit it.  Only extract genuinely new nodes.
+{% endif %}
+
+---
+## OUTPUT SCHEMA
+
+```json
+{
+  "entities": [
+    {
+      "name": "<canonical display name>",
+      "type": "<Person | Organization | Product | Location | Custom>",
+      "mentions": ["<exact text from conversation>"]
+    }
+  ],
+  "relationships": [
+    {
+      "subject": "<entity name from entities or known entities>",
+      "predicate": "<present-tense verb, lowercase>",
+      "object": "<entity name from entities or known entities>"
+    }
+  ]
+}
+```
+
+- **entities[]**: only genuinely NEW nodes.  Skip anything already in the
+  Known Entities table.
+- **relationships[]**: edges between known and/or new nodes.  Use canonical
+  names — not the conversation's casing.
+- If no new nodes, output `{"entities":[],"relationships":[]}`.
+
+---
+## FEW-SHOT ILLUSTRATIONS
+
+**Message:** "Nikita is a python developer and studied at FIEM College."
+**Graph has:** nikita(Person)
+
+```
+→ "Nikita" already known → skip.
+→ "python developer" — a role, not a thing → skip.
+→ "FIEM College" — an institution.  New node. ✓
+→ Edge: nikita→studied_at→FIEM College.
+Output: {"entities":[{"name":"FIEM College","type":"Organization","mentions":["FIEM College"]}],
+         "relationships":[{"subject":"nikita","predicate":"studied_at","object":"FIEM College"}]}
+```
+
+**Message:** "I use Python for backend work."
+**Graph has:** Rohan(Person)
+
+```
+→ "I" → "Rohan" (known).  Skip.
+→ "Python" — mentioned as a skill/tool in passing.  Is Python a distinct
+   thing being tracked?  If no entity-level detail exists (version, usage
+   context), it's just a skill mention, not a node.  → Skip.
+Output: {"entities":[],"relationships":[]}
+```
+
+**Message:** "My colleague at the company uses Python."
+**Graph has:** Rohan(Person), TheLinkAI(Organization)
+
+```
+→ "my colleague" — common noun referring to a Person.  Ambiguous.  Skip.
+→ "the company" — definite description resolving to TheLinkAI.  Already
+   a known entity.  Skip.
+→ "Python" — skill mention.  Skip.
+Output: {"entities":[],"relationships":[]}
+```
+
+---
+## NOW EXTRACT
+
+Conversation:
+```
+{{ conversation }}
+```
+
+Output only valid JSON.

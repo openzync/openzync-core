@@ -100,8 +100,9 @@ async def extract_facts(
 
     Pipeline:
         0. Fetch known entities + recent history from session (if session_id).
-        1. Render the ``extract_facts_v2.jinja2`` prompt with conversation,
-           known entities, and recent history.
+        1. Render the ``extract_facts_v4.jinja2`` prompt with conversation,
+           known entities, existing facts, and recent history (or
+           ``extract_facts_v3.jinja2`` for first extraction when no facts exist yet).
         2. Call the LLM backend (via ``resolve_backend()``, temperature 0.1).
         3. Parse the JSON response (handles markdown fence wrapping).
         4. Filter triples by confidence (>= 0.3) and quality heuristics.
@@ -200,8 +201,8 @@ async def extract_facts(
         finally:
             await ctx_engine.dispose()
 
-    # ── 1. Render prompt (v3 for delta with existing facts, v2 as fallback) ────
-    prompt_template = "extract_facts_v3" if existing_facts else "extract_facts_v2"
+    # ── 1. Render prompt (v4 for delta with existing facts, v3 as fallback) ────
+    prompt_template = "extract_facts_v4" if existing_facts else "extract_facts_v3"
     try:
         prompt = render_prompt(
             prompt_template,
@@ -541,8 +542,10 @@ def _filter_facts(facts: list[dict]) -> list[dict]:
                 "predicate": predicate,
                 "object": obj,
                 "confidence": confidence,
-                "subject_type": "literal",
-                "object_type": "literal",
+                # Preserve LLM's entity/literal judgment if available (v4 prompt);
+                # default to "literal" for v2/v3 prompts that don't output this field.
+                "subject_type": fact.get("subject_type", "literal"),
+                "object_type": fact.get("object_type", "literal"),
                 "subject_entity_id": None,
                 "object_entity_id": None,
             }
@@ -558,13 +561,19 @@ def _resolve_fact_entities(
     """Resolve subject/object to canonical entity names and IDs.
 
     For each fact, attempts to match the subject and object strings against
-    the list of known entities from the session.  When a match is found:
+    the list of known entities from the session.  Entity matching runs
+    regardless of the LLM's ``subject_type``/``object_type`` label to
+    ensure backward compatibility with v2/v3 prompts that don't output
+    these fields.
+
+    When a match is found:
     - The subject/object text is replaced with the canonical entity name.
     - ``subject_type`` / ``object_type`` is set to ``"entity"``.
     - ``subject_entity_id`` / ``object_entity_id`` is set to the entity UUID.
 
-    When no match is found the original values are preserved with type
-    ``"literal"`` and ``None`` entity IDs.
+    When no match is found the original values are preserved.  If the
+    LLM (v4+) already set a type, it is kept; otherwise defaults to
+    ``"literal"`` with ``None`` entity IDs.
 
     Args:
         facts: Filtered fact triples from ``_filter_facts``.
@@ -581,14 +590,14 @@ def _resolve_fact_entities(
     for fact in facts:
         new_fact = dict(fact)
 
-        # Resolve subject
+        # Resolve subject — always attempt matching regardless of LLM label
         subj_result = _match_entity(fact["subject"], known_entities)
         if subj_result:
             new_fact["subject"] = subj_result["name"]
             new_fact["subject_type"] = "entity"
             new_fact["subject_entity_id"] = subj_result["id"]
 
-        # Resolve object
+        # Resolve object — always attempt matching regardless of LLM label
         obj_result = _match_entity(fact["object"], known_entities)
         if obj_result:
             new_fact["object"] = obj_result["name"]

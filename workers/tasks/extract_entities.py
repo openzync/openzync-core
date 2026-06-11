@@ -21,12 +21,11 @@ from datetime import datetime, timezone
 import structlog
 from sqlalchemy import text
 
-from workers.tasks.base import ENRICHMENT_ENTITIES, with_retry
-
 # TechLead note: Import prompt_renderer at module level — it is a local
 # Jinja2 utility with no heavy dependencies, so eager import is safe
 # and avoids re-import overhead on every task invocation.
 from services.worker.prompt_renderer import render_prompt
+from workers.tasks.base import ENRICHMENT_ENTITIES, with_retry
 
 logger = structlog.get_logger()
 
@@ -55,8 +54,8 @@ async def extract_entities(
         2. If ``session_id`` is provided, fetch known entities from previous
            turns of this session for delta extraction (v3 prompt).
         3. Render the extract prompt:
-           - ``extract_entities_v3.jinja2`` when known entities exist (delta).
-           - ``extract_entities_v1.jinja2`` for the first extraction.
+            - ``extract_entities_v4.jinja2`` when known entities exist (delta).
+            - ``extract_entities_v3.jinja2`` for the first extraction.
         4. Call the LLM backend (via ``resolve_backend()``, temperature 0.1).
         5. Parse the JSON response (handles markdown fence wrapping).
         6. Validate entity types against the allowed ontology (reassign
@@ -80,13 +79,14 @@ async def extract_entities(
     """
     # Lazy imports to keep the module importable without the full async
     # stack at definition time — ARQ workers run in a separate process.
+    from sqlalchemy import select
+
     from core.config import settings
     from core.db import get_async_session, init_db_engine
     from core.llm import resolve_backend
     from models.episode import Episode
     from repositories.entity_repository import EntityRepository
     from repositories.fact_repository import FactRepository
-    from sqlalchemy import select
 
     logger.info(
         "entity_extraction.started",
@@ -135,7 +135,7 @@ async def extract_entities(
             )
 
     # ── 2. Render prompt ──────────────────────────────────────────────────────
-    prompt_template = "extract_entities_v3" if known_entities else "extract_entities_v1"
+    prompt_template = "extract_entities_v4" if known_entities else "extract_entities_v3"
     try:
         prompt = render_prompt(
             prompt_template,
@@ -159,8 +159,7 @@ async def extract_entities(
                 {
                     "role": "system",
                     "content": (
-                        "You are an entity extraction system. "
-                        "Output ONLY valid JSON."
+                        "You are an entity extraction system. Output ONLY valid JSON."
                     ),
                 },
                 {"role": "user", "content": prompt},
@@ -228,21 +227,63 @@ async def extract_entities(
         #    during fact extraction (see _match_entity in extract_facts.py).
         _PRONOUN_SKIP_NAMES: set[str] = {
             # First‑person
-            "i", "me", "my", "mine", "myself", "we", "us", "our", "ours",
+            "i",
+            "me",
+            "my",
+            "mine",
+            "myself",
+            "we",
+            "us",
+            "our",
+            "ours",
             "ourselves",
             # Second‑person
-            "you", "your", "yours", "yourself", "yourselves",
+            "you",
+            "your",
+            "yours",
+            "yourself",
+            "yourselves",
             # Third‑person
-            "he", "him", "his", "himself", "she", "her", "hers", "herself",
-            "it", "its", "itself", "they", "them", "their", "theirs",
+            "he",
+            "him",
+            "his",
+            "himself",
+            "she",
+            "her",
+            "hers",
+            "herself",
+            "it",
+            "its",
+            "itself",
+            "they",
+            "them",
+            "their",
+            "theirs",
             "themselves",
             # Ambiguous / filler
-            "this", "that", "these", "those", "someone", "somebody",
-            "everyone", "everybody", "nobody", "anyone", "anybody",
+            "this",
+            "that",
+            "these",
+            "those",
+            "someone",
+            "somebody",
+            "everyone",
+            "everybody",
+            "nobody",
+            "anyone",
+            "anybody",
             # Common misspellings (observed: "shhe")
-            "shhe", "hhe", "thei", "theyr", "thereselves",
+            "shhe",
+            "hhe",
+            "thei",
+            "theyr",
+            "thereselves",
             # Questions / catch‑all that leak through extraction
-            "what", "who", "whom", "whose", "which",
+            "what",
+            "who",
+            "whom",
+            "whose",
+            "which",
         }
 
         filtered_entities: list[dict] = []
@@ -265,7 +306,10 @@ async def extract_entities(
         for rel in relationships:
             subj = (rel.get("subject") or "").strip()
             obj = (rel.get("object") or "").strip()
-            if subj.lower() in _PRONOUN_SKIP_NAMES or obj.lower() in _PRONOUN_SKIP_NAMES:
+            if (
+                subj.lower() in _PRONOUN_SKIP_NAMES
+                or obj.lower() in _PRONOUN_SKIP_NAMES
+            ):
                 logger.info(
                     "entity_extraction.relationship_pronoun_skipped",
                     episode_id=episode_id,
@@ -372,7 +416,9 @@ async def extract_entities(
 
                     if subject in name_to_node and obj in name_to_node:
                         await entity_repo.upsert_relationship(
-                            subject=subject, predicate=predicate, obj=obj,
+                            subject=subject,
+                            predicate=predicate,
+                            obj=obj,
                             org_id=uuid.UUID(org_id),
                         )
 
@@ -413,7 +459,9 @@ async def extract_entities(
                 name: uuid.UUID(node["id"]) if node.get("id") else None
                 for name, node in name_to_node.items()
             }
-            engine = init_db_engine(str(settings.DATABASE_URL), pool_size=5, max_overflow=2)
+            engine = init_db_engine(
+                str(settings.DATABASE_URL), pool_size=5, max_overflow=2
+            )
             session_factory = get_async_session(engine)
             try:
                 async with session_factory() as db:
@@ -446,15 +494,18 @@ async def extract_entities(
                                      :valid_from, :valid_from, :valid_from)
                             """),
                             {
-                                "user_id": user_uuid, "org_id": org_uuid,
+                                "user_id": user_uuid,
+                                "org_id": org_uuid,
                                 "content": f"{subject} {predicate} {obj}",
-                                "subject": subject, "predicate": predicate,
+                                "subject": subject,
+                                "predicate": predicate,
                                 "object": obj,
                                 "subject_type": entity_type_map.get(subject, "literal"),
                                 "object_type": entity_type_map.get(obj, "literal"),
                                 "subj_entity_id": name_to_uuid.get(subject),
                                 "obj_entity_id": name_to_uuid.get(obj),
-                                "episode_id": episode_uuid, "valid_from": now,
+                                "episode_id": episode_uuid,
+                                "valid_from": now,
                             },
                         )
                     await db.commit()
@@ -473,9 +524,12 @@ async def extract_entities(
     await _set_enrichment_bit(episode_id, ENRICHMENT_ENTITIES)
 
     if persisted_count:
-        logger.info("entity_extraction.completed", episode_id=episode_id,
-                     entities=len(entities if data else []),
-                     facts=persisted_count)
+        logger.info(
+            "entity_extraction.completed",
+            episode_id=episode_id,
+            entities=len(entities if data else []),
+            facts=persisted_count,
+        )
     else:
         logger.info("entity_extraction.done", episode_id=episode_id)
 
@@ -502,9 +556,7 @@ async def _fetch_entity_types(org_id: str) -> list[str]:
     from core.config import settings
     from core.db import get_async_session, init_db_engine
 
-    _engine = init_db_engine(
-        str(settings.DATABASE_URL), pool_size=2, max_overflow=1
-    )
+    _engine = init_db_engine(str(settings.DATABASE_URL), pool_size=2, max_overflow=1)
     _session_factory = get_async_session(_engine)
     try:
         async with _session_factory() as _db:
@@ -519,15 +571,33 @@ async def _fetch_entity_types(org_id: str) -> list[str]:
             )
             schemas = result.all()
             if not schemas:
-                return ["Person", "Organization", "Product", "Location", "Date", "Custom"]
+                return [
+                    "Person",
+                    "Organization",
+                    "Product",
+                    "Location",
+                    "Date",
+                    "Custom",
+                ]
 
             types: list[str] = []
             for row in schemas:
                 schema: dict = row[0]
-                if isinstance(schema, dict) and "types" in schema and isinstance(schema["types"], list):
+                if (
+                    isinstance(schema, dict)
+                    and "types" in schema
+                    and isinstance(schema["types"], list)
+                ):
                     types.extend(schema["types"])
 
-            return types or ["Person", "Organization", "Product", "Location", "Date", "Custom"]
+            return types or [
+                "Person",
+                "Organization",
+                "Product",
+                "Location",
+                "Date",
+                "Custom",
+            ]
     finally:
         await _engine.dispose()
 
@@ -555,9 +625,9 @@ def _parse_entity_response(content: str) -> dict | None:
     content = content.strip()
 
     # Strip deepseek-r1 thinking blocks: find first JSON object or array
-    json_start = content.find('{')
+    json_start = content.find("{")
     if json_start < 0:
-        json_start = content.find('[')
+        json_start = content.find("[")
     if json_start >= 0:
         content = content[json_start:].strip()
 
@@ -595,20 +665,26 @@ async def _set_enrichment_bit(episode_id: str, bit: int) -> None:
     Always runs, even if no data was found — marks the task as complete
     so the pipeline knows it has been attempted.
     """
-    from core.db import get_async_session, init_db_engine
-    from core.config import settings as app_settings
     from sqlalchemy import text
+
+    from core.config import settings as app_settings
+    from core.db import get_async_session, init_db_engine
 
     engine = init_db_engine(str(app_settings.DATABASE_URL), pool_size=2, max_overflow=1)
     session_factory = get_async_session(engine)
     try:
         async with session_factory() as db:
             await db.execute(
-                text("UPDATE episodes SET enrichment_status = enrichment_status | :bit WHERE id = :id"),
+                text(
+                    "UPDATE episodes SET enrichment_status = enrichment_status | :bit WHERE id = :id"
+                ),
                 {"bit": bit, "id": uuid.UUID(episode_id)},
             )
             await db.commit()
     except Exception as exc:
-        logger.warning("enrichment_bit_failed", extra={"episode_id": episode_id, "bit": bit, "error": str(exc)})
+        logger.warning(
+            "enrichment_bit_failed",
+            extra={"episode_id": episode_id, "bit": bit, "error": str(exc)},
+        )
     finally:
         await engine.dispose()
