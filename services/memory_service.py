@@ -627,7 +627,7 @@ class MemoryService:
                 await arq_pool.enqueue("extract_entities", queue_name=qname,
                     **common, user_id=user_id)
                 await arq_pool.enqueue("extract_facts", queue_name=qname,
-                    **common, user_id=user_id)
+                    **common, user_id=user_id, session_id=session_id)
                 await arq_pool.enqueue("embed_episode", queue_name=qname,
                     **common)
                 await arq_pool.enqueue("sync_to_graph", queue_name=_arq_queue_name("low"),

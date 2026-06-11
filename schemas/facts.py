@@ -121,8 +121,14 @@ class FactResponse(BaseModel):
         object: Object entity name.
         confidence: Extraction confidence score (0.0–1.0).
         source_episode_id: Optional FK to the source episode.
-        subject_type: Entity type of the subject.
-        object_type: Entity type of the object.
+        subject_type: Entity type of the subject (``"literal"`` or
+            ``"entity"`` when resolved to ``graph_entities``).
+        object_type: Entity type of the object (``"literal"`` or
+            ``"entity"`` when resolved to ``graph_entities``).
+        subject_entity_id: FK to ``graph_entities`` if the subject was
+            resolved during extraction.
+        object_entity_id: FK to ``graph_entities`` if the object was
+            resolved during extraction.
         created_at: Fact creation timestamp.
     """
 
@@ -138,10 +144,20 @@ class FactResponse(BaseModel):
         None, description="Optional FK to the source episode."
     )
     subject_type: str = Field(
-        default="literal", description="Entity type of the subject."
+        default="literal",
+        description="Entity type of the subject ('literal' or 'entity').",
     )
     object_type: str = Field(
-        default="literal", description="Entity type of the object."
+        default="literal",
+        description="Entity type of the object ('literal' or 'entity').",
+    )
+    subject_entity_id: UUID | None = Field(
+        default=None,
+        description="FK to graph_entities if the subject was resolved to an entity.",
+    )
+    object_entity_id: UUID | None = Field(
+        default=None,
+        description="FK to graph_entities if the object was resolved to an entity.",
     )
     created_at: datetime = Field(
         ..., description="Fact creation timestamp (UTC)."

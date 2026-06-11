@@ -34,10 +34,16 @@ class Fact(TimestampMixin, Base):
         subject: The subject of the triple (e.g., "Alice").
         predicate: The relationship/predicate (e.g., "likes").
         object: The object of the triple (e.g., "hiking").
-        subject_type: Entity type of the subject (default ``literal``).
-        object_type: Entity type of the object (default ``literal``).
+        subject_type: Entity type of the subject (default ``literal``);
+            set to ``"entity"`` when resolved to a graph_entities row.
+        object_type: Entity type of the object (default ``literal``);
+            set to ``"entity"`` when resolved to a graph_entities row.
         confidence: Extraction confidence score (0.0–1.0).
         source_episode_id: Optional FK back to the originating episode.
+        subject_entity_id: Optional FK to ``graph_entities`` for the
+            resolved subject entity.
+        object_entity_id: Optional FK to ``graph_entities`` for the
+            resolved object entity.
         valid_from: Temporal validity start.
         valid_to: Temporal validity end.
         invalid_at: Timestamp when this fact was invalidated/retracted.
@@ -88,6 +94,18 @@ class Fact(TimestampMixin, Base):
     source_episode_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("episodes.id", ondelete="SET NULL"),
         nullable=True,
+    )
+    subject_entity_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("graph_entities.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+        comment="FK to graph_entities — resolved entity for the subject.",
+    )
+    object_entity_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("graph_entities.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+        comment="FK to graph_entities — resolved entity for the object.",
     )
     valid_from: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True,

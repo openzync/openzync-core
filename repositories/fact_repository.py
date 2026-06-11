@@ -50,6 +50,8 @@ class FactRepository:
         confidence: float = 1.0,
         source_episode_id: UUID | None = None,
         valid_from: datetime | None = None,
+        subject_entity_id: UUID | None = None,
+        object_entity_id: UUID | None = None,
     ) -> Fact:
         """Insert a new fact and return the ORM instance.
 
@@ -64,6 +66,10 @@ class FactRepository:
             confidence: Extraction confidence (0.0–1.0).
             source_episode_id: Optional FK back to the source episode.
             valid_from: Temporal validity start (defaults to now).
+            subject_entity_id: Optional FK to ``graph_entities`` for the
+                resolved subject entity.
+            object_entity_id: Optional FK to ``graph_entities`` for the
+                resolved object entity.
 
         Returns:
             The newly created :class:`Fact` instance with server-generated
@@ -79,6 +85,8 @@ class FactRepository:
             confidence=confidence,
             source_episode_id=source_episode_id,
             valid_from=valid_from or datetime.now(),
+            subject_entity_id=subject_entity_id,
+            object_entity_id=object_entity_id,
             embedding=[],
         )
         self._db.add(fact)
@@ -140,6 +148,8 @@ class FactRepository:
                     "source_episode_id": f.get("source_episode_id"),
                     "valid_from": f.get("valid_from", now),
                     "valid_to": f.get("valid_to"),
+                    "subject_entity_id": f.get("subject_entity_id"),
+                    "object_entity_id": f.get("object_entity_id"),
                     "embedding": [],
                 }
             )
@@ -193,6 +203,53 @@ class FactRepository:
         await self._db.flush()
         return result.rowcount  # type: ignore[return-value]
 
+    # ── Entity Lookup ───────────────────────────────────────────────────────────
+
+    async def get_entities_for_session(
+        self,
+        session_id: UUID,
+        organization_id: UUID,
+    ) -> list[dict[str, Any]]:
+        """Return all distinct graph entities linked to episodes in a session.
+
+        Traverses the ``session → episodes → graph_episode_entities →
+        graph_entities`` chain to collect every entity that has been
+        extracted from any turn of this session.
+
+        Args:
+            session_id: The session to fetch entities for.
+            organization_id: Tenant scope.
+
+        Returns:
+            A list of dicts with keys ``id``, ``name``, ``entity_type``,
+            ``summary``.
+        """
+        result = await self._db.execute(
+            text("""
+                SELECT DISTINCT ge.id, ge.name, ge.entity_type, ge.summary
+                FROM graph_entities ge
+                JOIN graph_episode_entities gee ON ge.id = gee.entity_id
+                JOIN episodes e ON e.id = gee.episode_id
+                WHERE e.session_id = :session_id
+                  AND e.organization_id = :org_id
+                  AND ge.organization_id = :org_id
+                  AND e.is_deleted = false
+                  AND ge.is_merged = false
+                ORDER BY ge.name
+            """),
+            {"session_id": session_id, "org_id": organization_id},
+        )
+        rows = result.mappings().all()
+        return [
+            {
+                "id": row["id"],
+                "name": row["name"],
+                "entity_type": row["entity_type"],
+                "summary": row["summary"],
+            }
+            for row in rows
+        ]
+
     # ── List by Session ────────────────────────────────────────────────────────
 
     async def list_by_session(
@@ -238,7 +295,8 @@ class FactRepository:
         base_query = """
             SELECT f.id, f.content, f.subject, f.predicate,
                    f."object", f.confidence, f.source_episode_id,
-                   f.created_at, f.subject_type, f.object_type
+                   f.created_at, f.subject_type, f.object_type,
+                   f.subject_entity_id, f.object_entity_id
             FROM facts f
             WHERE f.organization_id = :org_id
               AND f.source_episode_id IN (
@@ -303,6 +361,8 @@ class FactRepository:
                     "created_at": r[7].isoformat() if r[7] else None,
                     "subject_type": r[8],
                     "object_type": r[9],
+                    "subject_entity_id": str(r[10]) if r[10] else None,
+                    "object_entity_id": str(r[11]) if r[11] else None,
                 }
             )
 
