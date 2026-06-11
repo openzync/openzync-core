@@ -138,7 +138,17 @@ class PostgresGraphBackend(GraphBackend):
         entity_type: str,
         summary: str | None = None,
     ) -> dict:
-        """Create a new entity node.
+        """Create or update an entity node (upsert by org_id + name).
+
+        Uses ``ON CONFLICT (organization_id, name) DO UPDATE`` so that
+        duplicate extractions (same entity name in the same org) update
+        the entity_type and summary with the latest information rather
+        than silently dropping it or creating duplicate rows.
+
+        Entity type is only **upgraded** — if the existing type is
+        ``"Custom"`` and the new one is specific (e.g. ``"Person"``),
+        it will be updated.  A specific type is never downgraded to
+        ``"Custom"``.
 
         Raises:
             ExternalServiceError: If the insert fails.
@@ -150,7 +160,20 @@ class PostgresGraphBackend(GraphBackend):
                     INSERT INTO graph_entities
                         (organization_id, name, entity_type, summary)
                     VALUES (:org_id, :name, :type, :summary)
-                    RETURNING id, name, entity_type, summary, attributes, created_at
+                    ON CONFLICT (organization_id, name)
+                    DO UPDATE SET
+                        entity_type = CASE
+                            WHEN graph_entities.entity_type = 'Custom'
+                                 AND :type != 'Custom' THEN :type
+                            ELSE graph_entities.entity_type
+                        END,
+                        summary = CASE
+                            WHEN :summary != '' THEN :summary
+                            ELSE graph_entities.summary
+                        END,
+                        updated_at = now()
+                    RETURNING id, name, entity_type, summary, attributes,
+                              created_at, updated_at
                     """
                 ),
                 {
@@ -162,12 +185,24 @@ class PostgresGraphBackend(GraphBackend):
             )
             row = result.one()
             entity = self._row_to_entity(row)
+
+            # Determine action by checking if updated_at differs from created_at
+            # within the same statement (PostgreSQL xmin/xmax trick won't work
+            # with RETURNING).  If updated_at > created_at by more than a small
+            # delta it was an update; otherwise a fresh insert.
+            action = "created"
+            if row.updated_at and row.created_at:
+                delta = (row.updated_at - row.created_at).total_seconds()
+                if delta > 0.5:
+                    action = "updated"
+
             logger.info(
-                "pg_graph.entity_created",
+                "pg_graph.entity_upserted",
                 extra={
                     "org_id": str(org_id),
                     "entity_id": entity["id"],
                     "entity_type": entity_type,
+                    "action": action,
                 },
             )
             return entity
@@ -324,11 +359,12 @@ class PostgresGraphBackend(GraphBackend):
         valid_from: datetime | None = None,
         valid_to: datetime | None = None,
     ) -> dict:
-        """Create a directed relationship between two entities.
+        """Create or update a directed relationship between two entities.
 
-        Uses ``ON CONFLICT DO NOTHING`` to handle duplicate active
-        relationships (same source, target, type) gracefully — returns
-        the existing active relationship if one is already present.
+        Uses ``ON CONFLICT DO UPDATE`` so that duplicate extractions
+        (same source, target, type) **update** the existing relationship
+        with newer properties, fact text, and confidence rather than
+        silently dropping the information.
 
         Temporal semantics:
         - ``valid_from`` defaults to now().
@@ -354,10 +390,15 @@ class PostgresGraphBackend(GraphBackend):
                              COALESCE(:valid_from, now()), :valid_to, now())
                         ON CONFLICT (source_id, target_id, relationship_type)
                         WHERE invalid_at IS NULL
-                        DO NOTHING
+                        DO UPDATE SET
+                            properties = CAST(:properties AS jsonb),
+                            fact = :fact,
+                            confidence = GREATEST(graph_relationships.confidence, :confidence),
+                            valid_from = LEAST(graph_relationships.valid_from, COALESCE(:valid_from, now())),
+                            updated_at = now()
                         RETURNING id, source_id, target_id, relationship_type,
                                   properties, fact, confidence,
-                                  valid_from, valid_to, created_at
+                                  valid_from, valid_to, created_at, updated_at
                         """
                     ),
                     {
@@ -372,41 +413,25 @@ class PostgresGraphBackend(GraphBackend):
                         "valid_to": valid_to.isoformat() if valid_to else None,
                     },
                 )
-                row = result.one_or_none()
-
-                if row is None:
-                    # Relationship already exists — fetch active one
-                    existing = await self._db.execute(
-                        text(
-                            """
-                            SELECT id, source_id, target_id, relationship_type,
-                                   properties, fact, confidence,
-                                   valid_from, valid_to, created_at
-                            FROM graph_relationships
-                            WHERE source_id = :source_id
-                              AND target_id = :target_id
-                              AND relationship_type = :rel_type
-                              AND invalid_at IS NULL
-                            LIMIT 1
-                            """
-                        ),
-                        {
-                            "source_id": str(source_id),
-                            "target_id": str(target_id),
-                            "rel_type": relationship_type,
-                        },
-                    )
-                    row = existing.one()
+                row = result.one()
 
             relationship = self._row_to_relationship(row)
+
+            # Detect insert vs update via created_at/updated_at delta
+            action = "created"
+            if row.updated_at and row.created_at:
+                delta = (row.updated_at - row.created_at).total_seconds()
+                if delta > 0.5:
+                    action = "updated"
+
             logger.info(
-                "pg_graph.relationship_created",
+                "pg_graph.relationship_upserted",
                 extra={
                     "org_id": str(org_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
                     "type": relationship_type,
-                    "duplicate": row is not None,  # True when we fetched existing
+                    "action": action,
                 },
             )
             return relationship

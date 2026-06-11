@@ -119,9 +119,10 @@ async def extract_facts(
         content_length=len(content),
     )
 
-    # ── 0. Fetch session context (known entities + recent history) ────────────
+    # ── 0. Fetch session context (known entities + recent history + facts) ────
     known_entities: list[dict] = []
     recent_history: list[dict] = []
+    existing_facts: list[dict] = []
     if session_id:
         try:
             ctx_engine = init_db_engine(
@@ -133,6 +134,13 @@ async def extract_facts(
                 known_entities = await repo.get_entities_for_session(
                     session_id=uuid.UUID(session_id),
                     organization_id=uuid.UUID(org_id),
+                )
+
+                # Fetch existing facts from this session for delta extraction
+                existing_facts, _ = await repo.list_by_session(
+                    organization_id=uuid.UUID(org_id),
+                    session_id=uuid.UUID(session_id),
+                    limit=200,
                 )
 
                 # Fetch recent conversation history (before current episode)
@@ -157,12 +165,13 @@ async def extract_facts(
                     "fact_extraction.session_context_fetched",
                     episode_id=episode_id,
                     known_entities=len(known_entities),
+                    existing_facts=len(existing_facts),
                     recent_episodes=len(recent_history),
                 )
         except Exception as exc:
             # ⚠️ Non-fatal: continue without context if DB is unavailable
             logger.warning(
-                "fact_extression.session_context_failed",
+                "fact_extraction.session_context_failed",
                 episode_id=episode_id,
                 session_id=session_id,
                 error=str(exc),
@@ -170,19 +179,21 @@ async def extract_facts(
         finally:
             await ctx_engine.dispose()
 
-    # ── 1. Render prompt ──────────────────────────────────────────────────────
+    # ── 1. Render prompt (v3 for delta with existing facts, v2 as fallback) ────
+    prompt_template = "extract_facts_v3" if existing_facts else "extract_facts_v2"
     try:
         prompt = render_prompt(
-            "extract_facts_v2",
+            prompt_template,
             conversation=content,
             known_entities=known_entities,
             recent_history=recent_history,
+            existing_facts=existing_facts,
         )
     except FileNotFoundError:
         logger.error(
             "fact_extraction.prompt_missing",
             episode_id=episode_id,
-            template="extract_facts_v2.jinja2",
+            template=f"{prompt_template}.jinja2",
         )
         return
 

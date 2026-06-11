@@ -41,6 +41,7 @@ async def extract_entities(
     org_id: str,
     user_id: str,
     content: str,
+    session_id: str | None = None,
 ) -> None:
     """Extract named entities and relationships from a message and persist them.
 
@@ -51,15 +52,18 @@ async def extract_entities(
     Pipeline:
         1. Fetch organization's entity type ontology from
            ``extraction_schemas (type='entity_type')``.
-        2. Render the ``extract_entities_v1.jinja2`` prompt with the
-           conversation content and entity types injected.
-        3. Call the LLM backend (via ``resolve_backend()``, temperature 0.1).
-        4. Parse the JSON response (handles markdown fence wrapping).
-        5. Validate entity types against the allowed ontology (reassign
+        2. If ``session_id`` is provided, fetch known entities from previous
+           turns of this session for delta extraction (v3 prompt).
+        3. Render the extract prompt:
+           - ``extract_entities_v3.jinja2`` when known entities exist (delta).
+           - ``extract_entities_v1.jinja2`` for the first extraction.
+        4. Call the LLM backend (via ``resolve_backend()``, temperature 0.1).
+        5. Parse the JSON response (handles markdown fence wrapping).
+        6. Validate entity types against the allowed ontology (reassign
            invalid types to ``"Custom"``).
-        6. Persist entity nodes to Graphiti via ``EntityRepository``.
-        7. Persist relationships as facts in PostgreSQL.
-        8. Update ``episodes.enrichment_status`` bit 0.
+        7. Persist entity nodes to Graphiti via ``EntityRepository``.
+        8. Persist relationships as facts in PostgreSQL.
+        9. Update ``episodes.enrichment_status`` bit 0.
 
     Args:
         ctx: ARQ worker context (unused — required by ARQ contract).
@@ -67,6 +71,8 @@ async def extract_entities(
         org_id: UUID of the owning organization.
         user_id: UUID of the user who authored the message.
         content: The message text to extract entities from.
+        session_id: UUID of the session (passed from MemoryService).
+            Used to fetch known entities for delta extraction.
 
     Raises:
         Exception: Re-raises the last LLM or DB error after retry exhaustion
@@ -77,12 +83,16 @@ async def extract_entities(
     from core.config import settings
     from core.db import get_async_session, init_db_engine
     from core.llm import resolve_backend
+    from models.episode import Episode
     from repositories.entity_repository import EntityRepository
+    from repositories.fact_repository import FactRepository
+    from sqlalchemy import select
 
     logger.info(
         "entity_extraction.started",
         episode_id=episode_id,
         org_id=org_id,
+        session_id=session_id,
         content_length=len(content),
     )
 
@@ -95,18 +105,49 @@ async def extract_entities(
         entity_types=entity_types,
     )
 
+    # ── 1b. Fetch known entities for delta extraction (if session_id) ─────────
+    known_entities: list[dict] = []
+    if session_id:
+        try:
+            ctx_engine = init_db_engine(
+                str(settings.DATABASE_URL), pool_size=2, max_overflow=1
+            )
+            ctx_session_factory = get_async_session(ctx_engine)
+            async with ctx_session_factory() as db:
+                repo = FactRepository(db)
+                known_entities = await repo.get_entities_for_session(
+                    session_id=uuid.UUID(session_id),
+                    organization_id=uuid.UUID(org_id),
+                )
+            await ctx_engine.dispose()
+            logger.debug(
+                "entity_extraction.known_entities_fetched",
+                episode_id=episode_id,
+                known_entities=len(known_entities),
+            )
+        except Exception as exc:
+            # ⚠️ Non-fatal: continue without context if DB is unavailable
+            logger.warning(
+                "entity_extraction.known_entities_failed",
+                episode_id=episode_id,
+                session_id=session_id,
+                error=str(exc),
+            )
+
     # ── 2. Render prompt ──────────────────────────────────────────────────────
+    prompt_template = "extract_entities_v3" if known_entities else "extract_entities_v1"
     try:
         prompt = render_prompt(
-            "extract_entities_v1",
+            prompt_template,
             conversation=content,
             entity_types=entity_types,
+            known_entities=known_entities,
         )
     except FileNotFoundError:
         logger.error(
             "entity_extraction.prompt_missing",
             episode_id=episode_id,
-            template="extract_entities_v1.jinja2",
+            template=f"{prompt_template}.jinja2",
         )
         return
 
@@ -146,7 +187,10 @@ async def extract_entities(
         )
         try:
             recovery_prompt = render_prompt(
-                "extract_entities_v1", conversation=content
+                prompt_template,
+                conversation=content,
+                entity_types=entity_types,
+                known_entities=known_entities,
             )
             response2 = await llm.chat(
                 [

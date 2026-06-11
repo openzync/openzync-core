@@ -52,26 +52,34 @@ class EntityRepository:
         entity_type: str,
         summary: str | None = None,
     ) -> dict | None:
-        """Create an entity or return existing one by name.
+        """Create or update an entity (upsert by org_id + name).
 
-        Uses name-based lookup via ``search_entities``.  If found,
-        returns the existing entity.  Otherwise creates a new one.
+        Delegates to the graph backend which uses ``ON CONFLICT DO UPDATE``
+        on ``(organization_id, name)`` — the unique constraint added in
+        migration 0012 ensures no duplicates.
 
         Returns ``None`` if the backend is unavailable.
         """
         if self._backend is None:
             return None
 
-        # Check if entity with this name already exists
+        # Check if entity with this name already exists (for logging only)
         existing = await self.get_entity_by_name(org_id, name)
-        if existing is not None:
-            logger.debug(
-                "entity_repository.entity_exists",
-                extra={"entity_name": name, "entity_id": existing.get("id")},
-            )
-            return existing
+        action = "created"
+        changed_fields: list[str] = []
 
-        # Create new entity
+        if existing is not None:
+            action = "existing"
+            # Detect what would change
+            if existing.get("type") != entity_type:
+                # Only flag if the new type is more specific
+                if existing.get("type") == "Custom" and entity_type != "Custom":
+                    changed_fields.append("entity_type")
+            if summary and existing.get("summary", "") != summary:
+                changed_fields.append("summary")
+            if changed_fields:
+                action = "updated"
+
         try:
             entity = await self._backend.create_entity(
                 org_id=org_id,
@@ -80,22 +88,25 @@ class EntityRepository:
                 summary=summary,
             )
             logger.info(
-                "entity_repository.entity_created",
+                "entity_repository.entity_upserted",
                 extra={
                     "org_id": str(org_id),
                     "entity_name": name,
                     "entity_type": entity_type,
                     "entity_id": entity.get("id"),
+                    "action": action,
+                    "changed_fields": ",".join(changed_fields) if changed_fields else None,
                 },
             )
             return entity
         except Exception as exc:
             logger.error(
-                "entity_repository.create_failed",
+                "entity_repository.upsert_failed",
                 extra={
                     "org_id": str(org_id),
                     "entity_name": name,
                     "entity_type": entity_type,
+                    "action": action,
                     "error": str(exc),
                 },
             )
