@@ -218,14 +218,14 @@ async def extract_facts(
     session_factory = get_async_session(engine)
     try:
         async with session_factory() as db:
-            # Always set enrichment bit 2 first (fact extraction attempted)
-            await db.execute(
-                text("UPDATE episodes SET enrichment_status = enrichment_status | :bit WHERE id = :id"),
-                {"bit": ENRICHMENT_FACTS, "id": episode_id},
-            )
-            await db.commit()
-
-            # Persist facts if any were found (separate transaction)
+            # Persist facts (if any) AND set enrichment bit in a single
+            # transaction so that a persistence failure does NOT leave a
+            # falsely-completed enrichment marker.
+            #
+            # TechLead note: The enrichment bit is set AFTER fact persistence
+            # inside the same transaction.  If the fact inserts fail the
+            # transaction rolls back and the bit is NOT set, allowing the
+            # retry mechanism to re-attempt the work.
             if facts:
                 valid_facts = _filter_facts(facts)
                 if valid_facts:
@@ -251,7 +251,14 @@ async def extract_facts(
                             object_entity_id=fact.get("object_entity_id"),
                         )
                     persisted = len(resolved_facts)
-                    await db.commit()
+
+            # Set enrichment bit after fact persistence, inside the same
+            # transaction — rollback-safe.
+            await db.execute(
+                text("UPDATE episodes SET enrichment_status = enrichment_status | :bit WHERE id = :id"),
+                {"bit": ENRICHMENT_FACTS, "id": episode_id},
+            )
+            await db.commit()
     finally:
         await engine.dispose()
 
@@ -488,6 +495,11 @@ def _resolve_fact_entities(
     return resolved
 
 
+_FIRST_PERSON_PRONOUNS: set[str] = {
+    "i", "me", "my", "mine", "myself",
+}
+
+
 def _match_entity(
     name: str,
     known_entities: list[dict],
@@ -495,28 +507,41 @@ def _match_entity(
     """Match a subject/object string against known entities.
 
     Matching strategy (in order):
-    1. Exact, case-insensitive match.
-    2. The known entity name is a substring of the candidate (e.g.
+    1. First-person pronoun resolution — if the candidate is ``"I"``,
+       ``"me"``, ``"my"``, ``"mine"``, or ``"myself"``, resolve to the
+       first ``Person`` entity encountered in the known entities list.
+    2. Exact, case-insensitive match.
+    3. The known entity name is a substring of the candidate (e.g.
        "Rohan" matches "Rohan's expertise").
-    3. The candidate is a substring of the known entity name (e.g.
-       "OpenAI" matches "OpenAI").
+    4. The candidate is a substring of the known entity name (e.g.
+       "OpenAI" matches "OpenAI") — only if the candidate is 3+
+       characters to avoid false positives with short words.
 
     Only the first match is returned.  Entities are ordered
     alphabetically by name for deterministic matching.
 
     Args:
         name: The subject or object string from the extracted fact.
-        known_entities: List of known entity dicts with a ``name`` key.
+        known_entities: List of known entity dicts with ``name`` and
+            ``entity_type`` keys.
 
     Returns:
         The matching entity dict, or ``None`` if no match was found.
     """
     name_lower = name.lower().strip()
 
+    # Step 1: First-person pronoun → first Person entity
+    if name_lower in _FIRST_PERSON_PRONOUNS:
+        for ent in known_entities:
+            if ent.get("entity_type", "").lower() == "person":
+                return ent
+        # Fall through to exact/substring matching below in case
+        # no Person entity is known yet.
+
     for ent in known_entities:
         ent_name_lower = ent["name"].lower().strip()
 
-        # Exact match
+        # Exact match (also catches resolved first-person above)
         if name_lower == ent_name_lower:
             return ent
 

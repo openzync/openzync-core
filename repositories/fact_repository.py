@@ -52,6 +52,8 @@ class FactRepository:
         valid_from: datetime | None = None,
         subject_entity_id: UUID | None = None,
         object_entity_id: UUID | None = None,
+        subject_type: str = "literal",
+        object_type: str = "literal",
     ) -> Fact:
         """Insert a new fact and return the ORM instance.
 
@@ -70,6 +72,10 @@ class FactRepository:
                 resolved subject entity.
             object_entity_id: Optional FK to ``graph_entities`` for the
                 resolved object entity.
+            subject_type: Entity type for the subject (``"literal"`` or
+                ``"entity"`` when resolved).
+            object_type: Entity type for the object (``"literal"`` or
+                ``"entity"`` when resolved).
 
         Returns:
             The newly created :class:`Fact` instance with server-generated
@@ -87,6 +93,8 @@ class FactRepository:
             valid_from=valid_from or datetime.now(),
             subject_entity_id=subject_entity_id,
             object_entity_id=object_entity_id,
+            subject_type=subject_type,
+            object_type=object_type,
             embedding=[],
         )
         self._db.add(fact)

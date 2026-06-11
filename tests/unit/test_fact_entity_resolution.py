@@ -55,13 +55,27 @@ class TestMatchEntity:
         assert result is not None
         assert result["name"] == "Rohan"
 
-    def test_candidate_is_substring_of_entity_name_short(self, known_entities: list[dict]) -> None:
-        """Short candidates (< 3 chars) should NOT match to avoid false positives.
-
-        E.g., 'I' should not match 'AI Engineer' or 'theLinkAI'.
-        """
+    def test_first_person_pronoun_resolved(self, known_entities: list[dict]) -> None:
+        """"I" should resolve to first Person entity via first-person pronoun rule."""
         result = _match_entity("I", known_entities)
-        assert result is None, "Should not match single-letter pronouns"
+        assert result is not None
+        assert result["name"] == "Rohan"
+        assert result["entity_type"] == "Person"
+
+    def test_other_first_person_pronouns(self, known_entities: list[dict]) -> None:
+        """"me", "my", "mine", "myself" should all resolve to first Person."""
+        for pronoun in ("me", "my", "mine", "myself"):
+            result = _match_entity(pronoun, known_entities)
+            assert result is not None, f"{pronoun} should resolve"
+            assert result["name"] == "Rohan"
+
+    def test_short_candidate_no_match_when_not_pronoun(self, known_entities: list[dict]) -> None:
+        """Short candidates (< 3 chars) that are NOT pronouns should NOT match.
+
+        E.g., 'AI' should not match 'AI Engineer' (single-letter match is off).
+        """
+        result = _match_entity("AI", known_entities)
+        assert result is None, "Should not match short non-pronoun candidates"
 
     def test_candidate_is_substring_of_entity_name_long(self, known_entities: list[dict]) -> None:
         """Long candidate (3+ chars) that is a substring of entity name."""
@@ -92,8 +106,8 @@ class TestMatchEntity:
 class TestResolveFactEntities:
     """Tests for the batch fact entity resolution function."""
 
-    def test_resolves_pronoun_to_entity(self, known_entities: list[dict]) -> None:
-        """"I" in facts should resolve to "Rohan" if Rohan is known."""
+    def test_resolves_first_person_pronoun(self, known_entities: list[dict]) -> None:
+        """"I" in facts should resolve to first Person entity (Rohan)."""
         facts: list[dict[str, Any]] = [
             {
                 "subject": "I",
@@ -108,7 +122,70 @@ class TestResolveFactEntities:
         ]
         resolved = _resolve_fact_entities(facts, known_entities)
 
-        # "I" is short (< 3 chars) and won't match — verify it stays literal
+        # "I" should now resolve to the first Person entity ("Rohan")
+        assert resolved[0]["subject"] == "Rohan"
+        assert resolved[0]["subject_type"] == "entity"
+        assert resolved[0]["subject_entity_id"] == known_entities[0]["id"]
+
+    def test_resolves_me_pronoun(self, known_entities: list[dict]) -> None:
+        """"me" in facts should also resolve to first Person entity."""
+        facts: list[dict[str, Any]] = [
+            {
+                "subject": "me",
+                "predicate": "lives_in",
+                "object": "Kolkata",
+                "confidence": 0.95,
+                "subject_type": "literal",
+                "object_type": "literal",
+                "subject_entity_id": None,
+                "object_entity_id": None,
+            },
+        ]
+        resolved = _resolve_fact_entities(facts, known_entities)
+        assert resolved[0]["subject"] == "Rohan"
+        assert resolved[0]["subject_type"] == "entity"
+        assert resolved[0]["subject_entity_id"] == known_entities[0]["id"]
+
+    def test_my_pronoun_in_object(self, known_entities: list[dict]) -> None:
+        """"my" used as an object modifier should resolve to first Person."""
+        facts: list[dict[str, Any]] = [
+            {
+                "subject": "Alice",
+                "predicate": "knows",
+                "object": "my",
+                "confidence": 0.9,
+                "subject_type": "literal",
+                "object_type": "literal",
+                "subject_entity_id": None,
+                "object_entity_id": None,
+            },
+        ]
+        resolved = _resolve_fact_entities(facts, known_entities)
+        assert resolved[0]["object"] == "Rohan"
+        assert resolved[0]["object_type"] == "entity"
+        assert resolved[0]["object_entity_id"] == known_entities[0]["id"]
+
+    def test_first_person_no_person_entity(self) -> None:
+        """When no Person entity exists, first-person pronouns fall through to
+        exact/substring matching — and remain literal if no match."""
+        entities_no_person: list[dict] = [
+            {"id": uuid.UUID("11111111-1111-4111-8111-111111111111"), "name": "theLinkAI", "entity_type": "Organization", "summary": None},
+            {"id": uuid.UUID("22222222-2222-4222-8222-222222222222"), "name": "Acme Corp", "entity_type": "Organization", "summary": None},
+        ]
+        facts: list[dict[str, Any]] = [
+            {
+                "subject": "I",
+                "predicate": "works_at",
+                "object": "theLinkAI",
+                "confidence": 0.97,
+                "subject_type": "literal",
+                "object_type": "literal",
+                "subject_entity_id": None,
+                "object_entity_id": None,
+            },
+        ]
+        resolved = _resolve_fact_entities(facts, entities_no_person)
+        # No Person entity → falls through to exact match → no match → literal
         assert resolved[0]["subject"] == "I"
         assert resolved[0]["subject_type"] == "literal"
         assert resolved[0]["subject_entity_id"] is None

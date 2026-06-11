@@ -326,12 +326,16 @@ class PostgresGraphBackend(GraphBackend):
     ) -> dict:
         """Create a directed relationship between two entities.
 
+        Uses ``ON CONFLICT DO NOTHING`` to handle duplicate active
+        relationships (same source, target, type) gracefully — returns
+        the existing active relationship if one is already present.
+
         Temporal semantics:
         - ``valid_from`` defaults to now().
         - ``valid_to`` and ``invalid_at`` are NULL (active until invalidated).
 
         Raises:
-            ExternalServiceError: On FK or unique constraint violations.
+            ExternalServiceError: On FK violations or unexpected DB errors.
         """
         try:
             # Use a savepoint so a failed relationship does NOT roll back
@@ -348,6 +352,9 @@ class PostgresGraphBackend(GraphBackend):
                             (:org_id, :source_id, :target_id,
                              :rel_type, CAST(:properties AS jsonb), :fact, :confidence,
                              COALESCE(:valid_from, now()), :valid_to, now())
+                        ON CONFLICT (source_id, target_id, relationship_type)
+                        WHERE invalid_at IS NULL
+                        DO NOTHING
                         RETURNING id, source_id, target_id, relationship_type,
                                   properties, fact, confidence,
                                   valid_from, valid_to, created_at
@@ -365,7 +372,32 @@ class PostgresGraphBackend(GraphBackend):
                         "valid_to": valid_to.isoformat() if valid_to else None,
                     },
                 )
-                row = result.one()
+                row = result.one_or_none()
+
+                if row is None:
+                    # Relationship already exists — fetch active one
+                    existing = await self._db.execute(
+                        text(
+                            """
+                            SELECT id, source_id, target_id, relationship_type,
+                                   properties, fact, confidence,
+                                   valid_from, valid_to, created_at
+                            FROM graph_relationships
+                            WHERE source_id = :source_id
+                              AND target_id = :target_id
+                              AND relationship_type = :rel_type
+                              AND invalid_at IS NULL
+                            LIMIT 1
+                            """
+                        ),
+                        {
+                            "source_id": str(source_id),
+                            "target_id": str(target_id),
+                            "rel_type": relationship_type,
+                        },
+                    )
+                    row = existing.one()
+
             relationship = self._row_to_relationship(row)
             logger.info(
                 "pg_graph.relationship_created",
@@ -374,15 +406,13 @@ class PostgresGraphBackend(GraphBackend):
                     "source_id": str(source_id),
                     "target_id": str(target_id),
                     "type": relationship_type,
+                    "duplicate": row is not None,  # True when we fetched existing
                 },
             )
             return relationship
         except Exception as exc:
-            # Duplicate relationships (unique constraint) are expected when
-            # multiple episodes extract the same fact. The savepoint ensures
-            # entities from earlier operations are not affected.
-            logger.warning(
-                "pg_graph.create_relationship_duplicate",
+            logger.error(
+                "pg_graph.create_relationship_failed",
                 extra={
                     "org_id": str(org_id),
                     "source_id": str(source_id),
@@ -392,7 +422,7 @@ class PostgresGraphBackend(GraphBackend):
                 },
             )
             raise ExternalServiceError(
-                message=f"Duplicate relationship '{relationship_type}': {exc}",
+                message=f"Failed to create relationship '{relationship_type}': {exc}",
                 detail={
                     "org_id": str(org_id),
                     "source_id": str(source_id),

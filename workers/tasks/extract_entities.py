@@ -178,6 +178,61 @@ async def extract_entities(
         entities: list[dict] = data.get("entities", [])
         relationships: list[dict] = data.get("relationships", [])
 
+        # ── Pronoun filter — skip entities that are pronouns or common    ───
+        #    misspellings.  Pronouns like "I", "me", "my" should never be
+        #    persisted as graph entities — they are resolved to the speaker
+        #    during fact extraction (see _match_entity in extract_facts.py).
+        _PRONOUN_SKIP_NAMES: set[str] = {
+            # First‑person
+            "i", "me", "my", "mine", "myself", "we", "us", "our", "ours",
+            "ourselves",
+            # Second‑person
+            "you", "your", "yours", "yourself", "yourselves",
+            # Third‑person
+            "he", "him", "his", "himself", "she", "her", "hers", "herself",
+            "it", "its", "itself", "they", "them", "their", "theirs",
+            "themselves",
+            # Ambiguous / filler
+            "this", "that", "these", "those", "someone", "somebody",
+            "everyone", "everybody", "nobody", "anyone", "anybody",
+            # Common misspellings (observed: "shhe")
+            "shhe", "hhe", "thei", "theyr", "thereselves",
+            # Questions / catch‑all that leak through extraction
+            "what", "who", "whom", "whose", "which",
+        }
+
+        filtered_entities: list[dict] = []
+        for entity in entities:
+            name = (entity.get("name") or "").strip()
+            if not name:
+                continue
+            if name.lower() in _PRONOUN_SKIP_NAMES:
+                logger.info(
+                    "entity_extraction.pronoun_skipped",
+                    episode_id=episode_id,
+                    name=name,
+                )
+                continue
+            filtered_entities.append(entity)
+        entities = filtered_entities
+
+        # Clean relationships that reference skipped pronouns
+        clean_relationships: list[dict] = []
+        for rel in relationships:
+            subj = (rel.get("subject") or "").strip()
+            obj = (rel.get("object") or "").strip()
+            if subj.lower() in _PRONOUN_SKIP_NAMES or obj.lower() in _PRONOUN_SKIP_NAMES:
+                logger.info(
+                    "entity_extraction.relationship_pronoun_skipped",
+                    episode_id=episode_id,
+                    subject=subj,
+                    predicate=rel.get("predicate"),
+                    object=obj,
+                )
+                continue
+            clean_relationships.append(rel)
+        relationships = clean_relationships
+
         if not entities and not relationships:
             logger.info("entity_extraction.empty", episode_id=episode_id)
 
@@ -288,6 +343,11 @@ async def extract_entities(
             entity_type_map: dict[str, str] = {
                 e["name"]: e.get("type", "Custom") for e in entities
             }
+            # Build name → UUID map from upserted entity nodes
+            name_to_uuid: dict[str, uuid.UUID | None] = {
+                name: uuid.UUID(node["id"]) if node.get("id") else None
+                for name, node in name_to_node.items()
+            }
             engine = init_db_engine(str(settings.DATABASE_URL), pool_size=5, max_overflow=2)
             session_factory = get_async_session(engine)
             try:
@@ -309,12 +369,14 @@ async def extract_entities(
                                     (id, user_id, organization_id, content,
                                      subject, predicate, "object",
                                      subject_type, object_type,
+                                     subject_entity_id, object_entity_id,
                                      confidence, source_episode_id,
                                      valid_from, created_at, updated_at)
                                 VALUES
                                     (gen_random_uuid(), :user_id, :org_id, :content,
                                      :subject, :predicate, :object,
                                      :subject_type, :object_type,
+                                     :subj_entity_id, :obj_entity_id,
                                      1.0, :episode_id,
                                      :valid_from, :valid_from, :valid_from)
                             """),
@@ -325,6 +387,8 @@ async def extract_entities(
                                 "object": obj,
                                 "subject_type": entity_type_map.get(subject, "literal"),
                                 "object_type": entity_type_map.get(obj, "literal"),
+                                "subj_entity_id": name_to_uuid.get(subject),
+                                "obj_entity_id": name_to_uuid.get(obj),
                                 "episode_id": episode_uuid, "valid_from": now,
                             },
                         )

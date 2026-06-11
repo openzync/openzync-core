@@ -7,6 +7,7 @@ from models.dialog_classification import DialogClassification
 from models.episode import Episode
 from models.extraction_schema import ExtractionSchema
 from models.fact import Fact
+from models.graph_entity import GraphEntity
 from models.llm_usage import LLMUsage
 from models.organization import Organization
 from models.refresh_token import RefreshToken
@@ -24,6 +25,7 @@ __all__: list[str] = [
     "Session",
     "Episode",
     "Fact",
+    "GraphEntity",
     "StructuredExtraction",
     "DialogClassification",
     "ExtractionSchema",
