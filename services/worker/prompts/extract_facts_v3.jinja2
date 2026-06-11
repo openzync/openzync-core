@@ -32,6 +32,27 @@ Extract statements that:
   useful but uncertain.
 
 ---
+## ⛔ META-FACTS — NEVER EXTRACT THESE
+
+Some statements describe the **conversation itself** rather than domain facts.
+Never extract these:
+
+| ❌ Skip these completely | Why |
+|--------------------------|-----|
+| "X refers_to Y" / "X stands_for Y" / "X means Y" | Meta-reference about how language is used, not a domain fact |
+| "X is_known_as Y" / "X aka Y" / "X is_abbreviation_for Y" | Usually assistant meta-explanation, not user-provided knowledge |
+| "X describes Y" / "X talks_about Y" / "X is_about Y" | Conversation-about-conversation |
+| "X refers_to X" (self-referential) | Uninformative — subject and object are the same entity |
+| "X name X" / "X called X" / "X named X" | Trivial identity statement — adds no actionable information |
+| Any fact where the **source is the assistant** and the fact simply echoes what the user already said | The assistant's message is repeating user-provided info, not adding new facts |
+
+**Assistant echo anti-pattern:** If the current message is from the assistant
+and it is summarising or re-stating information the user previously provided,
+do NOT re-extract that information as new facts.  Check the Existing Facts
+table — if a fact is already captured, skip it even if the assistant's wording
+is slightly different.
+
+---
 ## KNOWN ENTITIES
 
 {% if known_entities is defined and known_entities %}
@@ -138,6 +159,13 @@ Return a JSON array of fact triples:
    "company" as an Organization when TheLinkAI is already a known Organization.
    If multiple entities of the same type exist, leave the generic noun as-is
    but assign a confidence ≤ 0.5.
+9. **Never extract meta-facts.**  Do not output facts whose predicate describes
+   the conversation itself (refers_to, stands_for, means, describes, explains,
+   is_about, talks_about, is_known_as, aka, is_abbreviation_for, etc.).
+10. **Never extract self-referential facts.**  If subject == object and the
+    predicate is an identity verb (refers_to, is, are, identifies_as), skip it.
+11. **Never extract uninformative facts.**  Facts whose predicate is just "name",
+    "called", or "named" (e.g. "Rohan name Rohan") add no value — skip them.
 
 ---
 ## FEW-SHOT EXAMPLES
@@ -232,6 +260,33 @@ Nikita is my colleague at the company.
   `TheLinkAI` (the only Organization in known entities).
 - No generic "company" or "colleague" entities leak into the output.
 - The existing fact `Rohan Shaw works_at TheLinkAI` is not re-extracted.
+
+### Example 4 — Assistant Echo (No New Facts)
+
+**Existing facts (already extracted):**
+| Subject | Predicate | Object | Confidence |
+|---------|-----------|--------|------------|
+| nikita | coworker_of | Rohan Shaw | 0.95 |
+| nikita | works_at | TheLinkAI | 0.95 |
+| nikita | is_a | python developer | 0.9 |
+
+**New message (assistant echoing the user):**
+```
+Assistant: Sounds like Nikita is a top-notch Python backend developer at TheLinkAI
+and your coworker — quite the skilled teammate!
+```
+
+**Expected output:**
+```json
+[]
+```
+
+**Why this is correct:** The assistant's message is re-stating facts already
+captured ("Nikita is a Python developer", "Nikita works at TheLinkAI",
+"Nikita is Rohan's coworker").  These already exist in the table above, so
+they are NOT re-extracted.  The fact that the message is from the assistant
+(rather than the user providing new information) is a strong signal that no
+new facts should be extracted.
 
 ---
 

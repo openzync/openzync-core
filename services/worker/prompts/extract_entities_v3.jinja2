@@ -143,6 +143,10 @@ Return a JSON object with two arrays — `entities` and `relationships`:
     generic nouns, not named entities.  If the conversation uses one of these
     as a definite description, resolve it via the Coreference Resolution rules
     above — do not create a new entity for it.
+11. **Use the canonical casing from Known Entities.**  When a known entity name
+    is "nikita" (lowercase) and the current message mentions "Nikita"
+    (capitalized), use the casing from Known Entities ("nikita") in your
+    relationship output — preserve the canonical form, not the surface form.
 
 ---
 ## FEW-SHOT EXAMPLES

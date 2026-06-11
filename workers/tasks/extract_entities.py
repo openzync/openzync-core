@@ -324,21 +324,42 @@ async def extract_entities(
                     entity_name = entity.get("name", "")
                     entity_type = entity.get("type", "Custom")
                     mentions: list[str] = entity.get("mentions", [])
+
+                    # ── Normalize entity name casing ─────────────────────────
+                    # Use the first mention's casing if available (it preserves
+                    # the user's original casing), otherwise capitalize the
+                    # first letter of a lowercase name.
+                    normalized_name = entity_name
+                    if mentions:
+                        first_mention = mentions[0].strip()
+                        # Only override if the mention looks like a user-typed
+                        # name (not a generic noun) — trust the LLM's name field
+                        # for the canonical form but prefer title-case mentions.
+                        if first_mention and len(first_mention) > 1:
+                            normalized_name = first_mention
+                    elif entity_name and entity_name.islower():
+                        normalized_name = entity_name.capitalize()
+
                     summary = (
-                        f"{entity_name} ({entity_type}) — "
+                        f"{normalized_name} ({entity_type}) — "
                         f"mentioned as: {', '.join(set(mentions))}"
                         if mentions
-                        else f"{entity_name} ({entity_type})"
+                        else f"{normalized_name} ({entity_type})"
                     )
 
                     node = await entity_repo.upsert_entity(
                         org_id=uuid.UUID(org_id),
-                        name=entity_name,
+                        name=normalized_name,
                         entity_type=entity_type,
                         summary=summary,
                     )
                     if node is not None:
-                        name_to_node[entity_name] = node
+                        # Key by normalized name so relationship lookups work
+                        name_to_node[normalized_name] = node
+                        # Also key by original name as fallback for callers
+                        # that might use the raw LLM output
+                        if normalized_name != entity_name:
+                            name_to_node[entity_name] = node
 
                 # ── 7. Persist relationships to graph ─────────────────────────
                 for rel in relationships:

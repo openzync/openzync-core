@@ -54,6 +54,27 @@ _IGNORE_SUBJECT_PREFIXES: tuple[str, ...] = (
 )
 _CONFIDENCE_THRESHOLD: float = 0.3
 
+# ── Meta-fact / uninformative fact filters ──────────────────────────────────
+# These predicates describe the conversation itself rather than the user's
+# domain knowledge.  Facts with these predicates add no value and should be
+# filtered out.
+_META_PREDICATES: frozenset[str] = frozenset({
+    "refers_to", "stands_for", "means", "describes", "explains",
+    "is_about", "talks_about", "mentions", "refers", "implies",
+    "indicates", "signifies", "represents", "corresponds_to",
+    "is_short_for", "is_abbreviation_for", "is_known_as",
+    "also_known_as", "aka",
+})
+# Self-referential patterns: subject == object with certain predicates
+# indicates a fact the LLM extracted about itself rather than domain knowledge.
+_SELF_REFERENTIAL_PREDICATES: frozenset[str] = frozenset({
+    "refers_to", "is", "are", "identifies_as",
+})
+# Uninformative predicates that convey no actionable information
+_UNINFORMATIVE_PREDICATES: frozenset[str] = frozenset({
+    "name", "called", "named", "has_name",
+})
+
 # ── Session context constants ─────────────────────────────────────────────────
 _RECENT_EPISODE_WINDOW: int = 10
 """Number of previous conversation turns to include as context."""
@@ -244,23 +265,61 @@ async def extract_facts(
                     resolved_facts = _resolve_fact_entities(
                         valid_facts, known_entities
                     )
-                    repo = FactRepository(db)
-                    for fact in resolved_facts:
-                        await repo.create(
-                            user_id=uuid.UUID(user_id),
-                            organization_id=uuid.UUID(org_id),
-                            content=f"{fact['subject']} {fact['predicate']} {fact['object']}",
-                            subject=fact["subject"],
-                            predicate=fact["predicate"],
-                            obj=fact["object"],
-                            subject_type=fact.get("subject_type", "literal"),
-                            object_type=fact.get("object_type", "literal"),
-                            confidence=fact["confidence"],
-                            source_episode_id=uuid.UUID(episode_id),
-                            valid_from=datetime.now(timezone.utc),
-                            subject_entity_id=fact.get("subject_entity_id"),
-                            object_entity_id=fact.get("object_entity_id"),
-                        )
+
+                    # ── Deduplicate against existing facts ──────────────────
+                    # Filters out facts that already exist in the session
+                    # (same normalized triple) to prevent re-extraction from
+                    # assistant echo messages or overlapping extractions.
+                    resolved_facts = _deduplicate_facts(
+                        resolved_facts, existing_facts,
+                    )
+
+                    if resolved_facts:
+                        repo = FactRepository(db)
+                        # Also init entity repo for graph relationship upserts
+                        from repositories.entity_repository import EntityRepository as _EntityRepo
+                        entity_repo = _EntityRepo(db=db)
+
+                        for fact in resolved_facts:
+                            await repo.create(
+                                user_id=uuid.UUID(user_id),
+                                organization_id=uuid.UUID(org_id),
+                                content=f"{fact['subject']} {fact['predicate']} {fact['object']}",
+                                subject=fact["subject"],
+                                predicate=fact["predicate"],
+                                obj=fact["object"],
+                                subject_type=fact.get("subject_type", "literal"),
+                                object_type=fact.get("object_type", "literal"),
+                                confidence=fact["confidence"],
+                                source_episode_id=uuid.UUID(episode_id),
+                                valid_from=datetime.now(timezone.utc),
+                                subject_entity_id=fact.get("subject_entity_id"),
+                                object_entity_id=fact.get("object_entity_id"),
+                            )
+
+                            # ── Also persist to graph_relationships ──────────
+                            # When both entity IDs are resolved, materialize
+                            # the relationship in the graph for traversal queries.
+                            subj_id = fact.get("subject_entity_id")
+                            obj_id = fact.get("object_entity_id")
+                            if subj_id is not None and obj_id is not None:
+                                try:
+                                    await entity_repo.upsert_relationship(
+                                        subject=fact["subject"],
+                                        predicate=fact["predicate"],
+                                        obj=fact["object"],
+                                        org_id=uuid.UUID(org_id),
+                                    )
+                                except Exception:
+                                    # Non-fatal: fact is already persisted,
+                                    # graph relationship is secondary
+                                    logger.warning(
+                                        "fact_extraction.graph_rel_failed",
+                                        episode_id=episode_id,
+                                        subject=fact["subject"],
+                                        predicate=fact["predicate"],
+                                        object=fact["object"],
+                                    )
                     persisted = len(resolved_facts)
 
             # Set enrichment bit after fact persistence, inside the same
@@ -405,6 +464,12 @@ def _filter_facts(facts: list[dict]) -> list[dict]:
     - Triples with empty subject, predicate, or object.
     - Bare copular predicates (is, are, was, …).
     - Predicates or subjects that suggest instruction-following content.
+    - **Meta-conversation facts**: predicates that describe the conversation
+      itself rather than domain knowledge (refers_to, stands_for, means, …).
+    - **Self-referential facts**: subject == object with identity predicates
+      (e.g. ``"nikita refers_to nikita"``).
+    - **Uninformative predicates**: trivial facts that add no value
+      (e.g. ``"Rohan name Rohan"``).
 
     Args:
         facts: Raw fact triples from the LLM.
@@ -439,6 +504,35 @@ def _filter_facts(facts: list[dict]) -> list[dict]:
         if predicate.lower().startswith(_IGNORE_PREDICATE_PREFIXES):
             continue
         if subject.lower().startswith(_IGNORE_SUBJECT_PREFIXES):
+            continue
+
+        # ── Meta-fact filter — skip conversation-about-conversation ──────────
+        pred_lower = predicate.lower()
+        subj_lower = subject.lower()
+        obj_lower = obj.lower()
+
+        # Meta-predicates describe the conversation itself
+        if pred_lower in _META_PREDICATES:
+            logger.debug(
+                "fact_filter.meta_predicate_skipped",
+                subject=subject, predicate=predicate, object=obj,
+            )
+            continue
+
+        # Self-referential: subject == object with identity predicate
+        if subj_lower == obj_lower and pred_lower in _SELF_REFERENTIAL_PREDICATES:
+            logger.debug(
+                "fact_filter.self_referential_skipped",
+                subject=subject, predicate=predicate, object=obj,
+            )
+            continue
+
+        # Uninformative: trivial name declarations
+        if pred_lower in _UNINFORMATIVE_PREDICATES:
+            logger.debug(
+                "fact_filter.uninformative_skipped",
+                subject=subject, predicate=predicate, object=obj,
+            )
             continue
 
         valid.append(
@@ -527,6 +621,10 @@ def _match_entity(
     4. The candidate is a substring of the known entity name (e.g.
        "OpenAI" matches "OpenAI") — only if the candidate is 3+
        characters to avoid false positives with short words.
+    5. **Aggressive normalization fallback**: both strings are lowercased,
+       stripped, punctuation removed, and whitespace collapsed before
+       comparison.  Catches residual case/whitespace/punctuation mismatches
+       like ``"Nikita"`` ↔ ``"nikita"`` or ``"theLinkAI"`` ↔ ``"the link ai"``.
 
     Only the first match is returned.  Entities are ordered
     alphabetically by name for deterministic matching.
@@ -566,4 +664,105 @@ def _match_entity(
         if len(name_lower) >= 3 and name_lower in ent_name_lower:
             return ent
 
+    # Step 5: Aggressive normalization — strip punctuation, collapse whitespace.
+    # Catches cases where the candidate and entity differ only in casing,
+    # punctuation, or spacing (e.g. "Nikita" vs "nikita", "FIEM College" vs
+    # "fiem college").
+    import re as _re
+
+    def normalize(s: str) -> str:
+        return _re.sub(r"[^a-z0-9\s]", "", s.lower()).strip()
+
+    name_normalized = normalize(name_lower)
+    if len(name_normalized) >= 2:  # skip very short after normalization
+        for ent in known_entities:
+            ent_normalized = normalize(ent["name"])
+            if name_normalized == ent_normalized:
+                return ent
+
     return None
+
+
+# ── Predicate synonym map for forgiving dedup ────────────────────────────────
+# Maps predicates that are semantically equivalent — used by ``_deduplicate_facts``
+# to catch duplicates that differ only in predicate naming.
+_PREDICATE_SYNONYMS: dict[str, set[str]] = {
+    "works_at": {"employed_at", "works_for", "employed_by", "joins"},
+    "friend_of": {"friends_with", "shares_friend_with", "has_friend"},
+    "colleague_of": {"coworker_of", "works_with", "teammate_of"},
+    "studied_at": {"attended", "went_to", "graduated_from"},
+    "likes": {"loves", "enjoys", "prefers"},
+    "has_number_of_friends": {"has_friend_count", "friend_count", "num_friends"},
+    "tech_lead_of": {"leads", "tech_lead_for", "leads_tech_for"},
+    "graduated_from": {"completed", "finished", "graduated"},
+}
+
+
+def _deduplicate_facts(
+    new_facts: list[dict],
+    existing_facts: list[dict],
+) -> list[dict]:
+    """Deduplicate new facts against existing facts from the session.
+
+    Two facts are considered duplicates if they have the same (subject, object)
+    pair and either:
+    - The same predicate (exact, case-insensitive), OR
+    - The predicates are synonyms (per ``_PREDICATE_SYNONYMS``).
+
+    This handles both exact duplicates (same triple, different episode) and
+    near-duplicates (different predicate wording for the same meaning).
+
+    Args:
+        new_facts: Facts from the current extraction (after filtering + resolution).
+        existing_facts: Facts already persisted for this session.
+
+    Returns:
+        Filtered list with duplicates removed.
+    """
+    if not existing_facts:
+        return new_facts
+
+    # Build a set of normalized (subject, object) pairs from existing facts,
+    # along with the predicates used for each pair.
+    existing_pairs: dict[tuple[str, str], set[str]] = {}
+    for ef in existing_facts:
+        key = (ef["subject"].lower().strip(), ef["object"].lower().strip())
+        pred = ef["predicate"].lower().strip()
+        if key not in existing_pairs:
+            existing_pairs[key] = set()
+        existing_pairs[key].add(pred)
+        # Add synonym predicates so we can match against them
+        if pred in _PREDICATE_SYNONYMS:
+            existing_pairs[key].update(_PREDICATE_SYNONYMS[pred])
+        # Also check if any other predicate maps TO this one
+        for canonical, synonyms in _PREDICATE_SYNONYMS.items():
+            if pred in synonyms:
+                existing_pairs[key].add(canonical)
+
+    deduped: list[dict] = []
+    for nf in new_facts:
+        key = (nf["subject"].lower().strip(), nf["object"].lower().strip())
+        pred = nf["predicate"].lower().strip()
+
+        # Expand to synonym set for matching
+        candidate_preds: set[str] = {pred}
+        if pred in _PREDICATE_SYNONYMS:
+            candidate_preds.update(_PREDICATE_SYNONYMS[pred])
+        for canonical, synonyms in _PREDICATE_SYNONYMS.items():
+            if pred in synonyms:
+                candidate_preds.add(canonical)
+
+        if key in existing_pairs:
+            # Check if any candidate predicate overlaps with existing
+            if candidate_preds & existing_pairs[key]:
+                logger.debug(
+                    "fact_dedup.duplicate_skipped",
+                    subject=nf["subject"],
+                    predicate=nf["predicate"],
+                    object=nf["object"],
+                )
+                continue
+
+        deduped.append(nf)
+
+    return deduped
