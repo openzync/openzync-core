@@ -33,6 +33,7 @@ from typing import Any, NoReturn
 import structlog
 from aiohttp import web
 from arq.connections import ArqRedis, RedisSettings
+from arq.cron import CronJob, cron
 from arq.worker import Worker as ArqWorker
 from prometheus_client import Counter, Gauge, Histogram
 from prometheus_client import start_http_server as start_prometheus_server
@@ -58,9 +59,7 @@ def setup_logging() -> None:
       via :func:`structlog.contextvars.bind_contextvars`.
     """
     # Set root logger level so structlog's filter_by_level has something to read
-    logging.getLogger().setLevel(
-        logging.getLevelName(settings.LOG_LEVEL)
-    )
+    logging.getLogger().setLevel(logging.getLevelName(settings.LOG_LEVEL))
 
     shared_processors: list[structlog.types.Processor] = [
         structlog.stdlib.filter_by_level,
@@ -98,14 +97,14 @@ logger: structlog.stdlib.BoundLogger = structlog.get_logger("OpenZep.worker")
 # ═════════════════════════════════════════════════════════════════════════════
 
 from workers.tasks.classify_dialog import classify_dialog
-from workers.tasks.extract_entities import extract_entities
 from workers.tasks.embed_episode import embed_episode
+from workers.tasks.embed_fact import embed_fact
+from workers.tasks.extract_entities import extract_entities
 from workers.tasks.extract_facts import extract_facts
 from workers.tasks.extract_structured import extract_structured
-from workers.tasks.sync_to_graph import sync_to_graph
-from workers.tasks.embed_fact import embed_fact
-from workers.tasks.summarise_community import summarise_community
 from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
+from workers.tasks.summarise_community import summarise_community
+from workers.tasks.sync_to_graph import sync_to_graph
 
 HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     classify_dialog,
@@ -238,6 +237,7 @@ def create_arq_worker(
     redis_settings: RedisSettings,
     concurrency: int,
     timeout: int,
+    cron_jobs: list[CronJob] | None = None,
 ) -> ArqWorker:
     """Create a configured ARQ Worker instance for the given queue.
 
@@ -248,6 +248,8 @@ def create_arq_worker(
         redis_settings: ARQ :class:`RedisSettings` instance.
         concurrency: Number of concurrent tasks this worker processes.
         timeout: Default job timeout in seconds.
+        cron_jobs: Optional list of :class:`CronJob` instances for scheduled
+            tasks (e.g. nightly community detection).
 
     Returns:
         Configured :class:`ArqWorker` instance (not yet started).
@@ -263,6 +265,7 @@ def create_arq_worker(
         poll_delay=settings.POLL_DELAY,
         on_job_end=on_job_end,
         on_shutdown=on_shutdown,
+        cron_jobs=cron_jobs or [],
     )
 
 
@@ -304,7 +307,6 @@ async def on_job_end(ctx: dict[str, Any]) -> None:
         task_type=task_type,
         status="success",
     ).inc()
-
 
 
 async def on_shutdown(_ctx: dict[str, Any]) -> None:
@@ -418,12 +420,40 @@ async def main() -> NoReturn:
         timeout=settings.JOB_TIMEOUT_DEFAULT,
     )
 
+    # ── Community detection scheduling ─────────────────────────────
+    # Two modes controlled by AUTO_RUN_COMMUNITY_DETECTION:
+    #   true  → event-driven (chained after sync_to_graph, with dedup)
+    #   false → nightly cron at 02:00 UTC (default)
+    community_cron_jobs: list[CronJob] = []
+    if not settings.AUTO_RUN_COMMUNITY_DETECTION:
+        community_cron_jobs = [
+            cron(
+                summarise_community,
+                hour=2,
+                minute=0,
+                unique=True,
+                job_id="nightly_community_detection",
+            ),
+        ]
+        logger.info(
+            "worker.cron.community_detection_scheduled",
+            schedule="daily at 02:00 UTC",
+            mode="nightly",
+            queue=settings.low_queue_full,
+        )
+    else:
+        logger.info(
+            "worker.cron.community_detection_enabled",
+            mode="event-driven (after sync_to_graph)",
+        )
+
     low_worker = create_arq_worker(
         queue_name=settings.LOW_QUEUE_NAME,
         functions=LOW_QUEUE_TASKS,
         redis_settings=redis_settings,
         concurrency=max(1, settings.MAX_WORKERS // 4),
         timeout=settings.JOB_TIMEOUT_DEFAULT * 2,
+        cron_jobs=community_cron_jobs,
     )
 
     logger.info(

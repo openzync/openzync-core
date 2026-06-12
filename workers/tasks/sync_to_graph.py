@@ -150,6 +150,34 @@ async def sync_to_graph(
             )
             await db.commit()
 
+            # ── 4. Optionally trigger community detection (event-driven mode) ──
+            from services.worker.worker_settings import settings as worker_settings
+            if worker_settings.AUTO_RUN_COMMUNITY_DETECTION:
+                try:
+                    # ctx is the ARQ worker context dict with a 'redis' key
+                    arq_redis: object | None = None
+                    if isinstance(ctx, dict):
+                        arq_redis = ctx.get("redis")
+                    if arq_redis is not None:
+                        dedup_key = f"community:recently_enqueued:{org_id}"
+                        if not await arq_redis.get(dedup_key):
+                            await arq_redis.enqueue_job(
+                                "summarise_community",
+                                org_id=org_id,
+                                _queue_name=worker_settings.low_queue_full,
+                            )
+                            # Prevent re-enqueueing within 1 hour per org
+                            await arq_redis.set(dedup_key, "1", ex=3600)
+                            logger.info(
+                                "sync_to_graph.scheduled_community_detection",
+                                org_id=org_id,
+                            )
+                except Exception as exc:
+                    logger.warning(
+                        "sync_to_graph.community_enqueue_failed",
+                        extra={"org_id": org_id, "error": str(exc)},
+                    )
+
             logger.info(
                 "sync_to_graph.completed",
                 episode_id=episode_id,

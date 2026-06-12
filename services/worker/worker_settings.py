@@ -167,6 +167,16 @@ class WorkerSettings(BaseSettings):
         ),
     )
 
+    # ── Community Detection ──────────────────────────────────────────────────
+    AUTO_RUN_COMMUNITY_DETECTION: bool = Field(
+        default=False,
+        description=(
+            "If True: enqueues summarise_community after each sync_to_graph "
+            "completion (with per-org Redis dedup \u2013 max once per hour per org). "
+            "If False (default): nightly cron at 02:00 UTC."
+        ),
+    )
+
     # ── Derived properties ───────────────────────────────────────────────────
 
     @property
