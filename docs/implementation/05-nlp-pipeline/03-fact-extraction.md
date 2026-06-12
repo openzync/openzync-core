@@ -618,10 +618,10 @@ except Exception as e:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `memgraph_facts_extracted_total` | Counter | `org_id` | Total facts persisted |
-| `memgraph_facts_rejected_total` | Counter | `org_id, reason` | Facts rejected (low confidence, invalid, duplicate) |
-| `memgraph_fact_extraction_duration_seconds` | Histogram | `org_id` | Worker wall-clock time |
-| `memgraph_llm_tokens_total` | Counter | `org_id, task=fact_extraction` | LLM token consumption |
+| `openzep_facts_extracted_total` | Counter | `org_id` | Total facts persisted |
+| `openzep_facts_rejected_total` | Counter | `org_id, reason` | Facts rejected (low confidence, invalid, duplicate) |
+| `openzep_fact_extraction_duration_seconds` | Histogram | `org_id` | Worker wall-clock time |
+| `openzep_llm_tokens_total` | Counter | `org_id, task=fact_extraction` | LLM token consumption |
 
 ### 8.2 Structured Logging
 

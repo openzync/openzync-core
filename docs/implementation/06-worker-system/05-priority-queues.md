@@ -340,7 +340,7 @@ async def monitor_starvation(high_worker, low_worker, redis: ArqRedis) -> None:
 # Defined in 01-arq-setup.md / services/worker/worker.py
 
 worker_queue_depth = Gauge(
-    "memgraph_worker_queue_depth",
+    "openzep_worker_queue_depth",
     "Current number of pending jobs per queue",
     labelnames=["queue_name"],
 )
@@ -371,7 +371,7 @@ async def monitor_queue_depth(redis: ArqRedis, interval: int = 15) -> None:
 # prometheus/alerts.yml
 
 - alert: MemGraphHighQueueDepth
-  expr: memgraph_worker_queue_depth{queue_name="high"} > 1000
+  expr: openzep_worker_queue_depth{queue_name="high"} > 1000
   for: 5m
   labels:
     severity: warning
@@ -379,7 +379,7 @@ async def monitor_queue_depth(redis: ArqRedis, interval: int = 15) -> None:
     summary: "High priority queue depth is {{ $value }} — ingestion may be backing up"
 
 - alert: MemGraphLowQueueDepth
-  expr: memgraph_worker_queue_depth{queue_name="low"} > 1000
+  expr: openzep_worker_queue_depth{queue_name="low"} > 1000
   for: 15m
   labels:
     severity: info
@@ -387,7 +387,7 @@ async def monitor_queue_depth(redis: ArqRedis, interval: int = 15) -> None:
     summary: "Low priority queue depth is {{ $value }} — batch processing may be behind"
 
 - alert: MemGraphQueueStarvation
-  expr: memgraph_worker_queue_depth{queue_name="low"} > 500 AND memgraph_worker_queue_depth{queue_name="high"} < 50
+  expr: openzep_worker_queue_depth{queue_name="low"} > 500 AND openzep_worker_queue_depth{queue_name="high"} < 50
   for: 30m
   labels:
     severity: warning

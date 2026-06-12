@@ -168,7 +168,7 @@ Response:
 ```promql
 // Requests per second by endpoint group
 sum by (endpoint_group) (
-  rate(memgraph_http_requests_total[5m])
+  rate(openzep_http_requests_total[5m])
 )
 ```
 
@@ -264,12 +264,12 @@ export function ApiRpsChart({ data }: { data: RpsDataPoint[] }) {
 ```promql
 // 5xx rate
 sum by (endpoint) (
-  rate(memgraph_http_requests_total{status_group="5xx"}[5m])
+  rate(openzep_http_requests_total{status_group="5xx"}[5m])
 )
 
 // 4xx rate
 sum by (endpoint) (
-  rate(memgraph_http_requests_total{status_group="4xx"}[5m])
+  rate(openzep_http_requests_total{status_group="4xx"}[5m])
 )
 ```
 
@@ -316,9 +316,9 @@ export function ErrorRateChart({ data }: { data: any[] }) {
 **PromQL:**
 ```promql
 // Latency percentiles for GET /context
-histogram_quantile(0.50, sum by (le) (rate(memgraph_context_assembly_duration_seconds_bucket[5m])))
-histogram_quantile(0.95, sum by (le) (rate(memgraph_context_assembly_duration_seconds_bucket[5m])))
-histogram_quantile(0.99, sum by (le) (rate(memgraph_context_assembly_duration_seconds_bucket[5m])))
+histogram_quantile(0.50, sum by (le) (rate(openzep_context_assembly_duration_seconds_bucket[5m])))
+histogram_quantile(0.95, sum by (le) (rate(openzep_context_assembly_duration_seconds_bucket[5m])))
+histogram_quantile(0.99, sum by (le) (rate(openzep_context_assembly_duration_seconds_bucket[5m])))
 ```
 
 **Panel:**
@@ -375,11 +375,11 @@ export function LatencyChart({ data }: { data: any[] }) {
 ```promql
 // Daily active users (count of distinct user_ids seen in last 24h)
 sum by (org_id) (
-  count_over_time(memgraph_http_requests_total{endpoint="POST /memory"}[24h])
+  count_over_time(openzep_http_requests_total{endpoint="POST /memory"}[24h])
 )
 
 // Or via a gauge metric updated by a cron job
-memgraph_active_users{daily="true", weekly="true", monthly="true"}
+openzep_active_users{daily="true", weekly="true", monthly="true"}
 ```
 
 **Panel:**
@@ -415,7 +415,7 @@ export function ActiveUsersChart({ stats }: { stats: { daily: number; weekly: nu
 **PromQL:**
 ```promql
 // Graph nodes by org over time
-memgraph_graph_nodes_total
+openzep_graph_nodes_total
 ```
 
 **Panel:**
@@ -455,12 +455,12 @@ export function GraphGrowthChart({ data }: { data: any[] }) {
 ```promql
 // Tokens consumed by model (cumulative)
 sum by (model) (
-  rate(memgraph_llm_tokens_total[5m])
+  rate(openzep_llm_tokens_total[5m])
 )
 
 // Tokens consumed by org
 sum by (org_id) (
-  rate(memgraph_llm_tokens_total[5m])
+  rate(openzep_llm_tokens_total[5m])
 )
 ```
 
@@ -519,8 +519,8 @@ export function TokenUsageChart({ data }: { data: any[] }) {
 **PromQL:**
 ```promql
 // Queue depth by priority
-memgraph_worker_queue_depth{queue="high"}
-memgraph_worker_queue_depth{queue="low"}
+openzep_worker_queue_depth{queue="high"}
+openzep_worker_queue_depth{queue="low"}
 ```
 
 **Panel:**
@@ -798,13 +798,13 @@ export function GrafanaEmbeddedPanels({ timeRange }: { timeRange: string }) {
 
   // Dashboard UIDs and panel IDs (set these when creating Grafana dashboards)
   const panels = [
-    { dashboardUid: "memgraph_api", panelId: 1, title: "API Request Rate" },
-    { dashboardUid: "memgraph_api", panelId: 2, title: "Error Rate" },
-    { dashboardUid: "memgraph_api", panelId: 3, title: "Context Latency" },
-    { dashboardUid: "memgraph_usage", panelId: 1, title: "Active Users" },
-    { dashboardUid: "memgraph_usage", panelId: 2, title: "Graph Nodes Growth" },
-    { dashboardUid: "memgraph_usage", panelId: 3, title: "Token Usage" },
-    { dashboardUid: "memgraph_worker", panelId: 1, title: "Worker Queue Depth" },
+    { dashboardUid: "openzep_api", panelId: 1, title: "API Request Rate" },
+    { dashboardUid: "openzep_api", panelId: 2, title: "Error Rate" },
+    { dashboardUid: "openzep_api", panelId: 3, title: "Context Latency" },
+    { dashboardUid: "openzep_usage", panelId: 1, title: "Active Users" },
+    { dashboardUid: "openzep_usage", panelId: 2, title: "Graph Nodes Growth" },
+    { dashboardUid: "openzep_usage", panelId: 3, title: "Token Usage" },
+    { dashboardUid: "openzep_worker", panelId: 1, title: "Worker Queue Depth" },
   ];
 
   return (
@@ -848,9 +848,9 @@ Create these dashboards in Grafana (see `12-observability/04-grafana-dashboards.
 
 | Dashboard | UID | Panels |
 |-----------|-----|--------|
-| OpenZep API | `memgraph_api` | RPS, Error rate, Latency |
-| OpenZep Usage | `memgraph_usage` | Active users, Graph growth, Token usage |
-| OpenZep Worker | `memgraph_worker` | Queue depth, Task throughput |
+| OpenZep API | `openzep_api` | RPS, Error rate, Latency |
+| OpenZep Usage | `openzep_usage` | Active users, Graph growth, Token usage |
+| OpenZep Worker | `openzep_worker` | Queue depth, Task throughput |
 
 ---
 

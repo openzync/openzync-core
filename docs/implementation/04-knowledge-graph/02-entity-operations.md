@@ -1018,7 +1018,7 @@ class TestGraphAPIIntegration:
 
 | ID | Question | Impact | Decision / Status |
 |----|----------|--------|-------------------|
-| ENT-01 | Graphiti's `get_by_group_ids()` may not scale efficiently beyond 10k nodes per group | Pagination may become slow | Add a composite index on `(group_id, created_at, uuid)` in the graph DB. Monitor `memgraph_graph_nodes_total` metric |
+| ENT-01 | Graphiti's `get_by_group_ids()` may not scale efficiently beyond 10k nodes per group | Pagination may become slow | Add a composite index on `(group_id, created_at, uuid)` in the graph DB. Monitor `openzep_graph_nodes_total` metric |
 | ENT-02 | Entity resolution by exact name match may miss case variations | Duplicate entities possible | Normalise entity names to lowercase during resolution. Add a follow-up task for fuzzy matching via Graphiti's node_search |
 | ENT-03 | Facts in PostgreSQL are not automatically deleted when an entity node is deleted | Orphaned facts | Implement a worker task that polls for orphaned facts. Or use the event bus to trigger fact cleanup |
 

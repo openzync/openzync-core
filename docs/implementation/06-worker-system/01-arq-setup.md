@@ -314,27 +314,27 @@ from prometheus_client import Counter, Gauge, Histogram
 
 # Task-level metrics
 worker_tasks_total = Counter(
-    "memgraph_worker_tasks_total",
+    "openzep_worker_tasks_total",
     "Tasks completed by type and status",
     labelnames=["task_type", "status"],  # status: success / failure / timeout
 )
 
 worker_task_duration_seconds = Histogram(
-    "memgraph_worker_task_duration_seconds",
+    "openzep_worker_task_duration_seconds",
     "Task execution duration",
     labelnames=["task_type"],
     buckets=(1, 2.5, 5, 10, 15, 30, 60, 120, 300, 600),
 )
 
 worker_queue_depth = Gauge(
-    "memgraph_worker_queue_depth",
+    "openzep_worker_queue_depth",
     "Current queue depth by queue name",
     labelnames=["queue_name"],
 )
 
 # Per-org task counters (for cost allocation)
 worker_tasks_per_org = Counter(
-    "memgraph_worker_tasks_per_org_total",
+    "openzep_worker_tasks_per_org_total",
     "Tasks by org, type, and status for cost tracking",
     labelnames=["org_id", "task_type", "status"],
 )
@@ -734,10 +734,10 @@ The worker runs a separate HTTP server on port 9090 (configurable via `PROMETHEU
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `memgraph_worker_tasks_total` | Counter | `task_type`, `status` | Tasks completed by type and status |
-| `memgraph_worker_task_duration_seconds` | Histogram | `task_type` | Task execution duration distribution |
-| `memgraph_worker_queue_depth` | Gauge | `queue_name` | Current number of pending jobs per queue |
-| `memgraph_worker_tasks_per_org_total` | Counter | `org_id`, `task_type`, `status` | Per-org task accounting for cost allocation |
+| `openzep_worker_tasks_total` | Counter | `task_type`, `status` | Tasks completed by type and status |
+| `openzep_worker_task_duration_seconds` | Histogram | `task_type` | Task execution duration distribution |
+| `openzep_worker_queue_depth` | Gauge | `queue_name` | Current number of pending jobs per queue |
+| `openzep_worker_tasks_per_org_total` | Counter | `org_id`, `task_type`, `status` | Per-org task accounting for cost allocation |
 
 ### 7.3 Queue Depth Monitoring
 
@@ -750,7 +750,7 @@ from arq.connections import ArqRedis
 from prometheus_client import Gauge
 
 worker_queue_depth = Gauge(
-    "memgraph_worker_queue_depth",
+    "openzep_worker_queue_depth",
     "Current queue depth by queue name",
     labelnames=["queue_name"],
 )

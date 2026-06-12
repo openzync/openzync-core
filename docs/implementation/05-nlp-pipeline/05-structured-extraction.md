@@ -873,10 +873,10 @@ Authorization: Bearer mg_live_...
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `memgraph_structured_extractions_total` | Counter | `org_id, schema_name` | Total extractions by schema |
-| `memgraph_structured_extraction_failures_total` | Counter | `org_id, schema_name, reason` | Failed extractions |
-| `memgraph_structured_extraction_duration_seconds` | Histogram | `org_id` | Worker wall-clock time |
-| `memgraph_llm_tokens_total` | Counter | `org_id, task=structured_extraction` | Token consumption |
+| `openzep_structured_extractions_total` | Counter | `org_id, schema_name` | Total extractions by schema |
+| `openzep_structured_extraction_failures_total` | Counter | `org_id, schema_name, reason` | Failed extractions |
+| `openzep_structured_extraction_duration_seconds` | Histogram | `org_id` | Worker wall-clock time |
+| `openzep_llm_tokens_total` | Counter | `org_id, task=structured_extraction` | Token consumption |
 
 ---
 

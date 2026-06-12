@@ -17,7 +17,7 @@ Usage in a router:
         ...
 
 The session factory must be set on ``app.state.db_session_factory`` during
-the application lifespan.  See ``memgraph.core.db`` for the canonical
+the application lifespan.  See ``openzep.core.db`` for the canonical
 lifespan pattern.
 """
 
@@ -40,7 +40,7 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
 
     The session factory is expected to be an
     ``async_sessionmaker[AsyncSession]`` instance created during the app's
-    lifespan using :func:`memgraph.core.db.get_async_session`.
+    lifespan using :func:`openzep.core.db.get_async_session`.
 
     Yields:
         An :class:`AsyncSession` bound to the application's engine.

@@ -486,10 +486,10 @@ class PIIDetector:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `memgraph_pii_detections_total` | Counter | `org_id, pii_type, action` | PII detection events |
-| `memgraph_pii_blocked_messages_total` | Counter | `org_id` | Messages rejected by block mode |
-| `memgraph_pii_detection_duration_seconds` | Histogram | — | Time spent in PII detection per message |
-| `memgraph_pii_redacted_characters_total` | Counter | `org_id` | Total characters redacted |
+| `openzep_pii_detections_total` | Counter | `org_id, pii_type, action` | PII detection events |
+| `openzep_pii_blocked_messages_total` | Counter | `org_id` | Messages rejected by block mode |
+| `openzep_pii_detection_duration_seconds` | Histogram | — | Time spent in PII detection per message |
+| `openzep_pii_redacted_characters_total` | Counter | `org_id` | Total characters redacted |
 
 ### 8.2 Structured Logging
 

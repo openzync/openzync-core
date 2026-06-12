@@ -15,7 +15,7 @@ Provides four levels of auth dependency:
    request is authenticated via JWT (dashboard session), ``None`` otherwise.
 
 All dependencies rely on ``request.state`` attributes set by
-:class:`AuthMiddleware <memgraph.middleware.auth.AuthMiddleware>`.
+:class:`AuthMiddleware <openzep.middleware.auth.AuthMiddleware>`.
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ async def require_org_id(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
-                "type": "https://errors.memgraph.dev/authentication_error",
+                "type": "https://errors.openzep.dev/authentication_error",
                 "title": "Authentication Required",
                 "status": 401,
                 "detail": (
@@ -152,7 +152,7 @@ def require_scope(required_scope: str):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
-                    "type": "https://errors.memgraph.dev/authorization_error",
+                    "type": "https://errors.openzep.dev/authorization_error",
                     "title": "Insufficient Permissions",
                     "status": 403,
                     "detail": (
@@ -195,7 +195,7 @@ async def get_dashboard_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
-                "type": "https://errors.memgraph.dev/authentication_error",
+                "type": "https://errors.openzep.dev/authentication_error",
                 "title": "Dashboard Authentication Required",
                 "status": 401,
                 "detail": (
@@ -210,7 +210,7 @@ async def get_dashboard_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
-                "type": "https://errors.memgraph.dev/authentication_error",
+                "type": "https://errors.openzep.dev/authentication_error",
                 "title": "Invalid Session",
                 "status": 401,
                 "detail": "The JWT token does not contain a valid user identifier.",

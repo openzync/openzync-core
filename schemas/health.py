@@ -14,11 +14,11 @@ class HealthResponse(BaseModel):
 
     Attributes:
         status: Always ``"ok"`` when the service process is alive.
-        service: Service name identifier (``"memgraph-api"``).
+        service: Service name identifier (``"openzep-api"``).
     """
 
     status: str
-    service: str = "memgraph-api"
+    service: str = "openzep-api"
 
 
 class ReadinessResponse(BaseModel):

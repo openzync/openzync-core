@@ -130,7 +130,7 @@ def _rfc7807_response(
     return JSONResponse(
         status_code=status,
         content={
-            "type": f"https://errors.memgraph.dev/{title.lower().replace(' ', '_')}",
+            "type": f"https://errors.openzep.dev/{title.lower().replace(' ', '_')}",
             "title": title,
             "status": status,
             "detail": detail,

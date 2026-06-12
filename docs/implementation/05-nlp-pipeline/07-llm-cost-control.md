@@ -553,21 +553,21 @@ Estimated costs per **100K messages** at each enrichment depth (using `gpt-4o-mi
 ```promql
 # Token consumption per org (last 7 days)
 sum by (organization_id) (
-  memgraph_llm_tokens_total{task_type="entity_extraction"}
+  openzep_llm_tokens_total{task_type="entity_extraction"}
 )
 
 # Daily spend per org (USD)
 sum by (organization_id) (
-  memgraph_llm_cost_total
+  openzep_llm_cost_total
 )
 
 # Budget utilization percentage
 (
   sum by (organization_id) (
-    memgraph_llm_tokens_total
+    openzep_llm_tokens_total
   )
   / on (organization_id)
-  memgraph_org_budget_tokens
+  openzep_org_budget_tokens
 ) * 100
 ```
 
@@ -592,8 +592,8 @@ groups:
       - alert: LLMBudget80Percent
         expr: |
           sum by(organization_id) (
-            rate(memgraph_llm_tokens_total[24h])
-          ) / on(organization_id) memgraph_org_budget_tokens > 0.8
+            rate(openzep_llm_tokens_total[24h])
+          ) / on(organization_id) openzep_org_budget_tokens > 0.8
         for: 5m
         labels:
           severity: warning
@@ -603,8 +603,8 @@ groups:
       - alert: LLMBudgetExceeded
         expr: |
           sum by(organization_id) (
-            rate(memgraph_llm_tokens_total[24h])
-          ) / on(organization_id) memgraph_org_budget_tokens >= 1.0
+            rate(openzep_llm_tokens_total[24h])
+          ) / on(organization_id) openzep_org_budget_tokens >= 1.0
         for: 1m
         labels:
           severity: critical
@@ -620,12 +620,12 @@ groups:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `memgraph_llm_tokens_total` | Counter | `org_id, model, task_type` | Total LLM tokens consumed |
-| `memgraph_llm_cost_total` | Counter | `org_id, model` | Estimated USD cost |
-| `memgraph_llm_calls_total` | Counter | `org_id, model, task_type, status` | Total LLM API calls |
-| `memgraph_tasks_skipped_total` | Counter | `org_id, task_type, reason` | Tasks skipped (budget, depth, disabled) |
-| `memgraph_org_budget_tokens` | Gauge | `org_id` | Configured daily token budget |
-| `memgraph_budget_utilization_ratio` | Gauge | `org_id` | Current day's usage / budget |
+| `openzep_llm_tokens_total` | Counter | `org_id, model, task_type` | Total LLM tokens consumed |
+| `openzep_llm_cost_total` | Counter | `org_id, model` | Estimated USD cost |
+| `openzep_llm_calls_total` | Counter | `org_id, model, task_type, status` | Total LLM API calls |
+| `openzep_tasks_skipped_total` | Counter | `org_id, task_type, reason` | Tasks skipped (budget, depth, disabled) |
+| `openzep_org_budget_tokens` | Gauge | `org_id` | Configured daily token budget |
+| `openzep_budget_utilization_ratio` | Gauge | `org_id` | Current day's usage / budget |
 
 ### 11.2 Structured Logging
 

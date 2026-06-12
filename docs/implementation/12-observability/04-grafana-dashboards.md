@@ -76,13 +76,13 @@ providers:
 
 ```promql
 # Request rate by status group
-sum(rate(memgraph_http_requests_total[5m])) by (status)
+sum(rate(openzep_http_requests_total[5m])) by (status)
 
 # Error rate percentage
 (
-  sum(rate(memgraph_http_requests_total{status="5xx"}[5m]))
+  sum(rate(openzep_http_requests_total{status="5xx"}[5m]))
   /
-  sum(rate(memgraph_http_requests_total[5m]))
+  sum(rate(openzep_http_requests_total[5m]))
 ) * 100
 ```
 
@@ -106,13 +106,13 @@ sum(rate(memgraph_http_requests_total[5m])) by (status)
 
 ```promql
 # p50
-histogram_quantile(0.50, sum(rate(memgraph_context_assembly_duration_seconds_bucket[5m])) by (le))
+histogram_quantile(0.50, sum(rate(openzep_context_assembly_duration_seconds_bucket[5m])) by (le))
 
 # p95
-histogram_quantile(0.95, sum(rate(memgraph_context_assembly_duration_seconds_bucket[5m])) by (le))
+histogram_quantile(0.95, sum(rate(openzep_context_assembly_duration_seconds_bucket[5m])) by (le))
 
 # p99
-histogram_quantile(0.99, sum(rate(memgraph_context_assembly_duration_seconds_bucket[5m])) by (le))
+histogram_quantile(0.99, sum(rate(openzep_context_assembly_duration_seconds_bucket[5m])) by (le))
 ```
 
 **Visual**:
@@ -128,7 +128,7 @@ histogram_quantile(0.99, sum(rate(memgraph_context_assembly_duration_seconds_buc
 
 ```
 LEGEND: Heatmap
-Query: sum(rate(memgraph_context_assembly_duration_seconds_bucket[5m])) by (le)
+Query: sum(rate(openzep_context_assembly_duration_seconds_bucket[5m])) by (le)
 ```
 
 ---
@@ -142,10 +142,10 @@ Query: sum(rate(memgraph_context_assembly_duration_seconds_bucket[5m])) by (le)
 
 ```promql
 # High priority queue
-memgraph_worker_queue_depth{queue_name="high"}
+openzep_worker_queue_depth{queue_name="high"}
 
 # Low priority queue
-memgraph_worker_queue_depth{queue_name="low"}
+openzep_worker_queue_depth{queue_name="low"}
 ```
 
 **Visual**:
@@ -168,10 +168,10 @@ memgraph_worker_queue_depth{queue_name="low"}
 
 ```promql
 # By model
-sum(increase(memgraph_llm_tokens_total[1d])) by (model)
+sum(increase(openzep_llm_tokens_total[1d])) by (model)
 
 # By org (second query)
-sum(increase(memgraph_llm_tokens_total[1d])) by (org_id)
+sum(increase(openzep_llm_tokens_total[1d])) by (org_id)
 ```
 
 **Visual**:
@@ -194,10 +194,10 @@ sum(increase(memgraph_llm_tokens_total[1d])) by (org_id)
 
 ```promql
 # Total entity nodes per org
-memgraph_graph_nodes_total
+openzep_graph_nodes_total
 
 # Growth rate
-sum(increase(memgraph_graph_nodes_total[1d])) by (org_id)
+sum(increase(openzep_graph_nodes_total[1d])) by (org_id)
 ```
 
 **Visual**:
@@ -221,13 +221,13 @@ sum(increase(memgraph_graph_nodes_total[1d])) by (org_id)
 
 ```promql
 # API health — up metric or scrape presence
-up{job="memgraph_api"}
+up{job="openzep_api"}
 
 # Worker health
-up{job="memgraph_worker"}
+up{job="openzep_worker"}
 
 # MCP health
-up{job="memgraph_mcp"}
+up{job="openzep_mcp"}
 
 # PostgreSQL
 pg_up{service="OpenZep"}
@@ -259,23 +259,23 @@ count_over_time({service="api"} |= `"level":"CRITICAL"` [5m])
 
 ```promql
 # Task rate by type
-sum(rate(memgraph_worker_tasks_total[5m])) by (task_type)
+sum(rate(openzep_worker_tasks_total[5m])) by (task_type)
 
 # Success vs failure rate
-sum(rate(memgraph_worker_tasks_total{status="success"}[5m])) / sum(rate(memgraph_worker_tasks_total[5m]))
+sum(rate(openzep_worker_tasks_total{status="success"}[5m])) / sum(rate(openzep_worker_tasks_total[5m]))
 ```
 
 ### DB Connection Pool
 
 ```promql
 # Active connections
-memgraph_db_connections_active{db_name="postgres"}
+openzep_db_connections_active{db_name="postgres"}
 
 # Pool utilization
 (
-  memgraph_db_connections_active{db_name="postgres"}
+  openzep_db_connections_active{db_name="postgres"}
   /
-  (memgraph_db_connections_active{db_name="postgres"} + memgraph_db_connections_idle{db_name="postgres"})
+  (openzep_db_connections_active{db_name="postgres"} + openzep_db_connections_idle{db_name="postgres"})
 ) * 100
 ```
 
@@ -283,7 +283,7 @@ memgraph_db_connections_active{db_name="postgres"}
 
 ```promql
 # Error rate by code
-sum(rate(memgraph_error_code_total[5m])) by (error_code)
+sum(rate(openzep_error_code_total[5m])) by (error_code)
 ```
 
 ---
@@ -292,7 +292,7 @@ sum(rate(memgraph_error_code_total[5m])) by (error_code)
 
 | Variable | Type | Definition | Usage |
 |---|---|---|---|
-| `org_id` | Query | `label_values(memgraph_http_requests_total, org_id)` | Filter all panels by org |
+| `org_id` | Query | `label_values(openzep_http_requests_total, org_id)` | Filter all panels by org |
 | `service` | Query | `label_values(up, job)` | Filter by service |
 | `time_range` | Interval | `24h, 7d, 30d` | Quick time range selector |
 

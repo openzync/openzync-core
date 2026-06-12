@@ -44,7 +44,7 @@ DB_NAME="OpenZep"
 DB_USER="OpenZep"
 RETENTION_DAYS=7
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-BACKUP_FILE="${BACKUP_DIR}/memgraph_${TIMESTAMP}.dump"
+BACKUP_FILE="${BACKUP_DIR}/openzep_${TIMESTAMP}.dump"
 
 mkdir -p "${BACKUP_DIR}"
 
@@ -64,7 +64,7 @@ if [ $? -eq 0 ]; then
     --endpoint-url="${S3_ENDPOINT}"
 
   # Cleanup old backups
-  find "${BACKUP_DIR}" -name "memgraph_*.dump" -mtime +${RETENTION_DAYS} -delete
+  find "${BACKUP_DIR}" -name "openzep_*.dump" -mtime +${RETENTION_DAYS} -delete
 else
   echo "${TIMESTAMP}: Backup FAILED" >> "${BACKUP_DIR}/backup.log"
   exit 1
@@ -658,7 +658,7 @@ spec:
 | Check | Method | Frequency |
 |---|---|---|
 | Backup job success rate | CronJob pod status / log | After each run |
-| Backup age | Prometheus gauge: `memgraph_backup_age_seconds` | Every 15 min |
+| Backup age | Prometheus gauge: `openzep_backup_age_seconds` | Every 15 min |
 | S3 bucket size | CloudWatch / MinIO console | Daily |
 | Restore drill | Manual | Quarterly |
 
@@ -667,7 +667,7 @@ spec:
 ```python
 # Prometheus gauge for backup freshness
 backup_age_seconds = Gauge(
-    "memgraph_backup_age_seconds",
+    "openzep_backup_age_seconds",
     "Seconds since last successful backup",
     labelnames=["component"],
 )
@@ -694,7 +694,7 @@ async def check_backup_age():
 
 ```yaml
 - alert: BackupTooOld
-  expr: memgraph_backup_age_seconds{component="postgres"} > 7200  # 2 hours
+  expr: openzep_backup_age_seconds{component="postgres"} > 7200  # 2 hours
   for: 5m
   labels:
     severity: critical

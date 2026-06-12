@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "memgraph"
+name = "openzep"
 version = "0.1.0"
 description = "Open-source agent memory platform — persistent, queryable, graph-based memory for AI agents."
 readme = "README.md"
@@ -68,11 +68,11 @@ doc = [
     "mkdocs-material>=9.5.0",
 ]
 all = [
-    "memgraph[dev,llm,neo4j,falkordb,doc]",
+    "openzep[dev,llm,neo4j,falkordb,doc]",
 ]
 
 [tool.setuptools.packages.find]
-include = ["memgraph*"]
+include = ["openzep*"]
 
 [tool.ruff]
 line-length = 88
@@ -148,7 +148,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source = ["memgraph"]
+source = ["openzep"]
 omit = [
     "tests/*",
     "scripts/*",

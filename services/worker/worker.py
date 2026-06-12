@@ -167,26 +167,26 @@ def handle_signal(signum: int, _frame: object | None = None) -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 
 worker_tasks_total = Counter(
-    "memgraph_worker_tasks_total",
+    "openzep_worker_tasks_total",
     "Tasks completed by type and status",
     labelnames=["task_type", "status"],
 )
 
 worker_task_duration_seconds = Histogram(
-    "memgraph_worker_task_duration_seconds",
+    "openzep_worker_task_duration_seconds",
     "Task execution duration in seconds",
     labelnames=["task_type"],
     buckets=(1, 2.5, 5, 10, 15, 30, 60, 120, 300, 600),
 )
 
 worker_queue_depth = Gauge(
-    "memgraph_worker_queue_depth",
+    "openzep_worker_queue_depth",
     "Current queue depth by queue name",
     labelnames=["queue_name"],
 )
 
 worker_tasks_per_org = Counter(
-    "memgraph_worker_tasks_per_org_total",
+    "openzep_worker_tasks_per_org_total",
     "Tasks by org, type, and status for cost tracking",
     labelnames=["org_id", "task_type", "status"],
 )

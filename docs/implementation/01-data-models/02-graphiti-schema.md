@@ -110,7 +110,7 @@ class EpisodicNode:
     """
     uuid: str = field(default_factory=lambda: str(uuid4()))
     content: str                     # Message text (truncated for graph storage)
-    source: str = "memgraph_api"     # Origin identifier
+    source: str = "openzep_api"     # Origin identifier
     source_id: str                   # FK to episodes.id in PostgreSQL
     created_at: str = ""             # ISO-8601 timestamp
     org_id: str                      # Mandatory — tenant isolation key

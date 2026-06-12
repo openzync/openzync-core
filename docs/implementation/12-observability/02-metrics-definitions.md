@@ -8,7 +8,7 @@ OpenZep exposes Prometheus metrics via a `/metrics` endpoint on the FastAPI gate
 
 ## Metrics Registry
 
-All metrics use the `memgraph_` prefix. Define in `packages/core/metrics.py`.
+All metrics use the `openzep_` prefix. Define in `packages/core/metrics.py`.
 
 ### Installation
 
@@ -26,7 +26,7 @@ pip install prometheus-client
 from prometheus_client import Counter, Histogram, Gauge
 
 http_requests_total = Counter(
-    "memgraph_http_requests_total",
+    "openzep_http_requests_total",
     "Total HTTP requests",
     labelnames=["method", "path", "status", "org_id"],
 )
@@ -43,7 +43,7 @@ http_requests_total = Counter(
 
 ```python
 http_request_duration_seconds = Histogram(
-    "memgraph_http_request_duration_seconds",
+    "openzep_http_request_duration_seconds",
     "HTTP request latency in seconds",
     labelnames=["method", "path", "status"],
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5),
@@ -63,7 +63,7 @@ http_request_duration_seconds = Histogram(
 
 ```python
 context_assembly_duration_seconds = Histogram(
-    "memgraph_context_assembly_duration_seconds",
+    "openzep_context_assembly_duration_seconds",
     "Time to assemble a context block (hybrid retrieval + graph traversal)",
     labelnames=["cache_hit"],
     buckets=(0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
@@ -78,7 +78,7 @@ context_assembly_duration_seconds = Histogram(
 
 ```python
 worker_tasks_total = Counter(
-    "memgraph_worker_tasks_total",
+    "openzep_worker_tasks_total",
     "Total worker tasks processed",
     labelnames=["task_type", "status"],
 )
@@ -93,7 +93,7 @@ worker_tasks_total = Counter(
 
 ```python
 worker_queue_depth = Gauge(
-    "memgraph_worker_queue_depth",
+    "openzep_worker_queue_depth",
     "Current number of jobs waiting in each ARQ queue",
     labelnames=["queue_name"],
 )
@@ -120,7 +120,7 @@ async def collect_queue_metrics():
 
 ```python
 graph_nodes_total = Gauge(
-    "memgraph_graph_nodes_total",
+    "openzep_graph_nodes_total",
     "Total graph entity nodes",
     labelnames=["org_id"],
 )
@@ -138,7 +138,7 @@ GROUP BY organization_id;
 
 ```python
 embedding_tokens_total = Counter(
-    "memgraph_embedding_tokens_total",
+    "openzep_embedding_tokens_total",
     "Total tokens consumed for embedding generation",
     labelnames=["model", "org_id"],
 )
@@ -153,7 +153,7 @@ embedding_tokens_total = Counter(
 
 ```python
 llm_tokens_total = Counter(
-    "memgraph_llm_tokens_total",
+    "openzep_llm_tokens_total",
     "Total tokens consumed for LLM calls (prompt + completion)",
     labelnames=["model", "org_id", "operation"],
 )
@@ -175,13 +175,13 @@ These were identified during the observability audit as necessary gaps.
 
 ```python
 context_cache_hit_total = Counter(
-    "memgraph_context_cache_hit_total",
+    "openzep_context_cache_hit_total",
     "Context block served from Redis cache",
     labelnames=["org_id"],
 )
 
 context_cache_miss_total = Counter(
-    "memgraph_context_cache_miss_total",
+    "openzep_context_cache_miss_total",
     "Context block assembled from scratch (cache miss)",
     labelnames=["org_id"],
 )
@@ -193,13 +193,13 @@ context_cache_miss_total = Counter(
 
 ```python
 db_connections_active = Gauge(
-    "memgraph_db_connections_active",
+    "openzep_db_connections_active",
     "Active database connections in the pool",
     labelnames=["db_name"],
 )
 
 db_connections_idle = Gauge(
-    "memgraph_db_connections_idle",
+    "openzep_db_connections_idle",
     "Idle database connections in the pool",
     labelnames=["db_name"],
 )
@@ -224,7 +224,7 @@ async def collect_pool_metrics():
 
 ```python
 worker_task_duration_seconds = Histogram(
-    "memgraph_worker_task_duration_seconds",
+    "openzep_worker_task_duration_seconds",
     "Duration of worker tasks in seconds",
     labelnames=["task_type", "status"],
     buckets=(0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 120.0),
@@ -237,7 +237,7 @@ worker_task_duration_seconds = Histogram(
 
 ```python
 error_code_total = Counter(
-    "memgraph_error_code_total",
+    "openzep_error_code_total",
     "Total errors by error code",
     labelnames=["error_code", "service"],
 )
@@ -281,14 +281,14 @@ start_http_server(9101)  # Worker metrics on port 9101
 ### `alloy/config.alloy`
 
 ```river
-prometheus.scrape "memgraph_api" {
+prometheus.scrape "openzep_api" {
   targets    = [{"__address__" = "api:8000"}]
   metrics_path = "/metrics"
   scrape_interval = "15s"
   forward_to = [prometheus.remote_write.mimir.receiver]
 }
 
-prometheus.scrape "memgraph_worker" {
+prometheus.scrape "openzep_worker" {
   targets    = [{"__address__" = "worker:9101"}]
   scrape_interval = "15s"
   forward_to = [prometheus.remote_write.mimir.receiver]
@@ -315,9 +315,9 @@ groups:
       - alert: HighErrorRate
         expr: |
           (
-            sum(rate(memgraph_http_requests_total{status="5xx"}[5m]))
+            sum(rate(openzep_http_requests_total{status="5xx"}[5m]))
             /
-            sum(rate(memgraph_http_requests_total[5m]))
+            sum(rate(openzep_http_requests_total[5m]))
           ) > 0.01
         for: 5m
         labels:
@@ -331,7 +331,7 @@ groups:
         expr: |
           histogram_quantile(
             0.99,
-            sum(rate(memgraph_context_assembly_duration_seconds_bucket[5m])) by (le, cache_hit)
+            sum(rate(openzep_context_assembly_duration_seconds_bucket[5m])) by (le, cache_hit)
           ) > 2.0
         for: 5m
         labels:
@@ -345,7 +345,7 @@ groups:
         expr: |
           histogram_quantile(
             0.99,
-            sum(rate(memgraph_context_assembly_duration_seconds_bucket[5m])) by (le, cache_hit)
+            sum(rate(openzep_context_assembly_duration_seconds_bucket[5m])) by (le, cache_hit)
           ) > 1.0
         for: 5m
         labels:
@@ -359,7 +359,7 @@ groups:
     interval: 30s
     rules:
       - alert: WorkerQueueDepthCritical
-        expr: memgraph_worker_queue_depth > 1000
+        expr: openzep_worker_queue_depth > 1000
         for: 5m
         labels:
           severity: critical
@@ -371,9 +371,9 @@ groups:
       - alert: HighFailedJobRate
         expr: |
           (
-            sum(rate(memgraph_worker_tasks_total{status="failure"}[5m]))
+            sum(rate(openzep_worker_tasks_total{status="failure"}[5m]))
             /
-            sum(rate(memgraph_worker_tasks_total[5m]))
+            sum(rate(openzep_worker_tasks_total[5m]))
           ) > 0.05
         for: 5m
         labels:
@@ -387,7 +387,7 @@ groups:
         expr: |
           histogram_quantile(
             0.99,
-            sum(rate(memgraph_worker_task_duration_seconds_bucket[5m])) by (le, task_type)
+            sum(rate(openzep_worker_task_duration_seconds_bucket[5m])) by (le, task_type)
           ) > 30.0
         for: 5m
         labels:
@@ -403,9 +403,9 @@ groups:
       - alert: DBConnectionPoolHigh
         expr: |
           (
-            memgraph_db_connections_active{db_name="postgres"}
+            openzep_db_connections_active{db_name="postgres"}
             /
-            (memgraph_db_connections_active{db_name="postgres"} + memgraph_db_connections_idle{db_name="postgres"})
+            (openzep_db_connections_active{db_name="postgres"} + openzep_db_connections_idle{db_name="postgres"})
           ) > 0.8
         for: 5m
         labels:
@@ -416,7 +416,7 @@ groups:
           description: "Pool utilization is {{ $value | humanizePercentage }}."
 
       - alert: WorkerQueueDepthWarning
-        expr: memgraph_worker_queue_depth > 500
+        expr: openzep_worker_queue_depth > 500
         for: 10m
         labels:
           severity: warning

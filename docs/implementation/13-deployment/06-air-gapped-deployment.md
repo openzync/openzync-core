@@ -382,14 +382,14 @@ CONTEXT_MAX_DEPTH=2
 // config.air-gapped.alloy — No external connections
 // All observability data is stored locally.
 
-prometheus.scrape "memgraph_api" {
+prometheus.scrape "openzep_api" {
   targets    = [{"__address__" = "api:8000"}]
   metrics_path = "/metrics"
   scrape_interval = "15s"
   forward_to = [prometheus.remote_write.blackhole.receiver]
 }
 
-prometheus.scrape "memgraph_worker" {
+prometheus.scrape "openzep_worker" {
   targets    = [{"__address__" = "worker:9101"}]
   scrape_interval = "15s"
   forward_to = [prometheus.remote_write.blackhole.receiver]

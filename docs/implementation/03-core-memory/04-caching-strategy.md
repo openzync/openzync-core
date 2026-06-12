@@ -24,9 +24,9 @@ OpenZep uses Redis as its primary caching layer. The caching strategy follows th
 
 | Metric | Target | Measurement |
 |--------|--------|-------------|
-| Context cache hit ratio | ≥70% for conversational queries | `memgraph_cache_hit_total / (hit + miss)` per cache type |
+| Context cache hit ratio | ≥70% for conversational queries | `openzep_cache_hit_total / (hit + miss)` per cache type |
 | Context cache p50 latency | ≤2ms | Redis GET timed |
-| API key cache hit ratio | ≥99% | `memgraph_cache_hit_total{type="apikey"}` |
+| API key cache hit ratio | ≥99% | `openzep_cache_hit_total{type="apikey"}` |
 | Cache miss penalty (context) | ≤645ms | Hybrid retrieval + assembly time |
 | Cache miss penalty (apikey) | ≤50ms | bcrypt verify + DB lookup |
 
@@ -370,19 +370,19 @@ from prometheus_client import Counter, Histogram
 
 
 CACHE_HIT_TOTAL = Counter(
-    "memgraph_cache_hit_total",
+    "openzep_cache_hit_total",
     "Cache hits by cache type",
     labelnames=["type"],  # context, apikey, embedding, graph
 )
 
 CACHE_MISS_TOTAL = Counter(
-    "memgraph_cache_miss_total",
+    "openzep_cache_miss_total",
     "Cache misses by cache type",
     labelnames=["type"],
 )
 
 CACHE_OPERATION_DURATION = Histogram(
-    "memgraph_cache_operation_duration_seconds",
+    "openzep_cache_operation_duration_seconds",
     "Cache operation latency by type and operation",
     labelnames=["type", "operation"],  # operation: get, set, delete
     buckets=[0.001, 0.002, 0.005, 0.01, 0.025, 0.05, 0.1],
@@ -418,9 +418,9 @@ def track_cache_metrics(cache_type: str):
 
 | Panel | Query | Description |
 |-------|-------|-------------|
-| Cache hit rate (by type) | `rate(memgraph_cache_hit_total{type="context"}[5m]) / (rate(memgraph_cache_hit_total{type="context"}[5m]) + rate(memgraph_cache_miss_total{type="context"}[5m]))` | Hit ratio per cache type |
-| Cache operation latency | `histogram_quantile(0.99, rate(memgraph_cache_operation_duration_seconds_bucket[5m]))` | p99 cache latency |
-| Cache entries evicted | `rate(memgraph_cache_eviction_total[5m])` | Eviction rate (if applicable) |
+| Cache hit rate (by type) | `rate(openzep_cache_hit_total{type="context"}[5m]) / (rate(openzep_cache_hit_total{type="context"}[5m]) + rate(openzep_cache_miss_total{type="context"}[5m]))` | Hit ratio per cache type |
+| Cache operation latency | `histogram_quantile(0.99, rate(openzep_cache_operation_duration_seconds_bucket[5m]))` | p99 cache latency |
+| Cache entries evicted | `rate(openzep_cache_eviction_total[5m])` | Eviction rate (if applicable) |
 
 ---
 

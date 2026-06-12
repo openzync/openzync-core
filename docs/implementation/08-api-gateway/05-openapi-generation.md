@@ -729,7 +729,7 @@ pip install openapi-python-client
 # Generate Python client from OpenAPI spec
 openapi-python-client generate \
     --path docs/openapi.yaml \
-    --output-path packages/sdk-python/memgraph_client \
+    --output-path packages/sdk-python/openzep_client \
     --overwrite
 
 # The generated client provides typed methods for every endpoint.
@@ -739,10 +739,10 @@ openapi-python-client generate \
 ```python
 # packages/sdk-python/OpenZep/_client.py
 
-from memgraph_client import Client as GeneratedClient
-from memgraph_client.api.users import create_user, list_users
-from memgraph_client.models import CreateUserRequest as GeneratedCreateUserRequest
-from memgraph_client.types import Response as GeneratedResponse
+from openzep_client import Client as GeneratedClient
+from openzep_client.api.users import create_user, list_users
+from openzep_client.models import CreateUserRequest as GeneratedCreateUserRequest
+from openzep_client.types import Response as GeneratedResponse
 
 
 class MemGraphClient:

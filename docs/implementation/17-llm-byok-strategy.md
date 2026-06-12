@@ -1977,9 +1977,9 @@ Set up a Grafana alert on enrichment failure rate:
 
 ```promql
 # Alert: enrichment failure rate > 5% over 5 minutes
-sum(rate(memgraph_enrichment_failures_total[5m]))
+sum(rate(openzep_enrichment_failures_total[5m]))
 /
-sum(rate(memgraph_enrichment_attempts_total[5m]))
+sum(rate(openzep_enrichment_attempts_total[5m]))
 > 0.05
 ```
 
@@ -1990,9 +1990,9 @@ groups:
     rules:
       - alert: EnrichmentFailureRateHigh
         expr: |
-          sum(rate(memgraph_enrichment_failures_total{reason="llm_unreachable"}[5m]))
+          sum(rate(openzep_enrichment_failures_total{reason="llm_unreachable"}[5m]))
           /
-          sum(rate(memgraph_enrichment_attempts_total[5m]))
+          sum(rate(openzep_enrichment_attempts_total[5m]))
           > 0.05
         for: 2m
         labels:

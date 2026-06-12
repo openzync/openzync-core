@@ -359,12 +359,12 @@ x-logging: &default-logging
 ### Alloy Loki configuration
 
 ```river
-local.file_match "memgraph_logs" {
+local.file_match "openzep_logs" {
   path_targets = [{"__path__" = "/var/lib/docker/containers/*/*.json"}]
 }
 
 loki.source.file "OpenZep" {
-  targets    = local.file_match.memgraph_logs.targets
+  targets    = local.file_match.openzep_logs.targets
   forward_to = [loki.write.default.receiver]
 }
 

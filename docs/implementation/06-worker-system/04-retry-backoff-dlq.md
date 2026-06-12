@@ -877,9 +877,9 @@ async def dlq_purge_task(ctx: dict, **kwargs: Any) -> dict:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `memgraph_worker_tasks_total` | Counter | `task_type`, `status` | Tasks by type and status (success/failure) |
-| `memgraph_dlq_entries_total` | Gauge | `env` | Current number of entries in the DLQ |
-| `memgraph_dlq_requeue_total` | Counter | `task_type` | Number of re-queue operations from DLQ |
+| `openzep_worker_tasks_total` | Counter | `task_type`, `status` | Tasks by type and status (success/failure) |
+| `openzep_dlq_entries_total` | Gauge | `env` | Current number of entries in the DLQ |
+| `openzep_dlq_requeue_total` | Counter | `task_type` | Number of re-queue operations from DLQ |
 
 ### 8.2 Alert Rules
 
@@ -890,7 +890,7 @@ groups:
   - name: OpenZep-worker
     rules:
       - alert: MemGraphHighTaskFailureRate
-        expr: rate(memgraph_worker_tasks_total{status="failure"}[5m]) / rate(memgraph_worker_tasks_total[5m]) > 0.05
+        expr: rate(openzep_worker_tasks_total{status="failure"}[5m]) / rate(openzep_worker_tasks_total[5m]) > 0.05
         for: 5m
         labels:
           severity: warning
@@ -898,7 +898,7 @@ groups:
           summary: "Task failure rate > 5% for 5 minutes"
 
       - alert: MemGraphDLQGrowing
-        expr: memgraph_dlq_entries_total > 100
+        expr: openzep_dlq_entries_total > 100
         for: 10m
         labels:
           severity: warning
@@ -906,7 +906,7 @@ groups:
           summary: "DLQ has {{ $value }} entries — manual inspection recommended"
 
       - alert: MemGraphDLQCritical
-        expr: memgraph_dlq_entries_total > 500
+        expr: openzep_dlq_entries_total > 500
         for: 5m
         labels:
           severity: critical

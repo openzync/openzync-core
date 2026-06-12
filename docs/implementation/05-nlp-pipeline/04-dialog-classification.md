@@ -623,10 +623,10 @@ FALLBACK = {
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `memgraph_classifications_total` | Counter | `org_id, intent` | Total classifications by intent |
-| `memgraph_classification_fallbacks_total` | Counter | `org_id` | Times fallback neutral was used |
-| `memgraph_classification_duration_seconds` | Histogram | — | Worker wall-clock time |
-| `memgraph_llm_tokens_total` | Counter | `org_id, task=classification` | LLM token consumption |
+| `openzep_classifications_total` | Counter | `org_id, intent` | Total classifications by intent |
+| `openzep_classification_fallbacks_total` | Counter | `org_id` | Times fallback neutral was used |
+| `openzep_classification_duration_seconds` | Histogram | — | Worker wall-clock time |
+| `openzep_llm_tokens_total` | Counter | `org_id, task=classification` | LLM token consumption |
 
 ### 8.2 Structured Logging
 

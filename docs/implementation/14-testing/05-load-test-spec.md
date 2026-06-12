@@ -379,10 +379,10 @@ During the load test, scrape the API's `/metrics` endpoint to correlate Locust r
 
 | Prometheus Metric | Maps to |
 |---|---|
-| `memgraph_http_request_duration_seconds` | Locust response time percentiles |
-| `memgraph_http_requests_total` | Locust RPS |
-| `memgraph_worker_queue_depth` | Worker backlog |
-| `memgraph_llm_tokens_total` | LLM cost estimate |
+| `openzep_http_request_duration_seconds` | Locust response time percentiles |
+| `openzep_http_requests_total` | Locust RPS |
+| `openzep_worker_queue_depth` | Worker backlog |
+| `openzep_llm_tokens_total` | LLM cost estimate |
 
 ### 8.3 Report Template
 

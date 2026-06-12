@@ -17,7 +17,7 @@ services:
       - "8000:8000"
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://memgraph:memgraph@postgres:5432/memgraph
+      DATABASE_URL: postgresql+asyncpg://openzep:openzep@postgres:5432/openzep
       REDIS_URL: redis://redis:6379/0
       OLLAMA_BASE_URL: http://ollama:11434
       OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
@@ -37,7 +37,7 @@ services:
       dockerfile: services/worker/Dockerfile
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://memgraph:memgraph@postgres:5432/memgraph
+      DATABASE_URL: postgresql+asyncpg://openzep:openzep@postgres:5432/openzep
       REDIS_URL: redis://redis:6379/0
       LOG_LEVEL: DEBUG
     depends_on:
@@ -54,13 +54,13 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: memgraph
-      POSTGRES_PASSWORD: memgraph
-      POSTGRES_DB: memgraph
+      POSTGRES_USER: openzep
+      POSTGRES_PASSWORD: openzep
+      POSTGRES_DB: openzep
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U memgraph"]
+      test: ["CMD-SHELL", "pg_isready -U openzep"]
       interval: 5s
       timeout: 5s
       retries: 5

@@ -16,7 +16,7 @@ Configuration environment variables (via ``pydantic-settings`` / ``.env``):
   the OTLP exporter (e.g. ``Authorization=Bearer token123``).
 - ``MG_TRACE_SAMPLE_RATE`` — Sampling rate as a float between 0.0 and 1.0.
   Default: ``0.05`` (5 %).  Set to ``1.0`` for full tracing in dev/staging.
-- ``MG_SERVICE_NAME`` — OpenTelemetry service name.  Default: ``memgraph``.
+- ``MG_SERVICE_NAME`` — OpenTelemetry service name.  Default: ``openzep``.
 - ``MG_ENVIRONMENT`` — Deployment environment, added as a span attribute.
 """
 
@@ -79,7 +79,7 @@ def _init_tracer() -> Any | None:
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
-        service_name: str = os.getenv("MG_SERVICE_NAME", "memgraph")
+        service_name: str = os.getenv("MG_SERVICE_NAME", "openzep")
         sample_rate_str: str = os.getenv("MG_TRACE_SAMPLE_RATE", "0.05")
 
         try:

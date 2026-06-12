@@ -163,7 +163,7 @@ worker:
       - type: External
         external:
           metric:
-            name: memgraph_worker_queue_depth
+            name: openzep_worker_queue_depth
             selector:
               matchLabels:
                 queue_name: high
@@ -442,7 +442,7 @@ spec:
     - type: External
       external:
         metric:
-          name: memgraph_worker_queue_depth
+          name: openzep_worker_queue_depth
           selector:
             matchLabels:
               queue_name: "high"
@@ -451,7 +451,7 @@ spec:
           averageValue: {{ .Values.worker.hpa.metrics[0].external.target.averageValue }}
 ```
 
-**Note**: The custom metric requires a Prometheus Adapter configured to expose `memgraph_worker_queue_depth` from Mimir.
+**Note**: The custom metric requires a Prometheus Adapter configured to expose `openzep_worker_queue_depth` from Mimir.
 
 ### PodDisruptionBudget
 

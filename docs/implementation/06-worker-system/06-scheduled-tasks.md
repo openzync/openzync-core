@@ -753,28 +753,28 @@ async def test_apscheduler_registers_jobs():
 
 ### 8.1 Prometheus Metrics
 
-The scheduled task trigger is itself an enqueue operation — the same `memgraph_worker_tasks_total` metric covers scheduled tasks:
+The scheduled task trigger is itself an enqueue operation — the same `openzep_worker_tasks_total` metric covers scheduled tasks:
 
 ```yaml
 # Example PromQL queries for scheduled tasks:
 
 # Did summarise_community run last night?
-increase(memgraph_worker_tasks_total{task_type="summarise_community"}[24h])
+increase(openzep_worker_tasks_total{task_type="summarise_community"}[24h])
 
 # How long did it take?
 histogram_quantile(0.95,
-  rate(memgraph_worker_task_duration_seconds{task_type="summarise_community"}[7d])
+  rate(openzep_worker_task_duration_seconds{task_type="summarise_community"}[7d])
 )
 
 # Did it succeed?
-rate(memgraph_worker_tasks_total{task_type="summarise_community", status="failure"}[7d])
+rate(openzep_worker_tasks_total{task_type="summarise_community", status="failure"}[7d])
 ```
 
 ### 8.2 Alert Rules
 
 ```yaml
 - alert: MemGraphScheduledTaskNotRun
-  expr: increase(memgraph_worker_tasks_total{task_type="summarise_community"}[28h]) == 0
+  expr: increase(openzep_worker_tasks_total{task_type="summarise_community"}[28h]) == 0
   for: 2h
   labels:
     severity: warning
@@ -783,7 +783,7 @@ rate(memgraph_worker_tasks_total{task_type="summarise_community", status="failur
     description: "The nightly summarise_community task may have failed to trigger"
 
 - alert: MemGraphDataRetentionNotRunning
-  expr: increase(memgraph_worker_tasks_total{task_type="data_retention_cleanup"}[28h]) == 0
+  expr: increase(openzep_worker_tasks_total{task_type="data_retention_cleanup"}[28h]) == 0
   for: 2h
   labels:
     severity: warning

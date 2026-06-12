@@ -977,14 +977,14 @@ Using TheLinkAI's existing LGTM stack (Loki, Grafana, Tempo, Mimir, Alloy).
 
 | Metric | Type | Description |
 |---|---|---|
-| `memgraph_http_requests_total` | Counter | Requests by method, path, status |
-| `memgraph_http_request_duration_seconds` | Histogram | Latency by endpoint |
-| `memgraph_context_assembly_duration_seconds` | Histogram | Context retrieval latency |
-| `memgraph_worker_tasks_total` | Counter | Tasks by type, status (success/failure) |
-| `memgraph_worker_queue_depth` | Gauge | ARQ queue depth by queue name |
-| `memgraph_graph_nodes_total` | Gauge | Entity nodes per organisation |
-| `memgraph_embedding_tokens_total` | Counter | Tokens consumed for embeddings |
-| `memgraph_llm_tokens_total` | Counter | Tokens consumed for LLM calls |
+| `openzep_http_requests_total` | Counter | Requests by method, path, status |
+| `openzep_http_request_duration_seconds` | Histogram | Latency by endpoint |
+| `openzep_context_assembly_duration_seconds` | Histogram | Context retrieval latency |
+| `openzep_worker_tasks_total` | Counter | Tasks by type, status (success/failure) |
+| `openzep_worker_queue_depth` | Gauge | ARQ queue depth by queue name |
+| `openzep_graph_nodes_total` | Gauge | Entity nodes per organisation |
+| `openzep_embedding_tokens_total` | Counter | Tokens consumed for embeddings |
+| `openzep_llm_tokens_total` | Counter | Tokens consumed for LLM calls |
 
 ### 11.2 Traces (Tempo)
 

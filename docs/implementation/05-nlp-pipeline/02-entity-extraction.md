@@ -649,10 +649,10 @@ The entity extraction worker emits the following metrics:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
-| `memgraph_llm_tokens_total` | Counter | `org_id, task=entity_extraction` | Total LLM tokens consumed |
-| `memgraph_entities_extracted_total` | Counter | `org_id` | Entities created (not dedup) |
-| `memgraph_entity_extraction_duration_seconds` | Histogram | `org_id` | Wall-clock time per extraction task |
-| `memgraph_worker_tasks_total` | Counter | `task=extract_entities, status=success/failure/skip` | Task outcomes |
+| `openzep_llm_tokens_total` | Counter | `org_id, task=entity_extraction` | Total LLM tokens consumed |
+| `openzep_entities_extracted_total` | Counter | `org_id` | Entities created (not dedup) |
+| `openzep_entity_extraction_duration_seconds` | Histogram | `org_id` | Wall-clock time per extraction task |
+| `openzep_worker_tasks_total` | Counter | `task=extract_entities, status=success/failure/skip` | Task outcomes |
 
 ### Structured Logging
 

@@ -17,7 +17,7 @@ import pytest
 # import time, and DATABASE_URL / REDIS_URL / FALKORDB_URL / SECRET_KEY have
 # no defaults.
 _REQUIRED_ENV: dict[str, str] = {
-    "MG_DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/memgraph_test",
+    "MG_DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/openzep_test",
     "MG_REDIS_URL": "redis://localhost:6379/1",
     "MG_FALKORDB_URL": "redis://localhost:6380",
     "MG_SECRET_KEY": "a" * 32,

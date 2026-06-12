@@ -48,7 +48,7 @@ FALLBACK_ORG_RATE_LIMIT: int = 1000
 FALLBACK_ORG_WINDOW: int = 60
 """Window in seconds for org-based requests."""
 
-RFC_7807_TYPE = "https://errors.memgraph.dev/rate_limit_exceeded"
+RFC_7807_TYPE = "https://errors.openzep.dev/rate_limit_exceeded"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

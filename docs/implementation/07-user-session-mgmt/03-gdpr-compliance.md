@@ -634,7 +634,7 @@ async def export_user_data(
     return JSONResponse(
         content=data,
         headers={
-            "Content-Disposition": f'attachment; filename="memgraph_export_{user_id}.json"',
+            "Content-Disposition": f'attachment; filename="openzep_export_{user_id}.json"',
             "X-Export-Timestamp": datetime.now(timezone.utc).isoformat(),
         },
     )
@@ -1323,7 +1323,7 @@ After exhausting retries, the failed job enters the dead-letter queue. Operators
 
 ```promql
 # Alert: GDPR purge failure
-rate(memgraph_worker_tasks_total{task="purge_user_data", status="failure"}[5m]) > 0
+rate(openzep_worker_tasks_total{task="purge_user_data", status="failure"}[5m]) > 0
 ```
 
 ---
@@ -1337,7 +1337,7 @@ rate(memgraph_worker_tasks_total{task="purge_user_data", status="failure"}[5m]) 
 | WRK-01 | All NLP enrichment runs asynchronously via ARQ | GDPR purge is an ARQ task (see §2.4) |
 | WRK-02 | Worker tasks are idempotent | All deletion steps use idempotent DELETE + SELECT patterns |
 | WRK-03 | Exponential backoff on failures | §10 retry policy: 5min, 10min, 20min |
-| WRK-04 | Queue depth exposed as Prometheus metrics | `memgraph_worker_queue_depth` gauge |
+| WRK-04 | Queue depth exposed as Prometheus metrics | `openzep_worker_queue_depth` gauge |
 | WRK-06 | Dead-letter queue for failed tasks | After max retries, task goes to DLQ |
 
 **GDPR-Specific Compliance:**

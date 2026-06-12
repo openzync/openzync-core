@@ -124,7 +124,7 @@ class TestExceptionHandlers:
         assert resp.status_code == 404
 
         body = resp.json()
-        assert body["type"] == "https://errors.memgraph.dev/not_found"
+        assert body["type"] == "https://errors.openzep.dev/not_found"
         assert body["title"] == "Not Found"
         assert body["status"] == 404
         assert body["detail"] == "Item not found"
@@ -137,7 +137,7 @@ class TestExceptionHandlers:
         assert resp.status_code == 422
 
         body = resp.json()
-        assert body["type"] == "https://errors.memgraph.dev/validation_error"
+        assert body["type"] == "https://errors.openzep.dev/validation_error"
         assert body["status"] == 422
 
     @pytest.mark.asyncio
@@ -147,7 +147,7 @@ class TestExceptionHandlers:
         assert resp.status_code == 429
 
         body = resp.json()
-        assert body["type"] == "https://errors.memgraph.dev/rate_limit_exceeded"
+        assert body["type"] == "https://errors.openzep.dev/rate_limit_exceeded"
         assert body["status"] == 429
 
     @pytest.mark.asyncio
@@ -171,5 +171,5 @@ class TestExceptionHandlers:
 
         assert resp.status_code == 499
         body = resp.json()
-        assert body["type"] == "https://errors.memgraph.dev/custom_error"
+        assert body["type"] == "https://errors.openzep.dev/custom_error"
         assert body["status"] == 499
