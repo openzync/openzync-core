@@ -160,7 +160,7 @@ class LLMBackendRegistry:
                 f"LLM backend '{name}' is already registered as {cls._backends[name].__name__}"
             )
         cls._backends[name] = backend_cls
-        logger.debug("llm.backend_registered", extra={"name": name, "cls": backend_cls.__name__})
+        logger.debug("llm.backend_registered", extra={"backend_name": name, "cls": backend_cls.__name__})
 
     @classmethod
     def get(cls, name: str) -> type[LLMBackend]:
