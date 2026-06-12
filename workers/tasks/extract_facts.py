@@ -246,7 +246,7 @@ async def extract_facts(
                         entity_repo = _EntityRepo(db=db)
 
                         for fact in resolved_facts:
-                            await repo.create(
+                            created = await repo.create_or_skip(
                                 user_id=uuid.UUID(user_id),
                                 organization_id=uuid.UUID(org_id),
                                 content=f"{fact['subject']} {fact['predicate']} {fact['object']}",
@@ -261,6 +261,18 @@ async def extract_facts(
                                 subject_entity_id=fact.get("subject_entity_id"),
                                 object_entity_id=fact.get("object_entity_id"),
                             )
+
+                            if created is None:
+                                logger.info(
+                                    "fact_extraction.duplicate_skipped",
+                                    episode_id=episode_id,
+                                    subject=fact["subject"],
+                                    predicate=fact["predicate"],
+                                    object=fact["object"],
+                                )
+                                continue
+
+                            persisted += 1
 
                             # ── Also persist to graph_relationships ──────────
                             # When both entity IDs are resolved, materialize
@@ -324,7 +336,6 @@ async def extract_facts(
                                         object=fact["object"],
                                         exc_info=True,
                                     )
-                    persisted = len(resolved_facts)
 
             # Set enrichment bit after fact persistence, inside the same
             # transaction — rollback-safe.

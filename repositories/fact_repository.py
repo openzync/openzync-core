@@ -102,6 +102,68 @@ class FactRepository:
         await self._db.refresh(fact)
         return fact
 
+    async def create_or_skip(
+        self,
+        user_id: UUID,
+        organization_id: UUID,
+        content: str,
+        subject: str | None = None,
+        predicate: str | None = None,
+        obj: str | None = None,
+        confidence: float = 1.0,
+        source_episode_id: UUID | None = None,
+        valid_from: datetime | None = None,
+        subject_entity_id: UUID | None = None,
+        object_entity_id: UUID | None = None,
+        subject_type: str = "literal",
+        object_type: str = "literal",
+    ) -> Fact | None:
+        """Insert a fact, skipping silently if the triple already exists
+        for this episode (unique constraint ``uq_facts_episode_triple``).
+
+        Uses PostgreSQL ``INSERT ... ON CONFLICT DO NOTHING`` with
+        ``RETURNING`` — returns ``None`` when the conflict fires so the
+        caller can log a duplicate skip without crashing the transaction.
+
+        Args:
+            Same as :meth:`create`.
+
+        Returns:
+            The newly created :class:`Fact` instance, or ``None`` if a
+            duplicate was skipped.
+        """
+        from sqlalchemy import func, insert
+
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        stmt = (
+            pg_insert(Fact)
+            .values(
+                id=func.gen_random_uuid(),
+                user_id=user_id,
+                organization_id=organization_id,
+                content=content,
+                subject=subject,
+                predicate=predicate,
+                object=obj,
+                subject_type=subject_type,
+                object_type=object_type,
+                confidence=confidence,
+                source_episode_id=source_episode_id,
+                valid_from=valid_from or datetime.now(),
+                subject_entity_id=subject_entity_id,
+                object_entity_id=object_entity_id,
+                embedding=[],
+            )
+            .on_conflict_do_nothing(
+                constraint="uq_facts_episode_triple",
+            )
+            .returning(Fact)
+        )
+        result = await self._db.execute(stmt)
+        await self._db.flush()
+        return result.scalar_one_or_none()
+
     # ── Batch Create ────────────────────────────────────────────────────────────
 
     async def batch_create(

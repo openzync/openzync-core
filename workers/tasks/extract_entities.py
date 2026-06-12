@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from datetime import datetime, timezone
 
 import structlog
 from sqlalchemy import text
@@ -214,8 +213,6 @@ async def extract_entities(
                 error=str(exc),
             )
             return
-
-    persisted_count = 0
 
     if data is None:
         logger.warning("entity_extraction.no_result", episode_id=episode_id)
@@ -525,92 +522,27 @@ async def extract_entities(
                 },
             )
 
-        # ── 9. Persist relationships as facts in PostgreSQL ───────────────────
-        if relationships:
-            entity_type_map: dict[str, str] = {
-                e["name"]: e.get("type", "Custom") for e in entities
-            }
-            # Build name → UUID map from upserted entity nodes
-            name_to_uuid: dict[str, uuid.UUID | None] = {
-                name: uuid.UUID(node["id"]) if node.get("id") else None
-                for name, node in name_to_node.items()
-            }
-            engine = init_db_engine(
-                str(settings.DATABASE_URL), pool_size=5, max_overflow=2
-            )
-            session_factory = get_async_session(engine)
-            try:
-                async with session_factory() as db:
-                    episode_uuid = uuid.UUID(episode_id)
-                    org_uuid = uuid.UUID(org_id)
-                    user_uuid = uuid.UUID(user_id)
-                    now = datetime.now(timezone.utc)
-
-                    for rel in relationships:
-                        subject = rel.get("subject", "")
-                        predicate = rel.get("predicate", "")
-                        obj = rel.get("object", "")
-                        if not subject or not predicate or not obj:
-                            continue
-                        await db.execute(
-                            text("""
-                                INSERT INTO facts
-                                    (id, user_id, organization_id, content,
-                                     subject, predicate, "object",
-                                     subject_type, object_type,
-                                     subject_entity_id, object_entity_id,
-                                     confidence, source_episode_id,
-                                     valid_from, created_at, updated_at)
-                                VALUES
-                                    (gen_random_uuid(), :user_id, :org_id, :content,
-                                     :subject, :predicate, :object,
-                                     :subject_type, :object_type,
-                                     :subj_entity_id, :obj_entity_id,
-                                     1.0, :episode_id,
-                                     :valid_from, :valid_from, :valid_from)
-                            """),
-                            {
-                                "user_id": user_uuid,
-                                "org_id": org_uuid,
-                                "content": f"{subject} {predicate} {obj}",
-                                "subject": subject,
-                                "predicate": predicate,
-                                "object": obj,
-                                "subject_type": entity_type_map.get(subject, "literal"),
-                                "object_type": entity_type_map.get(obj, "literal"),
-                                "subj_entity_id": name_to_uuid.get(subject),
-                                "obj_entity_id": name_to_uuid.get(obj),
-                                "episode_id": episode_uuid,
-                                "valid_from": now,
-                            },
-                        )
-                    await db.commit()
-                    persisted_count = len(relationships)
-            finally:
-                await engine.dispose()
-
         logger.info(
             "entity_extraction.persisted",
             episode_id=episode_id,
             entity_count=len(name_to_node),
-            relationship_count=persisted_count,
             entity_failure_count=entity_failure_count,
             relationship_failure_count=relationship_failure_count,
             relationship_skip_count=relationship_skip_count,
         )
 
-    # ── 10. Set enrichment_status bit 0 ──────────────────────────────────────
+    # ── 9. Set enrichment_status bit 0 ───────────────────────────────────────
     # Only reached if entity persistence succeeded (no ExternalServiceError
     # raised by the guard at step 8b) — enrichment bit is NOT set when
     # entities were silently dropped, allowing @with_retry to re-attempt.
     await _set_enrichment_bit(episode_id, ENRICHMENT_ENTITIES)
 
-    if persisted_count:
+    entity_count = len(entities if data else [])
+    if entity_count:
         logger.info(
             "entity_extraction.completed",
             episode_id=episode_id,
-            entities=len(entities if data else []),
-            facts=persisted_count,
+            entities=entity_count,
         )
     else:
         logger.info("entity_extraction.done", episode_id=episode_id)
