@@ -49,17 +49,15 @@ Built for developers who need persistent, queryable agent memory without vendor 
 
 ## Architecture
 
-```
-┌──────────┐     ┌──────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│  Client   │────▶│ FastAPI API  │────▶│   Services Layer  │────▶│  PostgreSQL 15   │
-│ (SDK/UI)  │     │   (:8000)    │     │ (business logic)  │     │  + pgvector      │
-└──────────┘     └──────────────┘     └─────────┬────────┘     └──────────────────┘
-                                                │
-                                       ┌────────▼────────┐     ┌──────────────────┐
-                                       │   ARQ Workers    │────▶│     Redis 7      │
-                                       │ (enrichment +    │     │ (queues + cache) │
-                                       │  graph sync)     │     └──────────────────┘
-                                       └─────────────────┘
+```mermaid
+flowchart LR
+    Client["Client<br/>(SDK / UI)"] --> API["FastAPI API<br/>:8000"]
+    API --> Services["Services Layer<br/>(business logic)"]
+    Services --> PG[("PostgreSQL 15<br/>+ pgvector")]
+    Services -->|enqueue jobs| Redis[("Redis 7<br/>queues + cache")]
+    Workers["ARQ Workers<br/>(enrichment +<br/>graph sync)"] --> Redis
+    Workers --> PG
+    API -->|serve| Client
 ```
 
 The API receives messages and persists them immediately. ARQ background workers asynchronously extract entities, facts, and embeddings, then sync everything to the knowledge graph. Context is retrieved at query time via hybrid search across vector, text, and graph indices.
