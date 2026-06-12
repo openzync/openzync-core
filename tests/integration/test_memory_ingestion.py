@@ -26,6 +26,7 @@ Auth strategy:
 
 from __future__ import annotations
 
+import time
 from uuid import UUID
 
 import pytest
@@ -97,23 +98,36 @@ class TestMemoryIngestion:
         assert user_resp.status_code == 201
         user_id = user_resp.json()["id"]
 
-        # Ingest
+        # Ingest — measure latency for G1.1 (must be ≤200ms for 10-turn conversation)
+        _ten_turn_conversation: list[dict] = []
+        for i in range(5):
+            _ten_turn_conversation.append(
+                {"role": "user", "content": f"Turn {i}: user message"}
+            )
+            _ten_turn_conversation.append(
+                {"role": "assistant", "content": f"Turn {i}: assistant response"}
+            )
+
+        _start = time.monotonic()
         response = await auth_client.post(
             f"/v1/users/{user_id}/memory",
             json={
                 "session_id": "test_session",
-                "messages": [
-                    {"role": "user", "content": "Hello"},
-                    {"role": "assistant", "content": "Hi there!"},
-                ],
+                "messages": _ten_turn_conversation,
             },
         )
+        _elapsed_ms = (time.monotonic() - _start) * 1000
         assert response.status_code == 202, (
             f"Expected 202, got {response.status_code}: {response.text}"
         )
         body = response.json()
 
-        _assert_ingest_response_shape(body, expected_episodes=2)
+        _assert_ingest_response_shape(body, expected_episodes=10)
+
+        # G1.1: POST /memory with 10-turn conversation returns 202 within 200ms
+        assert _elapsed_ms < 200, (
+            f"G1.1 FAIL: POST /memory took {_elapsed_ms:.1f}ms, expected <200ms"
+        )
 
         # Also check the session object got created
         get_resp = await auth_client.get(

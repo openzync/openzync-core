@@ -1,10 +1,24 @@
-"""Integration test fixtures — wired to a real PostgreSQL instance.
+"""Integration test fixtures — testcontainers-powered PostgreSQL and Redis.
 
-Expects PostgreSQL at ``localhost:5432`` with credentials from ``.env``.
+Every integration test gets an isolated PostgreSQL + Redis stack via
+``testcontainers``.  Alembic migrations are applied automatically before
+the first test, and containers are torn down at session end.
+
+Fixtures provided:
+    - ``engine`` — session-scoped async SQLAlchemy engine connected to the
+      testcontainers PostgreSQL.
+    - ``redis_client`` — session-scoped async Redis client connected to
+      the testcontainers Redis.
+    - ``app`` — FastAPI application with the DB session factory overridden
+      to point at the test PG.
+    - ``async_client`` — HTTP test client (ASGITransport) backed by ``app``.
+    - ``org_and_key`` — bootstraps a test org + API key.
+    - ``auth_client`` — ``async_client`` pre-authenticated with the API key.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, AsyncGenerator
 from uuid import UUID
 
@@ -16,27 +30,114 @@ from sqlalchemy.pool import NullPool
 
 from core.config import settings
 from core.db import get_async_session
+from tests.conftest import (
+    _start_postgres_container,
+    _start_redis_container,
+    _run_alembic_upgrade,
+    _ensure_testcontainers_env,
+)
 
 
 @pytest_asyncio.fixture(scope="session")
 async def engine():
-    """Session-scoped async engine connected to the real test DB.
+    """Session-scoped async engine backed by a testcontainers PostgreSQL.
 
-    Uses ``NullPool`` so every session gets a fresh asyncpg connection.
-    This avoids ``asyncpg``'s "attached to a different loop" error when
-    ``pytest-asyncio`` creates a new event loop per test (``asyncio_mode = "auto"``).
+    Spins up a PostgreSQL 15 + pgvector container, applies Alembic
+    migrations, and provides the engine to all tests in the session.
     """
-    e = create_async_engine(
-        str(settings.DATABASE_URL),
+    _ensure_testcontainers_env()
+    container = _start_postgres_container()
+    redis_container = _start_redis_container()
+
+    # ── Wait for both to be ready ────────────────────────────────────────
+    # testcontainers already blocks on ``container.start()`` until the
+    # health check passes, so we can connect immediately.
+    pg_url = container.get_connection_url()
+    driver_url = pg_url.replace("postgresql://", "postgresql+asyncpg://")
+
+    engine = create_async_engine(
+        driver_url,
         poolclass=NullPool,
+        pool_pre_ping=True,
     )
-    yield e
-    await e.dispose()
+
+    # ── Apply Alembic migrations ─────────────────────────────────────────
+    from alembic.config import Config as AlembicConfig
+    from alembic.runtime.environment import EnvironmentContext
+    from alembic.script import ScriptDirectory
+
+    alembic_cfg = AlembicConfig("alembic.ini")
+    script = ScriptDirectory.from_config(alembic_cfg)
+
+    async def _run_migrations() -> None:
+        def do_upgrade(rev, context):
+            return script._upgrade_revs("head", rev)
+
+        async with engine.connect() as conn:
+            await conn.run_sync(
+                lambda sync_conn: EnvironmentContext(alembic_cfg, script).configure(
+                    sync_conn,
+                    fn=do_upgrade,
+                )
+            )
+
+    try:
+        await _run_migrations()
+    except Exception as exc:
+        # If migrations fail, try a simpler approach
+        from sqlalchemy import text
+
+        async with engine.connect() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
+        await conn.commit()
+
+        # Run raw DDL from the initial migration
+        from alembic.command import upgrade as alembic_upgrade
+
+        def _upgrade():
+            alembic_cfg.attributes["connection"] = None
+            with engine.sync_engine.connect() as sync_conn:
+                alembic_cfg.attributes["connection"] = sync_conn
+                alembic_upgrade(alembic_cfg, "head")
+
+        await asyncio.get_event_loop().run_in_executor(None, _upgrade)
+
+    # ── Store for teardown ───────────────────────────────────────────────
+    engine._testcontainers_pg = container  # type: ignore[attr-defined]
+    engine._testcontainers_redis = redis_container  # type: ignore[attr-defined]
+
+    yield engine
+
+    # ── Teardown ─────────────────────────────────────────────────────────
+    await engine.dispose()
+    container.stop()
+    redis_container.stop()
+
+
+@pytest_asyncio.fixture(scope="session")
+async def redis_client(engine) -> Any:
+    """Session-scoped async Redis client connected to testcontainers Redis."""
+    from redis.asyncio import Redis as AsyncRedis
+
+    container = engine._testcontainers_redis  # type: ignore[attr-defined]
+    redis_url = f"redis://{container.get_container_host_ip()}:{container.get_exposed_port(6379)}/0"
+
+    client = AsyncRedis.from_url(
+        redis_url,
+        encoding="utf-8",
+        decode_responses=True,
+        socket_connect_timeout=5,
+        socket_timeout=10,
+    )
+    yield client
+    await client.aclose()
 
 
 @pytest_asyncio.fixture
 async def app(engine) -> Any:
-    """Create the FastAPI app wired to the real database."""
+    """Create the FastAPI app wired to the testcontainers database."""
     from services.api.main import create_app
     from dependencies.db import get_db
 
@@ -68,7 +169,7 @@ async def async_client(app: Any) -> AsyncGenerator[AsyncClient, None]:
 
 @pytest_asyncio.fixture
 async def org_and_key(app: Any) -> dict:
-    """Create a test org + API key via the bootstrap endpoint."""
+    """Create a test org + API key via the admin bootstrap endpoint."""
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(

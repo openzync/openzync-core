@@ -113,9 +113,7 @@ class HybridRetriever:
             )
 
         try:
-            fact_vector_results = await self._vector_search_facts(
-                query, user_id, limit
-            )
+            fact_vector_results = await self._vector_search_facts(query, user_id, limit)
         except Exception:
             logger.warning(
                 "hybrid_retriever.fact_vector_failed",
@@ -136,9 +134,7 @@ class HybridRetriever:
             )
 
         try:
-            fact_bm25_results = await self._bm25_search_facts(
-                query, user_id, limit
-            )
+            fact_bm25_results = await self._bm25_search_facts(query, user_id, limit)
         except Exception:
             logger.warning(
                 "hybrid_retriever.fact_bm25_failed",
@@ -192,12 +188,39 @@ class HybridRetriever:
                     "graph_bfs": len(entity_results),
                 },
             },
-            "total_items": len(merged_episodes)
-            + len(merged_facts)
-            + len(entities),
+            "total_items": len(merged_episodes) + len(merged_facts) + len(entities),
         }
 
     # ── Vector Search ──────────────────────────────────────────────────────────
+
+    async def _embed_query(self, query: str) -> list[float] | None:
+        """Generate an embedding vector for a search query.
+
+        Uses the configured LLM backend's embedding model.  Returns
+        ``None`` if embedding generation fails (backends unavailable,
+        network error, etc.), which triggers the BM25 fallback.
+
+        Args:
+            query: Natural-language query text.
+
+        Returns:
+            A list of floats representing the query embedding, or
+            ``None`` if embedding generation was not possible.
+        """
+        try:
+            from core.llm import resolve_backend
+
+            backend = await resolve_backend()
+            response = await backend.embed([query])
+            if response.embeddings and len(response.embeddings) > 0:
+                return response.embeddings[0]
+        except Exception:
+            logger.warning(
+                "hybrid_retriever.embed_query_failed",
+                extra={"query": query[:100]},
+                exc_info=True,
+            )
+        return None
 
     async def _vector_search_episodes(
         self,
@@ -207,8 +230,13 @@ class HybridRetriever:
     ) -> list[dict[str, Any]]:
         """Semantic search over episodes using pgvector cosine similarity.
 
-        Falls back to BM25-only when embeddings are not yet computed
-        (``embedding`` column is NULL).
+        Generates an embedding for the query, then finds the nearest
+        neighbours in ``episodes.embedding`` using the ``<=>`` (cosine
+        distance) operator.  Falls back to BM25 when no embeddings are
+        available or the query cannot be embedded.
+
+        The ``embedding`` column stores ``float[]`` arrays — they are
+        cast to ``vector`` at query time via ``::vector``.
 
         Args:
             query: Natural-language query text.
@@ -219,23 +247,44 @@ class HybridRetriever:
             A list of result dicts with ``id``, ``content``, ``role``,
             ``score``, and ``created_at`` keys.
         """
-        # note: This implementation returns an empty list because
-        # pgvector's ``<=>`` operator requires a proper vector column that
-        # is populated by the enrichment worker.  In production, the query
-        # would be:
-        #
-        #   SELECT id, content, role, created_at,
-        #          1 - (embedding <=> :query_embedding) AS score
-        #   FROM episodes
-        #   WHERE user_id = :user_id
-        #     AND is_deleted = false
-        #     AND embedding IS NOT NULL
-        #   ORDER BY score DESC
-        #   LIMIT :limit
-        #
-        # Once the embedding worker has populated the column, uncomment the
-        # implementation below and remove this fallback.
-        return await self._bm25_search_episodes(query, user_id, limit)
+        query_embedding = await self._embed_query(query)
+        if query_embedding is None:
+            logger.debug("hybrid_retriever.episode_vector_fallback_bm25")
+            return await self._bm25_search_episodes(query, user_id, limit)
+
+        embedding_literal = "[" + ",".join(str(x) for x in query_embedding) + "]"
+
+        stmt = (
+            select(
+                Episode.id,
+                Episode.content,
+                Episode.role,
+                Episode.created_at,
+                (
+                    1.0
+                    - func.coalesce(
+                        func.cast(Episode.embedding, text("vector")).op("<=>")(
+                            func.cast(embedding_literal, text("vector"))
+                        ),
+                        1.0,
+                    )
+                ).label("score"),
+            )
+            .where(
+                Episode.user_id == user_id,
+                Episode.is_deleted.is_(False),
+                Episode.embedding.isnot(None),
+            )
+            .order_by(text("score DESC"))
+            .limit(limit)
+        )
+        results = await self._execute_ranked_query(stmt)
+        if results:
+            logger.debug(
+                "hybrid_retriever.episode_vector_success",
+                extra={"result_count": len(results)},
+            )
+        return results
 
     async def _vector_search_facts(
         self,
@@ -245,7 +294,9 @@ class HybridRetriever:
     ) -> list[dict[str, Any]]:
         """Semantic search over facts using pgvector cosine similarity.
 
-        Same fallback pattern as ``_vector_search_episodes``.
+        Same pattern as ``_vector_search_episodes`` but operates on the
+        ``facts.embedding`` column.  Falls back to BM25 when embeddings
+        are unavailable.
 
         Args:
             query: Natural-language query text.
@@ -256,7 +307,47 @@ class HybridRetriever:
             A list of result dicts with ``id``, ``content``, ``subject``,
             ``predicate``, ``object``, ``score``, and ``confidence`` keys.
         """
-        return await self._bm25_search_facts(query, user_id, limit)
+        query_embedding = await self._embed_query(query)
+        if query_embedding is None:
+            logger.debug("hybrid_retriever.fact_vector_fallback_bm25")
+            return await self._bm25_search_facts(query, user_id, limit)
+
+        embedding_literal = "[" + ",".join(str(x) for x in query_embedding) + "]"
+
+        stmt = (
+            select(
+                Fact.id,
+                Fact.content,
+                Fact.subject,
+                Fact.predicate,
+                Fact.object,
+                Fact.confidence,
+                Fact.created_at,
+                (
+                    1.0
+                    - func.coalesce(
+                        func.cast(Fact.embedding, text("vector")).op("<=>")(
+                            func.cast(embedding_literal, text("vector"))
+                        ),
+                        1.0,
+                    )
+                ).label("score"),
+            )
+            .where(
+                Fact.user_id == user_id,
+                Fact.invalid_at.is_(None),
+                Fact.embedding.isnot(None),
+            )
+            .order_by(text("score DESC"))
+            .limit(limit)
+        )
+        results = await self._execute_ranked_query(stmt)
+        if results:
+            logger.debug(
+                "hybrid_retriever.fact_vector_success",
+                extra={"result_count": len(results)},
+            )
+        return results
 
     # ── BM25 Search ────────────────────────────────────────────────────────────
 
@@ -405,13 +496,15 @@ class HybridRetriever:
                 seen.add(entity_id_str)
 
                 # Add the matched entity itself with distance 0
-                results.append({
-                    "id": entity_id_str,
-                    "name": entity.get("name", ""),
-                    "type": entity.get("type", ""),
-                    "summary": entity.get("summary", ""),
-                    "distance": 0,
-                })
+                results.append(
+                    {
+                        "id": entity_id_str,
+                        "name": entity.get("name", ""),
+                        "type": entity.get("type", ""),
+                        "summary": entity.get("summary", ""),
+                        "distance": 0,
+                    }
+                )
 
                 # BFS up to depth 2
                 try:
@@ -441,13 +534,15 @@ class HybridRetriever:
                     depth = node.get("depth", 1)
                     if node_id and node_id not in seen:
                         seen.add(node_id)
-                        results.append({
-                            "id": node_id,
-                            "name": node.get("name", ""),
-                            "type": node.get("type", ""),
-                            "summary": node.get("summary", ""),
-                            "distance": depth,
-                        })
+                        results.append(
+                            {
+                                "id": node_id,
+                                "name": node.get("name", ""),
+                                "type": node.get("type", ""),
+                                "summary": node.get("summary", ""),
+                                "distance": depth,
+                            }
+                        )
 
             # Sort by distance (closest first), limit to MAX_BFS_RESULTS
             results.sort(key=lambda x: x.get("distance", 99))
