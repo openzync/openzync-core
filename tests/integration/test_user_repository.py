@@ -24,11 +24,12 @@ class TestUserRepository:
     async def _seed_user(
         self, repo: UserRepository, org_id: UUID, ext_id: str = "test_user"
     ) -> User:
+        email = f"{ext_id}@example.com"
         return await repo.create(
             organization_id=org_id,
             external_id=ext_id,
             name="Test User",
-            email="test@example.com",
+            email=email,
         )
 
     async def test_create_user(self, engine) -> None:
@@ -41,7 +42,7 @@ class TestUserRepository:
             assert user.id is not None
             assert user.external_id == "test_user"
             assert user.name == "Test User"
-            assert user.email == "test@example.com"
+            assert user.email == "test_user@example.com"
             assert user.created_at is not None
             assert user.updated_at is not None
 

@@ -84,7 +84,7 @@ class TestApiKeyRepository:
             assert key.id is not None
             assert key.prefix == "mg_test_"
 
-            keys, _ = await repo.list_by_org(ORG_ID)
+            keys = await repo.list_by_org(ORG_ID)
             assert len(keys) >= 1
 
     async def test_get_by_id_found(self, engine) -> None:
@@ -149,7 +149,7 @@ class TestAuthRepository:
             repo = AuthRepository(db)
             token = await repo.create_refresh_token(
                 user_id=str(uuid4()), organization_id=ORG_ID,
-                token_hash="tok_hash", expires_at=datetime.now(timezone.utc),
+                token_hash="tok_hash", expires_at=datetime.now(),
             )
             assert token.id is not None
 
@@ -158,10 +158,19 @@ class TestAuthRepository:
             repo = AuthRepository(db)
             token = await repo.create_refresh_token(
                 user_id=str(uuid4()), organization_id=ORG_ID,
-                token_hash="revoke_hash", expires_at=datetime.now(timezone.utc),
+                token_hash="revoke_hash", expires_at=datetime.now(),
             )
-            revoked = await repo.revoke_refresh_token("revoke_hash")
-            assert revoked is not None
+            assert token.is_revoked is False
+
+            await repo.revoke_refresh_token(token.id)
+            # Manually check the token was revoked in DB
+            from sqlalchemy import select
+            from models.refresh_token import RefreshToken
+            result = await db.execute(
+                select(RefreshToken).where(RefreshToken.id == token.id)
+            )
+            found = result.scalar_one()
+            assert found.is_revoked is True
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -238,7 +247,7 @@ class TestExtractionSchemaRepository:
                 json_schema={"type": "object"},
             )
             updated = await repo.update(
-                ORG_ID, schema.id, prompt_template="new template",
+                schema, prompt_template="new template",
             )
             assert updated is not None
             assert updated.prompt_template == "new template"
@@ -254,8 +263,8 @@ class TestStructuredExtractionRepository:
     async def test_get_by_session(self, engine) -> None:
         async with AsyncSession(engine) as db:
             repo = StructuredExtractionRepository(db)
-            results, cursor = await repo.get_by_session(
-                ORG_ID, session_id=uuid4(), limit=10,
+            results = await repo.get_by_session(
+                ORG_ID, uuid4(),
             )
             assert isinstance(results, list)
 

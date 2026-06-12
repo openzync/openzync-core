@@ -420,7 +420,7 @@ class SessionRepository:
         if session is None:
             return None
 
-        session.closed_at = datetime.now(timezone.utc)
+        session.closed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         await self._db.flush()
         await self._db.refresh(session)
         return session
@@ -532,7 +532,7 @@ class SessionRepository:
         Returns:
             A list of stale open Sessions.
         """
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=inactivity_hours)
+        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=inactivity_hours)
         result = await self._db.execute(
             select(Session)
             .where(

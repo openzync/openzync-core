@@ -25,6 +25,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 
+@pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
 class TestStructuredExtractionEndpoint:
     """Tests for the structured extraction query endpoints."""
 

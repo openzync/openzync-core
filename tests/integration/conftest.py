@@ -18,7 +18,6 @@ Fixtures provided:
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any, AsyncGenerator
 from uuid import UUID
 
@@ -33,9 +32,13 @@ from core.db import get_async_session
 from tests.conftest import (
     _start_postgres_container,
     _start_redis_container,
-    _run_alembic_upgrade,
     _ensure_testcontainers_env,
 )
+
+# Module-level container registry.
+# SQLAlchemy AsyncEngine uses __slots__ and rejects arbitrary attributes,
+# so we store testcontainer references here instead.
+_testcontainers: dict[str, object] = {}
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -43,77 +46,69 @@ async def engine():
     """Session-scoped async engine backed by a testcontainers PostgreSQL.
 
     Spins up a PostgreSQL 15 + pgvector container, applies Alembic
-    migrations, and provides the engine to all tests in the session.
+    migrations (via sync engine), and provides the async engine to all
+    tests in the session.  The sync/async split is deliberate — Alembic
+    operates in a pure synchronous context to avoid ``MissingGreenlet``
+    errors.
     """
     _ensure_testcontainers_env()
-    container = _start_postgres_container()
+    pg_container = _start_postgres_container()
     redis_container = _start_redis_container()
+    _testcontainers["pg"] = pg_container
+    _testcontainers["redis"] = redis_container
 
-    # ── Wait for both to be ready ────────────────────────────────────────
-    # testcontainers already blocks on ``container.start()`` until the
-    # health check passes, so we can connect immediately.
-    pg_url = container.get_connection_url()
+    # ── Step 1: Run Alembic migrations via a sync engine ─────────────────
+    pg_url = pg_container.get_connection_url()
+    # Strip the asyncpg driver suffix — Alembic runs in a sync context
+    sync_url = pg_url.replace("+asyncpg", "")
+
+    from sqlalchemy import create_engine as create_sync_engine
+
+    sync_engine = create_sync_engine(sync_url, pool_pre_ping=True)
+
+    from alembic.command import upgrade as alembic_upgrade
+    from alembic.config import Config as AlembicConfig
+
+    alembic_cfg = AlembicConfig("alembic.ini")
+    with sync_engine.connect() as sync_conn:
+        alembic_cfg.attributes["connection"] = sync_conn
+        alembic_upgrade(alembic_cfg, "head")
+    sync_engine.dispose()
+
+    # ── Step 2: Create the async engine for tests ────────────────────────
     driver_url = pg_url.replace("postgresql://", "postgresql+asyncpg://")
-
-    engine = create_async_engine(
+    async_engine = create_async_engine(
         driver_url,
         poolclass=NullPool,
         pool_pre_ping=True,
     )
 
-    # ── Apply Alembic migrations ─────────────────────────────────────────
-    from alembic.config import Config as AlembicConfig
-    from alembic.runtime.environment import EnvironmentContext
-    from alembic.script import ScriptDirectory
+    # ── Step 3: Seed bootstrap data ──────────────────────────────────────
+    # Many integration tests assume a well-known organization UUID exists.
+    from models.organization import Organization
+    from sqlalchemy import text
 
-    alembic_cfg = AlembicConfig("alembic.ini")
-    script = ScriptDirectory.from_config(alembic_cfg)
-
-    async def _run_migrations() -> None:
-        def do_upgrade(rev, context):
-            return script._upgrade_revs("head", rev)
-
-        async with engine.connect() as conn:
-            await conn.run_sync(
-                lambda sync_conn: EnvironmentContext(alembic_cfg, script).configure(
-                    sync_conn,
-                    fn=do_upgrade,
+    async with async_engine.connect() as conn:
+        # Check if bootstrap org exists
+        result = await conn.execute(
+            text("SELECT 1 FROM organizations WHERE id = '00000000-0000-0000-0000-000000000001'")
+        )
+        if not result.scalar():
+            await conn.execute(
+                text(
+                    "INSERT INTO organizations (id, name, plan) "
+                    "VALUES ('00000000-0000-0000-0000-000000000001', 'Bootstrap Org', 'free')"
                 )
             )
-
-    try:
-        await _run_migrations()
-    except Exception as exc:
-        # If migrations fail, try a simpler approach
-        from sqlalchemy import text
-
-        async with engine.connect() as conn:
-            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
         await conn.commit()
 
-        # Run raw DDL from the initial migration
-        from alembic.command import upgrade as alembic_upgrade
-
-        def _upgrade():
-            alembic_cfg.attributes["connection"] = None
-            with engine.sync_engine.connect() as sync_conn:
-                alembic_cfg.attributes["connection"] = sync_conn
-                alembic_upgrade(alembic_cfg, "head")
-
-        await asyncio.get_event_loop().run_in_executor(None, _upgrade)
-
-    # ── Store for teardown ───────────────────────────────────────────────
-    engine._testcontainers_pg = container  # type: ignore[attr-defined]
-    engine._testcontainers_redis = redis_container  # type: ignore[attr-defined]
-
-    yield engine
+    yield async_engine
 
     # ── Teardown ─────────────────────────────────────────────────────────
-    await engine.dispose()
-    container.stop()
+    await async_engine.dispose()
+    pg_container.stop()
     redis_container.stop()
+    _testcontainers.clear()
 
 
 @pytest_asyncio.fixture(scope="session")
@@ -121,7 +116,7 @@ async def redis_client(engine) -> Any:
     """Session-scoped async Redis client connected to testcontainers Redis."""
     from redis.asyncio import Redis as AsyncRedis
 
-    container = engine._testcontainers_redis  # type: ignore[attr-defined]
+    container = _testcontainers["redis"]
     redis_url = f"redis://{container.get_container_host_ip()}:{container.get_exposed_port(6379)}/0"
 
     client = AsyncRedis.from_url(
@@ -132,18 +127,25 @@ async def redis_client(engine) -> Any:
         socket_timeout=10,
     )
     yield client
-    await client.aclose()
+    try:
+        await client.aclose()
+    except RuntimeError:
+        pass  # event loop already closed during session teardown
 
 
 @pytest_asyncio.fixture
-async def app(engine) -> Any:
-    """Create the FastAPI app wired to the testcontainers database."""
+async def app(engine, redis_client) -> Any:
+    """Create the FastAPI app wired to the testcontainers database + Redis."""
     from services.api.main import create_app
     from dependencies.db import get_db
 
     app = create_app()
     session_factory = get_async_session(engine)
     app.state.db_session_factory = session_factory
+
+    # Wire Redis client — the app's lifespan normally does this, but it
+    # is not run when we call create_app() directly in tests.
+    app.state.redis = redis_client
 
     async def _get_db_override() -> AsyncGenerator[AsyncSession, None]:
         async with session_factory() as session:

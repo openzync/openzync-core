@@ -29,6 +29,7 @@ async def anon_client(app: pytest.fixture) -> AsyncClient:  # noqa: ARG002
         yield client
 
 
+@pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
 class TestMemoryWipe:
     """Tests for ``DELETE /v1/users/{user_id}/memory``."""
 

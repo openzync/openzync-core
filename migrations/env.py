@@ -2,6 +2,7 @@
 
 This configures Alembic to work with asyncpg and the OpenZep models.
 """
+
 import asyncio
 from logging.config import fileConfig
 
@@ -65,8 +66,25 @@ async def run_async_migrations() -> None:
 
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
-    asyncio.run(run_async_migrations())
+    """Run migrations in 'online' mode.
+
+    Supports two modes:
+
+    1. **Sync mode** (used by integration tests): A connection is provided
+       via ``config.attributes["connection"]``.  The migrations run
+       synchronously on that connection.
+
+    2. **Async mode** (default): An async engine is created from the config
+       URL and migrations run asynchronously.  This is the normal Alembic
+       workflow from the CLI.
+    """
+    connection = config.attributes.get("connection")
+    if connection is not None:
+        # Sync mode — caller provided a pre-existing connection
+        do_run_migrations(connection)
+    else:
+        # Async mode — create engine from config
+        asyncio.run(run_async_migrations())
 
 
 if context.is_offline_mode():

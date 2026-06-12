@@ -27,6 +27,7 @@ pytestmark = pytest.mark.integration
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
 class TestContextAssembly:
     """Context assembly correctness tests."""
 

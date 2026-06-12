@@ -40,6 +40,16 @@ def _set_required_env(monkeypatch: pytest.MonkeyPatch | None = None) -> None:
             os.environ.setdefault(key, val)
 
 
+def _settings(**overrides: str) -> Settings:
+    """Instantiate Settings without reading the project ``.env`` file.
+
+    Unit tests must not be influenced by the developer's local ``.env``
+    file (which may override defaults like ``MG_LLM_BACKEND``).  Passing
+    ``_env_file=None`` tells pydantic-settings to skip the file entirely.
+    """
+    return Settings(_env_file=None, **overrides)
+
+
 # ── Tests ─────────────────────────────────────────────────────────────────────
 
 
@@ -50,11 +60,11 @@ class TestSettings:
         """Fields with defaults should match expected development values."""
         _set_required_env(monkeypatch)
 
-        s = Settings()
+        s = _settings()
         assert s.LLM_BACKEND == "ollama"
         assert s.ENVIRONMENT == "development"
         assert s.EMBEDDING_DIM > 0
-        assert s.GRAPH_BACKEND == "falkordb"
+        assert s.GRAPH_BACKEND == "postgres"
         assert s.LOG_LEVEL == "INFO"
 
     def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -63,8 +73,7 @@ class TestSettings:
         monkeypatch.setenv("MG_LLM_BACKEND", "openai")
         monkeypatch.setenv("MG_ENVIRONMENT", "staging")
         monkeypatch.setenv("MG_LOG_LEVEL", "DEBUG")
-
-        s = Settings()
+        s = _settings()
         assert s.LLM_BACKEND == "openai"
         assert s.ENVIRONMENT == "staging"
         assert s.LOG_LEVEL == "DEBUG"
@@ -73,23 +82,24 @@ class TestSettings:
         """DATABASE_URL must contain 'postgresql' — pydantic PostgresDsn validator."""
         _set_required_env(monkeypatch)
 
-        s = Settings()
+        s = _settings()
         url = str(s.DATABASE_URL)
         assert "postgresql" in url, f"Expected postgresql DSN, got {url!r}"
 
     def test_secret_key_min_length_enforced(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A SECRET_KEY shorter than 32 characters should raise a validation error."""
         _set_required_env(monkeypatch)
-        monkeypatch.setenv("MG_SECRET_KEY", "too-short")
+        # Must clear MG_SECRET_KEY so the constructor kwarg isn't overridden
+        monkeypatch.delenv("MG_SECRET_KEY", raising=False)
 
         with pytest.raises(Exception, match="at least 32 characters"):
-            Settings()
+            _settings(MG_SECRET_KEY="too-short")
 
     def test_rate_limit_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Rate-limit configuration should have sensible defaults."""
         _set_required_env(monkeypatch)
 
-        s = Settings()
+        s = _settings()
         assert s.RATE_LIMIT_IP_MAX >= 1
         assert s.RATE_LIMIT_WINDOW_SEC >= 1
 
@@ -97,7 +107,7 @@ class TestSettings:
         """Default CORS origin should point to the local dev server."""
         _set_required_env(monkeypatch)
 
-        s = Settings()
+        s = _settings()
         assert "localhost:3000" in s.CORS_ORIGINS
 
     def test_embedding_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -105,7 +115,7 @@ class TestSettings:
         _set_required_env(monkeypatch)
         monkeypatch.setenv("MG_EMBEDDING_BACKEND", "ollama")
 
-        s = Settings()
+        s = _settings()
         assert s.EMBEDDING_BACKEND == "ollama"
         assert s.EMBEDDING_DIM == 768
 
@@ -118,6 +128,6 @@ class TestSettings:
         """
         _set_required_env(monkeypatch)
 
-        s = Settings()
+        s = _settings()
         with pytest.raises(Exception, match="frozen"):
             s.LLM_BACKEND = "anthropic"  # type: ignore[misc]

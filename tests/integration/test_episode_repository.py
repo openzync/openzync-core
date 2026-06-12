@@ -22,25 +22,26 @@ pytestmark = pytest.mark.integration
 class TestEpisodeRepository:
     ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 
-    async def _seed_user_and_session(self, engine) -> tuple[UUID, UUID]:
-        async with AsyncSession(engine) as db:
-            user_repo = UserRepository(db)
-            session_repo = SessionRepository(db)
-            user = await user_repo.create(
-                organization_id=self.ORG_ID,
-                external_id="episode_test_user",
-            )
-            session = await session_repo.create(
-                organization_id=self.ORG_ID,
-                user_id=user.id,
-                external_id="episode_test_session",
-            )
-            return user.id, session.id
+    async def _seed_user_and_session(
+        self, db: AsyncSession
+    ) -> tuple[UUID, UUID]:
+        user_repo = UserRepository(db)
+        session_repo = SessionRepository(db)
+        user = await user_repo.create(
+            organization_id=self.ORG_ID,
+            external_id="episode_test_user",
+        )
+        session = await session_repo.create(
+            organization_id=self.ORG_ID,
+            user_id=user.id,
+            external_id="episode_test_session",
+        )
+        return user.id, session.id
 
     async def test_batch_create(self, engine) -> None:
         """batch_create inserts multiple episodes and returns them."""
-        user_id, session_id = await self._seed_user_and_session(engine)
         async with AsyncSession(engine) as db:
+            user_id, session_id = await self._seed_user_and_session(db)
             repo = EpisodeRepository(db)
             messages = [
                 {"role": "user", "content": "Hello", "metadata": {}},
