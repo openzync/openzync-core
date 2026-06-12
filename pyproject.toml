@@ -139,6 +139,7 @@ filterwarnings = [
     "error",
     "ignore::DeprecationWarning:alembic.*",
     "ignore::DeprecationWarning:sqlalchemy.*",
+    "ignore::DeprecationWarning:testcontainers.*",
 ]
 markers = [
     "unit: Unit tests — no I/O, no DB, no network. Mock at the service boundary.",

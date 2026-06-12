@@ -41,9 +41,10 @@ def _start_postgres_container() -> object:
 
     container = PostgresContainer(
         image="pgvector/pgvector:pg15",
-        user="openzep",
-        password="openzep",
-        dbname="openzep_test",
+        username="memgraph",
+        password="memgraph",
+        dbname="memgraph_test",
+        driver="asyncpg",
     )
     container.start()
     return container
