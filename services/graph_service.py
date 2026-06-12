@@ -56,7 +56,9 @@ class GraphService:
             Returns empty page when graph backend is unavailable.
         """
         if self._backend is None:
-            logger.debug("graph_service.backend_unavailable", extra={"operation": "get_entities"})
+            logger.debug(
+                "graph_service.backend_unavailable", extra={"operation": "get_entities"}
+            )
             return {"items": [], "next_cursor": None, "has_more": False}
 
         return await self._backend.list_entities(
@@ -93,7 +95,9 @@ class GraphService:
                 detail={"entity_id": str(entity_id)},
             )
 
-        result = await self._backend.get_entity_with_edges(org_id=org_id, entity_id=entity_id)
+        result = await self._backend.get_entity_with_edges(
+            org_id=org_id, entity_id=entity_id
+        )
         if result is None:
             raise EntityNotFoundError(
                 message=f"Entity {entity_id} not found in the knowledge graph.",
@@ -155,7 +159,9 @@ class GraphService:
             A dict with ``items``, ``next_cursor``, and ``has_more`` keys.
         """
         if self._backend is None:
-            logger.debug("graph_service.backend_unavailable", extra={"operation": "get_edges"})
+            logger.debug(
+                "graph_service.backend_unavailable", extra={"operation": "get_edges"}
+            )
             return {"items": [], "next_cursor": None, "has_more": False}
 
         if subject_id is not None:
@@ -177,21 +183,37 @@ class GraphService:
 
     async def get_communities(
         self,
-        org_id: UUID,  # noqa: ARG002
+        org_id: UUID,
     ) -> list[dict[str, Any]]:
         """List community summary nodes.
 
-        Community detection is a scheduled background task (Phase 2c).
-        Until then, this always returns an empty list.
+        Communities are created by the scheduled ``summarise_community`` ARQ
+        worker, which runs Label Propagation on the entity graph and stores
+        community entities in ``graph_entities`` with ``entity_type='community'``.
 
         Args:
             org_id: The authenticated organization UUID.
 
         Returns:
-            An empty list (community detection not yet implemented).
+            A list of community dicts with ``id``, ``name``, ``summary``,
+            ``member_count``, and ``created_at`` keys.  Returns an empty list
+            when the graph backend is unavailable or no communities exist yet.
         """
-        # note: Community detection runs as a nightly ARQ task
-        # (summarise_community worker). Once implemented, this method will
-        # query CommunityNode instances via the graph backend.
-        logger.debug("graph_service.communities_not_implemented")
-        return []
+        if self._backend is None:
+            logger.debug(
+                "graph_service.backend_unavailable",
+                extra={"operation": "get_communities"},
+            )
+            return []
+
+        result = await self._backend.list_entities(
+            org_id=org_id,
+            entity_type="community",
+            limit=200,
+        )
+        items: list[dict[str, Any]] = result.get("items", [])
+        # member_count is stored in attributes at creation time
+        for item in items:
+            attrs = item.get("attributes") or {}
+            item["member_count"] = attrs.get("member_count", 0)
+        return items

@@ -10,6 +10,7 @@ Pipeline:
 
 from __future__ import annotations
 
+import json
 import logging
 from datetime import datetime, timezone
 from uuid import UUID
@@ -39,9 +40,10 @@ async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
     Returns:
         Dict with ``status``, ``orgs_processed``, ``communities_created``.
     """
-    from core.config import settings
-    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
     from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    from core.config import settings
 
     engine = create_async_engine(
         str(settings.DATABASE_URL),
@@ -51,6 +53,7 @@ async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
     )
 
     from core.db import get_async_session
+
     session_factory = get_async_session(engine)
 
     try:
@@ -108,8 +111,12 @@ async def _process_org(db: AsyncSession, org_id: UUID) -> int:
     Returns:
         Number of communities created.
     """
-    from packages.community.algorithms import build_entity_graph, detect_communities_label_propagation
     from sqlalchemy import text
+
+    from packages.community.algorithms import (
+        build_entity_graph,
+        detect_communities_label_propagation,
+    )
 
     # 1. Fetch all entities (non-community)
     result = await db.execute(
@@ -201,6 +208,7 @@ async def _create_community(
         all_relationships: All relationships for building the prompt context.
     """
     from sqlalchemy import text
+
     from core.llm import resolve_backend
 
     # Build entity name map
@@ -211,7 +219,8 @@ async def _create_community(
     # Build context for LLM
     context_entities = [entity_map[eid] for eid in entity_ids if eid in entity_map]
     context_rels = [
-        r for r in all_relationships
+        r
+        for r in all_relationships
         if r["source_id"] in entity_ids and r["target_id"] in entity_ids
     ]
 
@@ -219,22 +228,30 @@ async def _create_community(
     try:
         prompt = _build_community_prompt(context_entities, context_rels)
         llm = await resolve_backend()
-        response = await llm.chat([
-            {"role": "system", "content": "You are an analyst. Output ONLY the summary text, no preamble."},
-            {"role": "user", "content": prompt},
-        ])
+        response = await llm.chat(
+            [
+                {
+                    "role": "system",
+                    "content": "You are an analyst. Output ONLY the summary text, no preamble.",
+                },
+                {"role": "user", "content": prompt},
+            ]
+        )
         summary = response.content.strip()
     except Exception as exc:
         logger.warning("community.llm_summary_failed", extra={"error": str(exc)})
-        summary = f"Community of {len(member_names)} entities: {', '.join(member_names)}"
+        summary = (
+            f"Community of {len(member_names)} entities: {', '.join(member_names)}"
+        )
 
     # Create community entity
     now = datetime.now(timezone.utc)
     result = await db.execute(
         text(
             """
-            INSERT INTO graph_entities (organization_id, name, entity_type, summary, created_at)
-            VALUES (:org_id, :name, 'community', :summary, :created_at)
+            INSERT INTO graph_entities
+                (organization_id, name, entity_type, summary, attributes, created_at)
+            VALUES (:org_id, :name, 'community', :summary, :attributes, :created_at)
             RETURNING id
             """
         ),
@@ -242,6 +259,7 @@ async def _create_community(
             "org_id": org_id,
             "name": community_name,
             "summary": summary,
+            "attributes": json.dumps({"member_count": len(entity_ids)}),
             "created_at": now,
         },
     )
@@ -294,7 +312,9 @@ def _build_community_prompt(entities: list[dict], relationships: list[dict]) -> 
         "Entities:",
     ]
     for e in entities:
-        parts.append(f"- {e.get('name', '?')} ({e.get('type', '?')}): {e.get('summary', '')[:100]}")
+        parts.append(
+            f"- {e.get('name', '?')} ({e.get('type', '?')}): {e.get('summary', '')[:100]}"
+        )
 
     if relationships:
         parts.extend(["", "Relationships:"])
