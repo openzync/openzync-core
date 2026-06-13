@@ -15,6 +15,7 @@ top-N by merged score are returned.
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -91,6 +92,8 @@ class HybridRetriever:
             - ``source_counts``: Item count per source type.
             - ``total_items``: Sum of all items across sources.
         """
+        _search_start = time.monotonic()
+
         # ── Run all three retrieval legs concurrently ──────────────────────
         # Each leg returns a list of dicts with at minimum ``id`` and
         # ``score`` keys for RRF merging.
@@ -167,6 +170,9 @@ class HybridRetriever:
 
         # Entities: BFS results directly (single source, no merge needed)
         entities = entity_results[:limit]
+
+        from middleware.metrics import graph_search_latency_seconds
+        graph_search_latency_seconds.observe(time.monotonic() - _search_start)
 
         return {
             "episodes": merged_episodes,

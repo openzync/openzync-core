@@ -74,6 +74,13 @@ context_latency_seconds = Histogram(
     registry=METRICS_REGISTRY,
 )
 
+graph_search_latency_seconds = Histogram(
+    "openzep_graph_search_latency_seconds",
+    "Hybrid graph+vector+BM25 search latency in seconds.",
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+    registry=METRICS_REGISTRY,
+)
+
 # ── ASGI middleware ──────────────────────────────────────────────────────────
 
 

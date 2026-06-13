@@ -146,6 +146,13 @@ class Settings(BaseSettings):
         validation_alias="OLLAMA_BASE_URL",
     )
 
+    # ── Metrics / Observability ───────────────────────────────────────────
+    PROMETHEUS_URL: str = Field(
+        default="http://localhost:9090",
+        description="Prometheus server URL.  Used by the admin /metrics/summary endpoint.",
+        validation_alias="MG_PROMETHEUS_URL",
+    )
+
     # ── HTTP / Server ─────────────────────────────────────────────────────
     CORS_ORIGINS: str = Field(
         default="http://localhost:3000",

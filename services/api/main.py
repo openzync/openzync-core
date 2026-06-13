@@ -43,6 +43,7 @@ from middleware.tracing import TracingMiddleware
 from routers import (
     admin,
     admin_api_keys,
+    admin_metrics,
     admin_schemas,
     admin_stats,
     auth,
@@ -195,6 +196,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_api_keys.router)
     app.include_router(admin_schemas.router)
     app.include_router(admin_stats.router)
+    app.include_router(admin_metrics.router)
     app.include_router(auth.router)
     app.include_router(users.router)
     app.include_router(sessions.router)

@@ -68,15 +68,13 @@ PUBLIC_ENDPOINTS: set[str] = {
     "/v1/auth/signup",
     "/v1/auth/login",
     "/v1/auth/refresh",
-    "/metrics",
 }
 """Paths that are allowed without authentication.
 
-The ``/metrics`` endpoint is intentionally unauthenticated — Prometheus
-scrapers cannot carry bearer tokens, and it exposes only aggregate
-performance counters (no PII or business data).
-"""
-"""Paths that are allowed without authentication.
+The ``/metrics`` path is handled by an exact-path exemption in
+:meth:`AuthMiddleware.dispatch` — it must be unauthenticated so
+Prometheus scrapers can reach it, but sub-paths (``/metrics/summary``
+etc.) go through normal auth.
 
 These endpoints do not require an ``Authorization`` header.  The set may be
 extended at the application level.  Paths are matched suffix-wise so that
@@ -414,6 +412,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # (registered outermost) should catch these first, but this is a
         # defense-in-depth guard in case middleware ordering changes.
         if request.method == "OPTIONS":
+            return await call_next(request)
+
+        # ── Prometheus scrape endpoint — exact path only ─────────────────
+        # /metrics must be unauthenticated for Prometheus scrapers, but
+        # sub-paths like /metrics/summary go through normal auth.
+        if request.url.path == "/metrics":
             return await call_next(request)
 
         # ── Public endpoints pass through ────────────────────────────────

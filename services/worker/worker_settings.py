@@ -160,7 +160,7 @@ class WorkerSettings(BaseSettings):
 
     # ── Prometheus ───────────────────────────────────────────────────────────
     PROMETHEUS_PORT: int = Field(
-        default=9090,
+        default=9095,
         description=(
             "Port for the Prometheus metrics HTTP server. "
             "Separate from the health check port."
