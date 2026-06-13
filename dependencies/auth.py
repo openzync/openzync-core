@@ -1,6 +1,6 @@
 """FastAPI dependencies for authentication and authorization.
 
-Provides four levels of auth dependency:
+Provides five levels of auth dependency:
 
 1. ``get_org_id`` — Optional auth.  Returns the org ID if authenticated,
    ``None`` otherwise.  Works with both API keys and JWT tokens.
@@ -14,14 +14,24 @@ Provides four levels of auth dependency:
 4. ``get_dashboard_user`` — Returns ``request.state.user_id`` if the
    request is authenticated via JWT (dashboard session), ``None`` otherwise.
 
+5. ``require_project_access`` — Verifies that a project belongs to the
+   authenticated org and that a user is a member of that project.
+
 All dependencies rely on ``request.state`` attributes set by
 :class:`AuthMiddleware <openzep.middleware.auth.AuthMiddleware>`.
 """
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from dependencies.db import get_db
+from models.project import Project
+from repositories.project_repository import ProjectRepository
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Bearer token scheme — auto-adds to OpenAPI docs
@@ -217,3 +227,92 @@ async def get_dashboard_user(
             },
         )
     return user_id
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Project-level authorization
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+async def require_project_access(
+    request: Request,
+    org_id: str = Depends(require_org_id),
+    db: AsyncSession = Depends(get_db),
+) -> str:
+    """Verify that a project belongs to the authenticated org and that
+    the user (from JWT or path param) is a project member.
+
+    This dependency should be used on project-scoped endpoints::
+
+        @router.get("/v1/projects/{project_id}/{user_id}/sessions")
+        async def list_sessions(
+            project_id: UUID,
+            user_id: UUID,
+            _: str = Depends(require_project_access),
+            ...
+        )
+
+    The ``project_id`` and ``user_id`` are read from the request path params.
+    The ``org_id`` comes from the authentication context.
+
+    Returns:
+        The ``org_id`` if access is granted.
+
+    Raises:
+        HTTPException: 404 if the project doesn't exist or
+            403 if the user is not a member.
+    """
+    # Extract path parameters
+    path_params = request.path_params
+    project_id_str: str | None = path_params.get("project_id")
+    user_id_str: str | None = path_params.get("user_id")
+
+    if project_id_str is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="project_id is required in the path",
+        )
+
+    project_id = UUID(project_id_str)
+    org_uuid = UUID(org_id) if isinstance(org_id, str) else org_id
+
+    # Verify project exists and belongs to the org
+    repo = ProjectRepository(db)
+    project = await repo.get_by_id(org_uuid, project_id)
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Project {project_id} not found",
+        )
+
+    # Verify the authenticated user (JWT or API key owner) is a project member.
+    # The dashboard admin (from JWT) manages users' data within the project,
+    # so membership is always checked against the authenticated actor, not the
+    # path user_id.  For API-key auth the path user_id is the actor.
+    auth_type: str | None = getattr(request.state, "auth_type", None)
+    if auth_type == "jwt":
+        # Dashboard JWT session — check membership for the JWT user
+        jwt_user: str | None = getattr(request.state, "user_id", None)
+        if jwt_user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="JWT token does not contain a user identifier",
+            )
+        check_user_id = UUID(jwt_user)
+    elif user_id_str is not None:
+        # API-key auth — the path user_id is the actor
+        check_user_id = UUID(user_id_str)
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="user_id is required in the path for API-key auth",
+        )
+
+    is_member = await repo.is_member(project_id, check_user_id)
+    if not is_member:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"User {check_user_id} is not a member of project {project_id}",
+        )
+
+    return org_id

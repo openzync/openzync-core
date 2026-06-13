@@ -294,9 +294,12 @@ class MemoryService:
             {"id": ep.id, "content": ep.content, "role": ep.role}
             for ep in episodes
         ]
+        # Extract project_id from the session (always populated after migration)
+        project_id = str(session.project_id) if session.project_id else str(org_id)
         await self._enqueue_arq_tasks(
             job_id=job_id,
             org_id=str(org_id),
+            project_id=project_id,
             user_id=str(user_id),
             session_id=str(session_id),
             episodes=episode_dicts,
@@ -589,6 +592,7 @@ class MemoryService:
         self,
         job_id: str,
         org_id: str,
+        project_id: str,
         user_id: str,
         session_id: str,
         episodes: list[dict[str, Any]],
@@ -608,6 +612,7 @@ class MemoryService:
         Args:
             job_id: The composite job ID for this ingestion.
             org_id: The organization UUID string.
+            project_id: The project UUID string for scoping graph entities.
             user_id: The user UUID string.
             session_id: The session UUID string.
             episodes: List of episode dicts with ``id``, ``content``, ``role``.
@@ -620,7 +625,7 @@ class MemoryService:
                 ep_id = str(episode["id"])
                 content = episode["content"]
                 role = episode.get("role", "user")
-                common = {"episode_id": ep_id, "content": content, "org_id": org_id}
+                common = {"episode_id": ep_id, "content": content, "org_id": org_id, "project_id": project_id}
 
                 await arq_pool.enqueue("classify_dialog", queue_name=qname,
                     **common)

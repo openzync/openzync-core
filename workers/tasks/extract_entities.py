@@ -39,6 +39,7 @@ async def extract_entities(
     ctx: object,
     episode_id: str,
     org_id: str,
+    project_id: str,
     user_id: str,
     content: str,
     session_id: str | None = None,
@@ -397,6 +398,7 @@ async def extract_entities(
 
                     node = await entity_repo.upsert_entity(
                         org_id=uuid.UUID(org_id),
+                        project_id=uuid.UUID(project_id),
                         name=normalized_name,
                         entity_type=entity_type,
                         summary=summary,
@@ -434,6 +436,7 @@ async def extract_entities(
                         if name not in name_to_node:
                             fallback_node = await entity_repo.upsert_entity(
                                 org_id=uuid.UUID(org_id),
+                                project_id=uuid.UUID(project_id),
                                 name=name,
                                 entity_type="Custom",
                                 summary=(
@@ -456,6 +459,7 @@ async def extract_entities(
                             predicate=predicate,
                             obj=obj,
                             org_id=uuid.UUID(org_id),
+                            project_id=uuid.UUID(project_id),
                         )
                         if result is None:
                             relationship_failure_count += 1

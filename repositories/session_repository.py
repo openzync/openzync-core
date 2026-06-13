@@ -37,11 +37,12 @@ class SessionRepository:
     async def create(
         self,
         organization_id: UUID,
+        project_id: UUID,
         user_id: UUID,
         external_id: str,
         metadata: dict[str, Any] | None = None,
     ) -> Session:
-        """Create a new session for a user.
+        """Create a new session for a user within a project.
 
         The unique constraint on ``(user_id, external_id)`` provides the
         final guard against duplicates — the service layer checks first,
@@ -49,6 +50,7 @@ class SessionRepository:
 
         Args:
             organization_id: The organization UUID for tenant isolation.
+            project_id: The project UUID the session belongs to.
             user_id: The owning user's UUID.
             external_id: Caller-defined session identifier.
             metadata: Optional session metadata.
@@ -58,6 +60,7 @@ class SessionRepository:
         """
         session = Session(
             organization_id=organization_id,
+            project_id=project_id,
             user_id=user_id,
             external_id=external_id,
             metadata_=metadata or {},
@@ -68,9 +71,9 @@ class SessionRepository:
         return session
 
     async def get_or_create_default(
-        self, org_id: UUID, user_id: UUID
+        self, org_id: UUID, project_id: UUID, user_id: UUID
     ) -> Session:
-        """Get or create the ``__default__`` session for a user.
+        """Get or create the ``__default__`` session for a user within a project.
 
         The default session is used when callers send messages without
         specifying a ``session_id``.  It is hidden from session list
@@ -78,6 +81,7 @@ class SessionRepository:
 
         Args:
             org_id: The organization UUID for tenant isolation.
+            project_id: The project UUID the session belongs to.
             user_id: The owning user's UUID.
 
         Returns:
@@ -93,6 +97,7 @@ class SessionRepository:
 
         session = Session(
             organization_id=org_id,
+            project_id=project_id,
             user_id=user_id,
             external_id="__default__",
             metadata_={"auto_created": True},

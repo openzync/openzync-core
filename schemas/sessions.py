@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 
 
 class CreateSessionRequest(BaseModel):
-    """Request body for POST /v1/users/{user_id}/sessions.
+    """Request body for POST /v1/projects/{project_id}/{user_id}/sessions.
 
     Attributes:
         external_id: Caller-defined session identifier. Must be unique per
@@ -44,6 +44,7 @@ class SessionResponse(BaseModel):
     """
 
     id: UUID = Field(..., description="Internal OpenZep session UUID.")
+    project_id: UUID = Field(..., description="Project UUID this session belongs to.")
     user_id: UUID = Field(..., description="User UUID this session belongs to.")
     external_id: str = Field(..., description="Caller-defined session identifier.")
     metadata: dict[str, Any] = Field(
@@ -81,6 +82,7 @@ class SessionListResponse(BaseModel):
     """
 
     id: UUID = Field(..., description="Internal OpenZep session UUID.")
+    project_id: UUID = Field(..., description="Project UUID this session belongs to.")
     user_id: UUID = Field(..., description="User UUID this session belongs to.")
     external_id: str = Field(..., description="Caller-defined session identifier.")
     is_active: bool = Field(

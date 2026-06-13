@@ -37,6 +37,10 @@ class GraphEntity(Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(
         nullable=False,
     )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        nullable=False,
+        index=True,
+    )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     entity_type: Mapped[str] = mapped_column(
         Text,

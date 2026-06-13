@@ -39,14 +39,16 @@ class SessionService:
     async def create_session(
         self,
         organization_id: UUID,
+        project_id: UUID,
         user_id: UUID,
         external_id: str,
         metadata: dict[str, Any] | None = None,
     ) -> SessionResponse:
-        """Create a new session for a user.
+        """Create a new session for a user within a project.
 
         Args:
             organization_id: The organization UUID for tenant isolation.
+            project_id: The project UUID the session belongs to.
             user_id: The owning user's UUID.
             external_id: Caller-defined session identifier (unique per user).
             metadata: Optional session metadata.
@@ -69,6 +71,7 @@ class SessionService:
 
         session = await self._repo.create(
             organization_id=organization_id,
+            project_id=project_id,
             user_id=user_id,
             external_id=external_id,
             metadata=metadata,

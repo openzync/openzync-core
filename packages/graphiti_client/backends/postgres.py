@@ -40,6 +40,7 @@ WITH RECURSIVE bfs AS (
     FROM graph_entities ge
     WHERE ge.id = :start_id
       AND ge.organization_id = :org_id
+      AND ge.project_id = :project_id
 
     UNION
 
@@ -57,6 +58,7 @@ WITH RECURSIVE bfs AS (
         END)
     WHERE bfs.depth < :max_depth
       AND e.organization_id = :org_id
+      AND e.project_id = :project_id
       AND (:edge_types_null OR r.relationship_type = ANY(:edge_types))
 )
 SELECT DISTINCT ON (bfs.id) bfs.id, bfs.name, bfs.entity_type,
@@ -75,6 +77,7 @@ SELECT ge.id, ge.name, ge.entity_type, ge.summary,
        AS score
 FROM graph_entities ge
 WHERE ge.organization_id = :org_id
+  AND ge.project_id = :project_id
   AND (
       ge.name ILIKE '%' || :query || '%'
       OR similarity(ge.name, :query) > 0.2
@@ -134,14 +137,15 @@ class PostgresGraphBackend(GraphBackend):
     async def create_entity(
         self,
         org_id: UUID,
+        project_id: UUID,
         name: str,
         entity_type: str,
         summary: str | None = None,
     ) -> dict:
         """Create or update an entity node (upsert by org_id + name).
 
-        Uses ``ON CONFLICT (organization_id, name) DO UPDATE`` so that
-        duplicate extractions (same entity name in the same org) update
+        Uses ``ON CONFLICT (organization_id, project_id, name) DO UPDATE`` so that
+        duplicate extractions (same entity name in the same project) update
         the entity_type and summary with the latest information rather
         than silently dropping it or creating duplicate rows.
 
@@ -162,9 +166,9 @@ class PostgresGraphBackend(GraphBackend):
                 text(
                     """
                     INSERT INTO graph_entities
-                        (organization_id, name, entity_type, summary)
-                    VALUES (:org_id, :name, :type, :summary)
-                    ON CONFLICT (organization_id, name)
+                        (organization_id, project_id, name, entity_type, summary)
+                    VALUES (:org_id, :project_id, :name, :type, :summary)
+                    ON CONFLICT (organization_id, project_id, name)
                     DO UPDATE SET
                         entity_type = CASE
                             WHEN graph_entities.entity_type = 'Custom'
@@ -182,6 +186,7 @@ class PostgresGraphBackend(GraphBackend):
                 ),
                 {
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "name": name,
                     "type": entity_type,
                     "summary": summary or "",
@@ -220,7 +225,7 @@ class PostgresGraphBackend(GraphBackend):
                 detail={"org_id": str(org_id), "name": name},
             ) from exc
 
-    async def get_entity(self, org_id: UUID, entity_id: UUID) -> dict | None:
+    async def get_entity(self, org_id: UUID, project_id: UUID, entity_id: UUID) -> dict | None:
         """Retrieve an entity node by ID."""
         try:
             result = await self._db.execute(
@@ -228,10 +233,10 @@ class PostgresGraphBackend(GraphBackend):
                     """
                     SELECT id, name, entity_type, summary, attributes, created_at
                     FROM graph_entities
-                    WHERE id = :entity_id AND organization_id = :org_id
+                    WHERE id = :entity_id AND organization_id = :org_id AND project_id = :project_id
                     """
                 ),
-                {"entity_id": str(entity_id), "org_id": str(org_id)},
+                {"entity_id": str(entity_id), "org_id": str(org_id), "project_id": str(project_id)},
             )
             row = result.one_or_none()
             return self._row_to_entity(row) if row else None
@@ -252,6 +257,7 @@ class PostgresGraphBackend(GraphBackend):
     async def update_entity(
         self,
         org_id: UUID,
+        project_id: UUID,
         entity_id: UUID,
         name: str | None = None,
         summary: str | None = None,
@@ -279,9 +285,10 @@ class PostgresGraphBackend(GraphBackend):
             update_cols.append("attributes = CAST(:attributes_json AS jsonb)")
 
         if not update_cols:
-            return await self.get_entity(org_id, entity_id)
+            return await self.get_entity(org_id, project_id, entity_id)
 
         updates["org_id"] = str(org_id)
+        updates["project_id"] = str(project_id)
         updates["entity_id"] = str(entity_id)
         set_clause = ", ".join(update_cols)
 
@@ -291,7 +298,7 @@ class PostgresGraphBackend(GraphBackend):
                     f"""
                     UPDATE graph_entities
                     SET {set_clause}, updated_at = now()
-                    WHERE id = :entity_id AND organization_id = :org_id
+                    WHERE id = :entity_id AND organization_id = :org_id AND project_id = :project_id
                     RETURNING id, name, entity_type, summary, attributes, created_at
                     """
                 ),
@@ -313,7 +320,7 @@ class PostgresGraphBackend(GraphBackend):
                 detail={"org_id": str(org_id), "entity_id": str(entity_id)},
             ) from exc
 
-    async def delete_entity(self, org_id: UUID, entity_id: UUID) -> bool:
+    async def delete_entity(self, org_id: UUID, project_id: UUID, entity_id: UUID) -> bool:
         """Delete an entity — cascades to relationships and episode links.
 
         Returns:
@@ -324,11 +331,11 @@ class PostgresGraphBackend(GraphBackend):
                 text(
                     """
                     DELETE FROM graph_entities
-                    WHERE id = :entity_id AND organization_id = :org_id
+                    WHERE id = :entity_id AND organization_id = :org_id AND project_id = :project_id
                     RETURNING id
                     """
                 ),
-                {"entity_id": str(entity_id), "org_id": str(org_id)},
+                {"entity_id": str(entity_id), "org_id": str(org_id), "project_id": str(project_id)},
             )
             deleted = result.rowcount > 0
             if deleted:
@@ -356,6 +363,7 @@ class PostgresGraphBackend(GraphBackend):
     async def create_relationship(
         self,
         org_id: UUID,
+        project_id: UUID,
         source_id: UUID,
         target_id: UUID,
         relationship_type: str,
@@ -385,11 +393,11 @@ class PostgresGraphBackend(GraphBackend):
                     text(
                         """
                         INSERT INTO graph_relationships
-                            (organization_id, source_id, target_id,
+                            (organization_id, project_id, source_id, target_id,
                              relationship_type, properties, fact, confidence,
                              valid_from, valid_to, created_at)
                         VALUES
-                            (:org_id, :source_id, :target_id,
+                            (:org_id, :project_id, :source_id, :target_id,
                              :rel_type, CAST(:properties AS jsonb), :fact, :confidence,
                              COALESCE(:valid_from, now()), :valid_to, now())
                         ON CONFLICT (source_id, target_id, relationship_type)
@@ -407,6 +415,7 @@ class PostgresGraphBackend(GraphBackend):
                     ),
                     {
                         "org_id": str(org_id),
+                        "project_id": str(project_id),
                         "source_id": str(source_id),
                         "target_id": str(target_id),
                         "rel_type": relationship_type,
@@ -462,6 +471,7 @@ class PostgresGraphBackend(GraphBackend):
     async def expire_relationship(
         self,
         org_id: UUID,
+        project_id: UUID,
         relationship_id: UUID,
     ) -> bool:
         """Mark a relationship as invalidated (soft-delete).
@@ -476,11 +486,12 @@ class PostgresGraphBackend(GraphBackend):
                     SET invalid_at = now()
                     WHERE id = :rel_id
                       AND organization_id = :org_id
+                      AND project_id = :project_id
                       AND invalid_at IS NULL
                     RETURNING id
                     """
                 ),
-                {"rel_id": str(relationship_id), "org_id": str(org_id)},
+                {"rel_id": str(relationship_id), "org_id": str(org_id), "project_id": str(project_id)},
             )
             return result.rowcount > 0
         except Exception as exc:
@@ -503,6 +514,7 @@ class PostgresGraphBackend(GraphBackend):
     async def get_relationships(
         self,
         org_id: UUID,
+        project_id: UUID,
         entity_id: UUID,
         relationship_type: str | None = None,
         at_time: datetime | None = None,
@@ -522,6 +534,7 @@ class PostgresGraphBackend(GraphBackend):
         at_time = at_time or datetime.now(timezone.utc)
         conditions = """
             r.organization_id = :org_id
+            AND r.project_id = :project_id
             AND (r.source_id = :entity_id OR r.target_id = :entity_id)
             AND r.invalid_at IS NULL
             AND (r.valid_from IS NULL OR r.valid_from <= :at_time)
@@ -529,6 +542,7 @@ class PostgresGraphBackend(GraphBackend):
         """
         params: dict[str, object] = {
             "org_id": str(org_id),
+            "project_id": str(project_id),
             "entity_id": str(entity_id),
             "at_time": at_time,
             "limit": 201,
@@ -572,6 +586,7 @@ class PostgresGraphBackend(GraphBackend):
     async def traverse(
         self,
         org_id: UUID,
+        project_id: UUID,
         start_node_id: UUID,
         max_depth: int = 2,
         edge_types: list[str] | None = None,
@@ -596,7 +611,7 @@ class PostgresGraphBackend(GraphBackend):
         # Distinguish None (all types) from [] (no types)
         if edge_types is not None and len(edge_types) == 0:
             # No edge types to follow — return just the start node
-            start = await self.get_entity(org_id, start_node_id)
+            start = await self.get_entity(org_id, project_id, start_node_id)
             if start is None:
                 return []
             start["depth"] = 0
@@ -613,6 +628,7 @@ class PostgresGraphBackend(GraphBackend):
                 text(BFS_CTE),
                 {
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "start_id": str(start_node_id),
                     "max_depth": max_depth,
                     "edge_types": edge_types if edge_types is not None else [],
@@ -646,6 +662,7 @@ class PostgresGraphBackend(GraphBackend):
     async def traverse_iterative(
         self,
         org_id: UUID,
+        project_id: UUID,
         start_id: UUID,
         max_depth: int = 2,
         edge_types: list[str] | None = None,
@@ -658,7 +675,7 @@ class PostgresGraphBackend(GraphBackend):
         from collections import deque
 
         if edge_types is not None and len(edge_types) == 0:
-            start = await self.get_entity(org_id, start_id)
+            start = await self.get_entity(org_id, project_id, start_id)
             if start is None:
                 return []
             start["depth"] = 0
@@ -679,7 +696,7 @@ class PostgresGraphBackend(GraphBackend):
             visited.add(current_id)
 
             # Fetch current node
-            entity = await self.get_entity(org_id, UUID(current_id))
+            entity = await self.get_entity(org_id, project_id, UUID(current_id))
             if entity:
                 entity["depth"] = depth
                 nodes.append(entity)
@@ -698,6 +715,7 @@ class PostgresGraphBackend(GraphBackend):
                         END AS neighbour_id
                         FROM graph_relationships r
                         WHERE r.organization_id = :org_id
+                          AND r.project_id = :project_id
                           AND r.invalid_at IS NULL
                           AND (r.source_id = :eid OR r.target_id = :eid)
                           AND (:types_null OR r.relationship_type = ANY(:edge_types))
@@ -706,6 +724,7 @@ class PostgresGraphBackend(GraphBackend):
                     {
                         "eid": current_id,
                         "org_id": str(org_id),
+                        "project_id": str(project_id),
                         "types_null": not type_filter,
                         "edge_types": edge_types or [],
                     },
@@ -731,6 +750,7 @@ class PostgresGraphBackend(GraphBackend):
     async def search_entities(
         self,
         org_id: UUID,
+        project_id: UUID,
         query: str,
         types: list[str] | None = None,
         limit: int = 50,
@@ -749,6 +769,7 @@ class PostgresGraphBackend(GraphBackend):
                 text(SEARCH_ENTITIES_SQL),
                 {
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "query": query,
                     "entity_types": types if types is not None else [],
                     "entity_types_null": types is None,
@@ -785,6 +806,7 @@ class PostgresGraphBackend(GraphBackend):
     async def list_entities(
         self,
         org_id: UUID,
+        project_id: UUID,
         *,
         entity_type: str | None = None,
         limit: int = 50,
@@ -797,8 +819,12 @@ class PostgresGraphBackend(GraphBackend):
         """
         limit = min(limit, 200)
 
-        where_clause = "ge.organization_id = :org_id"
-        params: dict[str, object] = {"org_id": str(org_id), "limit": limit + 1}
+        where_clause = "ge.organization_id = :org_id AND ge.project_id = :project_id"
+        params: dict[str, object] = {
+            "org_id": str(org_id),
+            "project_id": str(project_id),
+            "limit": limit + 1,
+        }
 
         if entity_type:
             where_clause += " AND ge.entity_type = :entity_type"
@@ -850,6 +876,7 @@ class PostgresGraphBackend(GraphBackend):
     async def list_entity_edges(
         self,
         org_id: UUID,
+        project_id: UUID,
         entity_id: UUID,
         *,
         predicate: str | None = None,
@@ -861,10 +888,12 @@ class PostgresGraphBackend(GraphBackend):
 
         conditions = """
             r.organization_id = :org_id
+            AND r.project_id = :project_id
             AND (r.source_id = :eid OR r.target_id = :eid)
         """
         params: dict[str, object] = {
             "org_id": str(org_id),
+            "project_id": str(project_id),
             "eid": str(entity_id),
             "limit": limit + 1,
         }
@@ -918,13 +947,14 @@ class PostgresGraphBackend(GraphBackend):
     async def get_entity_with_edges(
         self,
         org_id: UUID,
+        project_id: UUID,
         entity_id: UUID,
     ) -> dict | None:
         """Retrieve an entity with all its incident edges."""
-        entity = await self.get_entity(org_id, entity_id)
+        entity = await self.get_entity(org_id, project_id, entity_id)
         if entity is None:
             return None
-        edges = await self.get_relationships(org_id, entity_id)
+        edges = await self.get_relationships(org_id, project_id, entity_id)
         return {"node": entity, "edges": edges}
 
     # ── Health ────────────────────────────────────────────────────────────────

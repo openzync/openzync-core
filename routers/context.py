@@ -69,6 +69,10 @@ async def get_context(
         description='Output format — "text" for plain-text or "json" '
         "for structured JSON.",
     ),
+    project_id: UUID = Query(
+        ...,
+        description="Project UUID for scoping graph entity retrieval.",
+    ),
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_org_id),
     response: Response = None,  # type: ignore[assignment]
@@ -124,7 +128,7 @@ async def get_context(
     # ── Assemble context ────────────────────────────────────────────────
     redis = getattr(request.app.state, "redis", None) if request else None
     graph_backend = PostgresGraphBackend(db=db)
-    service = ContextService(db, org_uuid, redis, graph_backend=graph_backend)
+    service = ContextService(db, org_uuid, project_id, redis, graph_backend=graph_backend)
     result = await service.assemble(
         user_id=user_id,
         query=query,

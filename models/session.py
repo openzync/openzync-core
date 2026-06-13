@@ -1,8 +1,14 @@
-"""Session model — a conversational session owned by a user.
+"""Session model — a conversational session owned by a user within a project.
 
 Sessions group related episodes (messages) into a single conversation context.
 Each user may have multiple sessions; the combination ``(user_id, external_id)``
-is unique within a user.
+is unique within a user.  Sessions are scoped to a project (via ``project_id``)
+rather than directly to the organization, though ``organization_id`` is
+denormalised here for RLS and direct query performance.
+
+Hierarchy::
+
+    Organization → Project → Session → Episode → Fact
 """
 
 import uuid
@@ -16,7 +22,7 @@ from models.base import Base, TimestampMixin
 
 
 class Session(TimestampMixin, Base):
-    """A conversation session belonging to a user."""
+    """A conversation session belonging to a user within a project."""
 
     __tablename__ = "sessions"
 
@@ -25,6 +31,11 @@ class Session(TimestampMixin, Base):
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

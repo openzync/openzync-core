@@ -56,6 +56,7 @@ from routers import (
     health,
     memory,
     metrics,
+    projects,
     search,
     sessions,
     structured_extractions,
@@ -204,17 +205,20 @@ def create_app() -> FastAPI:
     app.include_router(admin_schemas.router)
     app.include_router(admin_stats.router)
     app.include_router(audit_log.router)
-    app.include_router(admin_metrics.router)
     app.include_router(auth.router)
     app.include_router(users.router)
-    app.include_router(sessions.router)
     app.include_router(classifications.router)
     app.include_router(structured_extractions.router)
     app.include_router(memory.router)
     app.include_router(context.router)
     app.include_router(search.router)
-    app.include_router(graph.router)
     app.include_router(facts.router)
+
+    # Project routers
+    app.include_router(projects.admin_router)
+    app.include_router(projects.router)
+    app.include_router(sessions.router)
+    app.include_router(graph.router)
 
     # Metrics: intentionally registered last and outside /v1 so it responds
     # at ``/metrics`` (not ``/v1/metrics``) for standard Prometheus scraping.

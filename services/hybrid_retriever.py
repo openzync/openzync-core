@@ -52,11 +52,13 @@ class HybridRetriever:
         self,
         db: AsyncSession,
         org_id: UUID,
+        project_id: UUID,
         redis: object | None = None,
         graph_backend: GraphBackend | None = None,
     ) -> None:
         self._db = db
         self._org_id = org_id
+        self._project_id = project_id
         self._redis = redis
         self._graph_backend = graph_backend
 
@@ -484,6 +486,7 @@ class HybridRetriever:
             # Step 1: Search for entities matching the query
             matched_entities = await self._graph_backend.search_entities(
                 org_id=self._org_id,
+                project_id=self._project_id,
                 query=query,
                 limit=5,
             )
@@ -521,6 +524,7 @@ class HybridRetriever:
                 try:
                     related = await self._graph_backend.traverse(
                         org_id=self._org_id,
+                        project_id=self._project_id,
                         start_node_id=entity_id,
                         max_depth=2,
                     )

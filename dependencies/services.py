@@ -27,8 +27,10 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.db import get_db
+from repositories.project_repository import ProjectRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
+from services.project_service import ProjectService
 from services.session_service import SessionService
 from services.user_service import UserService
 
@@ -42,6 +44,13 @@ async def get_user_service(
     the application's async engine.
     """
     return UserService(repo=UserRepository(db))
+
+
+async def get_project_service(
+    db: AsyncSession = Depends(get_db),
+) -> ProjectService:
+    """Dependency that yields an initialised ProjectService."""
+    return ProjectService(repo=ProjectRepository(db))
 
 
 async def get_session_service(

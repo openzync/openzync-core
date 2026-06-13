@@ -67,6 +67,10 @@ async def search_memory(
         "Valid values: ``episodes``, ``facts``, ``entities``, "
         "``communities``.",
     ),
+    project_id: UUID = Query(
+        ...,
+        description="Project UUID for scoping graph entity retrieval.",
+    ),
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_org_id),
 ) -> dict:
@@ -114,7 +118,7 @@ async def search_memory(
 
     # ── Run hybrid search ───────────────────────────────────────────────
     graph_backend = PostgresGraphBackend(db=db)
-    retriever = HybridRetriever(db, org_uuid, graph_backend=graph_backend)
+    retriever = HybridRetriever(db, org_uuid, project_id, graph_backend=graph_backend)
     results = await retriever.hybrid_search(
         query=query,
         user_id=user_id,

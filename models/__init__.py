@@ -10,6 +10,7 @@ from models.fact import Fact
 from models.graph_entity import GraphEntity
 from models.llm_usage import LLMUsage
 from models.organization import Organization
+from models.project import Project, ProjectMember
 from models.refresh_token import RefreshToken
 from models.session import Session
 from models.structured_extraction import StructuredExtraction
@@ -20,6 +21,8 @@ __all__: list[str] = [
     "TimestampMixin",
     "CreatedAtMixin",
     "Organization",
+    "Project",
+    "ProjectMember",
     "ApiKey",
     "User",
     "Session",

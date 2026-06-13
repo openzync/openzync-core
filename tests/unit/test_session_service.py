@@ -18,12 +18,14 @@ class TestSessionService:
     """SessionService unit tests."""
 
     ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+    PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
     USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 
     def _make_mock_session(self, **kwargs) -> AsyncMock:
         session = AsyncMock()
         session.id = kwargs.get("id", uuid4())
         session.organization_id = kwargs.get("org_id", self.ORG_ID)
+        session.project_id = kwargs.get("project_id", self.PROJECT_ID)
         session.user_id = kwargs.get("user_id", self.USER_ID)
         session.external_id = kwargs.get("external_id", "test-session")
         session.metadata_ = kwargs.get("metadata", {})
@@ -51,6 +53,7 @@ class TestSessionService:
 
         result = await service.create_session(
             organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
             user_id=self.USER_ID,
             external_id="test-session",
         )
@@ -66,6 +69,7 @@ class TestSessionService:
         with pytest.raises(ConflictError):
             await service.create_session(
                 organization_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
                 user_id=self.USER_ID,
                 external_id="duplicate-session",
             )

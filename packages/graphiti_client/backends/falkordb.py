@@ -76,6 +76,7 @@ class FalkorDBBackend(GraphBackend):
     async def create_entity(
         self,
         org_id: UUID,
+        project_id: UUID,
         name: str,
         entity_type: str,
         summary: str | None = None,
@@ -91,7 +92,7 @@ class FalkorDBBackend(GraphBackend):
             driver = self._get_driver()
             node = EntityNode(
                 name=name,
-                group_id=f"org:{org_id}",
+                group_id=f"org:{org_id}:project:{project_id}",
                 labels=[entity_type],
                 summary=summary or "",
                 created_at=datetime.now(timezone.utc),
@@ -122,7 +123,7 @@ class FalkorDBBackend(GraphBackend):
                 detail={"org_id": str(org_id), "name": name},
             ) from exc
 
-    async def get_entity(self, org_id: UUID, entity_id: UUID) -> dict | None:
+    async def get_entity(self, org_id: UUID, project_id: UUID, entity_id: UUID) -> dict | None:
         """Retrieve an entity by ID, respecting org isolation.
 
         Uses ``EntityNode.get_by_uuid()`` — returns ``None`` if not found.
@@ -153,7 +154,7 @@ class FalkorDBBackend(GraphBackend):
                 detail={"org_id": str(org_id), "entity_id": str(entity_id)},
             ) from exc
 
-    async def delete_entity(self, org_id: UUID, entity_id: UUID) -> bool:
+    async def delete_entity(self, org_id: UUID, project_id: UUID, entity_id: UUID) -> bool:
         """Delete an entity node.
 
         Fetches via ``EntityNode.get_by_uuid()``, then calls ``.delete()``.
@@ -202,6 +203,7 @@ class FalkorDBBackend(GraphBackend):
     async def create_relationship(
         self,
         org_id: UUID,
+        project_id: UUID,
         source_id: UUID,
         target_id: UUID,
         relationship_type: str,
@@ -247,7 +249,7 @@ class FalkorDBBackend(GraphBackend):
                 source_node_uuid=str(source_id),
                 target_node_uuid=str(target_id),
                 name=relationship_type,
-                group_id=f"org:{org_id}",
+                group_id=f"org:{org_id}:project:{project_id}",
                 fact="",
                 created_at=datetime.now(timezone.utc),
                 attributes=properties or {},
@@ -290,6 +292,7 @@ class FalkorDBBackend(GraphBackend):
     async def traverse(
         self,
         org_id: UUID,
+        project_id: UUID,
         start_node_id: UUID,
         max_depth: int = 2,
         edge_types: list[str] | None = None,  # noqa: ARG002
@@ -303,7 +306,7 @@ class FalkorDBBackend(GraphBackend):
             results = await self._run_sync(
                 self._graphiti.search,
                 query="",
-                group_ids=[f"org:{org_id}"],
+                group_ids=[f"org:{org_id}:project:{project_id}"],
                 center_node_uuid=str(start_node_id),
                 num_results=max_depth * 10,
             )
@@ -352,6 +355,7 @@ class FalkorDBBackend(GraphBackend):
     async def search_entities(
         self,
         org_id: UUID,
+        project_id: UUID,
         query: str,
         types: list[str] | None = None,
         limit: int = 50,
@@ -369,7 +373,7 @@ class FalkorDBBackend(GraphBackend):
             results = await self._run_sync(
                 self._graphiti.search,
                 query=query,
-                group_ids=[f"org:{org_id}"],
+                group_ids=[f"org:{org_id}:project:{project_id}"],
                 num_results=limit,
             )
 
@@ -416,6 +420,7 @@ class FalkorDBBackend(GraphBackend):
     async def list_entities(
         self,
         org_id: UUID,
+        project_id: UUID,
         *,
         entity_type: str | None = None,
         limit: int = 50,
@@ -434,7 +439,6 @@ class FalkorDBBackend(GraphBackend):
             from graphiti_core.nodes import EntityNode
 
             driver = self._get_driver()
-            group_id = f"org:{org_id}"
 
             # Decode cursor to get uuid_cursor
             uuid_cursor: str | None = None
@@ -453,7 +457,7 @@ class FalkorDBBackend(GraphBackend):
             nodes = await self._run_sync(
                 EntityNode.get_by_group_ids,
                 driver,
-                [group_id],
+                [f"org:{org_id}:project:{project_id}"],
                 fetch_limit,
                 uuid_cursor,
             )
@@ -491,6 +495,7 @@ class FalkorDBBackend(GraphBackend):
     async def list_entity_edges(
         self,
         org_id: UUID,
+        project_id: UUID,
         entity_id: UUID,
         *,
         predicate: str | None = None,
@@ -544,14 +549,15 @@ class FalkorDBBackend(GraphBackend):
     async def get_entity_with_edges(
         self,
         org_id: UUID,
+        project_id: UUID,
         entity_id: UUID,
     ) -> dict | None:
         """Retrieve a single entity node with all its incident edges."""
-        node = await self.get_entity(org_id, entity_id)
+        node = await self.get_entity(org_id, project_id, entity_id)
         if node is None:
             return None
 
-        edges_result = await self.list_entity_edges(org_id, entity_id)
+        edges_result = await self.list_entity_edges(org_id, project_id, entity_id)
         return {
             "node": node,
             "edges": edges_result.get("items", []),

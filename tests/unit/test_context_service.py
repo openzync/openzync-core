@@ -26,6 +26,7 @@ class TestContextService:
         svc = ContextService(
             db=mock_db,
             org_id=self.ORG_ID,
+            project_id=self.ORG_ID,  # use org_id as mock project_id
             redis=mock_redis,
             graph_backend=mock_graph_backend,
         )
