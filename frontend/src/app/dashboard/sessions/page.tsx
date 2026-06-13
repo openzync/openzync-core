@@ -30,6 +30,7 @@ import {
   createSession,
   deleteSession,
   listUsers,
+  listProjects,
   ApiError,
 } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/useAuth";
@@ -65,6 +66,11 @@ export default function SessionsPage() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
+
+  // ── Project state ──────────────────────────────────────────────────────────
+
+  const [projectId, setProjectId] = useState("");
+  const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
 
   // ── Create dialog ──────────────────────────────────────────────────────────
 
@@ -114,16 +120,29 @@ export default function SessionsPage() {
     }
   }, [userId]);
 
+  const fetchProjects = useCallback(async () => {
+    try {
+      const result = await listProjects({ limit: 200 });
+      const items = (result.data as { id: string; name: string }[]) ?? [];
+      setProjects(items);
+      if (items.length > 0 && !projectId) {
+        setProjectId(items[0].id);
+      }
+    } catch {
+      // Projects list failure is non-fatal
+    }
+  }, [projectId]);
+
   const fetchSessions = useCallback(
     async (selectedUserId?: string) => {
       const uid = selectedUserId ?? userId;
-      if (!uid) {
+      if (!uid || !projectId) {
         setLoading(false);
         return;
       }
       setLoading(true);
       try {
-        const result = await listSessions(uid, {
+        const result = await listSessions(projectId, uid, {
           limit: 50,
           include_closed: true,
         });
@@ -140,14 +159,14 @@ export default function SessionsPage() {
         setLoading(false);
       }
     },
-    [userId, showSnackbar],
+    [userId, projectId, showSnackbar],
   );
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || !cursor || !userId) return;
+    if (loadingMore || !cursor || !userId || !projectId) return;
     setLoadingMore(true);
     try {
-      const result = await listSessions(userId, {
+      const result = await listSessions(projectId, userId, {
         limit: 50,
         cursor,
         include_closed: true,
@@ -164,10 +183,11 @@ export default function SessionsPage() {
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, cursor, userId, showSnackbar]);
+  }, [loadingMore, cursor, userId, projectId, showSnackbar]);
 
   useEffect(() => {
     fetchUsers();
+    fetchProjects();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -193,10 +213,14 @@ export default function SessionsPage() {
       setFormError("No user selected");
       return;
     }
+    if (!projectId) {
+      setFormError("No project selected");
+      return;
+    }
 
     setSubmitting(true);
     try {
-      await createSession(userId, {
+      await createSession(projectId, userId, {
         external_id: externalId.trim(),
         metadata: {},
       });
@@ -222,10 +246,10 @@ export default function SessionsPage() {
   };
 
   const handleDeleteSession = async () => {
-    if (!deleteTarget) return;
+    if (!deleteTarget || !projectId) return;
     setSubmitting(true);
     try {
-      await deleteSession(deleteTarget.user_id, deleteTarget.id);
+      await deleteSession(projectId, deleteTarget.user_id, deleteTarget.id);
       showSnackbar("Session deleted successfully", "success");
       setDeleteDialogOpen(false);
       setDeleteTarget(null);
@@ -301,7 +325,7 @@ export default function SessionsPage() {
           <Tooltip title="View session">
             <IconButton
               size="small"
-              onClick={() => router.push(`/dashboard/sessions/${row.id}?userId=${row.user_id}`)}
+              onClick={() => router.push(`/dashboard/sessions/${row.id}?userId=${row.user_id}&projectId=${projectId}`)}
             >
               <ViewIcon fontSize="small" />
             </IconButton>
@@ -330,6 +354,23 @@ export default function SessionsPage() {
           Sessions
         </Typography>
         <Box sx={{ display: "flex", gap: 2 }}>
+          <TextField
+            select
+            size="small"
+            value={projectId}
+            onChange={(e) => setProjectId(e.target.value)}
+            sx={{ minWidth: 180 }}
+            slotProps={{
+              select: { native: true },
+            }}
+          >
+            <option value="">Select a project</option>
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </TextField>
           <TextField
             select
             size="small"

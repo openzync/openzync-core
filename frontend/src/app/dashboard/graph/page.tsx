@@ -10,9 +10,8 @@ import {
   CircularProgress,
   Chip,
 } from "@mui/material";
-import { listGraphNodes, listGraphEdges, ApiError } from "@/lib/api/client";
+import { listGraphNodes, listGraphEdges, listProjects, listUsers, ApiError } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/useAuth";
-import { listUsers } from "@/lib/api/client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,10 +61,17 @@ export default function GraphPage() {
   const [entityFilter, setEntityFilter] = useState("");
   const [selectedNode, setSelectedNode] = useState<NodeData | null>(null);
   const [userId, setUserId] = useState<string>("");
+  const [projectId, setProjectId] = useState<string>("");
 
-  // ── Fetch users for selector ─────────────────────────────────────────────────
+  // ── Fetch projects and users for selector ────────────────────────────────────
 
   useEffect(() => {
+    listProjects({ limit: 1 })
+      .then((result) => {
+        const items = (result.data as { id: string; name: string }[]) ?? [];
+        if (items.length > 0) setProjectId(items[0].id);
+      })
+      .catch(() => {});
     listUsers({ limit: 1 })
       .then((result) => {
         const users = result.data as { id: string; external_id: string }[];
@@ -276,7 +282,7 @@ export default function GraphPage() {
   // ── Fetch data ──────────────────────────────────────────────────────────────
 
   const fetchGraph = useCallback(async () => {
-    if (!userId) return;
+    if (!userId || !projectId) return;
     setLoading(true);
     try {
       const params: Record<string, string | number | boolean | undefined | null> = {
@@ -284,7 +290,7 @@ export default function GraphPage() {
       };
       if (entityFilter) params.entity_type = entityFilter;
 
-      const nodeResult = await listGraphNodes(userId, params);
+      const nodeResult = await listGraphNodes(projectId, userId, params);
       const nodeList = (nodeResult.data?.items as NodeData[]) ?? [];
 
       // Fetch real edges for all nodes, deduplicated
@@ -296,7 +302,7 @@ export default function GraphPage() {
           const batch = nodeList.slice(i, i + batchSize);
           const results = await Promise.allSettled(
             batch.map((n) =>
-              listGraphEdges(userId, { subject_id: n.id, limit: 50 }).catch(
+              listGraphEdges(projectId, userId, { subject_id: n.id, limit: 50 }).catch(
                 () => ({ data: { items: [] } }),
               ),
             ),
@@ -323,7 +329,7 @@ export default function GraphPage() {
     } finally {
       setLoading(false);
     }
-  }, [userId, entityFilter, buildGraph]);
+  }, [userId, projectId, entityFilter, buildGraph]);
 
   useEffect(() => {
     fetchGraph();

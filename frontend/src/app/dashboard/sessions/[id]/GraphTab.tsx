@@ -33,13 +33,14 @@ interface EdgeData {
 // ─── Component Props ──────────────────────────────────────────────────────────
 
 interface GraphTabProps {
+  projectId: string;
   userId: string;
   sessionId: string;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function GraphTab({ userId }: GraphTabProps) {
+export default function GraphTab({ projectId, userId }: GraphTabProps) {
   const [nodes, setNodes] = useState<GraphNodeRow[]>([]);
   const [edges, setEdges] = useState<EdgeData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -275,7 +276,7 @@ export default function GraphTab({ userId }: GraphTabProps) {
       if (entityFilter) {
         params.entity_type = entityFilter;
       }
-      const result = await listGraphNodes(userId, params);
+      const result = await listGraphNodes(projectId, userId, params);
       const nodeList = (result.data?.items ?? []) as GraphNodeRow[];
       setNodes(nodeList);
       setCursor(result.data?.next_cursor ?? null);
@@ -290,7 +291,7 @@ export default function GraphTab({ userId }: GraphTabProps) {
         const batch = nodeList.slice(i, i + batchSize);
         const results = await Promise.allSettled(
           batch.map((n) =>
-            listGraphEdges(userId, { subject_id: n.id, limit: 50 }).catch(
+            listGraphEdges(projectId, userId, { subject_id: n.id, limit: 50 }).catch(
               () => ({ data: { items: [] } }),
             ),
           ),
@@ -315,13 +316,13 @@ export default function GraphTab({ userId }: GraphTabProps) {
     } finally {
       setLoading(false);
     }
-  }, [userId, entityFilter, buildGraph]);
+  }, [projectId, userId, entityFilter, buildGraph]);
 
   const loadMore = useCallback(async () => {
     if (loading || !cursor) return;
     setLoading(true);
     try {
-      const result = await listGraphNodes(userId, {
+      const result = await listGraphNodes(projectId, userId, {
         limit: 100,
         cursor,
         entity_type: entityFilter || null,
@@ -336,7 +337,7 @@ export default function GraphTab({ userId }: GraphTabProps) {
       const seen = new Set(allEdges.map((e) => [e.source_id, e.target_id].sort().join("|")));
       for (const n of newNodes) {
         try {
-          const r = await listGraphEdges(userId, { subject_id: n.id, limit: 50 });
+          const r = await listGraphEdges(projectId, userId, { subject_id: n.id, limit: 50 });
           const items = ((r.data as { items?: EdgeData[] })?.items ?? []) as EdgeData[];
           for (const e of items) {
             const key = [e.source_id, e.target_id].sort().join("|");
@@ -355,7 +356,7 @@ export default function GraphTab({ userId }: GraphTabProps) {
     } finally {
       setLoading(false);
     }
-  }, [loading, cursor, userId, entityFilter, nodes, edges, buildGraph]);
+  }, [loading, cursor, projectId, userId, entityFilter, nodes, edges, buildGraph]);
 
   // Rebuild canvas whenever nodes/edges/loading settle
   useEffect(() => {

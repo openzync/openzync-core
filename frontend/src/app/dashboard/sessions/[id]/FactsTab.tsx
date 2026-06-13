@@ -52,13 +52,14 @@ function confidenceColor(score: number): "success" | "warning" | "error" {
 // ─── Component Props ──────────────────────────────────────────────────────────
 
 interface FactsTabProps {
+  projectId: string;
   userId: string;
   sessionId: string;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function FactsTab({ userId, sessionId }: FactsTabProps) {
+export default function FactsTab({ projectId, userId, sessionId }: FactsTabProps) {
   const [facts, setFacts] = useState<FactRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -70,7 +71,7 @@ export default function FactsTab({ userId, sessionId }: FactsTabProps) {
   const fetchFacts = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await getSessionFacts(userId, sessionId, { limit: 50 });
+      const result = await getSessionFacts(projectId, userId, sessionId, { limit: 50 });
       setFacts(result.data as FactRow[]);
       setCursor(result.next_cursor ?? null);
       setHasMore(result.has_more);
@@ -79,13 +80,13 @@ export default function FactsTab({ userId, sessionId }: FactsTabProps) {
     } finally {
       setLoading(false);
     }
-  }, [userId, sessionId]);
+  }, [projectId, userId, sessionId]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !cursor) return;
     setLoadingMore(true);
     try {
-      const result = await getSessionFacts(userId, sessionId, {
+      const result = await getSessionFacts(projectId, userId, sessionId, {
         limit: 50,
         cursor,
       });
@@ -97,7 +98,7 @@ export default function FactsTab({ userId, sessionId }: FactsTabProps) {
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, cursor, userId, sessionId]);
+  }, [loadingMore, cursor, projectId, userId, sessionId]);
 
   useEffect(() => {
     fetchFacts();

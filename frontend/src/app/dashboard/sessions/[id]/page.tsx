@@ -36,6 +36,7 @@ export default function SessionDetailPage() {
   const router = useRouter();
   const sessionId = params.id as string;
   const userId = searchParams.get("userId") ?? "";
+  const projectId = searchParams.get("projectId") ?? "";
 
   const [session, setSession] = useState<SessionResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -55,10 +56,10 @@ export default function SessionDetailPage() {
   );
 
   const fetchSession = useCallback(async () => {
-    if (!userId) return;
+    if (!userId || !projectId) return;
     setLoading(true);
     try {
-      const result = await getSession(userId, sessionId);
+      const result = await getSession(projectId, userId, sessionId);
       setSession(result);
     } catch (err) {
       const message =
@@ -69,7 +70,7 @@ export default function SessionDetailPage() {
     } finally {
       setLoading(false);
     }
-  }, [userId, sessionId, showSnackbar]);
+  }, [userId, projectId, sessionId, showSnackbar]);
 
   useEffect(() => {
     fetchSession();
@@ -160,9 +161,9 @@ export default function SessionDetailPage() {
       </Card>
 
       {/* Tab panels */}
-      {tab === 0 && userId && <MessagesTab userId={userId} sessionId={sessionId} />}
-      {tab === 1 && userId && <FactsTab userId={userId} sessionId={sessionId} />}
-      {tab === 2 && userId && <GraphTab userId={userId} sessionId={sessionId} />}
+      {tab === 0 && userId && projectId && <MessagesTab projectId={projectId} userId={userId} sessionId={sessionId} />}
+      {tab === 1 && userId && projectId && <FactsTab projectId={projectId} userId={userId} sessionId={sessionId} />}
+      {tab === 2 && userId && projectId && <GraphTab projectId={projectId} userId={userId} sessionId={sessionId} />}
 
       {/* Snackbar */}
       <Snackbar

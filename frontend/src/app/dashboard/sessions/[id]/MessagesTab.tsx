@@ -83,13 +83,14 @@ function getRoleStyle(role: string) {
 // ─── Component Props ──────────────────────────────────────────────────────────
 
 interface MessagesTabProps {
+  projectId: string;
   userId: string;
   sessionId: string;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function MessagesTab({ userId, sessionId }: MessagesTabProps) {
+export default function MessagesTab({ projectId, userId, sessionId }: MessagesTabProps) {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -111,7 +112,7 @@ export default function MessagesTab({ userId, sessionId }: MessagesTabProps) {
   const fetchMessages = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await getSessionMessages(userId, sessionId, {
+      const result = await getSessionMessages(projectId, userId, sessionId, {
         limit: 100,
       });
       setMessages((result.data as MessageRow[]).reverse());
@@ -122,13 +123,13 @@ export default function MessagesTab({ userId, sessionId }: MessagesTabProps) {
     } finally {
       setLoading(false);
     }
-  }, [userId, sessionId]);
+  }, [projectId, userId, sessionId]);
 
   const loadOlder = useCallback(async () => {
     if (loadingMore || !cursor) return;
     setLoadingMore(true);
     try {
-      const result = await getSessionMessages(userId, sessionId, {
+      const result = await getSessionMessages(projectId, userId, sessionId, {
         limit: 100,
         cursor,
       });
@@ -141,7 +142,7 @@ export default function MessagesTab({ userId, sessionId }: MessagesTabProps) {
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, cursor, userId, sessionId]);
+  }, [loadingMore, cursor, projectId, userId, sessionId]);
 
   useEffect(() => {
     fetchMessages();

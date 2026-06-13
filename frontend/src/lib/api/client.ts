@@ -214,6 +214,7 @@ export async function deleteUser(userId: string): Promise<void> {
 // ---- Sessions ----
 
 export async function listSessions(
+  projectId: string,
   userId: string,
   params?: {
     limit?: number;
@@ -221,28 +222,31 @@ export async function listSessions(
     include_closed?: boolean;
   },
 ): Promise<Schema["PaginatedResponse_SessionListResponse_"]> {
-  return api.get(`/v1/users/${userId}/sessions`, params as Record<string, string | number | boolean | undefined | null>);
+  return api.get(`/v1/projects/${projectId}/${userId}/sessions`, params as Record<string, string | number | boolean | undefined | null>);
 }
 
 export async function createSession(
+  projectId: string,
   userId: string,
   payload: Schema["CreateSessionRequest"],
 ): Promise<Schema["SessionResponse"]> {
-  return api.post(`/v1/users/${userId}/sessions`, payload);
+  return api.post(`/v1/projects/${projectId}/${userId}/sessions`, payload);
 }
 
 export async function getSession(
+  projectId: string,
   userId: string,
   sessionId: string,
 ): Promise<Schema["SessionResponse"]> {
-  return api.get(`/v1/users/${userId}/sessions/${sessionId}`);
+  return api.get(`/v1/projects/${projectId}/${userId}/sessions/${sessionId}`);
 }
 
-export async function deleteSession(userId: string, sessionId: string): Promise<void> {
-  return api.delete(`/v1/users/${userId}/sessions/${sessionId}`);
+export async function deleteSession(projectId: string, userId: string, sessionId: string): Promise<void> {
+  return api.delete(`/v1/projects/${projectId}/${userId}/sessions/${sessionId}`);
 }
 
 export async function getSessionMessages(
+  projectId: string,
   userId: string,
   sessionId: string,
   params?: {
@@ -250,10 +254,11 @@ export async function getSessionMessages(
     cursor?: string | null;
   },
 ): Promise<Schema["PaginatedResponse_MessageResponse_"]> {
-  return api.get(`/v1/users/${userId}/sessions/${sessionId}/messages`, params as Record<string, string | number | boolean | undefined | null>);
+  return api.get(`/v1/projects/${projectId}/${userId}/sessions/${sessionId}/messages`, params as Record<string, string | number | boolean | undefined | null>);
 }
 
 export async function getSessionFacts(
+  projectId: string,
   userId: string,
   sessionId: string,
   params?: {
@@ -261,12 +266,13 @@ export async function getSessionFacts(
     cursor?: string | null;
   },
 ): Promise<Schema["PaginatedResponse_FactResponse_"]> {
-  return api.get(`/v1/users/${userId}/sessions/${sessionId}/facts`, params as Record<string, string | number | boolean | undefined | null>);
+  return api.get(`/v1/projects/${projectId}/${userId}/sessions/${sessionId}/facts`, params as Record<string, string | number | boolean | undefined | null>);
 }
 
 // ---- Graph ----
 
 export async function listGraphNodes(
+  projectId: string,
   userId: string,
   params?: {
     limit?: number;
@@ -274,14 +280,15 @@ export async function listGraphNodes(
     entity_type?: string | null;
   },
 ): Promise<Schema["GraphNodesListResponse"]> {
-  return api.get(`/v1/users/${userId}/graph/nodes`, params as Record<string, string | number | boolean | undefined | null>);
+  return api.get(`/v1/projects/${projectId}/${userId}/graph/nodes`, params as Record<string, string | number | boolean | undefined | null>);
 }
 
 export async function getGraphNode(
+  projectId: string,
   userId: string,
   nodeId: string,
 ): Promise<Schema["GraphNodeDetailResponse"]> {
-  return api.get(`/v1/users/${userId}/graph/nodes/${nodeId}`);
+  return api.get(`/v1/projects/${projectId}/${userId}/graph/nodes/${nodeId}`);
 }
 
 // ---- Admin: Metrics ----
@@ -385,6 +392,7 @@ export async function listAuditLogs(
 }
 
 export async function listGraphEdges(
+  projectId: string,
   userId: string,
   params: {
     subject_id: string;
@@ -393,5 +401,84 @@ export async function listGraphEdges(
     cursor?: string | null;
   },
 ): Promise<Schema["GraphEdgesListResponse"]> {
-  return api.get(`/v1/users/${userId}/graph/edges`, params as Record<string, string | number | boolean | undefined | null>);
+  return api.get(`/v1/projects/${projectId}/${userId}/graph/edges`, params as Record<string, string | number | boolean | undefined | null>);
+}
+
+// ---- Projects ----
+
+export interface ProjectResponse {
+  id: string;
+  organization_id: string;
+  name: string;
+  description: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemberResponse {
+  user_id: string;
+  project_id: string;
+  role: string;
+  created_at: string;
+}
+
+export interface MemberListResponse {
+  members: MemberResponse[];
+  total: number;
+}
+
+export interface PaginatedResponse<T> {
+  data: T[];
+  next_cursor: string | null;
+  has_more: boolean;
+}
+
+export async function listProjects(
+  params?: { limit?: number; cursor?: string },
+): Promise<PaginatedResponse<ProjectResponse>> {
+  return api.get("/v1/projects", params as Record<string, string | number | boolean | undefined | null>);
+}
+
+export async function getProject(projectId: string): Promise<ProjectResponse> {
+  return api.get(`/v1/projects/${projectId}`);
+}
+
+export async function createProject(name: string, description?: string): Promise<ProjectResponse> {
+  return api.post("/v1/admin/projects", { name, description });
+}
+
+export async function updateProject(
+  projectId: string,
+  data: { name?: string; description?: string; is_active?: boolean },
+): Promise<ProjectResponse> {
+  return api.patch(`/v1/projects/${projectId}`, data);
+}
+
+export async function deleteProject(projectId: string): Promise<void> {
+  return api.delete(`/v1/projects/${projectId}`);
+}
+
+export async function listProjectMembers(projectId: string): Promise<MemberListResponse> {
+  return api.get(`/v1/projects/${projectId}/members`);
+}
+
+export async function addProjectMember(
+  projectId: string,
+  userId: string,
+  role: string = "member",
+): Promise<MemberResponse> {
+  return api.post(`/v1/projects/${projectId}/members`, { user_id: userId, role });
+}
+
+export async function updateProjectMemberRole(
+  projectId: string,
+  userId: string,
+  role: string,
+): Promise<MemberResponse> {
+  return api.patch(`/v1/projects/${projectId}/members/${userId}`, { role });
+}
+
+export async function removeProjectMember(projectId: string, userId: string): Promise<void> {
+  return api.delete(`/v1/projects/${projectId}/members/${userId}`);
 }
