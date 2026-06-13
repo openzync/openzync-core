@@ -64,6 +64,16 @@ class WorkerSettings(BaseSettings):
         frozen=True,
     )
 
+    # ── Database ──────────────────────────────────────────────────────────────
+    DATABASE_URL: str = Field(
+        default="postgresql+asyncpg://postgres:postgres@localhost:5432/openzep",
+        description=(
+            "PostgreSQL connection string used by SQLAlchemy async engine. "
+            "Must use the ``postgresql+asyncpg://`` scheme."
+        ),
+        validation_alias="MG_DATABASE_URL",
+    )
+
     # ── Redis ────────────────────────────────────────────────────────────────
     REDIS_URL: RedisDsn = Field(
         default="redis://localhost:6379",

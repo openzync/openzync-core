@@ -114,16 +114,25 @@ async def ingest_business_data(
         }
 
     # Bulk-insert valid facts
-    from sqlalchemy.ext.asyncio import create_async_engine
     from core.db import get_async_session
 
-    engine = create_async_engine(
-        str(settings.DATABASE_URL),
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=2,
-    )
-    session_factory = get_async_session(engine)
+    # Use the shared engine from worker context.
+    engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
+    if engine is None:
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        engine = create_async_engine(
+            str(settings.DATABASE_URL),
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=2,
+        )
+        _own_engine = True
+    else:
+        _own_engine = False
+    session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
+    if session_factory is None:
+        session_factory = get_async_session(engine)
 
     try:
         async with session_factory() as db:
@@ -135,7 +144,8 @@ async def ingest_business_data(
             )
             await db.commit()
     finally:
-        await engine.dispose()
+        if _own_engine:
+            await engine.dispose()
 
     # Enqueue embedding tasks for each newly created fact
     await _enqueue_embedding_tasks(

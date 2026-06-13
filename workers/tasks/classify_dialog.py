@@ -73,8 +73,7 @@ async def classify_dialog(
         Exception: Re-raises the last LLM or DB error after retry exhaustion.
     """
     # Lazy imports — ARQ workers run in a separate process.
-    from core.config import settings
-    from core.db import get_async_session, init_db_engine
+    from core.db import get_async_session
     from core.llm import resolve_backend
 
     logger.info(
@@ -84,14 +83,25 @@ async def classify_dialog(
         content_length=len(content),
     )
 
-    engine = None
-    try:
-        # ── 1. Create temporary DB engine ──────────────────────────────────
+    # Use the shared engine from worker context.  ARQ workers running
+    # under `services/worker/worker.py` receive this automatically.
+    # The fallback path supports direct invocation (e.g. unit tests).
+    engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
+    if engine is None:
+        from core.config import settings as _settings
+        from core.db import init_db_engine
+
         engine = init_db_engine(
-            str(settings.DATABASE_URL), pool_size=2, max_overflow=1
+            str(_settings.DATABASE_URL), pool_size=2, max_overflow=1
         )
+        _own_engine = True
+    else:
+        _own_engine = False
+    session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
+    if session_factory is None:
         session_factory = get_async_session(engine)
 
+    try:
         async with session_factory() as db:
             # ── 2. Set RLS context ─────────────────────────────────────────
             await db.execute(
@@ -291,7 +301,7 @@ async def classify_dialog(
         )
         raise
     finally:
-        if engine is not None:
+        if _own_engine:
             await engine.dispose()
 
 

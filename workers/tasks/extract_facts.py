@@ -90,7 +90,7 @@ async def extract_facts(
     from sqlalchemy import select
 
     from core.config import settings
-    from core.db import get_async_session, init_db_engine
+    from core.db import get_async_session
     from core.llm import resolve_backend
     from models.episode import Episode
     from repositories.fact_repository import FactRepository
@@ -103,17 +103,28 @@ async def extract_facts(
         content_length=len(content),
     )
 
+    # Use the shared engine from worker context.
+    engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
+    if engine is None:
+        from core.db import init_db_engine
+
+        engine = init_db_engine(
+            str(settings.DATABASE_URL), pool_size=2, max_overflow=1
+        )
+        _own_engine = True
+    else:
+        _own_engine = False
+    session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
+    if session_factory is None:
+        session_factory = get_async_session(engine)
+
     # ── 0. Fetch session context (known entities + recent history + facts) ────
     known_entities: list[dict] = []
     recent_history: list[dict] = []
     existing_facts: list[dict] = []
     if session_id:
         try:
-            ctx_engine = init_db_engine(
-                str(settings.DATABASE_URL), pool_size=2, max_overflow=1
-            )
-            ctx_session_factory = get_async_session(ctx_engine)
-            async with ctx_session_factory() as db:
+            async with session_factory() as db:
                 repo = FactRepository(db)
                 known_entities = await repo.get_entities_for_session(
                     session_id=uuid.UUID(session_id),
@@ -160,8 +171,6 @@ async def extract_facts(
                 session_id=session_id,
                 error=str(exc),
             )
-        finally:
-            await ctx_engine.dispose()
 
     # ── 1. Render prompt (v4 for delta with existing facts, v3 as fallback) ────
     prompt_template = "extract_facts_v4" if existing_facts else "extract_facts_v3"
@@ -208,9 +217,8 @@ async def extract_facts(
     facts = _parse_facts_response(response.content)
 
     # ── 4. Filter, resolve entities, persist, and set enrichment bit ─────────
+    # Uses the shared engine from worker ctx (set earlier in this function).
     persisted = 0
-    engine = init_db_engine(str(settings.DATABASE_URL), pool_size=5, max_overflow=2)
-    session_factory = get_async_session(engine)
     try:
         async with session_factory() as db:
             # Persist facts (if any) AND set enrichment bit in a single
@@ -347,7 +355,8 @@ async def extract_facts(
             )
             await db.commit()
     finally:
-        await engine.dispose()
+        if _own_engine:
+            await engine.dispose()
 
     if persisted:
         logger.info("fact_extraction.completed", episode_id=episode_id, facts=persisted)
@@ -355,19 +364,38 @@ async def extract_facts(
         logger.info("fact_extraction.no_facts", episode_id=episode_id)
 
 
-async def _set_enrichment_bit(episode_id: str, bit: int) -> None:
+async def _set_enrichment_bit(
+    episode_id: str,
+    bit: int,
+    db_session_factory: Any = None,
+) -> None:
     """Set an enrichment_status bit for an episode.
 
     Always runs, even if no data was found — marks the task as complete
     so the pipeline knows it has been attempted.
+
+    Args:
+        episode_id: UUID of the episode to update.
+        bit: Bitmask value to OR into enrichment_status.
+        db_session_factory: Optional shared session factory from the worker
+            ctx.  When provided, avoids creating a short-lived DB engine.
     """
     from sqlalchemy import text
 
-    from core.config import settings as app_settings
-    from core.db import get_async_session, init_db_engine
+    if db_session_factory is None:
+        from core.config import settings as app_settings
+        from core.db import get_async_session, init_db_engine
 
-    engine = init_db_engine(str(app_settings.DATABASE_URL), pool_size=2, max_overflow=1)
-    session_factory = get_async_session(engine)
+        engine = init_db_engine(
+            str(app_settings.DATABASE_URL), pool_size=2, max_overflow=1
+        )
+        session_factory = get_async_session(engine)
+        _own_engine = True
+    else:
+        session_factory = db_session_factory
+        engine = None  # not owned
+        _own_engine = False
+
     try:
         async with session_factory() as db:
             await db.execute(
@@ -382,7 +410,8 @@ async def _set_enrichment_bit(episode_id: str, bit: int) -> None:
             "enrichment_bit_failed", episode_id=episode_id, bit=bit, error=str(exc)
         )
     finally:
-        await engine.dispose()
+        if _own_engine and engine is not None:
+            await engine.dispose()
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────

@@ -44,32 +44,39 @@ async def embed_fact(
     from core.db import get_async_session
     from core.llm import resolve_backend
     from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import create_async_engine
 
     logger.info("embed_fact.started", fact_id=fact_id)
 
-    # ── 0. Fetch content from DB if not provided ──────────────────────────
-    if content is None:
+    # Use the shared engine from worker context.
+    engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
+    if engine is None:
+        from sqlalchemy.ext.asyncio import create_async_engine
+
         engine = create_async_engine(
             str(settings.DATABASE_URL),
             pool_pre_ping=True,
             pool_size=5,
             max_overflow=2,
         )
+        _own_engine = True
+    else:
+        _own_engine = False
+    session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
+    if session_factory is None:
         session_factory = get_async_session(engine)
-        try:
-            async with session_factory() as db:
-                result = await db.execute(
-                    text("SELECT content FROM facts WHERE id = :id"),
-                    {"id": fact_id},
-                )
-                row = result.one_or_none()
-                if row is None:
-                    logger.error("embed_fact.fact_not_found", fact_id=fact_id)
-                    return
-                content = row[0]
-        finally:
-            await engine.dispose()
+
+    # ── 0. Fetch content from DB if not provided ──────────────────────────
+    if content is None:
+        async with session_factory() as db:
+            result = await db.execute(
+                text("SELECT content FROM facts WHERE id = :id"),
+                {"id": fact_id},
+            )
+            row = result.one_or_none()
+            if row is None:
+                logger.error("embed_fact.fact_not_found", fact_id=fact_id)
+                return
+            content = row[0]
 
     # ── 1. Resolve the embedding backend ──────────────────────────────────
     provider = settings.EMBEDDING_BACKEND or None
@@ -101,14 +108,6 @@ async def embed_fact(
         )
 
     # ── 4. Store in pgvector ──────────────────────────────────────────────
-    engine = create_async_engine(
-        str(settings.DATABASE_URL),
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=2,
-    )
-    session_factory = get_async_session(engine)
-
     try:
         async with session_factory() as db:
             await db.execute(
@@ -123,4 +122,5 @@ async def embed_fact(
             dim=len(embedding),
         )
     finally:
-        await engine.dispose()
+        if _own_engine:
+            await engine.dispose()
