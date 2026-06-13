@@ -34,6 +34,7 @@ from core.graph_backend import init_graph_backend
 # avoids importing the 361-line module on every startup.
 from core.logging import setup_logging
 from core.redis import close_redis, init_redis
+from middleware.audit import AuditMiddleware
 from middleware.auth import AuthMiddleware
 from middleware.logging import LoggingMiddleware
 from middleware.metrics import MetricsMiddleware
@@ -46,6 +47,7 @@ from routers import (
     admin_metrics,
     admin_schemas,
     admin_stats,
+    audit_log,
     auth,
     classifications,
     context,
@@ -144,9 +146,10 @@ def create_app() -> FastAPI:
     #   3. TracingMiddleware  — OpenTelemetry span management
     #   4. RateLimitMiddleware — per-IP / per-token sliding window
     #   5. AuthMiddleware     — extract/validate JWT & API key
-    #   6. GZipMiddleware     — compress responses >= 1 KB
-    #   7. TrustedHost        — prevent host-header attacks
-    #   8. RequestID          — assign request_id (innermost, closest to router)
+    #   6. AuditMiddleware    — record every request to audit_logs (post-response)
+    #   7. GZipMiddleware     — compress responses >= 1 KB
+    #   8. TrustedHost        — prevent host-header attacks
+    #   9. RequestID          — assign request_id (innermost, closest to router)
 
     # 0 (outermost) — Metrics: captures EVERY request including 404s and non-API paths.
     app.add_middleware(MetricsMiddleware)
@@ -171,6 +174,9 @@ def create_app() -> FastAPI:
     # 5 — Auth: extract and validate JWT/API key, set org_id/user_id on request state.
     app.add_middleware(AuthMiddleware)
 
+    # 6 — Audit: record every request to audit_logs (post-response, never blocks).
+    app.add_middleware(AuditMiddleware)
+
     # 4 — Rate limiting
     app.add_middleware(RateLimitMiddleware)
 
@@ -194,8 +200,10 @@ def create_app() -> FastAPI:
     app.include_router(health.router, prefix="/v1", tags=["Health"])
     app.include_router(admin.router)
     app.include_router(admin_api_keys.router)
+    app.include_router(admin_metrics.router)
     app.include_router(admin_schemas.router)
     app.include_router(admin_stats.router)
+    app.include_router(audit_log.router)
     app.include_router(admin_metrics.router)
     app.include_router(auth.router)
     app.include_router(users.router)

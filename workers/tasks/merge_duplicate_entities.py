@@ -24,7 +24,6 @@ Bitmask:
 
 from __future__ import annotations
 
-import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -453,28 +452,23 @@ async def _merge_cluster(
         "merged_names": [e["name"] for e in duplicate_entities],
     }
 
-    await db.execute(
-        text("""
-            INSERT INTO audit_logs
-                (id, organization_id, actor_id, actor_type,
-                 action, resource_type, resource_id, details,
-                 created_at)
-            VALUES
-                (gen_random_uuid(), :org_id, 'system', 'system',
-                 'entity.merge', 'graph_entities', :canonical_id,
-                 CAST(:details AS jsonb), now())
-        """),
-        {
-            "org_id": org_id,
-            "canonical_id": canonical["id"],
-            "details": json.dumps({
-                "action": "merge_duplicate_entities",
-                "before": before_snapshot,
-                "after": after_snapshot,
-                "cluster_size": len(cluster),
-                "relationships_rewired": total_rewired,
-            }),
+    from services.audit_log_service import AuditLogService
+    audit_service = AuditLogService(db)
+    await audit_service.log_action(
+        organization_id=org_id,
+        actor_id="system",
+        actor_type="system",
+        action="entity.merge",
+        resource_type="graph_entities",
+        resource_id=canonical["id"],
+        details={
+            "action": "merge_duplicate_entities",
+            "before": before_snapshot,
+            "after": after_snapshot,
+            "cluster_size": len(cluster),
+            "relationships_rewired": total_rewired,
         },
+        ip_address=None,
     )
 
     logger.info(

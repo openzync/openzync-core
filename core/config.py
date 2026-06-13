@@ -146,6 +146,17 @@ class Settings(BaseSettings):
         validation_alias="OLLAMA_BASE_URL",
     )
 
+    # ── Audit Logging ────────────────────────────────────────────────────
+    AUDIT_LOG_RESPONSE_BODY: bool = Field(
+        default=False,
+        description=(
+            "Capture response body in audit_logs.details. "
+            "WARNING: may contain PII — redaction is applied but "
+            "enabling this increases storage significantly."
+        ),
+        validation_alias="MG_AUDIT_LOG_RESPONSE_BODY",
+    )
+
     # ── Metrics / Observability ───────────────────────────────────────────
     PROMETHEUS_URL: str = Field(
         default="http://localhost:9090",
