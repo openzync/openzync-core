@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, redirect } from "next/navigation";
 import Link from "next/link";
 import {
   Box,
@@ -25,8 +25,7 @@ export default function LoginPage() {
 
   // If already logged in, redirect
   if (user) {
-    router.replace("/dashboard");
-    return null;
+    redirect("/dashboard");
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
