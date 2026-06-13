@@ -21,6 +21,8 @@ import logging
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+import structlog
+
 if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -587,6 +589,9 @@ class MemoryService:
             episodes: List of episode dicts with ``id``, ``content``, ``role``.
         """
         episode_ids = [ep["id"] for ep in episodes]
+        # Propagate trace_id from the current request context so ARQ worker
+        # tasks can be correlated back to the originating HTTP request.
+        trace_id = structlog.contextvars.get_contextvars().get("request_id", str(uuid4()))
         try:
             arq_pool = get_arq()
             qname = _arq_queue_name("high")
@@ -594,7 +599,7 @@ class MemoryService:
                 ep_id = str(episode["id"])
                 content = episode["content"]
                 role = episode.get("role", "user")
-                common = {"episode_id": ep_id, "content": content, "org_id": org_id}
+                common = {"episode_id": ep_id, "content": content, "org_id": org_id, "trace_id": trace_id}
 
                 await arq_pool.enqueue("classify_dialog", queue_name=qname,
                     **common)

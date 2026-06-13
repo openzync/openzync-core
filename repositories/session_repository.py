@@ -7,8 +7,8 @@ logic, no schema construction.
 
 from __future__ import annotations
 
-import base64
 from collections.abc import Sequence
+from core.cursor import decode_cursor, encode_cursor
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
@@ -514,6 +514,40 @@ class SessionRepository:
             "last_message_at": row.last_message_at,
         }
 
+    async def batch_get_stats(
+        self, session_ids: list[UUID], organization_id: UUID
+    ) -> dict[UUID, dict[str, int]]:
+        """Batch-load message counts per session in a single query.
+
+        Eliminates the N+1 problem when rendering session list pages.
+        Only non-deleted episodes are counted.
+
+        Args:
+            session_ids: The session UUIDs to fetch stats for.
+            organization_id: Tenant isolation scope.
+
+        Returns:
+            Dict mapping ``session_id`` → ``{"message_count": int}``.
+            Sessions with no episodes are omitted from the result.
+        """
+        if not session_ids:
+            return {}
+
+        stmt = select(
+            Episode.session_id,
+            func.count(Episode.id).label("message_count"),
+        ).where(
+            Episode.session_id.in_(session_ids),
+            Episode.organization_id == organization_id,
+            Episode.is_deleted.is_(False),
+        ).group_by(Episode.session_id)
+
+        result = await self._db.execute(stmt)
+        return {
+            row.session_id: {"message_count": row.message_count}
+            for row in result.all()
+        }
+
     # ── Auto-Close (for scheduled task) ─────────────────────────────────────
 
     async def find_stale_open_sessions(
@@ -572,8 +606,7 @@ class SessionRepository:
 
         Format: ``{created_at_isoformat}|{session_id_hex}``
         """
-        raw = f"{created_at.isoformat()}|{session_id.hex}"
-        return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+        return encode_cursor(f"{created_at.isoformat()}|{session_id.hex}")
 
     @staticmethod
     def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
@@ -583,10 +616,7 @@ class SessionRepository:
             ValueError: If the cursor is malformed.
         """
         try:
-            padding = 4 - len(cursor) % 4
-            if padding != 4:
-                cursor += "=" * padding
-            raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+            raw = decode_cursor(cursor)
             at_str, id_hex = raw.split("|", 1)
             return datetime.fromisoformat(at_str), UUID(hex=id_hex)
         except (ValueError, TypeError) as e:
@@ -598,8 +628,7 @@ class SessionRepository:
 
         Format: ``{sequence_number}|{episode_id_hex}``
         """
-        raw = f"{sequence_number}|{episode_id.hex}"
-        return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+        return encode_cursor(f"{sequence_number}|{episode_id.hex}")
 
     @staticmethod
     def _decode_message_cursor(cursor: str) -> tuple[int, UUID]:
@@ -609,10 +638,7 @@ class SessionRepository:
             ValueError: If the cursor is malformed.
         """
         try:
-            padding = 4 - len(cursor) % 4
-            if padding != 4:
-                cursor += "=" * padding
-            raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+            raw = decode_cursor(cursor)
             seq_str, id_hex = raw.split("|", 1)
             return int(seq_str), UUID(hex=id_hex)
         except (ValueError, TypeError) as e:

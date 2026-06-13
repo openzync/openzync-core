@@ -19,6 +19,7 @@ from uuid import UUID
 
 from typing import Any
 
+from core.cursor import decode_cursor, encode_cursor
 from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -248,6 +249,82 @@ class FactRepository:
 
         return created
 
+    async def batch_create_or_skip(
+        self,
+        facts: list[dict[str, Any]],
+        user_id: UUID,
+        organization_id: UUID,
+        source_episode_id: UUID,
+    ) -> list[Fact]:
+        """Batch-insert facts with ``ON CONFLICT DO NOTHING``.
+
+        More efficient than looping over ``create_or_skip`` — uses a
+        single ``INSERT ... ON CONFLICT DO NOTHING RETURNING *``
+        statement.
+
+        Only newly inserted rows are returned; conflicting rows are
+        silently skipped.
+
+        Args:
+            facts: List of fact dicts with keys: ``subject``, ``predicate``,
+                ``object``, ``confidence``, ``subject_type``, ``object_type``,
+                ``subject_entity_id``, ``object_entity_id``.
+            user_id: FK to the owning user.
+            organization_id: Denormalized org ID for RLS.
+            source_episode_id: FK back to the source episode.
+
+        Returns:
+            List of newly created :class:`Fact` ORM instances (conflicting
+            rows are excluded).
+        """
+        # ⚠️ Uses constraint name rather than index_elements to stay
+        # consistent with the existing create_or_skip method. Both must
+        # reference the same unique constraint for correct deduplication.
+        from datetime import datetime, timezone
+
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        now = datetime.now(timezone.utc)
+        rows = [
+            {
+                "user_id": user_id,
+                "organization_id": organization_id,
+                "content": f"{f['subject']} {f['predicate']} {f['object']}",
+                "subject": f["subject"],
+                "predicate": f["predicate"],
+                "object": f["object"],
+                "subject_type": f.get("subject_type", "literal"),
+                "object_type": f.get("object_type", "literal"),
+                "confidence": f["confidence"],
+                "source_episode_id": source_episode_id,
+                "valid_from": now,
+                "subject_entity_id": f.get("subject_entity_id"),
+                "object_entity_id": f.get("object_entity_id"),
+                "embedding": [],
+            }
+            for f in facts
+        ]
+
+        stmt = (
+            pg_insert(Fact)
+            .on_conflict_do_nothing(constraint="uq_facts_episode_triple")
+            .returning(Fact)
+        )
+        result = await self._db.execute(stmt, rows)
+        await self._db.flush()
+
+        created = list(result.scalars().all())
+
+        logger.info(
+            "fact_repository.batch_create_or_skip",
+            extra={
+                "input_count": len(facts),
+                "created_count": len(created),
+            },
+        )
+
+        return created
+
     # ── Soft Delete by User ──────────────────────────────────────────────────
 
     async def soft_delete_by_user(self, user_id: UUID) -> int:
@@ -344,7 +421,6 @@ class FactRepository:
         Returns:
             Tuple of (list of fact dicts, next_cursor or None).
         """
-        import base64
         from sqlalchemy import select, text as sql_text
 
         effective_limit = min(limit, 200) + 1  # +1 to detect has_more
@@ -354,7 +430,7 @@ class FactRepository:
         cursor_id: UUID | None = None
         if cursor:
             try:
-                decoded = base64.urlsafe_b64decode(cursor).decode()
+                decoded = decode_cursor(cursor)
                 parts = decoded.split("|")
                 if len(parts) == 2:
                     cursor_created = datetime.fromisoformat(parts[0])
@@ -440,7 +516,7 @@ class FactRepository:
         if has_more and facts:
             last = facts[-1]
             raw = f"{last['created_at']}|{last['id']}"
-            next_cursor = base64.urlsafe_b64encode(raw.encode()).decode()
+            next_cursor = encode_cursor(raw)
 
         return facts, next_cursor
 

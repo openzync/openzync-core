@@ -12,6 +12,8 @@ import logging
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
+import structlog
+
 if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
 
@@ -269,6 +271,9 @@ class FactService:
             user_id: The user UUID string.
             fact_ids: List of fact UUIDs to embed.
         """
+        # Propagate trace_id from the current request context so the
+        # embedding worker can correlate back to the originating request.
+        trace_id = structlog.contextvars.get_contextvars().get("request_id", str(uuid4()))
         try:
             arq_pool = get_arq()
             qname = _arq_queue_name(ARQ_QUEUE)
@@ -280,6 +285,7 @@ class FactService:
                     fact_id=fact_id,
                     org_id=org_id,
                     user_id=user_id,
+                    trace_id=trace_id,
                 )
 
             logger.info(

@@ -61,6 +61,8 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             response = Response(status_code=500)
             response.headers["X-Request-ID"] = request_id
             raise
+        finally:
+            structlog.contextvars.clear_contextvars()
 
         response.headers["X-Request-ID"] = request_id
         return response

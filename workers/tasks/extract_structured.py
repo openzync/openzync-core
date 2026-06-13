@@ -33,6 +33,7 @@ async def extract_structured(
     user_id: str,
     session_id: str,
     content: str,
+    trace_id: str = "",
 ) -> None:
     """Extract structured data from a dialog turn and persist the result.
 
@@ -56,10 +57,14 @@ async def extract_structured(
         user_id: UUID of the user (for episode FK context).
         session_id: UUID of the session (for FK to structured_extractions).
         content: The message text to extract data from.
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:
         Exception: Re-raises the last LLM or DB error after retry exhaustion.
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
     # Lazy imports — ARQ workers run in a separate process.
     from core.config import settings
     from core.db import get_async_session
@@ -72,6 +77,7 @@ async def extract_structured(
         org_id=org_id,
         session_id=session_id,
         content_length=len(content),
+        trace_id=trace_id,
     )
 
     # Use the shared engine from worker context.

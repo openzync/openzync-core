@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
+import structlog
+
 from core.arq import get_arq
 from core.config import settings
 from repositories.fact_repository import FactRepository
@@ -31,6 +33,7 @@ async def ingest_business_data(
     user_id: str,
     facts: list[dict],
     job_id: str | None = None,  # noqa: ARG001
+    trace_id: str = "",
 ) -> dict:
     """ARQ task: ingest a batch of fact triples into the database.
 
@@ -44,6 +47,7 @@ async def ingest_business_data(
         facts: List of fact dicts with keys: ``subject``, ``predicate``,
             ``object``, ``content`` (optional), ``confidence`` (optional).
         job_id: Unique job identifier for tracking.
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Returns:
         A dict with ``status``, ``accepted`` (count), and ``errors`` (list).
@@ -51,12 +55,15 @@ async def ingest_business_data(
     Raises:
         Exception: Propagates database errors for ARQ retry logic.
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
     logger.info(
         "ingest_business_data.started",
         extra={
             "org_id": org_id,
             "user_id": user_id,
             "fact_count": len(facts),
+            "trace_id": trace_id,
         },
     )
 
@@ -152,6 +159,7 @@ async def ingest_business_data(
         org_id=org_id,
         user_id=user_id,
         fact_ids=[str(f.id) for f in created],
+        trace_id=trace_id,
     )
 
     logger.info(
@@ -176,6 +184,7 @@ async def _enqueue_embedding_tasks(
     org_id: str,
     user_id: str,
     fact_ids: list[str],
+    trace_id: str = "",
 ) -> None:
     """Enqueue ARQ embedding tasks for the ingested facts.
 
@@ -183,6 +192,7 @@ async def _enqueue_embedding_tasks(
         org_id: Organization UUID string.
         user_id: User UUID string.
         fact_ids: List of fact UUID strings to embed.
+        trace_id: Request trace ID for end-to-end correlation.
     """
     try:
         arq_pool = get_arq()
@@ -195,6 +205,7 @@ async def _enqueue_embedding_tasks(
                 fact_id=fact_id,
                 org_id=org_id,
                 user_id=user_id,
+                trace_id=trace_id,
             )
 
         logger.info(

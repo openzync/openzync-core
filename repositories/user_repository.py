@@ -12,8 +12,8 @@ Key patterns:
 
 from __future__ import annotations
 
-import base64
 from collections.abc import Sequence
+from core.cursor import decode_cursor, encode_cursor
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -470,8 +470,7 @@ class UserRepository:
         Returns:
             URL-safe base64 string (padding stripped).
         """
-        raw = f"{created_at.isoformat()}|{user_id.hex}"
-        return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+        return encode_cursor(f"{created_at.isoformat()}|{user_id.hex}")
 
     @staticmethod
     def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
@@ -487,11 +486,7 @@ class UserRepository:
             ValueError: If the cursor is malformed or cannot be decoded.
         """
         try:
-            # Restore padding stripped by rstrip("=")
-            padding = 4 - len(cursor) % 4
-            if padding != 4:
-                cursor += "=" * padding
-            raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+            raw = decode_cursor(cursor)
             at_str, id_hex = raw.split("|", 1)
             return datetime.fromisoformat(at_str), UUID(hex=id_hex)
         except (ValueError, TypeError) as e:

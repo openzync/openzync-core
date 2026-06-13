@@ -52,6 +52,7 @@ async def extract_facts(
     user_id: str,
     content: str,
     session_id: str | None = None,
+    trace_id: str = "",
 ) -> None:
     """Extract zero-shot factual statements from a message and persist them.
 
@@ -80,11 +81,15 @@ async def extract_facts(
         session_id: UUID of the session (passed from MemoryService).
             Used to fetch previously extracted entities and recent
             conversation turns for pronoun resolution.
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:
         Exception: Re-raises the last LLM or DB error after retry exhaustion
             (``on_exhaustion="raise"`` default behaviour).
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
     # Lazy imports to keep the module importable without the full async
     # stack at definition time — ARQ workers run in a separate process.
     from sqlalchemy import select
@@ -101,6 +106,7 @@ async def extract_facts(
         org_id=org_id,
         session_id=session_id,
         content_length=len(content),
+        trace_id=trace_id,
     )
 
     # Use the shared engine from worker context.
@@ -253,40 +259,48 @@ async def extract_facts(
 
                         entity_repo = _EntityRepo(db=db)
 
-                        for fact in resolved_facts:
-                            created = await repo.create_or_skip(
-                                user_id=uuid.UUID(user_id),
-                                organization_id=uuid.UUID(org_id),
-                                content=f"{fact['subject']} {fact['predicate']} {fact['object']}",
-                                subject=fact["subject"],
-                                predicate=fact["predicate"],
-                                obj=fact["object"],
-                                subject_type=fact.get("subject_type", "literal"),
-                                object_type=fact.get("object_type", "literal"),
-                                confidence=fact["confidence"],
-                                source_episode_id=uuid.UUID(episode_id),
-                                valid_from=datetime.now(timezone.utc),
-                                subject_entity_id=fact.get("subject_entity_id"),
-                                object_entity_id=fact.get("object_entity_id"),
+                        # ══════════════════════════════════════════════════════
+                        # Batch-create all unique facts in a single query
+                        # instead of N individual round-trips.
+                        # ══════════════════════════════════════════════════════
+                        new_facts = await repo.batch_create_or_skip(
+                            facts=resolved_facts,
+                            user_id=uuid.UUID(user_id),
+                            organization_id=uuid.UUID(org_id),
+                            source_episode_id=uuid.UUID(episode_id),
+                        )
+
+                        # Build a lookup from content string → input fact dict
+                        # to match returned Fact ORM objects back to their
+                        # original input for entity resolution and graph upserts.
+                        content_to_fact: dict[str, dict] = {
+                            f"{f['subject']} {f['predicate']} {f['object']}": f
+                            for f in resolved_facts
+                        }
+
+                        persisted = len(new_facts)
+
+                        duplicates_count = len(resolved_facts) - len(new_facts)
+                        if duplicates_count:
+                            logger.info(
+                                "fact_extraction.duplicates_skipped",
+                                episode_id=episode_id,
+                                count=duplicates_count,
                             )
 
-                            if created is None:
-                                logger.info(
-                                    "fact_extraction.duplicate_skipped",
-                                    episode_id=episode_id,
-                                    subject=fact["subject"],
-                                    predicate=fact["predicate"],
-                                    object=fact["object"],
-                                )
-                                continue
-
-                            persisted += 1
+                        # ── Post-insert per-fact processing ──────────────────
+                        # Entity resolution fallback + graph relationship
+                        # materialization for newly created facts only.
+                        for fact_obj in new_facts:
+                            input_fact = content_to_fact.get(fact_obj.content)
+                            if input_fact is None:
+                                continue  # guard against logic errors
 
                             # ── Also persist to graph_relationships ──────────
                             # When both entity IDs are resolved, materialize
                             # the relationship in the graph for traversal queries.
-                            subj_id = fact.get("subject_entity_id")
-                            obj_id = fact.get("object_entity_id")
+                            subj_id = input_fact.get("subject_entity_id")
+                            obj_id = input_fact.get("object_entity_id")
 
                             # ── Live entity lookup fallback ────────────────
                             # If entity IDs weren't resolved from the session
@@ -298,39 +312,39 @@ async def extract_facts(
                             if subj_id is None:
                                 subj_node = await entity_repo.get_entity_by_name(
                                     org_id=uuid.UUID(org_id),
-                                    name=fact["subject"],
+                                    name=input_fact["subject"],
                                 )
                                 if subj_node is not None:
                                     subj_id = uuid.UUID(subj_node["id"])
-                                    fact["subject_entity_id"] = subj_id
+                                    input_fact["subject_entity_id"] = subj_id
                                     logger.info(
                                         "fact_extraction.live_entity_resolved",
                                         episode_id=episode_id,
-                                        entity_name=fact["subject"],
+                                        entity_name=input_fact["subject"],
                                         role="subject",
                                     )
 
                             if obj_id is None:
                                 obj_node = await entity_repo.get_entity_by_name(
                                     org_id=uuid.UUID(org_id),
-                                    name=fact["object"],
+                                    name=input_fact["object"],
                                 )
                                 if obj_node is not None:
                                     obj_id = uuid.UUID(obj_node["id"])
-                                    fact["object_entity_id"] = obj_id
+                                    input_fact["object_entity_id"] = obj_id
                                     logger.info(
                                         "fact_extraction.live_entity_resolved",
                                         episode_id=episode_id,
-                                        entity_name=fact["object"],
+                                        entity_name=input_fact["object"],
                                         role="object",
                                     )
 
                             if subj_id is not None and obj_id is not None:
                                 try:
                                     await entity_repo.upsert_relationship(
-                                        subject=fact["subject"],
-                                        predicate=fact["predicate"],
-                                        obj=fact["object"],
+                                        subject=input_fact["subject"],
+                                        predicate=input_fact["predicate"],
+                                        obj=input_fact["object"],
                                         org_id=uuid.UUID(org_id),
                                     )
                                 except Exception:
@@ -339,9 +353,9 @@ async def extract_facts(
                                     logger.warning(
                                         "fact_extraction.graph_rel_failed",
                                         episode_id=episode_id,
-                                        subject=fact["subject"],
-                                        predicate=fact["predicate"],
-                                        object=fact["object"],
+                                        subject=input_fact["subject"],
+                                        predicate=input_fact["predicate"],
+                                        object=input_fact["object"],
                                         exc_info=True,
                                     )
 

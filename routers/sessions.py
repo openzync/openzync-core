@@ -226,10 +226,8 @@ async def get_session_facts(
     org_uuid = UUID(org_id) if isinstance(org_id, str) else org_id
 
     # Verify the session exists before fetching facts.
-    try:
-        await service.get_session(org_uuid, session_id, user_id=user_id)
-    except Exception as exc:
-        raise HTTPException(status_code=404, detail=f"Session {session_id} not found") from exc
+    # NotFoundError propagates to global exception handler → 404.
+    await service.get_session(org_uuid, session_id, user_id=user_id)
 
     facts, next_cursor = await fact_service.list_facts_by_session(
         organization_id=org_uuid,

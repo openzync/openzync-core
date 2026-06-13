@@ -22,6 +22,7 @@ async def embed_episode(
     episode_id: str,
     org_id: str,
     content: str,
+    trace_id: str = "",
 ) -> None:
     """Generate an embedding for an episode and store it in pgvector.
 
@@ -37,18 +38,22 @@ async def embed_episode(
         episode_id: UUID of the episode to embed.
         org_id: UUID of the owning organisation (for observability / RLS).
         content: Episode message text to embed.
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:
         ValueError: If the embedding dimension does not match
             ``EMBEDDING_DIM``.
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
     # ── Lazy imports (ARQ workers run in a separate process) ──────────────
     from core.config import settings
     from core.db import get_async_session
     from core.llm import resolve_backend
     from sqlalchemy import text
 
-    logger.info("embed_episode.started", episode_id=episode_id)
+    logger.info("embed_episode.started", episode_id=episode_id, trace_id=trace_id)
 
     # ── 1. Resolve the embedding backend ──────────────────────────────────
     provider = settings.EMBEDDING_BACKEND or None

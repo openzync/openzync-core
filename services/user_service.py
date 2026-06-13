@@ -12,11 +12,12 @@ Key patterns:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from core.exceptions import ConflictError, NotFoundError, ValidationError
 from repositories.user_repository import UserRepository
+from schemas.users import UserListResponse, UserResponse, UserResponseWithStats
 
 # ╠ This file contains NO SQLAlchemy expressions.
 # ╠ If you see a ``select()`` or ``where()``, it belongs in the repository.
@@ -61,7 +62,6 @@ class UserService:
             ConflictError: A user with this ``external_id`` already exists
                 in the organization.
         """
-        from schemas.users import UserResponse
 
         exists = await self._repo.exists_by_external_id(
             organization_id, external_id
@@ -133,7 +133,6 @@ class UserService:
             NotFoundError: If the IntegrityError path somehow cannot find
                 the row (should never happen — indicates DB inconsistency).
         """
-        from schemas.users import UserResponse
 
         # Fast path: user already exists
         user = await self._repo.get_by_external_id(
@@ -188,7 +187,6 @@ class UserService:
             NotFoundError: No user with this UUID (or the user is
                 soft-deleted).
         """
-        from schemas.users import UserResponseWithStats
 
         user = await self._repo.get_by_uuid(organization_id, user_id)
         if user is None or user.is_deleted:
@@ -228,7 +226,6 @@ class UserService:
         Raises:
             NotFoundError: No user with this UUID in this organization.
         """
-        from schemas.users import UserResponse
 
         user = await self._repo.update(
             organization_id=organization_id,
@@ -302,7 +299,6 @@ class UserService:
         Raises:
             ValidationError: If ``limit`` is outside the 1-200 range.
         """
-        from schemas.users import UserListResponse, UserResponse
 
         if limit < 1 or limit > 200:
             raise ValidationError("limit must be between 1 and 200")

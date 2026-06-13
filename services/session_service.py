@@ -18,7 +18,7 @@ from schemas.sessions import (
 )
 
 from core.exceptions import ConflictError, NotFoundError, ValidationError
-from repositories.mappers import episode_to_dict, session_to_dict, session_to_list_dict
+from schemas.mappers import episode_to_dict, session_to_dict, session_to_list_dict
 from repositories.session_repository import SessionRepository
 
 logger = logging.getLogger(__name__)
@@ -211,13 +211,16 @@ class SessionService:
             include_closed=include_closed,
         )
 
-        # TODO(performance): Batch-load message/fact counts for list items
-        # via a single query instead of N+1.  For now, stats default to 0
-        # in the list response.  Use the individual GET endpoint for
-        # accurate counts.
+        # Batch-load message counts — one query instead of N+1.
+        session_ids = [s.id for s in sessions]
+        stats = await self._repo.batch_get_stats(session_ids, org_id) if session_ids else {}
+
         items = [
             SessionListResponse.model_validate(
-                session_to_list_dict(s)
+                session_to_list_dict(
+                    s,
+                    message_count=stats.get(s.id, {}).get("message_count", 0),
+                )
             )
             for s in sessions
         ]

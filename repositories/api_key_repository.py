@@ -9,7 +9,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.api_key import ApiKey
@@ -126,3 +126,41 @@ class ApiKeyRepository:
         await self._db.flush()
         await self._db.refresh(api_key)
         return api_key
+
+    async def get_by_lookup_hash(self, lookup_hash: str) -> ApiKey | None:
+        """Get an API key by its lookup hash.
+
+        Used during API key authentication — the incoming key is hashed with
+        SHA-256 and matched against ``lookup_hash`` for a fast, constant-time
+        candidate lookup. The full hash verification (with salt) happens in
+        the service layer.
+
+        Args:
+            lookup_hash: Unsalted SHA-256 hex digest of the API key prefix.
+
+        Returns:
+            The ApiKey if found and not soft-deleted, or ``None``.
+        """
+        result = await self._db.execute(
+            select(ApiKey).where(
+                ApiKey.lookup_hash == lookup_hash,
+                ApiKey.is_deleted.is_(False),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def update_last_used(self, key_id: uuid.UUID) -> None:
+        """Update the ``last_used_at`` timestamp for an API key.
+
+        Called after every successful API key authentication to track key
+        usage for audit and rotation decisions.
+
+        Args:
+            key_id: The API key UUID to update.
+        """
+        await self._db.execute(
+            sa_update(ApiKey)
+            .where(ApiKey.id == key_id)
+            .values(last_used_at=func.now())
+        )
+        await self._db.flush()

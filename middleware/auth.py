@@ -30,12 +30,14 @@ import logging
 from typing import Any, cast
 
 import redis.asyncio as aioredis
-from sqlalchemy import select
+from uuid import UUID
+
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from repositories.api_key_repository import ApiKeyRepository
 from utils.crypto import compute_lookup_hash, verify_api_key
 
 logger = logging.getLogger(__name__)
@@ -193,46 +195,32 @@ async def _query_key_from_db(
     db_factory: async_sessionmaker[AsyncSession],
     lookup_hash: str,
 ) -> dict[str, Any] | None:
-    """Query the database for an API key by its lookup hash.
+    """Query the database for an API key by its lookup hash via ApiKeyRepository.
 
     Args:
         db_factory: Async session factory from ``request.app.state``.
         lookup_hash: Unsalted SHA-256 hex digest of the API key.
 
     Returns:
-        Dict with ``org_id``, ``scopes``, ``key_hash``, ``salt``, ``is_revoked``,
-        ``expires_at`` if found, or ``None``.
+        Dict with ``id``, ``org_id``, ``scopes``, ``key_hash``, ``salt``,
+        ``is_revoked``, ``expires_at`` if found, or ``None``.
     """
-    # Late import to avoid circular dependency; the model is expected to exist.
-    try:
-        from models.api_key import ApiKey
-    except ImportError as err:
-        logger.critical(
-            "ApiKey model not available — cannot authenticate. "
-            "Ensure models/api_key.py exists.",
-            exc_info=True,
-        )
-        raise RuntimeError(
-            "ApiKey model is required for authentication middleware."
-        ) from err
-
     async with db_factory() as session:
         async with session.begin():
-            result = await session.execute(
-                select(ApiKey).where(ApiKey.lookup_hash == lookup_hash)  # type: ignore[attr-defined]
-            )
-            api_key = result.scalar_one_or_none()
+            repo = ApiKeyRepository(session)
+            api_key = await repo.get_by_lookup_hash(lookup_hash)
 
     if api_key is None:
         return None
 
     return {
-        "org_id": str(api_key.organization_id),  # type: ignore[attr-defined]
-        "scopes": list(api_key.scopes),  # type: ignore[attr-defined]
-        "key_hash": api_key.key_hash,  # type: ignore[attr-defined]
-        "salt": api_key.salt,  # type: ignore[attr-defined]
-        "is_revoked": api_key.is_revoked,  # type: ignore[attr-defined]
-        "expires_at": api_key.expires_at,  # type: ignore[attr-defined]
+        "id": str(api_key.id),
+        "org_id": str(api_key.organization_id),
+        "scopes": list(api_key.scopes),
+        "key_hash": api_key.key_hash,
+        "salt": api_key.salt,
+        "is_revoked": api_key.is_revoked,
+        "expires_at": api_key.expires_at,
     }
 
 
@@ -530,6 +518,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request.state.auth_type = "api_key"  # type: ignore[attr-defined]
         request.state.org_id = org_id  # type: ignore[attr-defined]
         request.state.api_key_scopes = scopes  # type: ignore[attr-defined]
+
+        # ═ Update last_used timestamp (fire-and-forget) ═══════════════════
+        try:
+            async with db_factory() as session:
+                await ApiKeyRepository(session).update_last_used(UUID(key_data["id"]))
+                await session.commit()
+        except Exception:
+            logger.warning("Failed to update API key last_used", exc_info=True)
 
         # ── Cache in Redis (fire-and-forget) ─────────────────────────────
         if redis is not None:

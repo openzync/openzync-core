@@ -27,6 +27,7 @@ async def sync_to_graph(
     user_id: str,
     content: str,
     role: str,
+    trace_id: str = "",
 ) -> None:
     """Link entities extracted from this episode via graph_episode_entities.
 
@@ -47,11 +48,15 @@ async def sync_to_graph(
         user_id: UUID of the user who authored the episode.
         content: Episode message text (used for entity name matching).
         role: Message role (user/assistant/system/tool).
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:
         RuntimeError: If Graphiti is required but not installed or
             initialised.
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
     from datetime import datetime, timezone
     from uuid import UUID
 

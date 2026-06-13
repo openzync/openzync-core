@@ -20,6 +20,7 @@ async def embed_fact(
     ctx: object,
     fact_id: str,
     content: str | None = None,
+    trace_id: str = "",
     **kwargs: object,  # noqa: ARG002 — accepts org_id, user_id from API caller
 ) -> None:
     """Generate an embedding for a fact and store it in ``facts.embedding``.
@@ -34,18 +35,22 @@ async def embed_fact(
         fact_id: UUID of the fact to embed.
         content: Fact text content to embed. If not provided (e.g. when
             called from ``fact_service``), it will be fetched from the DB.
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:
         ValueError: If the embedding dimension does not match
             ``EMBEDDING_DIM``.
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
     # ── Lazy imports (ARQ workers run in a separate process) ──────────────
     from core.config import settings
     from core.db import get_async_session
     from core.llm import resolve_backend
     from sqlalchemy import text
 
-    logger.info("embed_fact.started", fact_id=fact_id)
+    logger.info("embed_fact.started", fact_id=fact_id, trace_id=trace_id)
 
     # Use the shared engine from worker context.
     engine = ctx.get("db_engine") if isinstance(ctx, dict) else None

@@ -44,6 +44,7 @@ async def classify_dialog(
     episode_id: str,
     org_id: str,
     content: str,
+    trace_id: str = "",
 ) -> None:
     """Classify a dialog turn and persist the result.
 
@@ -68,10 +69,14 @@ async def classify_dialog(
         episode_id: UUID of the source episode (string, from ARQ).
         org_id: UUID of the owning organization.
         content: The message text to classify.
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:
         Exception: Re-raises the last LLM or DB error after retry exhaustion.
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
     # Lazy imports — ARQ workers run in a separate process.
     from core.db import get_async_session
     from core.llm import resolve_backend
@@ -81,6 +86,7 @@ async def classify_dialog(
         episode_id=episode_id,
         org_id=org_id,
         content_length=len(content),
+        trace_id=trace_id,
     )
 
     # Use the shared engine from worker context.  ARQ workers running

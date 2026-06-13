@@ -42,6 +42,7 @@ async def extract_entities(
     user_id: str,
     content: str,
     session_id: str | None = None,
+    trace_id: str = "",
 ) -> None:
     """Extract named entities and relationships from a message and persist them.
 
@@ -73,11 +74,15 @@ async def extract_entities(
         content: The message text to extract entities from.
         session_id: UUID of the session (passed from MemoryService).
             Used to fetch known entities for delta extraction.
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:
         Exception: Re-raises the last LLM or DB error after retry exhaustion
             (``on_exhaustion="raise"`` default behaviour).
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
     # Lazy imports to keep the module importable without the full async
     # stack at definition time — ARQ workers run in a separate process.
     from sqlalchemy import select
@@ -95,6 +100,7 @@ async def extract_entities(
         org_id=org_id,
         session_id=session_id,
         content_length=len(content),
+        trace_id=trace_id,
     )
 
     # Use the shared engine from worker context.
