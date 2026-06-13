@@ -12,12 +12,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends, Request
 
 from dependencies.auth import get_dashboard_user
-from dependencies.db import get_db
-from repositories.auth_repository import AuthRepository
+from dependencies.services import get_auth_service, get_auth_throttle
+from middleware.auth_throttle import AuthThrottle
 from schemas.auth import (
     DashboardUserResponse,
     LoginRequest,
@@ -34,11 +33,18 @@ router = APIRouter(
 )
 
 
-def _get_auth_service(
-    db: AsyncSession = Depends(get_db),
-) -> AuthService:
-    """Dependency factory for ``AuthService``."""
-    return AuthService(repo=AuthRepository(db))
+def _client_ip(request: Request) -> str:
+    """Extract the client IP address from the request.
+
+    Respects the ``X-Forwarded-For`` header for reverse-proxy deployments.
+    Falls back to ``request.client.host``.
+    """
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    if request.client:
+        return request.client.host
+    return "unknown"
 
 
 @router.post(
@@ -55,17 +61,22 @@ def _get_auth_service(
 )
 async def signup(
     payload: SignupRequest,
-    service: AuthService = Depends(_get_auth_service),
+    request: Request,
+    service: AuthService = Depends(get_auth_service),
+    throttle: AuthThrottle = Depends(get_auth_throttle),
 ) -> TokenResponse:
     """Sign up a new organization with an admin dashboard user.
 
     Args:
         payload: Email, password, and organization name.
+        request: Incoming HTTP request (for IP extraction).
         service: Injected auth service.
+        throttle: Injected auth throttle.
 
     Returns:
         Access and refresh tokens.
     """
+    await throttle.check_signup_attempt(_client_ip(request))
     return await service.signup(payload)
 
 
@@ -82,17 +93,22 @@ async def signup(
 )
 async def login(
     payload: LoginRequest,
-    service: AuthService = Depends(_get_auth_service),
+    request: Request,
+    service: AuthService = Depends(get_auth_service),
+    throttle: AuthThrottle = Depends(get_auth_throttle),
 ) -> TokenResponse:
     """Log in a dashboard user.
 
     Args:
         payload: Email and password.
+        request: Incoming HTTP request (for IP extraction).
         service: Injected auth service.
+        throttle: Injected auth throttle.
 
     Returns:
         Access and refresh tokens.
     """
+    await throttle.check_login_attempt(payload.email, _client_ip(request))
     return await service.login(payload)
 
 
@@ -108,7 +124,7 @@ async def login(
 )
 async def refresh(
     payload: RefreshRequest,
-    service: AuthService = Depends(_get_auth_service),
+    service: AuthService = Depends(get_auth_service),
 ) -> TokenResponse:
     """Refresh an expired access token.
 
@@ -132,7 +148,7 @@ async def refresh(
     ),
 )
 async def get_profile(
-    service: AuthService = Depends(_get_auth_service),
+    service: AuthService = Depends(get_auth_service),
     user_id: str = Depends(get_dashboard_user),
 ) -> DashboardUserResponse:
     """Get the current dashboard user's profile.
@@ -160,7 +176,7 @@ async def get_profile(
 )
 async def update_profile(
     payload: UpdateProfileRequest,
-    service: AuthService = Depends(_get_auth_service),
+    service: AuthService = Depends(get_auth_service),
     user_id: str = Depends(get_dashboard_user),
 ) -> DashboardUserResponse:
     """Update the current dashboard user's profile.

@@ -159,7 +159,7 @@ def create_app() -> FastAPI:
 
     # 7 — Trusted Host: prevent host-header attacks in production.
     allowed_hosts = (
-        settings.CORS_ORIGINS.split(",")
+        settings.HOSTS_ALLOWED.split(",")
         if settings.ENVIRONMENT == "production"
         else ["*"]
     )

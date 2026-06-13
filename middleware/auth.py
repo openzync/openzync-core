@@ -30,7 +30,7 @@ import logging
 from typing import Any, cast
 
 import redis.asyncio as aioredis
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
@@ -234,33 +234,6 @@ async def _query_key_from_db(
         "is_revoked": api_key.is_revoked,  # type: ignore[attr-defined]
         "expires_at": api_key.expires_at,  # type: ignore[attr-defined]
     }
-
-
-async def _set_rls_context(
-    db_factory: async_sessionmaker[AsyncSession],
-    org_id: str | None,
-    bypass_rls: bool = False,
-) -> None:
-    """Set PostgreSQL session-level configuration for RLS policies.
-
-    This must be called within a DB session so the ``SET_CONFIG`` takes effect
-    for the lifetime of that backend connection.
-
-    Args:
-        db_factory: Async session factory.
-        org_id: The authenticated organization ID, or ``"none"``.
-        bypass_rls: Whether to bypass RLS (e.g., for service accounts).
-    """
-    async with db_factory() as session:
-        async with session.begin():
-            await session.execute(
-                text("SELECT set_config('app.org_id', :org_id, true)"),
-                {"org_id": org_id or "none"},
-            )
-            await session.execute(
-                text("SELECT set_config('app.bypass_rls', :bypass, true)"),
-                {"bypass": "true" if bypass_rls else "false"},
-            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -569,10 +542,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
             except Exception:
                 logger.warning("Failed to cache auth data in Redis", exc_info=True)
 
-        # ── Set PostgreSQL RLS session config ────────────────────────────
-        try:
-            await _set_rls_context(db_factory, org_id, bypass_rls=False)
-        except Exception:
-            logger.warning("Failed to set RLS session config", exc_info=True)
+        # ── RLS context is set in dependencies/db.py on the actual request
+        # session.  Do NOT set it here — _set_rls_context opens its own
+        # short-lived session and PostgreSQL's set_config is session-local,
+        # so the config has zero effect on the request handler's session.
 
         return await call_next(request)

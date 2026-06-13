@@ -20,13 +20,10 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import NotFoundError
 from dependencies.auth import require_org_id
-from dependencies.db import get_db
-from packages.graphiti_client.backends.postgres import PostgresGraphBackend
-from repositories.user_repository import UserRepository
+from dependencies.services import get_graph_service
 from schemas.graph import (
     GraphCommunitiesListResponse,
     GraphCommunity,
@@ -45,50 +42,6 @@ router = APIRouter(
     prefix="/v1/users/{user_id}/graph",
     tags=["Knowledge Graph"],
 )
-
-
-# ── Dependency ──────────────────────────────────────────────────────────────────
-
-
-async def get_graph_service(
-    db: AsyncSession = Depends(get_db),
-) -> GraphService:
-    """FastAPI dependency that yields an initialised :class:`GraphService`.
-
-    Creates a request-scoped ``PostgresGraphBackend`` using the
-    already-injected request-scoped DB session.  Each request gets its
-    own session so that a transactional failure in one request cannot
-    poison subsequent requests (avoiding ``InFailedSqlTransaction``).
-    """
-    graph_backend = PostgresGraphBackend(db=db)
-    return GraphService(graph_backend=graph_backend)
-
-
-# ── Helpers ─────────────────────────────────────────────────────────────────────
-
-
-async def _resolve_user(
-    db: AsyncSession,
-    org_id: UUID,
-    user_id: UUID,
-) -> None:
-    """Verify the user exists in the organization.
-
-    Args:
-        db: Database session.
-        org_id: Authenticated organization UUID.
-        user_id: Requested user UUID.
-
-    Raises:
-        NotFoundError: If the user does not exist in the organization.
-    """
-    user_repo = UserRepository(db)
-    user = await user_repo.get_by_uuid(org_id, user_id)
-    if user is None:
-        raise NotFoundError(
-            message=f"User {user_id} not found in organization {org_id}",
-            detail={"user_id": str(user_id), "org_id": str(org_id)},
-        )
 
 
 # ── GET /nodes — List entity nodes ──────────────────────────────────────────────
@@ -128,7 +81,7 @@ async def list_graph_nodes(
 ) -> GraphNodesListResponse:
     """List entity nodes with optional type filter and cursor pagination."""
     org_uuid = UUID(org_id)
-    await _resolve_user(db, org_uuid, user_id)
+    await service.ensure_user_exists(org_uuid, user_id)
 
     result = await service.get_entities(
         org_id=org_uuid,
@@ -170,7 +123,7 @@ async def get_graph_node(
 ) -> GraphNodeDetailResponse:
     """Get a single entity node with all its incident edges."""
     org_uuid = UUID(org_id)
-    await _resolve_user(db, org_uuid, user_id)
+    await service.ensure_user_exists(org_uuid, user_id)
 
     result = await service.get_entity(
         org_id=org_uuid,
@@ -209,7 +162,7 @@ async def delete_graph_node(
 ) -> None:
     """Delete an entity node from the knowledge graph."""
     org_uuid = UUID(org_id)
-    await _resolve_user(db, org_uuid, user_id)
+    await service.ensure_user_exists(org_uuid, user_id)
 
     deleted = await service.delete_entity(
         org_id=org_uuid,
@@ -264,7 +217,7 @@ async def list_graph_edges(
 ) -> GraphEdgesListResponse:
     """List relationship edges with optional predicate filtering."""
     org_uuid = UUID(org_id)
-    await _resolve_user(db, org_uuid, user_id)
+    await service.ensure_user_exists(org_uuid, user_id)
 
     if subject_id is None:
         from fastapi import HTTPException
@@ -314,7 +267,7 @@ async def list_communities(
 ) -> GraphCommunitiesListResponse:
     """List community summary nodes."""
     org_uuid = UUID(org_id)
-    await _resolve_user(db, org_uuid, user_id)
+    await service.ensure_user_exists(org_uuid, user_id)
 
     communities = await service.get_communities(org_id=org_uuid)
 

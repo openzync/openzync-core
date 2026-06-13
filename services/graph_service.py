@@ -14,8 +14,9 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from core.exceptions import EntityNotFoundError
+from core.exceptions import EntityNotFoundError, NotFoundError
 from packages.graphiti_client.interface import GraphBackend
+from repositories.user_repository import UserRepository
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +29,43 @@ class GraphService:
             (e.g. ``FalkorDBBackend``).  May be ``None`` if the graph
             backend is not available — all methods gracefully return
             empty results.
+        user_repo: Optional ``UserRepository`` for user existence checks.
+            When provided, ``ensure_user_exists`` can be called by
+            routers before graph queries.
     """
 
-    def __init__(self, graph_backend: GraphBackend | None = None) -> None:
+    def __init__(
+        self,
+        graph_backend: GraphBackend | None = None,
+        user_repo: UserRepository | None = None,
+    ) -> None:
         self._backend = graph_backend
+        self._user_repo = user_repo
+
+    # ── User validation (moved from router layer) ───────────────────────────────
+
+    async def ensure_user_exists(self, org_id: UUID, user_id: UUID) -> None:
+        """Verify the user exists in the organization.
+
+        Args:
+            org_id: The authenticated organization UUID.
+            user_id: The requested user UUID.
+
+        Raises:
+            NotFoundError: If the user does not exist in the organization
+                or no user repository is configured.
+        """
+        if self._user_repo is None:
+            raise NotFoundError(
+                message=f"User {user_id} not found — user repo not configured.",
+                detail={"user_id": str(user_id)},
+            )
+        user = await self._user_repo.get_by_uuid(org_id, user_id)
+        if user is None:
+            raise NotFoundError(
+                message=f"User {user_id} not found in organization {org_id}",
+                detail={"user_id": str(user_id), "org_id": str(org_id)},
+            )
 
     # ── Public API ──────────────────────────────────────────────────────────────
 

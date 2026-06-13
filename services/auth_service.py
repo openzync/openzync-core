@@ -307,13 +307,13 @@ class AuthService:
         if user is None:
             raise NotFoundError("Dashboard user not found.")
 
-        has_profile_changes = False
-        has_password_change = False
+        has_changes = False
+        update_kwargs: dict[str, Any] = {}
 
         # Profile fields
         if payload.name is not None:
-            user.name = payload.name
-            has_profile_changes = True
+            update_kwargs["name"] = payload.name
+            has_changes = True
 
         if payload.email is not None:
             # Check email uniqueness
@@ -322,9 +322,8 @@ class AuthService:
                 raise ConflictError(
                     f"Email '{payload.email}' is already in use."
                 )
-            user.email = payload.email
-            user.external_id = payload.email
-            has_profile_changes = True
+            update_kwargs["email"] = payload.email
+            has_changes = True
 
         # Password change
         if payload.new_password is not None:
@@ -339,12 +338,14 @@ class AuthService:
             if not verify_password(payload.current_password, user.password_hash):
                 raise AuthenticationError("Current password is incorrect.")
             self._validate_password(payload.new_password)
-            user.password_hash = hash_password(payload.new_password)
-            has_password_change = True
+            update_kwargs["password_hash"] = hash_password(payload.new_password)
+            has_changes = True
 
-        if has_profile_changes or has_password_change:
-            await self._repo._db.flush()
-            await self._repo._db.refresh(user)
+        if has_changes:
+            user = await self._repo.update_dashboard_user(
+                user_id=user_id,
+                **update_kwargs,
+            )
 
         return DashboardUserResponse(
             id=user.id,

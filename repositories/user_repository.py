@@ -80,6 +80,51 @@ class UserRepository:
         await self._db.refresh(user)
         return user
 
+    async def create_or_get_by_external_id(
+        self,
+        organization_id: UUID,
+        external_id: str,
+        name: str | None = None,
+        email: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> User:
+        """Create a user or return existing one on unique-constraint race.
+
+        Handles the ``IntegrityError`` race condition internally so the
+        service layer does not need to import SQLAlchemy exceptions.
+
+        Args:
+            organization_id: Tenant scope (foreign key).
+            external_id: Caller-defined unique user identifier within org.
+            name: Optional display name.
+            email: Optional email address.
+            metadata: Arbitrary JSONB metadata.
+
+        Returns:
+            A User ORM instance — newly created or already existing.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            return await self.create(
+                organization_id=organization_id,
+                external_id=external_id,
+                name=name,
+                email=email,
+                metadata=metadata,
+            )
+        except IntegrityError:
+            await self._db.rollback()
+            user = await self.get_by_external_id(organization_id, external_id)
+            if user is None:
+                from core.exceptions import NotFoundError
+
+                raise NotFoundError(
+                    f"Failed to get-or-create user '{external_id}' "
+                    f"in organization {organization_id}"
+                )
+            return user
+
     # ── Read ────────────────────────────────────────────────────────────────
 
     async def get_by_external_id(

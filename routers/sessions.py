@@ -14,15 +14,10 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from dependencies.auth import require_org_id
-from dependencies.db import get_db
-from dependencies.services import get_session_service
-from repositories.fact_repository import FactRepository
-from repositories.session_repository import SessionRepository
-from repositories.user_repository import UserRepository
+from dependencies.services import get_fact_service, get_session_service
 from schemas.common import PaginatedResponse
 from schemas.facts import FactResponse
 from schemas.sessions import (
@@ -194,24 +189,6 @@ async def get_session_messages(
     )
 
 
-# ── Dependency factory for FactService ─────────────────────────────────────
-
-
-async def get_fact_service_for_session(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> FactService:
-    """FastAPI dependency that yields a FactService scoped to a session."""
-    redis_client = getattr(request.app.state, "redis", None)
-    return FactService(
-        db=db,
-        redis_client=redis_client,
-        fact_repo=FactRepository(db),
-        user_repo=UserRepository(db),
-        session_repo=SessionRepository(db),
-    )
-
-
 @router.get(
     "/{session_id}/facts",
     response_model=PaginatedResponse[FactResponse],
@@ -228,7 +205,7 @@ async def get_session_facts(
     user_id: UUID,
     session_id: UUID,
     service: SessionService = Depends(get_session_service),
-    fact_service: FactService = Depends(get_fact_service_for_session),
+    fact_service: FactService = Depends(get_fact_service),
     org_id: str = Depends(require_org_id),
     limit: int = Query(
         default=50,

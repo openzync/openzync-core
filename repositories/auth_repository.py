@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -206,3 +207,64 @@ class AuthRepository:
             if rotated_by is not None:
                 rt.rotated_by = uuid.UUID(rotated_by)
             await self._db.flush()
+
+    # ── Session helpers (used by service layer for ORM mutations) ─────────
+
+    async def flush(self) -> None:
+        """Flush pending ORM changes to the database.
+
+        Used after direct attribute mutations on ORM instances in the
+        service layer, avoiding access to the private ``_db`` attribute.
+        """
+        await self._db.flush()
+
+    async def refresh(self, instance: Any) -> None:
+        """Refresh an ORM instance from the database.
+
+        Args:
+            instance: The ORM instance to refresh.
+        """
+        await self._db.refresh(instance)
+
+    async def update_dashboard_user(
+        self,
+        user_id: uuid.UUID,
+        name: str | None = None,
+        email: str | None = None,
+        password_hash: str | None = None,
+    ) -> User:
+        """Update a dashboard user's profile fields and flush.
+
+        Encapsulates ORM attribute mutations so the service layer does
+        not need to import or manipulate ORM objects directly.
+
+        Args:
+            user_id: The user's UUID.
+            name: New display name (``None`` = no change).
+            email: New email (``None`` = no change).  When set,
+                ``external_id`` is also updated to match.
+            password_hash: New bcrypt hash (``None`` = no change).
+
+        Returns:
+            The updated User instance.
+
+        Raises:
+            NotFoundError: If the user does not exist (handled by caller).
+        """
+        from core.exceptions import NotFoundError
+
+        user = await self.get_user_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+
+        if name is not None:
+            user.name = name
+        if email is not None:
+            user.email = email
+            user.external_id = email
+        if password_hash is not None:
+            user.password_hash = password_hash
+
+        await self._db.flush()
+        await self._db.refresh(user)
+        return user
