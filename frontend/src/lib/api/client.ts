@@ -284,6 +284,64 @@ export async function getGraphNode(
   return api.get(`/v1/users/${userId}/graph/nodes/${nodeId}`);
 }
 
+// ---- Admin: Metrics ----
+
+export interface LatencyPercentiles {
+  p50: number;
+  p95: number;
+  p99: number;
+}
+
+export interface EpisodeStats {
+  added_total: number;
+  added_24h: number;
+  in_progress: number;
+  enrichment_pending: number;
+}
+
+export interface GraphStats {
+  entities_total: number;
+  entities_24h: number;
+  relationships_total: number;
+}
+
+export interface MetricsSummaryResponse {
+  episodes: EpisodeStats;
+  graphs: GraphStats;
+  users_total: number;
+  request_rate: Record<string, number>;
+  error_rate_pct: number;
+  overall_latency_ms: LatencyPercentiles;
+  context_latency_ms: LatencyPercentiles;
+  graph_search_latency_ms: LatencyPercentiles;
+  queue_depth: { high: number; low: number } | null;
+  total_requests: number;
+  active_requests: number;
+  status: string;
+  message: string | null;
+}
+
+export interface PrometheusTarget {
+  job: string;
+  instance: string;
+  health: string;
+  last_scrape: string;
+  last_error: string | null;
+}
+
+export interface MetricsTargetsResponse {
+  status: string;
+  targets: PrometheusTarget[];
+}
+
+export async function getMetricsSummary(): Promise<MetricsSummaryResponse> {
+  return api.get("/metrics/summary");
+}
+
+export async function getMetricsTargets(): Promise<MetricsTargetsResponse> {
+  return api.get("/metrics/targets");
+}
+
 export async function listGraphEdges(
   userId: string,
   params: {

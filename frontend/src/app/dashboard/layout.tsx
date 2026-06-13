@@ -26,6 +26,7 @@ import VpnKeyIcon from "@mui/icons-material/VpnKey";
 import DashboardIcon from "@mui/icons-material/Dashboard";
 import SettingsIcon from "@mui/icons-material/Settings";
 import BarChartIcon from "@mui/icons-material/BarChart";
+import MonitorHeartIcon from "@mui/icons-material/MonitorHeart";
 import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import SchemaIcon from "@mui/icons-material/Schema";
 import ChatIcon from "@mui/icons-material/Chat";
@@ -41,6 +42,7 @@ const NAV_ITEMS = [
   { label: "Sessions", path: "/dashboard/sessions", icon: <ChatIcon /> },
   { label: "API Keys", path: "/dashboard/api-keys", icon: <VpnKeyIcon /> },
   { label: "Analytics", path: "/dashboard/analytics", icon: <BarChartIcon /> },
+  { label: "Monitoring", path: "/dashboard/metrics", icon: <MonitorHeartIcon /> },
   { label: "Graph", path: "/dashboard/graph", icon: <AccountTreeIcon /> },
   { label: "Schemas", path: "/dashboard/schemas", icon: <SchemaIcon /> },
   { label: "Settings", path: "/dashboard/settings", icon: <SettingsIcon /> },
