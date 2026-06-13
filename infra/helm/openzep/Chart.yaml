@@ -1,0 +1,19 @@
+apiVersion: v2
+name: openzep
+description: OpenZep — Long-term memory for AI agents (Helm chart)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.25.0-0"
+home: https://openzep.dev
+sources:
+  - https://github.com/thelinkai/openzep
+maintainers:
+  - name: TheLinkAI Engineering
+    email: engineering@thelinkai.com
+keywords:
+  - memory
+  - llm
+  - agents
+  - rag
+  - ai

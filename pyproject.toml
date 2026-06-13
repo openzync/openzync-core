@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [
-    { name = "TheLinkAI", email = "opensource@thelink.ai" },
+    { name = "Rohan Shaw", email = "rohnsha0@gmail.com" },
 ]
 
 keywords = ["agent", "memory", "graph", "ai", "RAG", "llm", "falkordb", "neo4j"]

@@ -1,0 +1,19 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Prometheus configuration — OpenZep dev mode
+# ──────────────────────────────────────────────────────────────────────────────
+# Scrapes the host API's /metrics endpoint via host.docker.internal.
+# In production, replace with the Kubernetes service discovery.
+# ──────────────────────────────────────────────────────────────────────────────
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "openzep-api"
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8000"]
+        labels:
+          job: "openzep-api"

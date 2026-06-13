@@ -36,6 +36,7 @@ from core.logging import setup_logging
 from core.redis import close_redis, init_redis
 from middleware.auth import AuthMiddleware
 from middleware.logging import LoggingMiddleware
+from middleware.metrics import MetricsMiddleware
 from middleware.rate_limit import RateLimitMiddleware
 from middleware.request_id import RequestIDMiddleware
 from middleware.tracing import TracingMiddleware
@@ -51,6 +52,7 @@ from routers import (
     graph,
     health,
     memory,
+    metrics,
     search,
     sessions,
     structured_extractions,
@@ -135,6 +137,7 @@ def create_app() -> FastAPI:
     # first and handles OPTIONS preflights before auth checks.
     #
     # Execution order (outermost → innermost):
+    #   0. MetricsMiddleware  — RED metrics (wraps everything including 404)
     #   1. CORS              — intercept OPTIONS preflight immediately
     #   2. LoggingMiddleware  — log request/response lifecycle
     #   3. TracingMiddleware  — OpenTelemetry span management
@@ -143,6 +146,9 @@ def create_app() -> FastAPI:
     #   6. GZipMiddleware     — compress responses >= 1 KB
     #   7. TrustedHost        — prevent host-header attacks
     #   8. RequestID          — assign request_id (innermost, closest to router)
+
+    # 0 (outermost) — Metrics: captures EVERY request including 404s and non-API paths.
+    app.add_middleware(MetricsMiddleware)
 
     # 8 (innermost) — Request ID: must be first so every downstream component has an ID.
     app.add_middleware(RequestIDMiddleware)
@@ -199,6 +205,10 @@ def create_app() -> FastAPI:
     app.include_router(search.router)
     app.include_router(graph.router)
     app.include_router(facts.router)
+
+    # Metrics: intentionally registered last and outside /v1 so it responds
+    # at ``/metrics`` (not ``/v1/metrics``) for standard Prometheus scraping.
+    app.include_router(metrics.router)
 
     return app
 

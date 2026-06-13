@@ -1,0 +1,19 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Grafana dashboard provisioning — OpenZep
+# ──────────────────────────────────────────────────────────────────────────────
+# Auto-loads all JSON dashboard files from the dashboards directory.
+# Reference: https://grafana.com/docs/grafana/latest/administration/provisioning/
+# ──────────────────────────────────────────────────────────────────────────────
+
+apiVersion: 1
+
+providers:
+  - name: "OpenZep"
+    orgId: 1
+    folder: "OpenZep"
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards

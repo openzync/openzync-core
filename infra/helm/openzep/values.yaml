@@ -1,0 +1,159 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# OpenZep Helm chart — values.yaml
+# ──────────────────────────────────────────────────────────────────────────────
+# All configurable parameters for the OpenZep deployment.
+# Override via `--set key=value` or a custom values file.
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Global settings ───────────────────────────────────────────────────────────
+global:
+  environment: production
+  logLevel: INFO
+  imageRegistry: ghcr.io/thelinkai
+
+# ── API service ───────────────────────────────────────────────────────────────
+api:
+  name: openzep-api
+  replicaCount: 2
+  image:
+    repository: openzep-api
+    tag: latest
+    pullPolicy: IfNotPresent
+  containerPort: 8000
+  health:
+    path: /health
+    initialDelaySeconds: 10
+    periodSeconds: 30
+    timeoutSeconds: 5
+  resources:
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  ingress:
+    enabled: false
+    host: api.openzep.dev
+    tls:
+      enabled: true
+      secretName: openzep-tls
+
+# ── Worker service ────────────────────────────────────────────────────────────
+worker:
+  name: openzep-worker
+  replicaCount: 1
+  image:
+    repository: openzep-worker
+    tag: latest
+    pullPolicy: IfNotPresent
+  health:
+    initialDelaySeconds: 15
+    periodSeconds: 30
+    timeoutSeconds: 5
+  resources:
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+  autoscaling:
+    enabled: true
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 75
+
+# ── PostgreSQL ────────────────────────────────────────────────────────────────
+postgresql:
+  enabled: true
+  image: pgvector/pgvector:pg15
+  port: 5432
+  database: openzep
+  user: openzep
+  existingSecret: ""
+  persistence:
+    enabled: true
+    size: 20Gi
+    storageClass: ""
+  resources:
+    limits:
+      cpu: "2"
+      memory: "4Gi"
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+
+# ── Redis ─────────────────────────────────────────────────────────────────────
+redis:
+  enabled: true
+  image: redis:7-alpine
+  port: 6379
+  existingSecret: ""
+  persistence:
+    enabled: true
+    size: 5Gi
+    storageClass: ""
+  resources:
+    limits:
+      cpu: "1"
+      memory: "1Gi"
+    requests:
+      cpu: "200m"
+      memory: "512Mi"
+
+# ── Application configuration ─────────────────────────────────────────────────
+config:
+  # LLM backend
+  llmBackend: "ollama"
+  llmModel: "llama3.2:3b"
+  ollamaBaseUrl: "http://ollama:11434"
+
+  # Embeddings
+  embeddingBackend: ""
+  embeddingModel: "nomic-embed-text"
+  embeddingDim: 768
+
+  # Graph backend
+  graphBackend: "postgres"
+  graphMaxTraversalDepth: 2
+
+  # Context
+  contextCacheTtl: 30
+
+  # JWT
+  jwtAccessTokenTtlMinutes: 30
+  jwtRefreshTokenTtlDays: 7
+
+  # Rate limiting
+  rateLimitIpMax: 100
+  rateLimitWindowSec: 60
+
+  # CORS
+  corsOrigins: "http://localhost:3000"
+
+  # Observability
+  otlpEndpoint: "http://alloy:4317"
+
+# ── Secrets (reference external or use --set) ─────────────────────────────────
+secrets:
+  # Set via --set or external-secrets operator
+  databaseUrl: ""
+  redisUrl: ""
+  falkordbUrl: ""
+  secretKey: ""
+  openaiApiKey: ""
+  openrouterApiKey: ""
+  anthropicApiKey: ""
+
+# ── Service accounts ──────────────────────────────────────────────────────────
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}

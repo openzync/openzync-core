@@ -1,0 +1,159 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# OpenZep — GitHub Actions CI pipeline
+# ──────────────────────────────────────────────────────────────────────────────
+# Stages:
+#   lint            → ruff, mypy
+#   test-unit       → pytest with coverage
+#   test-integration → pytest with Postgres + Redis (testcontainers)
+#   build           → Docker image (main/tags only)
+#   sdk-publish     → PyPI (tags only)
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+env:
+  PYTHON_VERSION: "3.12"
+  MG_DATABASE_URL: "postgresql+asyncpg://postgres:postgres@localhost:5432/test"
+  MG_REDIS_URL: "redis://localhost:6379/0"
+  MG_FALKORDB_URL: "redis://localhost:6380"
+  MG_SECRET_KEY: "ci-secret-key-that-is-at-least-32-chars!!"
+  MG_ENVIRONMENT: "testing"
+  MG_LOG_LEVEL: "WARNING"
+
+jobs:
+  # ═════════════════════════════════════════════════════════════════════════════
+  # LINT
+  # ═════════════════════════════════════════════════════════════════════════════
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install ruff mypy
+      - run: ruff check . --output-format=github
+      - run: ruff format --check .
+      - run: pip install -e ".[dev]" && mypy core/ middleware/ dependencies/ routers/ models/ schemas/ services/
+
+  # ═════════════════════════════════════════════════════════════════════════════
+  # UNIT TESTS
+  # ═════════════════════════════════════════════════════════════════════════════
+  test-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: pip install -e ".[dev]"
+      - run: pytest tests/unit/ -v --timeout=30 --cov=core --cov=middleware --cov=dependencies --cov-report=term --cov-report=xml
+      - uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  # ═════════════════════════════════════════════════════════════════════════════
+  # INTEGRATION TESTS
+  # ═════════════════════════════════════════════════════════════════════════════
+  test-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          PGPASSWORD=postgres psql -h localhost -U postgres -c "CREATE DATABASE test;" || true
+      - run: pip install -e ".[dev]"
+      - run: alembic upgrade head
+      - run: |
+          pytest tests/integration/ -v --timeout=60 \
+            --cov=services --cov-report=term \
+            --ignore=tests/integration/test_enrichment_pipeline.py
+      - uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  # ═════════════════════════════════════════════════════════════════════════════
+  # BUILD  (Docker image — main and tags only)
+  # ═════════════════════════════════════════════════════════════════════════════
+  build:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [test-unit, test-integration]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - run: |
+          TAG=${GITHUB_REF#refs/tags/}
+          TAG=${TAG:-${{ github.sha }}}
+          docker build -t ghcr.io/${{ github.repository }}/api:$TAG -f services/api/Dockerfile .
+          docker build -t ghcr.io/${{ github.repository }}/worker:$TAG -f services/worker/Dockerfile .
+          docker push ghcr.io/${{ github.repository }}/api:$TAG
+          docker push ghcr.io/${{ github.repository }}/worker:$TAG
+
+  # ═════════════════════════════════════════════════════════════════════════════
+  # SDK PUBLISH  (PyPI — tags only)
+  # ═════════════════════════════════════════════════════════════════════════════
+  sdk-publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [test-unit]
+    defaults:
+      run:
+        working-directory: oss/sdk-python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: oss/sdk-python/dist/

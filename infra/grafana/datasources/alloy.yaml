@@ -1,0 +1,16 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Grafana datasource provisioning — OpenZep
+# ──────────────────────────────────────────────────────────────────────────────
+# Dev mode: Prometheus is the only available backend.
+# In production, datasources would point at Mimir, Tempo, and Loki via Alloy.
+# ──────────────────────────────────────────────────────────────────────────────
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    url: http://prometheus:9090
+    access: proxy
+    isDefault: true
+    editable: false

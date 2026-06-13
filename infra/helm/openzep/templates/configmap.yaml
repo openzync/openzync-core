@@ -1,0 +1,24 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "openzep.fullname" . }}-config
+  labels:
+    {{- include "openzep.labels" . | nindent 4 }}
+data:
+  MG_ENVIRONMENT: {{ .Values.global.environment | quote }}
+  MG_LOG_LEVEL: {{ .Values.global.logLevel | quote }}
+  MG_LLM_BACKEND: {{ .Values.config.llmBackend | quote }}
+  MG_LLM_MODEL: {{ .Values.config.llmModel | quote }}
+  MG_EMBEDDING_BACKEND: {{ .Values.config.embeddingBackend | quote }}
+  MG_EMBEDDING_MODEL: {{ .Values.config.embeddingModel | quote }}
+  MG_EMBEDDING_DIM: {{ .Values.config.embeddingDim | quote }}
+  MG_GRAPH_BACKEND: {{ .Values.config.graphBackend | quote }}
+  MG_GRAPH_MAX_TRAVERSAL_DEPTH: {{ .Values.config.graphMaxTraversalDepth | quote }}
+  MG_CONTEXT_CACHE_TTL: {{ .Values.config.contextCacheTtl | quote }}
+  MG_JWT_ACCESS_TOKEN_TTL_MINUTES: {{ .Values.config.jwtAccessTokenTtlMinutes | quote }}
+  MG_JWT_REFRESH_TOKEN_TTL_DAYS: {{ .Values.config.jwtRefreshTokenTtlDays | quote }}
+  MG_RATE_LIMIT_IP_MAX: {{ .Values.config.rateLimitIpMax | quote }}
+  MG_RATE_LIMIT_WINDOW_SEC: {{ .Values.config.rateLimitWindowSec | quote }}
+  MG_CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
+  MG_OTLP_ENDPOINT: {{ .Values.config.otlpEndpoint | quote }}
+  OLLAMA_BASE_URL: {{ .Values.config.ollamaBaseUrl | quote }}
