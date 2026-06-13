@@ -342,6 +342,48 @@ export async function getMetricsTargets(): Promise<MetricsTargetsResponse> {
   return api.get("/metrics/targets");
 }
 
+// ---- Admin: Audit Logs ----
+
+export interface AuditLogEntry {
+  id: string;
+  organization_id: string | null;
+  actor_id: string | null;
+  actor_type: string | null;
+  action: string;
+  resource_type: string;
+  resource_id: string | null;
+  details: Record<string, unknown>;
+  ip_address: string | null;
+  status_code: number | null;
+  method: string | null;
+  path: string | null;
+  created_at: string;
+}
+
+export interface AuditLogListResponse {
+  items: AuditLogEntry[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export async function listAuditLogs(
+  params?: {
+    action?: string;
+    actor_id?: string;
+    actor_type?: string;
+    resource_type?: string;
+    resource_id?: string;
+    status_code?: number;
+    created_after?: string;
+    created_before?: string;
+    limit?: number;
+    offset?: number;
+  },
+): Promise<AuditLogListResponse> {
+  return api.get("/v1/admin/audit-logs", params as Record<string, string | number | boolean | undefined | null>);
+}
+
 export async function listGraphEdges(
   userId: string,
   params: {
