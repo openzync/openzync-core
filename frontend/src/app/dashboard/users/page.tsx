@@ -4,28 +4,31 @@ import { useState, useCallback, useEffect } from "react";
 import {
   Box,
   Button,
-  Card,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
   TextField,
   Typography,
   IconButton,
   Tooltip,
-  Snackbar,
-  Alert,
-  CircularProgress,
 } from "@mui/material";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import type { GridColDef } from "@mui/x-data-grid";
 import {
   Add as AddIcon,
   ContentCopy as ContentCopyIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
 } from "@mui/icons-material";
-import { listUsers, createUser, updateUser, deleteUser, ApiError } from "@/lib/api/client";
+import {
+  listUsers,
+  createUser,
+  updateUser,
+  deleteUser,
+  ApiError,
+} from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/useAuth";
+import PageHeader from "@/components/shared/PageHeader";
+import DataTable from "@/components/shared/DataTable";
+import FormDialog from "@/components/shared/FormDialog";
+import ConfirmDialog from "@/components/shared/ConfirmDialog";
+import { useNotification } from "@/components/shared/NotificationProvider";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -50,18 +53,13 @@ interface EditUserForm {
   email: string;
 }
 
-interface SnackbarState {
-  open: boolean;
-  message: string;
-  severity: "success" | "error";
-}
-
 // ─── Page Component ───────────────────────────────────────────────────────────
 
 export default function UsersPage() {
   // Auth is guarded by dashboard layout AuthGuard; hook available for
   // per-user RBAC decisions on future features (e.g. admin-only delete).
   useAuth();
+  const { showNotification } = useNotification();
 
   // ── Data state ──────────────────────────────────────────────────────────────
 
@@ -94,21 +92,6 @@ export default function UsersPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  // ── Snackbar state ──────────────────────────────────────────────────────────
-
-  const [snackbar, setSnackbar] = useState<SnackbarState>({
-    open: false,
-    message: "",
-    severity: "success",
-  });
-
-  const showSnackbar = useCallback(
-    (message: string, severity: "success" | "error") => {
-      setSnackbar({ open: true, message, severity });
-    },
-    [],
-  );
-
   // ── Data fetching ───────────────────────────────────────────────────────────
 
   const fetchUsers = useCallback(async () => {
@@ -123,11 +106,11 @@ export default function UsersPage() {
         err instanceof ApiError
           ? err.detail ?? "Failed to load users"
           : "An unexpected error occurred";
-      showSnackbar(message, "error");
+      showNotification(message, "error");
     } finally {
       setLoading(false);
     }
-  }, [showSnackbar]);
+  }, [showNotification]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || !cursor) return;
@@ -142,11 +125,11 @@ export default function UsersPage() {
         err instanceof ApiError
           ? err.detail ?? "Failed to load more users"
           : "An unexpected error occurred";
-      showSnackbar(message, "error");
+      showNotification(message, "error");
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, cursor, showSnackbar]);
+  }, [loadingMore, cursor, showNotification]);
 
   useEffect(() => {
     fetchUsers();
@@ -177,7 +160,7 @@ export default function UsersPage() {
         name: createForm.name.trim() || undefined,
         email: createForm.email.trim() || undefined,
       });
-      showSnackbar("User created successfully", "success");
+      showNotification("User created successfully", "success");
       setCreateDialogOpen(false);
       await fetchUsers();
     } catch (err) {
@@ -185,7 +168,7 @@ export default function UsersPage() {
         err instanceof ApiError
           ? err.detail ?? "Failed to create user"
           : "An unexpected error occurred";
-      showSnackbar(message, "error");
+      showNotification(message, "error");
     } finally {
       setSubmitting(false);
     }
@@ -213,7 +196,7 @@ export default function UsersPage() {
         name: editForm.name.trim() || undefined,
         email: editForm.email.trim() || undefined,
       });
-      showSnackbar("User updated successfully", "success");
+      showNotification("User updated successfully", "success");
       setEditDialogOpen(false);
       setEditTarget(null);
       await fetchUsers();
@@ -222,7 +205,7 @@ export default function UsersPage() {
         err instanceof ApiError
           ? err.detail ?? "Failed to update user"
           : "An unexpected error occurred";
-      showSnackbar(message, "error");
+      showNotification(message, "error");
     } finally {
       setSubmitting(false);
     }
@@ -241,7 +224,7 @@ export default function UsersPage() {
     setSubmitting(true);
     try {
       await deleteUser(deleteTarget.id);
-      showSnackbar("User deleted successfully", "success");
+      showNotification("User deleted successfully", "success");
       setDeleteDialogOpen(false);
       setDeleteTarget(null);
       await fetchUsers();
@@ -250,7 +233,7 @@ export default function UsersPage() {
         err instanceof ApiError
           ? err.detail ?? "Failed to delete user"
           : "An unexpected error occurred";
-      showSnackbar(message, "error");
+      showNotification(message, "error");
     } finally {
       setSubmitting(false);
     }
@@ -262,15 +245,15 @@ export default function UsersPage() {
     async (id: string) => {
       try {
         await navigator.clipboard.writeText(id);
-        showSnackbar("User ID copied to clipboard", "success");
+        showNotification("User ID copied to clipboard", "success");
       } catch {
-        showSnackbar("Failed to copy ID", "error");
+        showNotification("Failed to copy ID", "error");
       }
     },
-    [showSnackbar],
+    [showNotification],
   );
 
-  // ── DataGrid columns ────────────────────────────────────────────────────────
+  // ── DataTable columns ───────────────────────────────────────────────────────
 
   const columns: GridColDef<UserRow>[] = [
     {
@@ -286,7 +269,10 @@ export default function UsersPage() {
       minWidth: 150,
       valueGetter: (_value, row) => row.name ?? "—",
       renderCell: ({ row, formattedValue }) => (
-        <Typography variant="body2" sx={{ color: row.name ? "text.primary" : "text.secondary" }}>
+        <Typography
+          variant="body2"
+          sx={{ color: row.name ? "text.primary" : "text.secondary" }}
+        >
           {formattedValue}
         </Typography>
       ),
@@ -298,7 +284,10 @@ export default function UsersPage() {
       minWidth: 200,
       valueGetter: (_value, row) => row.email ?? "—",
       renderCell: ({ row, formattedValue }) => (
-        <Typography variant="body2" sx={{ color: row.email ? "text.primary" : "text.secondary" }}>
+        <Typography
+          variant="body2"
+          sx={{ color: row.email ? "text.primary" : "text.secondary" }}
+        >
           {formattedValue}
         </Typography>
       ),
@@ -308,7 +297,8 @@ export default function UsersPage() {
       headerName: "Created",
       flex: 0.5,
       minWidth: 120,
-      valueGetter: (_value, row) => new Date(row.created_at).toLocaleDateString(),
+      valueGetter: (_value, row) =>
+        new Date(row.created_at).toLocaleDateString(),
     },
     {
       field: "actions",
@@ -323,7 +313,10 @@ export default function UsersPage() {
             </IconButton>
           </Tooltip>
           <Tooltip title="Edit">
-            <IconButton size="small" onClick={() => handleOpenEditDialog(row)}>
+            <IconButton
+              size="small"
+              onClick={() => handleOpenEditDialog(row)}
+            >
               <EditIcon fontSize="small" />
             </IconButton>
           </Tooltip>
@@ -345,206 +338,138 @@ export default function UsersPage() {
 
   return (
     <Box>
-      {/* Header row */}
-      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
-        <Typography variant="h5" sx={{ fontWeight: 600 }}>
-          Users
-        </Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreateDialog}>
-          Create User
-        </Button>
-      </Box>
+      <PageHeader
+        title="Users"
+        action={
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={handleOpenCreateDialog}
+          >
+            Create User
+          </Button>
+        }
+      />
 
       {/* Users table */}
-      <Card>
-        <DataGrid<UserRow>
-          rows={users}
-          columns={columns}
-          loading={loading}
-          getRowId={(row) => row.id}
-          getRowHeight={() => 52}
-          disableRowSelectionOnClick
-          hideFooter
-          autoHeight
-          sx={{
-            "& .MuiDataGrid-cell:focus": { outline: "none" },
-          }}
-        />
-        {hasMore && (
-          <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
-            <Button
-              variant="outlined"
-              onClick={loadMore}
-              disabled={loadingMore}
-              startIcon={loadingMore ? <CircularProgress size={16} /> : undefined}
-            >
-              {loadingMore ? "Loading..." : "Load More"}
-            </Button>
-          </Box>
-        )}
-      </Card>
+      <DataTable<UserRow>
+        rows={users}
+        columns={columns}
+        loading={loading}
+        getRowId={(row) => row.id}
+        hasMore={hasMore}
+        loadingMore={loadingMore}
+        onLoadMore={loadMore}
+        emptyTitle="No users found"
+        emptyDescription="Create your first user to get started."
+        emptyAction={{ label: "Create User", onClick: handleOpenCreateDialog }}
+      />
 
-      {/* ── Create User Dialog ─────────────────────────────────────────────── */}
-      <Dialog
+      {/* ── Create User Dialog ────────────────────────────────────────────── */}
+      <FormDialog
         open={createDialogOpen}
-        onClose={() => {
-          if (!submitting) setCreateDialogOpen(false);
-        }}
-        maxWidth="sm"
-        fullWidth
+        onClose={() => setCreateDialogOpen(false)}
+        title="Create User"
+        onSubmit={handleCreateUser}
+        submitting={submitting}
+        submitLabel="Create"
       >
-        <DialogTitle>Create User</DialogTitle>
-        <DialogContent>
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
-            <TextField
-              label="External ID"
-              required
-              value={createForm.external_id}
-              onChange={(e) =>
-                setCreateForm((prev) => ({ ...prev, external_id: e.target.value }))
-              }
-              error={!!formErrors.external_id}
-              helperText={formErrors.external_id}
-              slotProps={{ htmlInput: { maxLength: 255 } }}
-            />
-            <TextField
-              label="Name"
-              value={createForm.name}
-              onChange={(e) =>
-                setCreateForm((prev) => ({ ...prev, name: e.target.value }))
-              }
-              slotProps={{ htmlInput: { maxLength: 255 } }}
-            />
-            <TextField
-              label="Email"
-              type="email"
-              value={createForm.email}
-              onChange={(e) =>
-                setCreateForm((prev) => ({ ...prev, email: e.target.value }))
-              }
-              slotProps={{ htmlInput: { maxLength: 255 } }}
-            />
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCreateDialogOpen(false)} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button variant="contained" onClick={handleCreateUser} disabled={submitting}>
-            {submitting ? "Creating..." : "Create"}
-          </Button>
-        </DialogActions>
-      </Dialog>
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+          <TextField
+            label="External ID"
+            required
+            value={createForm.external_id}
+            onChange={(e) =>
+              setCreateForm((prev) => ({
+                ...prev,
+                external_id: e.target.value,
+              }))
+            }
+            error={!!formErrors.external_id}
+            helperText={formErrors.external_id}
+            slotProps={{ htmlInput: { maxLength: 255 } }}
+          />
+          <TextField
+            label="Name"
+            value={createForm.name}
+            onChange={(e) =>
+              setCreateForm((prev) => ({ ...prev, name: e.target.value }))
+            }
+            slotProps={{ htmlInput: { maxLength: 255 } }}
+          />
+          <TextField
+            label="Email"
+            type="email"
+            value={createForm.email}
+            onChange={(e) =>
+              setCreateForm((prev) => ({ ...prev, email: e.target.value }))
+            }
+            slotProps={{ htmlInput: { maxLength: 255 } }}
+          />
+        </Box>
+      </FormDialog>
 
-      {/* ── Edit User Dialog ───────────────────────────────────────────────── */}
-      <Dialog
+      {/* ── Edit User Dialog ──────────────────────────────────────────────── */}
+      <FormDialog
         open={editDialogOpen}
         onClose={() => {
-          if (!submitting) {
-            setEditDialogOpen(false);
-            setEditTarget(null);
-          }
+          setEditDialogOpen(false);
+          setEditTarget(null);
         }}
-        maxWidth="sm"
-        fullWidth
+        title="Edit User"
+        onSubmit={handleEditUser}
+        submitting={submitting}
+        submitLabel="Save"
       >
-        <DialogTitle>Edit User</DialogTitle>
-        <DialogContent>
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
-            <TextField
-              label="External ID"
-              value={editForm.external_id}
-              disabled
-              helperText="External ID cannot be changed after creation"
-            />
-            <TextField
-              label="Name"
-              value={editForm.name}
-              onChange={(e) =>
-                setEditForm((prev) => ({ ...prev, name: e.target.value }))
-              }
-              slotProps={{ htmlInput: { maxLength: 255 } }}
-            />
-            <TextField
-              label="Email"
-              type="email"
-              value={editForm.email}
-              onChange={(e) =>
-                setEditForm((prev) => ({ ...prev, email: e.target.value }))
-              }
-              slotProps={{ htmlInput: { maxLength: 255 } }}
-            />
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => { setEditDialogOpen(false); setEditTarget(null); }} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button variant="contained" onClick={handleEditUser} disabled={submitting}>
-            {submitting ? "Saving..." : "Save"}
-          </Button>
-        </DialogActions>
-      </Dialog>
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+          <TextField
+            label="External ID"
+            value={editForm.external_id}
+            disabled
+            helperText="External ID cannot be changed after creation"
+          />
+          <TextField
+            label="Name"
+            value={editForm.name}
+            onChange={(e) =>
+              setEditForm((prev) => ({ ...prev, name: e.target.value }))
+            }
+            slotProps={{ htmlInput: { maxLength: 255 } }}
+          />
+          <TextField
+            label="Email"
+            type="email"
+            value={editForm.email}
+            onChange={(e) =>
+              setEditForm((prev) => ({ ...prev, email: e.target.value }))
+            }
+            slotProps={{ htmlInput: { maxLength: 255 } }}
+          />
+        </Box>
+      </FormDialog>
 
-      {/* ── Delete Confirmation Dialog ─────────────────────────────────────── */}
-      <Dialog
+      {/* ── Delete Confirmation Dialog ────────────────────────────────────── */}
+      <ConfirmDialog
         open={deleteDialogOpen}
         onClose={() => {
-          if (!submitting) {
-            setDeleteDialogOpen(false);
-            setDeleteTarget(null);
-          }
+          setDeleteDialogOpen(false);
+          setDeleteTarget(null);
         }}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle>Delete User</DialogTitle>
-        <DialogContent>
-          <Typography variant="body1">
+        onConfirm={handleDeleteUser}
+        title="Delete User"
+        message={
+          <>
             Are you sure you want to delete user{" "}
             <Typography component="strong" sx={{ fontWeight: 600 }}>
               {deleteTarget?.external_id}
             </Typography>
             ? This action cannot be undone.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button
-            onClick={() => {
-              setDeleteDialogOpen(false);
-              setDeleteTarget(null);
-            }}
-            disabled={submitting}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            color="error"
-            onClick={handleDeleteUser}
-            disabled={submitting}
-          >
-            {submitting ? "Deleting..." : "Delete"}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* ── Snackbar ───────────────────────────────────────────────────────── */}
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      >
-        <Alert
-          onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-          severity={snackbar.severity}
-          variant="filled"
-          sx={{ width: "100%" }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
+          </>
+        }
+        confirmLabel="Delete"
+        confirmColor="error"
+        submitting={submitting}
+      />
     </Box>
   );
 }

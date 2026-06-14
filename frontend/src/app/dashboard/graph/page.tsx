@@ -9,22 +9,29 @@ import {
   Button,
   CircularProgress,
   Chip,
+  useTheme,
 } from "@mui/material";
-import { listGraphNodes, listGraphEdges, ApiError } from "@/lib/api/client";
+import { alpha } from "@mui/material/styles";
+import ForceGraph2D from "react-force-graph-2d";
+import { listGraphNodes, listGraphEdges } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/useAuth";
 import { listUsers } from "@/lib/api/client";
+import PageHeader from "@/components/shared/PageHeader";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface NodeData {
+interface GraphNode {
   id: string;
   name: string;
   type: string;
   summary: string | null;
-  x?: number;
-  y?: number;
-  vx?: number;
-  vy?: number;
+  val?: number;
+}
+
+interface GraphLink {
+  source: string;
+  target: string;
+  type: string;
 }
 
 interface EdgeData {
@@ -37,12 +44,12 @@ interface EdgeData {
 // ─── Colors ───────────────────────────────────────────────────────────────────
 
 const TYPE_COLORS: Record<string, string> = {
-  person: "#1565C0",
-  organization: "#388E3C",
-  location: "#F57C00",
-  event: "#7B1FA2",
-  concept: "#C62828",
-  literal: "#6A1B9A",
+  person: "#14488C",
+  organization: "#1453A6",
+  location: "#8FAFD9",
+  event: "#1747A6",
+  concept: "#6A8DB8",
+  literal: "#4A6D96",
 };
 
 function getColor(type: string): string {
@@ -53,305 +60,118 @@ function getColor(type: string): string {
 
 export default function GraphPage() {
   useAuth();
-  const canvasRef = useRef<HTMLDivElement>(null);
-  const graphInstance = useRef<{ destroy: () => void } | null>(null);
+  const theme = useTheme();
+  const fgRef = useRef<any>(null);
 
-  const [nodes, setNodes] = useState<NodeData[]>([]);
-  const [edges, setEdges] = useState<EdgeData[]>([]);
+  const [nodes, setNodes] = useState<GraphNode[]>([]);
+  const [links, setLinks] = useState<GraphLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [entityFilter, setEntityFilter] = useState("");
-  const [selectedNode, setSelectedNode] = useState<NodeData | null>(null);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
   const [userId, setUserId] = useState<string>("");
 
-  // ── Fetch users for selector ─────────────────────────────────────────────────
+  // ── Fetch users for selector ────────────────────────────────────────────────
 
   useEffect(() => {
     listUsers({ limit: 1 })
       .then((result) => {
-        const users = result.data as { id: string; external_id: string }[];
+        const users = (result.data as { id: string; external_id: string }[]) ?? [];
         if (users.length > 0) setUserId(users[0].id);
       })
       .catch(() => {});
   }, []);
 
-  // ── Build graph ──────────────────────────────────────────────────────────────
-
-  const buildGraph = useCallback(
-    (nodeList: NodeData[], edgeList: EdgeData[]) => {
-      if (!canvasRef.current) return;
-
-      if (graphInstance.current) {
-        graphInstance.current.destroy();
-        graphInstance.current = null;
-      }
-      canvasRef.current.innerHTML = "";
-      if (nodeList.length === 0) return;
-
-      const container = canvasRef.current;
-      const width = container.clientWidth || 800;
-      const height = 500;
-
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      container.appendChild(canvas);
-
-      const ctx = canvas.getContext("2d")!;
-
-      const simNodes = nodeList.map((n) => ({
-        ...n,
-        x: Math.random() * width,
-        y: Math.random() * height,
-        vx: 0,
-        vy: 0,
-      }));
-
-      // Build edge index from API data, deduplicated
-      const nodeIndex = new Map(simNodes.map((n, i) => [n.id, i]));
-      const seenPairs = new Set<string>();
-      const simEdges: { source: number; target: number; type: string }[] = [];
-      for (const e of edgeList) {
-        const key = [e.source_id, e.target_id].sort().join("|");
-        if (seenPairs.has(key)) continue;
-        seenPairs.add(key);
-        const si = nodeIndex.get(e.source_id);
-        const ti = nodeIndex.get(e.target_id);
-        if (si !== undefined && ti !== undefined) {
-          simEdges.push({ source: si, target: ti, type: e.type });
-        }
-      }
-
-      let animFrame: number;
-
-      function step() {
-        const repulsion = 8000;
-        const attraction = 0.003;
-        const damping = 0.9;
-        const centerForce = 0.008;
-        const cx = width / 2;
-        const cy = height / 2;
-
-        for (let i = 0; i < simNodes.length; i++) {
-          const n = simNodes[i];
-
-          // Center force
-          n.vx! += (cx - n.x!) * centerForce;
-          n.vy! += (cy - n.y!) * centerForce;
-
-          // Repulsion
-          for (let j = i + 1; j < simNodes.length; j++) {
-            const other = simNodes[j];
-            const dx = n.x! - other.x!;
-            const dy = n.y! - other.y!;
-            const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-            const force = repulsion / (dist * dist);
-            const fx = (dx / dist) * force;
-            const fy = (dy / dist) * force;
-            n.vx! += fx;
-            n.vy! += fy;
-            other.vx! -= fx;
-            other.vy! -= fy;
-          }
-
-          // Attraction along edges
-          for (const edge of simEdges) {
-            if (edge.source === i) {
-              const target = simNodes[edge.target];
-              const dx = target.x! - n.x!;
-              const dy = target.y! - n.y!;
-              n.vx! += dx * attraction;
-              n.vy! += dy * attraction;
-              target.vx! -= dx * attraction;
-              target.vy! -= dy * attraction;
-            }
-          }
-        }
-
-        let totalVel = 0;
-        for (const n of simNodes) {
-          n.vx! *= damping;
-          n.vy! *= damping;
-          n.x! += n.vx!;
-          n.y! += n.vy!;
-          totalVel += Math.abs(n.vx!) + Math.abs(n.vy!);
-        }
-
-        ctx.clearRect(0, 0, width, height);
-
-        // Edges
-        for (const edge of simEdges) {
-          const s = simNodes[edge.source];
-          const t = simNodes[edge.target];
-
-          const isHighlighted =
-            selectedNode !== null &&
-            (simNodes[edge.source].id === selectedNode.id ||
-             simNodes[edge.target].id === selectedNode.id);
-
-          ctx.strokeStyle = isHighlighted
-            ? "rgba(0,0,0,0.5)"
-            : "rgba(0,0,0,0.25)";
-          ctx.lineWidth = isHighlighted ? 2 : 1;
-          ctx.beginPath();
-          ctx.moveTo(s.x!, s.y!);
-          ctx.lineTo(t.x!, t.y!);
-          ctx.stroke();
-
-          // Edge type label
-          const midX = (s.x! + t.x!) / 2;
-          const midY = (s.y! + t.y!) / 2;
-          ctx.fillStyle = "rgba(0,0,0,0.35)";
-          ctx.font = "9px Inter, system-ui, sans-serif";
-          ctx.textAlign = "center";
-          ctx.fillText(edge.type, midX, midY - 4);
-        }
-
-        // Nodes
-        for (const n of simNodes) {
-          const color = getColor(n.type);
-          const radius = n.id === selectedNode?.id ? 12 : 8;
-          const glow = n.id === selectedNode?.id ? 6 : 4;
-
-          // Glow
-          ctx.beginPath();
-          ctx.arc(n.x!, n.y!, radius + glow, 0, 2 * Math.PI);
-          ctx.fillStyle = color + (n.id === selectedNode?.id ? "30" : "15");
-          ctx.fill();
-
-          // Circle
-          ctx.beginPath();
-          ctx.arc(n.x!, n.y!, radius, 0, 2 * Math.PI);
-          ctx.fillStyle = color;
-          ctx.fill();
-          ctx.strokeStyle = n.id === selectedNode?.id ? "#fff" : "transparent";
-          ctx.lineWidth = 3;
-          ctx.stroke();
-
-          // Label
-          ctx.fillStyle = "#333";
-          ctx.font = "11px Inter, system-ui, sans-serif";
-          ctx.textAlign = "center";
-          ctx.fillText(n.name, n.x!, n.y! + radius + 16);
-        }
-
-        // Hover detection
-        canvas.onmousemove = (e) => {
-          const rect = canvas.getBoundingClientRect();
-          const mx = e.clientX - rect.left;
-          const my = e.clientY - rect.top;
-          const found = simNodes.find((n) => {
-            const dx = mx - n.x!;
-            const dy = my - n.y!;
-            return Math.sqrt(dx * dx + dy * dy) < 15;
-          });
-          canvas.style.cursor = found ? "pointer" : "default";
-        };
-
-        canvas.onclick = (e) => {
-          const rect = canvas.getBoundingClientRect();
-          const mx = e.clientX - rect.left;
-          const my = e.clientY - rect.top;
-          const found = simNodes.find((n) => {
-            const dx = mx - n.x!;
-            const dy = my - n.y!;
-            return Math.sqrt(dx * dx + dy * dy) < 15;
-          });
-          setSelectedNode(found ?? null);
-        };
-
-        if (totalVel > 0.1) {
-          animFrame = requestAnimationFrame(step);
-        }
-      }
-
-      animFrame = requestAnimationFrame(step);
-
-      graphInstance.current = {
-        destroy: () => cancelAnimationFrame(animFrame),
-      };
-    },
-    [selectedNode],
-  );
-
-  // ── Fetch data ──────────────────────────────────────────────────────────────
+  // ── Fetch graph data ────────────────────────────────────────────────────────
 
   const fetchGraph = useCallback(async () => {
     if (!userId) return;
     setLoading(true);
+    setSelectedNode(null);
     try {
       const params: Record<string, string | number | boolean | undefined | null> = {
         limit: 100,
       };
       if (entityFilter) params.entity_type = entityFilter;
 
-      const nodeResult = await listGraphNodes(userId, params);
-      const nodeList = (nodeResult.data?.items as NodeData[]) ?? [];
+      const result = await listGraphNodes(userId, params);
+      const nodeList = ((result.data as any)?.items ?? []) as any[];
 
-      // Fetch real edges for all nodes, deduplicated
-      let edgeList: EdgeData[] = [];
-      const seenEdges = new Set<string>();
-      if (nodeList.length > 0) {
-        const batchSize = 5;
-        for (let i = 0; i < nodeList.length; i += batchSize) {
-          const batch = nodeList.slice(i, i + batchSize);
-          const results = await Promise.allSettled(
-            batch.map((n) =>
-              listGraphEdges(userId, { subject_id: n.id, limit: 50 }).catch(
-                () => ({ data: { items: [] } }),
-              ),
+      // Fetch edges for all nodes
+      const allEdges: EdgeData[] = [];
+      const seen = new Set<string>();
+      const batchSize = 5;
+      for (let i = 0; i < nodeList.length; i += batchSize) {
+        const batch = nodeList.slice(i, i + batchSize);
+        const edgeResults = await Promise.allSettled(
+          batch.map((n) =>
+            listGraphEdges(userId, { subject_id: n.id, limit: 50 }).catch(
+              () => ({ data: { items: [] } } as any),
             ),
-          );
-          for (const r of results) {
-            if (r.status === "fulfilled") {
-              const items = ((r.value.data as { items?: EdgeData[] })?.items ?? []) as EdgeData[];
-              for (const e of items) {
-                const key = [e.source_id, e.target_id].sort().join("|");
-                if (!seenEdges.has(key)) {
-                  seenEdges.add(key);
-                  edgeList.push(e);
-                }
+          ),
+        );
+        for (const r of edgeResults) {
+          if (r.status === "fulfilled") {
+            const items = ((r.value.data as any)?.items ?? []) as EdgeData[];
+            for (const e of items) {
+              const key = [e.source_id, e.target_id].sort().join("|");
+              if (!seen.has(key)) {
+                seen.add(key);
+                allEdges.push(e);
               }
             }
           }
         }
       }
 
-      setNodes(nodeList);
-      setEdges(edgeList);
+      // Map to ForceGraph format
+      const fgNodes: GraphNode[] = nodeList.map((n: any) => ({
+        id: n.id,
+        name: n.name,
+        type: n.type,
+        summary: n.summary,
+        val: 1,
+      }));
+
+      const nodeIds = new Set(fgNodes.map((n) => n.id));
+      const fgLinks: GraphLink[] = allEdges
+        .filter((e) => nodeIds.has(e.source_id) && nodeIds.has(e.target_id))
+        .map((e) => ({
+          source: e.source_id,
+          target: e.target_id,
+          type: e.type,
+        }));
+
+      setNodes(fgNodes);
+      setLinks(fgLinks);
     } catch (err) {
       console.error("Failed to load graph", err);
     } finally {
       setLoading(false);
     }
-  }, [userId, entityFilter, buildGraph]);
+  }, [userId, entityFilter]);
 
   useEffect(() => {
     fetchGraph();
-    return () => {
-      if (graphInstance.current) graphInstance.current.destroy();
-    };
   }, [fetchGraph]);
 
-  // Rebuild canvas whenever nodes/edges change
+  // Zoom to fit on data change
   useEffect(() => {
-    if (!loading && nodes.length > 0) {
-      buildGraph(nodes, edges);
+    if (!loading && nodes.length > 0 && fgRef.current) {
+      setTimeout(() => fgRef.current?.zoomToFit(400), 300);
     }
-    return () => {
-      if (graphInstance.current) graphInstance.current.destroy();
-    };
-  }, [nodes, edges, loading, buildGraph]);
+  }, [loading, nodes.length]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
+  const isDark = theme.palette.mode === "dark";
+
   return (
     <Box>
-      <Typography variant="h4" gutterBottom sx={{ fontWeight: 600 }}>
-        Knowledge Graph
-      </Typography>
-      <Typography variant="subtitle1" sx={{ mb: 3 }}>
-        Explore entities and relationships extracted from your data
-      </Typography>
+      <PageHeader
+        title="Knowledge Graph"
+        subtitle="Explore entities and relationships extracted from your data"
+      />
 
       {/* Controls */}
       <Box sx={{ display: "flex", gap: 2, mb: 3, alignItems: "center", flexWrap: "wrap" }}>
@@ -366,7 +186,7 @@ export default function GraphPage() {
           {loading ? "Loading..." : "Refresh"}
         </Button>
         <Typography variant="body2" color="text.secondary">
-          {nodes.length} entities · {edges.length} relationships
+          {nodes.length} entities · {links.length} relationships
         </Typography>
       </Box>
 
@@ -383,11 +203,67 @@ export default function GraphPage() {
         </Card>
       ) : (
         <>
-          {/* Graph canvas */}
+          {/* Force graph */}
           <Card
-            ref={canvasRef}
-            sx={{ width: "100%", height: 500, overflow: "hidden", mb: 2 }}
-          />
+            sx={{
+              width: "100%",
+              height: 500,
+              overflow: "hidden",
+              mb: 2,
+              position: "relative",
+              bgcolor: "background.default",
+            }}
+          >
+            <ForceGraph2D
+              ref={fgRef}
+              graphData={{ nodes, links }}
+              nodeLabel="name"
+              nodeColor={(node: any) => getColor(node.type)}
+              nodeVal={(node: any) => (selectedNode?.id === node.id ? 2.5 : node.val || 1)}
+              nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+                const label = node.name;
+                const fontSize = Math.max(8, 12 / globalScale);
+                const color = getColor(node.type);
+                const isSelected = selectedNode?.id === node.id;
+                const isHovered = hoveredNode?.id === node.id;
+                const radius = isSelected ? 7 : isHovered ? 6 : 5;
+
+                // Glow
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, radius + 4, 0, 2 * Math.PI);
+                ctx.fillStyle = color + (isSelected || isHovered ? "30" : "15");
+                ctx.fill();
+
+                // Circle
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI);
+                ctx.fillStyle = color;
+                ctx.fill();
+                ctx.strokeStyle = isSelected || isHovered
+                  ? (isDark ? "#F2F2F2" : "#FFFFFF")
+                  : "transparent";
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Label
+                ctx.font = `${fontSize}px Inter, system-ui, sans-serif`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "top";
+                ctx.fillStyle = isDark ? "rgba(242,242,242,0.8)" : "#333";
+                ctx.fillText(label, node.x, node.y + radius + 3);
+              }}
+              linkColor={() => `rgba(143,175,217,${isDark ? "0.2" : "0.25"})`}
+              linkLabel={(link: any) => link.type || ""}
+              linkWidth={0.5}
+              linkDirectionalArrowLength={3}
+              linkDirectionalArrowRelPos={1}
+              cooldownTicks={100}
+              d3VelocityDecay={0.3}
+              onNodeClick={(node: any) => setSelectedNode(node)}
+              onNodeHover={(node: any) => setHoveredNode(node || null)}
+              backgroundColor="transparent"
+            />
+          </Card>
 
           {/* Selected node info */}
           {selectedNode && (
@@ -395,13 +271,15 @@ export default function GraphPage() {
               <Typography variant="subtitle2" gutterBottom>
                 Selected: {selectedNode.name}
               </Typography>
-              <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+              <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
                 <Chip label={selectedNode.type} size="small" />
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "monospace" }}>
                   ID: {selectedNode.id}
                 </Typography>
                 {selectedNode.summary && (
-                  <Typography variant="body2">{selectedNode.summary}</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {selectedNode.summary}
+                  </Typography>
                 )}
               </Box>
             </Card>

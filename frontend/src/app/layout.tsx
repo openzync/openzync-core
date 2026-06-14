@@ -5,6 +5,7 @@ import "@fontsource/roboto/500.css";
 import "@fontsource/roboto/700.css";
 import { AuthProvider } from "@/lib/auth/AuthContext";
 import { MuiProvider } from "./MuiProvider";
+import { NotificationProvider } from "@/components/shared/NotificationProvider";
 
 export const metadata: Metadata = {
   title: "OpenZep Dashboard",
@@ -20,7 +21,9 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body style={{ margin: 0 }}>
         <MuiProvider>
-          <AuthProvider>{children}</AuthProvider>
+          <NotificationProvider>
+            <AuthProvider>{children}</AuthProvider>
+          </NotificationProvider>
         </MuiProvider>
       </body>
     </html>

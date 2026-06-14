@@ -17,6 +17,7 @@ interface AuthContextValue extends AuthState {
   login: (email: string, password: string) => Promise<void>;
   signup: (email: string, password: string, organizationName: string) => Promise<void>;
   logout: () => void;
+  refreshProfile: () => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
@@ -71,7 +72,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       doRefresh(refreshToken)
         .then(() => setIsLoading(false))
         .catch(() => {
-          // Refresh failed — clear everything
           api.setTokenProvider(null);
           setAccessToken(null);
           setRefreshToken(null);
@@ -92,7 +92,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const doRefresh = useCallback(async (token: string) => {
-    // Deduplicate concurrent refresh attempts
     if (!refreshPromise.current) {
       refreshPromise.current = (async () => {
         const res = await apiRefresh({ refresh_token: token });
@@ -133,6 +132,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setStoredRefreshToken(null);
   }, []);
 
+  const refreshProfile = useCallback(async () => {
+    try {
+      const profile = await getProfile();
+      setUser(profile);
+    } catch {
+      // Silently fail — user stays stale
+    }
+  }, []);
+
   const value = useMemo(
     () => ({
       accessToken,
@@ -142,8 +150,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       login: loginFn,
       signup: signupFn,
       logout,
+      refreshProfile,
     }),
-    [accessToken, refreshToken, user, isLoading, loginFn, signupFn, logout],
+    [accessToken, refreshToken, user, isLoading, loginFn, signupFn, logout, refreshProfile],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -16,10 +16,13 @@ import {
   TableRow,
   Paper,
 } from "@mui/material";
+import { useTheme } from "@mui/material/styles";
 import TimelineIcon from "@mui/icons-material/Timeline";
 import StorageIcon from "@mui/icons-material/Storage";
 import HubIcon from "@mui/icons-material/Hub";
 import PeopleIcon from "@mui/icons-material/People";
+import PageHeader from "@/components/shared/PageHeader";
+import LoadingSkeleton from "@/components/shared/LoadingSkeleton";
 import {
   getMetricsSummary,
   getMetricsTargets,
@@ -42,18 +45,6 @@ function timeAgo(date: Date): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
-}
-
-function latencyColor(ms: number): string {
-  if (ms < 100) return "#2e7d32";
-  if (ms < 500) return "#e65100";
-  return "#c62828";
-}
-
-function errorRateColor(pct: number): string {
-  if (pct < 1) return "#2e7d32";
-  if (pct < 5) return "#e65100";
-  return "#c62828";
 }
 
 function formatMs(ms: number | null | undefined): string {
@@ -85,17 +76,17 @@ function StatCard({
       <CardContent sx={{ p: 3 }}>
         <Box sx={{ display: "flex", alignItems: "center", gap: 2, mb: 1 }}>
           <Box
-            sx={{
+            sx={(theme) => ({
               width: 40,
               height: 40,
               borderRadius: 2,
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              bgcolor: "primary.light",
-              color: "primary.dark",
+              bgcolor: theme.palette.primary.dark,
+              color: theme.palette.primary.light,
               opacity: 0.85,
-            }}
+            })}
           >
             {icon}
           </Box>
@@ -128,10 +119,12 @@ function LatencyCard({
   title,
   data,
   loading,
+  dotColors,
 }: {
   title: string;
   data: { p50: number; p95: number; p99: number } | null | undefined;
   loading: boolean;
+  dotColors: { good: string; warn: string; bad: string };
 }) {
   const rows = [
     { label: "p50", value: data?.p50 },
@@ -139,10 +132,19 @@ function LatencyCard({
     { label: "p99", value: data?.p99 },
   ];
 
+  function latencyColor(ms: number): string {
+    if (ms < 100) return dotColors.good;
+    if (ms < 500) return dotColors.warn;
+    return dotColors.bad;
+  }
+
   return (
     <Card sx={{ flex: "1 1 280px" }}>
       <CardContent sx={{ p: 3 }}>
-        <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 2, color: "text.secondary" }}>
+        <Typography
+          variant="subtitle2"
+          sx={{ fontWeight: 600, mb: 2, color: "text.secondary" }}
+        >
           {title}
         </Typography>
         {loading ? (
@@ -162,17 +164,23 @@ function LatencyCard({
                   justifyContent: "space-between",
                 }}
               >
-                <Typography variant="body2" sx={{ fontFamily: "monospace", fontWeight: 500 }}>
+                <Typography
+                  variant="body2"
+                  sx={{ fontFamily: "monospace", fontWeight: 500 }}
+                >
                   {row.label}
                 </Typography>
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                   <Box
-                    sx={{
+                    sx={(theme) => ({
                       width: 10,
                       height: 10,
                       borderRadius: "50%",
-                      bgcolor: row.value != null ? latencyColor(row.value) : "grey.300",
-                    }}
+                      bgcolor:
+                        row.value != null
+                          ? latencyColor(row.value)
+                          : theme.palette.grey[700],
+                    })}
                   />
                   <Typography variant="body2" sx={{ fontWeight: 600 }}>
                     {formatMs(row.value)}
@@ -190,6 +198,13 @@ function LatencyCard({
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function MonitoringPage() {
+  const theme = useTheme();
+  const dotColors = {
+    good: theme.palette.success.main,
+    warn: theme.palette.warning.main,
+    bad: theme.palette.error.main,
+  };
+
   const [metrics, setMetrics] = useState<MetricsSummaryResponse | null>(null);
   const [targets, setTargets] = useState<MetricsTargetsResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -198,12 +213,16 @@ export default function MonitoringPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [m, t] = await Promise.all([getMetricsSummary(), getMetricsTargets()]);
+      const [m, t] = await Promise.all([
+        getMetricsSummary(),
+        getMetricsTargets(),
+      ]);
       setMetrics(m);
       setTargets(t);
       setLastUpdated(new Date());
     } catch {
-      // Silently fail — existing data stays visible
+      // Monitoring page: silent fail is intentional — existing data stays visible
+      console.error("[monitoring] Failed to fetch metrics data");
     } finally {
       setLoading(false);
     }
@@ -214,7 +233,7 @@ export default function MonitoringPage() {
     fetchData();
   }, [fetchData]);
 
-  // Auto-refresh
+  // Auto-refresh every 30s
   useEffect(() => {
     intervalRef.current = setInterval(fetchData, REFRESH_INTERVAL_MS);
     return () => {
@@ -231,22 +250,17 @@ export default function MonitoringPage() {
 
   return (
     <Box>
-      {/* ── Header ───────────────────────────────────────────────────────── */}
-      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", mb: 3 }}>
-        <Box>
-          <Typography variant="h4" sx={{ fontWeight: 600 }}>
-            Monitoring
-          </Typography>
-          <Typography variant="subtitle1" color="text.secondary">
-            Real-time platform performance and health metrics
-          </Typography>
-        </Box>
-        {lastUpdated && !loading && (
-          <Typography variant="caption" color="text.secondary">
-            Last updated {timeAgo(lastUpdated)}
-          </Typography>
-        )}
-      </Box>
+      <PageHeader
+        title="Monitoring"
+        subtitle="Real-time platform performance and health metrics"
+        action={
+          lastUpdated && !loading ? (
+            <Typography variant="caption" sx={{ color: "text.secondary", mt: 0.5 }}>
+              Last updated {timeAgo(lastUpdated)}
+            </Typography>
+          ) : undefined
+        }
+      />
 
       {/* ── Row 1: Stat Cards ────────────────────────────────────────────── */}
       <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
@@ -287,9 +301,9 @@ export default function MonitoringPage() {
         Latency (ms)
       </Typography>
       <Box sx={{ display: "flex", gap: 3, flexWrap: "wrap", mb: 4 }}>
-        <LatencyCard title="Overall API" data={ol} loading={loading} />
-        <LatencyCard title="Context Assembly" data={cl} loading={loading} />
-        <LatencyCard title="Graph Search" data={gs} loading={loading} />
+        <LatencyCard title="Overall API" data={ol} loading={loading} dotColors={dotColors} />
+        <LatencyCard title="Context Assembly" data={cl} loading={loading} dotColors={dotColors} />
+        <LatencyCard title="Graph Search" data={gs} loading={loading} dotColors={dotColors} />
       </Box>
 
       {/* ── Row 3: Error Rate & Health ───────────────────────────────────── */}
@@ -311,7 +325,12 @@ export default function MonitoringPage() {
                   variant="h4"
                   sx={{
                     fontWeight: 700,
-                    color: errorRateColor(metrics?.error_rate_pct ?? 0),
+                    color:
+                      (metrics?.error_rate_pct ?? 0) < 1
+                        ? "success.main"
+                        : (metrics?.error_rate_pct ?? 0) < 5
+                          ? "warning.main"
+                          : "error.main",
                   }}
                 >
                   {(metrics?.error_rate_pct ?? 0).toFixed(2)}%
@@ -388,7 +407,11 @@ export default function MonitoringPage() {
                   sx={{ fontWeight: 600, mb: 1 }}
                 />
                 {metrics?.message && (
-                  <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ display: "block" }}
+                  >
                     {metrics.message}
                   </Typography>
                 )}
@@ -402,17 +425,20 @@ export default function MonitoringPage() {
       <Typography variant="h6" sx={{ fontWeight: 600, mb: 2 }}>
         Scrape Targets
       </Typography>
-      <Card>
-        <CardContent sx={{ p: 0 }}>
-          {loading ? (
-            <Skeleton variant="rectangular" width="100%" height={120} sx={{ borderRadius: 1 }} />
-          ) : !targets || targets.targets.length === 0 ? (
-            <Box sx={{ p: 3 }}>
-              <Typography variant="body2" color="text.secondary">
-                No scrape targets found.
-              </Typography>
-            </Box>
-          ) : (
+
+      {loading ? (
+        <LoadingSkeleton variant="table" />
+      ) : !targets || targets.targets.length === 0 ? (
+        <Card>
+          <Box sx={{ p: 3 }}>
+            <Typography variant="body2" color="text.secondary">
+              No scrape targets found.
+            </Typography>
+          </Box>
+        </Card>
+      ) : (
+        <Card>
+          <CardContent sx={{ p: 0 }}>
             <TableContainer component={Paper} elevation={0}>
               <Table size="small">
                 <TableHead>
@@ -428,12 +454,18 @@ export default function MonitoringPage() {
                   {targets.targets.map((t, i) => (
                     <TableRow key={i}>
                       <TableCell>
-                        <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
+                        <Typography
+                          variant="body2"
+                          sx={{ fontFamily: "monospace" }}
+                        >
                           {t.job}
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        <Typography variant="body2" sx={{ fontFamily: "monospace" }}>
+                        <Typography
+                          variant="body2"
+                          sx={{ fontFamily: "monospace" }}
+                        >
                           {t.instance}
                         </Typography>
                       </TableCell>
@@ -453,7 +485,16 @@ export default function MonitoringPage() {
                         </Typography>
                       </TableCell>
                       <TableCell>
-                        <Typography variant="body2" color="error" sx={{ maxWidth: 300, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        <Typography
+                          variant="body2"
+                          color="error"
+                          sx={{
+                            maxWidth: 300,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
                           {t.last_error ?? "—"}
                         </Typography>
                       </TableCell>
@@ -462,9 +503,9 @@ export default function MonitoringPage() {
                 </TableBody>
               </Table>
             </TableContainer>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
     </Box>
   );
 }

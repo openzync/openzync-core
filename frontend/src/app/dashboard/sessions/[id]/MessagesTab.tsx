@@ -9,10 +9,14 @@ import {
   ToggleButtonGroup,
   ToggleButton,
   CircularProgress,
-  Tooltip,
   Chip,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
 } from "@mui/material";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
 import TableChartIcon from "@mui/icons-material/TableChart";
 import ChatIcon from "@mui/icons-material/Chat";
 import { getSessionMessages, ApiError } from "@/lib/api/client";
@@ -51,33 +55,57 @@ function formatDate(raw: string): string {
   }
 }
 
-// ─── Role colors for chat bubbles ─────────────────────────────────────────────
+// ─── Dark-theme chat bubble config ────────────────────────────────────────────
 
-const ROLE_COLORS: Record<string, { bg: string; align: "flex-start" | "flex-end" | "center"; label: string }> = {
+interface BubbleStyle {
+  bg: string;
+  borderColor: string;
+  align: "flex-start" | "flex-end" | "center";
+  label: string;
+  textColor: string;
+}
+
+const BUBBLE_STYLES: Record<string, BubbleStyle> = {
   user: {
-    bg: "#1565C0",
+    bg: "#14488C",
+    borderColor: "#14488C",
     align: "flex-end",
-    label: "User",
+    label: "You",
+    textColor: "#FFFFFF",
   },
   assistant: {
-    bg: "#E3F2FD",
+    bg: "#1A2332",
+    borderColor: "#8FAFD9",
     align: "flex-start",
     label: "Assistant",
+    textColor: "#E8EDF5",
   },
   system: {
-    bg: "#F5F5F5",
+    bg: "rgba(255, 255, 255, 0.04)",
+    borderColor: "rgba(255, 255, 255, 0.08)",
     align: "center",
     label: "System",
+    textColor: "text.secondary",
   },
   tool: {
-    bg: "#FFF3E0",
+    bg: "rgba(255, 255, 255, 0.04)",
+    borderColor: "rgba(255, 255, 255, 0.08)",
     align: "center",
     label: "Tool",
+    textColor: "text.secondary",
   },
 };
 
-function getRoleStyle(role: string) {
-  return ROLE_COLORS[role] ?? { bg: "#F5F5F5", align: "flex-start", label: role };
+function getBubbleStyle(role: string): BubbleStyle {
+  return (
+    BUBBLE_STYLES[role] ?? {
+      bg: "rgba(255, 255, 255, 0.04)",
+      borderColor: "rgba(255, 255, 255, 0.08)",
+      align: "flex-start",
+      label: role,
+      textColor: "text.secondary",
+    }
+  );
 }
 
 // ─── Component Props ──────────────────────────────────────────────────────────
@@ -99,7 +127,7 @@ export default function MessagesTab({ userId, sessionId }: MessagesTabProps) {
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Scroll to bottom on first load
+  // Smooth scroll to bottom on first load
   useEffect(() => {
     if (!loading && messages.length > 0 && !cursor) {
       chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -147,81 +175,10 @@ export default function MessagesTab({ userId, sessionId }: MessagesTabProps) {
     fetchMessages();
   }, [fetchMessages]);
 
-  // ── Table columns ───────────────────────────────────────────────────────────
-
-  const columns: GridColDef<MessageRow>[] = [
-    {
-      field: "sequence_number",
-      headerName: "#",
-      width: 60,
-      align: "center",
-    },
-    {
-      field: "role",
-      headerName: "Role",
-      width: 100,
-      renderCell: ({ value }) => (
-        <Chip
-          label={value}
-          size="small"
-          color={value === "user" ? "primary" : value === "assistant" ? "success" : "default"}
-          variant="outlined"
-        />
-      ),
-    },
-    {
-      field: "content",
-      headerName: "Content",
-      flex: 1,
-      minWidth: 300,
-      renderCell: ({ row }) => {
-        const isExpanded = expandedRows.has(row.id);
-        const text = isExpanded ? row.content : row.content.length > 300 ? row.content.slice(0, 300) + "..." : row.content;
-        return (
-          <Box
-            onClick={() => {
-              if (row.content.length > 300) {
-                setExpandedRows((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(row.id)) next.delete(row.id);
-                  else next.add(row.id);
-                  return next;
-                });
-              }
-            }}
-            sx={{
-              cursor: row.content.length > 300 ? "pointer" : "default",
-              whiteSpace: "pre-wrap",
-              fontFamily: "monospace",
-              fontSize: "0.8rem",
-              lineHeight: 1.4,
-              py: 0.5,
-            }}
-          >
-            {text}
-          </Box>
-        );
-      },
-    },
-    {
-      field: "token_count",
-      headerName: "Tokens",
-      width: 80,
-      align: "center",
-    },
-    {
-      field: "created_at",
-      headerName: "Time",
-      width: 160,
-      valueGetter: (_value, row) => formatDate(row.created_at),
-    },
-  ];
-
   // ── Render chat bubble ──────────────────────────────────────────────────────
 
   function renderChatBubble(msg: MessageRow) {
-    const style = getRoleStyle(msg.role);
-    const isUser = msg.role === "user";
+    const style = getBubbleStyle(msg.role);
     const isSystem = msg.role === "system" || msg.role === "tool";
 
     if (isSystem) {
@@ -242,7 +199,7 @@ export default function MessagesTab({ userId, sessionId }: MessagesTabProps) {
               px: 2,
               py: 1,
               border: "1px solid",
-              borderColor: "divider",
+              borderColor: style.borderColor,
             }}
           >
             <Typography
@@ -271,23 +228,27 @@ export default function MessagesTab({ userId, sessionId }: MessagesTabProps) {
       );
     }
 
+    const isUser = msg.role === "user";
+
     return (
       <Box
         key={msg.id}
         sx={{
           display: "flex",
-          justifyContent: isUser ? "flex-end" : "flex-start",
+          justifyContent: style.align,
           mb: 1.5,
         }}
       >
         <Box
           sx={{
             maxWidth: "70%",
-            bgcolor: isUser ? style.bg : "#F5F5F5",
-            color: isUser ? "#fff" : "text.primary",
+            bgcolor: style.bg,
+            color: style.textColor,
             borderRadius: 2,
             borderBottomRightRadius: isUser ? 0 : 2,
             borderBottomLeftRadius: isUser ? 2 : 0,
+            border: isUser ? "none" : "1px solid",
+            borderColor: isUser ? "transparent" : style.borderColor,
             px: 2,
             py: 1.2,
           }}
@@ -298,18 +259,17 @@ export default function MessagesTab({ userId, sessionId }: MessagesTabProps) {
               fontWeight: 600,
               display: "block",
               mb: 0.5,
-              opacity: 0.8,
-              color: isUser ? "rgba(255,255,255,0.85)" : "text.secondary",
+              opacity: 0.85,
+              color: isUser ? "rgba(255,255,255,0.85)" : "rgba(232,237,245,0.7)",
             }}
           >
-            {isUser ? "You" : "Assistant"}
+            {style.label}
           </Typography>
           <Typography
             variant="body2"
             sx={{
               whiteSpace: "pre-wrap",
               lineHeight: 1.5,
-              "& p": { mb: 1 },
             }}
           >
             {msg.content}
@@ -332,7 +292,46 @@ export default function MessagesTab({ userId, sessionId }: MessagesTabProps) {
     );
   }
 
-  // ── Render ──────────────────────────────────────────────────────────────────
+  // ── Render table row (content with expand) ──────────────────────────────────
+
+  function renderTableContent(row: MessageRow) {
+    const isExpanded = expandedRows.has(row.id);
+    const needsTruncation = row.content.length > 300;
+    const text = isExpanded
+      ? row.content
+      : needsTruncation
+        ? row.content.slice(0, 300) + "..."
+        : row.content;
+
+    return (
+      <Box
+        onClick={() => {
+          if (needsTruncation) {
+            setExpandedRows((prev) => {
+              const next = new Set(prev);
+              if (next.has(row.id)) next.delete(row.id);
+              else next.add(row.id);
+              return next;
+            });
+          }
+        }}
+        sx={{
+          cursor: needsTruncation ? "pointer" : "default",
+          whiteSpace: "pre-wrap",
+          fontFamily: "monospace",
+          fontSize: "0.8rem",
+          lineHeight: 1.4,
+          py: 0.5,
+          maxHeight: isExpanded ? "none" : 80,
+          overflow: "hidden",
+        }}
+      >
+        {text}
+      </Box>
+    );
+  }
+
+  // ── Loading state ───────────────────────────────────────────────────────────
 
   if (loading) {
     return (
@@ -351,6 +350,8 @@ export default function MessagesTab({ userId, sessionId }: MessagesTabProps) {
       </Card>
     );
   }
+
+  // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
     <Box>
@@ -374,7 +375,7 @@ export default function MessagesTab({ userId, sessionId }: MessagesTabProps) {
       </Box>
 
       {viewMode === "chat" ? (
-        /* Chat bubble view */
+        /* ── Chat bubble view ──────────────────────────────────────────────── */
         <Card sx={{ p: 3, maxHeight: "70vh", overflow: "auto" }}>
           {/* Load older button */}
           {hasMore && (
@@ -395,21 +396,63 @@ export default function MessagesTab({ userId, sessionId }: MessagesTabProps) {
           <div ref={chatEndRef} />
         </Card>
       ) : (
-        /* Table view */
+        /* ── Table view ────────────────────────────────────────────────────── */
         <Card>
-          <DataGrid<MessageRow>
-            rows={messages}
-            columns={columns}
-            loading={loading}
-            getRowId={(row) => row.id}
-            getRowHeight={() => 52}
-            disableRowSelectionOnClick
-            hideFooter
-            autoHeight
-            sx={{
-              "& .MuiDataGrid-cell:focus": { outline: "none" },
-            }}
-          />
+          <TableContainer>
+            <Table size="small" sx={{ minWidth: 650 }}>
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={{ width: 60, fontWeight: 600 }}>#</TableCell>
+                  <TableCell sx={{ width: 100, fontWeight: 600 }}>Role</TableCell>
+                  <TableCell sx={{ fontWeight: 600 }}>Content</TableCell>
+                  <TableCell sx={{ width: 80, fontWeight: 600, textAlign: "center" }}>
+                    Tokens
+                  </TableCell>
+                  <TableCell sx={{ width: 160, fontWeight: 600 }}>Time</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {messages.map((msg) => (
+                  <TableRow
+                    key={msg.id}
+                    sx={{
+                      "&:hover": { bgcolor: "rgba(255,255,255,0.03)" },
+                      "&:last-child td": { border: 0 },
+                    }}
+                  >
+                    <TableCell sx={{ textAlign: "center", fontFamily: "monospace", fontSize: "0.8rem" }}>
+                      {msg.sequence_number}
+                    </TableCell>
+                    <TableCell>
+                      <Chip
+                        label={msg.role}
+                        size="small"
+                        color={
+                          msg.role === "user"
+                            ? "primary"
+                            : msg.role === "assistant"
+                              ? "success"
+                              : "default"
+                        }
+                        variant="outlined"
+                      />
+                    </TableCell>
+                    <TableCell sx={{ maxWidth: 400 }}>
+                      {renderTableContent(msg)}
+                    </TableCell>
+                    <TableCell sx={{ textAlign: "center", fontFamily: "monospace", fontSize: "0.8rem" }}>
+                      {msg.token_count}
+                    </TableCell>
+                    <TableCell sx={{ fontSize: "0.8rem", whiteSpace: "nowrap" }}>
+                      {formatDate(msg.created_at)}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+
+          {/* Load older button for table view */}
           {hasMore && (
             <Box sx={{ display: "flex", justifyContent: "center", p: 2 }}>
               <Button

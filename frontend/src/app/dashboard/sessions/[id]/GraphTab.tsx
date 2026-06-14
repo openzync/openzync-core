@@ -9,11 +9,11 @@ import {
   Chip,
   TextField,
   Button,
+  useTheme,
 } from "@mui/material";
-import { listGraphNodes, listGraphEdges, ApiError } from "@/lib/api/client";
-import type { components } from "@/lib/api/schema";
-
-type GraphNode = components["schemas"]["GraphNode"];
+import ForceGraph2D from "react-force-graph-2d";
+import { listGraphNodes, listGraphEdges } from "@/lib/api/client";
+// ─── Types ─────────────────────────────────────────────────────────────────────
 
 interface GraphNodeRow {
   id: string;
@@ -30,6 +30,39 @@ interface EdgeData {
   type: string;
 }
 
+interface GraphNode {
+  id: string;
+  name: string;
+  type: string;
+  summary: string | null;
+  val?: number;
+  x?: number;
+  y?: number;
+  vx?: number;
+  vy?: number;
+}
+
+interface GraphLink {
+  source: string;
+  target: string;
+  type: string;
+}
+
+// ─── Colors ────────────────────────────────────────────────────────────────────
+
+const TYPE_COLORS: Record<string, string> = {
+  person: "#14488C",
+  organization: "#1453A6",
+  location: "#8FAFD9",
+  event: "#1747A6",
+  concept: "#6A8DB8",
+  literal: "#4A6D96",
+};
+
+function getColor(type: string): string {
+  return TYPE_COLORS[type.toLowerCase()] || "#757575";
+}
+
 // ─── Component Props ──────────────────────────────────────────────────────────
 
 interface GraphTabProps {
@@ -40,249 +73,35 @@ interface GraphTabProps {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function GraphTab({ userId }: GraphTabProps) {
-  const [nodes, setNodes] = useState<GraphNodeRow[]>([]);
-  const [edges, setEdges] = useState<EdgeData[]>([]);
+  const theme = useTheme();
+  const fgRef = useRef<any>(null);
+
+  const [nodes, setNodes] = useState<GraphNode[]>([]);
+  const [links, setLinks] = useState<GraphLink[]>([]);
   const [loading, setLoading] = useState(true);
-  const [edgeLoading, setEdgeLoading] = useState(false);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [entityFilter, setEntityFilter] = useState("");
-  const canvasRef = useRef<HTMLDivElement>(null);
-  const graphInstance = useRef<{ destroy: () => void } | null>(null);
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
+  const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
 
-  // ── Canvas rendering ────────────────────────────────────────────────────────
-
-  const TYPE_COLORS: Record<string, string> = {
-    person: "#1565C0",
-    organization: "#388E3C",
-    location: "#F57C00",
-    event: "#7B1FA2",
-    concept: "#C62828",
-    literal: "#6A1B9A",
-  };
-
-  function getColor(type: string): string {
-    return TYPE_COLORS[type.toLowerCase()] || "#757575";
-  }
-
-  const buildGraph = useCallback(
-    (nodeList: GraphNodeRow[], edgeList: EdgeData[]) => {
-      if (!canvasRef.current) return;
-
-      if (graphInstance.current) {
-        graphInstance.current.destroy();
-        graphInstance.current = null;
-      }
-      canvasRef.current.innerHTML = "";
-      if (nodeList.length === 0) return;
-
-      const container = canvasRef.current;
-      const width = container.clientWidth || 800;
-      const height = 500;
-
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      container.appendChild(canvas);
-
-      const ctx = canvas.getContext("2d")!;
-
-      const simNodes = nodeList.map((n) => ({
-        id: n.id,
-        name: n.name,
-        type: n.type,
-        x: Math.random() * width,
-        y: Math.random() * height,
-        vx: 0,
-        vy: 0,
-      }));
-
-      // Build real edges from API, deduplicated
-      const nodeIndex = new Map(simNodes.map((n, i) => [n.id, i]));
-      const seenEdges = new Set<string>();
-      const simEdges: { source: number; target: number; type: string }[] = [];
-      for (const e of edgeList) {
-        const key = [e.source_id, e.target_id].sort().join("|");
-        if (seenEdges.has(key)) continue;
-        seenEdges.add(key);
-        const si = nodeIndex.get(e.source_id);
-        const ti = nodeIndex.get(e.target_id);
-        if (si !== undefined && ti !== undefined) {
-          simEdges.push({ source: si, target: ti, type: e.type });
-        }
-      }
-
-      // ── Hover / click state ──────────────────────────────────────────────
-      let hoveredNode: number | null = null;
-      let selectedNodeId: string | null = null;
-
-      let animFrame: number;
-
-      function step() {
-        const repulsion = 8000;
-        const attraction = 0.003;
-        const damping = 0.9;
-        const centerForce = 0.008;
-        const cx = width / 2;
-        const cy = height / 2;
-
-        for (let i = 0; i < simNodes.length; i++) {
-          const n = simNodes[i];
-
-          n.vx += (cx - n.x) * centerForce;
-          n.vy += (cy - n.y) * centerForce;
-
-          for (let j = i + 1; j < simNodes.length; j++) {
-            const other = simNodes[j];
-            const dx = n.x - other.x;
-            const dy = n.y - other.y;
-            const dist = Math.max(Math.sqrt(dx * dx + dy * dy), 1);
-            const force = repulsion / (dist * dist);
-            const fx = (dx / dist) * force;
-            const fy = (dy / dist) * force;
-            n.vx += fx;
-            n.vy += fy;
-            other.vx -= fx;
-            other.vy -= fy;
-          }
-
-          for (const edge of simEdges) {
-            if (edge.source === i) {
-              const target = simNodes[edge.target];
-              const dx = target.x - n.x;
-              const dy = target.y - n.y;
-              n.vx += dx * attraction;
-              n.vy += dy * attraction;
-              target.vx -= dx * attraction;
-              target.vy -= dy * attraction;
-            }
-          }
-        }
-
-        let totalVel = 0;
-        for (const n of simNodes) {
-          n.vx *= damping;
-          n.vy *= damping;
-          n.x += n.vx;
-          n.y += n.vy;
-          totalVel += Math.abs(n.vx) + Math.abs(n.vy);
-        }
-
-        ctx.clearRect(0, 0, width, height);
-
-        // ── Draw edges ────────────────────────────────────────────────────
-        for (const edge of simEdges) {
-          const s = simNodes[edge.source];
-          const t = simNodes[edge.target];
-
-          const isHighlighted =
-            hoveredNode !== null &&
-            (edge.source === hoveredNode || edge.target === hoveredNode);
-
-          ctx.strokeStyle = isHighlighted
-            ? "rgba(0,0,0,0.45)"
-            : "rgba(0,0,0,0.2)";
-          ctx.lineWidth = isHighlighted ? 2 : 1;
-          ctx.beginPath();
-          ctx.moveTo(s.x, s.y);
-          ctx.lineTo(t.x, t.y);
-          ctx.stroke();
-
-          // Edge label
-          const midX = (s.x + t.x) / 2;
-          const midY = (s.y + t.y) / 2;
-          ctx.fillStyle = "rgba(0,0,0,0.35)";
-          ctx.font = "9px Inter, system-ui, sans-serif";
-          ctx.textAlign = "center";
-          ctx.fillText(edge.type, midX, midY - 4);
-        }
-
-        // ── Draw nodes ────────────────────────────────────────────────────
-        for (const n of simNodes) {
-          const color = getColor(n.type);
-          const isSelected = n.id === selectedNodeId;
-          const isHovered = hoveredNode === simNodes.indexOf(n);
-          const radius = isSelected ? 12 : isHovered ? 10 : 8;
-          const glow = isSelected ? 6 : 4;
-
-          ctx.beginPath();
-          ctx.arc(n.x, n.y, radius + glow, 0, 2 * Math.PI);
-          ctx.fillStyle = color + (isSelected || isHovered ? "30" : "15");
-          ctx.fill();
-
-          ctx.beginPath();
-          ctx.arc(n.x, n.y, radius, 0, 2 * Math.PI);
-          ctx.fillStyle = color;
-          ctx.fill();
-          ctx.strokeStyle = isSelected || isHovered ? "#fff" : "transparent";
-          ctx.lineWidth = 3;
-          ctx.stroke();
-
-          ctx.fillStyle = "#333";
-          ctx.font = "11px Inter, system-ui, sans-serif";
-          ctx.textAlign = "center";
-          ctx.fillText(n.name, n.x, n.y + radius + 16);
-        }
-
-        if (totalVel > 0.1) {
-          animFrame = requestAnimationFrame(step);
-        }
-      }
-
-      // Hover detection
-      canvas.onmousemove = (e) => {
-        const rect = canvas.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-        const found = simNodes.findIndex((n) => {
-          const dx = mx - n.x;
-          const dy = my - n.y;
-          return Math.sqrt(dx * dx + dy * dy) < 15;
-        });
-        hoveredNode = found >= 0 ? found : null;
-        canvas.style.cursor = hoveredNode !== null ? "pointer" : "default";
-      };
-
-      canvas.onclick = (e) => {
-        const rect = canvas.getBoundingClientRect();
-        const mx = e.clientX - rect.left;
-        const my = e.clientY - rect.top;
-        const found = simNodes.find((n) => {
-          const dx = mx - n.x;
-          const dy = my - n.y;
-          return Math.sqrt(dx * dx + dy * dy) < 15;
-        });
-        selectedNodeId = found?.id ?? null;
-      };
-
-      animFrame = requestAnimationFrame(step);
-
-      graphInstance.current = {
-        destroy: () => cancelAnimationFrame(animFrame),
-      };
-    },
-    [],
-  );
-
-  // ── Fetch nodes + edges ─────────────────────────────────────────────────────
+  // ── Fetch graph data ────────────────────────────────────────────────────────
 
   const fetchGraph = useCallback(async () => {
     setLoading(true);
+    setSelectedNode(null);
     try {
       const params: Record<string, string | number | boolean | undefined | null> = {
         limit: 100,
       };
-      if (entityFilter) {
-        params.entity_type = entityFilter;
-      }
-      const result = await listGraphNodes(userId, params);
-      const nodeList = (result.data?.items ?? []) as GraphNodeRow[];
-      setNodes(nodeList);
-      setCursor(result.data?.next_cursor ?? null);
-      setHasMore(result.data?.has_more ?? false);
+      if (entityFilter) params.entity_type = entityFilter;
 
-      // Fetch real edges for all nodes
-      setEdgeLoading(true);
+      const result = await listGraphNodes(userId, params);
+      const nodeList = ((result.data as any)?.items ?? []) as GraphNodeRow[];
+      setCursor((result.data as any)?.next_cursor ?? null);
+      setHasMore((result.data as any)?.has_more ?? false);
+
+      // Fetch edges for all nodes
       const allEdges: EdgeData[] = [];
       const seen = new Set<string>();
       const batchSize = 5;
@@ -291,13 +110,13 @@ export default function GraphTab({ userId }: GraphTabProps) {
         const results = await Promise.allSettled(
           batch.map((n) =>
             listGraphEdges(userId, { subject_id: n.id, limit: 50 }).catch(
-              () => ({ data: { items: [] } }),
+              () => ({ data: { items: [] } } as any),
             ),
           ),
         );
         for (const r of results) {
           if (r.status === "fulfilled") {
-            const items = ((r.value.data as { items?: EdgeData[] })?.items ?? []) as EdgeData[];
+            const items = ((r.value.data as any)?.items ?? []) as EdgeData[];
             for (const e of items) {
               const key = [e.source_id, e.target_id].sort().join("|");
               if (!seen.has(key)) {
@@ -308,14 +127,33 @@ export default function GraphTab({ userId }: GraphTabProps) {
           }
         }
       }
-      setEdges(allEdges);
-      setEdgeLoading(false);
+
+      // Map to ForceGraph format
+      const fgNodes: GraphNode[] = nodeList.map((n) => ({
+        id: n.id,
+        name: n.name,
+        type: n.type,
+        summary: n.summary,
+        val: 1,
+      }));
+
+      const nodeIds = new Set(fgNodes.map((n) => n.id));
+      const fgLinks: GraphLink[] = allEdges
+        .filter((e) => nodeIds.has(e.source_id) && nodeIds.has(e.target_id))
+        .map((e) => ({
+          source: e.source_id,
+          target: e.target_id,
+          type: e.type,
+        }));
+
+      setNodes(fgNodes);
+      setLinks(fgLinks);
     } catch (err) {
       console.error("Failed to load graph", err);
     } finally {
       setLoading(false);
     }
-  }, [userId, entityFilter, buildGraph]);
+  }, [userId, entityFilter]);
 
   const loadMore = useCallback(async () => {
     if (loading || !cursor) return;
@@ -326,59 +164,67 @@ export default function GraphTab({ userId }: GraphTabProps) {
         cursor,
         entity_type: entityFilter || null,
       });
-      const newNodes = (result.data?.items ?? []) as GraphNodeRow[];
-      const combined = [...nodes, ...newNodes];
-      setNodes(combined);
-      setCursor(result.data?.next_cursor ?? null);
-      setHasMore(result.data?.has_more ?? false);
-      // Fetch edges for new nodes too
-      const allEdges = [...edges];
-      const seen = new Set(allEdges.map((e) => [e.source_id, e.target_id].sort().join("|")));
-      for (const n of newNodes) {
+      const newNodes = ((result.data as any)?.items ?? []) as GraphNodeRow[];
+      setCursor((result.data as any)?.next_cursor ?? null);
+      setHasMore((result.data as any)?.has_more ?? false);
+
+      // Add new nodes
+      const existingIds = new Set(nodes.map((n) => n.id));
+      const freshNodes = newNodes.filter((n) => !existingIds.has(n.id));
+      const fgNewNodes: GraphNode[] = freshNodes.map((n) => ({
+        id: n.id,
+        name: n.name,
+        type: n.type,
+        summary: n.summary,
+        val: 1,
+      }));
+
+      // Fetch edges for new nodes
+      const allEdges = [...links];
+      const seen = new Set(allEdges.map((e) => [e.source, e.target].sort().join("|")));
+      for (const n of freshNodes) {
         try {
           const r = await listGraphEdges(userId, { subject_id: n.id, limit: 50 });
-          const items = ((r.data as { items?: EdgeData[] })?.items ?? []) as EdgeData[];
+          const items = ((r.data as any)?.items ?? []) as EdgeData[];
           for (const e of items) {
             const key = [e.source_id, e.target_id].sort().join("|");
             if (!seen.has(key)) {
               seen.add(key);
-              allEdges.push(e);
+              allEdges.push({
+                source: e.source_id,
+                target: e.target_id,
+                type: e.type,
+              } as GraphLink);
             }
           }
         } catch {
           // ignore
         }
       }
-      setEdges(allEdges);
+
+      setNodes((prev) => [...prev, ...fgNewNodes]);
+      setLinks(allEdges);
     } catch (err) {
       console.error("Failed to load more nodes", err);
     } finally {
       setLoading(false);
     }
-  }, [loading, cursor, userId, entityFilter, nodes, edges, buildGraph]);
-
-  // Rebuild canvas whenever nodes/edges/loading settle
-  useEffect(() => {
-    if (!loading && nodes.length > 0) {
-      buildGraph(nodes, edges);
-    }
-    return () => {
-      if (graphInstance.current) {
-        graphInstance.current.destroy();
-      }
-    };
-  }, [nodes, edges, loading, buildGraph]);
+  }, [loading, cursor, userId, entityFilter, nodes, links]);
 
   useEffect(() => {
     fetchGraph();
-    return () => {
-      if (graphInstance.current) {
-        graphInstance.current.destroy();
-      }
-    };
   }, [fetchGraph]);
 
+  // Zoom to fit on data change
+  useEffect(() => {
+    if (!loading && nodes.length > 0 && fgRef.current) {
+      setTimeout(() => fgRef.current?.zoomToFit(400), 300);
+    }
+  }, [loading, nodes.length]);
+
   // ── Render ──────────────────────────────────────────────────────────────────
+
+  const isDark = theme.palette.mode === "dark";
 
   if (loading) {
     return (
@@ -391,7 +237,7 @@ export default function GraphTab({ userId }: GraphTabProps) {
   return (
     <Box>
       {/* Controls */}
-      <Box sx={{ display: "flex", gap: 2, mb: 2, alignItems: "center" }}>
+      <Box sx={{ display: "flex", gap: 2, mb: 2, alignItems: "center", flexWrap: "wrap" }}>
         <TextField
           size="small"
           label="Filter by entity type"
@@ -399,12 +245,11 @@ export default function GraphTab({ userId }: GraphTabProps) {
           onChange={(e) => setEntityFilter(e.target.value)}
           sx={{ minWidth: 200 }}
         />
-        <Button variant="outlined" size="small" onClick={fetchGraph}>
+        <Button variant="outlined" size="small" onClick={fetchGraph} disabled={loading}>
           Refresh
         </Button>
         <Typography variant="caption" color="text.secondary">
-          {nodes.length} entities · {edges.length} relationships
-          {edgeLoading && " (loading edges...)"}
+          {nodes.length} entities · {links.length} relationships
         </Typography>
       </Box>
 
@@ -417,17 +262,80 @@ export default function GraphTab({ userId }: GraphTabProps) {
         </Card>
       ) : (
         <>
-          {/* Force graph canvas */}
-          <Card
-            ref={canvasRef}
-            sx={{
-              width: "100%",
-              height: 500,
-              overflow: "hidden",
-              position: "relative",
-              mb: 2,
-            }}
-          />
+          {/* Force graph */}
+          <Card sx={{ width: "100%", height: 500, overflow: "hidden", mb: 2, position: "relative" }}>
+            <ForceGraph2D
+              ref={fgRef}
+              graphData={{ nodes, links }}
+              nodeLabel="name"
+              nodeColor={(node: any) => getColor(node.type)}
+              nodeVal={(node: any) => (selectedNode?.id === node.id ? 2.5 : node.val || 1)}
+              nodeCanvasObject={(node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
+                const label = node.name;
+                const fontSize = Math.max(8, 12 / globalScale);
+                const color = getColor(node.type);
+                const isSelected = selectedNode?.id === node.id;
+                const isHovered = hoveredNode?.id === node.id;
+                const radius = isSelected ? 7 : isHovered ? 6 : 5;
+
+                // Glow
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, radius + 4, 0, 2 * Math.PI);
+                ctx.fillStyle = color + (isSelected || isHovered ? "30" : "15");
+                ctx.fill();
+
+                // Circle
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI);
+                ctx.fillStyle = color;
+                ctx.fill();
+                ctx.strokeStyle = isSelected || isHovered
+                  ? (isDark ? "#F2F2F2" : "#FFFFFF")
+                  : "transparent";
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Label
+                ctx.font = `${fontSize}px Inter, system-ui, sans-serif`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "top";
+                ctx.fillStyle = isDark ? "rgba(242,242,242,0.8)" : "#333";
+                ctx.fillText(label, node.x, node.y + radius + 3);
+              }}
+              linkColor={() => `rgba(143,175,217,${isDark ? "0.2" : "0.25"})`}
+              linkLabel={(link: any) => link.type || ""}
+              linkWidth={0.5}
+              linkDirectionalArrowLength={3}
+              linkDirectionalArrowRelPos={1}
+              cooldownTicks={100}
+              d3VelocityDecay={0.3}
+              onNodeClick={(node: any) => setSelectedNode(node)}
+              onNodeHover={(node: any) => setHoveredNode(node || null)}
+              backgroundColor="transparent"
+              width={undefined}
+              height={undefined}
+            />
+          </Card>
+
+          {/* Selected node info */}
+          {selectedNode && (
+            <Card sx={{ p: 2, mb: 2 }}>
+              <Typography variant="subtitle2" gutterBottom>
+                Selected: {selectedNode.name}
+              </Typography>
+              <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap", alignItems: "center" }}>
+                <Chip label={selectedNode.type} size="small" />
+                <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "monospace" }}>
+                  ID: {selectedNode.id}
+                </Typography>
+                {selectedNode.summary && (
+                  <Typography variant="body2" color="text.secondary">
+                    {selectedNode.summary}
+                  </Typography>
+                )}
+              </Box>
+            </Card>
+          )}
 
           {/* Legend */}
           <Card sx={{ p: 2 }}>
@@ -437,14 +345,7 @@ export default function GraphTab({ userId }: GraphTabProps) {
             <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
               {Object.entries(TYPE_COLORS).map(([type, color]) => (
                 <Box key={type} sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                  <Box
-                    sx={{
-                      width: 12,
-                      height: 12,
-                      borderRadius: "50%",
-                      bgcolor: color,
-                    }}
-                  />
+                  <Box sx={{ width: 12, height: 12, borderRadius: "50%", bgcolor: color }} />
                   <Typography variant="caption" sx={{ textTransform: "capitalize" }}>
                     {type}
                   </Typography>

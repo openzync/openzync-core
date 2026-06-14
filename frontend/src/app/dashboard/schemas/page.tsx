@@ -4,7 +4,6 @@ import { useState, useCallback, useEffect } from "react";
 import {
   Box,
   Button,
-  Card,
   Chip,
   Dialog,
   DialogTitle,
@@ -14,15 +13,13 @@ import {
   Typography,
   IconButton,
   Tooltip,
-  Snackbar,
-  Alert,
   Select,
   MenuItem,
   InputLabel,
   FormControl,
   FormHelperText,
 } from "@mui/material";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import type { GridColDef } from "@mui/x-data-grid";
 import {
   Add as AddIcon,
   Visibility as VisibilityIcon,
@@ -30,6 +27,11 @@ import {
 } from "@mui/icons-material";
 import { api, ApiError } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/useAuth";
+import PageHeader from "@/components/shared/PageHeader";
+import DataTable from "@/components/shared/DataTable";
+import FormDialog from "@/components/shared/FormDialog";
+import ConfirmDialog from "@/components/shared/ConfirmDialog";
+import { useNotification } from "@/components/shared/NotificationProvider";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -55,12 +57,6 @@ interface CreateSchemaForm {
   prompt_template: string;
 }
 
-interface SnackbarState {
-  open: boolean;
-  message: string;
-  severity: "success" | "error";
-}
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatDate(raw: string): string {
@@ -79,6 +75,7 @@ function formatDate(raw: string): string {
 
 export default function SchemasPage() {
   useAuth();
+  const { showNotification } = useNotification();
 
   // ── Data state ──────────────────────────────────────────────────────────────
 
@@ -105,21 +102,6 @@ export default function SchemasPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  // ── Snackbar state ──────────────────────────────────────────────────────────
-
-  const [snackbar, setSnackbar] = useState<SnackbarState>({
-    open: false,
-    message: "",
-    severity: "success",
-  });
-
-  const showSnackbar = useCallback(
-    (message: string, severity: "success" | "error") => {
-      setSnackbar({ open: true, message, severity });
-    },
-    [],
-  );
-
   // ── Data fetching ───────────────────────────────────────────────────────────
 
   const fetchSchemas = useCallback(async () => {
@@ -134,11 +116,11 @@ export default function SchemasPage() {
         err instanceof ApiError
           ? err.detail ?? "Failed to load schemas"
           : "An unexpected error occurred";
-      showSnackbar(message, "error");
+      showNotification(message, "error");
     } finally {
       setLoading(false);
     }
-  }, [showSnackbar]);
+  }, [showNotification]);
 
   useEffect(() => {
     fetchSchemas();
@@ -160,13 +142,13 @@ export default function SchemasPage() {
           err instanceof ApiError
             ? err.detail ?? "Failed to load schema details"
             : "An unexpected error occurred";
-        showSnackbar(message, "error");
+        showNotification(message, "error");
         setViewDialogOpen(false);
       } finally {
         setViewLoading(false);
       }
     },
-    [showSnackbar],
+    [showNotification],
   );
 
   // ── Create schema ───────────────────────────────────────────────────────────
@@ -180,6 +162,11 @@ export default function SchemasPage() {
     });
     setFormErrors({});
     setCreateDialogOpen(true);
+  };
+
+  const handleCloseCreateDialog = () => {
+    if (submitting) return;
+    setCreateDialogOpen(false);
   };
 
   const handleCreateSchema = async () => {
@@ -214,10 +201,9 @@ export default function SchemasPage() {
         name: trimmedName,
         type: createForm.type,
         json_schema: parsedJson,
-        prompt_template:
-          createForm.prompt_template.trim() || null,
+        prompt_template: createForm.prompt_template.trim() || null,
       });
-      showSnackbar("Schema created successfully", "success");
+      showNotification("Schema created successfully", "success");
       setCreateDialogOpen(false);
       await fetchSchemas();
     } catch (err) {
@@ -225,7 +211,7 @@ export default function SchemasPage() {
         err instanceof ApiError
           ? err.detail ?? "Failed to create schema"
           : "An unexpected error occurred";
-      showSnackbar(message, "error");
+      showNotification(message, "error");
     } finally {
       setSubmitting(false);
     }
@@ -238,13 +224,19 @@ export default function SchemasPage() {
     setDeleteDialogOpen(true);
   };
 
+  const handleCloseDeleteDialog = () => {
+    if (submitting) return;
+    setDeleteDialogOpen(false);
+    setDeleteTarget(null);
+  };
+
   const handleDeleteSchema = async () => {
     if (!deleteTarget) return;
 
     setSubmitting(true);
     try {
       await api.delete(`/v1/admin/schemas/${deleteTarget.id}`);
-      showSnackbar("Schema deleted successfully", "success");
+      showNotification("Schema deleted successfully", "success");
       setDeleteDialogOpen(false);
       setDeleteTarget(null);
       await fetchSchemas();
@@ -253,13 +245,13 @@ export default function SchemasPage() {
         err instanceof ApiError
           ? err.detail ?? "Failed to delete schema"
           : "An unexpected error occurred";
-      showSnackbar(message, "error");
+      showNotification(message, "error");
     } finally {
       setSubmitting(false);
     }
   };
 
-  // ── DataGrid columns ────────────────────────────────────────────────────────
+  // ── DataTable columns ───────────────────────────────────────────────────────
 
   const columns: GridColDef<SchemaRow>[] = [
     {
@@ -329,140 +321,129 @@ export default function SchemasPage() {
 
   return (
     <Box>
-      {/* Header row */}
-      <Box
-        sx={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          mb: 3,
-        }}
-      >
-        <Typography variant="h5" sx={{ fontWeight: 600 }}>
-          Extraction Schemas
-        </Typography>
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={handleOpenCreateDialog}
-        >
-          Create Schema
-        </Button>
-      </Box>
+      <PageHeader
+        title="Extraction Schemas"
+        action={
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={handleOpenCreateDialog}
+          >
+            Create Schema
+          </Button>
+        }
+      />
 
       {/* Schemas table */}
-      <Card>
-        <DataGrid<SchemaRow>
-          rows={schemas}
-          columns={columns}
-          loading={loading}
-          getRowId={(row) => row.id}
-          getRowHeight={() => 52}
-          disableRowSelectionOnClick
-          hideFooter
-          autoHeight
-          sx={{
-            "& .MuiDataGrid-cell:focus": { outline: "none" },
-          }}
-        />
-      </Card>
+      <DataTable<SchemaRow>
+        rows={schemas}
+        columns={columns}
+        loading={loading}
+        getRowId={(row) => row.id}
+        emptyTitle="No schemas found"
+        emptyDescription="Create your first extraction schema to get started."
+        emptyAction={{
+          label: "Create Schema",
+          onClick: handleOpenCreateDialog,
+        }}
+      />
 
       {/* ── Create Schema Dialog ──────────────────────────────────────────── */}
-      <Dialog
+      <FormDialog
         open={createDialogOpen}
-        onClose={() => {
-          if (!submitting) setCreateDialogOpen(false);
-        }}
+        onClose={handleCloseCreateDialog}
+        title="Create Extraction Schema"
+        onSubmit={handleCreateSchema}
+        submitting={submitting}
+        submitLabel="Create"
         maxWidth="md"
-        fullWidth
       >
-        <DialogTitle>Create Extraction Schema</DialogTitle>
-        <DialogContent>
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
-            <TextField
-              label="Name"
-              placeholder="e.g. invoice_extraction"
-              required
-              value={createForm.name}
-              onChange={(e) =>
-                setCreateForm((prev) => ({ ...prev, name: e.target.value }))
-              }
-              error={!!formErrors.name}
-              helperText={formErrors.name}
-              slotProps={{ htmlInput: { maxLength: 255 } }}
-            />
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+          <TextField
+            label="Name"
+            placeholder="e.g. invoice_extraction"
+            required
+            value={createForm.name}
+            onChange={(e) =>
+              setCreateForm((prev) => ({ ...prev, name: e.target.value }))
+            }
+            error={!!formErrors.name}
+            helperText={formErrors.name}
+            slotProps={{ htmlInput: { maxLength: 255 } }}
+          />
 
-            <FormControl error={!!formErrors.type}>
-              <InputLabel id="schema-type-label">Type</InputLabel>
-              <Select
-                labelId="schema-type-label"
-                label="Type"
-                value={createForm.type}
-                onChange={(e) =>
-                  setCreateForm((prev) => ({ ...prev, type: e.target.value }))
-                }
-              >
-                <MenuItem value="structured">structured</MenuItem>
-                <MenuItem value="classification">classification</MenuItem>
-              </Select>
-              {formErrors.type && (
-                <FormHelperText>{formErrors.type}</FormHelperText>
-              )}
-            </FormControl>
-
-            <TextField
-              label="JSON Schema"
-              placeholder='{"type": "object", "properties": {...}}'
-              required
-              multiline
-              minRows={6}
-              maxRows={16}
-              value={createForm.json_schema}
+          <FormControl error={!!formErrors.type}>
+            <InputLabel id="schema-type-label">Type</InputLabel>
+            <Select
+              labelId="schema-type-label"
+              label="Type"
+              value={createForm.type}
               onChange={(e) =>
-                setCreateForm((prev) => ({
-                  ...prev,
-                  json_schema: e.target.value,
-                }))
+                setCreateForm((prev) => ({ ...prev, type: e.target.value }))
               }
-              error={!!formErrors.json_schema}
-              helperText={formErrors.json_schema}
-              slotProps={{
-                htmlInput: {
-                  sx: { fontFamily: "monospace", fontSize: "0.8125rem" },
+            >
+              <MenuItem value="structured">structured</MenuItem>
+              <MenuItem value="classification">classification</MenuItem>
+            </Select>
+            {formErrors.type && (
+              <FormHelperText>{formErrors.type}</FormHelperText>
+            )}
+          </FormControl>
+
+          <TextField
+            label="JSON Schema"
+            placeholder='{"type": "object", "properties": {...}}'
+            required
+            multiline
+            minRows={6}
+            maxRows={16}
+            value={createForm.json_schema}
+            onChange={(e) =>
+              setCreateForm((prev) => ({
+                ...prev,
+                json_schema: e.target.value,
+              }))
+            }
+            error={!!formErrors.json_schema}
+            helperText={formErrors.json_schema}
+            slotProps={{
+              htmlInput: {
+                sx: {
+                  fontFamily: "monospace",
+                  fontSize: "0.8125rem",
+                  backgroundColor: "#0D1117",
+                  borderRadius: 1,
                 },
-              }}
-            />
+              },
+            }}
+          />
 
-            <TextField
-              label="Prompt Template (optional)"
-              placeholder="Override prompt template for this schema..."
-              multiline
-              minRows={3}
-              maxRows={8}
-              value={createForm.prompt_template}
-              onChange={(e) =>
-                setCreateForm((prev) => ({
-                  ...prev,
-                  prompt_template: e.target.value,
-                }))
-              }
-              slotProps={{
-                htmlInput: {
-                  sx: { fontFamily: "monospace", fontSize: "0.8125rem" },
+          <TextField
+            label="Prompt Template (optional)"
+            placeholder="Override prompt template for this schema..."
+            multiline
+            minRows={3}
+            maxRows={8}
+            value={createForm.prompt_template}
+            onChange={(e) =>
+              setCreateForm((prev) => ({
+                ...prev,
+                prompt_template: e.target.value,
+              }))
+            }
+            slotProps={{
+              htmlInput: {
+                sx: {
+                  fontFamily: "monospace",
+                  fontSize: "0.8125rem",
+                  backgroundColor: "#0D1117",
+                  borderRadius: 1,
                 },
-              }}
-            />
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCreateDialogOpen(false)} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button variant="contained" onClick={handleCreateSchema} disabled={submitting}>
-            {submitting ? "Creating..." : "Create"}
-          </Button>
-        </DialogActions>
-      </Dialog>
+              },
+            }}
+          />
+        </Box>
+      </FormDialog>
 
       {/* ── View Schema Dialog ────────────────────────────────────────────── */}
       <Dialog
@@ -487,27 +468,40 @@ export default function SchemasPage() {
         </DialogTitle>
         <DialogContent>
           {viewLoading && (
-            <Typography variant="body2" sx={{ color: "text.secondary", py: 4, textAlign: "center" }}>
+            <Typography
+              variant="body2"
+              sx={{ color: "text.secondary", py: 4, textAlign: "center" }}
+            >
               Loading schema details...
             </Typography>
           )}
           {viewTarget && !viewLoading && (
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+            <Box
+              sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}
+            >
               {/* Metadata row */}
               <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
                 <Box>
-                  <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
+                  <Typography
+                    variant="caption"
+                    sx={{ color: "text.secondary", display: "block" }}
+                  >
                     Type
                   </Typography>
                   <Chip
                     label={viewTarget.type}
                     size="small"
                     variant="outlined"
-                    color={viewTarget.type === "structured" ? "primary" : "secondary"}
+                    color={
+                      viewTarget.type === "structured" ? "primary" : "secondary"
+                    }
                   />
                 </Box>
                 <Box>
-                  <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
+                  <Typography
+                    variant="caption"
+                    sx={{ color: "text.secondary", display: "block" }}
+                  >
                     Status
                   </Typography>
                   <Chip
@@ -517,16 +511,26 @@ export default function SchemasPage() {
                   />
                 </Box>
                 <Box>
-                  <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
+                  <Typography
+                    variant="caption"
+                    sx={{ color: "text.secondary", display: "block" }}
+                  >
                     Created
                   </Typography>
-                  <Typography variant="body2">{formatDate(viewTarget.created_at)}</Typography>
+                  <Typography variant="body2">
+                    {formatDate(viewTarget.created_at)}
+                  </Typography>
                 </Box>
                 <Box>
-                  <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
+                  <Typography
+                    variant="caption"
+                    sx={{ color: "text.secondary", display: "block" }}
+                  >
                     Updated
                   </Typography>
-                  <Typography variant="body2">{formatDate(viewTarget.updated_at)}</Typography>
+                  <Typography variant="body2">
+                    {formatDate(viewTarget.updated_at)}
+                  </Typography>
                 </Box>
               </Box>
 
@@ -608,21 +612,14 @@ export default function SchemasPage() {
         </DialogActions>
       </Dialog>
 
-      {/* ── Delete Confirmation Dialog ─────────────────────────────────────── */}
-      <Dialog
+      {/* ── Delete Confirmation Dialog ────────────────────────────────────── */}
+      <ConfirmDialog
         open={deleteDialogOpen}
-        onClose={() => {
-          if (!submitting) {
-            setDeleteDialogOpen(false);
-            setDeleteTarget(null);
-          }
-        }}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle>Delete Schema</DialogTitle>
-        <DialogContent>
-          <Typography variant="body1">
+        onClose={handleCloseDeleteDialog}
+        onConfirm={handleDeleteSchema}
+        title="Delete Schema"
+        message={
+          <Typography variant="body2">
             Are you sure you want to delete schema{" "}
             <Typography component="strong" sx={{ fontWeight: 600 }}>
               {deleteTarget?.name}
@@ -630,44 +627,11 @@ export default function SchemasPage() {
             ? This will mark it as inactive. Existing extractions referencing
             this schema are preserved.
           </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button
-            onClick={() => {
-              setDeleteDialogOpen(false);
-              setDeleteTarget(null);
-            }}
-            disabled={submitting}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            color="error"
-            onClick={handleDeleteSchema}
-            disabled={submitting}
-          >
-            {submitting ? "Deleting..." : "Delete"}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* ── Snackbar ───────────────────────────────────────────────────────── */}
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      >
-        <Alert
-          onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-          severity={snackbar.severity}
-          variant="filled"
-          sx={{ width: "100%" }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
+        }
+        confirmLabel="Delete"
+        confirmColor="error"
+        submitting={submitting}
+      />
     </Box>
   );
 }

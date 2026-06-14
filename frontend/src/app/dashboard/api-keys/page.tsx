@@ -4,28 +4,34 @@ import { useState, useCallback, useEffect } from "react";
 import {
   Box,
   Button,
-  Card,
   Chip,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
   TextField,
   Typography,
   IconButton,
   Tooltip,
-  Snackbar,
-  Alert,
-  CircularProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from "@mui/material";
-import { DataGrid, type GridColDef } from "@mui/x-data-grid";
+import type { GridColDef } from "@mui/x-data-grid";
 import {
   Add as AddIcon,
   ContentCopy as ContentCopyIcon,
   Block as BlockIcon,
 } from "@mui/icons-material";
-import { listApiKeys, createApiKey, revokeApiKey, ApiError } from "@/lib/api/client";
+import {
+  listApiKeys,
+  createApiKey,
+  revokeApiKey,
+  ApiError,
+} from "@/lib/api/client";
 import { useAuth } from "@/lib/auth/useAuth";
+import PageHeader from "@/components/shared/PageHeader";
+import DataTable from "@/components/shared/DataTable";
+import FormDialog from "@/components/shared/FormDialog";
+import ConfirmDialog from "@/components/shared/ConfirmDialog";
+import { useNotification } from "@/components/shared/NotificationProvider";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -48,12 +54,6 @@ interface CreatedKeyInfo {
   scopes: string[];
 }
 
-interface SnackbarState {
-  open: boolean;
-  message: string;
-  severity: "success" | "error";
-}
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function formatDate(raw: string | null): string {
@@ -73,6 +73,7 @@ function formatDate(raw: string | null): string {
 
 export default function ApiKeysPage() {
   useAuth();
+  const { showNotification } = useNotification();
 
   // ── Data state ──────────────────────────────────────────────────────────────
 
@@ -92,21 +93,6 @@ export default function ApiKeysPage() {
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
 
-  // ── Snackbar state ──────────────────────────────────────────────────────────
-
-  const [snackbar, setSnackbar] = useState<SnackbarState>({
-    open: false,
-    message: "",
-    severity: "success",
-  });
-
-  const showSnackbar = useCallback(
-    (message: string, severity: "success" | "error") => {
-      setSnackbar({ open: true, message, severity });
-    },
-    [],
-  );
-
   // ── Data fetching ───────────────────────────────────────────────────────────
 
   const fetchKeys = useCallback(async () => {
@@ -119,11 +105,11 @@ export default function ApiKeysPage() {
         err instanceof ApiError
           ? err.detail ?? "Failed to load API keys"
           : "An unexpected error occurred";
-      showSnackbar(message, "error");
+      showNotification(message, "error");
     } finally {
       setLoading(false);
     }
-  }, [showSnackbar]);
+  }, [showNotification]);
 
   useEffect(() => {
     fetchKeys();
@@ -158,7 +144,7 @@ export default function ApiKeysPage() {
         err instanceof ApiError
           ? err.detail ?? "Failed to create API key"
           : "An unexpected error occurred";
-      showSnackbar(message, "error");
+      showNotification(message, "error");
     } finally {
       setSubmitting(false);
     }
@@ -170,12 +156,12 @@ export default function ApiKeysPage() {
     async (rawKey: string) => {
       try {
         await navigator.clipboard.writeText(rawKey);
-        showSnackbar("API key copied to clipboard", "success");
+        showNotification("API key copied to clipboard", "success");
       } catch {
-        showSnackbar("Failed to copy key", "error");
+        showNotification("Failed to copy key", "error");
       }
     },
-    [showSnackbar],
+    [showNotification],
   );
 
   // ── Revoke key ──────────────────────────────────────────────────────────────
@@ -191,7 +177,7 @@ export default function ApiKeysPage() {
     setSubmitting(true);
     try {
       await revokeApiKey(revokeTarget.id);
-      showSnackbar("API key revoked successfully", "success");
+      showNotification("API key revoked successfully", "success");
       setRevokeDialogOpen(false);
       setRevokeTarget(null);
       await fetchKeys();
@@ -200,13 +186,13 @@ export default function ApiKeysPage() {
         err instanceof ApiError
           ? err.detail ?? "Failed to revoke API key"
           : "An unexpected error occurred";
-      showSnackbar(message, "error");
+      showNotification(message, "error");
     } finally {
       setSubmitting(false);
     }
   };
 
-  // ── DataGrid columns ────────────────────────────────────────────────────────
+  // ── DataTable columns ───────────────────────────────────────────────────────
 
   const columns: GridColDef<ApiKeyRow>[] = [
     {
@@ -220,7 +206,11 @@ export default function ApiKeysPage() {
       headerName: "Prefix",
       width: 140,
       renderCell: ({ value }) => (
-        <Chip label={value} size="small" sx={{ fontFamily: "monospace", letterSpacing: 0.5 }} />
+        <Chip
+          label={value}
+          size="small"
+          sx={{ fontFamily: "monospace", letterSpacing: 0.5 }}
+        />
       ),
     },
     {
@@ -233,9 +223,18 @@ export default function ApiKeysPage() {
         <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
           {Array.isArray(value) && value.length > 0
             ? value.map((scope) => (
-                <Chip key={scope} label={scope} size="small" variant="outlined" />
+                <Chip
+                  key={scope}
+                  label={scope}
+                  size="small"
+                  variant="outlined"
+                />
               ))
-            : <Typography variant="body2" sx={{ color: "text.secondary" }}>—</Typography>}
+            : (
+              <Typography variant="body2" sx={{ color: "text.secondary" }}>
+                —
+              </Typography>
+            )}
         </Box>
       ),
     },
@@ -279,188 +278,158 @@ export default function ApiKeysPage() {
 
   return (
     <Box>
-      {/* Header row */}
-      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 3 }}>
-        <Typography variant="h5" sx={{ fontWeight: 600 }}>
-          API Keys
-        </Typography>
-        <Button variant="contained" startIcon={<AddIcon />} onClick={handleOpenCreateDialog}>
-          Create Key
-        </Button>
-      </Box>
+      <PageHeader
+        title="API Keys"
+        action={
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={handleOpenCreateDialog}
+          >
+            Create Key
+          </Button>
+        }
+      />
 
       {/* Keys table */}
-      <Card>
-        <DataGrid<ApiKeyRow>
-          rows={keys}
-          columns={columns}
-          loading={loading}
-          getRowId={(row) => row.id}
-          getRowHeight={() => 52}
-          disableRowSelectionOnClick
-          hideFooter
-          autoHeight
-          sx={{
-            "& .MuiDataGrid-cell:focus": { outline: "none" },
-          }}
-        />
-      </Card>
+      <DataTable<ApiKeyRow>
+        rows={keys}
+        columns={columns}
+        loading={loading}
+        getRowId={(row) => row.id}
+        emptyTitle="No API keys found"
+        emptyDescription="Create your first API key to authenticate requests."
+        emptyAction={{ label: "Create Key", onClick: handleOpenCreateDialog }}
+      />
 
-      {/* ── Create Key Dialog ──────────────────────────────────────────────── */}
-      <Dialog
+      {/* ── Create Key Dialog ─────────────────────────────────────────────── */}
+      <FormDialog
         open={createDialogOpen}
-        onClose={() => {
-          if (!submitting) setCreateDialogOpen(false);
-        }}
-        maxWidth="sm"
-        fullWidth
+        onClose={() => setCreateDialogOpen(false)}
+        title="Create API Key"
+        onSubmit={handleCreateKey}
+        submitting={submitting}
+        submitLabel="Create"
       >
-        <DialogTitle>Create API Key</DialogTitle>
-        <DialogContent>
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
-            <TextField
-              label="Key Name"
-              placeholder="e.g. Production CI/CD"
-              required
-              value={keyName}
-              onChange={(e) => {
-                setKeyName(e.target.value);
-                if (formError) setFormError("");
-              }}
-              error={!!formError}
-              helperText={formError}
-              slotProps={{ htmlInput: { maxLength: 255 } }}
-            />
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setCreateDialogOpen(false)} disabled={submitting}>
-            Cancel
-          </Button>
-          <Button variant="contained" onClick={handleCreateKey} disabled={submitting}>
-            {submitting ? "Creating..." : "Create"}
-          </Button>
-        </DialogActions>
-      </Dialog>
+        <Box sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
+          <TextField
+            label="Key Name"
+            placeholder="e.g. Production CI/CD"
+            required
+            value={keyName}
+            onChange={(e) => {
+              setKeyName(e.target.value);
+              if (formError) setFormError("");
+            }}
+            error={!!formError}
+            helperText={formError}
+            slotProps={{ htmlInput: { maxLength: 255 } }}
+          />
+        </Box>
+      </FormDialog>
 
-      {/* ── Key Created Dialog (raw key shown once) ────────────────────────── */}
+      {/* ── Key Created Dialog (raw key shown once) ───────────────────────── */}
       <Dialog
         open={createdKey !== null}
         onClose={() => setCreatedKey(null)}
         maxWidth="sm"
         fullWidth
       >
-        <DialogTitle>API Key Created</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 600, pb: 1 }}>
+          API Key Created
+        </DialogTitle>
         <DialogContent>
           <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <Typography variant="body2" sx={{ color: "warning.main", fontWeight: 600 }}>
-              {createdKey?.message ?? "Save this API key — it will not be shown again."}
+            <Typography
+              variant="body2"
+              sx={{ color: "warning.main", fontWeight: 600 }}
+            >
+              {createdKey?.message ??
+                "Save this API key — it will not be shown again."}
             </Typography>
+
+            {/* Dark terminal-style box for the raw key */}
             <Box
               sx={{
                 position: "relative",
-                backgroundColor: "grey.900",
-                borderRadius: 1,
-                p: 2,
-                pr: 6,
+                bgcolor: "#0d1117",
+                border: "1px solid",
+                borderColor: "#30363d",
+                borderRadius: 2,
+                p: 2.5,
+                pr: 7,
+                fontFamily: "monospace",
               }}
             >
               <Typography
                 variant="body2"
                 sx={{
-                  fontFamily: "monospace",
+                  fontFamily: "inherit",
                   fontSize: "0.8125rem",
+                  lineHeight: 1.6,
                   wordBreak: "break-all",
-                  color: "common.white",
+                  color: "#e6edf3",
+                  letterSpacing: 0.3,
                 }}
               >
                 {createdKey?.raw_key}
               </Typography>
               <IconButton
                 size="small"
-                onClick={() => createdKey && handleCopyRawKey(createdKey.raw_key)}
+                onClick={() =>
+                  createdKey && handleCopyRawKey(createdKey.raw_key)
+                }
                 sx={{
                   position: "absolute",
                   top: 8,
                   right: 8,
-                  color: "grey.400",
-                  "&:hover": { color: "common.white" },
+                  color: "#8b949e",
+                  bgcolor: "rgba(255,255,255,0.05)",
+                  "&:hover": {
+                    color: "#e6edf3",
+                    bgcolor: "rgba(255,255,255,0.1)",
+                  },
                 }}
               >
                 <ContentCopyIcon fontSize="small" />
               </IconButton>
             </Box>
+
             <Typography variant="caption" sx={{ color: "text.secondary" }}>
-              You can use this key to authenticate API requests. Store it securely.
+              You can use this key to authenticate API requests. Store it
+              securely.
             </Typography>
           </Box>
         </DialogContent>
-        <DialogActions>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
           <Button variant="contained" onClick={() => setCreatedKey(null)}>
             Done
           </Button>
         </DialogActions>
       </Dialog>
 
-      {/* ── Revoke Confirmation Dialog ─────────────────────────────────────── */}
-      <Dialog
+      {/* ── Revoke Confirmation Dialog ────────────────────────────────────── */}
+      <ConfirmDialog
         open={revokeDialogOpen}
         onClose={() => {
-          if (!submitting) {
-            setRevokeDialogOpen(false);
-            setRevokeTarget(null);
-          }
+          setRevokeDialogOpen(false);
+          setRevokeTarget(null);
         }}
-        maxWidth="xs"
-        fullWidth
-      >
-        <DialogTitle>Revoke API Key</DialogTitle>
-        <DialogContent>
-          <Typography variant="body1">
+        onConfirm={handleRevokeKey}
+        title="Revoke API Key"
+        message={
+          <>
             Are you sure you want to revoke key{" "}
             <Typography component="strong" sx={{ fontWeight: 600 }}>
               {revokeTarget?.name}
             </Typography>
             ? Any services using this key will immediately lose access.
-          </Typography>
-        </DialogContent>
-        <DialogActions>
-          <Button
-            onClick={() => {
-              setRevokeDialogOpen(false);
-              setRevokeTarget(null);
-            }}
-            disabled={submitting}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="contained"
-            color="error"
-            onClick={handleRevokeKey}
-            disabled={submitting}
-          >
-            {submitting ? "Revoking..." : "Revoke"}
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      {/* ── Snackbar ───────────────────────────────────────────────────────── */}
-      <Snackbar
-        open={snackbar.open}
-        autoHideDuration={4000}
-        onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
-      >
-        <Alert
-          onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
-          severity={snackbar.severity}
-          variant="filled"
-          sx={{ width: "100%" }}
-        >
-          {snackbar.message}
-        </Alert>
-      </Snackbar>
+          </>
+        }
+        confirmLabel="Revoke"
+        confirmColor="error"
+        submitting={submitting}
+      />
     </Box>
   );
 }

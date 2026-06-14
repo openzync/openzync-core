@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Box,
@@ -19,6 +19,7 @@ import {
   Divider,
   useMediaQuery,
   useTheme,
+  Tooltip,
 } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
 import PeopleIcon from "@mui/icons-material/People";
@@ -32,10 +33,18 @@ import AccountTreeIcon from "@mui/icons-material/AccountTree";
 import SchemaIcon from "@mui/icons-material/Schema";
 import ChatIcon from "@mui/icons-material/Chat";
 import LogoutIcon from "@mui/icons-material/Logout";
+import SearchIcon from "@mui/icons-material/Search";
+import DarkModeIcon from "@mui/icons-material/DarkMode";
+import LightModeIcon from "@mui/icons-material/LightMode";
+import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import { useAuth } from "@/lib/auth/useAuth";
 import { AuthGuard } from "@/lib/auth/AuthGuard";
+import { useThemeMode } from "@/app/MuiProvider";
+import SearchCommandPalette from "@/components/shared/SearchCommandPalette";
+import AnimatedPage from "@/components/shared/AnimatedPage";
 
 const DRAWER_WIDTH = 240;
+const DRAWER_COLLAPSED_WIDTH = 64;
 
 const NAV_ITEMS = [
   { label: "Overview", path: "/dashboard", icon: <DashboardIcon /> },
@@ -56,12 +65,30 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const { user, logout } = useAuth();
+  const { mode, toggleTheme } = useThemeMode();
   const pathname = usePathname();
   const router = useRouter();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [searchOpen, setSearchOpen] = useState(false);
+
+  // Global keyboard shortcut for search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchOpen((prev) => !prev);
+      }
+      if (e.key === "Escape") {
+        setSearchOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   const initials = user?.name
     ? user.name
@@ -72,63 +99,186 @@ export default function DashboardLayout({
         .slice(0, 2)
     : user?.email?.[0]?.toUpperCase() ?? "?";
 
+  const handleNavigate = useCallback(
+    (path: string) => {
+      router.push(path);
+      setMobileOpen(false);
+    },
+    [router],
+  );
+
+  const isActive = (path: string) =>
+    path === "/dashboard"
+      ? pathname === "/dashboard"
+      : pathname.startsWith(path);
+
   const drawerContent = (
-    <Box>
-      <Box sx={{ p: 2.5, pb: 1.5 }}>
-        <Typography variant="h6" sx={{ fontWeight: 600, color: "primary.dark" }}>
-          OpenZep
-        </Typography>
-        <Typography variant="caption" color="text.secondary">
-          Memory Infrastructure
-        </Typography>
-      </Box>
-      <Divider />
-      <List sx={{ px: 1, pt: 1 }}>
-        {NAV_ITEMS.map((item) => {
-          const isActive =
-            item.path === "/dashboard"
-              ? pathname === "/dashboard"
-              : pathname.startsWith(item.path);
-          return (
-            <ListItemButton
-              key={item.path}
-              selected={isActive}
-              onClick={() => {
-                router.push(item.path);
-                setMobileOpen(false);
+    <Box
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        transition: "width 0.3s ease",
+      }}
+    >
+      {/* Logo area */}
+      <Box
+        sx={{
+          px: sidebarOpen ? 2.5 : 1,
+          py: 2,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: sidebarOpen ? "space-between" : "center",
+          minHeight: 64,
+        }}
+      >
+        {sidebarOpen ? (
+          <Box>
+            <Typography
+              variant="h6"
+              sx={{
+                fontWeight: 700,
+                color: "primary.main",
+                letterSpacing: "-0.02em",
+                lineHeight: 1.2,
               }}
-              sx={{ borderRadius: 1, mb: 0.5 }}
             >
-              <ListItemIcon
+              OpenZep
+            </Typography>
+            <Typography
+              variant="caption"
+              sx={{ color: "text.secondary", display: "block", fontSize: "0.65rem" }}
+            >
+              Memory Infrastructure
+            </Typography>
+          </Box>
+        ) : (
+          <Typography
+            variant="h6"
+            sx={{ fontWeight: 700, color: "primary.main" }}
+          >
+            O
+          </Typography>
+        )}
+        {!isMobile && sidebarOpen && (
+          <IconButton size="small" onClick={() => setSidebarOpen(false)}>
+            <ChevronLeftIcon fontSize="small" />
+          </IconButton>
+        )}
+        {!isMobile && !sidebarOpen && (
+          <IconButton size="small" onClick={() => setSidebarOpen(true)}>
+            <MenuIcon fontSize="small" />
+          </IconButton>
+        )}
+      </Box>
+
+      <Divider />
+
+      {/* Navigation */}
+      <List sx={{ px: 1, pt: 1, flex: 1, overflow: "auto" }}>
+        {NAV_ITEMS.map((item) => {
+          const active = isActive(item.path);
+          return (
+            <Tooltip
+              key={item.path}
+              title={!sidebarOpen ? item.label : ""}
+              placement="right"
+              arrow
+            >
+              <ListItemButton
+                selected={active}
+                onClick={() => handleNavigate(item.path)}
                 sx={{
-                  minWidth: 40,
-                  color: isActive ? "primary.main" : "text.secondary",
-                }}
-              >
-                {item.icon}
-              </ListItemIcon>
-              <ListItemText
-                primary={item.label}
-                slotProps={{
-                  primary: {
-                    sx: {
-                      fontSize: "0.9rem",
-                      fontWeight: isActive ? 500 : 400,
-                      color: isActive ? "primary.main" : "text.primary",
-                    },
+                  borderRadius: 1,
+                  mb: 0.25,
+                  minHeight: 44,
+                  justifyContent: sidebarOpen ? "initial" : "center",
+                  px: sidebarOpen ? 1.5 : 1,
+                  "&.Mui-selected": {
+                    bgcolor: "rgba(20,72,140,0.15)",
+                    borderLeft: "3px solid",
+                    borderColor: "primary.main",
+                    "&:hover": { bgcolor: "rgba(20,72,140,0.2)" },
                   },
                 }}
-              />
-            </ListItemButton>
+              >
+                <ListItemIcon
+                  sx={{
+                    minWidth: sidebarOpen ? 36 : 0,
+                    justifyContent: "center",
+                    color: active ? "primary.main" : "text.secondary",
+                  }}
+                >
+                  {item.icon}
+                </ListItemIcon>
+                {sidebarOpen && (
+                  <ListItemText
+                    primary={item.label}
+                    slotProps={{
+                      primary: {
+                        sx: {
+                          fontSize: "0.875rem",
+                          fontWeight: active ? 600 : 400,
+                          color: active ? "primary.main" : "text.primary",
+                        },
+                        noWrap: true,
+                      },
+                    }}
+                  />
+                )}
+              </ListItemButton>
+            </Tooltip>
           );
         })}
       </List>
+
+      {/* Bottom section */}
+      <Box sx={{ px: sidebarOpen ? 2 : 1, py: 1.5 }}>
+        <Divider sx={{ mb: 1 }} />
+        <ListItemButton
+          onClick={toggleTheme}
+          sx={{
+            borderRadius: 1,
+            justifyContent: sidebarOpen ? "initial" : "center",
+            minHeight: 40,
+            px: sidebarOpen ? 1.5 : 1,
+          }}
+        >
+          <ListItemIcon
+            sx={{
+              minWidth: sidebarOpen ? 36 : 0,
+              justifyContent: "center",
+              color: "text.secondary",
+            }}
+          >
+            {mode === "dark" ? (
+              <LightModeIcon fontSize="small" />
+            ) : (
+              <DarkModeIcon fontSize="small" />
+            )}
+          </ListItemIcon>
+          {sidebarOpen && (
+            <ListItemText
+              primary={mode === "dark" ? "Light Mode" : "Dark Mode"}
+              slotProps={{
+                primary: {
+                  sx: { fontSize: "0.8125rem", color: "text.secondary" },
+                },
+              }}
+            />
+          )}
+        </ListItemButton>
+      </Box>
     </Box>
   );
 
+  const currentWidth = sidebarOpen ? DRAWER_WIDTH : DRAWER_COLLAPSED_WIDTH;
+
   return (
     <AuthGuard>
+      <SearchCommandPalette open={searchOpen} onClose={() => setSearchOpen(false)} />
       <Box sx={{ display: "flex", minHeight: "100vh" }}>
+        {/* ── Mobile drawer ─────────────────────────────────────────────── */}
         {isMobile && (
           <Drawer
             variant="temporary"
@@ -140,35 +290,77 @@ export default function DashboardLayout({
           </Drawer>
         )}
 
+        {/* ── Desktop sidebar ──────────────────────────────────────────── */}
         {!isMobile && (
           <Drawer
             variant="permanent"
             sx={{
-              width: DRAWER_WIDTH,
+              width: currentWidth,
               flexShrink: 0,
-              "& .MuiDrawer-paper": { width: DRAWER_WIDTH },
+              transition: "width 0.3s ease",
+              whiteSpace: "nowrap",
+              "& .MuiDrawer-paper": {
+                width: currentWidth,
+                transition: "width 0.3s ease",
+                overflowX: "hidden",
+              },
             }}
           >
             {drawerContent}
           </Drawer>
         )}
 
-        <Box sx={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-          <AppBar position="sticky" sx={{ ml: isMobile ? 0 : `${DRAWER_WIDTH}px` }}>
+        {/* ── Main content area ────────────────────────────────────────── */}
+        <Box
+          sx={{
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
+            minWidth: 0,
+          }}
+        >
+          <AppBar
+            position="sticky"
+            sx={{
+              ml: isMobile ? 0 : `${currentWidth}px`,
+              transition: "margin-left 0.3s ease",
+            }}
+          >
             <Toolbar>
               {isMobile && (
-                <IconButton edge="start" onClick={() => setMobileOpen(true)} sx={{ mr: 1 }}>
+                <IconButton
+                  edge="start"
+                  onClick={() => setMobileOpen(true)}
+                  sx={{ mr: 1 }}
+                >
                   <MenuIcon />
                 </IconButton>
               )}
-              <Typography variant="h6" sx={{ flex: 1, fontWeight: 500 }}>
-                {NAV_ITEMS.find((item) =>
-                  item.path === "/dashboard"
-                    ? pathname === "/dashboard"
-                    : pathname.startsWith(item.path),
-                )?.label ?? "Dashboard"}
+
+              {/* Page title from current route */}
+              <Typography variant="h6" sx={{ flex: 1, fontWeight: 600 }}>
+                {NAV_ITEMS.find((item) => isActive(item.path))?.label ?? "Dashboard"}
               </Typography>
 
+              {/* Search */}
+              <Tooltip title="Search (Ctrl+K)" arrow>
+                <IconButton onClick={() => setSearchOpen(true)} sx={{ mr: 0.5 }}>
+                  <SearchIcon />
+                </IconButton>
+              </Tooltip>
+
+              {/* Theme toggle */}
+              <Tooltip title={mode === "dark" ? "Light mode" : "Dark mode"} arrow>
+                <IconButton onClick={toggleTheme} sx={{ mr: 0.5 }}>
+                  {mode === "dark" ? (
+                    <LightModeIcon fontSize="small" />
+                  ) : (
+                    <DarkModeIcon fontSize="small" />
+                  )}
+                </IconButton>
+              </Tooltip>
+
+              {/* Avatar */}
               <IconButton onClick={(e) => setAnchorEl(e.currentTarget)}>
                 <Avatar
                   sx={{
@@ -182,14 +374,16 @@ export default function DashboardLayout({
                   {initials}
                 </Avatar>
               </IconButton>
+
               <Menu
                 anchorEl={anchorEl}
                 open={Boolean(anchorEl)}
                 onClose={() => setAnchorEl(null)}
                 transformOrigin={{ horizontal: "right", vertical: "top" }}
                 anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
+                slotProps={{ paper: { sx: { minWidth: 200, mt: 0.5 } } }}
               >
-                <MenuItem disabled>
+                <MenuItem disabled sx={{ opacity: 0.7 }}>
                   <Typography variant="body2" color="text.secondary">
                     {user?.email}
                   </Typography>
@@ -206,6 +400,7 @@ export default function DashboardLayout({
                   </ListItemIcon>
                   Settings
                 </MenuItem>
+                <Divider />
                 <MenuItem
                   onClick={() => {
                     setAnchorEl(null);
@@ -222,8 +417,16 @@ export default function DashboardLayout({
             </Toolbar>
           </AppBar>
 
-          <Box sx={{ flex: 1, p: 3, bgcolor: "background.default" }}>
-            {children}
+          {/* ── Page content ─────────────────────────────────────────────── */}
+          <Box
+            sx={{
+              flex: 1,
+              p: 3,
+              bgcolor: "background.default",
+              overflow: "auto",
+            }}
+          >
+            <AnimatedPage>{children}</AnimatedPage>
           </Box>
         </Box>
       </Box>

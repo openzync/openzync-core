@@ -6,7 +6,6 @@ import {
   Card,
   CardContent,
   Typography,
-  Skeleton,
   Chip,
   TextField,
   MenuItem,
@@ -22,9 +21,23 @@ import {
   Tooltip,
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
-import { listAuditLogs, type AuditLogEntry, type AuditLogListResponse } from "@/lib/api/client";
+import PageHeader from "@/components/shared/PageHeader";
+import LoadingSkeleton from "@/components/shared/LoadingSkeleton";
+import EmptyState from "@/components/shared/EmptyState";
+import { useNotification } from "@/components/shared/NotificationProvider";
+import {
+  listAuditLogs,
+  type AuditLogEntry,
+  type AuditLogListResponse,
+} from "@/lib/api/client";
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const REFRESH_INTERVAL_MS = 15_000;
+
+const ACTOR_TYPES = ["", "user", "api_key", "system"];
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function timeAgo(date: Date): string {
   const seconds = Math.floor((Date.now() - date.getTime()) / 1000);
@@ -37,16 +50,20 @@ function timeAgo(date: Date): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-const ACTOR_TYPES = ["", "user", "api_key", "system"];
-
-function statusCodeColor(code: number | null): "success" | "warning" | "error" | "default" {
+function statusCodeColor(
+  code: number | null,
+): "success" | "warning" | "error" | "default" {
   if (code === null) return "default";
   if (code < 300) return "success";
   if (code < 500) return "warning";
   return "error";
 }
 
+// ─── Page Component ───────────────────────────────────────────────────────────
+
 export default function AuditLogPage() {
+  const { showNotification } = useNotification();
+
   const [data, setData] = useState<AuditLogListResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -71,16 +88,18 @@ export default function AuditLogPage() {
       setData(result);
       setLastUpdated(new Date());
     } catch {
-      // Silently fail
+      showNotification("Failed to load audit logs", "error");
     } finally {
       setLoading(false);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, rowsPerPage, filterAction, filterActorType, filterStatusCode]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
+  // Auto-refresh
   useEffect(() => {
     intervalRef.current = setInterval(fetchData, REFRESH_INTERVAL_MS);
     return () => {
@@ -92,36 +111,33 @@ export default function AuditLogPage() {
     setPage(newPage);
   };
 
-  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleChangeRowsPerPage = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
     setRowsPerPage(parseInt(event.target.value, 10));
     setPage(0);
   };
 
   return (
     <Box>
-      {/* ── Header ──────────────────────────────────────────────────────── */}
-      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", mb: 3 }}>
-        <Box>
-          <Typography variant="h4" sx={{ fontWeight: 600 }}>
-            Audit Log
-          </Typography>
-          <Typography variant="subtitle1" color="text.secondary">
-            Immutable record of all system actions
-          </Typography>
-        </Box>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          {lastUpdated && !loading && (
-            <Typography variant="caption" color="text.secondary">
-              {timeAgo(lastUpdated)}
-            </Typography>
-          )}
-          <Tooltip title="Refresh">
-            <IconButton size="small" onClick={fetchData}>
-              <RefreshIcon />
-            </IconButton>
-          </Tooltip>
-        </Box>
-      </Box>
+      <PageHeader
+        title="Audit Log"
+        subtitle="Immutable record of all system actions"
+        action={
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            {lastUpdated && !loading && (
+              <Typography variant="caption" sx={{ color: "text.secondary" }}>
+                {timeAgo(lastUpdated)}
+              </Typography>
+            )}
+            <Tooltip title="Refresh">
+              <IconButton size="small" onClick={fetchData}>
+                <RefreshIcon />
+              </IconButton>
+            </Tooltip>
+          </Box>
+        }
+      />
 
       {/* ── Filters ─────────────────────────────────────────────────────── */}
       <Card sx={{ mb: 3 }}>
@@ -131,7 +147,10 @@ export default function AuditLogPage() {
               label="Action"
               size="small"
               value={filterAction}
-              onChange={(e) => { setFilterAction(e.target.value); setPage(0); }}
+              onChange={(e) => {
+                setFilterAction(e.target.value);
+                setPage(0);
+              }}
               placeholder="e.g. session.create"
               sx={{ minWidth: 200 }}
             />
@@ -140,7 +159,10 @@ export default function AuditLogPage() {
               label="Actor Type"
               size="small"
               value={filterActorType}
-              onChange={(e) => { setFilterActorType(e.target.value); setPage(0); }}
+              onChange={(e) => {
+                setFilterActorType(e.target.value);
+                setPage(0);
+              }}
               sx={{ minWidth: 140 }}
             >
               {ACTOR_TYPES.map((t) => (
@@ -154,7 +176,10 @@ export default function AuditLogPage() {
               label="Status"
               size="small"
               value={filterStatusCode}
-              onChange={(e) => { setFilterStatusCode(e.target.value); setPage(0); }}
+              onChange={(e) => {
+                setFilterStatusCode(e.target.value);
+                setPage(0);
+              }}
               sx={{ minWidth: 120 }}
             >
               <MenuItem value="">All</MenuItem>
@@ -170,20 +195,23 @@ export default function AuditLogPage() {
       <Card>
         <CardContent sx={{ p: 0, "&:last-child": { pb: 0 } }}>
           {loading ? (
-            <Skeleton variant="rectangular" width="100%" height={400} sx={{ borderRadius: 1 }} />
-          ) : !data || data.items.length === 0 ? (
-            <Box sx={{ p: 4, textAlign: "center" }}>
-              <Typography variant="body1" color="text.secondary">
-                No audit log entries found.
-              </Typography>
+            <Box sx={{ p: 0 }}>
+              <LoadingSkeleton variant="table" />
             </Box>
+          ) : !data || data.items.length === 0 ? (
+            <EmptyState
+              title="No audit log entries"
+              description="No audit log entries found matching your filters."
+            />
           ) : (
             <>
               <TableContainer component={Paper} elevation={0}>
                 <Table size="small">
                   <TableHead>
                     <TableRow>
-                      <TableCell sx={{ fontWeight: 600, whiteSpace: "nowrap" }}>Time</TableCell>
+                      <TableCell sx={{ fontWeight: 600, whiteSpace: "nowrap" }}>
+                        Time
+                      </TableCell>
                       <TableCell sx={{ fontWeight: 600 }}>Action</TableCell>
                       <TableCell sx={{ fontWeight: 600 }}>Actor</TableCell>
                       <TableCell sx={{ fontWeight: 600 }}>Type</TableCell>
@@ -202,20 +230,38 @@ export default function AuditLogPage() {
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontFamily: "monospace",
+                              fontSize: "0.8rem",
+                            }}
+                          >
                             {entry.action}
                           </Typography>
                         </TableCell>
                         <TableCell>
-                          <Typography variant="body2" sx={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontFamily: "monospace",
+                              fontSize: "0.8rem",
+                            }}
+                          >
                             {(entry.actor_id ?? "—").slice(0, 12)}
                           </Typography>
                         </TableCell>
                         <TableCell>
                           {entry.actor_type ? (
-                            <Chip label={entry.actor_type} size="small" variant="outlined" />
+                            <Chip
+                              label={entry.actor_type}
+                              size="small"
+                              variant="outlined"
+                            />
                           ) : (
-                            <Typography variant="caption" color="text.disabled">—</Typography>
+                            <Typography variant="caption" color="text.disabled">
+                              —
+                            </Typography>
                           )}
                         </TableCell>
                         <TableCell>
@@ -227,11 +273,15 @@ export default function AuditLogPage() {
                               variant="outlined"
                             />
                           ) : (
-                            <Typography variant="caption" color="text.disabled">—</Typography>
+                            <Typography variant="caption" color="text.disabled">
+                              —
+                            </Typography>
                           )}
                         </TableCell>
                         <TableCell>
-                          <Typography variant="caption">{entry.method ?? "—"}</Typography>
+                          <Typography variant="caption">
+                            {entry.method ?? "—"}
+                          </Typography>
                         </TableCell>
                         <TableCell>
                           <Typography
