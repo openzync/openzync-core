@@ -25,17 +25,18 @@ interface Session {
   id: string;
   user_id: string;
   external_id: string;
-  status: string;
+  is_active: boolean;
   message_count: number;
   fact_count: number;
   created_at: string;
   closed_at?: string;
 }
 
-interface SessionsResponse {
-  items: Session[];
-  cursor?: string;
+interface SessionsApiResponse {
+  data: Session[];
+  next_cursor: string | null;
   has_more: boolean;
+  total: number | null;
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -138,14 +139,15 @@ export default function SessionsPage() {
 
         const res = await fetch(url, { headers });
         if (res.ok) {
-          const data: SessionsResponse = await res.json();
+          const json: SessionsApiResponse = await res.json();
+          const items = json.data ?? [];
           if (isInitial) {
-            setSessions(data.items ?? []);
+            setSessions(items);
           } else {
-            setSessions((prev) => [...prev, ...(data.items ?? [])]);
+            setSessions((prev) => [...prev, ...items]);
           }
-          setCursor(data.cursor ?? null);
-          setHasMore(data.has_more ?? false);
+          setCursor(json.next_cursor ?? null);
+          setHasMore(json.has_more ?? false);
         } else if (isInitial) {
           const err = await res.json().catch(() => ({}));
           setFetchError(err.detail ?? "Failed to load sessions");
@@ -265,8 +267,8 @@ export default function SessionsPage() {
 
   // ── Render helpers ────────────────────────────────────────────────────────
 
-  function renderStatusChip(status: string) {
-    const isActive = status === "active";
+  function renderStatusChip(session: Session) {
+    const isActive = session.is_active;
     return (
       <span
         className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
@@ -442,7 +444,7 @@ export default function SessionsPage() {
 
                       {/* Status chip */}
                       <td className="px-4 py-3">
-                        {renderStatusChip(session.status)}
+                        {renderStatusChip(session)}
                       </td>
 
                       {/* Messages count */}

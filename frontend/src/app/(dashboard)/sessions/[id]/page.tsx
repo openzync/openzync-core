@@ -22,7 +22,7 @@ interface SessionDetail {
   id: string;
   user_id: string;
   external_id: string;
-  status: string;
+  is_active: boolean;
   message_count: number;
   fact_count: number;
   created_at: string;
@@ -99,8 +99,7 @@ function CopyButton({ text }: { text: string }) {
 
 // ─── Status Chip ───────────────────────────────────────────────────────────────
 
-function StatusChip({ status }: { status: string }) {
-  const isActive = status === "active";
+function StatusChip({ isActive }: { isActive: boolean }) {
   return (
     <span
       className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
@@ -286,7 +285,7 @@ export default function SessionDetailPage() {
                   Session overview
                 </p>
               </div>
-              <StatusChip status={session.status} />
+              <StatusChip isActive={session.is_active} />
             </div>
 
             {/* Metadata grid */}

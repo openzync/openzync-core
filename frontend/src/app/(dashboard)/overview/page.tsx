@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Users,
   MessageSquare,
@@ -74,6 +75,7 @@ const STAT_CARDS = [
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function OverviewPage() {
+  const router = useRouter();
   const [stats, setStats] = useState<OrgStats | null>(null);
   const [activities, setActivities] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -140,15 +142,24 @@ export default function OverviewPage() {
         <div className="card-base p-4">
           <h3 className="text-sm font-medium mb-2">Quick Actions</h3>
           <div className="space-y-2">
-            <button className="btn-secondary w-full text-xs justify-start" disabled>
+            <button
+              onClick={() => router.push("/memory")}
+              className="btn-secondary w-full text-xs justify-start"
+            >
               <MessageCircle size={14} className="mr-2" />
               Ingest Memory
             </button>
-            <button className="btn-secondary w-full text-xs justify-start" disabled>
+            <button
+              onClick={() => router.push("/users")}
+              className="btn-secondary w-full text-xs justify-start"
+            >
               <Users size={14} className="mr-2" />
               Create User
             </button>
-            <button className="btn-secondary w-full text-xs justify-start" disabled>
+            <button
+              onClick={() => router.push("/sessions")}
+              className="btn-secondary w-full text-xs justify-start"
+            >
               <MessageSquare size={14} className="mr-2" />
               New Session
             </button>
@@ -187,12 +198,23 @@ export default function OverviewPage() {
         </div>
       </div>
 
-      {/* Usage overview placeholder */}
+      {/* Usage overview */}
       <div className="card-base p-4">
-        <h3 className="text-sm font-medium mb-2">Daily Usage (7 days)</h3>
-        <div className="h-48 flex items-center justify-center text-surface-600 text-sm">
-          Chart coming soon with tremor
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium">Daily Usage (7 days)</h3>
+          <button onClick={() => router.push("/analytics")} className="text-xs text-accent-300 hover:text-accent-200">
+            View full analytics →
+          </button>
         </div>
+        {loading ? (
+          <div className="h-12 rounded bg-surface-800 animate-pulse" />
+        ) : (
+          <div className="text-sm text-surface-400">
+            <span className="text-[#F2F2F2] font-medium">{stats?.total_messages?.toLocaleString() ?? 0}</span> total messages ·{" "}
+            <span className="text-[#F2F2F2] font-medium">{stats?.total_sessions?.toLocaleString() ?? 0}</span> sessions ·{" "}
+            <span className="text-[#F2F2F2] font-medium">{stats?.total_episodes?.toLocaleString() ?? 0}</span> episodes
+          </div>
+        )}
       </div>
     </div>
   );
