@@ -207,8 +207,35 @@ export default function DashboardLayout({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [currentUserLabel, setCurrentUserLabel] = useState("User");
 
-  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    setMounted(true);
+    // Fetch the current user's email from the API
+    const token = sessionStorage.getItem("mg_access_token");
+    if (!token) return;
+    try {
+      const payload = JSON.parse(atob(token.split(".")[1]));
+      const userId = payload.sub;
+      const orgId = payload.org_id;
+      if (userId && orgId) {
+        fetch(`http://localhost:8000/v1/users/${userId}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((user) => {
+            if (user?.email) setCurrentUserLabel(user.email);
+            else setCurrentUserLabel(user?.name || userId.slice(0, 8));
+          })
+          .catch(() => setCurrentUserLabel(userId.slice(0, 8)));
+      }
+    } catch {
+      setCurrentUserLabel("User");
+    }
+  }, []);
 
   // Get page title from nav sections
   const pageTitle = (() => {
@@ -309,7 +336,7 @@ export default function DashboardLayout({
                 <div className="fixed inset-0 z-10" onClick={() => setUserMenuOpen(false)} />
                 <div className="absolute right-0 top-full mt-1 z-20 w-48 rounded-lg border border-surface-800 bg-surface-900 p-1 shadow-lg shadow-black/30 animate-slide-up">
                   <div className="px-2 py-1.5 text-sm text-surface-400 border-b border-surface-800 mb-1">
-                    admin@openzep.dev
+                    {currentUserLabel}
                   </div>
                   <button className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-surface-200 hover:bg-surface-800">
                     <UserIcon size={14} />
@@ -326,7 +353,15 @@ export default function DashboardLayout({
                     Settings
                   </button>
                   <hr className="my-1 border-surface-800" />
-                  <button className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-error hover:bg-surface-800">
+                  <button
+                    onClick={() => {
+                      setUserMenuOpen(false);
+                      sessionStorage.removeItem("mg_access_token");
+                      sessionStorage.removeItem("mg_refresh_token");
+                      router.push("/login");
+                    }}
+                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-error hover:bg-surface-800"
+                  >
                     <LogOut size={14} />
                     Sign Out
                   </button>
