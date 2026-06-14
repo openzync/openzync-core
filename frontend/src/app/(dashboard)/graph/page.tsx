@@ -149,6 +149,58 @@ export default function GraphExplorerPage() {
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [userName, setUserName] = useState<string>("");
 
+  // ── Rich node detail (fetched from API on click) ────────────────────────────
+  const userIdRef = useRef<string>("");
+  const [nodeDetail, setNodeDetail] = useState<{
+    node: GraphNode & { metadata?: Record<string, unknown> };
+    edges: GraphEdge[];
+    loading: boolean;
+  } | null>(null);
+
+  // Fetch full node detail + all edges when a node is selected
+  useEffect(() => {
+    if (!selectedNode || !userIdRef.current) {
+      setNodeDetail(null);
+      return;
+    }
+
+    let cancelled = false;
+    setNodeDetail((prev) => (prev ? { ...prev, loading: true } : null));
+
+    (async () => {
+      try {
+        const res = await fetch(
+          `${API_BASE}/v1/users/${userIdRef.current}/graph/nodes/${selectedNode.id}`,
+          { headers: authHeaders() },
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        const detail = json.data;
+        if (!cancelled) {
+          setNodeDetail({
+            node: detail.node ?? selectedNode,
+            edges: detail.edges ?? [],
+            loading: false,
+          });
+        }
+      } catch {
+        if (!cancelled) {
+          // Fallback: use local data
+          const localEdges = graphData?.links.filter(
+            (e) => e.source_id === selectedNode.id || e.target_id === selectedNode.id,
+          ) ?? [];
+          setNodeDetail({
+            node: selectedNode,
+            edges: localEdges,
+            loading: false,
+          });
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [selectedNode, graphData]);
+
   // ── D3 refs ───────────────────────────────────────────────────────────────
   const containerRef = useRef<HTMLDivElement>(null);
   const simulationRef = useRef<d3.Simulation<D3Node, D3Link> | null>(null);
@@ -181,6 +233,24 @@ export default function GraphExplorerPage() {
     }
   }, [filteredData, selectedNode]);
 
+  // ── Derived: connected edges & neighbors for selected node ─────────────────
+  const connectedEdges = useMemo<GraphEdge[]>(() => {
+    if (!selectedNode || !graphData) return [];
+    return graphData.links.filter(
+      (e) => e.source_id === selectedNode.id || e.target_id === selectedNode.id,
+    );
+  }, [selectedNode, graphData]);
+
+  const connectedNodes = useMemo<GraphNode[]>(() => {
+    if (!selectedNode || !graphData) return [];
+    const neighborIds = new Set<string>();
+    for (const e of connectedEdges) {
+      if (e.source_id === selectedNode.id) neighborIds.add(e.target_id);
+      if (e.target_id === selectedNode.id) neighborIds.add(e.source_id);
+    }
+    return graphData.nodes.filter((n) => neighborIds.has(n.id));
+  }, [selectedNode, graphData, connectedEdges]);
+
   // ╔══════════════════════════════════════════════════════════════════════════╗
   // ║ Data Loading                                                            ║
   // ╚══════════════════════════════════════════════════════════════════════════╝
@@ -205,6 +275,7 @@ export default function GraphExplorerPage() {
         return;
       }
       setUserName(user.name ?? user.id);
+      userIdRef.current = user.id;
 
       // Step 2: fetch nodes for the user
       const nodesRes = await fetch(
@@ -404,14 +475,20 @@ export default function GraphExplorerPage() {
       .text((d) => (d.name.length > 20 ? `${d.name.slice(0, 18)}…` : d.name));
 
     // ── Drag behaviour ───────────────────────────────────────────────────
+    // Use a flag to distinguish drag from click — drag fires a click event,
+    // so we suppress the selection if the mouse actually moved.
+    let dragMoved = false;
+
     const drag = d3
       .drag<SVGGElement, D3Node>()
       .on("start", (event: d3.D3DragEvent<SVGGElement, D3Node, D3Node>, d) => {
+        dragMoved = false;
         if (!event.active) simulation.alphaTarget(0.3).restart();
         d.fx = d.x;
         d.fy = d.y;
       })
       .on("drag", (event: d3.D3DragEvent<SVGGElement, D3Node, D3Node>, d) => {
+        dragMoved = true;
         d.fx = event.x;
         d.fy = event.y;
       })
@@ -423,8 +500,9 @@ export default function GraphExplorerPage() {
 
     node.call(drag);
 
-    // ── Click: select node ────────────────────────────────────────────────
+    // ── Click: select node (skip if it was a drag) ────────────────────────
     node.on("click", (_event: MouseEvent, d: D3Node) => {
+      if (dragMoved) return;
       setSelectedNode(d);
     });
 
@@ -715,53 +793,131 @@ export default function GraphExplorerPage() {
           )}
 
           {/* D3 renders into the SVG inside this container */}
+
+          {/* ── Floating node info panel ──────────────────────────────────── */}
+          {selectedNode && (
+            <div className="absolute bottom-4 right-4 z-20 w-80 max-h-[calc(100%-2rem)] overflow-y-auto rounded-lg border border-surface-700/50 bg-surface-900/95 backdrop-blur-md p-4 shadow-xl animate-fade-in">
+              {/* Loading overlay inside panel */}
+              {nodeDetail?.loading && (
+                <div className="flex items-center justify-center py-8">
+                  <Spinner className="text-accent-300 h-5 w-5" />
+                </div>
+              )}
+
+              {(!nodeDetail || !nodeDetail.loading) && (
+                <>
+                  {/* Header: name + type + close */}
+                  <div className="flex items-start justify-between gap-2 mb-3">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span
+                        className="mt-0.5 block h-3 w-3 shrink-0 rounded-full"
+                        style={{ backgroundColor: getColor(selectedNode.type) }}
+                      />
+                      <div className="min-w-0">
+                        <h3 className="text-sm font-semibold text-white truncate">
+                          {selectedNode.name}
+                        </h3>
+                      </div>
+                      <span
+                        className="text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0"
+                        style={{
+                          backgroundColor: `${getColor(selectedNode.type)}20`,
+                          color: getColor(selectedNode.type),
+                        }}
+                      >
+                        {selectedNode.type}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => setSelectedNode(null)}
+                      className="btn-ghost p-0.5 rounded text-surface-500 hover:text-white shrink-0"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+
+                  {/* Summary */}
+                  {selectedNode.summary && (
+                    <p className="text-xs text-surface-400 mb-2 leading-relaxed">
+                      {selectedNode.summary}
+                    </p>
+                  )}
+
+                  {/* Metadata from API */}
+                  {nodeDetail?.node?.metadata && Object.keys(nodeDetail.node.metadata).length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-surface-800">
+                      <h4 className="text-[10px] font-medium text-surface-500 mb-1 uppercase tracking-wider">
+                        Metadata
+                      </h4>
+                      <div className="space-y-0.5">
+                        {Object.entries(nodeDetail.node.metadata).map(([key, val]) => (
+                          <div key={key} className="flex gap-2 text-[11px]">
+                            <span className="text-surface-500 shrink-0">{key}:</span>
+                            <span className="text-surface-300 truncate">
+                              {typeof val === "object" ? JSON.stringify(val) : String(val)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Relationships */}
+                  {(nodeDetail?.edges ?? connectedEdges).length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-surface-800">
+                      <h4 className="text-[10px] font-medium text-surface-500 mb-1.5 uppercase tracking-wider">
+                        Relationships ({(nodeDetail?.edges ?? connectedEdges).length})
+                      </h4>
+                      <div className="space-y-1">
+                        {(nodeDetail?.edges ?? connectedEdges).map((edge, i) => {
+                          const isSource = edge.source_id === selectedNode.id;
+                          const neighborId = isSource ? edge.target_id : edge.source_id;
+                          const neighbor = graphData?.nodes.find((n) => n.id === neighborId);
+                          return (
+                            <div
+                              key={i}
+                              className="flex items-center gap-1.5 text-[11px]"
+                            >
+                              <span className="text-surface-600 shrink-0">
+                                {isSource ? "→" : "←"}
+                              </span>
+                              <span className="font-medium text-accent-300/80">{edge.type}</span>
+                              <span className="text-surface-600">→</span>
+                              {neighbor ? (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setSelectedNode(neighbor);
+                                  }}
+                                  className="truncate text-surface-200 hover:text-accent-300 underline underline-offset-2 decoration-surface-700 hover:decoration-accent-300 transition-colors"
+                                >
+                                  {neighbor.name}
+                                </button>
+                              ) : (
+                                <span className="text-surface-500 font-mono truncate">
+                                  {neighborId.slice(0, 8)}
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* ID + created */}
+                  <div className="mt-2 pt-2 border-t border-surface-800 flex items-center justify-between text-[10px] text-surface-600">
+                    <span className="font-mono truncate max-w-[140px]" title={selectedNode.id}>
+                      {selectedNode.id.slice(0, 12)}…
+                    </span>
+                    <span>Created {timeAgo(selectedNode.created_at)}</span>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
-
-      {/* ── Selected node info panel ────────────────────────────────────── */}
-      {selectedNode && (
-        <div className="card-base p-4 animate-fade-in">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex items-start gap-3 min-w-0">
-              <span
-                className="mt-0.5 block h-3 w-3 shrink-0 rounded-full"
-                style={{ backgroundColor: getColor(selectedNode.type) }}
-              />
-              <div className="min-w-0">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h3 className="text-sm font-semibold text-white truncate">
-                    {selectedNode.name}
-                  </h3>
-                  <span
-                    className="text-[10px] font-mono uppercase tracking-wider px-1.5 py-0.5 rounded"
-                    style={{
-                      backgroundColor: `${getColor(selectedNode.type)}20`,
-                      color: getColor(selectedNode.type),
-                    }}
-                  >
-                    {selectedNode.type}
-                  </span>
-                </div>
-                {selectedNode.summary && (
-                  <p className="text-sm text-surface-400 mt-1.5 leading-relaxed max-w-2xl">
-                    {selectedNode.summary}
-                  </p>
-                )}
-                <div className="flex items-center gap-3 mt-2 text-[11px] text-surface-500">
-                  <span className="font-mono">ID: {selectedNode.id}</span>
-                  <span>Created {timeAgo(selectedNode.created_at)}</span>
-                </div>
-              </div>
-            </div>
-            <button
-              onClick={() => setSelectedNode(null)}
-              className="btn-ghost p-1 rounded-md text-surface-400 hover:text-white shrink-0"
-            >
-              <X size={16} />
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* ── Legend ──────────────────────────────────────────────────────── */}
       <div className="card-base p-3">
