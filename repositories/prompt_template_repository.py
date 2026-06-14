@@ -156,12 +156,20 @@ class PromptTemplateRepository:
         name: str,
         text: str,
         desc: str | None = None,
+        template_type: str | None = None,
     ) -> PromptTemplate:
         """Create a new version for the org, deactivating prior active ones.
 
         1. Deactivates all currently active templates for this (org, name).
         2. Creates a new version with ``version = max(existing) + 1``.
         3. The new row is marked active.
+
+        Args:
+            org_id: The organisation UUID.
+            name: Template name identifier.
+            text: Jinja2 template body.
+            desc: Optional description.
+            template_type: Optional type classifier (e.g. ``"fact_extraction"``).
 
         Returns the newly created ``PromptTemplate``.
         """
@@ -191,6 +199,7 @@ class PromptTemplateRepository:
             template_text=text,
             version=max_version + 1,
             description=desc,
+            type=template_type,
             is_active=True,
         )
         self._db.add(template)

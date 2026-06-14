@@ -6,6 +6,7 @@ import {
   Download,
   FileText,
   Star,
+  Plus,
   X,
   Trash2,
   CheckCircle,
@@ -842,6 +843,256 @@ function BrowserDialog({ onClose, onImported, showToast }: {
 }
 
 
+// ─── Create Dialog ──────────────────────────────────────────────────────────────
+
+const KNOWN_TYPES = [
+  { value: "fact_extraction", label: "Fact Extraction" },
+  { value: "entity_extraction", label: "Entity Extraction" },
+  { value: "classification", label: "Classification" },
+  { value: "structured_extraction", label: "Structured Extraction" },
+  { value: "user_summary", label: "User Summary" },
+];
+
+interface CreateDialogProps {
+  onClose: () => void;
+  onCreate: () => Promise<void>;
+  showToast: (message: string, type: "success" | "error") => void;
+}
+
+function CreateDialog({ onClose, onCreate, showToast }: CreateDialogProps) {
+  const [name, setName] = useState("");
+  const [type, setType] = useState("");
+  const [description, setDescription] = useState("");
+  const [templateText, setTemplateText] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedName = name.trim();
+    const trimmedText = templateText.trim();
+    if (!trimmedName) { setError("Template name is required"); return; }
+    if (!trimmedText) { setError("Template text is required"); return; }
+
+    setCreating(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/org/prompts/${encodeURIComponent(trimmedName)}`, {
+        method: "PUT",
+        headers: authHeaders(),
+        body: JSON.stringify({
+          template_text: trimmedText,
+          description: description.trim() || null,
+          type: type || null,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail ?? "Failed to create template");
+      }
+      showToast(`Template "${templateDisplayName(trimmedName)}" created`, "success");
+      await onCreate();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create template");
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-fade-in" onClick={onClose}>
+      <div
+        className="card-base w-full max-w-3xl p-6 shadow-xl shadow-black/40 animate-slide-up max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-md bg-brand-500/10 shrink-0">
+              <FileText size={16} className="text-brand-300" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold">New Prompt Template</h2>
+              <p className="text-xs text-surface-400">Create a custom prompt template for your organisation</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="btn-ghost p-1 rounded-md text-surface-400 hover:text-white">
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Warning banner */}
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 mb-4">
+          <AlertCircle size={13} className="text-amber-400 mt-0.5 shrink-0" />
+          <p className="text-xs text-amber-200/80 leading-relaxed">
+            Incorrect Jinja2 syntax may cause extraction failures. Use the existing templates as reference.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {/* Name */}
+          <div>
+            <label className="block text-sm font-medium text-surface-300 mb-1">
+              Template Name <span className="text-error">*</span>
+            </label>
+            <input
+              className="input-base"
+              placeholder="e.g. my_custom_ner_v1"
+              value={name}
+              onChange={(e) => { setName(e.target.value); if (error) setError(null); }}
+              autoFocus
+              disabled={creating}
+            />
+            <p className="text-xs text-surface-500 mt-1">Unique identifier used as the template key in the system.</p>
+          </div>
+
+          {/* Type */}
+          <div>
+            <label className="block text-sm font-medium text-surface-300 mb-1">Type</label>
+            <select
+              className="input-base"
+              value={type}
+              onChange={(e) => setType(e.target.value)}
+              disabled={creating}
+            >
+              <option value="">— No type —</option>
+              {KNOWN_TYPES.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+            <p className="text-xs text-surface-500 mt-1">
+              Groups this template with a specific extraction worker type.
+            </p>
+          </div>
+
+          {/* Description */}
+          <div>
+            <label className="block text-sm font-medium text-surface-300 mb-1">
+              Description <span className="text-surface-500">(optional)</span>
+            </label>
+            <input
+              className="input-base"
+              placeholder="Describe what this template does"
+              value={description}
+              onChange={(e) => { setDescription(e.target.value); if (error) setError(null); }}
+              disabled={creating}
+            />
+          </div>
+
+          {/* Template text */}
+          <div>
+            <label className="block text-sm font-medium text-surface-300 mb-1">
+              Template <span className="text-error">*</span>
+            </label>
+            <textarea
+              className={cn(
+                "w-full rounded-lg border border-surface-700 bg-surface-950 p-4 text-sm font-mono leading-relaxed",
+                "text-surface-100 placeholder-surface-500 outline-none resize-y min-h-[300px]",
+                "transition-all duration-150 focus:border-accent-300 focus:shadow-[0_0_0_2px_rgba(143,175,217,0.2)]",
+              )}
+              placeholder="{% raw %}{{ Enter your Jinja2 template here }}{% endraw %}"
+              value={templateText}
+              onChange={(e) => { setTemplateText(e.target.value); if (error) setError(null); }}
+              disabled={creating}
+              spellCheck={false}
+            />
+            <p className="text-xs text-surface-500 mt-1">
+              Jinja2 template syntax. Use {"{{ variables }}"} and {"{% tags %}"} for dynamic content.
+            </p>
+          </div>
+
+          {error && (
+            <div className="rounded-md bg-error/10 border border-error/30 px-3 py-2 text-sm text-error flex items-center gap-2">
+              <AlertCircle size={14} />
+              {error}
+            </div>
+          )}
+
+          {/* Action bar */}
+          <div className="flex items-center justify-end gap-3 pt-2 border-t border-surface-800">
+            <button type="button" onClick={onClose} className="btn-secondary text-sm" disabled={creating}>
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={creating || !name.trim() || !templateText.trim()}
+              className="btn-primary text-sm min-w-[140px] justify-center"
+            >
+              {creating ? (
+                <span className="flex items-center gap-2">
+                  <Spinner /> Creating...
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <Plus size={14} /> Create Template
+                </span>
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Delete Dialog ──────────────────────────────────────────────────────────────
+
+interface DeleteDialogProps {
+  templateName: string;
+  templateDisplay: string;
+  onClose: () => void;
+  onConfirm: () => Promise<void>;
+}
+
+function DeleteDialog({ templateName, templateDisplay, onClose, onConfirm }: DeleteDialogProps) {
+  const [submitting, setSubmitting] = useState(false);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-fade-in" onClick={onClose}>
+      <div
+        className="card-base w-full max-w-sm p-6 shadow-xl shadow-black/40 animate-slide-up"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3 mb-4">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-error/10 shrink-0">
+            <Trash2 size={18} className="text-error" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold">Delete Template</h2>
+            <p className="text-sm text-surface-400">This action cannot be undone.</p>
+          </div>
+        </div>
+
+        <p className="text-sm text-surface-300 mb-2">
+          Are you sure you want to delete
+        </p>
+        <p className="text-sm font-medium text-white mb-5">
+          &ldquo;{templateDisplay}&rdquo;
+        </p>
+        <p className="text-xs text-surface-500 mb-5">
+          All custom versions will be removed. The organisation will fall back to the system default.
+        </p>
+
+        <div className="flex justify-end gap-3">
+          <button onClick={onClose} className="btn-secondary text-sm" disabled={submitting}>
+            Cancel
+          </button>
+          <button
+            onClick={async () => { setSubmitting(true); try { await onConfirm(); } finally { setSubmitting(false); } }}
+            disabled={submitting}
+            className="btn-danger text-sm min-w-[100px] justify-center"
+          >
+            {submitting ? (
+              <span className="flex items-center gap-2"><Spinner /> Deleting...</span>
+            ) : (
+              <span className="flex items-center gap-2"><Trash2 size={14} /> Delete</span>
+            )}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function PromptsPage() {
@@ -850,7 +1101,9 @@ export default function PromptsPage() {
 
   const [editTarget, setEditTarget] = useState<PromptTemplateDetail | null>(null);
   const [historyTarget, setHistoryTarget] = useState<string | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
   const [showBrowser, setShowBrowser] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
 
   const [toast, setToast] = useState<ToastState>({ visible: false, message: "", type: "success" });
 
@@ -917,6 +1170,26 @@ export default function PromptsPage() {
     await fetchTemplates();
   }, [fetchTemplates]);
 
+  const handleDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    try {
+      const res = await fetch(`${API_BASE}/admin/org/prompts/${deleteTarget}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail ?? "Failed to delete template");
+      }
+      showToast(`"${templateDisplayName(deleteTarget)}" reverted to system default`, "success");
+      setDeleteTarget(null);
+      await fetchTemplates();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to delete template", "error");
+      setDeleteTarget(null);
+    }
+  }, [deleteTarget, showToast, fetchTemplates]);
+
   // ── Skeleton rows ────────────────────────────────────────────────────────
 
   const skeletonRows = Array.from({ length: 4 }, (_, i) => (
@@ -956,9 +1229,14 @@ export default function PromptsPage() {
             Manage Jinja2 prompt templates for extraction workers. Organised by type with version history and rollback support.
           </p>
         </div>
-        <button onClick={() => setShowBrowser(true)} className="btn-secondary text-sm">
-          <Download size={14} /> Browse System Prompts
-        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={() => setShowCreate(true)} className="btn-primary text-sm">
+            <Plus size={16} /> New Template
+          </button>
+          <button onClick={() => setShowBrowser(true)} className="btn-secondary text-sm">
+            <Download size={14} /> Browse System Prompts
+          </button>
+        </div>
       </div>
 
       {/* Table */}
@@ -1083,6 +1361,15 @@ export default function PromptsPage() {
                             >
                               <History size={14} />
                             </button>
+                            {tmpl.is_customised && (
+                              <button
+                                onClick={() => setDeleteTarget(tmpl.name)}
+                                className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-error"
+                                title="Delete template (revert to system default)"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>,
@@ -1120,6 +1407,25 @@ export default function PromptsPage() {
           onClose={() => setHistoryTarget(null)}
           onRollback={handleRollback}
           showToast={showToast}
+        />
+      )}
+
+      {/* ── Create Template Dialog ────────────────────────────────────────────── */}
+      {showCreate && (
+        <CreateDialog
+          onClose={() => setShowCreate(false)}
+          onCreate={() => { setShowCreate(false); return fetchTemplates(); }}
+          showToast={showToast}
+        />
+      )}
+
+      {/* ── Delete Template Dialog ────────────────────────────────────────────── */}
+      {deleteTarget && (
+        <DeleteDialog
+          templateName={deleteTarget}
+          templateDisplay={templateDisplayName(deleteTarget)}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={handleDelete}
         />
       )}
 

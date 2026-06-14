@@ -85,6 +85,10 @@ class SetPromptTemplateRequest(BaseModel):
 
     template_text: str = Field(..., min_length=1)
     description: str | None = None
+    type: str | None = Field(
+        default=None,
+        description="Type classifier for the template (e.g. fact_extraction, entity_extraction).",
+    )
 
 
 class SystemTemplateEntry(BaseModel):

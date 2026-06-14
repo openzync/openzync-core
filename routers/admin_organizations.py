@@ -251,6 +251,7 @@ async def set_prompt_template(
         name=name,
         text=body.template_text,
         desc=body.description,
+        template_type=body.type,
     )
 
     # ── Invalidate Redis cache for this template ────────────────────────
