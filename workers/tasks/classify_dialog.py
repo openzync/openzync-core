@@ -20,7 +20,8 @@ from sqlalchemy import text
 
 from workers.tasks.base import ENRICHMENT_CLASSIFICATION, with_retry
 
-from services.worker.prompt_renderer import render_prompt
+from services.custom_instruction_service import format_custom_instructions
+from services.worker.prompt_renderer import render_prompt, resolve_prompt_template
 
 logger = structlog.get_logger()
 
@@ -59,11 +60,14 @@ async def classify_dialog(
         3. Check ``enrichment_status`` — skip if bit 4 is already set.
         4. Fetch organization's classification schemas (``type='classification'``).
         5. Extract label definitions from schemas (or use defaults).
-        6. Render the ``classify_dialog_v1.jinja2`` prompt.
-        7. Call the LLM backend (temperature 0.0, max_tokens 300).
-        8. Parse and validate the JSON response.
-        9. Insert a ``DialogClassification`` row.
-        10. Update ``enrichment_status`` bit 4.
+        6. Resolve prompt template from DB (fall back to filesystem).
+        7. Fetch custom instructions for the ``classification`` scope.
+        8. Render the ``classify_dialog_v1.jinja2`` prompt (with DB
+           template + custom instructions).
+        9. Call the LLM backend (temperature 0.0, max_tokens 300).
+        10. Parse and validate the JSON response.
+        11. Insert a ``DialogClassification`` row.
+        12. Update ``enrichment_status`` bit 4.
 
     Args:
         ctx: ARQ worker context (unused — required by ARQ contract).
@@ -142,9 +146,43 @@ async def classify_dialog(
             # ── 4. Fetch org classification schemas ────────────────────────
             labels = await _fetch_classification_labels(db, org_id)
 
-            # ── 5. Render prompt ───────────────────────────────────────────
+            # ── 5. Resolve prompt template from DB (fall back to filesystem) ─
+            prompt_template_name = "classify_dialog_v1"
+            try:
+                template_text = await resolve_prompt_template(
+                    prompt_template_name,
+                    org_id,
+                    session_factory,
+                )
+            except Exception:
+                template_text = None
+                logger.warning(
+                    "classification.template_resolve_failed",
+                    episode_id=episode_id,
+                    org_id=org_id,
+                )
+
+            # ── 6. Fetch custom instructions ───────────────────────────────
+            from repositories.custom_instruction_repository import (
+                CustomInstructionRepository,
+            )
+            ci_repo = CustomInstructionRepository(db)
+            raw = await ci_repo.get_by_scope(
+                org_id=uuid.UUID(org_id), scope="extraction",
+            )
+            custom_instr = (
+                format_custom_instructions(
+                    [{"name": i.name, "text": i.text} for i in raw],
+                )
+                if raw
+                else ""
+            )
+
+            # ── 7. Render prompt ───────────────────────────────────────────
             prompt = render_prompt(
                 "classify_dialog_v1",
+                template_text=template_text,
+                custom_instructions=custom_instr,
                 conversation=content,
                 intent_labels=labels["intent_labels"],
                 emotion_labels=labels["emotion_labels"],
@@ -152,7 +190,7 @@ async def classify_dialog(
                 arousal_options=labels["arousal_options"],
             )
 
-            # ── 6. Call LLM ────────────────────────────────────────────────
+            # ── 8. Call LLM ────────────────────────────────────────────────
             try:
                 llm = await resolve_backend()
                 response = await llm.chat(
@@ -177,7 +215,7 @@ async def classify_dialog(
                 )
                 raise  # Let @with_retry handle transient failures
 
-            # ── 7. Parse JSON response ─────────────────────────────────────
+            # ── 9. Parse JSON response ─────────────────────────────────────
             parsed = _parse_classification_response(response.content)
 
             # Recovery attempt if first parse failed
@@ -210,7 +248,7 @@ async def classify_dialog(
                         error=str(exc),
                     )
 
-            # ── 8. Validate labels against allowed sets ─────────────────────
+            # ── 10. Validate labels against allowed sets ────────────────────
             intent = None
             emotion = None
             valence = None
@@ -251,7 +289,7 @@ async def classify_dialog(
                         allowed=list(labels["emotion_set"]),
                     )
 
-            # ── 9. Insert classification row ───────────────────────────────
+            # ── 11. Insert classification row ──────────────────────────────
             await db.execute(
                 text("""
                     INSERT INTO dialog_classifications
@@ -275,7 +313,7 @@ async def classify_dialog(
                 },
             )
 
-            # ── 10. Set enrichment bit ─────────────────────────────────────
+            # ── 12. Set enrichment bit ─────────────────────────────────────
             await db.execute(
                 text("""
                     UPDATE episodes

@@ -93,6 +93,9 @@ class AuthService:
             plan="free",
         )
 
+        # Seed default prompt templates for the new org
+        await self._repo.seed_prompts_for_org(org.id)
+
         # Create dashboard admin user
         pw_hash = hash_password(payload.password)
         user = await self._repo.create_dashboard_user(

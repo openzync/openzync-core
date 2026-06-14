@@ -28,6 +28,8 @@ import {
   Bell,
   User as UserIcon,
   Webhook,
+  FileText,
+  FileCode,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -71,6 +73,8 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "Classifications", href: "/settings/classifications", icon: <Tags size={18} /> },
       { label: "Extractions", href: "/settings/extractions", icon: <Database size={18} /> },
       { label: "Webhooks", href: "/settings/webhooks", icon: <Webhook size={18} /> },
+      { label: "Extraction Instructions", href: "/settings/extraction-instructions", icon: <FileText size={18} /> },
+      { label: "Prompts", href: "/settings/prompts", icon: <FileCode size={18} /> },
     ],
   },
   {

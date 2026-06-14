@@ -1,8 +1,9 @@
 "use client";
 import { RequireAuth } from "../require-auth";
 
+import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Copy, Edit, Trash2, RefreshCw, UsersIcon, X, CheckCircle, AlertCircle } from "lucide-react";
+import { Plus, Copy, Edit, Trash2, RefreshCw, UsersIcon, X, CheckCircle, AlertCircle, Eye } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -575,6 +576,13 @@ export default function UsersPage() {
                         {/* Actions */}
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-1">
+                            <Link
+                              href={`/users/${user.id}`}
+                              className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white"
+                              title="View User"
+                            >
+                              <Eye size={14} />
+                            </Link>
                             <button
                               onClick={() => copyToClipboard(user.id)}
                               className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white"

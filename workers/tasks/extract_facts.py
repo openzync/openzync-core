@@ -28,7 +28,8 @@ from sqlalchemy import text
 # note: Import prompt_renderer at module level — it is a local
 # Jinja2 utility with no heavy dependencies, so eager import is safe
 # and avoids re-import overhead on every task invocation.
-from services.worker.prompt_renderer import render_prompt
+from services.worker.prompt_renderer import render_prompt, resolve_prompt_template
+from services.custom_instruction_service import format_custom_instructions
 from workers.tasks.base import ENRICHMENT_FACTS, with_retry
 
 logger = structlog.get_logger()
@@ -181,9 +182,38 @@ async def extract_facts(
 
     # ── 1. Render prompt (v4 for delta with existing facts, v3 as fallback) ────
     prompt_template = "extract_facts_v4" if existing_facts else "extract_facts_v3"
+
+    # ── Resolve prompt template from DB + fetch custom instructions ──────────
+    try:
+        template_text = await resolve_prompt_template(
+            prompt_template, org_id, session_factory,
+        )
+    except Exception:
+        template_text = None  # Fall back to filesystem
+        logger.warning(
+            "fact_extraction.template_resolve_failed",
+            episode_id=episode_id,
+            exc_info=True,
+        )
+
+    custom_instr = ""
+    async with session_factory() as db:
+        from repositories.custom_instruction_repository import (
+            CustomInstructionRepository,
+        )
+        raw = await CustomInstructionRepository(db).get_by_scope(
+            org_id=uuid.UUID(org_id), scope="extraction",
+        )
+        if raw:
+            custom_instr = format_custom_instructions(
+                [{"name": i.name, "text": i.text} for i in raw]
+            )
+
     try:
         prompt = render_prompt(
             prompt_template,
+            template_text=template_text,
+            custom_instructions=custom_instr,
             conversation=content,
             known_entities=known_entities,
             recent_history=recent_history,

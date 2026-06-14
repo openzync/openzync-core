@@ -20,7 +20,8 @@ from sqlalchemy import text
 
 from workers.tasks.base import ENRICHMENT_STRUCTURED_EXTRACTION, with_retry
 
-from services.worker.prompt_renderer import render_prompt
+from services.custom_instruction_service import format_custom_instructions
+from services.worker.prompt_renderer import render_prompt, resolve_prompt_template
 
 logger = structlog.get_logger()
 
@@ -43,12 +44,15 @@ async def extract_structured(
         3. Check ``enrichment_status`` — skip if bit 5 is already set.
         4. Fetch organization's structured schemas (``type='structured'``).
         5. If no schemas configured, set the bit and return (nothing to extract).
-        6. Render the ``extract_structured_v1.jinja2`` prompt with all schemas.
-        7. Call the LLM backend (temperature 0.0, max_tokens configurable).
-        8. Parse the keyed JSON response — each key is a schema name.
-        9. For each matched schema, validate output against the JSON Schema.
-        10. Insert one ``StructuredExtraction`` row per valid schema.
-        11. Update ``enrichment_status`` bit 5.
+        6. Resolve prompt template from DB (fall back to filesystem).
+        7. Fetch custom instructions for the ``extraction`` scope.
+        8. Render the ``extract_structured_v1.jinja2`` prompt (with DB
+           template + custom instructions).
+        9. Call the LLM backend (temperature 0.0, max_tokens configurable).
+        10. Parse the keyed JSON response — each key is a schema name.
+        11. For each matched schema, validate output against the JSON Schema.
+        12. Insert one ``StructuredExtraction`` row per valid schema.
+        13. Update ``enrichment_status`` bit 5.
 
     Args:
         ctx: ARQ worker context (unused — required by ARQ contract).
@@ -149,15 +153,49 @@ async def extract_structured(
                 await db.commit()
                 return
 
-            # ── 5. Render prompt ───────────────────────────────────────────
+            # ── 5. Resolve prompt template from DB (fall back to filesystem) ─
+            prompt_template_name = "extract_structured_v1"
+            try:
+                template_text = await resolve_prompt_template(
+                    prompt_template_name,
+                    org_id,
+                    session_factory,
+                )
+            except Exception:
+                template_text = None
+                logger.warning(
+                    "structured_extraction.template_resolve_failed",
+                    episode_id=episode_id,
+                    org_id=org_id,
+                )
+
+            # ── 6. Fetch custom instructions ───────────────────────────────
+            from repositories.custom_instruction_repository import (
+                CustomInstructionRepository,
+            )
+            ci_repo = CustomInstructionRepository(db)
+            raw = await ci_repo.get_by_scope(
+                org_id=uuid.UUID(org_id), scope="extraction",
+            )
+            custom_instr = (
+                format_custom_instructions(
+                    [{"name": i.name, "text": i.text} for i in raw],
+                )
+                if raw
+                else ""
+            )
+
+            # ── 7. Render prompt ───────────────────────────────────────────
             max_tokens = worker_settings.STRUCTURED_EXTRACTION_MAX_TOKENS
             prompt = render_prompt(
                 "extract_structured_v1",
+                template_text=template_text,
+                custom_instructions=custom_instr,
                 conversation=content,
                 schemas=schemas,
             )
 
-            # ── 6. Call LLM ────────────────────────────────────────────────
+            # ── 8. Call LLM ────────────────────────────────────────────────
             try:
                 llm = await resolve_backend()
                 response = await llm.chat(
@@ -182,7 +220,7 @@ async def extract_structured(
                 )
                 raise  # Let @with_retry handle transient failures
 
-            # ── 7. Parse JSON response ─────────────────────────────────────
+            # ── 9. Parse JSON response ─────────────────────────────────────
             parsed = _parse_structured_response(response.content)
 
             # Recovery attempt if first parse failed
@@ -215,7 +253,7 @@ async def extract_structured(
                         error=str(exc),
                     )
 
-            # ── 8. Validate & insert per schema ────────────────────────────
+            # ── 10. Validate & insert per schema ───────────────────────────
             schema_map: dict[str, dict[str, Any]] = {
                 s["name"]: s for s in schemas
             }
@@ -307,7 +345,7 @@ async def extract_structured(
                     episode_id=episode_id,
                 )
 
-            # ── 9. Set enrichment bit ──────────────────────────────────────
+            # ── 11. Set enrichment bit ─────────────────────────────────────
             await db.execute(
                 text("""
                     UPDATE episodes

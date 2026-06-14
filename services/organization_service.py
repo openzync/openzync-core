@@ -71,7 +71,18 @@ class OrganizationService:
         self._db.add(api_key)
         await self._db.flush()
 
-        # ── 3. Commit everything atomically ──────────────────────────────
+        # ── 3. Seed default prompt templates for the new org ─────────────
+        from repositories.prompt_template_repository import PromptTemplateRepository
+
+        seeded = await PromptTemplateRepository(self._db).seed_default_prompts(org.id)
+        if seeded:
+            logger.info(
+                "organization.prompts_seeded",
+                org_id=str(org.id),
+                count=seeded,
+            )
+
+        # ── 4. Commit everything atomically ──────────────────────────────
         await self._db.commit()
 
         logger.info(

@@ -6,8 +6,9 @@ Users are identified by an ``external_id`` chosen by the calling application
 """
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Index, String, Text, UniqueConstraint, func, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -74,6 +75,10 @@ class User(TimestampMixin, Base):
         nullable=False,
         default=False,
         server_default="false",
+    )
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
+    summary_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
     )
 
     __table_args__ = (

@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Select, String, func, or_, select, text
+from sqlalchemy import Select, String, func, or_, select, text, update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.episode import Episode
@@ -415,6 +415,49 @@ class UserRepository:
             "fact_count": row.fact_count or 0,
             "session_count": row.session_count or 0,
         }
+
+    # ── Summary ────────────────────────────────────────────────────────────
+
+    async def update_summary(self, user_id: UUID, summary: str) -> None:
+        """Set the summary text and bump ``summary_updated_at`` to now.
+
+        Uses a single UPDATE statement — no round-trip to read first.
+        If the user does not exist this is a no-op (0 rows affected).
+
+        Args:
+            user_id: The internal OpenZep user UUID.
+            summary: The generated summary text.
+        """
+        stmt = (
+            sa_update(User)
+            .where(User.id == user_id)
+            .values(
+                summary=summary,
+                summary_updated_at=func.now(),
+            )
+        )
+        await self._db.execute(stmt)
+        await self._db.flush()
+
+    async def get_summary(
+        self, user_id: UUID
+    ) -> tuple[str | None, datetime | None]:
+        """Return ``(summary, summary_updated_at)`` for a user.
+
+        Args:
+            user_id: The internal OpenZep user UUID.
+
+        Returns:
+            A ``(summary, summary_updated_at)`` tuple, or
+            ``(None, None)`` if the user is not found.
+        """
+        result = await self._db.execute(
+            select(User.summary, User.summary_updated_at).where(User.id == user_id)
+        )
+        row = result.one_or_none()
+        if row is None:
+            return None, None
+        return row.summary, row.summary_updated_at
 
     # ── Existence Check ─────────────────────────────────────────────────────
 

@@ -13,13 +13,20 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.exceptions import ValidationError
+from core.exceptions import RateLimitError, ValidationError
 from dependencies.auth import require_org_id
 from dependencies.db import get_db
+from repositories.custom_instruction_repository import CustomInstructionRepository
 from repositories.user_repository import UserRepository
+from schemas.custom_instructions import (
+    CustomInstructionSchema,
+    CustomInstructionsResponse,
+    SetCustomInstructionsRequest,
+)
+from schemas.user_summary import UserSummaryResponse, UserSummaryTriggerResponse
 from schemas.users import (
     CreateUserRequest,
     UpdateUserRequest,
@@ -28,6 +35,7 @@ from schemas.users import (
     UserResponseWithStats,
 )
 from services.user_service import UserService
+from services.user_summary_service import UserSummaryService
 
 router = APIRouter(prefix="/v1/users", tags=["Users"])
 
@@ -172,3 +180,116 @@ async def delete_user(
     grace period, it will be treated as a new user.
     """
     await service.delete_user(organization_id=UUID(org_id), user_id=user_id)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# User Summary
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+async def get_user_summary_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> UserSummaryService:
+    """Dependency that yields an initialised UserSummaryService."""
+    from core.arq import get_arq
+
+    arq = get_arq()
+    redis = getattr(request.app.state, "redis", None)
+    return UserSummaryService(db=db, arq=arq, redis=redis)
+
+
+@router.get("/{user_id}/summary", response_model=UserSummaryResponse)
+async def get_user_summary(
+    user_id: UUID,
+    service: UserSummaryService = Depends(get_user_summary_service),
+    org_id: str = Depends(require_org_id),
+) -> UserSummaryResponse:
+    """Get the current summary for a user.
+
+    Returns 404 if no summary has been generated yet.
+    """
+    summary = await service.get_summary(org_id=UUID(org_id), user_id=user_id)
+    if summary is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No summary has been generated for this user yet.",
+        )
+    return summary
+
+
+@router.post(
+    "/{user_id}/summary",
+    status_code=202,
+    responses={
+        202: {"model": UserSummaryTriggerResponse},
+        429: {"description": "Rate limited — try again in 5 minutes."},
+    },
+)
+async def trigger_user_summary(
+    user_id: UUID,
+    service: UserSummaryService = Depends(get_user_summary_service),
+    org_id: str = Depends(require_org_id),
+) -> UserSummaryTriggerResponse:
+    """Trigger generation of a user summary.
+
+    Enqueues an ARQ background job. Rate-limited to once per 5 minutes
+    per user (enforced via Redis).
+    """
+    try:
+        return await service.trigger_generation(
+            org_id=UUID(org_id), user_id=user_id,
+        )
+    except RateLimitError as exc:
+        raise HTTPException(status_code=429, detail=exc.message) from exc
+
+
+@router.get(
+    "/{user_id}/summary-instructions",
+    response_model=CustomInstructionsResponse,
+)
+async def list_user_summary_instructions(
+    user_id: UUID,
+    service: UserSummaryService = Depends(get_user_summary_service),
+    org_id: str = Depends(require_org_id),
+) -> CustomInstructionsResponse:
+    """List custom instructions for a user's summary generation."""
+    instructions = await service.get_instructions(
+        org_id=UUID(org_id), user_id=user_id,
+    )
+    return CustomInstructionsResponse(
+        data=[CustomInstructionSchema(**i) for i in instructions],
+    )
+
+
+@router.put(
+    "/{user_id}/summary-instructions",
+    response_model=CustomInstructionsResponse,
+    status_code=201,
+)
+async def set_user_summary_instructions(
+    user_id: UUID,
+    body: SetCustomInstructionsRequest,
+    service: UserSummaryService = Depends(get_user_summary_service),
+    org_id: str = Depends(require_org_id),
+) -> CustomInstructionsResponse:
+    """Replace all summary instructions for a user."""
+    instructions_data = [i.model_dump() for i in body.instructions]
+    instructions = await service.set_instructions(
+        org_id=UUID(org_id),
+        user_id=user_id,
+        instructions=instructions_data,
+    )
+    return CustomInstructionsResponse(
+        data=[CustomInstructionSchema(**i) for i in instructions],
+    )
+
+
+@router.delete("/{user_id}/summary-instructions", status_code=204)
+async def delete_user_summary_instructions(
+    user_id: UUID,
+    service: UserSummaryService = Depends(get_user_summary_service),
+    org_id: str = Depends(require_org_id),
+) -> None:
+    """Clear all summary instructions for a user."""
+    await service.delete_instructions(org_id=UUID(org_id), user_id=user_id)

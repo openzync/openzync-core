@@ -10,11 +10,13 @@ from models.fact import Fact
 from models.graph_entity import GraphEntity
 from models.llm_usage import LLMUsage
 from models.organization import Organization
+from models.prompt_template import PromptTemplate
 from models.refresh_token import RefreshToken
 from models.session import Session
 from models.structured_extraction import StructuredExtraction
 from models.user import User
 from models.webhook import WebhookDeliveryLog, WebhookEndpoint
+from models.custom_instruction import CustomInstruction
 
 __all__: list[str] = [
     "Base",
@@ -35,4 +37,6 @@ __all__: list[str] = [
     "LLMUsage",
     "WebhookEndpoint",
     "WebhookDeliveryLog",
+    "PromptTemplate",
+    "CustomInstruction",
 ]
