@@ -115,6 +115,34 @@ async def import_system_prompt(
     return PromptTemplateDetail.model_validate(template)
 
 
+@router.post(
+    "/prompts/{name}/set-default",
+    response_model=PromptTemplateDetail,
+)
+async def set_prompt_type_default(
+    name: str,
+    db: AsyncSession = Depends(get_db),
+    org_id: str = Depends(require_org_id),
+    _user_id: str = Depends(get_dashboard_user),
+) -> PromptTemplateDetail:
+    """Mark a prompt template as the active default for its type.
+
+    Sets ``is_default_for_type = True`` for this template and
+    ``is_default_for_type = False`` for all other templates of the same
+    type and scope.  Raises 404 if the template does not exist or has
+    no ``type`` assigned.
+    """
+    repo = PromptTemplateRepository(db)
+    try:
+        template = await repo.set_as_type_default(
+            org_id=uuid.UUID(org_id), name=name,
+        )
+    except ValueError as err:
+        raise HTTPException(status_code=404, detail=str(err)) from err
+
+    return PromptTemplateDetail.model_validate(template)
+
+
 @router.get(
     "/prompts/{name}",
     response_model=PromptTemplateDetail,

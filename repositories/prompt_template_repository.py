@@ -58,6 +58,98 @@ class PromptTemplateRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_active_by_type(
+        self,
+        org_id: UUID,
+        type: str,
+    ) -> PromptTemplate | None:
+        """Get the active default template for a given type.
+
+        Resolution order:
+        1. Org-specific default (``organization_id == org_id``,
+           ``type == :type``, ``is_default_for_type = True``).
+        2. System default (``organization_id IS NULL``, same type
+           and flag).
+
+        Returns ``None`` if no default exists at either level.
+        """
+        # (1) Org-specific default.
+        result = await self._db.execute(
+            select(PromptTemplate).where(
+                PromptTemplate.organization_id == org_id,
+                PromptTemplate.type == type,
+                PromptTemplate.is_default_for_type.is_(True),
+                PromptTemplate.is_active.is_(True),
+            )
+        )
+        template = result.scalar_one_or_none()
+        if template is not None:
+            return template
+
+        # (2) Fall back to system default.
+        result = await self._db.execute(
+            select(PromptTemplate).where(
+                PromptTemplate.organization_id.is_(None),
+                PromptTemplate.type == type,
+                PromptTemplate.is_default_for_type.is_(True),
+                PromptTemplate.is_active.is_(True),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def set_as_type_default(
+        self,
+        org_id: UUID,
+        name: str,
+    ) -> PromptTemplate:
+        """Mark a template as the active default for its type.
+
+        Sets ``is_default_for_type = True`` for the named template and
+        ``is_default_for_type = False`` for all other templates of the
+        same type and scope.
+
+        Args:
+            org_id: The organisation UUID (used for scope binding).
+            name: The template name to promote.
+
+        Returns:
+            The updated ``PromptTemplate``.
+
+        Raises:
+            ValueError: If the template does not exist or has no type.
+        """
+        # Find the template (org scope, then system scope).
+        template = await self._get_version_in_scope(org_id, name, None)
+        if template is None:
+            raise ValueError(f"Template {name!r} not found")
+
+        if template.type is None:
+            raise ValueError(f"Template {name!r} has no type assigned")
+
+        scope_org_id = template.organization_id  # None for system defaults
+
+        # Deactivate current default for this type + scope.
+        scope_condition = (
+            PromptTemplate.organization_id.is_(None)
+            if scope_org_id is None
+            else PromptTemplate.organization_id == scope_org_id
+        )
+        await self._db.execute(
+            update(PromptTemplate)
+            .where(
+                scope_condition,
+                PromptTemplate.type == template.type,
+                PromptTemplate.is_default_for_type.is_(True),
+            )
+            .values(is_default_for_type=False)
+        )
+
+        # Activate the target.
+        template.is_default_for_type = True
+        await self._db.flush()
+        await self._db.refresh(template)
+        return template
+
     async def set_for_org(
         self,
         org_id: UUID,
@@ -182,10 +274,9 @@ class PromptTemplateRepository:
     async def seed_default_prompts(self, org_id: UUID) -> int:
         """Seed the latest active system-default prompts for a new organisation.
 
-        Groups active system defaults by base name (strips ``_v\\d+`` suffix)
-        and copies **only the highest-versioned template per group** into the
-        org's scope at ``version = 1``.  This means ``extract_facts_v4`` is
-        seeded but ``extract_facts_v1``, ``v2``, ``v3`` are not.
+        Copies **one template per type** — only the system default that is
+        marked as ``is_default_for_type = True`` — into the org's scope at
+        ``version = 1``.
 
         Template names that the org already has are skipped — idempotent.
 
@@ -195,29 +286,14 @@ class PromptTemplateRepository:
         Returns:
             Number of templates seeded.
         """
-        _V_RE = re.compile(r"_v(\d+)$")
-
-        # Fetch all active system defaults.
+        # Fetch system defaults that are the active default for their type.
         result = await self._db.execute(
             select(PromptTemplate).where(
                 PromptTemplate.organization_id.is_(None),
-                PromptTemplate.is_active.is_(True),
+                PromptTemplate.is_default_for_type.is_(True),
             )
         )
         defaults = list(result.scalars().all())
-
-        # Group by base name, keep highest-versioned template per group.
-        groups: dict[str, list[tuple[int, PromptTemplate]]] = defaultdict(list)
-        for tmpl in defaults:
-            m = _V_RE.search(tmpl.template_name)
-            if m:
-                base = tmpl.template_name[: m.start()]
-                groups[base].append((int(m.group(1)), tmpl))
-            else:
-                # No version suffix — treat the name itself as the base.
-                groups[tmpl.template_name].append((0, tmpl))
-
-        latest_templates = [max(entries, key=lambda x: x[0])[1] for entries in groups.values()]
 
         count = 0
         for tmpl in latest_templates:
@@ -332,6 +408,8 @@ class PromptTemplateRepository:
                 PromptTemplate.template_name,
                 PromptTemplate.version,
                 PromptTemplate.description,
+                PromptTemplate.type,
+                PromptTemplate.is_default_for_type,
                 PromptTemplate.updated_at,
                 PromptTemplate.organization_id,
             )
@@ -353,6 +431,8 @@ class PromptTemplateRepository:
                     "version": row.version,
                     "is_customised": row.organization_id == org_id,
                     "description": row.description,
+                    "type": row.type,
+                    "is_default_for_type": row.is_default_for_type,
                     "updated_at": row.updated_at,
                 }
 
@@ -427,11 +507,12 @@ class PromptTemplateRepository:
         return result.scalar_one_or_none()
 
     async def list_system_grouped(self, org_id: UUID) -> list[dict]:
-        """List all system-default templates grouped by base name.
+        """List all system-default prompt templates grouped by type.
 
-        Returns groups annotated with which template names the org already
-        has imported.  Each group includes **all** system-default versions
-        (not just active ones), so users can see old versions too.
+        Each group corresponds to one ``type`` (e.g. ``fact_extraction``).
+        Templates with a ``type`` are grouped together; those without fall
+        under ``"other"``.  Each group is annotated with which template
+        names the organisation has already imported.
 
         Args:
             org_id: The organisation UUID for cross-checking imports.
@@ -441,11 +522,9 @@ class PromptTemplateRepository:
 
                 [
                     {
-                        "base_name": "extract_facts",
+                        "type": "fact_extraction",
                         "templates": [
-                            {"name": "extract_facts_v1", "version": 1,
-                             "is_active": false, "is_system_default": false,
-                             "description": None},
+                            {"name": "extract_facts_v1", "version": 1, ...},
                             ...
                         ],
                         "imported": ["extract_facts_v4"],
@@ -453,10 +532,7 @@ class PromptTemplateRepository:
                     ...
                 ]
         """
-        import re
         from collections import defaultdict
-
-        _V_RE = re.compile(r"_v(\d+)$")
 
         # Fetch all system-default rows (all versions).
         sys_result = await self._db.execute(
@@ -474,31 +550,32 @@ class PromptTemplateRepository:
         )
         org_names = {row[0] for row in org_result.fetchall()}
 
-        # Group by base name.
+        # Group by type field.
         groups: dict[str, list[PromptTemplate]] = defaultdict(list)
         for tmpl in system_rows:
-            m = _V_RE.search(tmpl.template_name)
-            base = tmpl.template_name[: m.start()] if m else tmpl.template_name
-            groups[base].append(tmpl)
+            group_key = tmpl.type or "other"
+            groups[group_key].append(tmpl)
 
         result = []
-        for base_name in sorted(groups):
+        for group_key in sorted(groups):
             templates = [
                 {
                     "name": t.template_name,
                     "version": t.version,
+                    "type": t.type,
                     "is_active": t.is_active,
+                    "is_default_for_type": t.is_default_for_type,
                     "is_system_default": t.is_system_default,
                     "description": t.description,
                 }
-                for t in groups[base_name]
+                for t in groups[group_key]
             ]
             # Which template names from this family has the org imported?
             imported = sorted(
                 t["name"] for t in templates if t["name"] in org_names
             )
             result.append({
-                "base_name": base_name,
+                "type": group_key,
                 "templates": templates,
                 "imported": imported,
             })
@@ -577,25 +654,46 @@ class PromptTemplateRepository:
         self,
         org_id: UUID,
         name: str,
-        version: int,
+        version: int | None,
     ) -> PromptTemplate | None:
-        """Look up a version in org scope, then system scope."""
+        """Look up a template in org scope, then system scope.
+
+        Args:
+            org_id: Organisation UUID (or any UUID for scope comparison).
+            name: Template name.
+            version: Specific version to find, or ``None`` to find
+                any active version (ordered by version descending).
+
+        Returns:
+            The matching ``PromptTemplate``, or ``None``.
+        """
+        conditions = [
+            PromptTemplate.organization_id == org_id,
+            PromptTemplate.template_name == name,
+        ]
+        if version is not None:
+            conditions.append(PromptTemplate.version == version)
+
         result = await self._db.execute(
-            select(PromptTemplate).where(
-                PromptTemplate.organization_id == org_id,
-                PromptTemplate.template_name == name,
-                PromptTemplate.version == version,
-            )
+            select(PromptTemplate)
+            .where(*conditions)
+            .order_by(PromptTemplate.version.desc())
         )
         template = result.scalar_one_or_none()
         if template is not None:
             return template
 
+        # Fall back to system scope.
+        sys_conditions = [
+            PromptTemplate.organization_id.is_(None),
+            PromptTemplate.template_name == name,
+        ]
+        if version is not None:
+            sys_conditions.append(PromptTemplate.version == version)
+
         result = await self._db.execute(
-            select(PromptTemplate).where(
-                PromptTemplate.organization_id.is_(None),
-                PromptTemplate.template_name == name,
-                PromptTemplate.version == version,
-            )
+            select(PromptTemplate)
+            .where(*sys_conditions)
+            .order_by(PromptTemplate.version.desc())
         )
         return result.scalar_one_or_none()

@@ -25,7 +25,7 @@ from core.exceptions import ExternalServiceError
 # note: Import prompt_renderer at module level — it is a local
 # Jinja2 utility with no heavy dependencies, so eager import is safe
 # and avoids re-import overhead on every task invocation.
-from services.worker.prompt_renderer import render_prompt, resolve_prompt_template
+from services.worker.prompt_renderer import render_prompt, resolve_prompt_template_by_type
 from services.custom_instruction_service import format_custom_instructions
 from workers.tasks.base import ENRICHMENT_ENTITIES, with_retry
 
@@ -153,13 +153,10 @@ async def extract_entities(
                 error=str(exc),
             )
 
-    # ── 2. Render prompt ──────────────────────────────────────────────────────
-    prompt_template = "extract_entities_v4" if known_entities else "extract_entities_v3"
-
-    # ── Resolve prompt template from DB + fetch custom instructions ──────────
+    # ── 2. Resolve prompt template from DB by type ──────────────────────────
     try:
-        template_text = await resolve_prompt_template(
-            prompt_template, org_id, session_factory,
+        template_text = await resolve_prompt_template_by_type(
+            "entity_extraction", org_id, session_factory,
         )
     except Exception:
         template_text = None  # Fall back to filesystem
@@ -184,7 +181,7 @@ async def extract_entities(
 
     try:
         prompt = render_prompt(
-            prompt_template,
+            "entity_extraction",
             template_text=template_text,
             custom_instructions=custom_instr,
             conversation=content,
@@ -195,7 +192,7 @@ async def extract_entities(
         logger.error(
             "entity_extraction.prompt_missing",
             episode_id=episode_id,
-            template=f"{prompt_template}.jinja2",
+            template="entity_extraction.jinja2",
         )
         return
 
@@ -234,7 +231,7 @@ async def extract_entities(
         )
         try:
             recovery_prompt = render_prompt(
-                prompt_template,
+                "entity_extraction",
                 template_text=template_text,
                 custom_instructions=custom_instr,
                 conversation=content,

@@ -21,7 +21,7 @@ from sqlalchemy import text
 from workers.tasks.base import ENRICHMENT_CLASSIFICATION, with_retry
 
 from services.custom_instruction_service import format_custom_instructions
-from services.worker.prompt_renderer import render_prompt, resolve_prompt_template
+from services.worker.prompt_renderer import render_prompt, resolve_prompt_template_by_type
 
 logger = structlog.get_logger()
 
@@ -147,10 +147,9 @@ async def classify_dialog(
             labels = await _fetch_classification_labels(db, org_id)
 
             # ── 5. Resolve prompt template from DB (fall back to filesystem) ─
-            prompt_template_name = "classify_dialog_v1"
             try:
-                template_text = await resolve_prompt_template(
-                    prompt_template_name,
+                template_text = await resolve_prompt_template_by_type(
+                    "classification",
                     org_id,
                     session_factory,
                 )
@@ -180,7 +179,7 @@ async def classify_dialog(
 
             # ── 7. Render prompt ───────────────────────────────────────────
             prompt = render_prompt(
-                "classify_dialog_v1",
+                "classification",
                 template_text=template_text,
                 custom_instructions=custom_instr,
                 conversation=content,

@@ -16,6 +16,8 @@ class PromptTemplateSummary(BaseModel):
     version: int
     is_customised: bool
     description: str | None
+    type: str | None = None
+    is_default_for_type: bool = False
     updated_at: datetime
 
 
@@ -32,7 +34,9 @@ class PromptTemplateDetail(BaseModel):
     version: int
     template_text: str
     description: str | None
+    type: str | None = None
     is_active: bool
+    is_default_for_type: bool = False
     is_system_default: bool = False
 
     model_config = {"from_attributes": True}
@@ -54,7 +58,9 @@ class PromptTemplateDetail(BaseModel):
                 "version": data.version,
                 "template_text": data.template_text,
                 "description": data.description,
+                "type": getattr(data, "type", None),
                 "is_active": data.is_active,
+                "is_default_for_type": getattr(data, "is_default_for_type", False),
                 "is_system_default": getattr(data, "is_system_default", False),
             }
         return data
@@ -86,15 +92,17 @@ class SystemTemplateEntry(BaseModel):
 
     name: str
     version: int
+    type: str | None = None
     is_active: bool
+    is_default_for_type: bool = False
     is_system_default: bool
     description: str | None = None
 
 
 class SystemPromptGroup(BaseModel):
-    """A group of system-default template versions sharing a base name."""
+    """A group of system-default template versions sharing a type."""
 
-    base_name: str
+    type: str
     templates: list[SystemTemplateEntry]
     imported: list[str]
 

@@ -49,6 +49,13 @@ class PromptTemplate(TimestampMixin, Base):
         server_default="1",
     )
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    type: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    is_default_for_type: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

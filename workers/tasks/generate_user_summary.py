@@ -24,7 +24,7 @@ import uuid
 import structlog
 from sqlalchemy import text
 
-from services.worker.prompt_renderer import render_prompt, resolve_prompt_template
+from services.worker.prompt_renderer import render_prompt, resolve_prompt_template_by_type
 from services.custom_instruction_service import format_custom_instructions
 from workers.tasks.base import with_retry
 
@@ -213,8 +213,8 @@ async def generate_user_summary(
 
     template_text: str | None = None
     try:
-        template_text = await resolve_prompt_template(
-            "summarise_user_v1", org_id, session_factory,
+        template_text = await resolve_prompt_template_by_type(
+            "user_summary", org_id, session_factory,
         )
     except Exception:
         logger.warning(
@@ -227,7 +227,7 @@ async def generate_user_summary(
 
     try:
         prompt_text = render_prompt(
-            "summarise_user_v1",
+            "user_summary",
             template_text=template_text,
             custom_instructions=custom_instr,
             episodes=episodes,
@@ -239,7 +239,7 @@ async def generate_user_summary(
     except FileNotFoundError:
         logger.error(
             "user_summary.prompt_missing",
-            template="summarise_user_v1.jinja2",
+            template="user_summary.jinja2",
         )
         return
 

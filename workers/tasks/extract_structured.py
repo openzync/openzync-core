@@ -21,7 +21,7 @@ from sqlalchemy import text
 from workers.tasks.base import ENRICHMENT_STRUCTURED_EXTRACTION, with_retry
 
 from services.custom_instruction_service import format_custom_instructions
-from services.worker.prompt_renderer import render_prompt, resolve_prompt_template
+from services.worker.prompt_renderer import render_prompt, resolve_prompt_template_by_type
 
 logger = structlog.get_logger()
 
@@ -154,10 +154,9 @@ async def extract_structured(
                 return
 
             # ── 5. Resolve prompt template from DB (fall back to filesystem) ─
-            prompt_template_name = "extract_structured_v1"
             try:
-                template_text = await resolve_prompt_template(
-                    prompt_template_name,
+                template_text = await resolve_prompt_template_by_type(
+                    "structured_extraction",
                     org_id,
                     session_factory,
                 )
@@ -188,7 +187,7 @@ async def extract_structured(
             # ── 7. Render prompt ───────────────────────────────────────────
             max_tokens = worker_settings.STRUCTURED_EXTRACTION_MAX_TOKENS
             prompt = render_prompt(
-                "extract_structured_v1",
+                "structured_extraction",
                 template_text=template_text,
                 custom_instructions=custom_instr,
                 conversation=content,
@@ -389,7 +388,7 @@ async def _fetch_structured_schemas(
     """
     result = await db.execute(
         text("""
-            SELECT id, name, json_schema FROM extraction_schemas
+            SELECT id, name, json_schema, prompt_template FROM extraction_schemas
             WHERE organization_id = :org_id
               AND type = 'structured'
               AND is_active = true
@@ -403,6 +402,7 @@ async def _fetch_structured_schemas(
             "id": str(row[0]),
             "name": row[1],
             "json_schema": row[2],
+            "prompt_template": row[3],
         }
         for row in rows
     ]

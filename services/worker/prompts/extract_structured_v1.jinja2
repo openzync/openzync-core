@@ -22,9 +22,13 @@ value to ``null``.
 
 {% for schema in schemas %}
 ### Schema {{ loop.index }}: "{{ schema.name }}"
+{% if schema.prompt_template %}
+{{ schema.prompt_template }}
+{% else %}
 ```json
 {{ schema.json_schema | tojson(indent=2) }}
 ```
+{% endif %}
 {% endfor %}
 
 ---

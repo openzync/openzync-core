@@ -148,3 +148,38 @@ async def resolve_prompt_template(
     # (organization_id IS NULL) internally when no org-specific override
     # exists, so a single call suffices here.
     return template.template_text if template is not None else None
+
+
+async def resolve_prompt_template_by_type(
+    type: str,
+    org_id: UUID | str,
+    db_session_factory: async_sessionmaker[AsyncSession],
+) -> str | None:
+    """Resolve the active default prompt template for a given type.
+
+    Looks up the org-specific default for this type first (``is_default_for_type
+    = True``), then falls back to the system default.  Returns ``None`` if no
+    default template exists for the given type.
+
+    This is the type-based counterpart of :func:`resolve_prompt_template` —
+    workers call this instead of hardcoding template names.
+
+    Args:
+        type: The template type (e.g. ``"fact_extraction"``).
+        org_id: Organisation UUID (string or ``UUID`` instance).
+        db_session_factory: An ``async_sessionmaker`` bound to the write
+            database engine.
+
+    Returns:
+        The active template body, or ``None`` if no default exists.
+    """
+    if isinstance(org_id, str):
+        org_id = UUID(org_id)
+
+    from repositories.prompt_template_repository import PromptTemplateRepository  # noqa: PLC0415, I001 — lazy import; must remain inline.
+
+    async with db_session_factory() as session:
+        repo = PromptTemplateRepository(session)
+        template = await repo.get_active_by_type(org_id=org_id, type=type)
+
+    return template.template_text if template is not None else None
