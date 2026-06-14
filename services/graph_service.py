@@ -16,6 +16,7 @@ from uuid import UUID
 
 from core.exceptions import EntityNotFoundError, NotFoundError
 from packages.graphiti_client.interface import GraphBackend
+from repositories.fact_repository import FactRepository
 from repositories.user_repository import UserRepository
 
 logger = logging.getLogger(__name__)
@@ -32,15 +33,20 @@ class GraphService:
         user_repo: Optional ``UserRepository`` for user existence checks.
             When provided, ``ensure_user_exists`` can be called by
             routers before graph queries.
+        fact_repo: Optional ``FactRepository`` for session-scoped entity
+            queries. When provided, ``get_entities`` accepts a ``session_id``
+            to scope results to entities linked to a specific session.
     """
 
     def __init__(
         self,
         graph_backend: GraphBackend | None = None,
         user_repo: UserRepository | None = None,
+        fact_repo: FactRepository | None = None,
     ) -> None:
         self._backend = graph_backend
         self._user_repo = user_repo
+        self._fact_repo = fact_repo
 
     # ── User validation (moved from router layer) ───────────────────────────────
 
@@ -76,14 +82,21 @@ class GraphService:
         entity_type: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        session_id: UUID | None = None,
     ) -> dict[str, Any]:
         """List entity nodes with optional type filter and cursor pagination.
+
+        When ``session_id`` is provided, entities are scoped to those linked
+        to episodes in the specified session.  Cursor pagination is not
+        supported for session-scoped queries — all matching entities are
+        returned in a single page.
 
         Args:
             org_id: The authenticated organization UUID.
             entity_type: Optional filter by entity type.
             limit: Maximum results per page (max 200).
             cursor: Opaque cursor for pagination.
+            session_id: Optional session UUID to scope entities.
 
         Returns:
             A dict with ``items``, ``next_cursor``, and ``has_more`` keys.
@@ -94,6 +107,44 @@ class GraphService:
                 "graph_service.backend_unavailable", extra={"operation": "get_entities"}
             )
             return {"items": [], "next_cursor": None, "has_more": False}
+
+        # Session-scoped query — use FactRepository to find entities linked
+        # to this session's episodes, then return in GraphNode-compatible format.
+        if session_id is not None:
+            if self._fact_repo is None:
+                logger.warning(
+                    "graph_service.no_fact_repo",
+                    extra={
+                        "operation": "get_entities",
+                        "session_id": str(session_id),
+                    },
+                )
+                return {"items": [], "next_cursor": None, "has_more": False}
+
+            entities = await self._fact_repo.get_entities_for_session(
+                session_id=session_id,
+                organization_id=org_id,
+            )
+
+            # Apply optional entity_type filter client-side
+            if entity_type:
+                entities = [e for e in entities if e.get("entity_type") == entity_type]
+
+            return {
+                "items": [
+                    {
+                        "id": str(e["id"]),
+                        "name": e["name"],
+                        "type": e["entity_type"],
+                        "summary": e.get("summary", ""),
+                        "metadata": {},
+                        "created_at": None,
+                    }
+                    for e in entities
+                ],
+                "next_cursor": None,
+                "has_more": False,
+            }
 
         return await self._backend.list_entities(
             org_id=org_id,

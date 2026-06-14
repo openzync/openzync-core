@@ -66,6 +66,10 @@ async def list_graph_nodes(
         default=None,
         description="Optional filter by entity type (e.g. 'Person', 'Organization').",
     ),
+    session_id: UUID | None = Query(
+        default=None,
+        description="Optional: scope entities to those linked to a specific session.",
+    ),
     limit: int = Query(
         default=50,
         ge=1,
@@ -87,6 +91,7 @@ async def list_graph_nodes(
     result = await service.get_entities(
         org_id=org_uuid,
         entity_type=entity_type,
+        session_id=session_id,
         limit=limit,
         cursor=cursor,
     )

@@ -140,7 +140,8 @@ async def get_graph_service(
     """Dependency that yields an initialised GraphService.
 
     Creates a request-scoped ``PostgresGraphBackend`` and wires in the
-    ``UserRepository`` for user-existence checks.
+    ``UserRepository`` for user-existence checks and ``FactRepository``
+    for session-scoped entity queries.
     """
     from packages.graphiti_client.backends.postgres import PostgresGraphBackend
 
@@ -148,6 +149,7 @@ async def get_graph_service(
     return GraphService(
         graph_backend=graph_backend,
         user_repo=UserRepository(db),
+        fact_repo=FactRepository(db),
     )
 
 
