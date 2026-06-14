@@ -14,6 +14,7 @@ import {
   ArrowUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import SessionTabs from "../tabs";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -23,13 +24,6 @@ interface Message {
   content: string;
   created_at?: string;
   token_count?: number;
-  [key: string]: unknown;
-}
-
-interface MessagesResponse {
-  items?: Message[];
-  messages?: Message[];
-  total?: number;
   [key: string]: unknown;
 }
 
@@ -114,8 +108,8 @@ export default function MessagesPage() {
           throw new Error(`HTTP ${res.status}${res.statusText ? `: ${res.statusText}` : ""}`);
         }
 
-        const data: MessagesResponse = await res.json();
-        const items = data.items ?? data.messages ?? data;
+        const json = await res.json();
+        const items: Message[] = json.data ?? [];
         const msgList: Message[] = Array.isArray(items) ? items : [];
 
         if (prepend) {
@@ -212,6 +206,7 @@ export default function MessagesPage() {
 
   return (
     <div className="space-y-4">
+      <SessionTabs sessionId={sessionId} userId={userId ?? ""} activeTab="messages" />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

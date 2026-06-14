@@ -35,7 +35,7 @@ export default function SessionGraphPage() {
         const headers: Record<string, string> = {};
         if (token) headers["Authorization"] = `Bearer ${token}`;
 
-        const nodeRes = await fetch(`http://localhost:8000/v1/users/${userId}/graph/nodes?limit=100`, { headers });
+        const nodeRes = await fetch(`http://localhost:8000/v1/users/${userId}/graph/nodes?limit=100&session_id=${sessionId}`, { headers });
         if (!nodeRes.ok) throw new Error("Failed to load graph data");
         const nodeData = await nodeRes.json();
         const items: any[] = (nodeData.data as any)?.items ?? [];
