@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import get_arq
 from core.config import settings
+from core.events import EventType
 from core.exceptions import NotFoundError, ValidationError
 from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
@@ -40,6 +41,7 @@ from repositories.organization_repository import OrganizationRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
 from schemas.memory import IngestMemoryResponse, Message
+from services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
 
@@ -114,10 +116,12 @@ class MemoryService:
         session_repo: SessionRepository | None = None,
         user_repo: UserRepository | None = None,
         fact_repo: FactRepository | None = None,
+        webhook_service: WebhookService | None = None,
         org_repo: OrganizationRepository | None = None,
     ) -> None:
         self._db = db
         self._redis = redis_client
+        self._webhook_service = webhook_service
 
         # Repositories (injected or auto-created)
         self._episode_repo = episode_repo or EpisodeRepository(db)
@@ -321,6 +325,26 @@ class MemoryService:
 
         # ── Step 10: Invalidate context cache for this user ──────────────
         await self._invalidate_context_cache(str(org_id), str(user_id))
+
+        # ── Step 11: Emit webhook events ─────────────────────────────────
+        if self._webhook_service:
+            event_payload = {
+                "org_id": str(org_id),
+                "user_id": str(user_id),
+                "session_id": str(session_id),
+                "episode_count": len(episodes),
+                "job_id": job_id,
+            }
+            await self._webhook_service.emit(
+                organization_id=org_id,
+                event_type=EventType.INGEST_BATCH_COMPLETED,
+                payload=event_payload,
+            )
+            await self._webhook_service.emit(
+                organization_id=org_id,
+                event_type=EventType.MESSAGE_ADDED,
+                payload=event_payload,
+            )
 
         return response
 

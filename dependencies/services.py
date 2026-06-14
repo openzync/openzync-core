@@ -34,12 +34,30 @@ from repositories.fact_repository import FactRepository
 from repositories.organization_repository import OrganizationRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
+from repositories.webhook_repository import WebhookRepository
 from services.auth_service import AuthService
 from services.fact_service import FactService
 from services.graph_service import GraphService
 from services.memory_service import MemoryService
 from services.session_service import SessionService
 from services.user_service import UserService
+from services.webhook_service import WebhookService
+
+
+# ── Webhook (must be first — other factories depend on it) ────────────────────
+
+
+async def get_webhook_service(
+    db: AsyncSession = Depends(get_db),
+) -> WebhookService:
+    """Dependency that yields an initialised WebhookService.
+
+    Wires in the webhook repository for endpoint CRUD.
+    Event emission uses ARQ job delivery (not Svix).
+    """
+    return WebhookService(
+        repo=WebhookRepository(db),
+    )
 
 
 # ── User ───────────────────────────────────────────────────────────────────────
@@ -47,13 +65,14 @@ from services.user_service import UserService
 
 async def get_user_service(
     db: AsyncSession = Depends(get_db),
+    webhook: WebhookService = Depends(get_webhook_service),
 ) -> UserService:
     """Dependency that yields an initialised UserService.
 
     The service is constructed once per request using a DB session from
     the application's async engine.
     """
-    return UserService(repo=UserRepository(db))
+    return UserService(repo=UserRepository(db), webhook_service=webhook)
 
 
 # ── Session ────────────────────────────────────────────────────────────────────
@@ -61,13 +80,14 @@ async def get_user_service(
 
 async def get_session_service(
     db: AsyncSession = Depends(get_db),
+    webhook: WebhookService = Depends(get_webhook_service),
 ) -> SessionService:
     """Dependency that yields an initialised SessionService.
 
     The service is constructed once per request using a DB session from
     the application's async engine.
     """
-    return SessionService(repo=SessionRepository(db))
+    return SessionService(repo=SessionRepository(db), webhook_service=webhook)
 
 
 # ── Auth ───────────────────────────────────────────────────────────────────────
@@ -86,6 +106,7 @@ async def get_auth_service(
 async def get_fact_service(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    webhook: WebhookService = Depends(get_webhook_service),
 ) -> FactService:
     """Dependency that yields an initialised FactService.
 
@@ -99,6 +120,7 @@ async def get_fact_service(
         fact_repo=FactRepository(db),
         user_repo=UserRepository(db),
         session_repo=SessionRepository(db),
+        webhook_service=webhook,
     )
 
 
@@ -108,6 +130,7 @@ async def get_fact_service(
 async def get_memory_service(
     request: Request,
     db: AsyncSession = Depends(get_db),
+    webhook: WebhookService = Depends(get_webhook_service),
 ) -> MemoryService:
     """Dependency that yields an initialised MemoryService.
 
@@ -128,6 +151,7 @@ async def get_memory_service(
         user_repo=UserRepository(db),
         fact_repo=FactRepository(db),
         org_repo=OrganizationRepository(db),
+        webhook_service=webhook,
     )
 
 
@@ -136,6 +160,7 @@ async def get_memory_service(
 
 async def get_graph_service(
     db: AsyncSession = Depends(get_db),
+    webhook: WebhookService = Depends(get_webhook_service),
 ) -> GraphService:
     """Dependency that yields an initialised GraphService.
 
@@ -150,6 +175,7 @@ async def get_graph_service(
         graph_backend=graph_backend,
         user_repo=UserRepository(db),
         fact_repo=FactRepository(db),
+        webhook_service=webhook,
     )
 
 
@@ -170,3 +196,6 @@ async def get_auth_throttle(
             "Ensure init_redis() was called during the application lifespan."
         )
     return AuthThrottle(redis)
+
+
+

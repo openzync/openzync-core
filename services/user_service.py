@@ -15,9 +15,11 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from core.events import EventType
 from core.exceptions import ConflictError, NotFoundError, ValidationError
 from repositories.user_repository import UserRepository
 from schemas.users import UserListResponse, UserResponse, UserResponseWithStats
+from services.webhook_service import WebhookService
 
 # ╠ This file contains NO SQLAlchemy expressions.
 # ╠ If you see a ``select()`` or ``where()``, it belongs in the repository.
@@ -33,8 +35,13 @@ class UserService:
         repo: The :class:`UserRepository` instance for DB access.
     """
 
-    def __init__(self, repo: UserRepository) -> None:
+    def __init__(
+        self,
+        repo: UserRepository,
+        webhook_service: WebhookService | None = None,
+    ) -> None:
         self._repo = repo
+        self._webhook_service = webhook_service
 
     # ── Create ──────────────────────────────────────────────────────────────
 
@@ -79,6 +86,17 @@ class UserService:
             email=email,
             metadata=metadata,
         )
+
+        if self._webhook_service:
+            await self._webhook_service.emit(
+                organization_id=organization_id,
+                event_type=EventType.USER_CREATED,
+                payload={
+                    "user_id": str(user.id),
+                    "external_id": external_id,
+                },
+            )
+
         return UserResponse.model_validate(self._user_to_dict(user))
 
     def _user_to_dict(self, user: Any) -> dict[str, Any]:
@@ -144,6 +162,7 @@ class UserService:
         # Race: concurrent create — DB constraint is the source of truth
         from sqlalchemy.exc import IntegrityError
 
+        is_new = False
         try:
             user = await self._repo.create(
                 organization_id=organization_id,
@@ -152,6 +171,7 @@ class UserService:
                 email=email,
                 metadata=metadata,
             )
+            is_new = True
         except IntegrityError:
             # Concurrent insert won. Rollback stale tx, then re-fetch.
             await self._repo.rollback()
@@ -166,6 +186,16 @@ class UserService:
                     f"IntegrityError was raised but no matching row "
                     f"was found."
                 )
+
+        if is_new and self._webhook_service:
+            await self._webhook_service.emit(
+                organization_id=organization_id,
+                event_type=EventType.USER_CREATED,
+                payload={
+                    "user_id": str(user.id),
+                    "external_id": external_id,
+                },
+            )
 
         return UserResponse.model_validate(self._user_to_dict(user))
 

@@ -47,6 +47,7 @@ from routers import (
     admin_metrics,
     admin_schemas,
     admin_stats,
+    admin_webhooks,
     audit_log,
     auth,
     classifications,
@@ -204,6 +205,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_metrics.router)
     app.include_router(admin_schemas.router)
     app.include_router(admin_stats.router)
+    app.include_router(admin_webhooks.router)
     app.include_router(audit_log.router)
     app.include_router(admin_metrics.router)
     app.include_router(auth.router)

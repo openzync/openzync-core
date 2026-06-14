@@ -14,6 +14,7 @@ from models.refresh_token import RefreshToken
 from models.session import Session
 from models.structured_extraction import StructuredExtraction
 from models.user import User
+from models.webhook import WebhookDeliveryLog, WebhookEndpoint
 
 __all__: list[str] = [
     "Base",
@@ -32,4 +33,6 @@ __all__: list[str] = [
     "RefreshToken",
     "AuditLog",
     "LLMUsage",
+    "WebhookEndpoint",
+    "WebhookDeliveryLog",
 ]

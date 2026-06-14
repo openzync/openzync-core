@@ -27,6 +27,7 @@ import {
   ChevronRight,
   Bell,
   User as UserIcon,
+  Webhook,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -69,6 +70,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "Extraction Schemas", href: "/settings/schemas", icon: <FileJson size={18} /> },
       { label: "Classifications", href: "/settings/classifications", icon: <Tags size={18} /> },
       { label: "Extractions", href: "/settings/extractions", icon: <Database size={18} /> },
+      { label: "Webhooks", href: "/settings/webhooks", icon: <Webhook size={18} /> },
     ],
   },
   {

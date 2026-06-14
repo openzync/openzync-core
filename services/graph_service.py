@@ -14,10 +14,12 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from core.events import EventType
 from core.exceptions import EntityNotFoundError, NotFoundError
 from packages.graphiti_client.interface import GraphBackend
 from repositories.fact_repository import FactRepository
 from repositories.user_repository import UserRepository
+from services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +45,12 @@ class GraphService:
         graph_backend: GraphBackend | None = None,
         user_repo: UserRepository | None = None,
         fact_repo: FactRepository | None = None,
+        webhook_service: WebhookService | None = None,
     ) -> None:
         self._backend = graph_backend
         self._user_repo = user_repo
         self._fact_repo = fact_repo
+        self._webhook_service = webhook_service
 
     # ── User validation (moved from router layer) ───────────────────────────────
 

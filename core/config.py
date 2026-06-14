@@ -218,6 +218,18 @@ class Settings(BaseSettings):
         validation_alias="MG_JWT_REFRESH_TOKEN_TTL_DAYS",
     )
 
+    # ── Webhooks ───────────────────────────────────────────────────────────
+    WEBHOOK_SIGNING_SECRET: str = Field(
+        default="dev-webhook-secret-change-in-production-00",
+        description=(
+            "Secret key for HMAC-SHA256 webhook signing. "
+            "Must be at least 32 characters. "
+            "Consumers use this to verify webhook authenticity."
+        ),
+        validation_alias="MG_WEBHOOK_SIGNING_SECRET",
+        min_length=32,
+    )
+
     # ── Rate Limiting ─────────────────────────────────────────────────────
 
     @model_validator(mode="after")

@@ -17,9 +17,11 @@ from schemas.sessions import (
     SessionResponse,
 )
 
+from core.events import EventType
 from core.exceptions import ConflictError, NotFoundError, ValidationError
 from schemas.mappers import episode_to_dict, session_to_dict, session_to_list_dict
 from repositories.session_repository import SessionRepository
+from services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
 
@@ -29,10 +31,16 @@ class SessionService:
 
     Args:
         repo: The session repository.
+        webhook_service: Optional webhook service for event emission.
     """
 
-    def __init__(self, repo: SessionRepository) -> None:
+    def __init__(
+        self,
+        repo: SessionRepository,
+        webhook_service: WebhookService | None = None,
+    ) -> None:
         self._repo = repo
+        self._webhook_service = webhook_service
 
     # ── Create ──────────────────────────────────────────────────────────────
 
@@ -82,6 +90,17 @@ class SessionService:
                 "external_id": external_id,
             },
         )
+
+        if self._webhook_service:
+            await self._webhook_service.emit(
+                organization_id=organization_id,
+                event_type=EventType.SESSION_CREATED,
+                payload={
+                    "session_id": str(session.id),
+                    "user_id": str(user_id),
+                    "external_id": external_id,
+                },
+            )
 
         return SessionResponse.model_validate(
             session_to_dict(session, message_count=0, fact_count=0)
@@ -315,3 +334,13 @@ class SessionService:
                 "user_id": str(session.user_id),
             },
         )
+
+        if self._webhook_service:
+            await self._webhook_service.emit(
+                organization_id=org_id,
+                event_type=EventType.SESSION_CLOSED,
+                payload={
+                    "session_id": str(session_id),
+                    "user_id": str(session.user_id),
+                },
+            )

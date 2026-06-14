@@ -21,11 +21,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import get_arq
 from core.config import settings
+from core.events import EventType
 from core.exceptions import NotFoundError
 from repositories.fact_repository import FactRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
 from schemas.facts import FactBatchResponse, FactTriple
+from services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
 
@@ -59,9 +61,11 @@ class FactService:
         fact_repo: FactRepository | None = None,
         user_repo: UserRepository | None = None,
         session_repo: SessionRepository | None = None,
+        webhook_service: WebhookService | None = None,
     ) -> None:
         self._db = db
         self._redis = redis_client
+        self._webhook_service = webhook_service
         self._fact_repo = fact_repo or FactRepository(db)
         self._user_repo = user_repo or UserRepository(db)
         self._session_repo = session_repo or SessionRepository(db)
@@ -174,6 +178,20 @@ class FactService:
 
         # ── Step 6: Cache content hash for future dedup ───────────────────
         await self._cache_dedup(content_hash, job_id)
+
+        # ── Emit webhook event ────────────────────────────────────────
+        if self._webhook_service:
+            await self._webhook_service.emit(
+                organization_id=org_id,
+                event_type=EventType.FACT_EXTRACTED,
+                payload={
+                    "org_id": str(org_id),
+                    "session_id": str(session_id) if session_id else None,
+                    "user_id": str(user_id),
+                    "fact_count": len(created),
+                    "job_id": job_id,
+                },
+            )
 
         logger.info(
             "fact_service.facts_ingested",

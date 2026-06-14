@@ -106,6 +106,7 @@ from services.worker.tasks.audit_log import write_audit_log
 from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
 from workers.tasks.summarise_community import summarise_community
 from workers.tasks.sync_to_graph import sync_to_graph
+from services.worker.tasks.deliver_webhook import deliver_webhook
 
 HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     classify_dialog,
@@ -122,6 +123,7 @@ LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     summarise_community,
     merge_duplicate_entities,
     write_audit_log,
+    deliver_webhook,
 ]
 """Tasks assigned to the low-priority queue (scheduled batch)."""
 
