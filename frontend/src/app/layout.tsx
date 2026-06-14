@@ -1,11 +1,19 @@
 import type { Metadata } from "next";
-import "@fontsource/roboto/300.css";
-import "@fontsource/roboto/400.css";
-import "@fontsource/roboto/500.css";
-import "@fontsource/roboto/700.css";
-import { AuthProvider } from "@/lib/auth/AuthContext";
-import { MuiProvider } from "./MuiProvider";
-import { NotificationProvider } from "@/components/shared/NotificationProvider";
+import { Inter, JetBrains_Mono } from "next/font/google";
+import { ThemeProvider } from "@/components/theme-provider";
+import "./globals.css";
+
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-sans",
+  display: "swap",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-mono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "OpenZep Dashboard",
@@ -14,17 +22,20 @@ export const metadata: Metadata = {
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body style={{ margin: 0 }}>
-        <MuiProvider>
-          <NotificationProvider>
-            <AuthProvider>{children}</AuthProvider>
-          </NotificationProvider>
-        </MuiProvider>
+      <body
+        className={`${inter.variable} ${jetbrainsMono.variable} font-sans`}
+      >
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem={false}
+          disableTransitionOnChange
+        >
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   );

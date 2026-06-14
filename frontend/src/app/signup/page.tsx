@@ -3,28 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import {
-  Box,
-  Card,
-  CardContent,
-  TextField,
-  Typography,
-  Button,
-  Alert,
-  InputAdornment,
-  IconButton,
-  CircularProgress,
-  LinearProgress,
-} from "@mui/material";
-import VisibilityIcon from "@mui/icons-material/Visibility";
-import VisibilityOffIcon from "@mui/icons-material/VisibilityOff";
-import { useAuth } from "@/lib/auth/useAuth";
-import { ApiError } from "@/lib/api/client";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 
 function getPasswordStrength(pw: string): {
   score: number;
   label: string;
-  color: "error" | "warning" | "success";
+  color: string;
 } {
   let score = 0;
   if (pw.length >= 8) score += 1;
@@ -32,15 +16,14 @@ function getPasswordStrength(pw: string): {
   if (/[A-Z]/.test(pw)) score += 1;
   if (/[0-9]/.test(pw)) score += 1;
   if (/[^A-Za-z0-9]/.test(pw)) score += 1;
-
-  if (score <= 1) return { score: 25, label: "Weak", color: "error" };
-  if (score <= 2) return { score: 50, label: "Fair", color: "warning" };
-  if (score <= 3) return { score: 75, label: "Good", color: "warning" };
-  return { score: 100, label: "Strong", color: "success" };
+  if (score <= 1) return { score: 20, label: "Weak", color: "bg-error" };
+  if (score <= 2) return { score: 40, label: "Fair", color: "bg-warning" };
+  if (score <= 3) return { score: 60, label: "Good", color: "bg-warning" };
+  if (score <= 4) return { score: 80, label: "Strong", color: "bg-success" };
+  return { score: 100, label: "Very Strong", color: "bg-success" };
 }
 
 export default function SignupPage() {
-  const { signup, user } = useAuth();
   const router = useRouter();
   const [orgName, setOrgName] = useState("");
   const [email, setEmail] = useState("");
@@ -49,263 +32,179 @@ export default function SignupPage() {
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  if (user) {
-    router.replace("/dashboard");
-    return null;
-  }
-
   const pwStrength = getPasswordStrength(password);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setSubmitting(true);
+
     try {
-      await signup(email, password, orgName);
-      router.replace("/dashboard");
-    } catch (err) {
-      if (err instanceof ApiError) {
-        setError(err.detail ?? "Signup failed. Please try again.");
-      } else {
-        setError("Connection error. Please try again.");
+      const res = await fetch("http://localhost:8000/v1/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          password,
+          organization_name: orgName,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail ?? "Signup failed. Please try again.");
       }
+      const data = await res.json();
+      sessionStorage.setItem("mg_access_token", data.access_token);
+      sessionStorage.setItem("mg_refresh_token", data.refresh_token);
+      router.replace("/overview");
+    } catch (err: any) {
+      setError(err.message ?? "Connection error. Please try again.");
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <Box
-      sx={{
-        display: "flex",
-        minHeight: "100vh",
-        bgcolor: "background.default",
-      }}
-    >
-      {/* ── Left Brand Panel ─────────────────────────────────────────────── */}
-      <Box
-        sx={{
-          flex: "1 1 50%",
-          display: { xs: "none", md: "flex" },
-          flexDirection: "column",
-          justifyContent: "center",
-          alignItems: "center",
-          background: "linear-gradient(135deg, #14488C 0%, #0D1117 100%)",
-          position: "relative",
-          overflow: "hidden",
-          "&::before": {
-            content: '""',
-            position: "absolute",
-            inset: 0,
-            backgroundImage:
-              "radial-gradient(circle at 75% 50%, rgba(143,175,217,0.08) 0%, transparent 50%), radial-gradient(circle at 25% 30%, rgba(20,72,140,0.12) 0%, transparent 50%)",
-          },
-        }}
-      >
-        <Box sx={{ position: "relative", zIndex: 1, textAlign: "center", px: 4 }}>
-          <Typography
-            variant="h3"
-            sx={{
-              fontWeight: 800,
-              color: "#F2F2F2",
-              letterSpacing: "-0.03em",
-              mb: 1,
-            }}
-          >
+    <div className="flex min-h-screen">
+      {/* Left brand panel */}
+      <div className="hidden md:flex flex-1 flex-col items-center justify-center relative overflow-hidden bg-gradient-to-br from-brand-500 to-surface-950">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_75%_50%,rgba(143,175,217,0.08)_0%,transparent_50%),radial-gradient(circle_at_25%_30%,rgba(20,72,140,0.12)_0%,transparent_50%)]" />
+        <div className="relative z-10 text-center px-8">
+          <h1 className="text-5xl font-extrabold text-[#F2F2F2] tracking-tight mb-2">
             OpenZep
-          </Typography>
-          <Typography
-            variant="h6"
-            sx={{
-              color: "rgba(242,242,242,0.7)",
-              fontWeight: 400,
-              maxWidth: 360,
-            }}
-          >
+          </h1>
+          <p className="text-lg text-surface-300 max-w-sm mx-auto mb-8">
             Get started with agent memory infrastructure
-          </Typography>
-          <Box
-            sx={{
-              mt: 4,
-              display: "flex",
-              flexDirection: "column",
-              gap: 2,
-              textAlign: "left",
-              maxWidth: 320,
-            }}
-          >
+          </p>
+          <div className="text-left max-w-xs mx-auto space-y-3">
             {[
               "Persistent, queryable agent memory",
               "Multi-provider LLM support (BYOK)",
               "Knowledge graph with hybrid search",
               "Async enrichment pipeline",
             ].map((feature, i) => (
-              <Box key={i} sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                <Box
-                  sx={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: "50%",
-                    bgcolor: "#8FAFD9",
-                    flexShrink: 0,
-                  }}
-                />
-                <Typography variant="body2" sx={{ color: "rgba(242,242,242,0.8)" }}>
-                  {feature}
-                </Typography>
-              </Box>
+              <div key={i} className="flex items-start gap-2.5">
+                <div className="mt-1.5 h-2 w-2 rounded-full bg-accent-300 shrink-0" />
+                <span className="text-sm text-surface-300">{feature}</span>
+              </div>
             ))}
-          </Box>
-        </Box>
-      </Box>
+          </div>
+        </div>
+      </div>
 
-      {/* ── Right Form Panel ─────────────────────────────────────────────── */}
-      <Box
-        sx={{
-          flex: "1 1 50%",
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          p: 4,
-        }}
-      >
-        <Card
-          sx={{
-            width: 420,
-            maxWidth: "100%",
-            boxShadow: "0 0 40px rgba(20,72,140,0.15)",
-          }}
-        >
-          <CardContent sx={{ p: 4 }}>
-            {/* Mobile brand */}
-            <Box sx={{ display: { xs: "block", md: "none" }, mb: 3, textAlign: "center" }}>
-              <Typography
-                variant="h5"
-                sx={{ fontWeight: 800, color: "primary.main", letterSpacing: "-0.02em" }}
-              >
-                OpenZep
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                Agent Memory Infrastructure
-              </Typography>
-            </Box>
+      {/* Right form panel */}
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="w-full max-w-sm">
+          {/* Mobile brand */}
+          <div className="md:hidden text-center mb-8">
+            <h1 className="text-2xl font-extrabold text-brand-500">OpenZep</h1>
+            <p className="text-xs text-surface-400">Agent Memory Infrastructure</p>
+          </div>
 
-            <Typography variant="h5" sx={{ fontWeight: 700, mb: 0.5 }}>
-              Create your account
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+          <div className="card-base p-6">
+            <h2 className="text-xl font-semibold mb-1">Create your account</h2>
+            <p className="text-sm text-surface-400 mb-6">
               Set up your OpenZep organization
-            </Typography>
+            </p>
 
             {error && (
-              <Alert severity="error" sx={{ mb: 2, borderRadius: 1.5 }}>
+              <div className="mb-4 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">
                 {error}
-              </Alert>
+              </div>
             )}
 
-            <Box component="form" onSubmit={handleSubmit}>
-              <TextField
-                fullWidth
-                label="Organization Name"
-                value={orgName}
-                onChange={(e) => setOrgName(e.target.value)}
-                required
-                autoFocus
-                sx={{ mb: 2 }}
-              />
-              <TextField
-                fullWidth
-                label="Email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                autoComplete="email"
-                sx={{ mb: 2 }}
-              />
-              <TextField
-                fullWidth
-                label="Password"
-                type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                autoComplete="new-password"
-                sx={{ mb: 1 }}
-                slotProps={{
-                  htmlInput: { minLength: 8 },
-                  input: {
-                    endAdornment: (
-                      <InputAdornment position="end">
-                        <IconButton
-                          onClick={() => setShowPassword(!showPassword)}
-                          edge="end"
-                          size="small"
-                        >
-                          {showPassword ? (
-                            <VisibilityOffIcon fontSize="small" />
-                          ) : (
-                            <VisibilityIcon fontSize="small" />
-                          )}
-                        </IconButton>
-                      </InputAdornment>
-                    ),
-                  },
-                }}
-              />
-              {password && (
-                <Box sx={{ mb: 2 }}>
-                  <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 0.5 }}>
-                    <Typography variant="caption" color="text.secondary">
-                      Password strength
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      sx={{ color: `${pwStrength.color}.main`, fontWeight: 600 }}
-                    >
-                      {pwStrength.label}
-                    </Typography>
-                  </Box>
-                  <LinearProgress
-                    variant="determinate"
-                    value={pwStrength.score}
-                    color={pwStrength.color}
-                    sx={{ height: 4, borderRadius: 2 }}
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-surface-300 mb-1.5">
+                  Organization Name
+                </label>
+                <input
+                  type="text"
+                  value={orgName}
+                  onChange={(e) => setOrgName(e.target.value)}
+                  required
+                  autoFocus
+                  className="input-base w-full"
+                  placeholder="My Organization"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-surface-300 mb-1.5">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  autoComplete="email"
+                  className="input-base w-full"
+                  placeholder="you@example.com"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-surface-300 mb-1.5">
+                  Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                    className="input-base w-full pr-10"
+                    placeholder="Minimum 8 characters"
                   />
-                </Box>
-              )}
-              <Button
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-surface-400 hover:text-[#F2F2F2]"
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                {password && (
+                  <div className="mt-2">
+                    <div className="flex justify-between text-xs mb-1">
+                      <span className="text-surface-500">Password strength</span>
+                      <span className="font-medium text-surface-300">{pwStrength.label}</span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-surface-800 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ${pwStrength.color}`}
+                        style={{ width: `${pwStrength.score}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button
                 type="submit"
-                variant="contained"
-                fullWidth
-                size="large"
                 disabled={submitting}
-                sx={{ mb: 2 }}
+                className="btn-primary w-full mt-2"
               >
                 {submitting ? (
-                  <CircularProgress size={20} color="inherit" />
+                  <Loader2 size={18} className="animate-spin" />
                 ) : (
                   "Create Account"
                 )}
-              </Button>
-            </Box>
+              </button>
+            </form>
 
-            <Typography variant="body2" align="center" color="text.secondary">
+            <p className="mt-6 text-center text-sm text-surface-400">
               Already have an account?{" "}
-              <Link
-                href="/login"
-                style={{
-                  color: "#8FAFD9",
-                  fontWeight: 600,
-                  textDecoration: "none",
-                }}
-              >
+              <Link href="/login" className="text-accent-300 font-medium hover:text-accent-200">
                 Sign in
               </Link>
-            </Typography>
-          </CardContent>
-        </Card>
-      </Box>
-    </Box>
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
