@@ -7,6 +7,8 @@ version numbers.
 
 from __future__ import annotations
 
+import re
+from collections import defaultdict
 from uuid import UUID
 
 from sqlalchemy import delete, func, select, update
@@ -180,17 +182,21 @@ class PromptTemplateRepository:
     async def seed_default_prompts(self, org_id: UUID) -> int:
         """Seed the latest active system-default prompts for a new organisation.
 
-        Copies each active system default (``organization_id IS NULL``,
-        ``is_active = True``) into the org's scope at ``version = 1``.
-        Template names that the org already has are skipped — this method is
-        safe for re-runs (idempotent).
+        Groups active system defaults by base name (strips ``_v\\d+`` suffix)
+        and copies **only the highest-versioned template per group** into the
+        org's scope at ``version = 1``.  This means ``extract_facts_v4`` is
+        seeded but ``extract_facts_v1``, ``v2``, ``v3`` are not.
+
+        Template names that the org already has are skipped — idempotent.
 
         Args:
             org_id: UUID of the newly created organisation.
 
         Returns:
-            The number of templates seeded.
+            Number of templates seeded.
         """
+        _V_RE = re.compile(r"_v(\d+)$")
+
         # Fetch all active system defaults.
         result = await self._db.execute(
             select(PromptTemplate).where(
@@ -200,8 +206,21 @@ class PromptTemplateRepository:
         )
         defaults = list(result.scalars().all())
 
-        count = 0
+        # Group by base name, keep highest-versioned template per group.
+        groups: dict[str, list[tuple[int, PromptTemplate]]] = defaultdict(list)
         for tmpl in defaults:
+            m = _V_RE.search(tmpl.template_name)
+            if m:
+                base = tmpl.template_name[: m.start()]
+                groups[base].append((int(m.group(1)), tmpl))
+            else:
+                # No version suffix — treat the name itself as the base.
+                groups[tmpl.template_name].append((0, tmpl))
+
+        latest_templates = [max(entries, key=lambda x: x[0])[1] for entries in groups.values()]
+
+        count = 0
+        for tmpl in latest_templates:
             # Skip if the org already has a version for this template name.
             existing = await self._db.execute(
                 select(PromptTemplate).where(
@@ -336,6 +355,18 @@ class PromptTemplateRepository:
                     "description": row.description,
                     "updated_at": row.updated_at,
                 }
+
+        # Cross-check: if the org has ANY row for a template name, it's
+        # customised — even if a higher-version system default shadows it.
+        org_result = await self._db.execute(
+            select(PromptTemplate.template_name)
+            .where(PromptTemplate.organization_id == org_id)
+            .distinct()
+        )
+        org_names = {row[0] for row in org_result.fetchall()}
+        for entry in seen.values():
+            if entry["name"] in org_names:
+                entry["is_customised"] = True
 
         return list(seen.values())
 
