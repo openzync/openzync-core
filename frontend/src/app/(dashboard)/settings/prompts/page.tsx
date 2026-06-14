@@ -25,6 +25,8 @@ interface PromptTemplateSummary {
   version: number;
   is_customised: boolean;
   description: string | null;
+  type: string | null;
+  is_default_for_type: boolean;
   updated_at: string;
 }
 
@@ -33,7 +35,9 @@ interface PromptTemplateDetail {
   version: number;
   template_text: string;
   description: string | null;
+  type: string | null;
   is_active: boolean;
+  is_default_for_type?: boolean;
   is_customised?: boolean;
   is_system_default?: boolean;
 }
@@ -165,6 +169,7 @@ function EditDialog({ template, onClose, onSaved, onReset, onShowHistory, showTo
   const [error, setError] = useState<string | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [resetting, setResetting] = useState(false);
+  const [settingDefault, setSettingDefault] = useState(false);
 
   // Reset form when template changes
   useEffect(() => {
@@ -230,6 +235,28 @@ function EditDialog({ template, onClose, onSaved, onReset, onShowHistory, showTo
     }
   };
 
+  const handleSetDefault = async () => {
+    if (!template.type || template.is_default_for_type) return;
+    setSettingDefault(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/org/prompts/${template.name}/set-default`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail ?? "Failed to set as default");
+      }
+      showToast(`"${templateDisplayName(template.name)}" is now the default for its type`, "success");
+      await onSaved();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to set as default");
+    } finally {
+      setSettingDefault(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-fade-in" onClick={onClose}>
       <div
@@ -252,14 +279,11 @@ function EditDialog({ template, onClose, onSaved, onReset, onShowHistory, showTo
         </div>
 
         {/* Warning banner */}
-        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 mb-4">
-          <AlertCircle size={16} className="text-amber-400 mt-0.5 shrink-0" />
-          <div>
-            <p className="text-sm font-medium text-amber-300">Warning</p>
-            <p className="text-xs text-amber-200/70 mt-0.5">
-              Custom prompts override the system default. Incorrect Jinja2 syntax may cause extraction failures.
-            </p>
-          </div>
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 mb-4">
+          <AlertCircle size={13} className="text-amber-400 mt-0.5 shrink-0" />
+          <p className="text-xs text-amber-200/80 leading-relaxed">
+            Custom prompts override the system default. Incorrect Jinja2 syntax may cause extraction failures.
+          </p>
         </div>
 
         <form onSubmit={handleSave} className="space-y-4">
@@ -315,12 +339,21 @@ function EditDialog({ template, onClose, onSaved, onReset, onShowHistory, showTo
                 className="btn-ghost text-sm"
               >
                 <History size={14} />
-                Show Version History
+                Version History
               </button>
-              {template.is_active && (
-                <span className="inline-flex items-center rounded-full bg-success/10 text-success px-2.5 py-0.5 text-[11px] font-medium">
-                  Active
-                </span>
+              {template.type && !template.is_default_for_type && (
+                <button
+                  type="button"
+                  onClick={handleSetDefault}
+                  disabled={settingDefault}
+                  className="btn-ghost text-xs text-amber-400 hover:text-amber-300"
+                >
+                  {settingDefault ? (
+                    <Spinner className="text-amber-400" />
+                  ) : (
+                    <><Star size={12} /> Set as Default</>
+                  )}
+                </button>
               )}
             </div>
 
@@ -655,13 +688,15 @@ function VersionHistoryDialog({ templateName, onClose, onRollback, showToast }: 
 interface SystemTemplateEntry {
   name: string;
   version: number;
+  type: string | null;
   is_active: boolean;
+  is_default_for_type: boolean;
   is_system_default: boolean;
   description: string | null;
 }
 
 interface SystemPromptGroup {
-  base_name: string;
+  type: string;
   templates: SystemTemplateEntry[];
   imported: string[];
 }
@@ -751,9 +786,9 @@ function BrowserDialog({ onClose, onImported, showToast }: {
             </div>
           ) : (
             groups.map((group) => (
-              <div key={group.base_name} className="border border-surface-800 rounded-md overflow-hidden">
+              <div key={group.type} className="border border-surface-800 rounded-md overflow-hidden">
                 <div className="bg-surface-800/50 px-3 py-2 text-sm font-medium text-surface-200">
-                  {templateDisplayName(group.base_name)}
+                  {templateDisplayName(group.type)}
                 </div>
                 <div className="divide-y divide-surface-800">
                   {group.templates.map((t) => {
@@ -913,15 +948,15 @@ export default function PromptsPage() {
   return (
     <RequireAuth>
     <div className="space-y-6">
-      {/* Page header */}
+        {/* Page header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Prompt Templates</h1>
           <p className="text-sm text-surface-400 mt-1">
-            Customize the Jinja2 prompt templates used by extraction workers. Changes take effect on the next extraction.
+            Manage Jinja2 prompt templates for extraction workers. Organised by type with version history and rollback support.
           </p>
         </div>
-        <button onClick={() => setShowBrowser(true)} className="btn-ghost text-xs">
+        <button onClick={() => setShowBrowser(true)} className="btn-secondary text-sm">
           <Download size={14} /> Browse System Prompts
         </button>
       </div>
@@ -934,23 +969,49 @@ export default function PromptsPage() {
               <tr className="bg-surface-800">
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-surface-400">Name</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-surface-400">Version</th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-surface-400">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-surface-400">Type</th>
                 <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-surface-400">Updated</th>
                 <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wider text-surface-400">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-surface-800">
-              {loading
-                ? skeletonRows
-                : templates.length === 0
-                  ? emptyRow
-                  : templates.map((tmpl, idx) => (
+              {loading ? (
+                skeletonRows
+              ) : templates.length === 0 ? (
+                emptyRow
+              ) : (
+                (() => {
+                  // Sort by type, then by name
+                  const sorted = [...templates].sort((a, b) => {
+                    const typeA = a.type || "\uffff";
+                    const typeB = b.type || "\uffff";
+                    if (typeA !== typeB) return typeA.localeCompare(typeB);
+                    return b.version - a.version;
+                  });
+                  const rows: React.ReactNode[] = [];
+                  let currentType: string | null = null;
+                  sorted.forEach((tmpl) => {
+                    if (tmpl.type !== currentType) {
+                      currentType = tmpl.type;
+                      rows.push(
+                        <tr key={`group-${currentType ?? "untagged"}`}>
+                          <td
+                            colSpan={5}
+                            className="px-4 py-1.5 bg-surface-800/70"
+                          >
+                            <span className="text-xs font-medium text-surface-300">
+                              {currentType
+                                ? templateDisplayName(currentType)
+                                : "Other"}
+                            </span>
+                          </td>
+                        </tr>,
+                      );
+                    }
+                    rows.push(
                       <tr
                         key={tmpl.name}
-                        className={cn(
-                          "transition-colors hover:bg-surface-800/50",
-                          idx % 2 === 0 ? "bg-surface-950/50" : "",
-                        )}
+                        className="transition-colors hover:bg-surface-800/50"
                       >
                         {/* Name */}
                         <td className="px-4 py-3">
@@ -973,32 +1034,43 @@ export default function PromptsPage() {
                           </span>
                         </td>
 
-                        {/* Status */}
+                        {/* Type badge + default indicator */}
                         <td className="px-4 py-3">
-                          {tmpl.is_customised ? (
-                            <span className="inline-flex items-center rounded-full bg-amber-500/10 text-amber-300 px-2.5 py-0.5 text-xs font-medium">
-                              Customised
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center rounded-full bg-surface-700 text-surface-400 px-2.5 py-0.5 text-xs font-medium">
-                              Default
-                            </span>
-                          )}
+                          <div className="flex items-center gap-2">
+                            {tmpl.type ? (
+                              <span className="inline-flex items-center rounded-full bg-brand-500/10 text-brand-300 px-2 py-0.5 text-[11px] font-medium">
+                                {templateDisplayName(tmpl.type)}
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-surface-500">
+                                —
+                              </span>
+                            )}
+                            {tmpl.is_default_for_type && (
+                              <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 text-amber-400 px-1.5 py-0.5 text-[10px] font-medium">
+                                <Star size={10} /> Default
+                              </span>
+                            )}
+                          </div>
                         </td>
 
                         {/* Updated */}
                         <td className="px-4 py-3">
-                          <div>
-                            <span className="text-surface-400 text-xs">{timeAgo(tmpl.updated_at)}</span>
-                            <p className="text-[10px] text-surface-600">{formatDate(tmpl.updated_at)}</p>
-                          </div>
+                          <span
+                            className="text-surface-400 text-xs"
+                            title={formatDate(tmpl.updated_at)}
+                          >
+                            {timeAgo(tmpl.updated_at)}
+                          </span>
                         </td>
 
                         {/* Actions */}
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-1">
                             <button
-                              onClick={() => openEditor(tmpl.name, tmpl.is_customised)}
+                              onClick={() =>
+                                openEditor(tmpl.name, tmpl.is_customised)
+                              }
                               className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300"
                               title="Edit template"
                             >
@@ -1013,8 +1085,12 @@ export default function PromptsPage() {
                             </button>
                           </div>
                         </td>
-                      </tr>
-                    ))}
+                      </tr>,
+                    );
+                  });
+                  return rows;
+                })()
+              )}
             </tbody>
           </table>
         </div>
