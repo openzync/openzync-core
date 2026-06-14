@@ -33,9 +33,11 @@ interface EdgesApiResponse {
 const API_BASE = "http://localhost:8000";
 
 function authHeaders(): Record<string, string> {
-  const token = sessionStorage.getItem("mg_access_token");
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (typeof window !== "undefined") {
+    const token = sessionStorage.getItem("mg_access_token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
   return headers;
 }
 

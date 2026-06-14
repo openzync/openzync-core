@@ -31,8 +31,10 @@ interface Message {
 
 function getHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const token = sessionStorage.getItem("mg_access_token");
-  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (typeof window !== "undefined") {
+    const token = sessionStorage.getItem("mg_access_token");
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  }
   return headers;
 }
 

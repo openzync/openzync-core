@@ -163,6 +163,7 @@ export function ForceGraph({
 }: ForceGraphProps) {
   // ── State ────────────────────────────────────────────────────────────────
   const [filterText, setFilterText] = useState("");
+  const [showRelated, setShowRelated] = useState(true);
   const [selectedNode, setSelectedNode] = useState<GraphNodeData | null>(null);
   const [nodeDetail, setNodeDetail] = useState<{
     node: GraphNodeData & { metadata?: Record<string, unknown> };
@@ -181,18 +182,36 @@ export function ForceGraph({
     const lowerFilter = filterText.toLowerCase().trim();
     if (!lowerFilter) return { nodes: allNodes, edges: allEdges };
 
-    const filteredNodes = allNodes.filter(
+    // Nodes that match the search text
+    const matchingNodes = allNodes.filter(
       (n) =>
         n.name.toLowerCase().includes(lowerFilter) ||
         n.type.toLowerCase().includes(lowerFilter),
     );
-    const filteredNodeIds = new Set(filteredNodes.map((n) => n.id));
-    const filteredEdges = allEdges.filter(
-      (l) => filteredNodeIds.has(l.source_id) && filteredNodeIds.has(l.target_id),
+    const matchingNodeIds = new Set(matchingNodes.map((n) => n.id));
+
+    if (!showRelated) {
+      // Strict mode: only edges connecting two matching nodes
+      const strictEdges = allEdges.filter(
+        (l) => matchingNodeIds.has(l.source_id) && matchingNodeIds.has(l.target_id),
+      );
+      return { nodes: matchingNodes, edges: strictEdges };
+    }
+
+    // Related mode: include 1-hop neighbors of matching nodes
+    const neighborIds = new Set<string>();
+    for (const edge of allEdges) {
+      if (matchingNodeIds.has(edge.source_id)) neighborIds.add(edge.target_id);
+      if (matchingNodeIds.has(edge.target_id)) neighborIds.add(edge.source_id);
+    }
+    const expandedNodeIds = new Set([...matchingNodeIds, ...neighborIds]);
+    const expandedNodes = allNodes.filter((n) => expandedNodeIds.has(n.id));
+    const expandedEdges = allEdges.filter(
+      (l) => expandedNodeIds.has(l.source_id) && expandedNodeIds.has(l.target_id),
     );
 
-    return { nodes: filteredNodes, edges: filteredEdges };
-  }, [allNodes, allEdges, filterText]);
+    return { nodes: expandedNodes, edges: expandedEdges };
+  }, [allNodes, allEdges, filterText, showRelated]);
 
   // Clear selected node when filter hides it
   useEffect(() => {
@@ -581,6 +600,30 @@ export function ForceGraph({
                 onChange={(e) => setFilterText(e.target.value)}
               />
             </div>
+          )}
+
+          {/* Related toggle */}
+          {showFilter && (
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-surface-400 hover:text-surface-200 transition-colors shrink-0 select-none">
+              <div
+                className={`relative w-8 h-4 rounded-full transition-colors ${
+                  showRelated ? "bg-brand-600" : "bg-surface-700"
+                }`}
+              >
+                <div
+                  className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
+                    showRelated ? "translate-x-4" : "translate-x-0"
+                  }`}
+                />
+              </div>
+              <span>Related</span>
+              <input
+                type="checkbox"
+                checked={showRelated}
+                onChange={() => setShowRelated((p) => !p)}
+                className="sr-only"
+              />
+            </label>
           )}
 
           {/* Stats */}
