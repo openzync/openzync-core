@@ -48,9 +48,10 @@ async def classify_dialog(
 ) -> None:
     """Classify a dialog turn and persist the result.
 
-    This function is designed as an ARQ task — the ``ctx`` parameter is
-    required by the ARQ contract but is not used directly here (we create
-    a short-lived DB engine per invocation).
+    This function is designed as an ARQ task — the ``ctx`` parameter provides
+    a shared DB engine from the worker process (``ctx["db_engine"]``).
+    When ``ctx`` is absent (direct invocation), a short-lived engine is
+    created as a fallback.
 
     Pipeline:
         1. Create a temporary DB engine + session.

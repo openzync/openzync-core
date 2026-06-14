@@ -19,10 +19,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from core.exceptions import NotFoundError
 from dependencies.auth import require_org_id
+from dependencies.db import get_db
 from dependencies.services import get_graph_service
 from schemas.graph import (
     GraphCommunitiesListResponse,
@@ -220,7 +221,6 @@ async def list_graph_edges(
     await service.ensure_user_exists(org_uuid, user_id)
 
     if subject_id is None:
-        from fastapi import HTTPException
         raise HTTPException(
             status_code=422,
             detail="The 'subject_id' query parameter is required to list edges.",

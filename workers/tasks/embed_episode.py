@@ -89,11 +89,10 @@ async def embed_episode(
     # `services/worker/worker.py` this is injected automatically.
     engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
     if engine is None:
-        from sqlalchemy.ext.asyncio import create_async_engine
+        from core.db import init_db_engine
 
-        engine = create_async_engine(
+        engine = init_db_engine(
             str(settings.DATABASE_URL),
-            pool_pre_ping=True,
             pool_size=5,
             max_overflow=2,
         )

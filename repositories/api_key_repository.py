@@ -144,7 +144,7 @@ class ApiKeyRepository:
         result = await self._db.execute(
             select(ApiKey).where(
                 ApiKey.lookup_hash == lookup_hash,
-                ApiKey.is_deleted.is_(False),
+                ApiKey.is_revoked.is_(False),
             )
         )
         return result.scalar_one_or_none()
