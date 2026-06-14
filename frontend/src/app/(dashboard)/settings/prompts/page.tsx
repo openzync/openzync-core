@@ -872,6 +872,7 @@ function CreateDialog({ onClose, onCreate, showToast }: CreateDialogProps) {
     const trimmedName = name.trim();
     const trimmedText = templateText.trim();
     if (!trimmedName) { setError("Template name is required"); return; }
+    if (!type) { setError("Template type is required"); return; }
     if (!trimmedText) { setError("Template text is required"); return; }
 
     setCreating(true);
@@ -883,7 +884,7 @@ function CreateDialog({ onClose, onCreate, showToast }: CreateDialogProps) {
         body: JSON.stringify({
           template_text: trimmedText,
           description: description.trim() || null,
-          type: type || null,
+          type: type,
         }),
       });
       if (!res.ok) {
@@ -947,14 +948,16 @@ function CreateDialog({ onClose, onCreate, showToast }: CreateDialogProps) {
 
           {/* Type */}
           <div>
-            <label className="block text-sm font-medium text-surface-300 mb-1">Type</label>
+            <label className="block text-sm font-medium text-surface-300 mb-1">
+              Type <span className="text-error">*</span>
+            </label>
             <select
               className="input-base"
               value={type}
-              onChange={(e) => setType(e.target.value)}
+              onChange={(e) => { setType(e.target.value); if (error) setError(null); }}
               disabled={creating}
             >
-              <option value="">— No type —</option>
+              <option value="">Select a type…</option>
               {KNOWN_TYPES.map((t) => (
                 <option key={t.value} value={t.value}>{t.label}</option>
               ))}
@@ -1014,7 +1017,7 @@ function CreateDialog({ onClose, onCreate, showToast }: CreateDialogProps) {
             </button>
             <button
               type="submit"
-              disabled={creating || !name.trim() || !templateText.trim()}
+              disabled={creating || !name.trim() || !type || !templateText.trim()}
               className="btn-primary text-sm min-w-[140px] justify-center"
             >
               {creating ? (
@@ -1104,6 +1107,7 @@ export default function PromptsPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [showBrowser, setShowBrowser] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [settingDefault, setSettingDefault] = useState<string | null>(null);
 
   const [toast, setToast] = useState<ToastState>({ visible: false, message: "", type: "success" });
 
@@ -1169,6 +1173,26 @@ export default function PromptsPage() {
     setHistoryTarget(null);
     await fetchTemplates();
   }, [fetchTemplates]);
+
+  const handleSetDefault = useCallback(async (name: string) => {
+    setSettingDefault(name);
+    try {
+      const res = await fetch(`${API_BASE}/admin/org/prompts/${name}/set-default`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail ?? "Failed to set as default");
+      }
+      showToast(`"${templateDisplayName(name)}" is now the default for its type`, "success");
+      await fetchTemplates();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to set as default", "error");
+    } finally {
+      setSettingDefault(null);
+    }
+  }, [showToast, fetchTemplates]);
 
   const handleDelete = useCallback(async () => {
     if (!deleteTarget) return;
@@ -1345,6 +1369,20 @@ export default function PromptsPage() {
                         {/* Actions */}
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-1">
+                            {tmpl.type && !tmpl.is_default_for_type && (
+                              <button
+                                onClick={() => handleSetDefault(tmpl.name)}
+                                disabled={settingDefault === tmpl.name}
+                                className="btn-ghost p-1.5 rounded-md text-amber-400 hover:text-amber-300"
+                                title="Set as default for this type"
+                              >
+                                {settingDefault === tmpl.name ? (
+                                  <Spinner className="text-amber-400" />
+                                ) : (
+                                  <Star size={14} />
+                                )}
+                              </button>
+                            )}
                             <button
                               onClick={() =>
                                 openEditor(tmpl.name, tmpl.is_customised)
@@ -1361,7 +1399,7 @@ export default function PromptsPage() {
                             >
                               <History size={14} />
                             </button>
-                            {tmpl.is_customised && (
+                            {tmpl.is_customised && !tmpl.is_default_for_type && (
                               <button
                                 onClick={() => setDeleteTarget(tmpl.name)}
                                 className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-error"

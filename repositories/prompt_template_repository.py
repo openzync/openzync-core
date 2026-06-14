@@ -173,7 +173,24 @@ class PromptTemplateRepository:
 
         Returns the newly created ``PromptTemplate``.
         """
-        # Deactivate all currently active templates for this (org, name).
+        # Capture whether the old active version was the type default.
+        old_result = await self._db.execute(
+            select(PromptTemplate).where(
+                PromptTemplate.organization_id == org_id,
+                PromptTemplate.template_name == name,
+                PromptTemplate.is_active.is_(True),
+            )
+        )
+        old_active = old_result.scalar_one_or_none()
+        old_was_default = (
+            old_active is not None
+            and old_active.is_default_for_type
+            and old_active.type is not None
+        )
+
+        # Deactivate old versions and clear any default flag so the unique
+        # partial index (org_id, type) WHERE is_default_for_type = true
+        # is not violated when the new version carries the flag.
         await self._db.execute(
             update(PromptTemplate)
             .where(
@@ -181,7 +198,7 @@ class PromptTemplateRepository:
                 PromptTemplate.template_name == name,
                 PromptTemplate.is_active.is_(True),
             )
-            .values(is_active=False)
+            .values(is_active=False, is_default_for_type=False)
         )
 
         # Determine the next version number.
@@ -201,6 +218,7 @@ class PromptTemplateRepository:
             description=desc,
             type=template_type,
             is_active=True,
+            is_default_for_type=old_was_default,
         )
         self._db.add(template)
         await self._db.flush()
@@ -229,7 +247,22 @@ class PromptTemplateRepository:
                 f"in org {org_id} or system defaults",
             )
 
-        # Deactivate currently active org-specific templates.
+        # Capture whether the old active version was the type default.
+        old_active_result = await self._db.execute(
+            select(PromptTemplate).where(
+                PromptTemplate.organization_id == org_id,
+                PromptTemplate.template_name == name,
+                PromptTemplate.is_active.is_(True),
+            )
+        )
+        old_active = old_active_result.scalar_one_or_none()
+        old_was_default = (
+            old_active is not None
+            and old_active.is_default_for_type
+            and old_active.type is not None
+        )
+
+        # Deactivate currently active org-specific templates and clear default.
         await self._db.execute(
             update(PromptTemplate)
             .where(
@@ -237,7 +270,7 @@ class PromptTemplateRepository:
                 PromptTemplate.template_name == name,
                 PromptTemplate.is_active.is_(True),
             )
-            .values(is_active=False)
+            .values(is_active=False, is_default_for_type=False)
         )
 
         # Determine the next version number.
@@ -255,7 +288,9 @@ class PromptTemplateRepository:
             template_text=target.template_text,
             version=max_version + 1,
             description=target.description,
+            type=target.type,
             is_active=True,
+            is_default_for_type=old_was_default,
         )
         self._db.add(new_template)
         await self._db.flush()
@@ -305,7 +340,7 @@ class PromptTemplateRepository:
         defaults = list(result.scalars().all())
 
         count = 0
-        for tmpl in latest_templates:
+        for tmpl in defaults:
             # Skip if the org already has a version for this template name.
             existing = await self._db.execute(
                 select(PromptTemplate).where(
@@ -322,6 +357,8 @@ class PromptTemplateRepository:
                 template_text=tmpl.template_text,
                 version=1,
                 description=tmpl.description,
+                type=tmpl.type,
+                is_default_for_type=tmpl.is_default_for_type,
                 is_active=True,
             )
             self._db.add(org_tmpl)
@@ -384,12 +421,26 @@ class PromptTemplateRepository:
         )
         max_version: int = result.scalar() or 0
 
-        # ── 4. Create new system default ─────────────────────────────────
+        # ── 4. Clear old default-for-type flag for this type ──────────────
+        if target.type is not None:
+            await self._db.execute(
+                update(PromptTemplate)
+                .where(
+                    PromptTemplate.organization_id.is_(None),
+                    PromptTemplate.type == target.type,
+                    PromptTemplate.is_default_for_type.is_(True),
+                )
+                .values(is_default_for_type=False)
+            )
+
+        # ── 5. Create new system default ─────────────────────────────────
         new_default = PromptTemplate(
             organization_id=None,
             template_name=name,
             template_text=target.template_text,
             version=max_version + 1,
+            type=target.type,
+            is_default_for_type=target.type is not None,
             description=(
                 f"[Promoted from v{target_version} by "
                 f"org {caller_org_id}]"
@@ -430,20 +481,24 @@ class PromptTemplateRepository:
         )
         rows = result.all()
 
-        # Collapse into one entry per name, keeping the highest-version row.
+        # Collapse into one entry per name, preferring org-specific rows over
+        # system defaults when they share the same version (system rows can
+        # have stale type / is_default_for_type metadata).
         seen: dict[str, dict] = {}
         for row in rows:
             name = row.template_name
-            if name not in seen:
-                seen[name] = {
-                    "name": name,
-                    "version": row.version,
-                    "is_customised": row.organization_id == org_id,
-                    "description": row.description,
-                    "type": row.type,
-                    "is_default_for_type": row.is_default_for_type,
-                    "updated_at": row.updated_at,
-                }
+            # Prefer org-specific rows over system rows for the same name.
+            if name in seen and row.organization_id is None:
+                continue
+            seen[name] = {
+                "name": name,
+                "version": row.version,
+                "is_customised": row.organization_id == org_id,
+                "description": row.description,
+                "type": row.type,
+                "is_default_for_type": row.is_default_for_type,
+                "updated_at": row.updated_at,
+            }
 
         # Cross-check: if the org has ANY row for a template name, it's
         # customised — even if a higher-version system default shadows it.
@@ -682,6 +737,8 @@ class PromptTemplateRepository:
         ]
         if version is not None:
             conditions.append(PromptTemplate.version == version)
+        else:
+            conditions.append(PromptTemplate.is_active.is_(True))
 
         result = await self._db.execute(
             select(PromptTemplate)
@@ -699,6 +756,8 @@ class PromptTemplateRepository:
         ]
         if version is not None:
             sys_conditions.append(PromptTemplate.version == version)
+        else:
+            sys_conditions.append(PromptTemplate.is_active.is_(True))
 
         result = await self._db.execute(
             select(PromptTemplate)

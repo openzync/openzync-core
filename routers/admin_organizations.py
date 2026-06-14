@@ -239,6 +239,7 @@ async def set_prompt_template(
             template_text=body.template_text,
             version=1,
             description=body.description,
+            type=body.type,
             is_active=True,
         )
         db.add(system_template)
@@ -320,6 +321,15 @@ async def delete_prompt_template_override(
             detail=(
                 f"No org-specific override found for template '{name}'; "
                 f"the organization is already using the system default."
+            ),
+        )
+
+    if active.is_default_for_type:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Cannot delete '{name}' because it is the active default "
+                f"for its type. Set another template as the type default first."
             ),
         )
 
