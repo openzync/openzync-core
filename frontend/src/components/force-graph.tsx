@@ -10,6 +10,8 @@ import {
   GitBranch,
   Info,
   X,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
@@ -164,6 +166,7 @@ export function ForceGraph({
   // ── State ────────────────────────────────────────────────────────────────
   const [filterText, setFilterText] = useState("");
   const [showRelated, setShowRelated] = useState(true);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [selectedNode, setSelectedNode] = useState<GraphNodeData | null>(null);
   const [nodeDetail, setNodeDetail] = useState<{
     node: GraphNodeData & { metadata?: Record<string, unknown> };
@@ -220,6 +223,20 @@ export function ForceGraph({
       if (!stillVisible) setSelectedNode(null);
     }
   }, [filteredData, selectedNode]);
+
+  // Fullscreen: Escape to exit + lock body scroll
+  useEffect(() => {
+    if (!isFullscreen) return;
+    document.body.style.overflow = "hidden";
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsFullscreen(false);
+    };
+    window.addEventListener("keydown", handler);
+    return () => {
+      document.body.style.overflow = "";
+      window.removeEventListener("keydown", handler);
+    };
+  }, [isFullscreen]);
 
   // ── Derived: connected edges & neighbors for selected node ─────────────
   const connectedEdges = useMemo<GraphEdgeData[]>(() => {
@@ -583,7 +600,7 @@ export function ForceGraph({
   // ╚══════════════════════════════════════════════════════════════════════╝
 
   return (
-    <div className="space-y-4">
+    <div className={`space-y-4 ${isFullscreen ? 'fixed inset-0 z-50 bg-surface-950 p-6 overflow-y-auto' : ''}`}>
       {/* ── Control bar ───────────────────────────────────────────────── */}
       {(showFilter || showControls) && (
         <div className="flex items-center gap-3 flex-wrap">
@@ -681,6 +698,14 @@ export function ForceGraph({
               >
                 <RotateCcw size={14} />
               </button>
+              <div className="w-px h-4 bg-surface-700" aria-hidden="true" />
+              <button
+                onClick={() => setIsFullscreen((p) => !p)}
+                className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white"
+                title={isFullscreen ? "Exit fullscreen (Esc)" : "Enter fullscreen"}
+              >
+                {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
+              </button>
             </div>
           )}
         </div>
@@ -691,7 +716,7 @@ export function ForceGraph({
         <div
           ref={containerRef}
           className="relative"
-          style={{ height: `${height}px` }}
+          style={{ height: isFullscreen ? 'calc(100vh - 130px)' : `${height}px` }}
         >
           {/* Loading overlay */}
           {loading && (
@@ -867,7 +892,7 @@ export function ForceGraph({
       </div>
 
       {/* ── Legend ────────────────────────────────────────────────────── */}
-      {showLegend && allNodes.length > 0 && (
+      {!isFullscreen && showLegend && allNodes.length > 0 && (
         <div className="card-base p-3">
           <div className="flex items-center gap-6 flex-wrap">
             <span className="text-xs text-surface-500 font-medium uppercase tracking-wider">
