@@ -1,17 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import * as d3 from "d3";
-import { AlertCircle } from "lucide-react";
+import { ForceGraph, type GraphNodeData, type GraphEdgeData } from "@/components/force-graph";
 import SessionTabs from "../tabs";
 
-const TYPE_COLORS: Record<string, string> = {
-  person: "#14488C", organization: "#1453A6", location: "#8FAFD9",
-  event: "#1747A6", concept: "#6A8DB8",
-};
-function getColor(type: string): string {
-  return TYPE_COLORS[type?.toLowerCase()] ?? "#4A6D96";
+const API_BASE = "http://localhost:8000";
+
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const token = sessionStorage.getItem("mg_access_token");
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  return headers;
 }
 
 export default function SessionGraphPage() {
@@ -19,120 +19,114 @@ export default function SessionGraphPage() {
   const searchParams = useSearchParams();
   const sessionId = params.id as string;
   const userId = searchParams.get("userId") ?? "";
-  const svgRef = useRef<SVGSVGElement>(null);
+  const loadAttempted = useRef(false);
+
+  const [graphData, setGraphData] = useState<{ nodes: GraphNodeData[]; edges: GraphEdgeData[] } | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!userId || !svgRef.current) return;
-    let simulation: d3.Simulation<any, any> | null = null;
+  const loadData = useCallback(async () => {
+    if (!userId || !sessionId) return;
+    setLoading(true);
+    setError(null);
+    loadAttempted.current = true;
 
-    async function loadGraph() {
-      setLoading(true);
-      setError("");
-      try {
-        const token = sessionStorage.getItem("mg_access_token");
-        const headers: Record<string, string> = {};
-        if (token) headers["Authorization"] = `Bearer ${token}`;
+    try {
+      // Step 1: fetch session-scoped nodes
+      const nodeRes = await fetch(
+        `${API_BASE}/v1/users/${userId}/graph/nodes?limit=200&session_id=${sessionId}`,
+        { headers: authHeaders() },
+      );
 
-        const nodeRes = await fetch(`http://localhost:8000/v1/users/${userId}/graph/nodes?limit=100&session_id=${sessionId}`, { headers });
-        if (!nodeRes.ok) throw new Error("Failed to load graph data");
-        const nodeData = await nodeRes.json();
-        const items: any[] = (nodeData.data as any)?.items ?? [];
+      if (!nodeRes.ok) {
+        const errBody = await nodeRes.json().catch(() => ({}));
+        throw new Error(
+          (errBody as { detail?: string }).detail ?? `Failed to load graph data (${nodeRes.status})`,
+        );
+      }
 
-        const nodes = items.map((n: any) => ({ id: n.id, name: n.name, type: n.type }));
-        const links: any[] = [];
-        const seen = new Set<string>();
+      const nodeData = await nodeRes.json();
+      const items: GraphNodeData[] = (nodeData.data as { items: GraphNodeData[] })?.items ?? [];
 
-        for (let i = 0; i < items.length; i += 5) {
-          const batch = items.slice(i, i + 5);
-          const results = await Promise.allSettled(
-            batch.map((n: any) =>
-              fetch(`http://localhost:8000/v1/users/${userId}/graph/edges?subject_id=${n.id}&limit=50`, { headers })
-                .then(r => r.json())
-                .catch(() => ({ data: { items: [] } })),
-            ),
-          );
-          for (const r of results) {
-            if (r.status === "fulfilled") {
-              for (const e of (r.value.data as any)?.items ?? []) {
-                const key = [e.source_id, e.target_id].sort().join("|");
-                if (!seen.has(key)) { seen.add(key); links.push({ source: e.source_id, target: e.target_id, type: e.type }); }
-              }
+      if (items.length === 0) {
+        setGraphData({ nodes: [], edges: [] });
+        setLoading(false);
+        return;
+      }
+
+      // Step 2: fetch edges for each node in batches of 5
+      const allEdges: GraphEdgeData[] = [];
+      const seen = new Set<string>();
+
+      for (let i = 0; i < items.length; i += 5) {
+        const batch = items.slice(i, i + 5);
+        const batchResults = await Promise.allSettled(
+          batch.map((node) =>
+            fetch(`${API_BASE}/v1/users/${userId}/graph/edges?subject_id=${node.id}&limit=50`, { headers: authHeaders() })
+              .then((r) => {
+                if (!r.ok) throw new Error(`Edge fetch failed for ${node.id}`);
+                return r.json();
+              })
+              .then((d: { data?: { items?: GraphEdgeData[] } }) => d.data?.items ?? []),
+          ),
+        );
+
+        for (const result of batchResults) {
+          if (result.status === "fulfilled") {
+            for (const edge of result.value) {
+              if (edge.source_id === edge.target_id) continue;
+              const key = [edge.source_id, edge.target_id].sort().join("::");
+              if (seen.has(key)) continue;
+              seen.add(key);
+              allEdges.push(edge);
             }
           }
         }
-
-        // Render D3 graph
-        const svg = d3.select(svgRef.current!);
-        svg.selectAll("*").remove();
-        const width = svgRef.current!.clientWidth || 600;
-        const height = 500;
-
-        simulation = d3.forceSimulation(nodes as any)
-          .force("link", d3.forceLink(links).id((d: any) => d.id).distance(100))
-          .force("charge", d3.forceManyBody().strength(-200))
-          .force("center", d3.forceCenter(width / 2, height / 2))
-          .force("collide", d3.forceCollide(30));
-
-        const g = svg.append("g");
-        const zoom = d3.zoom().scaleExtent([0.15, 5]).on("zoom", (event) => g.attr("transform", event.transform));
-        svg.call(zoom as any);
-
-        const link = g.append("g").selectAll("line").data(links).join("line")
-          .attr("stroke", "rgba(143,175,217,0.2)").attr("stroke-width", 1);
-
-        const node = g.append("g").selectAll("g").data(nodes).join("g")
-          .call(d3.drag<any, any>()
-            .on("start", (event, d) => { if (!event.active) simulation?.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
-            .on("drag", (event, d) => { d.fx = event.x; d.fy = event.y; })
-            .on("end", (event, d) => { if (!event.active) simulation?.alphaTarget(0); d.fx = null; d.fy = null; }) as any);
-
-        node.append("circle").attr("r", 6).attr("fill", (d: any) => getColor(d.type));
-        node.append("text").text((d: any) => d.name).attr("dx", 10).attr("dy", 3)
-          .attr("font-size", "10px").attr("fill", "rgba(242,242,242,0.7)").attr("font-family", "var(--font-sans)");
-
-        simulation.on("tick", () => {
-          link.attr("x1", (d: any) => d.source.x).attr("y1", (d: any) => d.source.y)
-              .attr("x2", (d: any) => d.target.x).attr("y2", (d: any) => d.target.y);
-          node.attr("transform", (d: any) => `translate(${d.x},${d.y})`);
-        });
-
-        // Zoom to fit
-        setTimeout(() => {
-          const bounds = (svg.node() as any)?.getBBox();
-          if (bounds) {
-            const scale = Math.min(width / bounds.width, height / bounds.height, 1.5) * 0.9;
-            const tx = width / 2 - bounds.x * scale - bounds.width * scale / 2;
-            const ty = height / 2 - bounds.y * scale - bounds.height * scale / 2;
-            svg.transition().duration(500).call(zoom.transform as any, d3.zoomIdentity.translate(tx, ty).scale(scale));
-          }
-        }, 100);
-
-        setLoading(false);
-      } catch (err: any) {
-        setError(err.message);
-        setLoading(false);
       }
+
+      setGraphData({ nodes: items, edges: allEdges });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "An unknown error occurred");
+    } finally {
+      setLoading(false);
     }
-    loadGraph();
-    return () => { simulation?.stop(); };
   }, [userId, sessionId]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // ── Missing userId guard ─────────────────────────────────────────────
+  if (!userId) {
+    return (
+      <div>
+        <SessionTabs sessionId={sessionId} userId="" activeTab="graph" />
+        <div className="card-base p-8 flex flex-col items-center justify-center gap-3 text-surface-500 mt-4">
+          <p className="text-sm">No user selected. Provide a <code className="text-surface-300 font-mono text-xs bg-surface-800 px-1.5 py-0.5 rounded">userId</code> query parameter.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div>
       <SessionTabs sessionId={sessionId} userId={userId} activeTab="graph" />
-      {loading ? (
-        <div className="card-base p-6 flex items-center justify-center h-[400px]">
-          <div className="animate-spin h-8 w-8 border-2 border-brand-500 border-t-transparent rounded-full" />
-        </div>
-      ) : error ? (
-        <div className="card-base p-6 flex items-center gap-3 text-error text-sm"><AlertCircle size={18} />{error}</div>
-      ) : (
-        <div className="card-base overflow-hidden">
-          <svg ref={svgRef} width="100%" height="500" className="block" />
-        </div>
-      )}
+      <ForceGraph
+        nodes={graphData?.nodes ?? []}
+        edges={graphData?.edges ?? []}
+        loading={loading}
+        error={error}
+        onRetry={loadData}
+        apiConfig={{
+          baseUrl: API_BASE,
+          userId,
+          headers: authHeaders(),
+        }}
+        showFilter
+        showControls
+        showLegend
+        emptyMessage="No entities found for this session. Facts must be extracted first."
+      />
     </div>
   );
 }
