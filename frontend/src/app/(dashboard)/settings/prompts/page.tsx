@@ -3,6 +3,7 @@ import { RequireAuth } from "../../require-auth";
 
 import { useEffect, useState, useCallback } from "react";
 import {
+  Download,
   FileText,
   Star,
   X,
@@ -649,6 +650,163 @@ function VersionHistoryDialog({ templateName, onClose, onRollback, showToast }: 
   );
 }
 
+// ─── Browse System Prompts Dialog ───────────────────────────────────────────────
+
+interface SystemTemplateEntry {
+  name: string;
+  version: number;
+  is_active: boolean;
+  is_system_default: boolean;
+  description: string | null;
+}
+
+interface SystemPromptGroup {
+  base_name: string;
+  templates: SystemTemplateEntry[];
+  imported: string[];
+}
+
+interface SystemPromptGroupsResponse {
+  groups: SystemPromptGroup[];
+}
+
+function BrowserDialog({ onClose, onImported, showToast }: {
+  onClose: () => void;
+  onImported: () => void;
+  showToast: (message: string, type: "success" | "error") => void;
+}) {
+  const [groups, setGroups] = useState<SystemPromptGroup[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [importing, setImporting] = useState<string | null>(null);
+
+  const fetchSystemPrompts = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/admin/org/prompts/system`, { headers: authHeaders() });
+      if (!res.ok) throw new Error("Failed to load system prompts");
+      const data: SystemPromptGroupsResponse = await res.json();
+      setGroups(data.groups ?? []);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to load system prompts", "error");
+      onClose();
+    } finally {
+      setLoading(false);
+    }
+  }, [showToast, onClose]);
+
+  useEffect(() => { fetchSystemPrompts(); }, [fetchSystemPrompts]);
+
+  const handleImport = async (templateName: string) => {
+    setImporting(templateName);
+    try {
+      const res = await fetch(`${API_BASE}/admin/org/prompts/import`, {
+        method: "POST",
+        headers: { ...authHeaders(), "Content-Type": "application/json" },
+        body: JSON.stringify({ template_name: templateName }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.detail ?? "Failed to import template");
+      }
+      showToast(`"${templateDisplayName(templateName)}" imported successfully`, "success");
+      await fetchSystemPrompts();
+      onImported();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Failed to import template", "error");
+    } finally {
+      setImporting(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-fade-in" onClick={onClose}>
+      <div
+        className="card-base w-full max-w-2xl p-6 shadow-xl shadow-black/40 animate-slide-up max-h-[85vh] flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-md bg-surface-800 shrink-0">
+              <Download size={16} className="text-surface-300" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold">Browse System Prompts</h2>
+              <p className="text-xs text-surface-400">Import system-default prompt templates into your organisation</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="btn-ghost p-1 rounded-md text-surface-400 hover:text-white">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto space-y-4 min-h-0">
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Spinner className="text-surface-400" />
+            </div>
+          ) : groups.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-surface-500">
+              <Download size={32} className="mb-2 opacity-40" />
+              <p className="text-sm">No system prompts available</p>
+            </div>
+          ) : (
+            groups.map((group) => (
+              <div key={group.base_name} className="border border-surface-800 rounded-md overflow-hidden">
+                <div className="bg-surface-800/50 px-3 py-2 text-sm font-medium text-surface-200">
+                  {templateDisplayName(group.base_name)}
+                </div>
+                <div className="divide-y divide-surface-800">
+                  {group.templates.map((t) => {
+                    const isImported = group.imported.includes(t.name);
+                    return (
+                      <div key={t.name} className="flex items-center justify-between px-3 py-2.5 hover:bg-surface-800/30">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-mono text-surface-200">{t.name}</span>
+                          <span className="text-[10px] text-surface-500">v{t.version}</span>
+                          {t.is_system_default && (
+                            <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-500/10 text-amber-400 px-1.5 py-0.5 text-[10px] font-medium">
+                              <Star size={10} /> Active Default
+                            </span>
+                          )}
+                          {!t.is_active && !t.is_system_default && (
+                            <span className="text-[10px] text-surface-500">inactive</span>
+                          )}
+                        </div>
+                        {isImported ? (
+                          <span className="inline-flex items-center gap-1 text-xs text-success">
+                            <CheckCircle size={12} /> Imported
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => handleImport(t.name)}
+                            disabled={importing === t.name}
+                            className="btn-primary text-xs min-w-[80px] justify-center"
+                          >
+                            {importing === t.name ? (
+                              <span className="flex items-center gap-1"><Spinner /> Importing...</span>
+                            ) : (
+                              "Import"
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="flex justify-end mt-4 shrink-0 pt-3 border-t border-surface-800">
+          <button onClick={onClose} className="btn-ghost text-sm">Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function PromptsPage() {
@@ -657,6 +815,7 @@ export default function PromptsPage() {
 
   const [editTarget, setEditTarget] = useState<PromptTemplateDetail | null>(null);
   const [historyTarget, setHistoryTarget] = useState<string | null>(null);
+  const [showBrowser, setShowBrowser] = useState(false);
 
   const [toast, setToast] = useState<ToastState>({ visible: false, message: "", type: "success" });
 
@@ -762,6 +921,9 @@ export default function PromptsPage() {
             Customize the Jinja2 prompt templates used by extraction workers. Changes take effect on the next extraction.
           </p>
         </div>
+        <button onClick={() => setShowBrowser(true)} className="btn-ghost text-xs">
+          <Download size={14} /> Browse System Prompts
+        </button>
       </div>
 
       {/* Table */}
@@ -881,6 +1043,15 @@ export default function PromptsPage() {
           templateName={historyTarget}
           onClose={() => setHistoryTarget(null)}
           onRollback={handleRollback}
+          showToast={showToast}
+        />
+      )}
+
+      {/* ── Browse System Prompts Dialog ──────────────────────────────────────── */}
+      {showBrowser && (
+        <BrowserDialog
+          onClose={() => setShowBrowser(false)}
+          onImported={fetchTemplates}
           showToast={showToast}
         />
       )}

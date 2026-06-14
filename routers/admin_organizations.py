@@ -20,11 +20,13 @@ from schemas.custom_instructions import (
     SetCustomInstructionsRequest,
 )
 from schemas.prompt_templates import (
+    ImportPromptRequest,
     PromptTemplateDetail,
     PromptTemplateListResponse,
     PromptTemplateSummary,
     PromptTemplateVersionsResponse,
     SetPromptTemplateRequest,
+    SystemPromptGroupsResponse,
 )
 
 # ── Router ─────────────────────────────────────────────────────────────────
@@ -59,6 +61,58 @@ async def list_prompt_templates(
     return PromptTemplateListResponse(
         data=[PromptTemplateSummary(**t) for t in templates],
     )
+
+
+@router.get(
+    "/prompts/system",
+    response_model=SystemPromptGroupsResponse,
+)
+async def list_system_prompts(
+    db: AsyncSession = Depends(get_db),
+    org_id: str = Depends(require_org_id),
+    _user_id: str = Depends(get_dashboard_user),
+) -> SystemPromptGroupsResponse:
+    """List all system-default prompt templates grouped by base name.
+
+    Returns every system-default version (not just active ones) so users
+    can see old versions.  Each group is annotated with which template
+    names the organisation has already imported.
+    """
+    repo = PromptTemplateRepository(db)
+    groups = await repo.list_system_grouped(org_id=uuid.UUID(org_id))
+    return SystemPromptGroupsResponse(groups=groups)
+
+
+@router.post(
+    "/prompts/import",
+    response_model=PromptTemplateDetail,
+    status_code=201,
+)
+async def import_system_prompt(
+    body: ImportPromptRequest,
+    db: AsyncSession = Depends(get_db),
+    org_id: str = Depends(require_org_id),
+    _user_id: str = Depends(get_dashboard_user),
+) -> PromptTemplateDetail:
+    """Import a system-default prompt template into the organisation.
+
+    Creates an org-specific copy at ``version = 1`` with the text from
+    the active system default.  Raises 409 if the template is already
+    imported, or 404 if no active system default exists.
+    """
+    repo = PromptTemplateRepository(db)
+    try:
+        template = await repo.import_system_template(
+            org_id=uuid.UUID(org_id),
+            template_name=body.template_name,
+        )
+    except ValueError as err:
+        msg = str(err)
+        if "already imported" in msg:
+            raise HTTPException(status_code=409, detail=msg) from err
+        raise HTTPException(status_code=404, detail=msg) from err
+
+    return PromptTemplateDetail.model_validate(template)
 
 
 @router.get(

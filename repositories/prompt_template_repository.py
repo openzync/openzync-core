@@ -368,7 +368,8 @@ class PromptTemplateRepository:
             if entry["name"] in org_names:
                 entry["is_customised"] = True
 
-        return list(seen.values())
+        # Only return templates the org actually owns (seeded or imported).
+        return [v for v in seen.values() if v["is_customised"]]
 
     async def list_versions(
         self,
@@ -424,6 +425,149 @@ class PromptTemplateRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def list_system_grouped(self, org_id: UUID) -> list[dict]:
+        """List all system-default templates grouped by base name.
+
+        Returns groups annotated with which template names the org already
+        has imported.  Each group includes **all** system-default versions
+        (not just active ones), so users can see old versions too.
+
+        Args:
+            org_id: The organisation UUID for cross-checking imports.
+
+        Returns:
+            A list of group dicts::
+
+                [
+                    {
+                        "base_name": "extract_facts",
+                        "templates": [
+                            {"name": "extract_facts_v1", "version": 1,
+                             "is_active": false, "is_system_default": false,
+                             "description": None},
+                            ...
+                        ],
+                        "imported": ["extract_facts_v4"],
+                    },
+                    ...
+                ]
+        """
+        import re
+        from collections import defaultdict
+
+        _V_RE = re.compile(r"_v(\d+)$")
+
+        # Fetch all system-default rows (all versions).
+        sys_result = await self._db.execute(
+            select(PromptTemplate)
+            .where(PromptTemplate.organization_id.is_(None))
+            .order_by(PromptTemplate.template_name, PromptTemplate.version.desc())
+        )
+        system_rows = list(sys_result.scalars().all())
+
+        # Fetch template names the org already has.
+        org_result = await self._db.execute(
+            select(PromptTemplate.template_name)
+            .where(PromptTemplate.organization_id == org_id)
+            .distinct()
+        )
+        org_names = {row[0] for row in org_result.fetchall()}
+
+        # Group by base name.
+        groups: dict[str, list[PromptTemplate]] = defaultdict(list)
+        for tmpl in system_rows:
+            m = _V_RE.search(tmpl.template_name)
+            base = tmpl.template_name[: m.start()] if m else tmpl.template_name
+            groups[base].append(tmpl)
+
+        result = []
+        for base_name in sorted(groups):
+            templates = [
+                {
+                    "name": t.template_name,
+                    "version": t.version,
+                    "is_active": t.is_active,
+                    "is_system_default": t.is_system_default,
+                    "description": t.description,
+                }
+                for t in groups[base_name]
+            ]
+            # Which template names from this family has the org imported?
+            imported = sorted(
+                t["name"] for t in templates if t["name"] in org_names
+            )
+            result.append({
+                "base_name": base_name,
+                "templates": templates,
+                "imported": imported,
+            })
+
+        return result
+
+    async def import_system_template(
+        self,
+        org_id: UUID,
+        template_name: str,
+    ) -> PromptTemplate:
+        """Import a system-default prompt template into the org's scope.
+
+        Creates an org copy at ``version = 1`` with the template text
+        from the active system default.  Idempotent — if the org already
+        has this template name, it's a no-op.
+
+        Args:
+            org_id: The organisation UUID.
+            template_name: The template name to import (e.g.
+                ``"extract_facts_v2"``).
+
+        Returns:
+            The newly created org ``PromptTemplate``.
+
+        Raises:
+            ValueError: If no active system default exists for the
+                given template name.
+        """
+        # Find the active system default for this template name.
+        result = await self._db.execute(
+            select(PromptTemplate).where(
+                PromptTemplate.organization_id.is_(None),
+                PromptTemplate.template_name == template_name,
+                PromptTemplate.is_active.is_(True),
+            )
+        )
+        system_tmpl = result.scalar_one_or_none()
+        if system_tmpl is None:
+            raise ValueError(
+                f"No active system default found for template "
+                f"{template_name!r}",
+            )
+
+        # Check if org already has it.
+        existing = await self._db.execute(
+            select(PromptTemplate).where(
+                PromptTemplate.organization_id == org_id,
+                PromptTemplate.template_name == template_name,
+            )
+        )
+        if existing.scalar_one_or_none() is not None:
+            raise ValueError(
+                f"Template {template_name!r} already imported into "
+                f"this organisation",
+            )
+
+        org_tmpl = PromptTemplate(
+            organization_id=org_id,
+            template_name=template_name,
+            template_text=system_tmpl.template_text,
+            version=1,
+            description=system_tmpl.description,
+            is_active=True,
+        )
+        self._db.add(org_tmpl)
+        await self._db.flush()
+        await self._db.refresh(org_tmpl)
+        return org_tmpl
 
     # ------------------------------------------------------------------
     # Private helpers

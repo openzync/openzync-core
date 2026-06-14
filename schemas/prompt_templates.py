@@ -79,3 +79,37 @@ class SetPromptTemplateRequest(BaseModel):
 
     template_text: str = Field(..., min_length=1)
     description: str | None = None
+
+
+class SystemTemplateEntry(BaseModel):
+    """A single system-default template version shown in the import browser."""
+
+    name: str
+    version: int
+    is_active: bool
+    is_system_default: bool
+    description: str | None = None
+
+
+class SystemPromptGroup(BaseModel):
+    """A group of system-default template versions sharing a base name."""
+
+    base_name: str
+    templates: list[SystemTemplateEntry]
+    imported: list[str]
+
+
+class SystemPromptGroupsResponse(BaseModel):
+    """Response wrapper for the system prompt browser."""
+
+    groups: list[SystemPromptGroup]
+
+
+class ImportPromptRequest(BaseModel):
+    """Request body to import a system prompt template into the org."""
+
+    template_name: str = Field(
+        ...,
+        min_length=1,
+        description="The exact template name to import (e.g. extract_facts_v2).",
+    )
