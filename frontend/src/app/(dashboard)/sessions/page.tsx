@@ -1,4 +1,5 @@
 "use client";
+import { RequireAuth } from "../require-auth";
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
@@ -290,6 +291,7 @@ export default function SessionsPage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
+    <RequireAuth>
     <div className="space-y-6">
       {/* ═══ Page header ═══ */}
       <div className="flex items-center justify-between">
@@ -680,5 +682,6 @@ export default function SessionsPage() {
         </div>
       )}
     </div>
+  </RequireAuth>
   );
 }

@@ -1,4 +1,5 @@
 "use client";
+import { RequireAuth } from "../require-auth";
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -107,6 +108,7 @@ export default function OverviewPage() {
   }, []);
 
   return (
+    <RequireAuth>
     <div className="space-y-6">
       {/* Page header */}
       <div>
@@ -217,5 +219,6 @@ export default function OverviewPage() {
         )}
       </div>
     </div>
+  </RequireAuth>
   );
 }

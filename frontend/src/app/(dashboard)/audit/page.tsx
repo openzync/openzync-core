@@ -1,4 +1,5 @@
 "use client";
+import { RequireAuth } from "../require-auth";
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
@@ -232,6 +233,7 @@ export default function AuditLogPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
+    <RequireAuth>
     <div className="space-y-6">
       {/* Page header */}
       <div>
@@ -506,5 +508,6 @@ export default function AuditLogPage() {
         )}
       </div>
     </div>
+  </RequireAuth>
   );
 }

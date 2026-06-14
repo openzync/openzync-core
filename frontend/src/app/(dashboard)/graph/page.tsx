@@ -1,4 +1,5 @@
 "use client";
+import { RequireAuth } from "../require-auth";
 
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import * as d3 from "d3";
@@ -642,6 +643,7 @@ export default function GraphExplorerPage() {
   const isFiltered = filterText.trim().length > 0;
 
   return (
+    <RequireAuth>
     <div className="space-y-6">
       {/* ── Page header ─────────────────────────────────────────────────── */}
       <div>
@@ -944,5 +946,6 @@ export default function GraphExplorerPage() {
         </div>
       </div>
     </div>
+  </RequireAuth>
   );
 }

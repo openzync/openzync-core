@@ -1,4 +1,5 @@
 "use client";
+import { RequireAuth } from "../require-auth";
 
 import { useState, useEffect, useCallback } from "react";
 import {
@@ -103,6 +104,7 @@ export default function MemoryPage() {
   }, []);
 
   return (
+    <RequireAuth>
     <div className="space-y-6">
       {/* Header */}
       <div>
@@ -142,6 +144,7 @@ export default function MemoryPage() {
         <SearchTab users={users} loadingUsers={loadingUsers} usersError={usersError} />
       )}
     </div>
+  </RequireAuth>
   );
 }
 

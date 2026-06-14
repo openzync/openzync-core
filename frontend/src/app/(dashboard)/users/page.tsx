@@ -1,4 +1,5 @@
 "use client";
+import { RequireAuth } from "../require-auth";
 
 import { useEffect, useState, useCallback } from "react";
 import { Plus, Copy, Edit, Trash2, RefreshCw, UsersIcon, X, CheckCircle, AlertCircle } from "lucide-react";
@@ -495,6 +496,7 @@ export default function UsersPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
+    <RequireAuth>
     <div className="space-y-6">
       {/* Page header */}
       <div className="flex items-center justify-between">
@@ -661,5 +663,6 @@ export default function UsersPage() {
       {/* ── Toast ───────────────────────────────────────────────────────────── */}
       <Toast toast={toast} onDismiss={dismissToast} />
     </div>
+  </RequireAuth>
   );
 }

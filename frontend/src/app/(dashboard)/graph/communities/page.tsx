@@ -1,4 +1,5 @@
 "use client";
+import { RequireAuth } from "../../require-auth";
 
 import { useEffect, useState } from "react";
 import { Shield, AlertCircle, Users as UsersIcon } from "lucide-react";
@@ -46,6 +47,7 @@ export default function CommunitiesPage() {
   }, []);
 
   return (
+    <RequireAuth>
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Communities</h1>
@@ -80,5 +82,6 @@ export default function CommunitiesPage() {
         </div>
       )}
     </div>
+  </RequireAuth>
   );
 }

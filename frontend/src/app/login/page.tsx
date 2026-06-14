@@ -1,9 +1,26 @@
 "use client";
 
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2, LogIn } from "lucide-react";
+
+function LoginNotice() {
+  const searchParams = useSearchParams();
+  const reason = searchParams.get("reason");
+  if (reason !== "not-signed-in") return null;
+  return (
+    <div className="mb-4 rounded-lg border border-accent-300/20 bg-accent-300/5 px-4 py-3">
+      <div className="flex items-center gap-2 mb-0.5">
+        <LogIn size={16} className="text-accent-300" />
+        <p className="font-medium text-accent-300 text-sm">Sign in required</p>
+      </div>
+      <p className="text-surface-400 text-xs ml-6">
+        Please sign in to access the dashboard.
+      </p>
+    </div>
+  );
+}
 
 export default function LoginPage() {
   const router = useRouter();
@@ -81,6 +98,10 @@ export default function LoginPage() {
             <p className="text-sm text-surface-400 mb-6">
               Sign in to your organization dashboard
             </p>
+
+            <Suspense fallback={null}>
+              <LoginNotice />
+            </Suspense>
 
             {error && (
               <div className="mb-4 rounded-md border border-error/20 bg-error/10 px-3 py-2 text-sm text-error">

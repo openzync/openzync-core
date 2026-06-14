@@ -1,4 +1,5 @@
 "use client";
+import { RequireAuth } from "../require-auth";
 
 import { useEffect, useState, useRef } from "react";
 import {
@@ -406,6 +407,7 @@ export default function AnalyticsPage() {
   // ── Render ───────────────────────────────────────────────────────────
 
   return (
+    <RequireAuth>
     <div className="space-y-6 animate-fade-in">
       {/* Page header */}
       <div>
@@ -550,5 +552,6 @@ export default function AnalyticsPage() {
         </div>
       </div>
     </div>
+  </RequireAuth>
   );
 }

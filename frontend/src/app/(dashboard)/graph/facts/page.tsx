@@ -1,4 +1,5 @@
 "use client";
+import { RequireAuth } from "../../require-auth";
 
 import { useEffect, useState } from "react";
 import { Database, AlertCircle } from "lucide-react";
@@ -12,6 +13,7 @@ export default function FactsPage() {
   }, []);
 
   return (
+    <RequireAuth>
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Facts</h1>
@@ -23,5 +25,6 @@ export default function FactsPage() {
         <p className="text-xs text-surface-600 mt-1">Use the Facts tab on a session page to view extracted facts.</p>
       </div>
     </div>
+  </RequireAuth>
   );
 }

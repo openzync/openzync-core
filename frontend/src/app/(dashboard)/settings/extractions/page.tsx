@@ -1,4 +1,5 @@
 "use client";
+import { RequireAuth } from "../../require-auth";
 
 import { useEffect, useState, useCallback } from "react";
 import { Database, Eye, X, CheckCircle, AlertCircle } from "lucide-react";
@@ -227,6 +228,7 @@ export default function ExtractionsPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
+    <RequireAuth>
     <div className="space-y-6">
       {/* Page header */}
       <div>
@@ -311,5 +313,6 @@ export default function ExtractionsPage() {
       {/* ── Toast ─────────────────────────────────────────────────────────────── */}
       <Toast toast={toast} onDismiss={dismissToast} />
     </div>
+  </RequireAuth>
   );
 }

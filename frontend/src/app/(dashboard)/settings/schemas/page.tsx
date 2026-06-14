@@ -1,4 +1,5 @@
 "use client";
+import { RequireAuth } from "../../require-auth";
 
 import { useEffect, useState, useCallback } from "react";
 import {
@@ -522,6 +523,7 @@ export default function SchemasPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
+    <RequireAuth>
     <div className="space-y-6">
       {/* Page header */}
       <div className="flex items-center justify-between">
@@ -662,5 +664,6 @@ export default function SchemasPage() {
       {/* ── Toast ─────────────────────────────────────────────────────────────── */}
       <Toast toast={toast} onDismiss={dismissToast} />
     </div>
+  </RequireAuth>
   );
 }
