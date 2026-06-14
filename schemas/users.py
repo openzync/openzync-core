@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator, model_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
 
 class CreateUserRequest(BaseModel):
@@ -138,7 +138,7 @@ class UserResponse(BaseModel):
         description="Soft-delete flag. True during the 30-day GDPR grace period.",
     )
 
-    model_config = {"from_attributes": True, "populate_by_name": True}
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
 class UserResponseWithStats(UserResponse):

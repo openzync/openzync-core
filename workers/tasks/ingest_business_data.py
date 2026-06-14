@@ -13,6 +13,8 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
+import structlog
+
 from core.arq import get_arq
 from core.config import settings
 from repositories.fact_repository import FactRepository
@@ -31,6 +33,7 @@ async def ingest_business_data(
     user_id: str,
     facts: list[dict],
     job_id: str | None = None,  # noqa: ARG001
+    trace_id: str = "",
 ) -> dict:
     """ARQ task: ingest a batch of fact triples into the database.
 
@@ -44,6 +47,7 @@ async def ingest_business_data(
         facts: List of fact dicts with keys: ``subject``, ``predicate``,
             ``object``, ``content`` (optional), ``confidence`` (optional).
         job_id: Unique job identifier for tracking.
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Returns:
         A dict with ``status``, ``accepted`` (count), and ``errors`` (list).
@@ -51,12 +55,15 @@ async def ingest_business_data(
     Raises:
         Exception: Propagates database errors for ARQ retry logic.
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
     logger.info(
         "ingest_business_data.started",
         extra={
             "org_id": org_id,
             "user_id": user_id,
             "fact_count": len(facts),
+            "trace_id": trace_id,
         },
     )
 
@@ -114,16 +121,24 @@ async def ingest_business_data(
         }
 
     # Bulk-insert valid facts
-    from sqlalchemy.ext.asyncio import create_async_engine
     from core.db import get_async_session
 
-    engine = create_async_engine(
-        str(settings.DATABASE_URL),
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=2,
-    )
-    session_factory = get_async_session(engine)
+    # Use the shared engine from worker context.
+    engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
+    if engine is None:
+        from core.db import init_db_engine
+
+        engine = init_db_engine(
+            str(settings.DATABASE_URL),
+            pool_size=5,
+            max_overflow=2,
+        )
+        _own_engine = True
+    else:
+        _own_engine = False
+    session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
+    if session_factory is None:
+        session_factory = get_async_session(engine)
 
     try:
         async with session_factory() as db:
@@ -135,13 +150,15 @@ async def ingest_business_data(
             )
             await db.commit()
     finally:
-        await engine.dispose()
+        if _own_engine:
+            await engine.dispose()
 
     # Enqueue embedding tasks for each newly created fact
     await _enqueue_embedding_tasks(
         org_id=org_id,
         user_id=user_id,
         fact_ids=[str(f.id) for f in created],
+        trace_id=trace_id,
     )
 
     logger.info(
@@ -166,6 +183,7 @@ async def _enqueue_embedding_tasks(
     org_id: str,
     user_id: str,
     fact_ids: list[str],
+    trace_id: str = "",
 ) -> None:
     """Enqueue ARQ embedding tasks for the ingested facts.
 
@@ -173,6 +191,7 @@ async def _enqueue_embedding_tasks(
         org_id: Organization UUID string.
         user_id: User UUID string.
         fact_ids: List of fact UUID strings to embed.
+        trace_id: Request trace ID for end-to-end correlation.
     """
     try:
         arq_pool = get_arq()
@@ -185,6 +204,7 @@ async def _enqueue_embedding_tasks(
                 fact_id=fact_id,
                 org_id=org_id,
                 user_id=user_id,
+                trace_id=trace_id,
             )
 
         logger.info(

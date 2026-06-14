@@ -21,13 +21,14 @@ import logging
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+import structlog
+
 if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
 
     from models.session import Session
     from models.user import User
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import get_arq
@@ -35,6 +36,7 @@ from core.config import settings
 from core.exceptions import NotFoundError, ValidationError
 from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
+from repositories.organization_repository import OrganizationRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
 from schemas.memory import IngestMemoryResponse, Message
@@ -112,6 +114,7 @@ class MemoryService:
         session_repo: SessionRepository | None = None,
         user_repo: UserRepository | None = None,
         fact_repo: FactRepository | None = None,
+        org_repo: OrganizationRepository | None = None,
     ) -> None:
         self._db = db
         self._redis = redis_client
@@ -121,6 +124,7 @@ class MemoryService:
         self._session_repo = session_repo or SessionRepository(db)
         self._user_repo = user_repo or UserRepository(db)
         self._fact_repo = fact_repo or FactRepository(db)
+        self._org_repo = org_repo or OrganizationRepository(db)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Public API
@@ -384,28 +388,10 @@ class MemoryService:
         Returns:
             A ``User`` ORM instance (existing or newly created).
         """
-        user = await self._user_repo.get_by_external_id(org_id, external_id)
-        if user is not None:
-            return user
-
-        # Race-safe: unique constraint prevents duplicate inserts
-        from sqlalchemy.exc import IntegrityError
-
-        try:
-            user = await self._user_repo.create(
-                organization_id=org_id,
-                external_id=external_id,
-            )
-        except IntegrityError:
-            await self._user_repo.rollback()
-            user = await self._user_repo.get_by_external_id(org_id, external_id)
-            if user is None:
-                raise NotFoundError(
-                    f"Failed to get-or-create user '{external_id}' "
-                    f"in organization {org_id}"
-                ) from None
-
-        return user
+        return await self._user_repo.create_or_get_by_external_id(
+            organization_id=org_id,
+            external_id=external_id,
+        )
 
     async def _resolve_session(
         self,
@@ -436,8 +422,6 @@ class MemoryService:
         Raises:
             NotFoundError: If a specific session_id was given but not found.
         """
-        from models.session import Session
-
         if session_external_id is not None:
             session = await self._session_repo.get_by_external_id(
                 org_id=organization_id,
@@ -573,15 +557,7 @@ class MemoryService:
             The PII config dict (possibly empty).  Returns ``{}`` if the
             organization does not exist or has no PII config.
         """
-        result = await self._db.execute(
-            text("SELECT quotas->'pii' AS pii_config FROM organizations WHERE id = :org_id"),
-            {"org_id": org_id},
-        )
-        row = result.one_or_none()
-        if row is None:
-            return {}
-        pii_config = row[0]
-        return pii_config if isinstance(pii_config, dict) else {}
+        return await self._org_repo.get_pii_config(org_id)
 
     # ── ARQ Task Enqueue ─────────────────────────────────────────────────────
 
@@ -613,6 +589,9 @@ class MemoryService:
             episodes: List of episode dicts with ``id``, ``content``, ``role``.
         """
         episode_ids = [ep["id"] for ep in episodes]
+        # Propagate trace_id from the current request context so ARQ worker
+        # tasks can be correlated back to the originating HTTP request.
+        trace_id = structlog.contextvars.get_contextvars().get("request_id", str(uuid4()))
         try:
             arq_pool = get_arq()
             qname = _arq_queue_name("high")
@@ -620,7 +599,7 @@ class MemoryService:
                 ep_id = str(episode["id"])
                 content = episode["content"]
                 role = episode.get("role", "user")
-                common = {"episode_id": ep_id, "content": content, "org_id": org_id}
+                common = {"episode_id": ep_id, "content": content, "org_id": org_id, "trace_id": trace_id}
 
                 await arq_pool.enqueue("classify_dialog", queue_name=qname,
                     **common)

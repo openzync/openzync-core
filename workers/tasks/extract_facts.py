@@ -52,12 +52,14 @@ async def extract_facts(
     user_id: str,
     content: str,
     session_id: str | None = None,
+    trace_id: str = "",
 ) -> None:
     """Extract zero-shot factual statements from a message and persist them.
 
-    This function is designed as an ARQ task — the ``ctx`` parameter is
-    required by the ARQ contract but is not used directly here (we create
-    a short-lived DB engine per invocation).
+    This function is designed as an ARQ task — the ``ctx`` parameter provides
+    a shared DB engine from the worker process (``ctx["db_engine"]``).
+    When ``ctx`` is absent (direct invocation), a short-lived engine is
+    created as a fallback.
 
     Pipeline:
         0. Fetch known entities + recent history from session (if session_id).
@@ -80,17 +82,21 @@ async def extract_facts(
         session_id: UUID of the session (passed from MemoryService).
             Used to fetch previously extracted entities and recent
             conversation turns for pronoun resolution.
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:
         Exception: Re-raises the last LLM or DB error after retry exhaustion
             (``on_exhaustion="raise"`` default behaviour).
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
     # Lazy imports to keep the module importable without the full async
     # stack at definition time — ARQ workers run in a separate process.
     from sqlalchemy import select
 
     from core.config import settings
-    from core.db import get_async_session, init_db_engine
+    from core.db import get_async_session
     from core.llm import resolve_backend
     from models.episode import Episode
     from repositories.fact_repository import FactRepository
@@ -101,7 +107,23 @@ async def extract_facts(
         org_id=org_id,
         session_id=session_id,
         content_length=len(content),
+        trace_id=trace_id,
     )
+
+    # Use the shared engine from worker context.
+    engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
+    if engine is None:
+        from core.db import init_db_engine
+
+        engine = init_db_engine(
+            str(settings.DATABASE_URL), pool_size=2, max_overflow=1
+        )
+        _own_engine = True
+    else:
+        _own_engine = False
+    session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
+    if session_factory is None:
+        session_factory = get_async_session(engine)
 
     # ── 0. Fetch session context (known entities + recent history + facts) ────
     known_entities: list[dict] = []
@@ -109,11 +131,7 @@ async def extract_facts(
     existing_facts: list[dict] = []
     if session_id:
         try:
-            ctx_engine = init_db_engine(
-                str(settings.DATABASE_URL), pool_size=2, max_overflow=1
-            )
-            ctx_session_factory = get_async_session(ctx_engine)
-            async with ctx_session_factory() as db:
+            async with session_factory() as db:
                 repo = FactRepository(db)
                 known_entities = await repo.get_entities_for_session(
                     session_id=uuid.UUID(session_id),
@@ -160,8 +178,6 @@ async def extract_facts(
                 session_id=session_id,
                 error=str(exc),
             )
-        finally:
-            await ctx_engine.dispose()
 
     # ── 1. Render prompt (v4 for delta with existing facts, v3 as fallback) ────
     prompt_template = "extract_facts_v4" if existing_facts else "extract_facts_v3"
@@ -208,9 +224,8 @@ async def extract_facts(
     facts = _parse_facts_response(response.content)
 
     # ── 4. Filter, resolve entities, persist, and set enrichment bit ─────────
+    # Uses the shared engine from worker ctx (set earlier in this function).
     persisted = 0
-    engine = init_db_engine(str(settings.DATABASE_URL), pool_size=5, max_overflow=2)
-    session_factory = get_async_session(engine)
     try:
         async with session_factory() as db:
             # Persist facts (if any) AND set enrichment bit in a single
@@ -245,40 +260,48 @@ async def extract_facts(
 
                         entity_repo = _EntityRepo(db=db)
 
-                        for fact in resolved_facts:
-                            created = await repo.create_or_skip(
-                                user_id=uuid.UUID(user_id),
-                                organization_id=uuid.UUID(org_id),
-                                content=f"{fact['subject']} {fact['predicate']} {fact['object']}",
-                                subject=fact["subject"],
-                                predicate=fact["predicate"],
-                                obj=fact["object"],
-                                subject_type=fact.get("subject_type", "literal"),
-                                object_type=fact.get("object_type", "literal"),
-                                confidence=fact["confidence"],
-                                source_episode_id=uuid.UUID(episode_id),
-                                valid_from=datetime.now(timezone.utc),
-                                subject_entity_id=fact.get("subject_entity_id"),
-                                object_entity_id=fact.get("object_entity_id"),
+                        # ══════════════════════════════════════════════════════
+                        # Batch-create all unique facts in a single query
+                        # instead of N individual round-trips.
+                        # ══════════════════════════════════════════════════════
+                        new_facts = await repo.batch_create_or_skip(
+                            facts=resolved_facts,
+                            user_id=uuid.UUID(user_id),
+                            organization_id=uuid.UUID(org_id),
+                            source_episode_id=uuid.UUID(episode_id),
+                        )
+
+                        # Build a lookup from content string → input fact dict
+                        # to match returned Fact ORM objects back to their
+                        # original input for entity resolution and graph upserts.
+                        content_to_fact: dict[str, dict] = {
+                            f"{f['subject']} {f['predicate']} {f['object']}": f
+                            for f in resolved_facts
+                        }
+
+                        persisted = len(new_facts)
+
+                        duplicates_count = len(resolved_facts) - len(new_facts)
+                        if duplicates_count:
+                            logger.info(
+                                "fact_extraction.duplicates_skipped",
+                                episode_id=episode_id,
+                                count=duplicates_count,
                             )
 
-                            if created is None:
-                                logger.info(
-                                    "fact_extraction.duplicate_skipped",
-                                    episode_id=episode_id,
-                                    subject=fact["subject"],
-                                    predicate=fact["predicate"],
-                                    object=fact["object"],
-                                )
-                                continue
-
-                            persisted += 1
+                        # ── Post-insert per-fact processing ──────────────────
+                        # Entity resolution fallback + graph relationship
+                        # materialization for newly created facts only.
+                        for fact_obj in new_facts:
+                            input_fact = content_to_fact.get(fact_obj.content)
+                            if input_fact is None:
+                                continue  # guard against logic errors
 
                             # ── Also persist to graph_relationships ──────────
                             # When both entity IDs are resolved, materialize
                             # the relationship in the graph for traversal queries.
-                            subj_id = fact.get("subject_entity_id")
-                            obj_id = fact.get("object_entity_id")
+                            subj_id = input_fact.get("subject_entity_id")
+                            obj_id = input_fact.get("object_entity_id")
 
                             # ── Live entity lookup fallback ────────────────
                             # If entity IDs weren't resolved from the session
@@ -290,39 +313,39 @@ async def extract_facts(
                             if subj_id is None:
                                 subj_node = await entity_repo.get_entity_by_name(
                                     org_id=uuid.UUID(org_id),
-                                    name=fact["subject"],
+                                    name=input_fact["subject"],
                                 )
                                 if subj_node is not None:
                                     subj_id = uuid.UUID(subj_node["id"])
-                                    fact["subject_entity_id"] = subj_id
+                                    input_fact["subject_entity_id"] = subj_id
                                     logger.info(
                                         "fact_extraction.live_entity_resolved",
                                         episode_id=episode_id,
-                                        entity_name=fact["subject"],
+                                        entity_name=input_fact["subject"],
                                         role="subject",
                                     )
 
                             if obj_id is None:
                                 obj_node = await entity_repo.get_entity_by_name(
                                     org_id=uuid.UUID(org_id),
-                                    name=fact["object"],
+                                    name=input_fact["object"],
                                 )
                                 if obj_node is not None:
                                     obj_id = uuid.UUID(obj_node["id"])
-                                    fact["object_entity_id"] = obj_id
+                                    input_fact["object_entity_id"] = obj_id
                                     logger.info(
                                         "fact_extraction.live_entity_resolved",
                                         episode_id=episode_id,
-                                        entity_name=fact["object"],
+                                        entity_name=input_fact["object"],
                                         role="object",
                                     )
 
                             if subj_id is not None and obj_id is not None:
                                 try:
                                     await entity_repo.upsert_relationship(
-                                        subject=fact["subject"],
-                                        predicate=fact["predicate"],
-                                        obj=fact["object"],
+                                        subject=input_fact["subject"],
+                                        predicate=input_fact["predicate"],
+                                        obj=input_fact["object"],
                                         org_id=uuid.UUID(org_id),
                                     )
                                 except Exception:
@@ -331,9 +354,9 @@ async def extract_facts(
                                     logger.warning(
                                         "fact_extraction.graph_rel_failed",
                                         episode_id=episode_id,
-                                        subject=fact["subject"],
-                                        predicate=fact["predicate"],
-                                        object=fact["object"],
+                                        subject=input_fact["subject"],
+                                        predicate=input_fact["predicate"],
+                                        object=input_fact["object"],
                                         exc_info=True,
                                     )
 
@@ -347,7 +370,8 @@ async def extract_facts(
             )
             await db.commit()
     finally:
-        await engine.dispose()
+        if _own_engine:
+            await engine.dispose()
 
     if persisted:
         logger.info("fact_extraction.completed", episode_id=episode_id, facts=persisted)
@@ -355,19 +379,38 @@ async def extract_facts(
         logger.info("fact_extraction.no_facts", episode_id=episode_id)
 
 
-async def _set_enrichment_bit(episode_id: str, bit: int) -> None:
+async def _set_enrichment_bit(
+    episode_id: str,
+    bit: int,
+    db_session_factory: Any = None,
+) -> None:
     """Set an enrichment_status bit for an episode.
 
     Always runs, even if no data was found — marks the task as complete
     so the pipeline knows it has been attempted.
+
+    Args:
+        episode_id: UUID of the episode to update.
+        bit: Bitmask value to OR into enrichment_status.
+        db_session_factory: Optional shared session factory from the worker
+            ctx.  When provided, avoids creating a short-lived DB engine.
     """
     from sqlalchemy import text
 
-    from core.config import settings as app_settings
-    from core.db import get_async_session, init_db_engine
+    if db_session_factory is None:
+        from core.config import settings as app_settings
+        from core.db import get_async_session, init_db_engine
 
-    engine = init_db_engine(str(app_settings.DATABASE_URL), pool_size=2, max_overflow=1)
-    session_factory = get_async_session(engine)
+        engine = init_db_engine(
+            str(app_settings.DATABASE_URL), pool_size=2, max_overflow=1
+        )
+        session_factory = get_async_session(engine)
+        _own_engine = True
+    else:
+        session_factory = db_session_factory
+        engine = None  # not owned
+        _own_engine = False
+
     try:
         async with session_factory() as db:
             await db.execute(
@@ -382,7 +425,8 @@ async def _set_enrichment_bit(episode_id: str, bit: int) -> None:
             "enrichment_bit_failed", episode_id=episode_id, bit=bit, error=str(exc)
         )
     finally:
-        await engine.dispose()
+        if _own_engine and engine is not None:
+            await engine.dispose()
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────

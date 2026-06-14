@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from typing import Any
 from uuid import UUID
 
@@ -27,9 +28,14 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from core.config import settings
+from services.pii_service import PIIDetector, PIIRedactor
 from services.worker.worker_settings import get_queue_name
 
 logger = logging.getLogger(__name__)
+
+# Module-level PII detector + redactor (regex-only, stateless, no config needed).
+_pii_detector = PIIDetector()
+_pii_redactor = PIIRedactor(mode="mask")
 
 # ── Exempt paths (no audit for internal noise) ────────────────────────────────
 
@@ -212,12 +218,16 @@ class AuditMiddleware(BaseHTTPMiddleware):
             "user_agent": request.headers.get("User-Agent", ""),
         }
 
-        # Optionally capture response body (config-gated)
+        # Optionally capture response body with PII redaction (config-gated)
         if settings.AUDIT_LOG_RESPONSE_BODY:
             try:
                 body = await self._read_response_body(response)
                 if body:
-                    details["response_body"] = body[:10_000]  # cap at 10 KB
+                    raw_text = body[:10_000]
+                    # Run PII detection + redaction using regex-only detector.
+                    detections = _pii_detector.detect(raw_text)
+                    redacted = _pii_redactor.apply(raw_text, detections) if detections else raw_text
+                    details["response_body"] = redacted
             except Exception:
                 logger.warning("audit.body_read_failed", exc_info=True)
 
@@ -239,6 +249,7 @@ class AuditMiddleware(BaseHTTPMiddleware):
             resource_id=resource_id,
             details=json.dumps(details),
             ip_address=ip_address,
+            trace_id=getattr(request.state, "request_id", None) or str(uuid.uuid4()),
         )
 
     @staticmethod

@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class CreateSessionRequest(BaseModel):
@@ -47,7 +47,9 @@ class SessionResponse(BaseModel):
     user_id: UUID = Field(..., description="User UUID this session belongs to.")
     external_id: str = Field(..., description="Caller-defined session identifier.")
     metadata: dict[str, Any] = Field(
-        default_factory=dict, description="Session metadata JSON."
+        default_factory=dict,
+        validation_alias="metadata_",
+        description="Session metadata JSON.",
     )
     is_active: bool = Field(
         default=True, description="Whether the session is accepting new messages."
@@ -70,7 +72,7 @@ class SessionResponse(BaseModel):
         ..., description="Last activity timestamp (UTC)."
     )
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SessionListResponse(BaseModel):
@@ -96,7 +98,7 @@ class SessionListResponse(BaseModel):
         ..., description="Session creation timestamp (UTC)."
     )
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class MessageResponse(BaseModel):
@@ -112,7 +114,9 @@ class MessageResponse(BaseModel):
     )
     content: str = Field(..., description="Message body text.")
     metadata: dict[str, Any] = Field(
-        default_factory=dict, description="Per-message metadata JSON."
+        default_factory=dict,
+        validation_alias="metadata_",
+        description="Per-message metadata JSON.",
     )
     token_count: int = Field(
         default=0, description="Approximate token count for this message."
@@ -124,4 +128,4 @@ class MessageResponse(BaseModel):
         ..., description="Message creation timestamp (UTC)."
     )
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)

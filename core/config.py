@@ -170,6 +170,16 @@ class Settings(BaseSettings):
         description="Comma-separated list of allowed CORS origins.",
         validation_alias="MG_CORS_ORIGINS",
     )
+    HOSTS_ALLOWED: str = Field(
+        default="localhost:8000",
+        description=(
+            "Comma-separated list of allowed Host header values for "
+            "TrustedHostMiddleware in production "
+            "(e.g. 'api.openzep.dev,localhost:3000'). "
+            "Accepts '*' in development."
+        ),
+        validation_alias="MG_HOSTS_ALLOWED",
+    )
 
     # ── Environment & Observability ───────────────────────────────────────
     ENVIRONMENT: Literal["development", "staging", "production"] = Field(

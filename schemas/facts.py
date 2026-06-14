@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class FactTriple(BaseModel):
@@ -163,7 +163,7 @@ class FactResponse(BaseModel):
         ..., description="Fact creation timestamp (UTC)."
     )
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PaginatedFactsResponse(BaseModel):

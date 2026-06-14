@@ -135,31 +135,32 @@ def create_app() -> FastAPI:
 
     # ── Middleware stack (order matters!) ─────────────────────────────────
     # Starlette middleware is LIFO — the last `add_middleware()` call wraps
-    # the outermost layer and runs first on every request.  Auth must come
-    # BEFORE CORS in registration order so that CORS (registered last) runs
-    # first and handles OPTIONS preflights before auth checks.
+    # the outermost layer and runs first on every request.
     #
-    # Execution order (outermost → innermost):
-    #   0. MetricsMiddleware  — RED metrics (wraps everything including 404)
-    #   1. CORS              — intercept OPTIONS preflight immediately
-    #   2. LoggingMiddleware  — log request/response lifecycle
-    #   3. TracingMiddleware  — OpenTelemetry span management
-    #   4. RateLimitMiddleware — per-IP / per-token sliding window
-    #   5. AuthMiddleware     — extract/validate JWT & API key
-    #   6. AuditMiddleware    — record every request to audit_logs (post-response)
-    #   7. GZipMiddleware     — compress responses >= 1 KB
-    #   8. TrustedHost        — prevent host-header attacks
-    #   9. RequestID          — assign request_id (innermost, closest to router)
+    # The numbered comments below show the RUNTIME execution order
+    # (outermost → innermost).  Registration order is the reverse.
+    #
+    # Runtime order (outermost → innermost):
+    #   0. MetricsMiddleware   — RED metrics (wraps everything including 404)
+    #   1. CORSMiddleware       — intercept OPTIONS preflight immediately
+    #   2. LoggingMiddleware    — log request/response lifecycle
+    #   3. TracingMiddleware    — OpenTelemetry span management
+    #   4. RateLimitMiddleware  — per-IP / per-token sliding window
+    #   5. AuthMiddleware       — extract/validate JWT & API key
+    #   6. AuditMiddleware      — record request to audit_logs (post-response)
+    #   7. GZipMiddleware       — compress responses >= 1 KB
+    #   8. TrustedHostMiddleware — prevent host-header attacks
+    #   9. RequestIDMiddleware   — assign request_id (innermost, closest to router)
 
-    # 0 (outermost) — Metrics: captures EVERY request including 404s and non-API paths.
+    # Runtime 0 (outermost) — Metrics: captures EVERY request including 404s.
     app.add_middleware(MetricsMiddleware)
 
-    # 8 (innermost) — Request ID: must be first so every downstream component has an ID.
+    # Runtime 9 (innermost) — Request ID: spans every downstream component.
     app.add_middleware(RequestIDMiddleware)
 
-    # 7 — Trusted Host: prevent host-header attacks in production.
+    # Runtime 8 — Trusted Host: prevent host-header attacks in production.
     allowed_hosts = (
-        settings.CORS_ORIGINS.split(",")
+        settings.HOSTS_ALLOWED.split(",")
         if settings.ENVIRONMENT == "production"
         else ["*"]
     )
@@ -168,26 +169,26 @@ def create_app() -> FastAPI:
         allowed_hosts=allowed_hosts,
     )
 
-    # 6 — GZip compression
+    # Runtime 7 — GZip compression
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-    # 5 — Auth: extract and validate JWT/API key, set org_id/user_id on request state.
+    # Runtime 5 — Auth: extract/validate JWT & API key, set request state.
     app.add_middleware(AuthMiddleware)
 
-    # 6 — Audit: record every request to audit_logs (post-response, never blocks).
+    # Runtime 6 — Audit: record request to audit_logs (post-response, never blocks).
     app.add_middleware(AuditMiddleware)
 
-    # 4 — Rate limiting
+    # Runtime 4 — Rate limiting
     app.add_middleware(RateLimitMiddleware)
 
-    # 3 — Tracing
+    # Runtime 3 — Tracing
     app.add_middleware(TracingMiddleware)
 
-    # 2 — Structured logging
+    # Runtime 2 — Structured logging
     app.add_middleware(LoggingMiddleware)
 
-    # 1 (outermost) — CORS: MUST be outermost so it intercepts OPTIONS
-    # preflight requests BEFORE AuthMiddleware rejects them.
+    # Runtime 1 (outermost after Metrics) — CORS: intercepts OPTIONS preflight
+    # BEFORE AuthMiddleware rejects them.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS.split(","),

@@ -240,6 +240,7 @@ def create_arq_worker(
     concurrency: int,
     timeout: int,
     cron_jobs: list[CronJob] | None = None,
+    ctx: dict[str, Any] | None = None,
 ) -> ArqWorker:
     """Create a configured ARQ Worker instance for the given queue.
 
@@ -252,11 +253,15 @@ def create_arq_worker(
         timeout: Default job timeout in seconds.
         cron_jobs: Optional list of :class:`CronJob` instances for scheduled
             tasks (e.g. nightly community detection).
+        ctx: Shared context dict passed to every task invocation.  Used to
+            inject the shared DB engine, session factory, and other resources
+            so tasks don't create their own per-invocation connections.
 
     Returns:
         Configured :class:`ArqWorker` instance (not yet started).
     """
     return ArqWorker(
+        ctx=ctx or {},
         redis_settings=redis_settings,
         functions=functions,
         queue_name=get_queue_name(settings.ENV, queue_name),
@@ -395,6 +400,31 @@ async def main() -> NoReturn:
         health_port=settings.HEALTH_PORT,
     )
 
+    # ── Create shared DB engine ───────────────────────────────────────────
+    # One engine per worker process, shared across all task invocations.
+    # Eliminates per-task connection churn that would exhaust PostgreSQL's
+    # max_connections at scale.
+    from core.db import get_async_session, init_db_engine
+
+    db_engine = init_db_engine(
+        str(settings.DATABASE_URL),
+        pool_size=10,
+        max_overflow=5,
+    )
+    db_session_factory = get_async_session(db_engine)
+
+    # Build the shared context dict passed to all ARQ tasks.
+    worker_ctx: dict[str, Any] = {
+        "db_engine": db_engine,
+        "db_session_factory": db_session_factory,
+    }
+
+    logger.info(
+        "worker.db_engine_created",
+        pool_size=10,
+        max_overflow=5,
+    )
+
     # ── Start Prometheus HTTP server ────────────────────────────────────
     try:
         start_prometheus_server(settings.PROMETHEUS_PORT)
@@ -420,6 +450,7 @@ async def main() -> NoReturn:
         redis_settings=redis_settings,
         concurrency=min(settings.MAX_WORKERS, 8),
         timeout=settings.JOB_TIMEOUT_DEFAULT,
+        ctx=worker_ctx,
     )
 
     # ── Community detection scheduling ─────────────────────────────
@@ -456,6 +487,7 @@ async def main() -> NoReturn:
         concurrency=max(1, settings.MAX_WORKERS // 4),
         timeout=settings.JOB_TIMEOUT_DEFAULT * 2,
         cron_jobs=community_cron_jobs,
+        ctx=worker_ctx,
     )
 
     logger.info(
@@ -500,6 +532,8 @@ async def main() -> NoReturn:
         logger.info("worker.run_cancelled")
         raise
     finally:
+        await db_engine.dispose()
+        logger.debug("worker.db_engine_disposed")
         monitor_task.cancel()
         await runner.cleanup()
         logger.info("worker.stopped")

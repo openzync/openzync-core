@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AuditLogResponse(BaseModel):
@@ -25,7 +25,7 @@ class AuditLogResponse(BaseModel):
     path: str | None = Field(None, description="Request URL path")
     created_at: datetime = Field(..., description="Timestamp of the event")
 
-    model_config = {"from_attributes": True}
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AuditLogFilter(BaseModel):

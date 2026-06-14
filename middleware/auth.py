@@ -30,12 +30,13 @@ import logging
 from typing import Any, cast
 
 import redis.asyncio as aioredis
-from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from uuid import UUID
 
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+from repositories.api_key_repository import ApiKeyRepository
 from utils.crypto import compute_lookup_hash, verify_api_key
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,21 @@ AUTH_CACHE_PREFIX: str = "auth:key:"
 
 AUTH_CACHE_TTL: int = 300
 """TTL in seconds for cached auth lookups (5 minutes)."""
+
+AUTH_NEG_CACHE_PREFIX: str = "auth:neg:"
+"""Redis key prefix for negative cache entries (key not found in DB)."""
+
+AUTH_NEG_CACHE_TTL: int = 60
+"""TTL in seconds for negative cache entries (1 minute)."""
+
+AUTH_MISS_RATE_LIMIT_PREFIX: str = "auth:miss_ip:"
+"""Redis key prefix for per-IP auth miss-rate counters."""
+
+AUTH_MISS_RATE_LIMIT: int = 10
+"""Maximum DB auth misses per IP per window before throttling."""
+
+AUTH_MISS_RATE_WINDOW: int = 60
+"""Sliding window in seconds for per-IP miss-rate limiting."""
 
 SCHEMA_AUTH_HEADER: str = "Bearer"
 """Expected Authorization header scheme."""
@@ -145,6 +161,58 @@ def _rfc7807_response(
     )
 
 
+# ── ASGI response sender ──────────────────────────────────────────────────
+# These replace the ``JSONResponse``-based helpers when used from raw ASGI
+# middleware (AuthMiddleware).  They send directly via the ASGI ``send``
+# channel instead of returning a response object.
+
+
+async def _send_rfc7807(
+    send: Send,
+    status: int,
+    title: str,
+    detail: str,
+    path: str,
+    **extra: Any,
+) -> None:
+    """Send an RFC 7807 Problem Details response via ASGI.
+
+    Args:
+        send: The ASGI ``send`` callable.
+        status: HTTP status code.
+        title: Human-readable title for the error type.
+        detail: Detailed explanation of the error.
+        path: The request URL path (used as ``instance``).
+        **extra: Additional fields to include in the response body.
+    """
+    body = json.dumps(
+        {
+            "type": f"https://errors.openzep.dev/{title.lower().replace(' ', '_')}",
+            "title": title,
+            "status": status,
+            "detail": detail,
+            "instance": path,
+            **extra,
+        },
+    ).encode("utf-8")
+    await send(
+        {
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/problem+json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        },
+    )
+    await send(
+        {
+            "type": "http.response.body",
+            "body": body,
+        },
+    )
+
+
 async def _lookup_key_in_redis(
     redis: aioredis.Redis,
     lookup_hash: str,
@@ -189,78 +257,106 @@ async def _cache_key_in_redis(
     await redis.setex(cache_key, ttl, json.dumps(data))
 
 
+# ── Negative cache + auth miss-rate limiting ─────────────────────────────
+
+
+async def _check_negative_cache(
+    redis: aioredis.Redis,
+    lookup_hash: str,
+) -> bool:
+    """Check whether a lookup hash was recently found absent from the DB.
+
+    Args:
+        redis: Async Redis client.
+        lookup_hash: Unsalted SHA-256 hex digest of the API key.
+
+    Returns:
+        ``True`` if the key is known to not exist (cache hit on absence).
+    """
+    return bool(await redis.exists(f"{AUTH_NEG_CACHE_PREFIX}{lookup_hash}"))
+
+
+async def _mark_negative_cache(
+    redis: aioredis.Redis,
+    lookup_hash: str,
+) -> None:
+    """Record that a lookup hash does not correspond to a valid API key.
+
+    Subsequent lookups for the same hash will be rejected without a DB
+    query for ``AUTH_NEG_CACHE_TTL`` seconds.
+
+    Args:
+        redis: Async Redis client.
+        lookup_hash: Unsalted SHA-256 hex digest of the API key.
+    """
+    await redis.setex(
+        f"{AUTH_NEG_CACHE_PREFIX}{lookup_hash}",
+        AUTH_NEG_CACHE_TTL,
+        "1",
+    )
+
+
+async def _check_auth_miss_rate_limit(
+    redis: aioredis.Redis,
+    client_ip: str,
+) -> None:
+    """Check whether an IP address has exceeded the auth miss-rate limit.
+
+    Each DB cache-miss increments a per-IP counter.  If the counter
+    exceeds ``AUTH_MISS_RATE_LIMIT`` within the sliding window, a
+    :class:`RateLimitError` is raised so the caller can return 429.
+
+    Args:
+        redis: Async Redis client.
+        client_ip: The client's IP address.
+
+    Raises:
+        RateLimitError: If the IP has exceeded the allowed miss rate.
+    """
+    key = f"{AUTH_MISS_RATE_LIMIT_PREFIX}{client_ip}"
+    count = await redis.incr(key)
+    if count == 1:
+        await redis.expire(key, AUTH_MISS_RATE_WINDOW)
+    if count > AUTH_MISS_RATE_LIMIT:
+        from core.exceptions import RateLimitError
+
+        raise RateLimitError(
+            f"Too many authentication attempts from {client_ip}. "
+            f"Try again later."
+        )
+
+
 async def _query_key_from_db(
     db_factory: async_sessionmaker[AsyncSession],
     lookup_hash: str,
 ) -> dict[str, Any] | None:
-    """Query the database for an API key by its lookup hash.
+    """Query the database for an API key by its lookup hash via ApiKeyRepository.
 
     Args:
         db_factory: Async session factory from ``request.app.state``.
         lookup_hash: Unsalted SHA-256 hex digest of the API key.
 
     Returns:
-        Dict with ``org_id``, ``scopes``, ``key_hash``, ``salt``, ``is_revoked``,
-        ``expires_at`` if found, or ``None``.
+        Dict with ``id``, ``org_id``, ``scopes``, ``key_hash``, ``salt``,
+        ``is_revoked``, ``expires_at`` if found, or ``None``.
     """
-    # Late import to avoid circular dependency; the model is expected to exist.
-    try:
-        from models.api_key import ApiKey
-    except ImportError as err:
-        logger.critical(
-            "ApiKey model not available — cannot authenticate. "
-            "Ensure models/api_key.py exists.",
-            exc_info=True,
-        )
-        raise RuntimeError(
-            "ApiKey model is required for authentication middleware."
-        ) from err
-
     async with db_factory() as session:
         async with session.begin():
-            result = await session.execute(
-                select(ApiKey).where(ApiKey.lookup_hash == lookup_hash)  # type: ignore[attr-defined]
-            )
-            api_key = result.scalar_one_or_none()
+            repo = ApiKeyRepository(session)
+            api_key = await repo.get_by_lookup_hash(lookup_hash)
 
     if api_key is None:
         return None
 
     return {
-        "org_id": str(api_key.organization_id),  # type: ignore[attr-defined]
-        "scopes": list(api_key.scopes),  # type: ignore[attr-defined]
-        "key_hash": api_key.key_hash,  # type: ignore[attr-defined]
-        "salt": api_key.salt,  # type: ignore[attr-defined]
-        "is_revoked": api_key.is_revoked,  # type: ignore[attr-defined]
-        "expires_at": api_key.expires_at,  # type: ignore[attr-defined]
+        "id": str(api_key.id),
+        "org_id": str(api_key.organization_id),
+        "scopes": list(api_key.scopes),
+        "key_hash": api_key.key_hash,
+        "salt": api_key.salt,
+        "is_revoked": api_key.is_revoked,
+        "expires_at": api_key.expires_at,
     }
-
-
-async def _set_rls_context(
-    db_factory: async_sessionmaker[AsyncSession],
-    org_id: str | None,
-    bypass_rls: bool = False,
-) -> None:
-    """Set PostgreSQL session-level configuration for RLS policies.
-
-    This must be called within a DB session so the ``SET_CONFIG`` takes effect
-    for the lifetime of that backend connection.
-
-    Args:
-        db_factory: Async session factory.
-        org_id: The authenticated organization ID, or ``"none"``.
-        bypass_rls: Whether to bypass RLS (e.g., for service accounts).
-    """
-    async with db_factory() as session:
-        async with session.begin():
-            await session.execute(
-                text("SELECT set_config('app.org_id', :org_id, true)"),
-                {"org_id": org_id or "none"},
-            )
-            await session.execute(
-                text("SELECT set_config('app.bypass_rls', :bypass, true)"),
-                {"bypass": "true" if bypass_rls else "false"},
-            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -285,20 +381,23 @@ def _is_jwt_token(token: str) -> bool:
 
 
 def _verify_jwt_and_set_state(
-    request: Request,
+    state: dict[str, Any],
+    path: str,
     token: str,
-) -> JSONResponse | None:
-    """Verify a JWT token and set ``request.state``.
+) -> dict | None:
+    """Verify a JWT token and populate the request state dict.
 
     Extracts ``sub`` (user_id), ``org_id``, and ``role`` from the JWT
-    claims and populates ``request.state`` accordingly.
+    claims and writes them into ``state``.
 
     Args:
-        request: The incoming HTTP request (state is mutated in-place).
+        state: Mutable request state dict (populated on success).
+        path: The request URL path (used in error responses).
         token: The raw JWT string.
 
     Returns:
-        ``None`` on success, or an RFC 7807 ``JSONResponse`` on failure.
+        ``None`` on success, or an error dict (status, title, detail, path)
+        suitable for passing to ``_send_rfc7807`` on failure.
     """
     from core.config import settings
     from utils.crypto import verify_jwt_token
@@ -307,12 +406,12 @@ def _verify_jwt_and_set_state(
         payload = verify_jwt_token(token, settings.SECRET_KEY)
     except Exception as exc:
         logger.warning("JWT verification failed", exc_info=exc)
-        return _rfc7807_response(
-            status=401,
-            title="Invalid Token",
-            detail="The JWT token is invalid or expired.",
-            path=request.url.path,
-        )
+        return {
+            "status": 401,
+            "title": "Invalid Token",
+            "detail": "The JWT token is invalid or expired.",
+            "path": path,
+        }
 
     # Validate required claims
     user_id: str | None = payload.get("sub")
@@ -321,26 +420,26 @@ def _verify_jwt_and_set_state(
     token_type: str | None = payload.get("type")
 
     if token_type != "access":
-        return _rfc7807_response(
-            status=401,
-            title="Invalid Token Type",
-            detail="Only access tokens are accepted for API authentication.",
-            path=request.url.path,
-        )
+        return {
+            "status": 401,
+            "title": "Invalid Token Type",
+            "detail": "Only access tokens are accepted for API authentication.",
+            "path": path,
+        }
 
     if not user_id or not org_id:
-        return _rfc7807_response(
-            status=401,
-            title="Invalid Token Claims",
-            detail="JWT must contain 'sub' (user_id) and 'org_id' claims.",
-            path=request.url.path,
-        )
+        return {
+            "status": 401,
+            "title": "Invalid Token Claims",
+            "detail": "JWT must contain 'sub' (user_id) and 'org_id' claims.",
+            "path": path,
+        }
 
-    request.state.auth_type = "jwt"  # type: ignore[attr-defined]
-    request.state.org_id = org_id  # type: ignore[attr-defined]
-    request.state.user_id = user_id  # type: ignore[attr-defined]
-    request.state.role = role  # type: ignore[attr-defined]
-    request.state.api_key_scopes = ["read", "write", "admin"]  # type: ignore[attr-defined]
+    state["auth_type"] = "jwt"
+    state["org_id"] = org_id
+    state["user_id"] = user_id
+    state["role"] = role
+    state["api_key_scopes"] = ["read", "write", "admin"]
     # JWT users get full scopes — fine-grained RBAC can be added later.
 
     return None
@@ -351,8 +450,11 @@ def _verify_jwt_and_set_state(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class AuthMiddleware(BaseHTTPMiddleware):
-    """Authenticate requests via ``Authorization: Bearer <api_key|jwt>``.
+class AuthMiddleware:
+    """Raw ASGI auth middleware — no ``BaseHTTPMiddleware`` overhead.
+
+    Authenticates requests via ``Authorization: Bearer <api_key|jwt>``.
+    Sets ``scope["state"]`` for downstream middleware and route handlers.
 
     Supports two authentication methods:
 
@@ -361,121 +463,151 @@ class AuthMiddleware(BaseHTTPMiddleware):
     - **JWT** (dashboard users):  Identified by a three-segment JWT string.
       Validated with ``MG_SECRET_KEY`` via HS256.
 
-    This middleware depends on:
-    - ``request.app.state.redis`` — an ``aioredis.Redis`` client initialised
-      during the application lifespan.
-    - ``request.app.state.db_session_factory`` — an ``async_sessionmaker``
-      bound to the application engine.
+    This middleware reads:
+    - ``scope["app"].state.redis`` — an ``aioredis.Redis`` client.
+    - ``scope["app"].state.db_session_factory`` — an ``async_sessionmaker``.
 
-    It sets the following attributes on ``request.state``:
+    It sets the following keys on ``scope["state"]``:
     - ``org_id`` — the authenticated organization's UUID (or ``None``).
     - ``user_id`` — the authenticated user's UUID (JWT only; ``None`` for API key).
-    - ``role`` — user role string (JWT only; empty for API key).
+    - ``role`` — user role string (JWT only; ``None`` for API key).
     - ``auth_type`` — ``"jwt"`` or ``"api_key"``.
     - ``api_key_scopes`` — list of permission strings (or ``[]``).
     """
 
-    def __init__(self, app: Any, **kwargs: Any) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         """Initialise the middleware.
 
         Args:
             app: The ASGI application.
-            **kwargs: Additional arguments for ``BaseHTTPMiddleware``.
         """
-        super().__init__(app, **kwargs)
+        self.app = app
         self._public_endpoints: set[str] = PUBLIC_ENDPOINTS
 
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: RequestResponseEndpoint,
-    ) -> Response:
-        """Authenticate the request and set ``request.state``.
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Authenticate the request and set ``scope["state"]``.
 
         Args:
-            request: Incoming HTTP request.
-            call_next: The next middleware or route handler.
-
-        Returns:
-            HTTP response — possibly an RFC 7807 401 if auth fails.
+            scope: The ASGI connection scope.
+            receive: The ASGI receive callable.
+            send: The ASGI send callable.
         """
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         # ── Initialise state defaults ────────────────────────────────────
-        request.state.org_id = None  # type: ignore[attr-defined]
-        request.state.user_id = None  # type: ignore[attr-defined]
-        request.state.role = None  # type: ignore[attr-defined]
-        request.state.auth_type = None  # type: ignore[attr-defined]
-        request.state.api_key_scopes = []  # type: ignore[attr-defined]
+        scope["state"] = {
+            "org_id": None,
+            "user_id": None,
+            "role": None,
+            "auth_type": None,
+            "api_key_scopes": [],
+        }
+
+        # ── Extract request metadata from scope ──────────────────────────
+        headers: dict[str, str] = {
+            k.decode("ascii").lower(): v.decode("ascii")
+            for k, v in scope.get("headers", [])
+        }
+        path: str = scope.get("path", "/")
+        method: str = scope.get("method", "GET")
 
         # ── CORS preflight pass-through ──────────────────────────────────
         # Browsers never send Authorization on OPTIONS preflight, so we
         # must let them through regardless of path. The CORSMiddleware
         # (registered outermost) should catch these first, but this is a
         # defense-in-depth guard in case middleware ordering changes.
-        if request.method == "OPTIONS":
-            return await call_next(request)
+        if method == "OPTIONS":
+            await self.app(scope, receive, send)
+            return
 
         # ── Prometheus scrape endpoint — exact path only ─────────────────
         # /metrics must be unauthenticated for Prometheus scrapers, but
         # sub-paths like /metrics/summary go through normal auth.
-        if request.url.path == "/metrics":
-            return await call_next(request)
+        if path == "/metrics":
+            await self.app(scope, receive, send)
+            return
 
         # ── Public endpoints pass through ────────────────────────────────
-        if _is_public_path(request.url.path):
-            return await call_next(request)
+        if _is_public_path(path):
+            await self.app(scope, receive, send)
+            return
 
         # ── Extract Authorization header ─────────────────────────────────
-        auth_header: str | None = request.headers.get("Authorization")
+        auth_header: str | None = headers.get("authorization")
         if auth_header is None:
-            return _rfc7807_response(
+            await _send_rfc7807(
+                send,
                 status=401,
                 title="Authentication Required",
                 detail="Missing Authorization header. Use: Bearer <api_key or jwt>",
-                path=request.url.path,
+                path=path,
             )
+            return
 
         if not auth_header.startswith(SCHEMA_AUTH_HEADER):
-            return _rfc7807_response(
+            await _send_rfc7807(
+                send,
                 status=401,
                 title="Invalid Authorization Scheme",
                 detail=(
                     f"Authorization header must start with '{SCHEMA_AUTH_HEADER}'. "
                     f"Got: {auth_header.split()[0] if ' ' in auth_header else 'empty'}"
                 ),
-                path=request.url.path,
+                path=path,
             )
+            return
 
         raw_key: str = auth_header[len(SCHEMA_AUTH_HEADER) :].strip()
         if not raw_key:
-            return _rfc7807_response(
+            await _send_rfc7807(
+                send,
                 status=401,
                 title="Empty Credentials",
                 detail="Authorization header is empty after 'Bearer '.",
-                path=request.url.path,
+                path=path,
             )
+            return
 
         # ── Route to JWT or API key flow ─────────────────────────────────
         # JWT tokens have 2 dots.  API keys have a known prefix.
         # If the token doesn't have an API key prefix, try JWT first.
         if not raw_key.startswith(API_KEY_PREFIXES) and _is_jwt_token(raw_key):
-            jwt_result = _verify_jwt_and_set_state(request, raw_key)
-            if jwt_result is not None:
-                return jwt_result
-            return await call_next(request)
+            jwt_error = _verify_jwt_and_set_state(
+                scope["state"], path, raw_key,
+            )
+            if jwt_error is not None:
+                await _send_rfc7807(send, **jwt_error)
+                return
+            await self.app(scope, receive, send)
+            return
 
         # ── API key flow ─────────────────────────────────────────────────
         lookup_hash: str = compute_lookup_hash(raw_key)
 
+        # ── Access app state from scope ──────────────────────────────────
+        app_state = scope.get("app")
+        app_state_obj = getattr(app_state, "state", None) if app_state else None
+        redis: aioredis.Redis | None = (
+            getattr(app_state_obj, "redis", None) if app_state_obj else None
+        )
+        db_factory: async_sessionmaker[AsyncSession] | None = (
+            getattr(app_state_obj, "db_session_factory", None)
+            if app_state_obj
+            else None
+        )
+
         # ── Check Redis cache ────────────────────────────────────────────
-        redis: aioredis.Redis | None = getattr(request.app.state, "redis", None)
         if redis is not None:
             try:
                 cached = await _lookup_key_in_redis(redis, lookup_hash)
                 if cached is not None:
-                    request.state.auth_type = "api_key"  # type: ignore[attr-defined]
-                    request.state.org_id = cached["org_id"]  # type: ignore[attr-defined]
-                    request.state.api_key_scopes = cached.get("scopes", [])  # type: ignore[attr-defined]
-                    return await call_next(request)
+                    scope["state"]["auth_type"] = "api_key"
+                    scope["state"]["org_id"] = cached["org_id"]
+                    scope["state"]["api_key_scopes"] = cached.get("scopes", [])
+                    await self.app(scope, receive, send)
+                    return
             except Exception:
                 # Graceful degradation — if Redis is down, fall through to DB.
                 logger.warning(
@@ -483,58 +615,109 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     exc_info=True,
                 )
 
+        # ── Negative cache check ──────────────────────────────────────────
+        # If this lookup_hash was recently looked up and not found in DB,
+        # reject immediately without hitting the database.
+        if redis is not None:
+            try:
+                if await _check_negative_cache(redis, lookup_hash):
+                    await _send_rfc7807(
+                        send,
+                        status=401,
+                        title="Invalid API Key",
+                        detail="The provided API key is not valid.",
+                        path=path,
+                    )
+                    return
+            except Exception:
+                logger.warning("Negative cache check failed", exc_info=True)
+
+        # ── Per-IP auth miss-rate limit ───────────────────────────────────
+        # Prevent a single IP from hammering the DB with many unique
+        # (likely rotated) API keys per minute.
+        if redis is not None:
+            client_raw = scope.get("client")
+            client_ip: str = client_raw[0] if client_raw is not None else "unknown"
+            try:
+                await _check_auth_miss_rate_limit(redis, client_ip)
+            except Exception as exc:
+                if "Too many authentication attempts" in str(exc):
+                    await _send_rfc7807(
+                        send,
+                        status=429,
+                        title="Too Many Requests",
+                        detail="Too many authentication attempts. Try again later.",
+                        path=path,
+                    )
+                    return
+                logger.warning("Auth miss-rate check failed", exc_info=True)
+
         # ── Check DB ─────────────────────────────────────────────────────
-        db_factory: async_sessionmaker[AsyncSession] | None = getattr(
-            request.app.state, "db_session_factory", None
-        )
         if db_factory is None:
             logger.error(
                 "db_session_factory not available on app.state — "
                 "AuthMiddleware cannot query API keys."
             )
-            return _rfc7807_response(
+            await _send_rfc7807(
+                send,
                 status=500,
                 title="Internal Server Error",
                 detail="Authentication service is misconfigured.",
-                path=request.url.path,
+                path=path,
             )
+            return
 
         try:
             key_data = await _query_key_from_db(db_factory, lookup_hash)
         except Exception:
             logger.exception("Failed to query API key from database")
-            return _rfc7807_response(
+            await _send_rfc7807(
+                send,
                 status=500,
                 title="Internal Server Error",
                 detail="Authentication service temporarily unavailable.",
-                path=request.url.path,
+                path=path,
             )
+            return
 
         if key_data is None:
-            return _rfc7807_response(
+            # Record this miss in the negative cache so subsequent requests
+            # with the same key are rejected without a DB round-trip.
+            if redis is not None:
+                try:
+                    await _mark_negative_cache(redis, lookup_hash)
+                except Exception:
+                    logger.warning("Failed to mark negative cache", exc_info=True)
+            await _send_rfc7807(
+                send,
                 status=401,
                 title="Invalid API Key",
                 detail="The provided API key is not valid.",
-                path=request.url.path,
+                path=path,
             )
+            return
 
         # ── Verify against salted hash ───────────────────────────────────
         if not verify_api_key(raw_key, key_data["key_hash"], key_data["salt"]):
-            return _rfc7807_response(
+            await _send_rfc7807(
+                send,
                 status=401,
                 title="Invalid API Key",
                 detail="The provided API key is not valid.",
-                path=request.url.path,
+                path=path,
             )
+            return
 
         # ── Validate key state ───────────────────────────────────────────
         if key_data["is_revoked"]:
-            return _rfc7807_response(
+            await _send_rfc7807(
+                send,
                 status=401,
                 title="API Key Revoked",
                 detail="This API key has been revoked.",
-                path=request.url.path,
+                path=path,
             )
+            return
 
         if key_data.get("expires_at") is not None:
             from datetime import datetime, timezone
@@ -543,20 +726,30 @@ class AuthMiddleware(BaseHTTPMiddleware):
             if expires.tzinfo is None:
                 expires = expires.replace(tzinfo=timezone.utc)
             if expires < datetime.now(timezone.utc):
-                return _rfc7807_response(
+                await _send_rfc7807(
+                    send,
                     status=401,
                     title="API Key Expired",
                     detail="This API key has expired.",
-                    path=request.url.path,
+                    path=path,
                 )
+                return
 
         # ── Set request state ────────────────────────────────────────────
-        org_id: str = key_data["org_id"]
+        org_id_val: str = key_data["org_id"]
         scopes: list[str] = key_data["scopes"]
 
-        request.state.auth_type = "api_key"  # type: ignore[attr-defined]
-        request.state.org_id = org_id  # type: ignore[attr-defined]
-        request.state.api_key_scopes = scopes  # type: ignore[attr-defined]
+        scope["state"]["auth_type"] = "api_key"
+        scope["state"]["org_id"] = org_id_val
+        scope["state"]["api_key_scopes"] = scopes
+
+        # ═ Update last_used timestamp (fire-and-forget) ═══════════════════
+        try:
+            async with db_factory() as session:
+                await ApiKeyRepository(session).update_last_used(UUID(key_data["id"]))
+                await session.commit()
+        except Exception:
+            logger.warning("Failed to update API key last_used", exc_info=True)
 
         # ── Cache in Redis (fire-and-forget) ─────────────────────────────
         if redis is not None:
@@ -564,15 +757,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
                 await _cache_key_in_redis(
                     redis,
                     lookup_hash,
-                    {"org_id": org_id, "scopes": scopes},
+                    {"org_id": org_id_val, "scopes": scopes},
                 )
             except Exception:
                 logger.warning("Failed to cache auth data in Redis", exc_info=True)
 
-        # ── Set PostgreSQL RLS session config ────────────────────────────
-        try:
-            await _set_rls_context(db_factory, org_id, bypass_rls=False)
-        except Exception:
-            logger.warning("Failed to set RLS session config", exc_info=True)
+        # ── RLS context is set in dependencies/db.py on the actual request
+        # session.  Do NOT set it here — _set_rls_context opens its own
+        # short-lived session and PostgreSQL's set_config is session-local,
+        # so the config has zero effect on the request handler's session.
 
-        return await call_next(request)
+        await self.app(scope, receive, send)

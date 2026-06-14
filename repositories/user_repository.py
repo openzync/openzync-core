@@ -12,8 +12,8 @@ Key patterns:
 
 from __future__ import annotations
 
-import base64
 from collections.abc import Sequence
+from core.cursor import decode_cursor, encode_cursor
 from datetime import datetime
 from typing import Any
 from uuid import UUID
@@ -79,6 +79,51 @@ class UserRepository:
         await self._db.flush()
         await self._db.refresh(user)
         return user
+
+    async def create_or_get_by_external_id(
+        self,
+        organization_id: UUID,
+        external_id: str,
+        name: str | None = None,
+        email: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> User:
+        """Create a user or return existing one on unique-constraint race.
+
+        Handles the ``IntegrityError`` race condition internally so the
+        service layer does not need to import SQLAlchemy exceptions.
+
+        Args:
+            organization_id: Tenant scope (foreign key).
+            external_id: Caller-defined unique user identifier within org.
+            name: Optional display name.
+            email: Optional email address.
+            metadata: Arbitrary JSONB metadata.
+
+        Returns:
+            A User ORM instance — newly created or already existing.
+        """
+        from sqlalchemy.exc import IntegrityError
+
+        try:
+            return await self.create(
+                organization_id=organization_id,
+                external_id=external_id,
+                name=name,
+                email=email,
+                metadata=metadata,
+            )
+        except IntegrityError:
+            await self._db.rollback()
+            user = await self.get_by_external_id(organization_id, external_id)
+            if user is None:
+                from core.exceptions import NotFoundError
+
+                raise NotFoundError(
+                    f"Failed to get-or-create user '{external_id}' "
+                    f"in organization {organization_id}"
+                )
+            return user
 
     # ── Read ────────────────────────────────────────────────────────────────
 
@@ -425,8 +470,7 @@ class UserRepository:
         Returns:
             URL-safe base64 string (padding stripped).
         """
-        raw = f"{created_at.isoformat()}|{user_id.hex}"
-        return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+        return encode_cursor(f"{created_at.isoformat()}|{user_id.hex}")
 
     @staticmethod
     def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
@@ -442,11 +486,7 @@ class UserRepository:
             ValueError: If the cursor is malformed or cannot be decoded.
         """
         try:
-            # Restore padding stripped by rstrip("=")
-            padding = 4 - len(cursor) % 4
-            if padding != 4:
-                cursor += "=" * padding
-            raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+            raw = decode_cursor(cursor)
             at_str, id_hex = raw.split("|", 1)
             return datetime.fromisoformat(at_str), UUID(hex=id_hex)
         except (ValueError, TypeError) as e:

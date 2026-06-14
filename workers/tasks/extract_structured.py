@@ -33,6 +33,7 @@ async def extract_structured(
     user_id: str,
     session_id: str,
     content: str,
+    trace_id: str = "",
 ) -> None:
     """Extract structured data from a dialog turn and persist the result.
 
@@ -56,13 +57,17 @@ async def extract_structured(
         user_id: UUID of the user (for episode FK context).
         session_id: UUID of the session (for FK to structured_extractions).
         content: The message text to extract data from.
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:
         Exception: Re-raises the last LLM or DB error after retry exhaustion.
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
     # Lazy imports — ARQ workers run in a separate process.
     from core.config import settings
-    from core.db import get_async_session, init_db_engine
+    from core.db import get_async_session
     from core.llm import resolve_backend
     from services.worker.worker_settings import settings as worker_settings
 
@@ -72,16 +77,25 @@ async def extract_structured(
         org_id=org_id,
         session_id=session_id,
         content_length=len(content),
+        trace_id=trace_id,
     )
 
-    engine = None
-    try:
-        # ── 1. Create temporary DB engine ──────────────────────────────────
+    # Use the shared engine from worker context.
+    engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
+    if engine is None:
+        from core.db import init_db_engine
+
         engine = init_db_engine(
             str(settings.DATABASE_URL), pool_size=2, max_overflow=1
         )
+        _own_engine = True
+    else:
+        _own_engine = False
+    session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
+    if session_factory is None:
         session_factory = get_async_session(engine)
 
+    try:
         async with session_factory() as db:
             # ── 2. Set RLS context ─────────────────────────────────────────
             await db.execute(
@@ -202,7 +216,6 @@ async def extract_structured(
                     )
 
             # ── 8. Validate & insert per schema ────────────────────────────
-            # Build a lookup from schema name → schema info
             schema_map: dict[str, dict[str, Any]] = {
                 s["name"]: s for s in schemas
             }
@@ -212,7 +225,6 @@ async def extract_structured(
                 for schema_name, data in parsed.items():
                     schema_info = schema_map.get(schema_name)
                     if schema_info is None:
-                        # LLM invented a schema name — skip
                         logger.warning(
                             "structured_extraction.unknown_schema",
                             episode_id=episode_id,
@@ -221,7 +233,6 @@ async def extract_structured(
                         continue
 
                     if data is None:
-                        # LLM explicitly said no data for this schema — skip
                         continue
 
                     if not isinstance(data, dict):
@@ -232,17 +243,10 @@ async def extract_structured(
                         )
                         continue
 
-                    # ── Strip null values before validation ────────────────────
-                    # The LLM sometimes sets absent fields to null instead of
-                    # omitting them.  Strip nulls, then fill any missing required
-                    # fields with type-appropriate defaults so the row is not
-                    # silently dropped when the LLM can't infer a required value.
-                    # ════════════════════════════════════════════════════════════
                     cleaned: dict[str, object] = {
                         k: v for k, v in data.items() if v is not None
                     }
 
-                    # ── Fill missing required fields with type defaults ──────
                     TYPE_DEFAULTS: dict[str, object] = {
                         "string": "unknown",
                         "number": 0,
@@ -259,7 +263,6 @@ async def extract_structured(
                             )
                             cleaned[field] = TYPE_DEFAULTS.get(ftype, "unknown")
 
-                    # Validate against JSON Schema
                     try:
                         _validate_against_schema(cleaned, schema_info["json_schema"])
                     except Exception as exc:
@@ -271,11 +274,6 @@ async def extract_structured(
                         )
                         continue
 
-                    # ══════════════════════════════════════════════════════════════
-                    # ⚠️  This INSERT must include organization_id because the
-                    #     column is NOT NULL.  The org_id comes from the ARQ
-                    #     job parameter — do not rely on RLS to fill it.
-                    # ══════════════════════════════════════════════════════════════
                     await db.execute(
                         text("""
                             INSERT INTO structured_extractions
@@ -337,7 +335,7 @@ async def extract_structured(
         )
         raise
     finally:
-        if engine is not None:
+        if _own_engine:
             await engine.dispose()
 
 

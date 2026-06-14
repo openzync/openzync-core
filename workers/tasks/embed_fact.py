@@ -20,6 +20,7 @@ async def embed_fact(
     ctx: object,
     fact_id: str,
     content: str | None = None,
+    trace_id: str = "",
     **kwargs: object,  # noqa: ARG002 — accepts org_id, user_id from API caller
 ) -> None:
     """Generate an embedding for a fact and store it in ``facts.embedding``.
@@ -34,42 +35,52 @@ async def embed_fact(
         fact_id: UUID of the fact to embed.
         content: Fact text content to embed. If not provided (e.g. when
             called from ``fact_service``), it will be fetched from the DB.
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:
         ValueError: If the embedding dimension does not match
             ``EMBEDDING_DIM``.
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
     # ── Lazy imports (ARQ workers run in a separate process) ──────────────
     from core.config import settings
     from core.db import get_async_session
     from core.llm import resolve_backend
     from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import create_async_engine
 
-    logger.info("embed_fact.started", fact_id=fact_id)
+    logger.info("embed_fact.started", fact_id=fact_id, trace_id=trace_id)
 
-    # ── 0. Fetch content from DB if not provided ──────────────────────────
-    if content is None:
-        engine = create_async_engine(
+    # Use the shared engine from worker context.
+    engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
+    if engine is None:
+        from core.db import init_db_engine
+
+        engine = init_db_engine(
             str(settings.DATABASE_URL),
-            pool_pre_ping=True,
             pool_size=5,
             max_overflow=2,
         )
+        _own_engine = True
+    else:
+        _own_engine = False
+    session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
+    if session_factory is None:
         session_factory = get_async_session(engine)
-        try:
-            async with session_factory() as db:
-                result = await db.execute(
-                    text("SELECT content FROM facts WHERE id = :id"),
-                    {"id": fact_id},
-                )
-                row = result.one_or_none()
-                if row is None:
-                    logger.error("embed_fact.fact_not_found", fact_id=fact_id)
-                    return
-                content = row[0]
-        finally:
-            await engine.dispose()
+
+    # ── 0. Fetch content from DB if not provided ──────────────────────────
+    if content is None:
+        async with session_factory() as db:
+            result = await db.execute(
+                text("SELECT content FROM facts WHERE id = :id"),
+                {"id": fact_id},
+            )
+            row = result.one_or_none()
+            if row is None:
+                logger.error("embed_fact.fact_not_found", fact_id=fact_id)
+                return
+            content = row[0]
 
     # ── 1. Resolve the embedding backend ──────────────────────────────────
     provider = settings.EMBEDDING_BACKEND or None
@@ -101,14 +112,6 @@ async def embed_fact(
         )
 
     # ── 4. Store in pgvector ──────────────────────────────────────────────
-    engine = create_async_engine(
-        str(settings.DATABASE_URL),
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=2,
-    )
-    session_factory = get_async_session(engine)
-
     try:
         async with session_factory() as db:
             await db.execute(
@@ -123,4 +126,5 @@ async def embed_fact(
             dim=len(embedding),
         )
     finally:
-        await engine.dispose()
+        if _own_engine:
+            await engine.dispose()

@@ -13,6 +13,8 @@ import traceback
 from typing import Any
 from uuid import UUID
 
+import structlog
+
 from services.audit_log_service import AuditLogService
 
 logger = logging.getLogger(__name__)
@@ -29,6 +31,7 @@ async def write_audit_log(
     resource_id: str | None = None,
     details: str | None = None,
     ip_address: str | None = None,
+    trace_id: str = "",
 ) -> None:
     """ARQ task — writes a single audit log entry.
 
@@ -45,7 +48,11 @@ async def write_audit_log(
         resource_id: Identifier of the affected resource.
         details: JSON-encoded string of action-specific context.
         ip_address: Source IP address.
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
     from core.config import settings
     from core.db import get_async_session, init_db_engine
 

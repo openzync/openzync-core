@@ -113,7 +113,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             HTTP response (unchanged).
         """
         start_time: float = time.monotonic()
-        response: Response = await call_next(request)
+        response = await call_next(request)
         duration_ms: float = (time.monotonic() - start_time) * 1000
 
         # We intentionally read these AFTER the response so that auth middleware
@@ -132,5 +132,7 @@ class LoggingMiddleware(BaseHTTPMiddleware):
             status_code=response.status_code,
             duration_ms=round(duration_ms, 1),
         )
+
+        structlog.contextvars.clear_contextvars()
 
         return response

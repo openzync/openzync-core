@@ -23,49 +23,14 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Request, Response, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends, Header, Response, status
 
 from dependencies.auth import require_org_id
-from dependencies.db import get_db
-from repositories.episode_repository import EpisodeRepository
-from repositories.fact_repository import FactRepository
-from repositories.session_repository import SessionRepository
-from repositories.user_repository import UserRepository
+from dependencies.services import get_memory_service
 from schemas.memory import IngestMemoryRequest, IngestMemoryResponse
 from services.memory_service import MemoryService
 
 router = APIRouter(prefix="/v1/users/{user_id}/memory", tags=["Memory"])
-
-
-# ── Dependency factory ───────────────────────────────────────────────────────
-
-
-async def get_memory_service(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-) -> MemoryService:
-    """FastAPI dependency that yields an initialised :class:`MemoryService`.
-
-    Wires up repositories and Redis with the request-scoped DB session.
-    The Redis client is read from ``request.app.state.redis``
-    (initialised during the application lifespan).
-    """
-    redis_client = getattr(request.app.state, "redis", None)
-    if redis_client is None:
-        raise RuntimeError(
-            "Redis client not found on app.state. "
-            "Ensure init_redis() was called during the application lifespan."
-        )
-
-    return MemoryService(
-        db=db,
-        redis_client=redis_client,
-        episode_repo=EpisodeRepository(db),
-        session_repo=SessionRepository(db),
-        user_repo=UserRepository(db),
-        fact_repo=FactRepository(db),
-    )
 
 
 # ── POST: Ingest messages ────────────────────────────────────────────────────

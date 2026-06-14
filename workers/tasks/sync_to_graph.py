@@ -27,6 +27,7 @@ async def sync_to_graph(
     user_id: str,
     content: str,
     role: str,
+    trace_id: str = "",
 ) -> None:
     """Link entities extracted from this episode via graph_episode_entities.
 
@@ -47,28 +48,40 @@ async def sync_to_graph(
         user_id: UUID of the user who authored the episode.
         content: Episode message text (used for entity name matching).
         role: Message role (user/assistant/system/tool).
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:
         RuntimeError: If Graphiti is required but not installed or
             initialised.
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
     from datetime import datetime, timezone
     from uuid import UUID
 
     from sqlalchemy import select, update
-    from sqlalchemy.ext.asyncio import create_async_engine
 
     from core.config import settings
     from core.db import get_async_session
     from models.episode import Episode
 
-    engine = create_async_engine(
-        str(settings.DATABASE_URL),
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=2,
-    )
-    session_factory = get_async_session(engine)
+    # Use the shared engine from worker context.
+    engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
+    if engine is None:
+        from core.db import init_db_engine
+
+        engine = init_db_engine(
+            str(settings.DATABASE_URL),
+            pool_size=5,
+            max_overflow=2,
+        )
+        _own_engine = True
+    else:
+        _own_engine = False
+    session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
+    if session_factory is None:
+        session_factory = get_async_session(engine)
     now = datetime.now(timezone.utc)
 
     try:
@@ -194,4 +207,5 @@ async def sync_to_graph(
             )
 
     finally:
-        await engine.dispose()
+        if _own_engine:
+            await engine.dispose()

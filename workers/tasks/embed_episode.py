@@ -22,6 +22,7 @@ async def embed_episode(
     episode_id: str,
     org_id: str,
     content: str,
+    trace_id: str = "",
 ) -> None:
     """Generate an embedding for an episode and store it in pgvector.
 
@@ -37,25 +38,24 @@ async def embed_episode(
         episode_id: UUID of the episode to embed.
         org_id: UUID of the owning organisation (for observability / RLS).
         content: Episode message text to embed.
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:
         ValueError: If the embedding dimension does not match
             ``EMBEDDING_DIM``.
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
     # ── Lazy imports (ARQ workers run in a separate process) ──────────────
     from core.config import settings
     from core.db import get_async_session
     from core.llm import resolve_backend
     from sqlalchemy import text
-    from sqlalchemy.ext.asyncio import create_async_engine
 
-    logger.info("embed_episode.started", episode_id=episode_id)
+    logger.info("embed_episode.started", episode_id=episode_id, trace_id=trace_id)
 
     # ── 1. Resolve the embedding backend ──────────────────────────────────
-    # note: EMBEDDING_BACKEND is a separate config from LLM_BACKEND
-    # because many deployments use a dedicated embedding service (e.g.
-    # nomic-embed-text on Ollama) alongside a chat LLM (e.g. GPT-4o). When
-    # EMBEDDING_BACKEND is empty we fall back to the chat LLM provider.
     provider = settings.EMBEDDING_BACKEND or None
     llm = await resolve_backend(provider=provider)
 
@@ -85,25 +85,26 @@ async def embed_episode(
         )
 
     # ── 4. Store in pgvector and update enrichment_status ─────────────────
-    # note: We create a short-lived engine here because ARQ workers
-    # run in a separate process and may not share the app's engine. For
-    # higher throughput, consider passing the engine from the worker
-    # initialisation context instead.
-    engine = create_async_engine(
-        str(settings.DATABASE_URL),
-        pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=2,
-    )
-    session_factory = get_async_session(engine)
+    # Use the shared engine from worker context.  Under
+    # `services/worker/worker.py` this is injected automatically.
+    engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
+    if engine is None:
+        from core.db import init_db_engine
+
+        engine = init_db_engine(
+            str(settings.DATABASE_URL),
+            pool_size=5,
+            max_overflow=2,
+        )
+        _own_engine = True
+    else:
+        _own_engine = False
+    session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
+    if session_factory is None:
+        session_factory = get_async_session(engine)
 
     try:
         async with session_factory() as db:
-            # ⚠️ VECTOR SERIALIZATION: When the column is ``vector(1536)``,
-            # asyncpg handles list[float] → vector conversion automatically.
-            # If the column is still ``Text`` (pre-migration), this stores
-            # the Python repr. The Alembic migration for pgvector should be
-            # run before this worker is deployed to production.
             await db.execute(
                 text("UPDATE episodes SET embedding = :embedding WHERE id = :id"),
                 {"embedding": embedding, "id": episode_id},
@@ -125,4 +126,5 @@ async def embed_episode(
             dim=len(embedding),
         )
     finally:
-        await engine.dispose()
+        if _own_engine:
+            await engine.dispose()

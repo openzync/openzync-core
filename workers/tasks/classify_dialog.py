@@ -44,12 +44,14 @@ async def classify_dialog(
     episode_id: str,
     org_id: str,
     content: str,
+    trace_id: str = "",
 ) -> None:
     """Classify a dialog turn and persist the result.
 
-    This function is designed as an ARQ task — the ``ctx`` parameter is
-    required by the ARQ contract but is not used directly here (we create
-    a short-lived DB engine per invocation).
+    This function is designed as an ARQ task — the ``ctx`` parameter provides
+    a shared DB engine from the worker process (``ctx["db_engine"]``).
+    When ``ctx`` is absent (direct invocation), a short-lived engine is
+    created as a fallback.
 
     Pipeline:
         1. Create a temporary DB engine + session.
@@ -68,13 +70,16 @@ async def classify_dialog(
         episode_id: UUID of the source episode (string, from ARQ).
         org_id: UUID of the owning organization.
         content: The message text to classify.
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:
         Exception: Re-raises the last LLM or DB error after retry exhaustion.
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
     # Lazy imports — ARQ workers run in a separate process.
-    from core.config import settings
-    from core.db import get_async_session, init_db_engine
+    from core.db import get_async_session
     from core.llm import resolve_backend
 
     logger.info(
@@ -82,16 +87,28 @@ async def classify_dialog(
         episode_id=episode_id,
         org_id=org_id,
         content_length=len(content),
+        trace_id=trace_id,
     )
 
-    engine = None
-    try:
-        # ── 1. Create temporary DB engine ──────────────────────────────────
+    # Use the shared engine from worker context.  ARQ workers running
+    # under `services/worker/worker.py` receive this automatically.
+    # The fallback path supports direct invocation (e.g. unit tests).
+    engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
+    if engine is None:
+        from core.config import settings as _settings
+        from core.db import init_db_engine
+
         engine = init_db_engine(
-            str(settings.DATABASE_URL), pool_size=2, max_overflow=1
+            str(_settings.DATABASE_URL), pool_size=2, max_overflow=1
         )
+        _own_engine = True
+    else:
+        _own_engine = False
+    session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
+    if session_factory is None:
         session_factory = get_async_session(engine)
 
+    try:
         async with session_factory() as db:
             # ── 2. Set RLS context ─────────────────────────────────────────
             await db.execute(
@@ -291,7 +308,7 @@ async def classify_dialog(
         )
         raise
     finally:
-        if engine is not None:
+        if _own_engine:
             await engine.dispose()
 
 

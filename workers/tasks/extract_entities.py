@@ -42,12 +42,14 @@ async def extract_entities(
     user_id: str,
     content: str,
     session_id: str | None = None,
+    trace_id: str = "",
 ) -> None:
     """Extract named entities and relationships from a message and persist them.
 
-    This function is designed as an ARQ task — the ``ctx`` parameter is
-    required by the ARQ contract but is not used directly here (we create
-    a short-lived DB engine per invocation).
+    This function is designed as an ARQ task — the ``ctx`` parameter provides
+    a shared DB engine from the worker process (``ctx["db_engine"]``).
+    When ``ctx`` is absent (direct invocation), a short-lived engine is
+    created as a fallback.
 
     Pipeline:
         1. Fetch organization's entity type ontology from
@@ -73,17 +75,21 @@ async def extract_entities(
         content: The message text to extract entities from.
         session_id: UUID of the session (passed from MemoryService).
             Used to fetch known entities for delta extraction.
+        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:
         Exception: Re-raises the last LLM or DB error after retry exhaustion
             (``on_exhaustion="raise"`` default behaviour).
     """
+    if trace_id:
+        structlog.contextvars.bind_contextvars(trace_id=trace_id)
+
     # Lazy imports to keep the module importable without the full async
     # stack at definition time — ARQ workers run in a separate process.
     from sqlalchemy import select
 
     from core.config import settings
-    from core.db import get_async_session, init_db_engine
+    from core.db import get_async_session
     from core.llm import resolve_backend
     from models.episode import Episode
     from repositories.entity_repository import EntityRepository
@@ -95,10 +101,26 @@ async def extract_entities(
         org_id=org_id,
         session_id=session_id,
         content_length=len(content),
+        trace_id=trace_id,
     )
 
+    # Use the shared engine from worker context.
+    engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
+    if engine is None:
+        from core.db import init_db_engine
+
+        engine = init_db_engine(
+            str(settings.DATABASE_URL), pool_size=2, max_overflow=1
+        )
+        _own_engine = True
+    else:
+        _own_engine = False
+    session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
+    if session_factory is None:
+        session_factory = get_async_session(engine)
+
     # ── 1. Fetch org entity types (ontology) ──────────────────────────────────
-    entity_types = await _fetch_entity_types(org_id)
+    entity_types = await _fetch_entity_types(org_id, session_factory=session_factory)
     logger.debug(
         "entity_extraction.entity_types",
         episode_id=episode_id,
@@ -110,17 +132,12 @@ async def extract_entities(
     known_entities: list[dict] = []
     if session_id:
         try:
-            ctx_engine = init_db_engine(
-                str(settings.DATABASE_URL), pool_size=2, max_overflow=1
-            )
-            ctx_session_factory = get_async_session(ctx_engine)
-            async with ctx_session_factory() as db:
+            async with session_factory() as db:
                 repo = FactRepository(db)
                 known_entities = await repo.get_entities_for_session(
                     session_id=uuid.UUID(session_id),
                     organization_id=uuid.UUID(org_id),
                 )
-            await ctx_engine.dispose()
             logger.debug(
                 "entity_extraction.known_entities_fetched",
                 episode_id=episode_id,
@@ -346,16 +363,7 @@ async def extract_entities(
                 entity["type"] = "Custom"
 
         # ── 6. Persist entities to graph (if available) ─────────────────────
-        # Create a temporary DB engine + session for the entity repository
-        from sqlalchemy.ext.asyncio import create_async_engine as _create_engine
-
-        _engine = _create_engine(
-            str(settings.DATABASE_URL),
-            pool_pre_ping=True,
-            pool_size=5,
-            max_overflow=2,
-        )
-        _session_factory = get_async_session(_engine)
+        # Uses the shared engine from worker ctx (set earlier in this function).
 
         name_to_node: dict[str, dict] = {}
 
@@ -365,7 +373,7 @@ async def extract_entities(
         relationship_skip_count: int = 0
 
         try:
-            async with _session_factory() as _db:
+            async with session_factory() as _db:
                 entity_repo = EntityRepository(db=_db)
 
                 for entity in entities:
@@ -496,7 +504,8 @@ async def extract_entities(
                 # all entity/relationship writes are silently rolled back.
                 await _db.commit()
         finally:
-            await _engine.dispose()
+            if _own_engine:
+                await engine.dispose()
 
         # ── 8b. Guard enrichment bit against persistence failures ────────────
         # If entities failed to persist, raise so @with_retry can retry.
@@ -535,7 +544,11 @@ async def extract_entities(
     # Only reached if entity persistence succeeded (no ExternalServiceError
     # raised by the guard at step 8b) — enrichment bit is NOT set when
     # entities were silently dropped, allowing @with_retry to re-attempt.
-    await _set_enrichment_bit(episode_id, ENRICHMENT_ENTITIES)
+    await _set_enrichment_bit(
+        episode_id,
+        ENRICHMENT_ENTITIES,
+        db_session_factory=session_factory,
+    )
 
     entity_count = len(entities if data else [])
     if entity_count:
@@ -551,7 +564,10 @@ async def extract_entities(
 # ── Private helpers ───────────────────────────────────────────────────────────
 
 
-async def _fetch_entity_types(org_id: str) -> list[str]:
+async def _fetch_entity_types(
+    org_id: str,
+    session_factory: Any = None,
+) -> list[str]:
     """Fetch entity type ontology from the organization's extraction schemas.
 
     Queries ``extraction_schemas`` where ``type='entity_type'`` and
@@ -560,6 +576,11 @@ async def _fetch_entity_types(org_id: str) -> list[str]:
 
     Falls back to the default type set if no schemas are configured.
 
+    Args:
+        org_id: Organization UUID string.
+        session_factory: Optional shared session factory from the worker
+            ctx.  When provided, avoids creating a short-lived DB engine.
+
     Returns:
         A list of allowed entity type names.
 
@@ -567,11 +588,19 @@ async def _fetch_entity_types(org_id: str) -> list[str]:
         Exception: Re-raises DB errors so the caller's ``@with_retry``
             decorator can handle transient failures.
     """
-    from core.config import settings
-    from core.db import get_async_session, init_db_engine
+    if session_factory is None:
+        from core.config import settings as _settings
+        from core.db import get_async_session, init_db_engine
 
-    _engine = init_db_engine(str(settings.DATABASE_URL), pool_size=2, max_overflow=1)
-    _session_factory = get_async_session(_engine)
+        _engine = init_db_engine(
+            str(_settings.DATABASE_URL), pool_size=2, max_overflow=1
+        )
+        _session_factory = get_async_session(_engine)
+        _own_engine = True
+    else:
+        _engine = None
+        _session_factory = session_factory
+        _own_engine = False
     try:
         async with _session_factory() as _db:
             result = await _db.execute(
@@ -613,7 +642,8 @@ async def _fetch_entity_types(org_id: str) -> list[str]:
                 "Custom",
             ]
     finally:
-        await _engine.dispose()
+        if _own_engine:
+            await _engine.dispose()
 
 
 def _parse_entity_response(content: str) -> dict | None:
@@ -673,19 +703,38 @@ def _parse_entity_response(content: str) -> dict | None:
     return data
 
 
-async def _set_enrichment_bit(episode_id: str, bit: int) -> None:
+async def _set_enrichment_bit(
+    episode_id: str,
+    bit: int,
+    db_session_factory: Any = None,
+) -> None:
     """Set an enrichment_status bit for an episode.
 
     Always runs, even if no data was found — marks the task as complete
     so the pipeline knows it has been attempted.
+
+    Args:
+        episode_id: UUID of the episode to update.
+        bit: Bitmask value to OR into enrichment_status.
+        db_session_factory: Optional shared session factory from the worker
+            ctx.  When provided, avoids creating a short-lived DB engine.
     """
     from sqlalchemy import text
 
-    from core.config import settings as app_settings
-    from core.db import get_async_session, init_db_engine
+    if db_session_factory is None:
+        from core.config import settings as app_settings
+        from core.db import get_async_session, init_db_engine
 
-    engine = init_db_engine(str(app_settings.DATABASE_URL), pool_size=2, max_overflow=1)
-    session_factory = get_async_session(engine)
+        engine = init_db_engine(
+            str(app_settings.DATABASE_URL), pool_size=2, max_overflow=1
+        )
+        session_factory = get_async_session(engine)
+        _own_engine = True
+    else:
+        engine = None
+        session_factory = db_session_factory
+        _own_engine = False
+
     try:
         async with session_factory() as db:
             await db.execute(
@@ -701,4 +750,5 @@ async def _set_enrichment_bit(episode_id: str, bit: int) -> None:
             extra={"episode_id": episode_id, "bit": bit, "error": str(exc)},
         )
     finally:
-        await engine.dispose()
+        if _own_engine:
+            await engine.dispose()

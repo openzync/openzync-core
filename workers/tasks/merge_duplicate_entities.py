@@ -67,14 +67,23 @@ async def merge_duplicate_entities(
         ``entities_merged``, ``relationships_rewired``.
     """
     from core.config import settings
-    from core.db import get_async_session, init_db_engine
+    from core.db import get_async_session
 
-    _engine = init_db_engine(
-        str(settings.DATABASE_URL),
-        pool_size=5,
-        max_overflow=2,
-    )
-    _session_factory = get_async_session(_engine)
+    _engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
+    if _engine is None:
+        from core.db import init_db_engine
+
+        _engine = init_db_engine(
+            str(settings.DATABASE_URL),
+            pool_size=5,
+            max_overflow=2,
+        )
+        _own_engine = True
+    else:
+        _own_engine = False
+    _session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
+    if _session_factory is None:
+        _session_factory = get_async_session(_engine)
 
     try:
         async with _session_factory() as db:
@@ -127,7 +136,8 @@ async def merge_duplicate_entities(
             }
 
     finally:
-        await _engine.dispose()
+        if _own_engine:
+            await _engine.dispose()
 
 
 # ── Private helpers ────────────────────────────────────────────────────────────
