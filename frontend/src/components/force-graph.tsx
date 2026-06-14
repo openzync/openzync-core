@@ -602,28 +602,33 @@ export function ForceGraph({
             </div>
           )}
 
-          {/* Related toggle */}
+          {/* Search mode: segmented control */}
           {showFilter && (
-            <label className="flex items-center gap-2 cursor-pointer text-xs text-surface-400 hover:text-surface-200 transition-colors shrink-0 select-none">
-              <div
-                className={`relative w-8 h-4 rounded-full transition-colors ${
-                  showRelated ? "bg-brand-600" : "bg-surface-700"
+            <div className="flex items-center rounded-md border border-surface-700 overflow-hidden shrink-0">
+              <button
+                onClick={() => setShowRelated(false)}
+                title="Show only matching nodes (strict)"
+                className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                  !showRelated
+                    ? "bg-surface-800 text-white"
+                    : "text-surface-400 hover:text-surface-200"
                 }`}
               >
-                <div
-                  className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
-                    showRelated ? "translate-x-4" : "translate-x-0"
-                  }`}
-                />
-              </div>
-              <span>Related</span>
-              <input
-                type="checkbox"
-                checked={showRelated}
-                onChange={() => setShowRelated((p) => !p)}
-                className="sr-only"
-              />
-            </label>
+                Exact
+              </button>
+              <div className="w-px h-3 bg-surface-700" aria-hidden="true" />
+              <button
+                onClick={() => setShowRelated(true)}
+                title="Include 1-hop neighbors of matched nodes"
+                className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                  showRelated
+                    ? "bg-surface-800 text-white"
+                    : "text-surface-400 hover:text-surface-200"
+                }`}
+              >
+                Related
+              </button>
+            </div>
           )}
 
           {/* Stats */}
