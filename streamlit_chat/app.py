@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 import os
 import uuid
@@ -12,7 +11,9 @@ from typing import Any
 import streamlit as st
 from dotenv import load_dotenv
 from openai import OpenAI
+from langchain_core.messages import AIMessage, HumanMessage
 from openzep import AsyncOpenZep
+from openzep.integrations.langchain import OZMemory
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -98,44 +99,15 @@ def _await(coro: Any) -> Any:
     return _openzep_loop.run_until_complete(coro)
 
 
-# Expose domain clients through the persistent loop wrapper.
-# Usage: _oz.sessions.list(user_id)  →  _await(_async_oz.sessions.list(user_id))
-class _SyncDomain:
-    """Wrapper that runs async domain methods through the persistent loop."""
-
-    def __init__(self, domain: Any) -> None:
-        self._domain = domain
-
-    def __getattr__(self, name: str) -> Any:
-        attr = getattr(self._domain, name)
-        if inspect.iscoroutinefunction(attr):
-            def wrapper(*args: Any, **kwargs: Any) -> Any:
-                return _await(attr(*args, **kwargs))
-            return wrapper
-        return attr
-
-
-class _SyncOpenZepClient:
-    """Sync wrapper around AsyncOpenZep with persistent event loop."""
-
-    def __init__(self, async_client: AsyncOpenZep) -> None:
-        self.memory = _SyncDomain(async_client.memory)
-        self.facts = _SyncDomain(async_client.facts)
-        self.graph = _SyncDomain(async_client.graph)
-        self.users = _SyncDomain(async_client.users)
-        self.sessions = _SyncDomain(async_client.sessions)
-
-
-oz = _SyncOpenZepClient(_async_oz)
 llm: OpenAI = _get_llm_client()
 
 # ── User Management ───────────────────────────────────────────────────────────
 
 
-def _find_user_by_external_id(client: OpenZep, external_id: str) -> str | None:
+def _find_user_by_external_id(client: AsyncOpenZep, external_id: str) -> str | None:
     """Look up a user by external_id. Returns the UUID or ``None``."""
     try:
-        result = client.users.list(limit=20)
+        result = _await(client.users.list(limit=20))
         users = result.get("data", []) if isinstance(result, dict) else result.data
         for u in users:
             if u.get("external_id") == external_id or (
@@ -149,15 +121,15 @@ def _find_user_by_external_id(client: OpenZep, external_id: str) -> str | None:
     return None
 
 
-def _create_user(client: OpenZep, external_id: str) -> str:
+def _create_user(client: AsyncOpenZep, external_id: str) -> str:
     """Create a new user. Returns the UUID."""
-    user = client.users.create(external_id=external_id)
+    user = _await(client.users.create(external_id=external_id))
     uid: str = user.id if hasattr(user, "id") else user["id"]
     logger.info("Created user: %s (id=%s)", external_id, uid)
     return uid
 
 
-def _ensure_user(client: OpenZep, external_id: str) -> str:
+def _ensure_user(client: AsyncOpenZep, external_id: str) -> str:
     """Find or create a user. Returns the UUID."""
     uid = _find_user_by_external_id(client, external_id)
     if uid is not None:
@@ -168,10 +140,10 @@ def _ensure_user(client: OpenZep, external_id: str) -> str:
 # ── Session Management ────────────────────────────────────────────────────────
 
 
-def _list_sessions(client: OpenZep, user_id: str) -> list[dict[str, Any]]:
+def _list_sessions(client: AsyncOpenZep, user_id: str) -> list[dict[str, Any]]:
     """List all sessions for a user (newest first)."""
     try:
-        result = client.sessions.list(user_id, limit=100)
+        result = _await(client.sessions.list(user_id, limit=100))
         sessions_raw = result.get("data", []) if isinstance(result, dict) else result.data
         sessions_raw.sort(key=lambda s: (
             s.get("created_at") if isinstance(s, dict) else s.created_at
@@ -183,32 +155,25 @@ def _list_sessions(client: OpenZep, user_id: str) -> list[dict[str, Any]]:
         return []
 
 
-def _create_session(client: OpenZep, user_id: str) -> tuple[str, str]:
+def _create_session(client: AsyncOpenZep, user_id: str) -> tuple[str, str]:
     """Create a new session. Returns ``(internal_id, external_id)``."""
     external_id = f"chat-{uuid.uuid4().hex[:12]}"
-    session = client.sessions.create(user_id=user_id, external_id=external_id)
+    session = _await(client.sessions.create(user_id=user_id, external_id=external_id))
     sid: str = session.id if hasattr(session, "id") else session["id"]
     logger.info("Created session: %s (id=%s)", external_id, sid)
     return sid, external_id
 
 
-def _load_messages(
-    client: OpenZep, user_id: str, session_id: str
-) -> list[dict[str, str]]:
-    """Load messages for a session, ordered by sequence_number ascending."""
+def _messages_to_dicts(memory: OZMemory) -> list[dict[str, str]]:
+    """Load messages from ``OZMemory`` as role/content dicts."""
     try:
-        result = client.sessions.messages(user_id, session_id, limit=200)
-        items = result.data if hasattr(result, "data") else result.get("data", [])
-        # Sort by sequence_number to get chronological order.
-        items.sort(key=lambda m: (
-            m.sequence_number if hasattr(m, "sequence_number") else m.get("sequence_number", 0)
-        ))
+        raw = _await(memory.chat_memory.aget_messages())
         return [
             {
-                "role": m.role if hasattr(m, "role") else m["role"],
-                "content": m.content if hasattr(m, "content") else m["content"],
+                "role": "user" if isinstance(m, HumanMessage) else "assistant",
+                "content": m.content,
             }
-            for m in items
+            for m in raw
         ]
     except Exception as exc:
         logger.warning("Failed to load messages: %s", exc)
@@ -218,12 +183,12 @@ def _load_messages(
 # ── Initialize Session State ──────────────────────────────────────────────────
 
 if "user_id" not in st.session_state:
-    st.session_state.user_id = _ensure_user(oz, DEFAULT_USER_EXTERNAL_ID)
+    st.session_state.user_id = _ensure_user(_async_oz, DEFAULT_USER_EXTERNAL_ID)
     st.session_state.user_external_id = DEFAULT_USER_EXTERNAL_ID
     logger.info("User initialized: %s", st.session_state.user_id)
 
 if "session_id" not in st.session_state:
-    sessions = _list_sessions(oz, st.session_state.user_id)
+    sessions = _list_sessions(_async_oz, st.session_state.user_id)
     if sessions:
         latest = sessions[0]
         st.session_state.session_id = (
@@ -233,12 +198,18 @@ if "session_id" not in st.session_state:
             latest.external_id if hasattr(latest, "external_id") else latest["external_id"]
         )
     else:
-        sid, ext = _create_session(oz, st.session_state.user_id)
+        sid, ext = _create_session(_async_oz, st.session_state.user_id)
         st.session_state.session_id = sid
         st.session_state.session_external_id = ext
-    st.session_state.messages = _load_messages(
-        oz, st.session_state.user_id, st.session_state.session_id
+
+    # Create OZMemory instance for the active session.
+    st.session_state.memory = OZMemory(
+        session_id=st.session_state.session_external_id,
+        user_id=st.session_state.user_id,
+        client=_async_oz,
+        return_messages=True,
     )
+    st.session_state.messages = _messages_to_dicts(st.session_state.memory)
     logger.info(
         "Session initialized: %s (%s messages)",
         st.session_state.session_external_id,
@@ -261,7 +232,7 @@ with st.sidebar:
     st.divider()
     st.subheader("Sessions")
 
-    sessions_list = _list_sessions(oz, st.session_state.user_id)
+    sessions_list = _list_sessions(_async_oz, st.session_state.user_id)
 
     for s in sessions_list:
         s_id = s.id if hasattr(s, "id") else s["id"]
@@ -282,17 +253,27 @@ with st.sidebar:
         ):
             st.session_state.session_id = s_id
             st.session_state.session_external_id = s_ext
-            st.session_state.messages = _load_messages(
-                oz, st.session_state.user_id, s_id
+            st.session_state.memory = OZMemory(
+                session_id=s_ext,
+                user_id=st.session_state.user_id,
+                client=_async_oz,
+                return_messages=True,
             )
+            st.session_state.messages = _messages_to_dicts(st.session_state.memory)
             st.rerun()
 
     # New session button
     st.divider()
     if st.button("+ New Session", use_container_width=True, type="primary"):
-        sid, ext = _create_session(oz, st.session_state.user_id)
+        sid, ext = _create_session(_async_oz, st.session_state.user_id)
         st.session_state.session_id = sid
         st.session_state.session_external_id = ext
+        st.session_state.memory = OZMemory(
+            session_id=ext,
+            user_id=st.session_state.user_id,
+            client=_async_oz,
+            return_messages=True,
+        )
         st.session_state.messages = []
         st.rerun()
 
@@ -317,31 +298,23 @@ if prompt := st.chat_input("Type a message..."):
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # ── Ingest user message to OpenZep ──
+    # ── Persist user message via LangChain integration ──
     try:
-        ingest_resp = oz.memory.ingest(
-            st.session_state.user_id,
-            messages=[{"role": "user", "content": prompt}],
-            session_id=st.session_state.session_external_id,
-        )
-        logger.info(
-            "Ingested user message: job=%s episodes=%d",
-            ingest_resp.job_id if hasattr(ingest_resp, "job_id") else "?",
-            ingest_resp.episode_count if hasattr(ingest_resp, "episode_count") else 0,
-        )
+        _await(st.session_state.memory.chat_memory.aadd_messages(
+            [HumanMessage(content=prompt)]
+        ))
+        logger.info("Stored user message via OZMemory integration")
     except Exception as exc:
-        logger.error("Failed to ingest user message: %s", exc)
+        logger.error("Failed to store user message: %s", exc)
         st.error(f"Failed to store message: {exc}")
 
     # ── Retrieve LLM context from OpenZep ──
     context_text = ""
     try:
-        context = oz.memory.get_context(
-            st.session_state.user_id,
-            query=prompt,
-            limit=10,
+        context_resp = _await(
+            st.session_state.memory.get_context(query=prompt, limit=10)
         )
-        context_text = context.context if hasattr(context, "context") else ""
+        context_text = context_resp.context if context_resp.context else ""
     except Exception as exc:
         logger.warning("Could not retrieve context: %s", exc)
 
@@ -384,16 +357,14 @@ if prompt := st.chat_input("Type a message..."):
         if reply:
             st.markdown(reply)
 
-    # ── Store assistant response ──
+    # ── Store assistant response via LangChain integration ──
     if reply:
         st.session_state.messages.append({"role": "assistant", "content": reply})
         try:
-            oz.memory.ingest(
-                st.session_state.user_id,
-                messages=[{"role": "assistant", "content": reply}],
-                session_id=st.session_state.session_external_id,
-            )
-            logger.info("Ingested assistant response (%d chars)", len(reply))
+            _await(st.session_state.memory.chat_memory.aadd_messages(
+                [AIMessage(content=reply)]
+            ))
+            logger.info("Stored assistant response (%d chars) via integration", len(reply))
         except Exception as exc:
-            logger.error("Failed to ingest assistant response: %s", exc)
+            logger.error("Failed to store assistant response: %s", exc)
             st.error(f"Failed to store assistant response: {exc}")

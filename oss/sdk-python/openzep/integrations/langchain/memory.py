@@ -15,6 +15,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from pydantic import BaseModel, Field
 
 from openzep.integrations.langchain.message_history import OZChatMessageHistory
+from openzep.models.memory import ContextResponse
 
 
 class OZMemory(BaseMemory):
@@ -130,6 +131,27 @@ class OZMemory(BaseMemory):
     def clear(self) -> None:
         """Clear all persisted memory."""
         self.chat_memory.clear()
+
+    async def get_context(self, query: str, limit: int = 10) -> ContextResponse:
+        """Retrieve relevant context from memory for LLM injection.
+
+        Calls the OpenZep server-side context endpoint, which assembles
+        a formatted context block from recent conversation history and
+        semantic search results.
+
+        Args:
+            query: Natural-language query describing the context needed.
+            limit: Maximum results per source type.
+
+        Returns:
+            ``ContextResponse`` with a ``context`` string suitable for
+            use as a system-prompt prefix.
+        """
+        return await self.client.memory.get_context(
+            self.user_id,
+            query=query,
+            limit=limit,
+        )
 
     # ── Private helpers ─────────────────────────────────────────────────
 

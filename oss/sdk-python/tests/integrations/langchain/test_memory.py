@@ -140,6 +140,25 @@ class TestOZMemory:
         memory.clear()
         assert memory._chat_memory._messages == []
 
+    @pytest.mark.asyncio
+    async def test_get_context(self, mock_client):
+        """get_context delegates to client.memory.get_context."""
+        memory = OZMemory(
+            session_id="session-1",
+            user_id="user-1",
+            client=mock_client,
+        )
+        mock_client.memory.get_context = AsyncMock(
+            return_value=AsyncMock(context="relevant context info"),
+        )
+
+        result = await memory.get_context(query="hello", limit=5)
+
+        mock_client.memory.get_context.assert_awaited_once_with(
+            "user-1", query="hello", limit=5,
+        )
+        assert result.context == "relevant context info"
+
     def test_messages_to_string(self):
         """_messages_to_string formats messages correctly."""
         msgs: list[BaseMessage] = [
