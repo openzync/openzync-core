@@ -20,4 +20,9 @@ __all__ = [
     "OpenZep",
 ]
 
+# LangChain integration classes live under openzep.integrations.langchain.
+# Import them with:
+#   from openzep.integrations.langchain import OZChatMessageHistory, OZMemory, ...
+# Requires: pip install openzep-py[langchain]
+
 __version__ = "0.1.0"

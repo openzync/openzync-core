@@ -121,11 +121,102 @@ for user in client.users.list_iter():
     print(user["name"])
 ```
 
+## LangChain Integration
+
+LangChain developers can use OpenZep as a drop-in memory provider, graph retriever, and tool set.
+
+```bash
+pip install "openzep-py[langchain]"
+```
+
+### Chat Message History
+
+Persist conversation history to OpenZep:
+
+```python
+from openzep import OpenZep
+from openzep.integrations.langchain import OZChatMessageHistory
+from langchain_core.messages import HumanMessage
+
+client = OpenZep(api_key="...")
+history = OZChatMessageHistory(
+    session_id="session-1",
+    user_id="user-abc",
+    client=client,  # accepts both sync and async clients
+)
+
+history.add_message(HumanMessage(content="Hello!"))
+print(history.messages)
+```
+
+### Memory
+
+Use `OZMemory` as a standard LangChain `BaseMemory` inside chains:
+
+```python
+from openzep import OpenZep
+from openzep.integrations.langchain import OZMemory
+from langchain_core.messages import HumanMessage, AIMessage
+
+client = OpenZep(api_key="...")
+memory = OZMemory(
+    session_id="session-1",
+    user_id="user-abc",
+    client=client,
+    return_messages=True,   # False returns string
+    memory_key="history",   # key in memory_variables
+)
+
+memory.save_context({"input": "Hi"}, {"output": "Hello!"})
+context = memory.load_memory_variables({})
+# context["history"] — list of BaseMessage or str depending on return_messages
+```
+
+### Graph Retriever
+
+Use `OZGraphRetriever` as a LangChain retriever for RAG pipelines:
+
+```python
+from openzep.integrations.langchain import OZGraphRetriever
+
+retriever = OZGraphRetriever(
+    user_id="user-abc",
+    client=client,
+    k=5,                    # max results
+    types="episodes,facts", # filter by node type
+    score_threshold=0.7,    # minimum relevance score
+)
+
+docs = retriever.invoke("What does Alice know about Acme Corp?")
+for doc in docs:
+    print(doc.page_content, doc.metadata)
+```
+
+### Tool plugins
+
+Expose OpenZep graph search and fact management as LangChain tools:
+
+```python
+from openzep.integrations.langchain.tools.graph import GraphSearchTool
+from openzep.integrations.langchain.tools.facts import AddFactsTool
+
+tools = [
+    GraphSearchTool(client=client),
+    AddFactsTool(client=client),
+]
+
+# Use with LangGraph / ReAct agents
+# agent = create_react_agent(model, tools)
+```
+
 ## Development
 
 ```bash
 # Install with dev dependencies
 pip install "openzep-py[dev]"
+
+# Install everything (dev + langchain)
+pip install "openzep-py[dev,langchain]"
 
 # Run tests
 pytest
