@@ -24,8 +24,7 @@ import uuid
 import structlog
 from sqlalchemy import text
 
-from services.worker.prompt_renderer import render_prompt, resolve_prompt_template_by_type
-from services.custom_instruction_service import format_custom_instructions
+from services.worker.prompt_renderer import render_prompt
 from workers.tasks.base import with_retry
 
 logger = structlog.get_logger()
@@ -65,13 +64,6 @@ async def generate_user_summary(
     if trace_id:
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
 
-    # Lazy imports to keep the module importable without the full async
-    # stack at definition time — ARQ workers run in a separate process.
-    from sqlalchemy.ext.asyncio import (
-        AsyncSession,
-        async_sessionmaker,
-    )
-
     from core.config import settings
     from core.db import get_async_session
 
@@ -94,154 +86,28 @@ async def generate_user_summary(
     else:
         _own_engine = False
 
-    session_factory: async_sessionmaker[AsyncSession] = (
-        ctx.get("db_session_factory") if isinstance(ctx, dict) else None
-    )
+    session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
     if session_factory is None:
         session_factory = get_async_session(engine)
 
-    # ── 1-4. Fetch conversation data in a single session ──────────────────
-    episodes: list[dict[str, str]] = []
-    facts: list[dict[str, str]] = []
-    entities: list[dict[str, str]] = []
-    classifications: dict[str, list[str]] = {"top_intents": [], "top_emotions": []}
-
-    try:
-        async with session_factory() as db:
-            # 1. Episodes (last 100, chronological)
-            result = await db.execute(
-                text("""
-                    SELECT role, content FROM episodes
-                    WHERE session_id IN (
-                        SELECT id FROM sessions
-                        WHERE user_id = :user_id AND organization_id = :org_id
-                    )
-                    AND is_deleted = false
-                    ORDER BY created_at DESC
-                    LIMIT 100
-                """),
-                {"user_id": uuid.UUID(user_id), "org_id": uuid.UUID(org_id)},
-            )
-            episodes = [{"role": r[0], "content": r[1]} for r in result.fetchall()]
-            episodes.reverse()  # chronological order
-
-            # 2. Facts (last 100)
-            result = await db.execute(
-                text("""
-                    SELECT f.subject, f.predicate, f.object FROM facts f
-                    JOIN episodes e ON f.source_episode_id = e.id
-                    JOIN sessions s ON e.session_id = s.id
-                    WHERE s.user_id = :user_id AND s.organization_id = :org_id
-                    ORDER BY f.created_at DESC
-                    LIMIT 100
-                """),
-                {"user_id": uuid.UUID(user_id), "org_id": uuid.UUID(org_id)},
-            )
-            facts = [
-                {"subject": r[0], "predicate": r[1], "object": r[2]}
-                for r in result.fetchall()
-            ]
-
-            # 3. Entities (distinct, up to 50)
-            result = await db.execute(
-                text("""
-                    SELECT DISTINCT ge.name, ge.entity_type
-                    FROM graph_entities ge
-                    JOIN graph_episode_entities gee ON ge.id = gee.entity_id
-                    JOIN episodes e ON gee.episode_id = e.id
-                    JOIN sessions s ON e.session_id = s.id
-                    WHERE s.user_id = :user_id AND s.organization_id = :org_id
-                    LIMIT 50
-                """),
-                {"user_id": uuid.UUID(user_id), "org_id": uuid.UUID(org_id)},
-            )
-            entities = [
-                {"name": r[0], "entity_type": r[1]} for r in result.fetchall()
-            ]
-
-            # 4. Dialog classifications (aggregate top intents/emotions)
-            result = await db.execute(
-                text("""
-                    SELECT intent, emotion, COUNT(*) as cnt
-                    FROM dialog_classifications dc
-                    JOIN episodes e ON dc.episode_id = e.id
-                    JOIN sessions s ON e.session_id = s.id
-                    WHERE s.user_id = :user_id AND s.organization_id = :org_id
-                    GROUP BY intent, emotion
-                    ORDER BY cnt DESC
-                    LIMIT 5
-                """),
-                {"user_id": uuid.UUID(user_id), "org_id": uuid.UUID(org_id)},
-            )
-            for r in result.fetchall():
-                if r[0]:
-                    classifications["top_intents"].append(r[0])
-                if r[1]:
-                    classifications["top_emotions"].append(r[1])
-
-        logger.debug(
-            "user_summary.data_fetched",
-            episode_count=len(episodes),
-            fact_count=len(facts),
-            entity_count=len(entities),
-            top_intents=classifications["top_intents"],
-            top_emotions=classifications["top_emotions"],
-        )
-    except Exception as exc:
-        logger.warning(
-            "user_summary.data_fetch_failed",
-            org_id=org_id,
-            user_id=user_id,
-            error=str(exc),
-            exc_info=True,
-        )
-        raise  # Let @with_retry handle transient DB failures
-
-    # ── 5-6. Resolve custom instructions + prompt template ────────────────
-    custom_instr = ""
-    async with session_factory() as db:
-        from repositories.custom_instruction_repository import (
-            CustomInstructionRepository,
-        )
-        raw = await CustomInstructionRepository(db).get_by_scope(
-            org_id=uuid.UUID(org_id), scope="user_summary", target_id=uuid.UUID(user_id),
-        )
-        if raw:
-            custom_instr = format_custom_instructions(
-                [{"name": i.name, "text": i.text} for i in raw],
-            )
-
-    template_text: str | None = None
-    try:
-        template_text = await resolve_prompt_template_by_type(
-            "user_summary", org_id, session_factory,
-        )
-    except Exception:
-        logger.warning(
-            "user_summary.template_resolve_failed",
-            exc_info=True,
-        )
-
-    # ── 7-8. Render prompt and call LLM ───────────────────────────────────
+    # ── 1-4. Render prompt with auto-injected context ─────────────────────
     from core.llm import resolve_backend
 
     try:
-        prompt_text = render_prompt(
+        prompt_text = await render_prompt(
             "user_summary",
-            template_text=template_text,
-            custom_instructions=custom_instr,
-            episodes=episodes,
-            facts=facts,
-            entities=entities,
-            classifications=classifications,
-            episode_count=len(episodes),
+            org_id=org_id,
+            user_id=user_id,
+            db_session_factory=session_factory,
         )
-    except FileNotFoundError:
+    except Exception:
         logger.error(
-            "user_summary.prompt_missing",
-            template="user_summary.jinja2",
+            "user_summary.prompt_failed",
+            org_id=org_id,
+            user_id=user_id,
+            exc_info=True,
         )
-        return
+        raise
 
     try:
         llm = await resolve_backend()

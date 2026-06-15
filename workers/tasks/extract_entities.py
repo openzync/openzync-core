@@ -25,8 +25,7 @@ from core.exceptions import ExternalServiceError
 # note: Import prompt_renderer at module level — it is a local
 # Jinja2 utility with no heavy dependencies, so eager import is safe
 # and avoids re-import overhead on every task invocation.
-from services.worker.prompt_renderer import render_prompt, resolve_prompt_template_by_type
-from services.custom_instruction_service import format_custom_instructions
+from services.worker.prompt_renderer import render_prompt
 from workers.tasks.base import ENRICHMENT_ENTITIES, with_retry
 
 logger = structlog.get_logger()
@@ -87,14 +86,10 @@ async def extract_entities(
 
     # Lazy imports to keep the module importable without the full async
     # stack at definition time — ARQ workers run in a separate process.
-    from sqlalchemy import select
-
     from core.config import settings
     from core.db import get_async_session
     from core.llm import resolve_backend
-    from models.episode import Episode
     from repositories.entity_repository import EntityRepository
-    from repositories.fact_repository import FactRepository
 
     logger.info(
         "entity_extraction.started",
@@ -120,81 +115,14 @@ async def extract_entities(
     if session_factory is None:
         session_factory = get_async_session(engine)
 
-    # ── 1. Fetch org entity types (ontology) ──────────────────────────────────
-    entity_types = await _fetch_entity_types(org_id, session_factory=session_factory)
-    logger.debug(
-        "entity_extraction.entity_types",
-        episode_id=episode_id,
+    # ── 1-2. Render prompt with auto-injected context ─────────────────────────
+    prompt = await render_prompt(
+        "entity_extraction",
         org_id=org_id,
-        entity_types=entity_types,
+        episode_id=episode_id,
+        session_id=session_id,
+        db_session_factory=session_factory,
     )
-
-    # ── 1b. Fetch known entities for delta extraction (if session_id) ─────────
-    known_entities: list[dict] = []
-    if session_id:
-        try:
-            async with session_factory() as db:
-                repo = FactRepository(db)
-                known_entities = await repo.get_entities_for_session(
-                    session_id=uuid.UUID(session_id),
-                    organization_id=uuid.UUID(org_id),
-                )
-            logger.debug(
-                "entity_extraction.known_entities_fetched",
-                episode_id=episode_id,
-                known_entities=len(known_entities),
-            )
-        except Exception as exc:
-            # ⚠️ Non-fatal: continue without context if DB is unavailable
-            logger.warning(
-                "entity_extraction.known_entities_failed",
-                episode_id=episode_id,
-                session_id=session_id,
-                error=str(exc),
-            )
-
-    # ── 2. Resolve prompt template from DB by type ──────────────────────────
-    try:
-        template_text = await resolve_prompt_template_by_type(
-            "entity_extraction", org_id, session_factory,
-        )
-    except Exception:
-        template_text = None  # Fall back to filesystem
-        logger.warning(
-            "entity_extraction.template_resolve_failed",
-            episode_id=episode_id,
-            exc_info=True,
-        )
-
-    custom_instr = ""
-    async with session_factory() as db:
-        from repositories.custom_instruction_repository import (
-            CustomInstructionRepository,
-        )
-        raw = await CustomInstructionRepository(db).get_by_scope(
-            org_id=uuid.UUID(org_id), scope="extraction",
-        )
-        if raw:
-            custom_instr = format_custom_instructions(
-                [{"name": i.name, "text": i.text} for i in raw]
-            )
-
-    try:
-        prompt = render_prompt(
-            "entity_extraction",
-            template_text=template_text,
-            custom_instructions=custom_instr,
-            conversation=content,
-            entity_types=entity_types,
-            known_entities=known_entities,
-        )
-    except FileNotFoundError:
-        logger.error(
-            "entity_extraction.prompt_missing",
-            episode_id=episode_id,
-            template="entity_extraction.jinja2",
-        )
-        return
 
     # ── 3. Call LLM ───────────────────────────────────────────────────────────
     try:
@@ -230,14 +158,8 @@ async def extract_entities(
             episode_id=episode_id,
         )
         try:
-            recovery_prompt = render_prompt(
-                "entity_extraction",
-                template_text=template_text,
-                custom_instructions=custom_instr,
-                conversation=content,
-                entity_types=entity_types,
-                known_entities=known_entities,
-            )
+            # Reuse the already-rendered prompt with a stricter system message.
+            recovery_prompt = prompt
             response2 = await llm.chat(
                 [
                     {
@@ -591,88 +513,6 @@ async def extract_entities(
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
-
-
-async def _fetch_entity_types(
-    org_id: str,
-    session_factory: Any = None,
-) -> list[str]:
-    """Fetch entity type ontology from the organization's extraction schemas.
-
-    Queries ``extraction_schemas`` where ``type='entity_type'`` and
-    ``is_active=true``.  The ``json_schema`` field is expected to contain
-    ``{"types": ["Type1", "Type2", ...]}``.
-
-    Falls back to the default type set if no schemas are configured.
-
-    Args:
-        org_id: Organization UUID string.
-        session_factory: Optional shared session factory from the worker
-            ctx.  When provided, avoids creating a short-lived DB engine.
-
-    Returns:
-        A list of allowed entity type names.
-
-    Raises:
-        Exception: Re-raises DB errors so the caller's ``@with_retry``
-            decorator can handle transient failures.
-    """
-    if session_factory is None:
-        from core.config import settings as _settings
-        from core.db import get_async_session, init_db_engine
-
-        _engine = init_db_engine(
-            str(_settings.DATABASE_URL), pool_size=2, max_overflow=1
-        )
-        _session_factory = get_async_session(_engine)
-        _own_engine = True
-    else:
-        _engine = None
-        _session_factory = session_factory
-        _own_engine = False
-    try:
-        async with _session_factory() as _db:
-            result = await _db.execute(
-                text("""
-                    SELECT json_schema FROM extraction_schemas
-                    WHERE organization_id = :org_id
-                      AND type = 'entity_type'
-                      AND is_active = true
-                """),
-                {"org_id": uuid.UUID(org_id)},
-            )
-            schemas = result.all()
-            if not schemas:
-                return [
-                    "Person",
-                    "Organization",
-                    "Product",
-                    "Location",
-                    "Date",
-                    "Custom",
-                ]
-
-            types: list[str] = []
-            for row in schemas:
-                schema: dict = row[0]
-                if (
-                    isinstance(schema, dict)
-                    and "types" in schema
-                    and isinstance(schema["types"], list)
-                ):
-                    types.extend(schema["types"])
-
-            return types or [
-                "Person",
-                "Organization",
-                "Product",
-                "Location",
-                "Date",
-                "Custom",
-            ]
-    finally:
-        if _own_engine:
-            await _engine.dispose()
 
 
 def _parse_entity_response(content: str) -> dict | None:

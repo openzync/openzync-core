@@ -22,6 +22,7 @@ from services.worker.prompt_renderer import render_prompt
 from tests.evals.conftest import (
     evaluate_structured_match,
     load_golden,
+    load_prompt_text,
     parse_structured_response,
 )
 
@@ -61,14 +62,17 @@ async def test_structured_extraction_accuracy() -> None:
         extra={"samples": total, "threshold": ACCURACY_THRESHOLD},
     )
 
+    template_text = load_prompt_text("extract_structured_v1")
+
     for i, item in enumerate(dataset):
         conversation = item["conversation"]
         schemas = item["schemas"]
         template_vars = {"schemas": schemas, "conversation": conversation}
 
         try:
-            prompt = render_prompt(
-                "extract_structured_v1",
+            prompt = await render_prompt(
+                "structured_extraction",
+                template_text=template_text,
                 **template_vars,
             )
 

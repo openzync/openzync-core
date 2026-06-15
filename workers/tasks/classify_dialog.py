@@ -20,17 +20,9 @@ from sqlalchemy import text
 
 from workers.tasks.base import ENRICHMENT_CLASSIFICATION, with_retry
 
-from services.custom_instruction_service import format_custom_instructions
-from services.worker.prompt_renderer import render_prompt, resolve_prompt_template_by_type
+from services.worker.prompt_renderer import render_prompt
 
 logger = structlog.get_logger()
-
-# ── Default label sets (used when no classification schemas are configured) ────
-
-DEFAULT_INTENT_LABELS = "greeting, question, command, complaint, chit-chat, farewell, request, confirmation"
-DEFAULT_EMOTION_LABELS = "joy, frustration, sadness, anger, neutral, surprise, fear, disgust"
-DEFAULT_VALENCE_OPTIONS = "positive, negative, neutral"
-DEFAULT_AROUSAL_OPTIONS = "low, medium, high"
 
 ALLOWED_VALENCES = frozenset({"positive", "negative", "neutral"})
 ALLOWED_AROUSALS = frozenset({"low", "medium", "high"})
@@ -143,50 +135,12 @@ async def classify_dialog(
                 )
                 return
 
-            # ── 4. Fetch org classification schemas ────────────────────────
-            labels = await _fetch_classification_labels(db, org_id)
-
-            # ── 5. Resolve prompt template from DB (fall back to filesystem) ─
-            try:
-                template_text = await resolve_prompt_template_by_type(
-                    "classification",
-                    org_id,
-                    session_factory,
-                )
-            except Exception:
-                template_text = None
-                logger.warning(
-                    "classification.template_resolve_failed",
-                    episode_id=episode_id,
-                    org_id=org_id,
-                )
-
-            # ── 6. Fetch custom instructions ───────────────────────────────
-            from repositories.custom_instruction_repository import (
-                CustomInstructionRepository,
-            )
-            ci_repo = CustomInstructionRepository(db)
-            raw = await ci_repo.get_by_scope(
-                org_id=uuid.UUID(org_id), scope="extraction",
-            )
-            custom_instr = (
-                format_custom_instructions(
-                    [{"name": i.name, "text": i.text} for i in raw],
-                )
-                if raw
-                else ""
-            )
-
-            # ── 7. Render prompt ───────────────────────────────────────────
-            prompt = render_prompt(
+            # ── 4. Render prompt with auto-injected context ────────────────
+            prompt = await render_prompt(
                 "classification",
-                template_text=template_text,
-                custom_instructions=custom_instr,
-                conversation=content,
-                intent_labels=labels["intent_labels"],
-                emotion_labels=labels["emotion_labels"],
-                valence_options=labels["valence_options"],
-                arousal_options=labels["arousal_options"],
+                org_id=org_id,
+                episode_id=episode_id,
+                db_session_factory=session_factory,
             )
 
             # ── 8. Call LLM ────────────────────────────────────────────────
@@ -248,6 +202,8 @@ async def classify_dialog(
                     )
 
             # ── 10. Validate labels against allowed sets ────────────────────
+            validation_sets = await _fetch_validation_sets(db, org_id)
+
             intent = None
             emotion = None
             valence = None
@@ -257,10 +213,10 @@ async def classify_dialog(
 
             if parsed is not None:
                 intent = _validate_label(
-                    parsed.get("intent"), labels["intent_set"]
+                    parsed.get("intent"), validation_sets["intent_set"]
                 )
                 emotion = _validate_label(
-                    parsed.get("emotion"), labels["emotion_set"]
+                    parsed.get("emotion"), validation_sets["emotion_set"]
                 )
                 valence_raw = parsed.get("valence")
                 valence = (
@@ -278,14 +234,14 @@ async def classify_dialog(
                         "classification.invalid_intent",
                         episode_id=episode_id,
                         received=parsed.get("intent"),
-                        allowed=list(labels["intent_set"]),
+                        allowed=list(validation_sets["intent_set"]),
                     )
                 if emotion is None and parsed.get("emotion") is not None:
                     logger.warning(
                         "classification.invalid_emotion",
                         episode_id=episode_id,
                         received=parsed.get("emotion"),
-                        allowed=list(labels["emotion_set"]),
+                        allowed=list(validation_sets["emotion_set"]),
                     )
 
             # ── 11. Insert classification row ──────────────────────────────
@@ -352,21 +308,13 @@ async def classify_dialog(
 # ── Private helpers ────────────────────────────────────────────────────────────
 
 
-async def _fetch_classification_labels(
+async def _fetch_validation_sets(
     db: Any, org_id: str
-) -> dict[str, Any]:
-    """Fetch classification label definitions from the org's schemas.
+) -> dict[str, set[str]]:
+    """Fetch intent and emotion label sets from the org's schemas.
 
-    Queries ``extraction_schemas`` where ``type='classification'`` and
-    ``is_active=true``.  Merges label sets if multiple schemas exist.
-
-    Returns a dict with:
-        ``intent_labels``: comma-separated string for prompt injection.
-        ``emotion_labels``: comma-separated string for prompt injection.
-        ``valence_options``: comma-separated string for prompt injection.
-        ``arousal_options``: comma-separated string for prompt injection.
-        ``intent_set``: set of allowed intent values (for validation).
-        ``emotion_set``: set of allowed emotion values (for validation).
+    Falls back to defaults when no schemas are configured.
+    Returns ``{"intent_set": ..., "emotion_set": ...}``.
     """
     result = await db.execute(
         text("""
@@ -381,20 +329,18 @@ async def _fetch_classification_labels(
 
     if not schemas:
         return {
-            "intent_labels": DEFAULT_INTENT_LABELS,
-            "emotion_labels": DEFAULT_EMOTION_LABELS,
-            "valence_options": DEFAULT_VALENCE_OPTIONS,
-            "arousal_options": DEFAULT_AROUSAL_OPTIONS,
-            "intent_set": _parse_label_set(DEFAULT_INTENT_LABELS),
-            "emotion_set": _parse_label_set(DEFAULT_EMOTION_LABELS),
+            "intent_set": {
+                "greeting", "question", "command", "complaint",
+                "chit-chat", "farewell", "request", "confirmation",
+            },
+            "emotion_set": {
+                "joy", "frustration", "sadness", "anger",
+                "neutral", "surprise", "fear", "disgust",
+            },
         }
 
-    # Merge labels from all active classification schemas
     all_intents: set[str] = set()
     all_emotions: set[str] = set()
-    valences: set[str] = set()
-    arousals: set[str] = set()
-
     for row in schemas:
         schema: dict = row[0]
         if isinstance(schema, dict):
@@ -402,18 +348,18 @@ async def _fetch_classification_labels(
                 all_intents.update(schema["intent"])
             if "emotion" in schema and isinstance(schema["emotion"], list):
                 all_emotions.update(schema["emotion"])
-            if "valence" in schema and isinstance(schema["valence"], list):
-                valences.update(schema["valence"])
-            if "arousal" in schema and isinstance(schema["arousal"], list):
-                arousals.update(schema["arousal"])
 
     return {
-        "intent_labels": ", ".join(sorted(all_intents)) if all_intents else DEFAULT_INTENT_LABELS,
-        "emotion_labels": ", ".join(sorted(all_emotions)) if all_emotions else DEFAULT_EMOTION_LABELS,
-        "valence_options": ", ".join(sorted(valences)) if valences else DEFAULT_VALENCE_OPTIONS,
-        "arousal_options": ", ".join(sorted(arousals)) if arousals else DEFAULT_AROUSAL_OPTIONS,
-        "intent_set": all_intents or _parse_label_set(DEFAULT_INTENT_LABELS),
-        "emotion_set": all_emotions or _parse_label_set(DEFAULT_EMOTION_LABELS),
+        "intent_set": all_intents
+        or {
+            "greeting", "question", "command", "complaint",
+            "chit-chat", "farewell", "request", "confirmation",
+        },
+        "emotion_set": all_emotions
+        or {
+            "joy", "frustration", "sadness", "anger",
+            "neutral", "surprise", "fear", "disgust",
+        },
     }
 
 
@@ -481,6 +427,4 @@ def _validate_label(label: Any, allowed_set: set[str]) -> str | None:
     return label if label in allowed_set else None
 
 
-def _parse_label_set(labels_csv: str) -> set[str]:
-    """Convert a comma-separated label string into a set of stripped labels."""
-    return {label.strip() for label in labels_csv.split(",") if label.strip()}
+

@@ -20,8 +20,7 @@ from sqlalchemy import text
 
 from workers.tasks.base import ENRICHMENT_STRUCTURED_EXTRACTION, with_retry
 
-from services.custom_instruction_service import format_custom_instructions
-from services.worker.prompt_renderer import render_prompt, resolve_prompt_template_by_type
+from services.worker.prompt_renderer import render_prompt
 
 logger = structlog.get_logger()
 
@@ -130,9 +129,17 @@ async def extract_structured(
                 )
                 return
 
-            # ── 4. Fetch org structured schemas ────────────────────────────
-            schemas = await _fetch_structured_schemas(db, org_id)
+            # ── 4. Render prompt with auto-injected context ────────────────
+            prompt, prompt_ctx = await render_prompt(
+                "structured_extraction",
+                org_id=org_id,
+                episode_id=episode_id,
+                session_id=session_id,
+                db_session_factory=session_factory,
+                return_context=True,
+            )
 
+            schemas: list[dict] = prompt_ctx.get("schemas", [])
             if not schemas:
                 logger.info(
                     "structured_extraction.no_schemas",
@@ -153,46 +160,7 @@ async def extract_structured(
                 await db.commit()
                 return
 
-            # ── 5. Resolve prompt template from DB (fall back to filesystem) ─
-            try:
-                template_text = await resolve_prompt_template_by_type(
-                    "structured_extraction",
-                    org_id,
-                    session_factory,
-                )
-            except Exception:
-                template_text = None
-                logger.warning(
-                    "structured_extraction.template_resolve_failed",
-                    episode_id=episode_id,
-                    org_id=org_id,
-                )
-
-            # ── 6. Fetch custom instructions ───────────────────────────────
-            from repositories.custom_instruction_repository import (
-                CustomInstructionRepository,
-            )
-            ci_repo = CustomInstructionRepository(db)
-            raw = await ci_repo.get_by_scope(
-                org_id=uuid.UUID(org_id), scope="extraction",
-            )
-            custom_instr = (
-                format_custom_instructions(
-                    [{"name": i.name, "text": i.text} for i in raw],
-                )
-                if raw
-                else ""
-            )
-
-            # ── 7. Render prompt ───────────────────────────────────────────
             max_tokens = worker_settings.STRUCTURED_EXTRACTION_MAX_TOKENS
-            prompt = render_prompt(
-                "structured_extraction",
-                template_text=template_text,
-                custom_instructions=custom_instr,
-                conversation=content,
-                schemas=schemas,
-            )
 
             # ── 8. Call LLM ────────────────────────────────────────────────
             try:
@@ -377,35 +345,6 @@ async def extract_structured(
 
 
 # ── Private helpers ────────────────────────────────────────────────────────────
-
-
-async def _fetch_structured_schemas(
-    db: Any, org_id: str
-) -> list[dict[str, Any]]:
-    """Fetch active structured extraction schemas for the organization.
-
-    Returns a list of dicts with keys: ``id``, ``name``, ``json_schema``.
-    """
-    result = await db.execute(
-        text("""
-            SELECT id, name, json_schema, prompt_template FROM extraction_schemas
-            WHERE organization_id = :org_id
-              AND type = 'structured'
-              AND is_active = true
-            ORDER BY name
-        """),
-        {"org_id": uuid.UUID(org_id)},
-    )
-    rows = result.all()
-    return [
-        {
-            "id": str(row[0]),
-            "name": row[1],
-            "json_schema": row[2],
-            "prompt_template": row[3],
-        }
-        for row in rows
-    ]
 
 
 def _parse_structured_response(content: str) -> dict[str, Any] | None:

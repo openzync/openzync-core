@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 
 from services.worker.prompt_renderer import render_prompt
-from tests.evals.conftest import load_golden
+from tests.evals.conftest import load_golden, load_prompt_text
 from workers.tasks.extract_entities import _parse_entity_response
 
 logger = logging.getLogger(__name__)
@@ -63,14 +63,17 @@ async def test_entity_ontology_accuracy() -> None:
         extra={"samples": total, "threshold": ACCURACY_THRESHOLD},
     )
 
+    template_text = load_prompt_text("extract_entities_v1")
+
     for i, item in enumerate(dataset):
         conversation = item["conversation"]
         entity_types: list[str] = item.get("entity_types", [])
         expected_entities: list[dict[str, str]] = item.get("expected_entities", [])
 
         try:
-            prompt = render_prompt(
-                "extract_entities_v1",
+            prompt = await render_prompt(
+                "entity_extraction",
+                template_text=template_text,
                 conversation=conversation,
                 entity_types=entity_types if entity_types else None,
             )

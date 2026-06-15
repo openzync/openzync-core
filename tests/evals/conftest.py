@@ -13,6 +13,24 @@ from typing import Any
 import pytest
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
+PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "services" / "worker" / "prompts"
+
+
+def load_prompt_text(template_name: str) -> str:
+    """Load a prompt template from the filesystem prompts directory.
+
+    Args:
+        template_name: The logical template name (e.g. ``"classify_dialog_v1"``).
+
+    Returns:
+        The raw Jinja2 template text.
+    """
+    path = PROMPTS_DIR / f"{template_name}.jinja2"
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Prompt template '{template_name}' not found at {path}"
+        )
+    return path.read_text()
 
 
 def load_golden(filename: str) -> list[dict[str, Any]]:

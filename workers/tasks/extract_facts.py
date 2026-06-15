@@ -25,21 +25,13 @@ from datetime import datetime, timezone
 import structlog
 from sqlalchemy import text
 
-# note: Import prompt_renderer at module level — it is a local
-# Jinja2 utility with no heavy dependencies, so eager import is safe
-# and avoids re-import overhead on every task invocation.
-from services.worker.prompt_renderer import render_prompt, resolve_prompt_template_by_type
-from services.custom_instruction_service import format_custom_instructions
+from services.worker.prompt_renderer import render_prompt
 from workers.tasks.base import ENRICHMENT_FACTS, with_retry
 
 logger = structlog.get_logger()
 
 # ── Quality-heuristic constants ───────────────────────────────────────────────
 _CONFIDENCE_THRESHOLD: float = 0.3
-
-# ── Session context constants ─────────────────────────────────────────────────
-_RECENT_EPISODE_WINDOW: int = 10
-"""Number of previous conversation turns to include as context."""
 
 
 # ── Public ARQ task (decorated with retry) ────────────────────────────────────
@@ -94,12 +86,9 @@ async def extract_facts(
 
     # Lazy imports to keep the module importable without the full async
     # stack at definition time — ARQ workers run in a separate process.
-    from sqlalchemy import select
-
     from core.config import settings
     from core.db import get_async_session
     from core.llm import resolve_backend
-    from models.episode import Episode
     from repositories.fact_repository import FactRepository
 
     logger.info(
@@ -126,103 +115,18 @@ async def extract_facts(
     if session_factory is None:
         session_factory = get_async_session(engine)
 
-    # ── 0. Fetch session context (known entities + recent history + facts) ────
-    known_entities: list[dict] = []
-    recent_history: list[dict] = []
-    existing_facts: list[dict] = []
-    if session_id:
-        try:
-            async with session_factory() as db:
-                repo = FactRepository(db)
-                known_entities = await repo.get_entities_for_session(
-                    session_id=uuid.UUID(session_id),
-                    organization_id=uuid.UUID(org_id),
-                )
+    # ── 1. Render prompt with auto-injected context ─────────────────────────
+    prompt, ctx = await render_prompt(
+        "fact_extraction",
+        org_id=org_id,
+        episode_id=episode_id,
+        session_id=session_id,
+        db_session_factory=session_factory,
+        return_context=True,
+    )
 
-                # Fetch existing facts from this session for delta extraction
-                existing_facts, _ = await repo.list_by_session(
-                    organization_id=uuid.UUID(org_id),
-                    session_id=uuid.UUID(session_id),
-                    limit=200,
-                )
-
-                # Fetch recent conversation history (before current episode)
-                result = await db.execute(
-                    select(Episode)
-                    .where(
-                        Episode.session_id == uuid.UUID(session_id),
-                        Episode.id != uuid.UUID(episode_id),
-                        Episode.is_deleted == False,
-                    )
-                    .order_by(Episode.created_at.desc())
-                    .limit(_RECENT_EPISODE_WINDOW)
-                )
-                recent_eps = list(result.scalars().all())
-                # Reverse to get chronological order
-                recent_history = [
-                    {"role": ep.role, "content": ep.content}
-                    for ep in reversed(recent_eps)
-                ]
-
-                logger.debug(
-                    "fact_extraction.session_context_fetched",
-                    episode_id=episode_id,
-                    known_entities=len(known_entities),
-                    existing_facts=len(existing_facts),
-                    recent_episodes=len(recent_history),
-                )
-        except Exception as exc:
-            # ⚠️ Non-fatal: continue without context if DB is unavailable
-            logger.warning(
-                "fact_extraction.session_context_failed",
-                episode_id=episode_id,
-                session_id=session_id,
-                error=str(exc),
-            )
-
-    # ── 1. Resolve prompt template from DB by type ──────────────────────────
-    try:
-        template_text = await resolve_prompt_template_by_type(
-            "fact_extraction", org_id, session_factory,
-        )
-    except Exception:
-        template_text = None  # Fall back to filesystem
-        logger.warning(
-            "fact_extraction.template_resolve_failed",
-            episode_id=episode_id,
-            exc_info=True,
-        )
-
-    custom_instr = ""
-    async with session_factory() as db:
-        from repositories.custom_instruction_repository import (
-            CustomInstructionRepository,
-        )
-        raw = await CustomInstructionRepository(db).get_by_scope(
-            org_id=uuid.UUID(org_id), scope="extraction",
-        )
-        if raw:
-            custom_instr = format_custom_instructions(
-                [{"name": i.name, "text": i.text} for i in raw]
-            )
-
-    try:
-        prompt = render_prompt(
-            "fact_extraction",
-            template_text=template_text,
-            custom_instructions=custom_instr,
-            conversation=content,
-            known_entities=known_entities,
-            recent_history=recent_history,
-            existing_facts=existing_facts,
-        )
-    except FileNotFoundError:
-        logger.error(
-            "fact_extraction.prompt_missing",
-            episode_id=episode_id,
-            template="fact_extraction.jinja2",
-        )
-        return
+    known_entities: list[dict] = ctx.get("known_entities", [])
+    existing_facts: list[dict] = ctx.get("existing_facts", [])
 
     # ── 2. Call LLM ───────────────────────────────────────────────────────────
     try:

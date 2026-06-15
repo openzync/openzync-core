@@ -21,6 +21,7 @@ from services.worker.prompt_renderer import render_prompt
 from tests.evals.conftest import (
     evaluate_classification_match,
     load_golden,
+    load_prompt_text,
     parse_classification_response,
 )
 
@@ -51,13 +52,16 @@ async def test_classification_accuracy() -> None:
         extra={"samples": total, "threshold": ACCURACY_THRESHOLD},
     )
 
+    template_text = load_prompt_text("classify_dialog_v1")
+
     for i, item in enumerate(dataset):
         conversation = item["conversation"]
         tv = item["template_vars"]
 
         try:
-            prompt = render_prompt(
-                "classify_dialog_v1",
+            prompt = await render_prompt(
+                "classification",
+                template_text=template_text,
                 conversation=conversation,
                 intent_labels=tv["intent_labels"],
                 emotion_labels=tv["emotion_labels"],
