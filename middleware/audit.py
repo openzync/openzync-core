@@ -37,6 +37,58 @@ logger = logging.getLogger(__name__)
 _pii_detector = PIIDetector()
 _pii_redactor = PIIRedactor(mode="mask")
 
+
+async def _resolve_audit_body_capture(
+    org_id: str | None,
+    request: Request,
+) -> bool:
+    """Resolve whether to capture the response body for this request.
+
+    Checks the org's DB config (via Redis cache, then DB).  When the
+    field is not set for the org, defaults to ``False``.
+
+    Args:
+        org_id: The authenticated organization ID (may be ``None`` for
+            unauthenticated requests).
+        request: The incoming HTTP request (used to access ``app.state``).
+
+    Returns:
+        ``True`` if the response body should be captured for audit.
+    """
+    # Fast path: no org context, don't capture
+    if org_id is None:
+        return False
+
+    redis = getattr(request.app.state, "redis", None)
+
+    # Try Redis cache (fast path)
+    if redis is not None:
+        try:
+            from core.org_config import CACHE_KEY_PREFIX
+
+            cache_key = f"{CACHE_KEY_PREFIX}:{org_id}"
+            cached = await redis.get(cache_key)
+            if cached:
+                raw = json.loads(cached)
+                org_val = raw.get("audit_log_response_body")
+                if org_val is not None:
+                    return bool(org_val)
+        except Exception:
+            logger.debug("audit.org_config_cache_read_failed", exc_info=True)
+
+    # Cache miss — resolve from DB (post-response so user doesn't wait).
+    # On failure, default to False (don't capture).
+    try:
+        from core.db import AsyncSessionLocal
+        from core.org_config import get_org_config
+
+        async with AsyncSessionLocal() as db:
+            config = await get_org_config(UUID(org_id), db, redis=redis, skip_cache=True)
+            return bool(config.audit_log_response_body) if config.audit_log_response_body is not None else False
+    except Exception:
+        logger.warning("audit.org_config_db_resolve_failed", exc_info=True)
+        return False
+
 # ── Exempt paths (no audit for internal noise) ────────────────────────────────
 
 EXEMPT_PATHS: frozenset = frozenset({
@@ -218,8 +270,9 @@ class AuditMiddleware(BaseHTTPMiddleware):
             "user_agent": request.headers.get("User-Agent", ""),
         }
 
-        # Optionally capture response body with PII redaction (config-gated)
-        if settings.AUDIT_LOG_RESPONSE_BODY:
+        # Resolve audit_log_response_body: per-org config → env default.
+        _capture_body = await _resolve_audit_body_capture(org_id, request)
+        if _capture_body:
             try:
                 body = await self._read_response_body(response)
                 if body:

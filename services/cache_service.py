@@ -43,10 +43,20 @@ class CacheService:
 
     Args:
         redis: An optional async Redis client.
+        default_ttl: Default cache TTL in seconds.  Falls back to
+            ``settings.CONTEXT_CACHE_TTL`` when not provided.  Callers
+            can override this per-call via the ``ttl`` parameter.
     """
 
-    def __init__(self, redis: object | None = None) -> None:
+    def __init__(
+        self, redis: object | None = None, default_ttl: int | None = None
+    ) -> None:
         self._redis = redis
+        self._default_ttl: int = (
+            default_ttl
+            if default_ttl is not None
+            else settings.CONTEXT_CACHE_TTL
+        )
 
     # ── Public API ──────────────────────────────────────────────────────────────
 
@@ -81,8 +91,9 @@ class CacheService:
         Args:
             key: The full Redis key.
             value: The string value to cache.
-            ttl: TTL in seconds.  Falls back to
-                ``settings.CONTEXT_CACHE_TTL`` when ``None``.
+            ttl: TTL in seconds.  Falls back to ``self._default_ttl``
+                (which itself falls back to ``settings.CONTEXT_CACHE_TTL``)
+                when ``None``.
 
         Returns:
             ``True`` if the value was set, ``False`` if Redis is
@@ -94,7 +105,7 @@ class CacheService:
             from redis.asyncio import Redis as AsyncRedis
 
             r: AsyncRedis = self._redis  # type: ignore[assignment]
-            effective_ttl = ttl if ttl is not None else settings.CONTEXT_CACHE_TTL
+            effective_ttl = ttl if ttl is not None else self._default_ttl
             return await r.setex(key, effective_ttl, value)  # type: ignore[return-value]
         except Exception:
             logger.warning(
@@ -196,7 +207,7 @@ class CacheService:
 
         # ── Compute and cache ────────────────────────────────────────────
         value = compute_fn()
-        effective_ttl = ttl if ttl is not None else settings.CONTEXT_CACHE_TTL
+        effective_ttl = ttl if ttl is not None else self._default_ttl
 
         if isinstance(value, str):
             await self.set(key, value, ttl=effective_ttl)

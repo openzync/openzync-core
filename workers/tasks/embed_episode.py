@@ -55,38 +55,8 @@ async def embed_episode(
 
     logger.info("embed_episode.started", episode_id=episode_id, trace_id=trace_id)
 
-    # ── 1. Resolve the embedding backend ──────────────────────────────────
-    provider = settings.EMBEDDING_BACKEND or None
-    llm = await resolve_backend(provider=provider)
-
-    # ── 2. Generate embedding ────────────────────────────────────────────
-    try:
-        result = await llm.embed([content], model=settings.EMBEDDING_MODEL)
-        embedding = result.embeddings[0]
-    except Exception as e:
-        logger.error(
-            "embed_episode.embedding_failed",
-            episode_id=episode_id,
-            error=str(e),
-        )
-        raise
-
-    # ── 3. Validate dimension matches config ──────────────────────────────
-    if len(embedding) != settings.EMBEDDING_DIM:
-        logger.error(
-            "embed_episode.dimension_mismatch",
-            episode_id=episode_id,
-            got=len(embedding),
-            expected=settings.EMBEDDING_DIM,
-        )
-        raise ValueError(
-            f"Embedding dimension mismatch: got {len(embedding)}, "
-            f"expected {settings.EMBEDDING_DIM}"
-        )
-
-    # ── 4. Store in pgvector and update enrichment_status ─────────────────
-    # Use the shared engine from worker context.  Under
-    # `services/worker/worker.py` this is injected automatically.
+    # ── 1. Resolve DB engine / session factory ─────────────────────────────
+    # Moved up from the DB write section — needed here for org config fetch.
     engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
     if engine is None:
         from core.db import init_db_engine
@@ -102,6 +72,65 @@ async def embed_episode(
     session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
     if session_factory is None:
         session_factory = get_async_session(engine)
+
+    # ── 2. Fetch per-organization config ───────────────────────────────────
+    import uuid
+    from core.org_config import get_org_config
+
+    org_cfg = None
+    try:
+        async with session_factory() as _db:
+            org_cfg = await get_org_config(uuid.UUID(org_id), _db, redis=None)
+    except Exception:
+        logger.warning(
+            "embed_episode.org_config_fetch_failed",
+            org_id=org_id,
+            exc_info=True,
+        )
+
+    # No env-var fallback — skip if org config is unavailable or
+    # no embedding backend is configured.
+    if org_cfg is None or org_cfg.embedding_backend is None:
+        logger.warning(
+            "embed_episode.skipped_no_embedding_config",
+            org_id=org_id,
+        )
+        return
+
+    _embedding_backend = org_cfg.embedding_backend
+    _embedding_model = org_cfg.embedding_model
+    _embedding_dim = org_cfg.embedding_dim
+    _org_config_dict = org_cfg.to_llm_config_dict()
+
+    # ── 3. Resolve the embedding backend ──────────────────────────────────
+    llm = await resolve_backend(provider=_embedding_backend, org_config=_org_config_dict)
+
+    # ── 4. Generate embedding ────────────────────────────────────────────
+    try:
+        result = await llm.embed([content], model=_embedding_model)
+        embedding = result.embeddings[0]
+    except Exception as e:
+        logger.error(
+            "embed_episode.embedding_failed",
+            episode_id=episode_id,
+            error=str(e),
+        )
+        raise
+
+    # ── 5. Validate dimension matches config ──────────────────────────────
+    if len(embedding) != _embedding_dim:
+        logger.error(
+            "embed_episode.dimension_mismatch",
+            episode_id=episode_id,
+            got=len(embedding),
+            expected=_embedding_dim,
+        )
+        raise ValueError(
+            f"Embedding dimension mismatch: got {len(embedding)}, "
+            f"expected {_embedding_dim}"
+        )
+
+    # ── 4. Store in pgvector and update enrichment_status ─────────────────
 
     try:
         async with session_factory() as db:

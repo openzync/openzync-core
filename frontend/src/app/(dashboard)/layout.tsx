@@ -30,6 +30,7 @@ import {
   Webhook,
   FileText,
   FileCode,
+  SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -75,6 +76,7 @@ const NAV_SECTIONS: NavSection[] = [
       { label: "Webhooks", href: "/settings/webhooks", icon: <Webhook size={18} /> },
       { label: "Extraction Instructions", href: "/settings/extraction-instructions", icon: <FileText size={18} /> },
       { label: "Prompts", href: "/settings/prompts", icon: <FileCode size={18} /> },
+      { label: "Org Config", href: "/settings/org-config", icon: <SlidersHorizontal size={18} /> },
     ],
   },
   {

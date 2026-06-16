@@ -89,6 +89,7 @@ async def extract_entities(
     from core.config import settings
     from core.db import get_async_session
     from core.llm import resolve_backend
+    from core.org_config import get_org_config
     from repositories.entity_repository import EntityRepository
 
     logger.info(
@@ -124,9 +125,24 @@ async def extract_entities(
         db_session_factory=session_factory,
     )
 
+    # ── 2b. Fetch per-organization config ─────────────────────────────────
+    llm_config_dict: dict | None = None
+    try:
+        async with session_factory() as db:
+            org_cfg = await get_org_config(
+                uuid.UUID(org_id), db, redis=None
+            )
+            llm_config_dict = org_cfg.to_llm_config_dict()
+    except Exception:
+        logger.warning(
+            "entity_extraction.org_config_fetch_failed",
+            org_id=org_id,
+            exc_info=True,
+        )
+
     # ── 3. Call LLM ───────────────────────────────────────────────────────────
     try:
-        llm = await resolve_backend()
+        llm = await resolve_backend(org_config=llm_config_dict)
         response = await llm.chat(
             [
                 {

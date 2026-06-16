@@ -218,6 +218,7 @@ async def _create_community(
     from sqlalchemy import text
 
     from core.llm import resolve_backend
+    from core.org_config import get_org_config
 
     # Build entity name map
     entity_map = {e["id"]: e for e in all_entities}
@@ -235,7 +236,8 @@ async def _create_community(
     # Generate summary via LLM
     try:
         prompt = _build_community_prompt(context_entities, context_rels)
-        llm = await resolve_backend()
+        org_cfg = await get_org_config(org_id, db, redis=None)
+        llm = await resolve_backend(org_config=org_cfg.to_llm_config_dict())
         response = await llm.chat(
             [
                 {

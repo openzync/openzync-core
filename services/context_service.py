@@ -15,6 +15,7 @@ and formatting to ``context_formatter``.
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
@@ -24,6 +25,9 @@ from middleware.metrics import context_latency_seconds
 from services.cache_service import CacheService
 from services.context_formatter import format_json, format_text
 from services.hybrid_retriever import HybridRetriever
+
+if TYPE_CHECKING:
+    from schemas.organization_config import OrgConfigBase
 
 logger = structlog.get_logger()
 
@@ -48,9 +52,19 @@ class ContextService:
         org_id: UUID,
         redis: object | None = None,
         graph_backend: object | None = None,
+        org_config: OrgConfigBase | None = None,
+
+
+
     ) -> None:
-        self._retriever = HybridRetriever(db, org_id, redis, graph_backend=graph_backend)
-        self._cache = CacheService(redis) if redis else None
+        self._retriever = HybridRetriever(
+            db, org_id, redis, graph_backend=graph_backend, org_config=org_config,
+        )
+        self._cache = (
+            CacheService(redis, default_ttl=org_config.context_cache_ttl if org_config else None)
+            if redis
+            else None
+        )
         self._org_id = org_id
 
     # ── Public API ──────────────────────────────────────────────────────────────

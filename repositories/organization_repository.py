@@ -6,11 +6,14 @@ No business logic — pure query construction and execution.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.exceptions import NotFoundError
 
 
 class OrganizationRepository:
@@ -22,6 +25,55 @@ class OrganizationRepository:
 
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
+
+    # ── Config JSONB (Groups A, B, C — UI-exposed settings) ─────────────────
+
+    async def get_config(self, org_id: UUID) -> dict[str, Any]:
+        """Read the full ``config`` JSONB column for an organization.
+
+        Args:
+            org_id: The organization UUID.
+
+        Returns:
+            The config dict, or ``{}`` if not configured or the org does
+            not exist.
+        """
+        result = await self._db.execute(
+            text("SELECT config FROM organizations WHERE id = :org_id"),
+            {"org_id": org_id},
+        )
+        row = result.one_or_none()
+        return dict(row.config) if row and row.config else {}
+
+    async def update_config(
+        self, org_id: UUID, config: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Replace the ``config`` JSONB column entirely.
+
+        Args:
+            org_id: The organization UUID.
+            config: The full config dict to persist.
+
+        Returns:
+            The newly stored config dict.
+
+        Raises:
+            NotFoundError: If no organization with *org_id* exists.
+        """
+        result = await self._db.execute(
+            text(
+                "UPDATE organizations SET config = :config "
+                "WHERE id = :org_id RETURNING config"
+            ),
+            {"org_id": org_id, "config": json.dumps(config)},
+        )
+        row = result.one_or_none()
+        if row is None:
+            raise NotFoundError(f"Organization {org_id} not found")
+        await self._db.flush()
+        return dict(row.config)
+
+    # ── PII config (from quotas->'pii') ──────────────────────────────────────
 
     async def get_pii_config(self, org_id: UUID) -> dict:
         """Fetch the PII configuration for an organization.
@@ -49,19 +101,35 @@ class OrganizationRepository:
         pii_config = row[0]
         return pii_config if isinstance(pii_config, dict) else {}
 
+    # ── Legacy llm_config (deprecated — reads config->'llm' with fallback) ───
+
     async def get_llm_config(self, org_id: UUID) -> dict[str, Any]:
         """Get the LLM configuration for an organization.
 
-        The LLM config lives at ``organizations.llm_config`` as a JSONB
-        column.
+        **DEPRECATED**: Prefer ``get_config()`` which returns the full config
+        JSONB.  This method reads from ``config->'llm'`` with a fallback to
+        the legacy ``llm_config`` column for backward compatibility during
+        the migration window.
 
         Args:
             org_id: The organization UUID.
 
         Returns:
-            The LLM config dict, or ``{}`` if not configured or the
-            organization does not exist.
+            The LLM config dict, or ``{}`` if not configured.
         """
+        # Primary: read from new config JSONB
+        result = await self._db.execute(
+            text(
+                "SELECT config->'llm' AS llm FROM organizations WHERE id = :org_id"
+            ),
+            {"org_id": org_id},
+        )
+        row = result.one_or_none()
+        if row and row.llm is not None and isinstance(row.llm, dict):
+            return dict(row.llm)
+
+        # Fallback: legacy llm_config column (data will be migrated by
+        # Alembic revision 0002, but keep this for safety)
         result = await self._db.execute(
             text("SELECT llm_config FROM organizations WHERE id = :org_id"),
             {"org_id": org_id},

@@ -82,13 +82,44 @@ async def embed_fact(
                 return
             content = row[0]
 
+    # ── 0b. Fetch per-organization config if org_id is available ─────────
+    _org_id = kwargs.get("org_id")
+    import uuid
+
+    org_cfg = None
+    if _org_id:
+        try:
+            from core.org_config import get_org_config
+
+            async with session_factory() as _cfg_db:
+                org_cfg = await get_org_config(uuid.UUID(_org_id), _cfg_db, redis=None)
+        except Exception:
+            logger.warning(
+                "embed_fact.org_config_fetch_failed",
+                org_id=_org_id,
+                exc_info=True,
+            )
+
+    # No env-var fallback — skip if org config is unavailable or
+    # no embedding backend is configured.
+    if org_cfg is None or org_cfg.embedding_backend is None:
+        logger.warning(
+            "embed_fact.skipped_no_embedding_config",
+            org_id=_org_id,
+        )
+        return
+
+    _embedding_backend = org_cfg.embedding_backend
+    _embedding_model = org_cfg.embedding_model
+    _embedding_dim = org_cfg.embedding_dim
+    _org_config_dict = org_cfg.to_llm_config_dict()
+
     # ── 1. Resolve the embedding backend ──────────────────────────────────
-    provider = settings.EMBEDDING_BACKEND or None
-    llm = await resolve_backend(provider=provider)
+    llm = await resolve_backend(provider=_embedding_backend, org_config=_org_config_dict)
 
     # ── 2. Generate embedding ────────────────────────────────────────────
     try:
-        result = await llm.embed([content], model=settings.EMBEDDING_MODEL)
+        result = await llm.embed([content], model=_embedding_model)
         embedding = result.embeddings[0]
     except Exception as e:
         logger.error(
@@ -99,16 +130,16 @@ async def embed_fact(
         raise
 
     # ── 3. Validate dimension matches config ──────────────────────────────
-    if len(embedding) != settings.EMBEDDING_DIM:
+    if len(embedding) != _embedding_dim:
         logger.error(
             "embed_fact.dimension_mismatch",
             fact_id=fact_id,
             got=len(embedding),
-            expected=settings.EMBEDDING_DIM,
+            expected=_embedding_dim,
         )
         raise ValueError(
             f"Embedding dimension mismatch: got {len(embedding)}, "
-            f"expected {settings.EMBEDDING_DIM}"
+            f"expected {_embedding_dim}"
         )
 
     # ── 4. Store in pgvector ──────────────────────────────────────────────

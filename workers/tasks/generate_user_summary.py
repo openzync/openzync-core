@@ -66,6 +66,7 @@ async def generate_user_summary(
 
     from core.config import settings
     from core.db import get_async_session
+    from core.org_config import get_org_config
 
     logger.info(
         "user_summary.started",
@@ -109,8 +110,24 @@ async def generate_user_summary(
         )
         raise
 
+    # ── 5b. Fetch per-organization config for LLM resolution ─────────────
+    llm_config_dict: dict | None = None
     try:
-        llm = await resolve_backend()
+        async with session_factory() as db:
+            org_cfg = await get_org_config(
+                uuid.UUID(org_id), db, redis=None
+            )
+            llm_config_dict = org_cfg.to_llm_config_dict()
+    except Exception:
+        logger.warning(
+            "user_summary.org_config_fetch_failed",
+            org_id=org_id,
+            user_id=user_id,
+            exc_info=True,
+        )
+
+    try:
+        llm = await resolve_backend(org_config=llm_config_dict)
         response = await llm.chat(
             [
                 {

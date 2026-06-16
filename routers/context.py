@@ -23,9 +23,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.exceptions import NotFoundError
 from dependencies.auth import require_org_id
 from dependencies.db import get_db
+from dependencies.org_config import get_org_config
 from packages.graphiti_client.backends.postgres import PostgresGraphBackend
 from repositories.user_repository import UserRepository
 from schemas.context import ContextResponse
+from schemas.organization_config import OrgConfigBase
 from services.context_service import ContextService
 
 router = APIRouter(
@@ -71,6 +73,7 @@ async def get_context(
     ),
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_org_id),
+    org_config: OrgConfigBase = Depends(get_org_config),
     response: Response = None,  # type: ignore[assignment]
     request: Request = None,  # type: ignore[assignment]
     # NOTE: ``request`` is injected via FastAPI's dependency resolver.
@@ -124,7 +127,7 @@ async def get_context(
     # ── Assemble context ────────────────────────────────────────────────
     redis = getattr(request.app.state, "redis", None) if request else None
     graph_backend = PostgresGraphBackend(db=db)
-    service = ContextService(db, org_uuid, redis, graph_backend=graph_backend)
+    service = ContextService(db, org_uuid, redis, graph_backend=graph_backend, org_config=org_config)
     result = await service.assemble(
         user_id=user_id,
         query=query,

@@ -22,8 +22,12 @@ class Organization(TimestampMixin, Base):
         id: UUID primary key, generated server-side via gen_random_uuid().
         name: Human-readable organization name.
         plan: Billing plan — one of ``free``, ``pro``, ``enterprise``.
-        llm_config: JSONB blob for LLM backend configuration per org
-            (model, temperature, max_tokens, etc.).
+        config: JSONB blob for all per-org configuration (LLM, embeddings,
+            graph, behaviour).  UI-exposed.  ``None`` fields fall back to
+            env-var defaults from ``core.config.settings``.
+        llm_config: **Deprecated** — kept for backward compatibility during
+            migration.  Reads/writes alias to ``config->'llm'``.  Prefer
+            ``config`` for new code.
         quotas: JSONB blob for usage quotas (max_sessions, max_episodes, etc.).
         is_active: Soft toggle for deactivation.
     """
@@ -42,6 +46,16 @@ class Organization(TimestampMixin, Base):
         default="free",
         server_default="free",
     )
+    config: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+        comment="Per-org UI-exposed configuration (LLM, embeddings, graph, behaviour).",
+    )
+    # DEPRECATED: llm_config is kept for data migration.  New code should use
+    # the ``config`` column.  The Alembic migration 0002 copies existing
+    # llm_config values into config->'llm'.
     llm_config: Mapped[dict] = mapped_column(
         JSONB,
         nullable=False,

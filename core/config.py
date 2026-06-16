@@ -27,6 +27,19 @@ class Settings(BaseSettings):
     ``.env`` file.  An instance is created once at import time and reused
     throughout the application — import ``settings`` from this module, do not
     instantiate ``Settings`` yourself.
+
+    .. note::
+
+        **Migration to DB-backed per-org config**
+
+        Settings in Groups A (LLM & Embeddings), B (Graph), and C (Behaviour)
+        below are now **overridable** by per-organization DB config stored in
+        the ``organizations.config`` JSONB column.  The env-var values in this
+        class serve as the **fallback default** when no DB value is set.
+
+        When reading these fields via code that has access to an org context,
+        prefer resolving through ``core.org_config.get_org_config()``
+        instead of reading ``settings.XXX`` directly.
     """
 
     # ── Database ──────────────────────────────────────────────────────────
@@ -41,7 +54,7 @@ class Settings(BaseSettings):
         validation_alias="MG_REDIS_URL",
     )
 
-    # ── Graph Backend ─────────────────────────────────────────────────────
+    # ── Graph Backend (Group B — overridable by org config) ──────────────
     FALKORDB_URL: RedisDsn | None = Field(
         default=None,
         description="FalkorDB connection string (required only when GRAPH_BACKEND=graphiti).",
@@ -51,7 +64,8 @@ class Settings(BaseSettings):
         default="postgres",
         description=(
             "Graph backend to use: postgres (native), graphiti (FalkorDB), "
-            "or none (disable).  Accepts 'falkordb' as an alias for 'graphiti'."
+            "or none (disable).  Overridable by org DB config.  "
+            "Accepts 'falkordb' as an alias for 'graphiti'."
         ),
         validation_alias="MG_GRAPH_BACKEND",
     )
@@ -59,48 +73,48 @@ class Settings(BaseSettings):
         default=2,
         ge=1,
         le=10,
-        description="Maximum BFS traversal depth for the graph backend.",
+        description="Max BFS traversal depth.  Overridable by org DB config.",
         validation_alias="MG_GRAPH_MAX_TRAVERSAL_DEPTH",
     )
 
-    # ── LLM ───────────────────────────────────────────────────────────────
+    # ── LLM (Group A — overridable by org config) ──────────────────────────
     LLM_BACKEND: Literal["ollama", "openai", "azure", "anthropic", "openrouter"] = (
         Field(
             default="ollama",
-            description="LLM provider backend.",
+            description="LLM provider backend.  Overridable by org DB config.",
             validation_alias="MG_LLM_BACKEND",
         )
     )
     LLM_MODEL: str = Field(
         default="llama3.2:3b",
-        description="Model name / tag to use with the LLM backend.",
+        description="Model name / tag.  Overridable by org DB config.",
         validation_alias="MG_LLM_MODEL",
     )
 
-    # ── Embeddings ────────────────────────────────────────────────────────
+    # ── Embeddings (Group A — overridable by org config) ──────────────────
     EMBEDDING_BACKEND: str = Field(
         default="",
         description=(
-            "Embedding provider.  When empty (default) it falls back to the "
-            "same provider as LLM_BACKEND."
+            "Embedding provider.  Overridable by org DB config.  When empty "
+            "falls back to the same provider as LLM_BACKEND."
         ),
         validation_alias="MG_EMBEDDING_BACKEND",
     )
     EMBEDDING_MODEL: str = Field(
         default="nomic-embed-text",
-        description="Embedding model name / tag.",
+        description="Embedding model name / tag.  Overridable by org DB config.",
         validation_alias="MG_EMBEDDING_MODEL",
     )
     EMBEDDING_DIM: int = Field(
         default=768,
-        description="Output dimensionality of EMBEDDING_MODEL.",
+        description="Output dimensionality.  Overridable by org DB config.",
         validation_alias="MG_EMBEDDING_DIM",
     )
 
-    # ── Context / Memory ──────────────────────────────────────────────────
+    # ── Context / Memory (Group C — overridable by org config) ────────────
     CONTEXT_CACHE_TTL: int = Field(
         default=30,
-        description="TTL in seconds for cached context summaries.",
+        description="TTL in seconds for cached context summaries.  Overridable by org DB config.",
         validation_alias="MG_CONTEXT_CACHE_TTL",
     )
 
@@ -114,43 +128,44 @@ class Settings(BaseSettings):
         min_length=32,
     )
 
-    # ── LLM API Keys (optional — backend-dependent) ───────────────────────
+    # ── LLM API Keys (Group A — overridable by org config) ────────────────
     OPENAI_API_KEY: str = Field(
         default="",
-        description="OpenAI API key.  Required when LLM_BACKEND == 'openai'.",
+        description="OpenAI API key.  Overridable by org DB config.",
         validation_alias="OPENAI_API_KEY",
     )
     OPENROUTER_API_KEY: str = Field(
         default="",
-        description="OpenRouter API key.  Required when LLM_BACKEND == 'openrouter'.",
+        description="OpenRouter API key.  Overridable by org DB config.",
         validation_alias="OPENROUTER_API_KEY",
     )
     AZURE_OPENAI_ENDPOINT: str = Field(
         default="",
-        description="Azure OpenAI endpoint URL.",
+        description="Azure OpenAI endpoint URL.  Overridable by org DB config.",
         validation_alias="AZURE_OPENAI_ENDPOINT",
     )
     AZURE_OPENAI_KEY: str = Field(
         default="",
-        description="Azure OpenAI API key.",
+        description="Azure OpenAI API key.  Overridable by org DB config.",
         validation_alias="AZURE_OPENAI_KEY",
     )
     ANTHROPIC_API_KEY: str = Field(
         default="",
-        description="Anthropic API key.  Required when LLM_BACKEND == 'anthropic'.",
+        description="Anthropic API key.  Overridable by org DB config.",
         validation_alias="ANTHROPIC_API_KEY",
     )
     OLLAMA_BASE_URL: str = Field(
         default="http://localhost:11434",
-        description="Base URL for a local Ollama instance.",
+        description="Base URL for a local Ollama instance.  Overridable by org DB config.",
         validation_alias="OLLAMA_BASE_URL",
     )
 
-    # ── Audit Logging ────────────────────────────────────────────────────
+    # ── Audit Logging (Group C — overridable by org config) ──────────────
     AUDIT_LOG_RESPONSE_BODY: bool = Field(
         default=False,
         description=(
-            "Capture response body in audit_logs.details. "
+            "Capture response body in audit_logs.details.  "
+            "Overridable by org DB config.  "
             "WARNING: may contain PII — redaction is applied but "
             "enabling this increases storage significantly."
         ),

@@ -77,6 +77,8 @@ async def classify_dialog(
     # Lazy imports — ARQ workers run in a separate process.
     from core.db import get_async_session
     from core.llm import resolve_backend
+    import uuid
+    from core.org_config import get_org_config
 
     logger.info(
         "classification.started",
@@ -143,9 +145,15 @@ async def classify_dialog(
                 db_session_factory=session_factory,
             )
 
+            # ── 7b. Fetch per-organization config ──────────────────────────
+            org_cfg = await get_org_config(
+                uuid.UUID(org_id), db, redis=None
+            )
+            llm_config_dict = org_cfg.to_llm_config_dict()
+
             # ── 8. Call LLM ────────────────────────────────────────────────
             try:
-                llm = await resolve_backend()
+                llm = await resolve_backend(org_config=llm_config_dict)
                 response = await llm.chat(
                     [
                         {

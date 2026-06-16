@@ -23,8 +23,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.exceptions import NotFoundError
 from dependencies.auth import require_org_id
 from dependencies.db import get_db
+from dependencies.org_config import get_org_config
 from packages.graphiti_client.backends.postgres import PostgresGraphBackend
 from repositories.user_repository import UserRepository
+from schemas.organization_config import OrgConfigBase
 from services.hybrid_retriever import HybridRetriever
 
 router = APIRouter(
@@ -69,6 +71,7 @@ async def search_memory(
     ),
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_org_id),
+    org_config: OrgConfigBase = Depends(get_org_config),
 ) -> dict:
     """Hybrid search across a user's memory.
 
@@ -114,7 +117,7 @@ async def search_memory(
 
     # ── Run hybrid search ───────────────────────────────────────────────
     graph_backend = PostgresGraphBackend(db=db)
-    retriever = HybridRetriever(db, org_uuid, graph_backend=graph_backend)
+    retriever = HybridRetriever(db, org_uuid, graph_backend=graph_backend, org_config=org_config)
     results = await retriever.hybrid_search(
         query=query,
         user_id=user_id,

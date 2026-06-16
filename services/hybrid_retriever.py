@@ -27,6 +27,7 @@ from models.fact import Fact
 
 if TYPE_CHECKING:
     from packages.graphiti_client.interface import GraphBackend
+    from schemas.organization_config import OrgConfigBase
 
 logger = logging.getLogger(__name__)
 
@@ -54,11 +55,13 @@ class HybridRetriever:
         org_id: UUID,
         redis: object | None = None,
         graph_backend: GraphBackend | None = None,
+        org_config: OrgConfigBase | None = None,
     ) -> None:
         self._db = db
         self._org_id = org_id
         self._redis = redis
         self._graph_backend = graph_backend
+        self._org_config = org_config
 
     # ── Public API ──────────────────────────────────────────────────────────────
 
@@ -216,7 +219,12 @@ class HybridRetriever:
         try:
             from core.llm import resolve_backend
 
-            backend = await resolve_backend()
+            org_config_dict = (
+                self._org_config.to_llm_config_dict()
+                if self._org_config
+                else None
+            )
+            backend = await resolve_backend(org_config=org_config_dict)
             response = await backend.embed([query])
             if response.embeddings and len(response.embeddings) > 0:
                 return response.embeddings[0]

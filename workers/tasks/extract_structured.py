@@ -72,6 +72,7 @@ async def extract_structured(
     from core.config import settings
     from core.db import get_async_session
     from core.llm import resolve_backend
+    from core.org_config import get_org_config
     from services.worker.worker_settings import settings as worker_settings
 
     logger.info(
@@ -162,9 +163,15 @@ async def extract_structured(
 
             max_tokens = worker_settings.STRUCTURED_EXTRACTION_MAX_TOKENS
 
+            # ── 7b. Fetch per-organization config ──────────────────────────
+            org_cfg = await get_org_config(
+                uuid.UUID(org_id), db, redis=None
+            )
+            llm_config_dict = org_cfg.to_llm_config_dict()
+
             # ── 8. Call LLM ────────────────────────────────────────────────
             try:
-                llm = await resolve_backend()
+                llm = await resolve_backend(org_config=llm_config_dict)
                 response = await llm.chat(
                     [
                         {
