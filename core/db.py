@@ -70,6 +70,7 @@ def init_db_engine(database_url: str, **kwargs: Any) -> AsyncEngine:
         max_overflow=kwargs.pop("max_overflow", 10),
         pool_recycle=kwargs.pop("pool_recycle", 3600),
         echo=kwargs.pop("echo", False),
+        connect_args={"statement_cache_size": 0},
         **kwargs,
     )
     return engine

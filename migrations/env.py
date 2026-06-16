@@ -1,9 +1,14 @@
 """Alembic environment configuration for async SQLAlchemy.
 
 This configures Alembic to work with asyncpg and the OpenZep models.
+
+The database URL is resolved in this priority order:
+  1. ``MG_DATABASE_URL`` environment variable
+  2. ``sqlalchemy.url`` in ``alembic.ini``
 """
 
 import asyncio
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -21,6 +26,11 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
+def _db_url() -> str:
+    """Resolve the database URL from env var or alembic.ini."""
+    return os.environ.get("MG_DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+
+
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
 
@@ -28,7 +38,7 @@ def run_migrations_offline() -> None:
     Calls to context.execute() here emit the given string to the
     script output.
     """
-    url = config.get_main_option("sqlalchemy.url")
+    url = _db_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -51,12 +61,13 @@ def do_run_migrations(connection: Connection) -> None:
 async def run_async_migrations() -> None:
     """Run migrations in 'online' mode with async engine."""
     configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = config.get_main_option("sqlalchemy.url")
+    configuration["sqlalchemy.url"] = _db_url()
 
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args={"statement_cache_size": 0},
     )
 
     async with connectable.connect() as connection:
