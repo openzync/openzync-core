@@ -117,13 +117,16 @@ async def extract_entities(
         session_factory = get_async_session(engine)
 
     # ── 1-2. Render prompt with auto-injected context ─────────────────────────
-    prompt = await render_prompt(
+    prompt_data = await render_prompt(
         "entity_extraction",
         org_id=org_id,
         episode_id=episode_id,
         session_id=session_id,
         db_session_factory=session_factory,
+        return_context=True,
     )
+    prompt, prompt_context = prompt_data  # type: tuple[str, dict]
+    entity_types: list[str] = prompt_context.get("entity_types", [])
 
     # ── 2b. Fetch per-organization config ─────────────────────────────────
     llm_config_dict: dict | None = None

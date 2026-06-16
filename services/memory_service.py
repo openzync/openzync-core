@@ -447,11 +447,26 @@ class MemoryService:
             NotFoundError: If a specific session_id was given but not found.
         """
         if session_external_id is not None:
+            # Try by external_id first (the canonical lookup).
             session = await self._session_repo.get_by_external_id(
                 org_id=organization_id,
                 user_id=user_id,
                 external_id=session_external_id,
             )
+            if session is None:
+                # Fallback: try resolving as a raw UUID — the caller may
+                # have passed the session's internal UUID rather than its
+                # user-facing external_id.
+                try:
+                    parsed = UUID(session_external_id)
+                except ValueError:
+                    parsed = None
+                if parsed is not None:
+                    session = await self._session_repo.get_by_uuid(
+                        org_id=organization_id,
+                        session_id=parsed,
+                        user_id=user_id,
+                    )
             if session is None:
                 raise NotFoundError(
                     f"Session '{session_external_id}' not found for user {user_id}"

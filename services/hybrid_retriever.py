@@ -19,7 +19,7 @@ import time
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import Select, func, select, text
+from sqlalchemy import Select, func, literal_column, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.episode import Episode
@@ -117,6 +117,7 @@ class HybridRetriever:
                 extra={"user_id": str(user_id), "query": query},
                 exc_info=True,
             )
+            await self._db.rollback()
 
         try:
             fact_vector_results = await self._vector_search_facts(query, user_id, limit)
@@ -126,6 +127,7 @@ class HybridRetriever:
                 extra={"user_id": str(user_id), "query": query},
                 exc_info=True,
             )
+            await self._db.rollback()
 
         # BM25 search for episodes and facts
         try:
@@ -138,6 +140,7 @@ class HybridRetriever:
                 extra={"user_id": str(user_id), "query": query},
                 exc_info=True,
             )
+            await self._db.rollback()
 
         try:
             fact_bm25_results = await self._bm25_search_facts(query, user_id, limit)
@@ -147,6 +150,7 @@ class HybridRetriever:
                 extra={"user_id": str(user_id), "query": query},
                 exc_info=True,
             )
+            await self._db.rollback()
 
         # Graph BFS via entity name search
         try:
@@ -157,6 +161,7 @@ class HybridRetriever:
                 extra={"user_id": str(user_id), "query": query},
                 exc_info=True,
             )
+            await self._db.rollback()
 
         # ── RRF merge per type ────────────────────────────────────────────
         # Episodes: merge vector + BM25
@@ -224,7 +229,10 @@ class HybridRetriever:
                 if self._org_config
                 else None
             )
-            backend = await resolve_backend(org_config=org_config_dict)
+            backend = await resolve_backend(
+                provider=self._org_config.embedding_backend if self._org_config else None,
+                org_config=org_config_dict,
+            )
             response = await backend.embed([query])
             if response.embeddings and len(response.embeddings) > 0:
                 return response.embeddings[0]
@@ -249,8 +257,8 @@ class HybridRetriever:
         distance) operator.  Falls back to BM25 when no embeddings are
         available or the query cannot be embedded.
 
-        The ``embedding`` column stores ``float[]`` arrays — they are
-        cast to ``vector`` at query time via ``::vector``.
+        The ``embedding`` column is ``vector(768)`` — cast via
+        :class:`pgvector.sqlalchemy.Vector` at query time.
 
         Args:
             query: Natural-language query text.
@@ -266,7 +274,8 @@ class HybridRetriever:
             logger.debug("hybrid_retriever.episode_vector_fallback_bm25")
             return await self._bm25_search_episodes(query, user_id, limit)
 
-        embedding_literal = "[" + ",".join(str(x) for x in query_embedding) + "]"
+        vector_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
+        embedding_expr = literal_column(f"'{vector_str}'::vector")
 
         stmt = (
             select(
@@ -277,9 +286,7 @@ class HybridRetriever:
                 (
                     1.0
                     - func.coalesce(
-                        func.cast(Episode.embedding, text("vector")).op("<=>")(
-                            func.cast(embedding_literal, text("vector"))
-                        ),
+                        Episode.embedding.op("<=>")(embedding_expr),
                         1.0,
                     )
                 ).label("score"),
@@ -326,7 +333,8 @@ class HybridRetriever:
             logger.debug("hybrid_retriever.fact_vector_fallback_bm25")
             return await self._bm25_search_facts(query, user_id, limit)
 
-        embedding_literal = "[" + ",".join(str(x) for x in query_embedding) + "]"
+        vector_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
+        embedding_expr = literal_column(f"'{vector_str}'::vector")
 
         stmt = (
             select(
@@ -340,9 +348,7 @@ class HybridRetriever:
                 (
                     1.0
                     - func.coalesce(
-                        func.cast(Fact.embedding, text("vector")).op("<=>")(
-                            func.cast(embedding_literal, text("vector"))
-                        ),
+                        Fact.embedding.op("<=>")(embedding_expr),
                         1.0,
                     )
                 ).label("score"),

@@ -204,10 +204,11 @@ if "session_id" not in st.session_state:
 
     # Create OZMemory instance for the active session.
     st.session_state.memory = OZMemory(
-        session_id=st.session_state.session_external_id,
+        session_id=st.session_state.session_id,
         user_id=st.session_state.user_id,
         client=_async_oz,
         return_messages=True,
+        max_messages=500,
     )
     st.session_state.messages = _messages_to_dicts(st.session_state.memory)
     logger.info(
@@ -254,10 +255,11 @@ with st.sidebar:
             st.session_state.session_id = s_id
             st.session_state.session_external_id = s_ext
             st.session_state.memory = OZMemory(
-                session_id=s_ext,
+                session_id=s_id,
                 user_id=st.session_state.user_id,
                 client=_async_oz,
                 return_messages=True,
+                max_messages=500,
             )
             st.session_state.messages = _messages_to_dicts(st.session_state.memory)
             st.rerun()
@@ -269,10 +271,11 @@ with st.sidebar:
         st.session_state.session_id = sid
         st.session_state.session_external_id = ext
         st.session_state.memory = OZMemory(
-            session_id=ext,
+            session_id=sid,
             user_id=st.session_state.user_id,
             client=_async_oz,
             return_messages=True,
+            max_messages=500,
         )
         st.session_state.messages = []
         st.rerun()
