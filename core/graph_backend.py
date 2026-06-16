@@ -1,15 +1,15 @@
-"""Graph backend factory — selects backend based on config.
+"""Graph backend factory — selects backend based on per-org config.
 
 Usage::
 
     from core.graph_backend import init_graph_backend
 
-    backend = await init_graph_backend(db=async_session)
+    backend = await init_graph_backend(db=async_session, org_config=org_config)
     entity = await backend.create_entity(org_id=..., name="Acme", ...)
 
-Configuration resolution:
-1. ``org_config`` parameter (per-org DB config, if provided)
-2. Defaults: ``"postgres"`` backend with max depth ``2`` when no config
+There are **no** defaults.  ``org_config`` must contain ``graph_backend``
+and ``graph_max_traversal_depth``.  If the graph is intentionally disabled,
+set ``graph_backend`` to ``"none"`` in the per-org config.
 """
 
 from __future__ import annotations
@@ -34,28 +34,35 @@ async def init_graph_backend(
 ) -> GraphBackend | None:
     """Initialise the configured graph backend.
 
-    The backend is selected by ``org_config.graph_backend`` (if provided)
-    or defaults to ``"postgres"``:
+    **There are no defaults.**  ``org_config`` must be provided and must
+    contain ``graph_backend``.  If the graph is intentionally disabled,
+    set ``graph_backend`` to ``"none"`` in the per-org config.
 
-    - ``"postgres"`` (default): :class:`PostgresGraphBackend`
-    - ``"graphiti"`` (legacy): :class:`FalkorDBBackend` (requires FalkorDB)
+    Supported backends:
+
+    - ``"postgres"``: :class:`PostgresGraphBackend` (requires ``db`` and
+      ``graph_max_traversal_depth`` in ``org_config``)
+    - ``"graphiti"`` (legacy): :class:`FalkorDBBackend` (requires
+      ``falkordb_url`` in ``org_config``)
     - ``"none"``: returns ``None`` — graph features disabled
 
-    Legacy aliases ``"falkordb"`` and ``"neo4j"`` are mapped to ``"graphiti"``.
-
-    There is no env-var fallback — all graph configuration comes from
-    the per-org config or hardcoded defaults (``"postgres"``, depth 2).
+    Legacy aliases ``"falkordb"`` and ``"neo4j"`` are mapped to
+    ``"graphiti"``.
 
     Args:
         db: An async SQLAlchemy session. Required for ``postgres`` backend.
             Ignored for ``graphiti`` backend.
-        org_config: Optional resolved org config.  When provided, overrides
-            the defaults for backend selection, traversal depth,
-            and FalkorDB URL.
+        org_config: **Required** — the resolved per-org configuration.
+            Must contain ``graph_backend``.  ``graph_max_traversal_depth``
+            is required for ``postgres``; ``falkordb_url`` for ``graphiti``.
 
     Returns:
         An initialised ``GraphBackend`` instance, or ``None`` if graph
         features are disabled.
+
+    Raises:
+        ValueError: If ``org_config`` is ``None``, or required fields are
+            missing, or the backend name is unknown.
     """
     backend_name = _resolve_backend(org_config)
 
@@ -64,11 +71,13 @@ async def init_graph_backend(
             raise ValueError("db is required for postgres graph backend")
         from packages.graphiti_client.backends.postgres import PostgresGraphBackend
 
-        max_depth = (
-            org_config.graph_max_traversal_depth
-            if org_config
-            else 2
-        )
+        if org_config is None or org_config.graph_max_traversal_depth is None:
+            raise ValueError(
+                "graph_max_traversal_depth is required in per-org "
+                "configuration for the postgres graph backend. "
+                "Set it via PATCH /admin/org/config."
+            )
+        max_depth = org_config.graph_max_traversal_depth
         backend: GraphBackend = PostgresGraphBackend(db, max_traversal_depth=max_depth)
         logger.info("graph_backend.initialized", extra={"backend": "postgres"})
         return backend
@@ -76,14 +85,14 @@ async def init_graph_backend(
     elif backend_name == "graphiti":
         from core.graphiti import init_graphiti, get_graphiti
 
-        falkordb_url = (
-            org_config.falkordb_url
-            if org_config and org_config.falkordb_url
-            else None
-        )
+        if org_config is None or not org_config.falkordb_url:
+            raise ValueError(
+                "falkordb_url is required in per-org configuration "
+                "for the graphiti graph backend. "
+                "Set it via PATCH /admin/org/config."
+            )
+        falkordb_url = org_config.falkordb_url
         try:
-            if falkordb_url is None:
-                raise ValueError("FALKORDB_URL is required for graphiti backend")
             await init_graphiti(str(falkordb_url))
             client = get_graphiti()
             from packages.graphiti_client.backends.falkordb import FalkorDBBackend
@@ -111,15 +120,29 @@ def _resolve_backend(
 ) -> str:
     """Resolve the effective backend name, handling legacy aliases.
 
-    Priority:
-    1. ``org_config.graph_backend`` (if provided and non-empty)
-    2. Default: ``"postgres"``
+    ``org_config`` is **required** — there is no fallback default.
+    The caller must have ``graph_backend`` set in the per-org config.
+    Use ``"none"`` to disable graph features.
+
+    Args:
+        org_config: The resolved per-org configuration.  Must contain
+            ``graph_backend``.
+
+    Returns:
+        The resolved backend name (``"postgres"``, ``"graphiti"``, or
+        ``"none"``).
+
+    Raises:
+        ValueError: If ``org_config`` is ``None`` or ``graph_backend``
+            is not set.
     """
-    backend: str = (
-        org_config.graph_backend
-        if org_config and org_config.graph_backend
-        else "postgres"
-    )
+    if org_config is None or not org_config.graph_backend:
+        raise ValueError(
+            "graph_backend is not configured. "
+            "Set graph_backend in the per-org configuration "
+            "via PATCH /admin/org/config."
+        )
+    backend: str = org_config.graph_backend
     alias_map = {
         "falkordb": "graphiti",
         "neo4j": "graphiti",

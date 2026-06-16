@@ -157,6 +157,24 @@ class ExternalServiceError(AppError):
         super().__init__(message=message, detail=detail)
 
 
+class LLMConfigurationError(AppError):
+    """LLM backend cannot be resolved due to missing or invalid configuration.
+
+    Raised when no LLM backend can be resolved because the per-org config
+    is missing required fields (API keys, model names, endpoints, etc.).
+    """
+
+    status_code: int = 502
+    code: str = "llm_configuration_error"
+
+    def __init__(
+        self,
+        message: str = "No LLM backend configured.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
 class PayloadTooLargeError(AppError):
     """Request body exceeds the maximum allowed size."""
 
@@ -259,6 +277,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         RateLimitError: 429,
         InsufficientCreditsError: 402,
         ExternalServiceError: 502,
+        LLMConfigurationError: 502,
         PayloadTooLargeError: 413,
         EntityNotFoundError: 404,
         EdgeNotFoundError: 404,

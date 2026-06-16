@@ -202,12 +202,7 @@ importlib.import_module("core.llm_backends")
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class LLMConfigurationError(Exception):
-    """Raised when no LLM backend can be resolved from available configuration."""
-
-    def __init__(self, message: str = "No LLM backend configured.") -> None:
-        self.message = message
-        super().__init__(self.message)
+from core.exceptions import LLMConfigurationError as LLMConfigurationError
 
 
 async def resolve_backend(
@@ -268,84 +263,79 @@ async def _create_backend(provider: str, config: dict | None = None) -> LLMBacke
     """Instantiate an LLM backend for *provider*, passing optional config.
 
     All provider-specific values (API keys, model names, endpoints) come
-    exclusively from *config* — there is no env-var fallback.  If *config*
-    does not contain a required value, the backend class uses its own
-    hardcoded default (e.g. ``OllamaBackend.DEFAULT_CHAT_MODEL``) or the
-    upstream library raises an auth/connection error.
+    exclusively from *config* — there is **no** env-var fallback and **no**
+    hardcoded default at this layer.  Every required field must be present
+    in *config* or the function raises :class:`LLMConfigurationError`.
 
     Args:
         provider: One of ``"ollama"``, ``"openai"``, ``"azure"``,
             ``"anthropic"``, ``"openrouter"``.
         config: Optional dict with provider-specific overrides (API keys,
-            model names, endpoints).
+            model names, endpoints).  Required fields vary by provider.
 
     Returns:
         An initialised ``LLMBackend`` instance.
 
     Raises:
+        LLMConfigurationError: If a required config field is missing or empty.
         ValueError: If *provider* is not recognised.
     """
     backend_cls = LLMBackendRegistry.get(provider)
 
     if provider == "ollama":
-        base_url = (
-            config.get("ollama_base_url", "http://localhost:11434")
-            if config
-            else "http://localhost:11434"
-        )
-        instance: LLMBackend = backend_cls(base_url=base_url)  # type: ignore[call-arg]
+        if config is None or not config.get("ollama_base_url"):
+            raise LLMConfigurationError(
+                "Ollama backend requires ollama_base_url in per-org "
+                "configuration.  Set it via PATCH /admin/org/config."
+            )
+        instance: LLMBackend = backend_cls(base_url=config["ollama_base_url"])  # type: ignore[call-arg]
     elif provider == "openai":
-        api_key = (
-            config.get("openai_api_key", "")
-            if config
-            else ""
-        )
-        model = (
-            config.get("openai_model", "")
-            if config
-            else ""
-        )
+        if config is None or not config.get("openai_api_key"):
+            raise LLMConfigurationError(
+                "OpenAI backend requires openai_api_key in per-org "
+                "configuration.  Set it via PATCH /admin/org/config."
+            )
+        api_key: str = config["openai_api_key"]
+        model: str | None = config.get("openai_model")
         instance = backend_cls(api_key=api_key, model=model)
     elif provider == "azure":
-        endpoint = (
-            config.get("azure_endpoint", "")
-            if config
-            else ""
+        if config is None or not config.get("azure_endpoint"):
+            raise LLMConfigurationError(
+                "Azure backend requires azure_endpoint in per-org "
+                "configuration.  Set it via PATCH /admin/org/config."
+            )
+        if config is None or not config.get("azure_api_key"):
+            raise LLMConfigurationError(
+                "Azure backend requires azure_api_key in per-org "
+                "configuration.  Set it via PATCH /admin/org/config."
+            )
+        if config is None or not config.get("azure_deployment"):
+            raise LLMConfigurationError(
+                "Azure backend requires azure_deployment in per-org "
+                "configuration.  Set it via PATCH /admin/org/config."
+            )
+        instance = backend_cls(
+            endpoint=config["azure_endpoint"],
+            api_key=config["azure_api_key"],
+            deployment=config["azure_deployment"],
         )
-        api_key = (
-            config.get("azure_api_key", "")
-            if config
-            else ""
-        )
-        deployment = (
-            config.get("azure_deployment", "")
-            if config
-            else ""
-        )
-        instance = backend_cls(endpoint=endpoint, api_key=api_key, deployment=deployment)
     elif provider == "anthropic":
-        api_key = (
-            config.get("anthropic_api_key", "")
-            if config
-            else ""
-        )
-        model = (
-            config.get("anthropic_model", "claude-sonnet-4-20250514")
-            if config
-            else "claude-sonnet-4-20250514"
-        )
+        if config is None or not config.get("anthropic_api_key"):
+            raise LLMConfigurationError(
+                "Anthropic backend requires anthropic_api_key in per-org "
+                "configuration.  Set it via PATCH /admin/org/config."
+            )
+        api_key = config["anthropic_api_key"]
+        model = config.get("anthropic_model")
         instance = backend_cls(api_key=api_key, model=model)
     elif provider == "openrouter":
-        api_key = (
-            config.get("api_key", "")
-            if config
-            else ""
-        )
-        model = (
-            config.get("model", "")
-            if config
-            else ""
-        )
+        if config is None or not config.get("api_key"):
+            raise LLMConfigurationError(
+                "OpenRouter backend requires api_key in per-org "
+                "configuration.  Set it via PATCH /admin/org/config."
+            )
+        api_key = config["api_key"]
+        model = config.get("model")
         instance = backend_cls(api_key=api_key, model=model)
     else:
         raise ValueError(f"Unknown provider: {provider}")

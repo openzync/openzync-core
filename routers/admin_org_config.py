@@ -10,9 +10,11 @@ only manage their own org's config.
 
 from __future__ import annotations
 
+from pathlib import Path
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Request
+import yaml
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.auth import require_org_id, require_scope
@@ -29,6 +31,9 @@ router = APIRouter(
     tags=["Admin - Organization Config"],
 )
 
+#: Path to the onboarding defaults YAML file (relative to project root).
+DEFAULTS_PATH = Path(__file__).parent.parent / "config" / "defaults" / "org_config.yaml"
+
 
 # ── Dependency factory ────────────────────────────────────────────────────────
 
@@ -44,6 +49,33 @@ def _get_config_service(
     """
     redis = getattr(request.app.state, "redis", None)
     return OrgConfigService(db=db, redis=redis)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GET  /defaults  — Seeded onboarding defaults
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@router.get(
+    "/defaults",
+    response_model=UpdateOrgConfigRequest,
+)
+async def get_org_config_defaults() -> UpdateOrgConfigRequest:
+    """Return seeded onboarding defaults for a new organization.
+
+    These are **not** the stored config — they are starter values for the
+    onboarding form.  The user reviews and adjusts them before saving via
+    ``PATCH /admin/org/config``.
+
+    No auth required — this endpoint returns only non-sensitive defaults.
+    Secrets such as ``openai_api_key`` are returned as empty strings so
+    the user must fill them in.
+    """
+    if not DEFAULTS_PATH.is_file():
+        raise HTTPException(status_code=500, detail="Defaults configuration file not found")
+    with DEFAULTS_PATH.open() as f:
+        data: dict = yaml.safe_load(f)
+    return UpdateOrgConfigRequest(**data)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

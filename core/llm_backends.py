@@ -15,12 +15,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 from typing import Any, ClassVar
 
 import httpx
 
+from core.exceptions import LLMConfigurationError
 from core.llm import (
     ChatResponse,
     EmbeddingResponse,
@@ -594,7 +594,8 @@ class OpenRouterBackend(LLMBackend):
     """LLM backend powered by OpenRouter's unified API.
 
     Uses the OpenAI-compatible client pointed at ``https://openrouter.ai/api/v1``.
-    Requires ``OPENROUTER_API_KEY`` environment variable or constructor argument.
+    The API key must be provided via the constructor (from per-org config).
+    There is no env-var fallback.
 
     Default model: ``openai/gpt-oss-120b:free`` (no-cost tier).
 
@@ -605,21 +606,18 @@ class OpenRouterBackend(LLMBackend):
     DEFAULT_CHAT_MODEL: ClassVar[str] = "openai/gpt-oss-120b:free"
     BASE_URL: ClassVar[str] = "https://openrouter.ai/api/v1"
 
-    def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
-        import os
-
+    def __init__(self, api_key: str, model: str | None = None) -> None:
         from openai import AsyncOpenAI
 
-        key = api_key or os.environ.get("OPENROUTER_API_KEY", "")
-        if not key:
+        if not api_key:
             raise LLMConfigurationError(
-                "OPENROUTER_API_KEY is not set. "
-                "Set it in your environment or .env file."
+                "OpenRouter API key is required. "
+                "Set it via PATCH /admin/org/config."
             )
 
         self._client = AsyncOpenAI(
             base_url=self.BASE_URL,
-            api_key=key,
+            api_key=api_key,
             default_headers={
                 "HTTP-Referer": "https://github.com/thelinkai/openzep",
                 "X-OpenRouter-Title": "OpenZep - Agent Memory Platform",

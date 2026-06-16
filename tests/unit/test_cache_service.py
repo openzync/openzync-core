@@ -19,7 +19,7 @@ class TestCacheService:
     @pytest.mark.asyncio
     async def test_no_redis_degrades_gracefully(self) -> None:
         """With redis=None, all operations return None/False."""
-        cache = CacheService(redis=None)
+        cache = CacheService(redis=None, default_ttl=60)
         assert await cache.get("key") is None
         assert await cache.set("key", "val") is False
         assert await cache.delete("key") is False
@@ -30,7 +30,7 @@ class TestCacheService:
         """get() returns the cached string value."""
         mock_redis = AsyncMock()
         mock_redis.get.return_value = "cached_value"
-        cache = CacheService(redis=mock_redis)
+        cache = CacheService(redis=mock_redis, default_ttl=60)
 
         result = await cache.get("test_key")
         assert result == "cached_value"
@@ -41,7 +41,7 @@ class TestCacheService:
         """get() returns None when key does not exist."""
         mock_redis = AsyncMock()
         mock_redis.get.return_value = None
-        cache = CacheService(redis=mock_redis)
+        cache = CacheService(redis=mock_redis, default_ttl=60)
 
         result = await cache.get("missing_key")
         assert result is None
@@ -51,7 +51,7 @@ class TestCacheService:
         """get() returns None when Redis raises."""
         mock_redis = AsyncMock()
         mock_redis.get.side_effect = ConnectionError("Redis down")
-        cache = CacheService(redis=mock_redis)
+        cache = CacheService(redis=mock_redis, default_ttl=60)
 
         result = await cache.get("test_key")
         assert result is None
@@ -61,7 +61,7 @@ class TestCacheService:
         """set() calls setex with the correct TTL."""
         mock_redis = AsyncMock()
         mock_redis.setex.return_value = True
-        cache = CacheService(redis=mock_redis)
+        cache = CacheService(redis=mock_redis, default_ttl=60)
 
         result = await cache.set("test_key", "test_value", ttl=60)
         assert result is True
@@ -72,7 +72,7 @@ class TestCacheService:
         """delete() returns True when key is deleted."""
         mock_redis = AsyncMock()
         mock_redis.delete.return_value = 1
-        cache = CacheService(redis=mock_redis)
+        cache = CacheService(redis=mock_redis, default_ttl=60)
 
         result = await cache.delete("test_key")
         assert result is True
@@ -82,7 +82,7 @@ class TestCacheService:
         """get_or_compute returns cached value without calling compute_fn."""
         mock_redis = AsyncMock()
         mock_redis.get.return_value = "cached"
-        cache = CacheService(redis=mock_redis)
+        cache = CacheService(redis=mock_redis, default_ttl=60)
         compute_fn = MagicMock()
 
         result = await cache.get_or_compute("key", compute_fn)
@@ -97,7 +97,7 @@ class TestCacheService:
         mock_redis.get.side_effect = [None, None]
         mock_redis.set.return_value = True  # stampede lock
         mock_redis.setex.return_value = True
-        cache = CacheService(redis=mock_redis)
+        cache = CacheService(redis=mock_redis, default_ttl=60)
 
         result = await cache.get_or_compute("key", lambda: "computed_value")
         assert result == "computed_value"

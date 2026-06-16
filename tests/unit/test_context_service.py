@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from schemas.organization_config import OrgConfigBase
 from services.cache_service import CacheService
 from services.context_service import ContextService
 from services.hybrid_retriever import HybridRetriever
@@ -28,6 +29,7 @@ class TestContextService:
             org_id=self.ORG_ID,
             redis=mock_redis,
             graph_backend=mock_graph_backend,
+            org_config=OrgConfigBase(context_cache_ttl=300),
         )
         # Mock the internal retriever to control its output
         mock_retriever = AsyncMock(spec=HybridRetriever)

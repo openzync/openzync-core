@@ -1,0 +1,29 @@
+# Onboarding defaults for new organizations.
+#
+# Returned by GET /admin/org/config/defaults.  The onboarding page
+# pre-fills its config form with these values so the user only needs
+# to fill in secrets (API keys) and tweak any preferences before saving.
+#
+# These defaults are NOT fallbacks — they are UI seed values.  The
+# backend code never reads this file at runtime to resolve a missing
+# config value.  If a required field is absent from the stored per-org
+# config, the backend raises an explicit error.
+
+llm_backend: openai
+
+# Secrets — left blank so the user MUST fill them in during onboarding.
+openai_api_key: ""
+
+llm_model: gpt-4o-mini
+llm_temperature: 0.0
+llm_max_tokens: 4096
+
+embedding_backend: openai
+embedding_model: text-embedding-3-small
+embedding_dim: 1536
+
+graph_backend: postgres
+graph_max_traversal_depth: 2
+
+context_cache_ttl: 300
+audit_log_response_body: false

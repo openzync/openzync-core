@@ -41,18 +41,22 @@ class CacheService:
 
     Args:
         redis: An optional async Redis client.
-        default_ttl: Default cache TTL in seconds.  Falls back to ``30``
-            when not provided.  Callers can override this per-call via
-            the ``ttl`` parameter.
+        default_ttl: Default cache TTL in seconds.  **Required** — there
+            is no fallback.  Callers can override this per-call via the
+            ``ttl`` parameter.
     """
 
     def __init__(
         self, redis: object | None = None, default_ttl: int | None = None
     ) -> None:
+        if default_ttl is None:
+            raise ValueError(
+                "default_ttl is required. "
+                "Set context_cache_ttl in the per-org configuration "
+                "via PATCH /admin/org/config."
+            )
         self._redis = redis
-        self._default_ttl: int = (
-            default_ttl if default_ttl is not None else 30
-        )
+        self._default_ttl: int = default_ttl
 
     # ── Public API ──────────────────────────────────────────────────────────────
 
