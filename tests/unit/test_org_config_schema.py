@@ -55,6 +55,8 @@ class TestOrgConfigBaseToDict:
             llm_model="gpt-4o",
             openai_api_key="sk-test",
             ollama_base_url="http://ollama:11434",
+            llm_temperature=0.7,
+            llm_max_tokens=2048,
         )
         d = cfg.to_llm_config_dict()
         assert d["llm_backend"] == "openai"
@@ -65,12 +67,22 @@ class TestOrgConfigBaseToDict:
         assert d["anthropic_model"] == "gpt-4o"
         assert d["azure_deployment"] == "gpt-4o"
         assert d["model"] == "gpt-4o"
+        # Temperature and max_tokens
+        assert d["temperature"] == 0.7
+        assert d["max_tokens"] == 2048
 
     def test_to_llm_config_dict_excludes_none(self) -> None:
         """Fields with None values should be omitted from the dict."""
         cfg = OrgConfigBase()
         d = cfg.to_llm_config_dict()
         assert d == {}
+
+    def test_to_llm_config_dict_temperature_boundaries(self) -> None:
+        """Temperature should respect inclusive bounds."""
+        cfg = OrgConfigBase(llm_temperature=0.0)
+        assert cfg.to_llm_config_dict()["temperature"] == 0.0
+        cfg = OrgConfigBase(llm_temperature=2.0)
+        assert cfg.to_llm_config_dict()["temperature"] == 2.0
 
     def test_to_embedding_config_dict(self) -> None:
         """to_embedding_config_dict() should return flat embedding fields."""

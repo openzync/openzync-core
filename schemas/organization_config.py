@@ -35,6 +35,17 @@ class OrgConfigBase(BaseModel):
         default=None,
         description="Model name/tag for the LLM backend.",
     )
+    llm_temperature: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=2.0,
+        description="LLM sampling temperature (0.0–2.0).",
+    )
+    llm_max_tokens: int | None = Field(
+        default=None,
+        ge=1,
+        description="Maximum tokens in the LLM response.",
+    )
     openai_api_key: str | None = Field(
         default=None,
         description="OpenAI API key.",
@@ -105,14 +116,14 @@ class OrgConfigBase(BaseModel):
 
     # ── Helpers for downstream callers ───────────────────────────────────────
 
-    def to_llm_config_dict(self) -> dict[str, str]:
+    def to_llm_config_dict(self) -> dict[str, str | float | int]:
         """Return config as a dict suitable for ``core.llm.resolve_backend()``.
 
         Only non-``None`` fields are included.  The returned dict maps
         our canonical field names to the provider-specific keys that
         ``_create_backend()`` in ``core/llm.py`` expects.
         """
-        d: dict[str, str] = {}
+        d: dict[str, str | float | int] = {}
         if self.llm_backend is not None:
             d["llm_backend"] = self.llm_backend
         if self.openai_api_key is not None:
@@ -133,6 +144,10 @@ class OrgConfigBase(BaseModel):
         if self.openrouter_api_key is not None:
             d["openrouter_api_key"] = self.openrouter_api_key
             d["api_key"] = self.openrouter_api_key
+        if self.llm_temperature is not None:
+            d["temperature"] = self.llm_temperature
+        if self.llm_max_tokens is not None:
+            d["max_tokens"] = self.llm_max_tokens
         return d
 
     def to_embedding_config_dict(self) -> dict[str, str | int]:
@@ -165,6 +180,8 @@ class UpdateOrgConfigRequest(BaseModel):
     # Same fields as OrgConfigBase, all optional
     llm_backend: str | None = None
     llm_model: str | None = None
+    llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
+    llm_max_tokens: int | None = Field(default=None, ge=1)
     openai_api_key: str | None = None
     openrouter_api_key: str | None = None
     azure_openai_endpoint: str | None = None
