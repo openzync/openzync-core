@@ -41,7 +41,7 @@ async def test_classification_accuracy() -> None:
     from core.llm import resolve_backend
 
     dataset = load_golden("classification.json")
-    llm = await resolve_backend()
+    llm = await resolve_backend(provider="openai")
 
     total = len(dataset)
     correct = 0

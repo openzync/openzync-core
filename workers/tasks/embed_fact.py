@@ -25,10 +25,11 @@ async def embed_fact(
 ) -> None:
     """Generate an embedding for a fact and store it in ``facts.embedding``.
 
-    Resolution chain for the embedding model:
-        1. ``EMBEDDING_BACKEND`` env var (if set) → overrides the chat LLM.
-        2. ``LLM_BACKEND`` env var → fallback.
-        3. Auto-detect (Ollama on localhost) → last resort.
+    The embedding backend, model, and dimension come exclusively from the
+    per-org config (``org_cfg.embedding_backend`` / ``embedding_model`` /
+    ``embedding_dim``) resolved from the ``organizations.config`` JSONB
+    column.  There is no env-var fallback — if any required field is
+    ``None`` the task logs a warning and returns early.
 
     Args:
         ctx: ARQ worker context (unused — required by ARQ contract).
@@ -39,7 +40,7 @@ async def embed_fact(
 
     Raises:
         ValueError: If the embedding dimension does not match
-            ``EMBEDDING_DIM``.
+            the per-org config ``embedding_dim``.
     """
     if trace_id:
         structlog.contextvars.bind_contextvars(trace_id=trace_id)

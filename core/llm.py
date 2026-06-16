@@ -214,16 +214,13 @@ async def resolve_backend(
     provider: str | None = None,
     org_config: dict | None = None,
 ) -> LLMBackend:
-    """Resolve the appropriate LLM backend via a cascading configuration chain.
+    """Resolve the appropriate LLM backend via org config or explicit argument.
 
     The resolution order is:
 
     1. **Org-level config** — ``org_config.get("llm_backend")``
     2. **Explicit argument** — the ``provider`` parameter
-    3. **Environment variable** — ``MG_LLM_BACKEND`` (via settings)
-    4. **Auto-detect** — checks whether Ollama is reachable at
-       ``OLLAMA_BASE_URL``
-    5. **Error** — raises :class:`LLMConfigurationError`
+    3. **Error** — raises :class:`LLMConfigurationError`
 
     Args:
         provider: Explicit override.  If provided, org config is skipped.
@@ -240,8 +237,6 @@ async def resolve_backend(
         LLMConfigurationError: If no backend could be resolved.
         ValueError: If the resolved provider name is unknown.
     """
-    from core.config import settings
-
     provider_name: str | None = None
 
     # 1. Org-level config (skip if explicit provider given).
@@ -259,51 +254,28 @@ async def resolve_backend(
         logger.debug("llm.resolved_from_argument", extra={"provider": provider_name})
         return await _create_backend(provider_name, org_config)
 
-    # 3. Environment variable.
-    if settings.LLM_BACKEND:
-        provider_name = settings.LLM_BACKEND
-        logger.debug(
-            "llm.resolved_from_env",
-            extra={"provider": provider_name},
-        )
-        return await _create_backend(provider_name)
-
-    # 4. Auto-detect Ollama on localhost.
-    if await _detect_ollama(settings.OLLAMA_BASE_URL):
-        logger.info("llm.auto_detected_ollama", extra={"url": settings.OLLAMA_BASE_URL})
-        return await _create_backend("ollama")
-
-    # 5. Nothing worked.
+    # 3. Nothing worked.
     raise LLMConfigurationError(
-        "No LLM backend configured.  Set MG_LLM_BACKEND environment variable "
-        "or ensure Ollama is running."
+        "No LLM backend configured.  Pass a provider argument or set "
+        "llm_backend in the per-org configuration."
     )
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
 
-async def _detect_ollama(base_url: str) -> bool:
-    """Check whether an Ollama instance is reachable at *base_url*.
-
-    Sends a GET to ``/api/tags`` with a 2-second timeout.  Returns
-    ``True`` if the endpoint responds 200.
-    """
-    import httpx
-
-    try:
-        async with httpx.AsyncClient(timeout=2) as client:
-            resp = await client.get(f"{base_url}/api/tags")
-            return resp.status_code == 200
-    except (httpx.ConnectError, httpx.TimeoutException):
-        return False
-
-
 async def _create_backend(provider: str, config: dict | None = None) -> LLMBackend:
     """Instantiate an LLM backend for *provider*, passing optional config.
 
+    All provider-specific values (API keys, model names, endpoints) come
+    exclusively from *config* — there is no env-var fallback.  If *config*
+    does not contain a required value, the backend class uses its own
+    hardcoded default (e.g. ``OllamaBackend.DEFAULT_CHAT_MODEL``) or the
+    upstream library raises an auth/connection error.
+
     Args:
-        provider: One of ``"ollama"``, ``"openai"``, ``"azure"``, ``"anthropic"``.
+        provider: One of ``"ollama"``, ``"openai"``, ``"azure"``,
+            ``"anthropic"``, ``"openrouter"``.
         config: Optional dict with provider-specific overrides (API keys,
             model names, endpoints).
 
@@ -313,51 +285,49 @@ async def _create_backend(provider: str, config: dict | None = None) -> LLMBacke
     Raises:
         ValueError: If *provider* is not recognised.
     """
-    from core.config import settings
-
     backend_cls = LLMBackendRegistry.get(provider)
 
     if provider == "ollama":
         base_url = (
-            config.get("ollama_base_url", settings.OLLAMA_BASE_URL)
+            config.get("ollama_base_url", "http://localhost:11434")
             if config
-            else settings.OLLAMA_BASE_URL
+            else "http://localhost:11434"
         )
         instance: LLMBackend = backend_cls(base_url=base_url)  # type: ignore[call-arg]
     elif provider == "openai":
         api_key = (
-            config.get("openai_api_key") or settings.OPENAI_API_KEY
-            if config and config.get("openai_api_key")
-            else settings.OPENAI_API_KEY
+            config.get("openai_api_key", "")
+            if config
+            else ""
         )
         model = (
-            config.get("openai_model", settings.LLM_MODEL)
+            config.get("openai_model", "")
             if config
-            else settings.LLM_MODEL
+            else ""
         )
         instance = backend_cls(api_key=api_key, model=model)
     elif provider == "azure":
         endpoint = (
-            config.get("azure_endpoint", settings.AZURE_OPENAI_ENDPOINT)
+            config.get("azure_endpoint", "")
             if config
-            else settings.AZURE_OPENAI_ENDPOINT
+            else ""
         )
         api_key = (
-            config.get("azure_api_key", settings.AZURE_OPENAI_KEY)
+            config.get("azure_api_key", "")
             if config
-            else settings.AZURE_OPENAI_KEY
+            else ""
         )
         deployment = (
-            config.get("azure_deployment", settings.LLM_MODEL)
+            config.get("azure_deployment", "")
             if config
-            else settings.LLM_MODEL
+            else ""
         )
         instance = backend_cls(endpoint=endpoint, api_key=api_key, deployment=deployment)
     elif provider == "anthropic":
         api_key = (
-            config.get("anthropic_api_key", settings.ANTHROPIC_API_KEY)
+            config.get("anthropic_api_key", "")
             if config
-            else settings.ANTHROPIC_API_KEY
+            else ""
         )
         model = (
             config.get("anthropic_model", "claude-sonnet-4-20250514")
@@ -367,14 +337,14 @@ async def _create_backend(provider: str, config: dict | None = None) -> LLMBacke
         instance = backend_cls(api_key=api_key, model=model)
     elif provider == "openrouter":
         api_key = (
-            config.get("api_key", settings.OPENROUTER_API_KEY)
+            config.get("api_key", "")
             if config
-            else settings.OPENROUTER_API_KEY
+            else ""
         )
         model = (
-            config.get("model", settings.LLM_MODEL)
+            config.get("model", "")
             if config
-            else settings.LLM_MODEL
+            else ""
         )
         instance = backend_cls(api_key=api_key, model=model)
     else:

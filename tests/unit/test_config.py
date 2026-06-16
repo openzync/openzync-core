@@ -3,23 +3,26 @@
 These tests validate that the pydantic-settings model loads correctly,
 respects environment variable overrides (with the ``MG_`` prefix used by
 the actual model), and enforces constraints like ``SECRET_KEY min_length``.
+
+.. note::
+
+    LLM / Embedding / Graph / Behaviour settings were removed from this
+    class in favour of per-org DB config.  See
+    ``schemas/organization_config.OrgConfigBase``.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Any
 
 import pytest
 
 # ═══ NOTE: Required env vars must be set BEFORE importing Settings ═══════════
 # The ``settings = Settings()`` singleton in core/config.py is evaluated at
-# import time, and DATABASE_URL / REDIS_URL / FALKORDB_URL / SECRET_KEY have
-# no defaults.
+# import time, and DATABASE_URL / REDIS_URL / SECRET_KEY have no defaults.
 _REQUIRED_ENV: dict[str, str] = {
     "MG_DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/openzep_test",
     "MG_REDIS_URL": "redis://localhost:6379/1",
-    "MG_FALKORDB_URL": "redis://localhost:6380",
     "MG_SECRET_KEY": "a" * 32,
 }
 for _key, _val in _REQUIRED_ENV.items():
@@ -44,8 +47,8 @@ def _settings(**overrides: str) -> Settings:
     """Instantiate Settings without reading the project ``.env`` file.
 
     Unit tests must not be influenced by the developer's local ``.env``
-    file (which may override defaults like ``MG_LLM_BACKEND``).  Passing
-    ``_env_file=None`` tells pydantic-settings to skip the file entirely.
+    file.  Passing ``_env_file=None`` tells pydantic-settings to skip
+    the file entirely.
     """
     return Settings(_env_file=None, **overrides)
 
@@ -61,20 +64,15 @@ class TestSettings:
         _set_required_env(monkeypatch)
 
         s = _settings()
-        assert s.LLM_BACKEND == "ollama"
         assert s.ENVIRONMENT == "development"
-        assert s.EMBEDDING_DIM > 0
-        assert s.GRAPH_BACKEND == "postgres"
         assert s.LOG_LEVEL == "INFO"
 
     def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Settings should pick up ``MG_``-prefixed env vars."""
         _set_required_env(monkeypatch)
-        monkeypatch.setenv("MG_LLM_BACKEND", "openai")
         monkeypatch.setenv("MG_ENVIRONMENT", "staging")
         monkeypatch.setenv("MG_LOG_LEVEL", "DEBUG")
         s = _settings()
-        assert s.LLM_BACKEND == "openai"
         assert s.ENVIRONMENT == "staging"
         assert s.LOG_LEVEL == "DEBUG"
 
@@ -89,7 +87,6 @@ class TestSettings:
     def test_secret_key_min_length_enforced(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A SECRET_KEY shorter than 32 characters should raise a validation error."""
         _set_required_env(monkeypatch)
-        # Must clear MG_SECRET_KEY so the constructor kwarg isn't overridden
         monkeypatch.delenv("MG_SECRET_KEY", raising=False)
 
         with pytest.raises(Exception, match="at least 32 characters"):
@@ -110,15 +107,6 @@ class TestSettings:
         s = _settings()
         assert "localhost:3000" in s.CORS_ORIGINS
 
-    def test_embedding_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Embedding defaults should be sensible for local development."""
-        _set_required_env(monkeypatch)
-        monkeypatch.setenv("MG_EMBEDDING_BACKEND", "ollama")
-
-        s = _settings()
-        assert s.EMBEDDING_BACKEND == "ollama"
-        assert s.EMBEDDING_DIM == 768
-
     def test_frozen_settings_prevent_mutation(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Settings instances are frozen — assignment should raise an error.
 
@@ -130,4 +118,4 @@ class TestSettings:
 
         s = _settings()
         with pytest.raises(Exception, match="frozen"):
-            s.LLM_BACKEND = "anthropic"  # type: ignore[misc]
+            s.ENVIRONMENT = "production"  # type: ignore[misc]

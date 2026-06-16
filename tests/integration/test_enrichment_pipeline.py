@@ -50,10 +50,6 @@ def _set_test_env_vars(
     os.environ["MG_REDIS_URL"] = f"redis://{redis_host}:{redis_port}/0"
     os.environ["MG_ENVIRONMENT"] = "development"
     os.environ["MG_SECRET_KEY"] = "a" * 32
-    os.environ["MG_LLM_BACKEND"] = "ollama"
-    os.environ["MG_OLLAMA_BASE_URL"] = "http://localhost:11434"
-    os.environ["MG_EMBEDDING_DIM"] = "768"
-    os.environ["MG_GRAPH_BACKEND"] = "postgres"
 
 
 @pytest_asyncio.fixture(scope="module")

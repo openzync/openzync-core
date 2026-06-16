@@ -50,7 +50,7 @@ async def test_entity_ontology_accuracy() -> None:
     from core.llm import resolve_backend
 
     dataset = load_golden("entity_ontology.json")
-    llm = await resolve_backend()
+    llm = await resolve_backend(provider="openai")
 
     total = len(dataset)
     type_valid_count = 0

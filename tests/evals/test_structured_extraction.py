@@ -51,7 +51,7 @@ async def test_structured_extraction_accuracy() -> None:
     from core.llm import resolve_backend
 
     dataset = load_golden("structured_extraction.json")
-    llm = await resolve_backend()
+    llm = await resolve_backend(provider="openai")
 
     total = len(dataset)
     correct = 0

@@ -54,10 +54,9 @@ class OllamaBackend(LLMBackend):
 
     def __init__(self, base_url: str = "http://localhost:11434") -> None:
         self._base_url = base_url.rstrip("/")
-        # Read model config from settings (lazy import to avoid circular deps)
-        from core.config import settings as _cfg
-        self._chat_model = getattr(_cfg, "LLM_MODEL", None) or self.DEFAULT_CHAT_MODEL
-        self._embed_model = getattr(_cfg, "EMBEDDING_MODEL", None) or self.DEFAULT_EMBED_MODEL
+        # Model defaults are class constants — no env-var fallback.
+        self._chat_model = self.DEFAULT_CHAT_MODEL
+        self._embed_model = self.DEFAULT_EMBED_MODEL
 
     # ── LLMBackend ─────────────────────────────────────────────────────────
 

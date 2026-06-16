@@ -25,7 +25,6 @@ try:
 except ImportError:
     HAS_GRAPHITI = False
 
-from core.config import settings
 from core.exceptions import ExternalServiceError
 
 logger = logging.getLogger(__name__)
@@ -42,7 +41,7 @@ class GraphitiClient:
 
     Usage::
 
-        client = GraphitiClient(falkordb_url=settings.FALKORDB_URL)
+        client = GraphitiClient(falkordb_url="redis://localhost:6380")
         await client.initialize()
         try:
             entity = await client.add_entity(...)
@@ -59,15 +58,16 @@ class GraphitiClient:
         """Initialise configuration; does **not** connect.
 
         Args:
-            falkordb_url: Redis/FalkorDB connection string.  Falls back to
-                ``settings.FALKORDB_URL``.
+            falkordb_url: Redis/FalkorDB connection string.
+                Must be provided before calling ``initialize()``; there is
+                no env-var fallback.
             llm_client: Optional LLM client for Graphiti's internal entity
                 extraction.  If ``None``, Graphiti will not perform LLM-based
                 enrichment.
             embedder: Optional embedding model for vector-similarity queries.
                 If ``None``, Graphiti falls back to a default.
         """
-        self._falkordb_url: str = falkordb_url or str(settings.FALKORDB_URL)
+        self._falkordb_url: str | None = falkordb_url
         self._llm_client: Any | None = llm_client
         self._embedder: Any | None = embedder
         self._graphiti: Graphiti | None = None
@@ -96,6 +96,12 @@ class GraphitiClient:
             )
             return
 
+        if self._falkordb_url is None:
+            raise ExternalServiceError(
+                message="FalkorDB URL is required to initialise Graphiti. "
+                "Set falkordb_url in the per-org configuration.",
+            )
+
         self._loop = asyncio.get_running_loop()
 
         try:
@@ -104,7 +110,7 @@ class GraphitiClient:
             # pass a FalkorDriver explicitly via the graph_driver parameter.
             self._graphiti = await self._loop.run_in_executor(
                 None,
-                lambda: self._build_graphiti(self._falkordb_url),
+                lambda: self._build_graphiti(self._falkordb_url),  # type: ignore[arg-type]
             )
         except Exception as exc:
             logger.error(
@@ -281,8 +287,8 @@ async def init_graphiti(
     Intended to be called from FastAPI's ``lifespan`` startup context.
 
     Args:
-        falkordb_url: FalkorDB connection string (defaults to
-            ``settings.FALKORDB_URL``).
+        falkordb_url: FalkorDB connection string.  Required; there is no
+            env-var fallback.
         llm_client: Optional LLM client for Graphiti's entity extraction.
         embedder: Optional embedding model.
 

@@ -16,8 +16,6 @@ import logging
 from typing import Any, Callable, TypeVar
 from uuid import UUID
 
-from core.config import settings
-
 logger = logging.getLogger(__name__)
 
 # ── Type variable for the generic ``get_or_compute`` method ───────────────────
@@ -43,9 +41,9 @@ class CacheService:
 
     Args:
         redis: An optional async Redis client.
-        default_ttl: Default cache TTL in seconds.  Falls back to
-            ``settings.CONTEXT_CACHE_TTL`` when not provided.  Callers
-            can override this per-call via the ``ttl`` parameter.
+        default_ttl: Default cache TTL in seconds.  Falls back to ``30``
+            when not provided.  Callers can override this per-call via
+            the ``ttl`` parameter.
     """
 
     def __init__(
@@ -53,9 +51,7 @@ class CacheService:
     ) -> None:
         self._redis = redis
         self._default_ttl: int = (
-            default_ttl
-            if default_ttl is not None
-            else settings.CONTEXT_CACHE_TTL
+            default_ttl if default_ttl is not None else 30
         )
 
     # ── Public API ──────────────────────────────────────────────────────────────
@@ -92,8 +88,7 @@ class CacheService:
             key: The full Redis key.
             value: The string value to cache.
             ttl: TTL in seconds.  Falls back to ``self._default_ttl``
-                (which itself falls back to ``settings.CONTEXT_CACHE_TTL``)
-                when ``None``.
+                (which defaults to ``30``) when ``None``.
 
         Returns:
             ``True`` if the value was set, ``False`` if Redis is
@@ -162,7 +157,7 @@ class CacheService:
             compute_fn: A callable that produces the value to cache.
                 Called only on cache miss or when the lock is acquired.
             ttl: Cache TTL in seconds.  Falls back to
-                ``settings.CONTEXT_CACHE_TTL`` when ``None``.
+                ``self._default_ttl`` (default ``30``) when ``None``.
             enable_stampede_protection: When ``True``, uses ``SET NX EX``
                 to prevent multiple concurrent recomputes.
 
