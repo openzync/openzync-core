@@ -1,9 +1,9 @@
-"""Jinja2 prompt template rendering with auto-injected context.
+"""Prompt template resolution with auto-injected context.
 
 All prompt templates live in the ``prompt_templates`` database table and are
 resolved at runtime via :func:`resolve_prompt_template_by_type`.  The resolved
-``template_text`` is rendered with context variables auto-injected from the DB
-based on the template's type.
+``template_text`` is returned as-is (plain text, no Jinja2) — context is
+assembled and injected by the caller via :func:`build_enrichment_prompt`.
 
 The ``.jinja2`` files under ``prompts/`` exist solely as seed sources for
 the database migration — they are **never** loaded at runtime.
@@ -11,26 +11,15 @@ the database migration — they are **never** loaded at runtime.
 Usage (workers):
     from services.worker.prompt_renderer import render_prompt
 
-    prompt = await render_prompt(
+    system_prompt, ctx = await render_prompt(
         "fact_extraction",
         org_id=org_id,
         episode_id=episode_id,
         session_id=session_id,
         db_session_factory=session_factory,
+        return_context=True,
     )
-
-Usage (eval tests, direct):
-    from services.worker.prompt_renderer import render_prompt
-
-    prompt = await render_prompt(
-        "classification",
-        template_text="Classify: {{ conversation }}",
-        conversation=user_message,
-        intent_labels="greeting, question, command",
-        emotion_labels="joy, frustration, neutral",
-        valence_options="positive, negative, neutral",
-        arousal_options="low, medium, high",
-    )
+    prompt = build_enrichment_prompt(system_prompt, ctx)
 """
 
 from __future__ import annotations
@@ -42,31 +31,20 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from jinja2 import Environment
-
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 # ── Module layout ──────────────────────────────────────────────────────────────
-# 1. Jinja2 environment
-# 2. DataSource enum — every DB-backed variable type the system knows about
-# 3. TYPE_DATA_SOURCES — static registry: prompt_type → set of DataSource
-# 4. Provider functions — one per DataSource, each returns dict[str, Any]
-# 5. Provider dispatch
-# 6. render_prompt() — async, auto-injects context from DB
-# 7. resolve_prompt_template_by_type() — kept for compat
+# 1. DataSource enum — every DB-backed variable type the system knows about
+# 2. TYPE_DATA_SOURCES — static registry: prompt_type → set of DataSource
+# 3. Provider functions — one per DataSource, each returns dict[str, Any]
+# 4. Provider dispatch
+# 5. render_prompt() — async, auto-injects context from DB
+# 6. resolve_prompt_template_by_type() — kept for compat
 # ────────────────────────────────────────────────────────────────────────────────
 
-# ── 1. Jinja2 environment (unchanged) ──────────────────────────────────────────
 
-_ENV = Environment(
-    autoescape=False,  # noqa: S701 — LLM prompts are trusted templates.
-    trim_blocks=True,
-    lstrip_blocks=True,
-)
-
-
-# ── 2. DataSource enum ─────────────────────────────────────────────────────────
+# ── 1. DataSource enum ─────────────────────────────────────────────────────────
 
 
 class DataSource(Enum):
@@ -128,7 +106,7 @@ class DataSource(Enum):
     """Semantically similar facts via BM25 full-text search (scoped to user)."""
 
 
-# ── 3. Static registry: prompt_type → set of DataSource ──────────────────────
+# ── 2. Static registry: prompt_type → set of DataSource ──────────────────────
 
 TYPE_DATA_SOURCES: dict[str, set[DataSource]] = {
     "fact_extraction": {
@@ -176,7 +154,7 @@ TYPE_DATA_SOURCES: dict[str, set[DataSource]] = {
 }
 
 
-# ── 4. Provider functions — one per DataSource ──────────────────────────────
+# ── 3. Provider functions — one per DataSource ──────────────────────────────
 
 _RECENT_HISTORY_WINDOW: int = 10
 
@@ -757,7 +735,7 @@ async def _fetch_custom_instructions(
     return {"custom_instructions": ""}
 
 
-# ── 5. Provider dispatch ──────────────────────────────────────────────────────
+# ── 4. Provider dispatch ──────────────────────────────────────────────────────
 
 _PROVIDER_DISPATCH: dict[DataSource, Any] = {
     DataSource.EPISODE_CONTENT: _fetch_episode_content,
@@ -778,7 +756,7 @@ _PROVIDER_DISPATCH: dict[DataSource, Any] = {
 }
 
 
-# ── 6. render_prompt — async with auto-injection ────────────────────────────
+# ── 5. render_prompt — async with auto-injection ─────────────────────────────
 
 
 async def render_prompt(
@@ -793,7 +771,7 @@ async def render_prompt(
     return_context: bool = False,
     **extra_context: Any,
 ) -> str | tuple[str, dict[str, Any]]:
-    """Render a Jinja2 prompt template with auto-injected context variables.
+    """Fetch and return a system prompt with auto-injected context.
 
     When ``org_id`` and ``db_session_factory`` are provided, context
     variables are auto-fetched from the DB according to the registered
@@ -804,6 +782,9 @@ async def render_prompt(
     no auto-injection occurs — only ``extra_context`` and the optional
     ``template_text`` are used.  This is the direct-invocation mode
     suitable for eval tests and one-off prompts.
+
+    The returned ``template_text`` is plain text (no Jinja2).  Call
+    ``build_enrichment_prompt()`` to assemble the full prompt.
 
     Args:
         prompt_type: The template type (e.g. ``"fact_extraction"``).
@@ -827,7 +808,7 @@ async def render_prompt(
             any auto-injected values with the same key.
 
     Returns:
-        The fully rendered prompt string, ready for the LLM.  When
+        The system prompt text (plain text, no Jinja2).  When
         ``return_context=True``, returns ``(prompt, context_dict)``.
 
     Raises:
@@ -908,15 +889,14 @@ async def render_prompt(
             context["episode_count"] = len(context["episodes"])
 
     # ── Render ─────────────────────────────────────────────────────────
-    template = _ENV.from_string(template_text)
-    rendered = template.render(**context)
-
+    # The template text is plain text (no Jinja2 variables). Context is
+    # injected by the caller via build_enrichment_prompt().
     if return_context:
-        return rendered, context
-    return rendered
+        return template_text, context
+    return template_text
 
 
-# ── 7. resolve_prompt_template_by_type — kept for direct use ──────────────
+# ── 6. resolve_prompt_template_by_type — kept for direct use ────────────────
 
 
 async def resolve_prompt_template_by_type(
@@ -953,7 +933,7 @@ async def resolve_prompt_template_by_type(
     return template.template_text if template is not None else None
 
 
-# ── 8. Prompt assembly helper ─────────────────────────────────────────────────
+# ── 7. Prompt assembly helper ─────────────────────────────────────────────────
 
 
 def build_enrichment_prompt(system_prompt: str, ctx: dict[str, Any]) -> str:
