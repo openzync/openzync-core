@@ -17,11 +17,14 @@ interface OrgConfigResponse {
   stored: Record<string, unknown>;
 }
 
+type GraphBackend = "postgres" | "graphiti" | "none";
 type GraphSearchType = "hybrid" | "bm25" | "vector";
 
 interface FormState {
+  graph_backend: GraphBackend;
   graph_search_type: GraphSearchType;
   graph_max_traversal_depth: number;
+  falkordb_url: string;
 }
 
 interface ToastState {
@@ -32,12 +35,20 @@ interface ToastState {
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const TOAST_DURATION = 4000;
 
 const FIELDS: (keyof FormState)[] = [
+  "graph_backend",
   "graph_search_type",
   "graph_max_traversal_depth",
+  "falkordb_url",
+];
+
+const GRAPH_BACKEND_OPTIONS: { value: GraphBackend; label: string }[] = [
+  { value: "postgres", label: "PostgreSQL (pgvector)" },
+  { value: "graphiti", label: "Graphiti (FalkorDB)" },
+  { value: "none", label: "No graph backend" },
 ];
 
 const SEARCH_TYPE_OPTIONS: { value: GraphSearchType; label: string }[] = [
@@ -88,18 +99,16 @@ function Toast({ toast, onDismiss }: { toast: ToastState; onDismiss: () => void 
   );
 }
 
-// ─── Defaults ──────────────────────────────────────────────────────────────────
-
-const DEFAULT_FORM: FormState = {
-  graph_search_type: "hybrid",
-  graph_max_traversal_depth: 3,
-};
-
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function GraphConfigPage() {
-  const [form, setForm] = useState<FormState>({ ...DEFAULT_FORM });
-  const [initialForm, setInitialForm] = useState<FormState>({ ...DEFAULT_FORM });
+  const [form, setForm] = useState<FormState>({
+    graph_backend: "postgres",
+    graph_search_type: "hybrid",
+    graph_max_traversal_depth: 3,
+    falkordb_url: "",
+  });
+  const [initialForm, setInitialForm] = useState<FormState>({ ...form });
   const [stored, setStored] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -126,13 +135,35 @@ export default function GraphConfigPage() {
       const data: OrgConfigResponse = await res.json();
 
       const stored = data.stored as Record<string, unknown>;
+      const hasAnyStored = FIELDS.some((f) => stored[f] != null);
+
+      // If no stored values exist for this tab, pull onboarding defaults from API
+      let defaults: Record<string, unknown> = {};
+      if (!hasAnyStored) {
+        try {
+          const defRes = await fetch(`${API_BASE}/admin/org/config/defaults`);
+          if (defRes.ok) {
+            defaults = await defRes.json();
+          }
+        } catch {
+          // best-effort; fall through to inline fallbacks
+        }
+      }
+
+      const val = (field: string, fallback: unknown) =>
+        (stored[field] as unknown) ?? (defaults[field] as unknown) ?? fallback;
+
       setForm({
-        graph_search_type: (stored.graph_search_type as GraphSearchType) ?? "hybrid",
-        graph_max_traversal_depth: (stored.graph_max_traversal_depth as number) ?? 3,
+        graph_backend: val("graph_backend", "postgres") as GraphBackend,
+        graph_search_type: val("graph_search_type", "hybrid") as GraphSearchType,
+        graph_max_traversal_depth: val("graph_max_traversal_depth", 3) as number,
+        falkordb_url: val("falkordb_url", "") as string,
       });
       setInitialForm({
-        graph_search_type: (stored.graph_search_type as GraphSearchType) ?? "hybrid",
-        graph_max_traversal_depth: (stored.graph_max_traversal_depth as number) ?? 3,
+        graph_backend: val("graph_backend", "postgres") as GraphBackend,
+        graph_search_type: val("graph_search_type", "hybrid") as GraphSearchType,
+        graph_max_traversal_depth: val("graph_max_traversal_depth", 3) as number,
+        falkordb_url: val("falkordb_url", "") as string,
       });
       setStored(data.stored ?? {});
       setError(null);
@@ -246,6 +277,34 @@ export default function GraphConfigPage() {
               </div>
             )}
             <div className="space-y-4 max-w-md">
+              {/* graph_backend */}
+              <div>
+                <label className="block text-sm font-medium text-surface-300 mb-1">
+                  Graph Backend
+                  
+                </label>
+                <div className="flex gap-2 items-start">
+                  <select
+                    className="input-base flex-1"
+                    value={form.graph_backend}
+                    onChange={(e) => updateField("graph_backend", e.target.value as GraphBackend)}
+                  >
+                    {GRAPH_BACKEND_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                  {isFieldSet("graph_backend") && (
+                    <button
+                      onClick={() => handleResetField("graph_backend")}
+                      className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                      title="Reset to default"
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+
               {/* graph_search_type */}
               <div>
                 <label className="block text-sm font-medium text-surface-300 mb-1">
@@ -273,6 +332,35 @@ export default function GraphConfigPage() {
                   )}
                 </div>
               </div>
+
+              {/* falkordb_url — conditionally shown */}
+              {form.graph_backend === "graphiti" && (
+                <div>
+                  <label className="block text-sm font-medium text-surface-300 mb-1">
+                    FalkorDB URL
+                    
+                  </label>
+                  <div className="flex gap-2 items-start">
+                    <input
+                      className="input-base flex-1"
+                      type="url"
+                      placeholder="falkordb://username:password@host:port"
+                      value={form.falkordb_url}
+                      onChange={(e) => updateField("falkordb_url", e.target.value)}
+                    />
+                    {isFieldSet("falkordb_url") && (
+                      <button
+                        onClick={() => handleResetField("falkordb_url")}
+                        className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                        title="Reset to default"
+                      >
+                        <X size={14} />
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-xs text-surface-500 mt-1">Required when using Graphiti backend</p>
+                </div>
+              )}
 
               {/* graph_max_traversal_depth */}
               <div>

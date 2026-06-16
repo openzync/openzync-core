@@ -42,7 +42,7 @@ interface ToastState {
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const TOAST_DURATION = 4000;
 const LLM_FIELDS: (keyof FormState)[] = [
   "llm_backend",
@@ -108,26 +108,22 @@ function Toast({ toast, onDismiss }: { toast: ToastState; onDismiss: () => void 
   );
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-
-const DEFAULT_FORM: FormState = {
-  llm_backend: "openai",
-  llm_model: "",
-  llm_temperature: 0.7,
-  llm_max_tokens: 4096,
-  openai_api_key: "",
-  anthropic_api_key: "",
-  openrouter_api_key: "",
-  ollama_base_url: "",
-  azure_openai_endpoint: "",
-  azure_openai_key: "",
-};
-
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function LlmConfigPage() {
-  const [form, setForm] = useState<FormState>({ ...DEFAULT_FORM });
-  const [initialForm, setInitialForm] = useState<FormState>({ ...DEFAULT_FORM });
+  const [form, setForm] = useState<FormState>({
+    llm_backend: "openai",
+    llm_model: "",
+    llm_temperature: 0.7,
+    llm_max_tokens: 4096,
+    openai_api_key: "",
+    anthropic_api_key: "",
+    openrouter_api_key: "",
+    ollama_base_url: "",
+    azure_openai_endpoint: "",
+    azure_openai_key: "",
+  });
+  const [initialForm, setInitialForm] = useState<FormState>({ ...form });
   const [stored, setStored] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -160,35 +156,53 @@ export default function LlmConfigPage() {
       const data: OrgConfigResponse = await res.json();
 
       const stored = data.stored as Record<string, unknown>;
+      const hasAnyStored = LLM_FIELDS.some((f) => stored[f] != null);
+
+      // If no stored values exist for this tab, pull onboarding defaults from API
+      let defaults: Record<string, unknown> = {};
+      if (!hasAnyStored) {
+        try {
+          const defRes = await fetch(`${API_BASE}/admin/org/config/defaults`);
+          if (defRes.ok) {
+            defaults = await defRes.json();
+          }
+        } catch {
+          // defaults fetch is best-effort; fall through to inline fallbacks
+        }
+      }
+
+      const val = (field: string, fallback: unknown) =>
+        (stored[field] as unknown) ?? (defaults[field] as unknown) ?? fallback;
+
       setForm({
-        llm_backend: (stored.llm_backend as LlmBackend) ?? "openai",
-        llm_model: (stored.llm_model as string) ?? "",
-        llm_temperature: (stored.llm_temperature as number) ?? 0.7,
-        llm_max_tokens: (stored.llm_max_tokens as number) ?? 4096,
-        openai_api_key: (stored.openai_api_key as string) ?? "",
-        anthropic_api_key: (stored.anthropic_api_key as string) ?? "",
-        openrouter_api_key: (stored.openrouter_api_key as string) ?? "",
-        ollama_base_url: (stored.ollama_base_url as string) ?? "",
-        azure_openai_endpoint: (stored.azure_openai_endpoint as string) ?? "",
-        azure_openai_key: (stored.azure_openai_key as string) ?? "",
+        llm_backend: val("llm_backend", "openai") as LlmBackend,
+        llm_model: val("llm_model", "") as string,
+        llm_temperature: val("llm_temperature", 0.7) as number,
+        llm_max_tokens: val("llm_max_tokens", 4096) as number,
+        openai_api_key: val("openai_api_key", "") as string,
+        anthropic_api_key: val("anthropic_api_key", "") as string,
+        openrouter_api_key: val("openrouter_api_key", "") as string,
+        ollama_base_url: val("ollama_base_url", "") as string,
+        azure_openai_endpoint: val("azure_openai_endpoint", "") as string,
+        azure_openai_key: val("azure_openai_key", "") as string,
       });
       setInitialForm({
-        llm_backend: (stored.llm_backend as LlmBackend) ?? "openai",
-        llm_model: (stored.llm_model as string) ?? "",
-        llm_temperature: (stored.llm_temperature as number) ?? 0.7,
-        llm_max_tokens: (stored.llm_max_tokens as number) ?? 4096,
-        openai_api_key: (stored.openai_api_key as string) ?? "",
-        anthropic_api_key: (stored.anthropic_api_key as string) ?? "",
-        openrouter_api_key: (stored.openrouter_api_key as string) ?? "",
-        ollama_base_url: (stored.ollama_base_url as string) ?? "",
-        azure_openai_endpoint: (stored.azure_openai_endpoint as string) ?? "",
-        azure_openai_key: (stored.azure_openai_key as string) ?? "",
+        llm_backend: val("llm_backend", "openai") as LlmBackend,
+        llm_model: val("llm_model", "") as string,
+        llm_temperature: val("llm_temperature", 0.7) as number,
+        llm_max_tokens: val("llm_max_tokens", 4096) as number,
+        openai_api_key: val("openai_api_key", "") as string,
+        anthropic_api_key: val("anthropic_api_key", "") as string,
+        openrouter_api_key: val("openrouter_api_key", "") as string,
+        ollama_base_url: val("ollama_base_url", "") as string,
+        azure_openai_endpoint: val("azure_openai_endpoint", "") as string,
+        azure_openai_key: val("azure_openai_key", "") as string,
       });
       setStored(data.stored ?? {});
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load configuration");
-      // initialForm keeps defaults so the form remains interactive
+      // initialForm keeps current values so the form remains interactive
     } finally {
       setLoading(false);
     }

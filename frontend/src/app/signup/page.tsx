@@ -56,7 +56,7 @@ export default function SignupPage() {
       const data = await res.json();
       sessionStorage.setItem("mg_access_token", data.access_token);
       sessionStorage.setItem("mg_refresh_token", data.refresh_token);
-      router.replace("/overview");
+      router.replace("/onboarding");
     } catch (err: any) {
       setError(err.message ?? "Connection error. Please try again.");
     } finally {

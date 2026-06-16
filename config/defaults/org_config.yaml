@@ -23,6 +23,7 @@ embedding_model: text-embedding-3-small
 embedding_dim: 1536
 
 graph_backend: postgres
+graph_search_type: hybrid
 graph_max_traversal_depth: 2
 
 context_cache_ttl: 300

@@ -30,7 +30,7 @@ interface ToastState {
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const TOAST_DURATION = 4000;
 
 const FIELDS: (keyof FormState)[] = [
@@ -80,18 +80,14 @@ function Toast({ toast, onDismiss }: { toast: ToastState; onDismiss: () => void 
   );
 }
 
-// ─── Defaults ──────────────────────────────────────────────────────────────────
-
-const DEFAULT_FORM: FormState = {
-  context_cache_ttl: 1800,
-  audit_log_response_body: true,
-};
-
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function BehaviourConfigPage() {
-  const [form, setForm] = useState<FormState>({ ...DEFAULT_FORM });
-  const [initialForm, setInitialForm] = useState<FormState>({ ...DEFAULT_FORM });
+  const [form, setForm] = useState<FormState>({
+    context_cache_ttl: 1800,
+    audit_log_response_body: true,
+  });
+  const [initialForm, setInitialForm] = useState<FormState>({ ...form });
   const [stored, setStored] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -118,13 +114,31 @@ export default function BehaviourConfigPage() {
       const data: OrgConfigResponse = await res.json();
 
       const stored = data.stored as Record<string, unknown>;
+      const hasAnyStored = FIELDS.some((f) => stored[f] != null);
+
+      // If no stored values exist for this tab, pull onboarding defaults from API
+      let defaults: Record<string, unknown> = {};
+      if (!hasAnyStored) {
+        try {
+          const defRes = await fetch(`${API_BASE}/admin/org/config/defaults`);
+          if (defRes.ok) {
+            defaults = await defRes.json();
+          }
+        } catch {
+          // best-effort; fall through to inline fallbacks
+        }
+      }
+
+      const val = (field: string, fallback: unknown) =>
+        (stored[field] as unknown) ?? (defaults[field] as unknown) ?? fallback;
+
       setForm({
-        context_cache_ttl: (stored.context_cache_ttl as number) ?? 1800,
-        audit_log_response_body: (stored.audit_log_response_body as boolean) ?? true,
+        context_cache_ttl: val("context_cache_ttl", 1800) as number,
+        audit_log_response_body: val("audit_log_response_body", true) as boolean,
       });
       setInitialForm({
-        context_cache_ttl: (stored.context_cache_ttl as number) ?? 1800,
-        audit_log_response_body: (stored.audit_log_response_body as boolean) ?? true,
+        context_cache_ttl: val("context_cache_ttl", 1800) as number,
+        audit_log_response_body: val("audit_log_response_body", true) as boolean,
       });
       setStored(data.stored ?? {});
       setError(null);

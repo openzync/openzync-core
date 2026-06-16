@@ -92,6 +92,10 @@ class OrgConfigBase(BaseModel):
         default=None,
         description="Graph backend (postgres, graphiti, none).",
     )
+    graph_search_type: str | None = Field(
+        default=None,
+        description="Graph search algorithm (hybrid, bm25, vector).",
+    )
     graph_max_traversal_depth: int | None = Field(
         default=None,
         ge=1,
@@ -192,6 +196,7 @@ class UpdateOrgConfigRequest(BaseModel):
     embedding_model: str | None = None
     embedding_dim: int | None = Field(default=None, ge=64, le=4096)
     graph_backend: str | None = None
+    graph_search_type: str | None = None
     graph_max_traversal_depth: int | None = Field(default=None, ge=1, le=10)
     falkordb_url: str | None = None
     context_cache_ttl: int | None = Field(default=None, ge=1)

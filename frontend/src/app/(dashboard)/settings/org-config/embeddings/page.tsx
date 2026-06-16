@@ -37,7 +37,7 @@ interface ToastState {
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
-const API_BASE = "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const TOAST_DURATION = 4000;
 
 const FIELDS: (keyof FormState)[] = [
@@ -97,21 +97,17 @@ function Toast({ toast, onDismiss }: { toast: ToastState; onDismiss: () => void 
   );
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-
-const DEFAULT_FORM: FormState = {
-  embedding_backend: "openai",
-  embedding_model: "",
-  embedding_dim: 1536,
-  embedding_api_key: "",
-  embedding_provider: "",
-};
-
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function EmbeddingsConfigPage() {
-  const [form, setForm] = useState<FormState>({ ...DEFAULT_FORM });
-  const [initialForm, setInitialForm] = useState<FormState>({ ...DEFAULT_FORM });
+  const [form, setForm] = useState<FormState>({
+    embedding_backend: "openai",
+    embedding_model: "",
+    embedding_dim: 1536,
+    embedding_api_key: "",
+    embedding_provider: "",
+  });
+  const [initialForm, setInitialForm] = useState<FormState>({ ...form });
   const [stored, setStored] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -139,19 +135,37 @@ export default function EmbeddingsConfigPage() {
       const data: OrgConfigResponse = await res.json();
 
       const stored = data.stored as Record<string, unknown>;
+      const hasAnyStored = FIELDS.some((f) => stored[f] != null);
+
+      // If no stored values exist for this tab, pull onboarding defaults from API
+      let defaults: Record<string, unknown> = {};
+      if (!hasAnyStored) {
+        try {
+          const defRes = await fetch(`${API_BASE}/admin/org/config/defaults`);
+          if (defRes.ok) {
+            defaults = await defRes.json();
+          }
+        } catch {
+          // best-effort; fall through to inline fallbacks
+        }
+      }
+
+      const val = (field: string, fallback: unknown) =>
+        (stored[field] as unknown) ?? (defaults[field] as unknown) ?? fallback;
+
       setForm({
-        embedding_backend: (stored.embedding_backend as EmbeddingBackend) ?? "openai",
-        embedding_model: (stored.embedding_model as string) ?? "",
-        embedding_dim: (stored.embedding_dim as number) ?? 1536,
-        embedding_api_key: (stored.embedding_api_key as string) ?? "",
-        embedding_provider: (stored.embedding_provider as string) ?? "",
+        embedding_backend: val("embedding_backend", "openai") as EmbeddingBackend,
+        embedding_model: val("embedding_model", "") as string,
+        embedding_dim: val("embedding_dim", 1536) as number,
+        embedding_api_key: val("embedding_api_key", "") as string,
+        embedding_provider: val("embedding_provider", "") as string,
       });
       setInitialForm({
-        embedding_backend: (stored.embedding_backend as EmbeddingBackend) ?? "openai",
-        embedding_model: (stored.embedding_model as string) ?? "",
-        embedding_dim: (stored.embedding_dim as number) ?? 1536,
-        embedding_api_key: (stored.embedding_api_key as string) ?? "",
-        embedding_provider: (stored.embedding_provider as string) ?? "",
+        embedding_backend: val("embedding_backend", "openai") as EmbeddingBackend,
+        embedding_model: val("embedding_model", "") as string,
+        embedding_dim: val("embedding_dim", 1536) as number,
+        embedding_api_key: val("embedding_api_key", "") as string,
+        embedding_provider: val("embedding_provider", "") as string,
       });
       setStored(data.stored ?? {});
       setError(null);

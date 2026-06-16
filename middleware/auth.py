@@ -81,6 +81,7 @@ PUBLIC_ENDPOINTS: set[str] = {
     "/openapi.json",
     "/redoc",
     "/admin/organizations",
+    "/admin/org/config/defaults",
     "/v1/auth/signup",
     "/v1/auth/login",
     "/v1/auth/refresh",
