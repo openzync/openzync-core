@@ -79,10 +79,22 @@ async def _resolve_audit_body_capture(
     # Cache miss — resolve from DB (post-response so user doesn't wait).
     # On failure, default to False (don't capture).
     try:
-        from core.db import AsyncSessionLocal
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
         from core.org_config import get_org_config
 
-        async with AsyncSessionLocal() as db:
+        # Use the existing session factory from app state if available,
+        # otherwise create a fresh one.
+        factory = getattr(request.app.state, "db_session_factory", None)
+        if factory is None:
+            from core.db import init_db_engine
+
+            engine = init_db_engine(str(settings.DATABASE_URL))
+            factory = async_sessionmaker(
+                bind=engine, class_=AsyncSession, expire_on_commit=False
+            )
+
+        async with factory() as db:
             config = await get_org_config(UUID(org_id), db, redis=redis, skip_cache=True)
             return bool(config.audit_log_response_body) if config.audit_log_response_body is not None else False
     except Exception:
