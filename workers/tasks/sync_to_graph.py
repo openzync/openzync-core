@@ -28,6 +28,7 @@ async def sync_to_graph(
     content: str,
     role: str,
     trace_id: str = "",
+    metadata: dict | None = None,
 ) -> None:
     """Link entities extracted from this episode via graph_episode_entities.
 

@@ -20,7 +20,7 @@ from sqlalchemy import text
 
 from workers.tasks.base import ENRICHMENT_STRUCTURED_EXTRACTION, with_retry
 
-from services.worker.prompt_renderer import render_prompt
+from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
 
 logger = structlog.get_logger()
 
@@ -34,6 +34,7 @@ async def extract_structured(
     session_id: str,
     content: str,
     trace_id: str = "",
+    metadata: dict | None = None,
 ) -> None:
     """Extract structured data from a dialog turn and persist the result.
 
@@ -130,15 +131,18 @@ async def extract_structured(
                 )
                 return
 
-            # ── 4. Render prompt with auto-injected context ────────────────
-            prompt, prompt_ctx = await render_prompt(
+            # ── 4. Render prompt (system instructions) with auto-injected context ──
+            system_prompt, prompt_ctx = await render_prompt(
                 "structured_extraction",
                 org_id=org_id,
                 episode_id=episode_id,
                 session_id=session_id,
+                user_id=user_id,
                 db_session_factory=session_factory,
                 return_context=True,
+                metadata=metadata or {},
             )
+            prompt = build_enrichment_prompt(system_prompt, prompt_ctx)
 
             schemas: list[dict] = prompt_ctx.get("schemas", [])
             if not schemas:

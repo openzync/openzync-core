@@ -116,7 +116,7 @@ async def extract_facts(
         session_factory = get_async_session(engine)
 
     # ── 1. Render prompt (system instructions) with auto-injected context ──
-    system_prompt, ctx = await render_prompt(
+    system_prompt, prompt_context = await render_prompt(
         "fact_extraction",
         org_id=org_id,
         episode_id=episode_id,
@@ -127,11 +127,11 @@ async def extract_facts(
         metadata=metadata or {},
     )
 
-    known_entities: list[dict] = ctx.get("known_entities", [])
-    existing_facts: list[dict] = ctx.get("existing_facts", [])
+    known_entities: list[dict] = prompt_context.get("known_entities", [])
+    existing_facts: list[dict] = prompt_context.get("existing_facts", [])
 
     # ── 1b. Build full prompt with context sections ────────────────────────
-    prompt = build_enrichment_prompt(system_prompt, ctx)
+    prompt = build_enrichment_prompt(system_prompt, prompt_context)
 
     # ── 1b. Fetch per-organization config ─────────────────────────────────
     llm_config_dict: dict | None = None

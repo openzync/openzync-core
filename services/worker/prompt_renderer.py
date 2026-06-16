@@ -150,10 +150,20 @@ TYPE_DATA_SOURCES: dict[str, set[DataSource]] = {
     },
     "classification": {
         DataSource.EPISODE_CONTENT,
+        DataSource.EPISODE_METADATA,
+        DataSource.SESSION_RECENT_HISTORY,
+        DataSource.SIMILAR_EPISODES,
+        DataSource.SIMILAR_FACTS,
         DataSource.ORG_CLASSIFICATION_LABELS,
     },
     "structured_extraction": {
         DataSource.EPISODE_CONTENT,
+        DataSource.EPISODE_METADATA,
+        DataSource.SESSION_ENTITIES,
+        DataSource.SESSION_FACTS,
+        DataSource.SESSION_RECENT_HISTORY,
+        DataSource.SIMILAR_EPISODES,
+        DataSource.SIMILAR_FACTS,
         DataSource.ORG_STRUCTURED_SCHEMAS,
     },
     "user_summary": {
@@ -356,6 +366,7 @@ async def _fetch_similar_episodes(
     results = await repo.search_by_bm25(
         query=query,
         user_id=user_id,
+        org_id=org_id,
         limit=5,
     )
     # Filter out current episode from results
@@ -401,6 +412,7 @@ async def _fetch_similar_facts(
     results = await repo.search_by_bm25(
         query=query,
         user_id=user_id,
+        org_id=org_id,
         limit=5,
     )
     return {"related_facts": results}

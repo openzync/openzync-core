@@ -20,7 +20,7 @@ from sqlalchemy import text
 
 from workers.tasks.base import ENRICHMENT_CLASSIFICATION, with_retry
 
-from services.worker.prompt_renderer import render_prompt
+from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
 
 logger = structlog.get_logger()
 
@@ -38,6 +38,9 @@ async def classify_dialog(
     org_id: str,
     content: str,
     trace_id: str = "",
+    session_id: str | None = None,
+    user_id: str | None = None,
+    metadata: dict | None = None,
 ) -> None:
     """Classify a dialog turn and persist the result.
 
@@ -77,7 +80,6 @@ async def classify_dialog(
     # Lazy imports — ARQ workers run in a separate process.
     from core.db import get_async_session
     from core.llm import resolve_backend
-    import uuid
     from core.org_config import get_org_config
 
     logger.info(
@@ -137,13 +139,18 @@ async def classify_dialog(
                 )
                 return
 
-            # ── 4. Render prompt with auto-injected context ────────────────
-            prompt = await render_prompt(
+            # ── 4. Render prompt (system instructions) with auto-injected context ──
+            system_prompt, prompt_ctx = await render_prompt(
                 "classification",
                 org_id=org_id,
                 episode_id=episode_id,
+                user_id=user_id,
+                session_id=session_id,
                 db_session_factory=session_factory,
+                return_context=True,
+                metadata=metadata or {},
             )
+            prompt = build_enrichment_prompt(system_prompt, prompt_ctx)
 
             # ── 7b. Fetch per-organization config ──────────────────────────
             org_cfg = await get_org_config(

@@ -23,6 +23,7 @@ async def embed_episode(
     org_id: str,
     content: str,
     trace_id: str = "",
+    metadata: dict | None = None,
 ) -> None:
     """Generate an embedding for an episode and store it in pgvector.
 

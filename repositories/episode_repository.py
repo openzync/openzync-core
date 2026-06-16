@@ -381,7 +381,7 @@ class EpisodeRepository:
     # ── BM25 Full-Text Search ─────────────────────────────────────────────────
 
     async def search_by_bm25(
-        self, query: str, user_id: UUID, limit: int = 50
+        self, query: str, user_id: UUID, org_id: UUID, limit: int = 50
     ) -> list[dict[str, Any]]:
         """Search episodes by BM25 full-text (PostgreSQL ``ts_rank``).
 
@@ -391,6 +391,7 @@ class EpisodeRepository:
         Args:
             query: Raw search text (no special syntax needed).
             user_id: Scope results to this user.
+            org_id: Tenant scope for multi-tenant isolation.
             limit: Maximum results (capped at 200).
 
         Returns:
@@ -408,6 +409,7 @@ class EpisodeRepository:
                        ) AS score
                 FROM episodes
                 WHERE user_id = :user_id
+                  AND organization_id = :org_id
                   AND is_deleted = false
                   AND to_tsvector('english', content)
                       @@ plainto_tsquery('english', :query)
@@ -415,7 +417,7 @@ class EpisodeRepository:
                 LIMIT :limit
                 """
             ),
-            {"query": query, "user_id": user_id, "limit": effective_limit},
+            {"query": query, "user_id": user_id, "org_id": org_id, "limit": effective_limit},
         )
         return [
             {

@@ -647,7 +647,7 @@ class MemoryService:
                 common = {"episode_id": ep_id, "content": content, "org_id": org_id, "trace_id": trace_id, "metadata": metadata}
 
                 await arq_pool.enqueue("classify_dialog", queue_name=qname,
-                    **common)
+                    **common, user_id=user_id, session_id=session_id)
                 await arq_pool.enqueue("extract_entities", queue_name=qname,
                     **common, user_id=user_id, session_id=session_id)
                 await arq_pool.enqueue("extract_facts", queue_name=qname,
