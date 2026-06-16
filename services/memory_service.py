@@ -299,7 +299,12 @@ class MemoryService:
         # ── Step 8: Generate job_id and enqueue ARQ tasks ────────────────
         job_id = str(uuid4())
         episode_dicts = [
-            {"id": ep.id, "content": ep.content, "role": ep.role}
+            {
+                "id": ep.id,
+                "content": ep.content,
+                "role": ep.role,
+                "metadata": ep.metadata_,
+            }
             for ep in episodes
         ]
         await self._enqueue_arq_tasks(
@@ -638,7 +643,8 @@ class MemoryService:
                 ep_id = str(episode["id"])
                 content = episode["content"]
                 role = episode.get("role", "user")
-                common = {"episode_id": ep_id, "content": content, "org_id": org_id, "trace_id": trace_id}
+                metadata = episode.get("metadata", {})
+                common = {"episode_id": ep_id, "content": content, "org_id": org_id, "trace_id": trace_id, "metadata": metadata}
 
                 await arq_pool.enqueue("classify_dialog", queue_name=qname,
                     **common)

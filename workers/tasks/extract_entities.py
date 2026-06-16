@@ -25,7 +25,7 @@ from core.exceptions import ExternalServiceError
 # note: Import prompt_renderer at module level — it is a local
 # Jinja2 utility with no heavy dependencies, so eager import is safe
 # and avoids re-import overhead on every task invocation.
-from services.worker.prompt_renderer import render_prompt
+from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
 from workers.tasks.base import ENRICHMENT_ENTITIES, with_retry
 
 logger = structlog.get_logger()
@@ -43,6 +43,7 @@ async def extract_entities(
     content: str,
     session_id: str | None = None,
     trace_id: str = "",
+    metadata: dict | None = None,
 ) -> None:
     """Extract named entities and relationships from a message and persist them.
 
@@ -116,17 +117,21 @@ async def extract_entities(
     if session_factory is None:
         session_factory = get_async_session(engine)
 
-    # ── 1-2. Render prompt with auto-injected context ─────────────────────────
-    prompt_data = await render_prompt(
+    # ── 1-2. Render prompt (system instructions) with auto-injected context ──
+    system_prompt, prompt_context = await render_prompt(
         "entity_extraction",
         org_id=org_id,
         episode_id=episode_id,
         session_id=session_id,
+        user_id=user_id,
         db_session_factory=session_factory,
         return_context=True,
+        metadata=metadata or {},
     )
-    prompt, prompt_context = prompt_data  # type: tuple[str, dict]
     entity_types: list[str] = prompt_context.get("entity_types", [])
+
+    # ── 1b. Build full prompt with context sections ────────────────────────
+    prompt = build_enrichment_prompt(system_prompt, prompt_context)
 
     # ── 2b. Fetch per-organization config ─────────────────────────────────
     llm_config_dict: dict | None = None

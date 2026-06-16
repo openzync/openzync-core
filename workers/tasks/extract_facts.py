@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 import structlog
 from sqlalchemy import text
 
-from services.worker.prompt_renderer import render_prompt
+from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
 from workers.tasks.base import ENRICHMENT_FACTS, with_retry
 
 logger = structlog.get_logger()
@@ -46,6 +46,7 @@ async def extract_facts(
     content: str,
     session_id: str | None = None,
     trace_id: str = "",
+    metadata: dict | None = None,
 ) -> None:
     """Extract zero-shot factual statements from a message and persist them.
 
@@ -106,9 +107,7 @@ async def extract_facts(
     if engine is None:
         from core.db import init_db_engine
 
-        engine = init_db_engine(
-            str(settings.DATABASE_URL), pool_size=2, max_overflow=1
-        )
+        engine = init_db_engine(str(settings.DATABASE_URL), pool_size=2, max_overflow=1)
         _own_engine = True
     else:
         _own_engine = False
@@ -116,26 +115,29 @@ async def extract_facts(
     if session_factory is None:
         session_factory = get_async_session(engine)
 
-    # ── 1. Render prompt with auto-injected context ─────────────────────────
-    prompt, ctx = await render_prompt(
+    # ── 1. Render prompt (system instructions) with auto-injected context ──
+    system_prompt, ctx = await render_prompt(
         "fact_extraction",
         org_id=org_id,
         episode_id=episode_id,
         session_id=session_id,
+        user_id=user_id,
         db_session_factory=session_factory,
         return_context=True,
+        metadata=metadata or {},
     )
 
     known_entities: list[dict] = ctx.get("known_entities", [])
     existing_facts: list[dict] = ctx.get("existing_facts", [])
 
+    # ── 1b. Build full prompt with context sections ────────────────────────
+    prompt = build_enrichment_prompt(system_prompt, ctx)
+
     # ── 1b. Fetch per-organization config ─────────────────────────────────
     llm_config_dict: dict | None = None
     try:
         async with session_factory() as db:
-            org_cfg = await get_org_config(
-                uuid.UUID(org_id), db, redis=None
-            )
+            org_cfg = await get_org_config(uuid.UUID(org_id), db, redis=None)
             llm_config_dict = org_cfg.to_llm_config_dict()
     except Exception:
         logger.warning(

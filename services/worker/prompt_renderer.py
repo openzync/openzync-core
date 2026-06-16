@@ -35,6 +35,7 @@ Usage (eval tests, direct):
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncGenerator
 from enum import Enum
 from pathlib import Path
@@ -66,6 +67,7 @@ _ENV = Environment(
 
 
 # ── 2. DataSource enum ─────────────────────────────────────────────────────────
+
 
 class DataSource(Enum):
     """Known DB-backed sources for prompt context variables.
@@ -116,20 +118,35 @@ class DataSource(Enum):
     CUSTOM_INSTRUCTIONS = "org.custom_instructions"
     """Custom instructions for the prompt's scope (currently used by user_summary)."""
 
+    EPISODE_METADATA = "episode.metadata"
+    """The ``metadata`` JSONB of the current episode being enriched."""
+
+    SIMILAR_EPISODES = "similar.episodes"
+    """Semantically similar episodes via BM25 full-text search (scoped to user)."""
+
+    SIMILAR_FACTS = "similar.facts"
+    """Semantically similar facts via BM25 full-text search (scoped to user)."""
+
 
 # ── 3. Static registry: prompt_type → set of DataSource ──────────────────────
 
 TYPE_DATA_SOURCES: dict[str, set[DataSource]] = {
     "fact_extraction": {
         DataSource.EPISODE_CONTENT,
+        DataSource.EPISODE_METADATA,
         DataSource.SESSION_ENTITIES,
         DataSource.SESSION_FACTS,
         DataSource.SESSION_RECENT_HISTORY,
+        DataSource.SIMILAR_EPISODES,
+        DataSource.SIMILAR_FACTS,
     },
     "entity_extraction": {
         DataSource.EPISODE_CONTENT,
+        DataSource.EPISODE_METADATA,
         DataSource.SESSION_ENTITIES,
         DataSource.ORG_ENTITY_TYPES,
+        DataSource.SIMILAR_EPISODES,
+        DataSource.SIMILAR_FACTS,
     },
     "classification": {
         DataSource.EPISODE_CONTENT,
@@ -195,7 +212,9 @@ async def _fetch_session_entities(
     if session_id is None:
         return {"known_entities": []}
 
-    from repositories.fact_repository import FactRepository  # noqa: PLC0415 — lazy import
+    from repositories.fact_repository import (
+        FactRepository,  # noqa: PLC0415 — lazy import
+    )
 
     repo = FactRepository(db)
     entities = await repo.get_entities_for_session(
@@ -218,7 +237,9 @@ async def _fetch_session_facts(
     if session_id is None:
         return {"existing_facts": []}
 
-    from repositories.fact_repository import FactRepository  # noqa: PLC0415 — lazy import
+    from repositories.fact_repository import (
+        FactRepository,  # noqa: PLC0415 — lazy import
+    )
 
     repo = FactRepository(db)
     facts, _ = await repo.list_by_session(
@@ -263,10 +284,126 @@ async def _fetch_session_recent_history(
     result = await db.execute(query)
     recent_eps = list(result.scalars().all())
     recent_eps.reverse()  # chronological order
-    recent_history = [
-        {"role": ep.role, "content": ep.content} for ep in recent_eps
-    ]
+    recent_history = [{"role": ep.role, "content": ep.content} for ep in recent_eps]
     return {"recent_history": recent_history}
+
+
+async def _fetch_episode_metadata(
+    db: AsyncSession,
+    org_id: UUID,
+    episode_id: UUID | None,
+    **_: Any,
+) -> dict[str, Any]:
+    """Fetch the metadata JSONB of the current episode being enriched.
+
+    Returns ``{"message_metadata": {...}}`` or ``{"message_metadata": {}}``
+    if no ``episode_id`` is provided or the episode is not found.
+    """
+    if episode_id is None:
+        return {"message_metadata": {}}
+
+    from sqlalchemy import select  # noqa: PLC0415 — lazy import
+
+    from models.episode import Episode  # noqa: PLC0415 — lazy import
+
+    result = await db.execute(
+        select(Episode.metadata_).where(
+            Episode.id == episode_id,
+            Episode.organization_id == org_id,
+        )
+    )
+    row = result.scalar_one_or_none()
+    return {"message_metadata": row if row is not None else {}}
+
+
+async def _fetch_similar_episodes(
+    db: AsyncSession,
+    org_id: UUID,
+    episode_id: UUID | None,
+    user_id: UUID | None,
+    **_: Any,
+) -> dict[str, Any]:
+    """Fetch semantically similar episodes via BM25 full-text search.
+
+    Uses the current episode's content as the search query and returns
+    the top 5 matches scoped to the same user.  BM25 is used instead of
+    vector search because the episode may not have an embedding yet when
+    enrichment runs.
+
+    Returns ``{"similar_episodes": [...]}`` or empty list.
+    """
+    if episode_id is None or user_id is None:
+        return {"similar_episodes": []}
+
+    from sqlalchemy import select  # noqa: PLC0415 — lazy import
+
+    from models.episode import Episode  # noqa: PLC0415 — lazy import
+
+    # Fetch current episode content to use as search query
+    ep_result = await db.execute(
+        select(Episode.content).where(
+            Episode.id == episode_id,
+            Episode.organization_id == org_id,
+        )
+    )
+    query = ep_result.scalar_one_or_none()
+    if not query:
+        return {"similar_episodes": []}
+
+    from repositories.episode_repository import EpisodeRepository  # noqa: PLC0415
+
+    repo = EpisodeRepository(db)
+    results = await repo.search_by_bm25(
+        query=query,
+        user_id=user_id,
+        limit=5,
+    )
+    # Filter out current episode from results
+    results = [r for r in results if r["id"] != str(episode_id)]
+    return {"similar_episodes": results}
+
+
+async def _fetch_similar_facts(
+    db: AsyncSession,
+    org_id: UUID,
+    episode_id: UUID | None,
+    user_id: UUID | None,
+    **_: Any,
+) -> dict[str, Any]:
+    """Fetch semantically similar facts via BM25 full-text search.
+
+    Uses the current episode's content as the search query and returns
+    the top 5 matching facts scoped to the same user.
+
+    Returns ``{"related_facts": [...]}`` or empty list.
+    """
+    if episode_id is None or user_id is None:
+        return {"related_facts": []}
+
+    from sqlalchemy import select  # noqa: PLC0415 — lazy import
+
+    from models.episode import Episode  # noqa: PLC0415 — lazy import
+
+    # Fetch current episode content to use as search query
+    ep_result = await db.execute(
+        select(Episode.content).where(
+            Episode.id == episode_id,
+            Episode.organization_id == org_id,
+        )
+    )
+    query = ep_result.scalar_one_or_none()
+    if not query:
+        return {"related_facts": []}
+
+    from repositories.fact_repository import FactRepository  # noqa: PLC0415
+
+    repo = FactRepository(db)
+    results = await repo.search_by_bm25(
+        query=query,
+        user_id=user_id,
+        limit=5,
+    )
+    return {"related_facts": results}
 
 
 async def _fetch_org_entity_types(
@@ -307,11 +444,16 @@ async def _fetch_org_entity_types(
     types: list[str] = []
     for row in schemas:
         schema: dict = row[0]
-        if isinstance(schema, dict) and "types" in schema and isinstance(schema["types"], list):
+        if (
+            isinstance(schema, dict)
+            and "types" in schema
+            and isinstance(schema["types"], list)
+        ):
             types.extend(schema["types"])
 
     return {
-        "entity_types": types or [
+        "entity_types": types
+        or [
             "Person",
             "Organization",
             "Product",
@@ -485,8 +627,7 @@ async def _fetch_user_facts(
         {"user_id": user_id, "org_id": org_id},
     )
     facts = [
-        {"subject": r[0], "predicate": r[1], "object": r[2]}
-        for r in result.fetchall()
+        {"subject": r[0], "predicate": r[1], "object": r[2]} for r in result.fetchall()
     ]
     return {"facts": facts}
 
@@ -518,9 +659,7 @@ async def _fetch_user_entities(
         """),
         {"user_id": user_id, "org_id": org_id},
     )
-    entities = [
-        {"name": r[0], "entity_type": r[1]} for r in result.fetchall()
-    ]
+    entities = [{"name": r[0], "entity_type": r[1]} for r in result.fetchall()]
     return {"entities": entities}
 
 
@@ -621,6 +760,9 @@ _PROVIDER_DISPATCH: dict[DataSource, Any] = {
     DataSource.USER_ENTITIES: _fetch_user_entities,
     DataSource.USER_CLASSIFICATIONS: _fetch_user_classifications,
     DataSource.CUSTOM_INSTRUCTIONS: _fetch_custom_instructions,
+    DataSource.EPISODE_METADATA: _fetch_episode_metadata,
+    DataSource.SIMILAR_EPISODES: _fetch_similar_episodes,
+    DataSource.SIMILAR_FACTS: _fetch_similar_facts,
 }
 
 
@@ -697,7 +839,9 @@ async def render_prompt(
     if template_text is None:
         if org_id is not None and db_session_factory is not None:
             template_text = await resolve_prompt_template_by_type(
-                prompt_type, org_id, db_session_factory,
+                prompt_type,
+                org_id,
+                db_session_factory,
             )
 
     if template_text is None:
@@ -795,3 +939,82 @@ async def resolve_prompt_template_by_type(
         template = await repo.get_active_by_type(org_id=org_id, type=type)
 
     return template.template_text if template is not None else None
+
+
+# ── 8. Prompt assembly helper ─────────────────────────────────────────────────
+
+
+def build_enrichment_prompt(system_prompt: str, ctx: dict[str, Any]) -> str:
+    """Build a full enrichment prompt by appending context sections.
+
+    Takes the raw system instructions from the DB and automatically injects
+    all available context (metadata, entities, facts, history, semantic
+    search results) as structured sections after the instructions.
+
+    Args:
+        system_prompt: Raw system instructions from the DB template.
+        ctx: Context dict from ``render_prompt(return_context=True)``.
+
+    Returns:
+        A fully assembled prompt string ready for the LLM.
+    """
+    parts: list[str] = [system_prompt.strip()]
+
+    # ── Metadata ─────────────────────────────────────────────────────────
+    metadata = ctx.get("message_metadata")
+    if metadata:
+        parts.append(f"\n\n## MESSAGE METADATA\n\n{json.dumps(metadata, indent=2)}")
+
+    # ── Known entities ──────────────────────────────────────────────────
+    known_entities: list = ctx.get("known_entities", [])
+    if known_entities:
+        parts.append("\n\n## KNOWN ENTITIES\n\n")
+        parts.append("| Name | Type |\n|------|------|\n")
+        for ent in known_entities:
+            parts.append(f"| {ent.get('name', '')} | {ent.get('entity_type', '')} |\n")
+
+    # ── Existing facts ──────────────────────────────────────────────────
+    existing_facts: list = ctx.get("existing_facts", [])
+    if existing_facts:
+        parts.append("\n\n## EXISTING FACTS\n\n")
+        parts.append("| Subject | Predicate | Object |\n")
+        parts.append("|---------|-----------|--------|\n")
+        for f in existing_facts:
+            parts.append(
+                f"| {f.get('subject', '')} | {f.get('predicate', '')} | {f.get('object', '')} |\n"
+            )
+
+    # ── Recent history ──────────────────────────────────────────────────
+    recent_history: list = ctx.get("recent_history", [])
+    if recent_history:
+        parts.append("\n\n## RECENT CONVERSATION\n\n")
+        for turn in recent_history:
+            parts.append(f"[{turn.get('role', '?')}]\n{turn.get('content', '')}\n")
+
+    # ── Similar episodes (semantic search) ──────────────────────────────
+    similar_episodes: list = ctx.get("similar_episodes", [])
+    if similar_episodes:
+        parts.append("\n\n## SIMILAR EPISODES FROM HISTORY\n\n")
+        for ep in similar_episodes:
+            role = ep.get("role", "?")
+            content_preview = ep.get("content", "")[:300]
+            score = ep.get("score", 0)
+            parts.append(f"[{role}] (score: {score:.3f})\n{content_preview}\n\n")
+
+    # ── Related facts (semantic search) ─────────────────────────────────
+    related_facts: list = ctx.get("related_facts", [])
+    if related_facts:
+        parts.append("\n\n## RELATED FACTS FROM HISTORY\n\n")
+        parts.append("| Subject | Predicate | Object | Score |\n")
+        parts.append("|---------|-----------|--------|-------|\n")
+        for f in related_facts:
+            parts.append(
+                f"| {f.get('subject', '')} | {f.get('predicate', '')} | {f.get('object', '')} | {f.get('score', 0):.3f} |\n"
+            )
+
+    # ── Conversation to extract from ───────────────────────────────────
+    conversation = ctx.get("conversation", "")
+    if conversation:
+        parts.append(f"\n\n## NOW EXTRACT FROM THIS CONVERSATION\n\n{conversation}")
+
+    return "".join(parts)
