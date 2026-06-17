@@ -1,24 +1,14 @@
 "use client";
 import { RequireAuth } from "../../require-auth";
 
-import { useEffect, useState } from "react";
-import { Database, AlertCircle } from "lucide-react";
+import { Database } from "lucide-react";
+import { PageHeader } from "@/components/shared/page-header";
 
 export default function FactsPage() {
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const t = setTimeout(() => setLoading(false), 500);
-    return () => clearTimeout(t);
-  }, []);
-
   return (
     <RequireAuth>
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Facts</h1>
-        <p className="text-sm text-surface-400 mt-1">Subject-predicate-object knowledge triples</p>
-      </div>
+      <PageHeader title="Facts" description="Subject-predicate-object knowledge triples" />
       <div className="card-base p-8 text-center text-surface-500">
         <Database size={40} className="mx-auto mb-3 opacity-50" />
         <p className="text-sm">Fact management page coming soon.</p>

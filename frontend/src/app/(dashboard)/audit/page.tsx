@@ -11,6 +11,14 @@ import {
   Search,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { get, ApiError } from "@/lib/api-client";
+import { smartTimestamp } from "@/lib/utils";
+import { PageHeader } from "@/components/shared/page-header";
+import { EmptyState } from "@/components/shared/empty-state";
+import { ErrorState } from "@/components/shared/error-state";
+import { Button } from "@/components/ui/button";
+import { StatusBadge, ActorTypeBadge, actorTypeLabel } from "@/components/ui/badge";
+import { TableSkeleton } from "@/components/shared/skeleton";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -36,63 +44,7 @@ interface AuditResponse {
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
-const API_BASE = "http://localhost:8000";
 const PAGE_SIZE = 25;
-
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-
-function authHeaders(): Record<string, string> {
-  const token = sessionStorage.getItem("mg_access_token");
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  return headers;
-}
-
-function formatTime(dateStr: string): string {
-  const d = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  const diffMins = Math.floor(diffMs / 60_000);
-
-  if (diffMins < 1) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-
-  const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  const dateStr_fmt = d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  });
-
-  // If today, show time only
-  if (d.toDateString() === now.toDateString()) return timeStr;
-  // If this year, show month day time
-  if (d.getFullYear() === now.getFullYear()) return `${dateStr_fmt} ${timeStr}`;
-  return `${dateStr_fmt} ${d.getFullYear()} ${timeStr}`;
-}
-
-function statusColor(code: number | null): string {
-  if (code === null) return "bg-surface-700 text-surface-400";
-  if (code < 300) return "bg-success/10 text-success";
-  if (code < 500) return "bg-warning/10 text-warning";
-  return "bg-error/10 text-error";
-}
-
-function actorTypeLabel(type: string | null): string {
-  if (!type) return "system";
-  const map: Record<string, string> = {
-    user: "User",
-    api_key: "API Key",
-    system: "System",
-  };
-  return map[type] ?? type;
-}
-
-function actorTypeColor(type: string | null): string {
-  if (!type || type === "system") return "bg-surface-700 text-surface-300";
-  if (type === "user") return "bg-brand-500/10 text-brand-300";
-  if (type === "api_key") return "bg-accent-300/10 text-accent-300";
-  return "bg-surface-700 text-surface-300";
-}
 
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
@@ -131,54 +83,37 @@ export default function AuditLogPage() {
       if (filterAction.trim()) params.set("action", filterAction.trim());
       if (filterActorType !== "all") params.set("actor_type", filterActorType);
       if (filterStatus !== "all") {
-        // Map user-friendly status filters to API params
         if (filterStatus === "2xx") params.set("status_code", "2");
         else if (filterStatus === "4xx") params.set("status_code", "4");
         else if (filterStatus === "5xx") params.set("status_code", "5");
       }
 
-      const res = await fetch(`${API_BASE}/v1/admin/audit-logs?${params}`, {
-        headers: authHeaders(),
-      });
-
-      if (!res.ok) throw new Error("Failed to load audit logs");
-
-      const data: AuditResponse = await res.json();
+      const data = await get<AuditResponse>(`/v1/admin/audit-logs?${params}`);
       setEntries(data.items ?? []);
       setTotal(data.total ?? 0);
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load audit logs");
+      setError(err instanceof ApiError ? err.message : "Failed to load audit logs");
     } finally {
       setLoading(false);
     }
   }, [filterAction, filterActorType, filterStatus]);
 
-  // Initial fetch and on filter/pagination change
-  useEffect(() => {
-    fetchLogs(offset);
-  }, [offset, fetchLogs]);
+  useEffect(() => { fetchLogs(offset); }, [offset, fetchLogs]);
 
   // Auto-refresh
   useEffect(() => {
     if (autoRefresh) {
-      intervalRef.current = setInterval(() => {
-        fetchLogs(offset);
-      }, 10000); // Refresh every 10s
+      intervalRef.current = setInterval(() => { fetchLogs(offset); }, 10000);
     }
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = null;
-      }
+      if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null; }
     };
   }, [autoRefresh, offset, fetchLogs]);
 
-  // ── Filter handlers ────────────────────────────────────────────────────────
+  // ── Handlers ────────────────────────────────────────────────────────────────
 
-  const applyFilters = () => {
-    setOffset(0);
-  };
+  const applyFilters = () => setOffset(0);
 
   const clearFilters = () => {
     setFilterAction("");
@@ -189,66 +124,25 @@ export default function AuditLogPage() {
 
   const hasActiveFilters = filterAction.trim() || filterActorType !== "all" || filterStatus !== "all";
 
-  // ── Pagination ─────────────────────────────────────────────────────────────
-
-  const goToPrevious = () => {
-    setOffset((prev) => Math.max(0, prev - PAGE_SIZE));
-  };
-
-  const goToNext = () => {
-    setOffset((prev) => {
-      const next = prev + PAGE_SIZE;
-      return next < total ? next : prev;
-    });
-  };
-
-  // ── Skeleton rows ──────────────────────────────────────────────────────────
-
-  const skeletonRows = Array.from({ length: 6 }, (_, i) => (
-    <tr key={`skel-${i}`} className={i % 2 === 0 ? "bg-surface-950/50" : ""}>
-      {[1, 2, 3, 4, 5, 6, 7].map((col) => (
-        <td key={col} className="px-4 py-3">
-          <div className="h-4 rounded bg-surface-800 animate-pulse" style={{ width: col === 2 ? "120px" : "70px" }} />
-        </td>
-      ))}
-    </tr>
-  ));
-
-  // ── Empty state ────────────────────────────────────────────────────────────
-
-  const emptyRow = (
-    <tr>
-      <td colSpan={8}>
-        <div className="flex flex-col items-center justify-center py-16 text-surface-500">
-          <Shield size={40} className="mb-3 opacity-40" />
-          <p className="text-sm font-medium">No audit entries found</p>
-          <p className="text-xs mt-1">
-            {hasActiveFilters ? "Try adjusting your filters" : "Audit entries will appear here as actions are performed"}
-          </p>
-        </div>
-      </td>
-    </tr>
-  );
+  const goToPrevious = () => setOffset((prev) => Math.max(0, prev - PAGE_SIZE));
+  const goToNext = () => setOffset((prev) => (prev + PAGE_SIZE < total ? prev + PAGE_SIZE : prev));
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <RequireAuth>
     <div className="space-y-6">
-      {/* Page header */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Audit Log</h1>
-        <p className="text-sm text-surface-400 mt-1">Immutable record of all system actions</p>
-      </div>
+      <PageHeader
+        title="Audit Log"
+        description="Immutable record of all system actions"
+      />
 
       {/* Filter bar */}
       <div className="card-base p-3">
         <div className="flex flex-wrap items-end gap-3">
           {/* Action filter */}
           <div className="flex-1 min-w-[160px]">
-            <label className="block text-xs font-medium text-surface-400 mb-1">
-              Action
-            </label>
+            <label className="block text-xs font-medium text-surface-400 mb-1">Action</label>
             <div className="relative">
               <input
                 className="input-base pl-8 text-sm"
@@ -263,9 +157,7 @@ export default function AuditLogPage() {
 
           {/* Actor Type filter */}
           <div className="w-36">
-            <label className="block text-xs font-medium text-surface-400 mb-1">
-              Actor Type
-            </label>
+            <label className="block text-xs font-medium text-surface-400 mb-1">Actor Type</label>
             <select
               className="input-base appearance-none cursor-pointer text-sm"
               value={filterActorType}
@@ -280,9 +172,7 @@ export default function AuditLogPage() {
 
           {/* Status filter */}
           <div className="w-28">
-            <label className="block text-xs font-medium text-surface-400 mb-1">
-              Status
-            </label>
+            <label className="block text-xs font-medium text-surface-400 mb-1">Status</label>
             <select
               className="input-base appearance-none cursor-pointer text-sm"
               value={filterStatus}
@@ -295,20 +185,16 @@ export default function AuditLogPage() {
             </select>
           </div>
 
-          {/* Apply / Clear */}
           <div className="flex items-center gap-2 pb-0.5">
-            <button onClick={applyFilters} className="btn-primary text-xs">
-              Apply
-            </button>
+            <Button variant="primary" size="sm" onClick={applyFilters}>Apply</Button>
             {hasActiveFilters && (
-              <button onClick={clearFilters} className="btn-ghost text-xs text-surface-400">
+              <Button variant="ghost" size="sm" onClick={clearFilters} className="text-surface-400">
                 <X size={14} />
                 Clear
-              </button>
+              </Button>
             )}
           </div>
 
-          {/* Spacer */}
           <div className="flex-1" />
 
           {/* Auto-refresh toggle */}
@@ -331,9 +217,7 @@ export default function AuditLogPage() {
               <span className="text-xs text-surface-400">Auto-refresh</span>
             </label>
             {lastUpdated && (
-              <span className="text-[11px] text-surface-500">
-                Updated {lastUpdated}
-              </span>
+              <span className="text-[11px] text-surface-500">Updated {lastUpdated}</span>
             )}
           </div>
         </div>
@@ -356,97 +240,69 @@ export default function AuditLogPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-surface-800">
-              {loading
-                ? skeletonRows
-                : entries.length === 0
-                  ? emptyRow
-                  : entries.map((entry, idx) => (
-                      <tr
-                        key={entry.id}
-                        className={cn(
-                          "transition-colors hover:bg-surface-800/50",
-                          idx % 2 === 0 ? "bg-surface-950/50" : "",
-                        )}
+              {loading ? (
+                <TableSkeleton rows={6} cols={8} colWidths={["w-16", "w-28", "w-16", "w-14", "w-12", "w-10", "w-24", "w-20"]} />
+              ) : entries.length === 0 ? (
+                <tr>
+                  <td colSpan={8}>
+                    <EmptyState
+                      icon={Shield}
+                      title="No audit entries found"
+                      description={hasActiveFilters ? "Try adjusting your filters" : "Audit entries will appear here as actions are performed"}
+                    />
+                  </td>
+                </tr>
+              ) : (
+                entries.map((entry, idx) => (
+                  <tr
+                    key={entry.id}
+                    className={cn(
+                      "transition-colors hover:bg-surface-800/50",
+                      idx % 2 === 0 ? "bg-surface-950/50" : "",
+                    )}
+                  >
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className="text-surface-300 text-xs">{smartTimestamp(entry.created_at)}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="font-mono text-xs text-surface-200">{entry.action}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span
+                        className="font-mono text-xs text-surface-400 max-w-[80px] block truncate"
+                        title={entry.actor_id ?? undefined}
                       >
-                        {/* Time */}
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <span className="text-surface-300 text-xs">{formatTime(entry.created_at)}</span>
-                        </td>
-
-                        {/* Action — monospace */}
-                        <td className="px-4 py-3">
-                          <span className="font-mono text-xs text-surface-200">{entry.action}</span>
-                        </td>
-
-                        {/* Actor — truncated ID */}
-                        <td className="px-4 py-3">
-                          <span
-                            className="font-mono text-xs text-surface-400 max-w-[80px] block truncate"
-                            title={entry.actor_id ?? undefined}
-                          >
-                            {entry.actor_id ? entry.actor_id.slice(0, 12) : "—"}
-                          </span>
-                        </td>
-
-                        {/* Actor Type chip */}
-                        <td className="px-4 py-3">
-                          <span
-                            className={cn(
-                              "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium",
-                              actorTypeColor(entry.actor_type),
-                            )}
-                          >
-                            {actorTypeLabel(entry.actor_type)}
-                          </span>
-                        </td>
-
-                        {/* Status code — colored chip */}
-                        <td className="px-4 py-3 text-center">
-                          {entry.status_code !== null ? (
-                            <span
-                              className={cn(
-                                "inline-flex items-center justify-center rounded px-1.5 py-0.5 text-xs font-mono font-medium min-w-[32px]",
-                                statusColor(entry.status_code),
-                              )}
-                            >
-                              {entry.status_code}
-                            </span>
-                          ) : (
-                            <span className="text-surface-600 text-xs">—</span>
-                          )}
-                        </td>
-
-                        {/* Method */}
-                        <td className="px-4 py-3">
-                          {entry.method ? (
-                            <span className="text-xs font-mono text-surface-400">{entry.method}</span>
-                          ) : (
-                            <span className="text-surface-600 text-xs">—</span>
-                          )}
-                        </td>
-
-                        {/* Path — truncated */}
-                        <td className="px-4 py-3">
-                          {entry.path ? (
-                            <span
-                              className="text-xs text-surface-400 max-w-[140px] block truncate font-mono"
-                              title={entry.path}
-                            >
-                              {entry.path}
-                            </span>
-                          ) : (
-                            <span className="text-surface-600 text-xs">—</span>
-                          )}
-                        </td>
-
-                        {/* IP */}
-                        <td className="px-4 py-3">
-                          <span className="text-xs font-mono text-surface-500">
-                            {entry.ip_address ?? "—"}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
+                        {entry.actor_id ? entry.actor_id.slice(0, 12) : "—"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <ActorTypeBadge type={entry.actor_type} />
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <StatusBadge code={entry.status_code} />
+                    </td>
+                    <td className="px-4 py-3">
+                      {entry.method ? (
+                        <span className="text-xs font-mono text-surface-400">{entry.method}</span>
+                      ) : (
+                        <span className="text-surface-600 text-xs">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {entry.path ? (
+                        <span className="text-xs text-surface-400 max-w-[140px] block truncate font-mono" title={entry.path}>
+                          {entry.path}
+                        </span>
+                      ) : (
+                        <span className="text-surface-600 text-xs">—</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="text-xs font-mono text-surface-500">{entry.ip_address ?? "—"}</span>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -454,16 +310,7 @@ export default function AuditLogPage() {
         {/* Error state */}
         {error && !loading && (
           <div className="border-t border-surface-800 px-4 py-3">
-            <div className="rounded-md bg-error/10 border border-error/30 px-3 py-2 text-sm text-error flex items-center gap-2">
-              <X size={14} />
-              {error}
-              <button
-                onClick={() => fetchLogs(offset)}
-                className="ml-auto btn-ghost text-xs text-error hover:text-white"
-              >
-                Retry
-              </button>
-            </div>
+            <ErrorState message={error} onRetry={() => fetchLogs(offset)} />
           </div>
         )}
 

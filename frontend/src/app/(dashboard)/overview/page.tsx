@@ -8,9 +8,12 @@ import {
   MessageSquare,
   MessageCircle,
   Key,
-  TrendingUp,
-  TrendingDown,
 } from "lucide-react";
+
+import { get } from "@/lib/api-client";
+import { timeAgo, actionLabel, formatNumber } from "@/lib/utils";
+import { PageHeader } from "@/components/shared/page-header";
+import { StatCard } from "@/components/shared/stat-card";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -34,37 +37,13 @@ interface AuditEntry {
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
-function timeAgo(dateStr: string): string {
-  const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (seconds < 5) return "just now";
-  if (seconds < 60) return `${seconds}s ago`;
-  const mins = Math.floor(seconds / 60);
-  if (mins < 60) return `${mins}m ago`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
-}
-
-function actionLabel(action: string): string {
-  const map: Record<string, string> = {
-    "session.create": "Session created",
-    "session.delete": "Session deleted",
-    "user.create": "User created",
-    "user.delete": "User deleted",
-    "memory.ingest": "Memory ingested",
-    "api_key.create": "API key created",
-    "api_key.revoke": "API key revoked",
-  };
-  return map[action] ?? action.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
 function actorLabel(entry: AuditEntry): string {
   if (entry.actor_type === "api_key") return "API";
   if (entry.actor_id) return entry.actor_id.slice(0, 8);
   return "System";
 }
 
-// ─── Stat Card ─────────────────────────────────────────────────────────────────
+// ─── Stat Card Config ──────────────────────────────────────────────────────────
 
 const STAT_CARDS = [
   { label: "Total Users", key: "total_users" as const, icon: Users, color: "text-brand-300" },
@@ -84,22 +63,14 @@ export default function OverviewPage() {
   useEffect(() => {
     async function fetchData() {
       try {
-        const token = sessionStorage.getItem("mg_access_token");
-        const headers: Record<string, string> = {};
-        if (token) headers["Authorization"] = `Bearer ${token}`;
-
         const [statsRes, auditRes] = await Promise.all([
-          fetch("http://localhost:8000/v1/admin/stats/org", { headers }),
-          fetch("http://localhost:8000/v1/admin/audit-logs?limit=5", { headers }),
+          get<OrgStats>("/v1/admin/stats/org"),
+          get<{ items: AuditEntry[] }>("/v1/admin/audit-logs?limit=5"),
         ]);
-
-        if (statsRes.ok) setStats(await statsRes.json());
-        if (auditRes.ok) {
-          const auditData = await auditRes.json();
-          setActivities(auditData.items ?? []);
-        }
+        setStats(statsRes);
+        setActivities(auditRes.items ?? []);
       } catch {
-        // Silently fail
+        // Silently fail on overview — non-critical data
       } finally {
         setLoading(false);
       }
@@ -110,36 +81,26 @@ export default function OverviewPage() {
   return (
     <RequireAuth>
     <div className="space-y-6">
-      {/* Page header */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Overview</h1>
-        <p className="text-sm text-surface-400 mt-1">Summary of your organization</p>
-      </div>
+      <PageHeader
+        title="Overview"
+        description="Summary of your organization"
+      />
 
       {/* Stat cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {STAT_CARDS.map((card) => (
-          <div key={card.key} className="stat-card">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-brand-500/10">
-                <card.icon size={22} className={card.color} />
-              </div>
-              <div>
-                <div className="text-xs text-surface-400">{card.label}</div>
-                {loading ? (
-                  <div className="h-6 w-16 mt-1 rounded bg-surface-800 animate-pulse" />
-                ) : (
-                  <div className="text-xl font-semibold mt-0.5">
-                    {stats?.[card.key]?.toLocaleString() ?? "—"}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+          <StatCard
+            key={card.key}
+            label={card.label}
+            value={stats?.[card.key] ?? null}
+            icon={card.icon}
+            color={card.color}
+            loading={loading}
+          />
         ))}
       </div>
 
-      {/* Quick actions */}
+      {/* Quick actions + Recent Activity */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="card-base p-4">
           <h3 className="text-sm font-medium mb-2">Quick Actions</h3>
@@ -171,7 +132,12 @@ export default function OverviewPage() {
         <div className="card-base p-4 md:col-span-2">
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-medium">Recent Activity</h3>
-            <button className="text-xs text-accent-300 hover:text-accent-200">View all →</button>
+            <button
+              onClick={() => router.push("/audit")}
+              className="text-xs text-accent-300 hover:text-accent-200"
+            >
+              View all →
+            </button>
           </div>
           {activities.length === 0 ? (
             <div className="text-sm text-surface-500 py-4 text-center">
@@ -204,7 +170,10 @@ export default function OverviewPage() {
       <div className="card-base p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-medium">Daily Usage (7 days)</h3>
-          <button onClick={() => router.push("/analytics")} className="text-xs text-accent-300 hover:text-accent-200">
+          <button
+            onClick={() => router.push("/analytics")}
+            className="text-xs text-accent-300 hover:text-accent-200"
+          >
             View full analytics →
           </button>
         </div>
@@ -212,9 +181,9 @@ export default function OverviewPage() {
           <div className="h-12 rounded bg-surface-800 animate-pulse" />
         ) : (
           <div className="text-sm text-surface-400">
-            <span className="text-[#F2F2F2] font-medium">{stats?.total_messages?.toLocaleString() ?? 0}</span> total messages ·{" "}
-            <span className="text-[#F2F2F2] font-medium">{stats?.total_sessions?.toLocaleString() ?? 0}</span> sessions ·{" "}
-            <span className="text-[#F2F2F2] font-medium">{stats?.total_episodes?.toLocaleString() ?? 0}</span> episodes
+            <span className="text-[#F2F2F2] font-medium">{formatNumber(stats?.total_messages ?? 0)}</span> total messages ·
+            <span className="text-[#F2F2F2] font-medium ml-1">{formatNumber(stats?.total_sessions ?? 0)}</span> sessions ·
+            <span className="text-[#F2F2F2] font-medium ml-1">{formatNumber(stats?.total_episodes ?? 0)}</span> episodes
           </div>
         )}
       </div>
