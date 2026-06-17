@@ -231,6 +231,35 @@ class GraphTimeoutError(AppError):
         super().__init__(message=message, detail=detail)
 
 
+class LLMStructuredOutputError(ExternalServiceError):
+    """LLM output failed validation against the expected Pydantic model.
+
+    Raised when ``LLMBackend.chat()`` is called with a ``response_model``
+    and the response cannot be parsed into that model after exhausting all
+    validation retries.  Carries just enough detail to diagnose the failure
+    without leaking the full conversation.
+    """
+
+    code: str = "llm_structured_output_error"
+
+    def __init__(
+        self,
+        message: str = "LLM output failed to match the expected schema.",
+        *,
+        model_name: str = "",
+        content_preview: str = "",
+        validation_error: str = "",
+    ) -> None:
+        detail: dict[str, Any] = {}
+        if model_name:
+            detail["model_name"] = model_name
+        if content_preview:
+            detail["content_preview"] = content_preview
+        if validation_error:
+            detail["validation_error"] = validation_error
+        super().__init__(message=message, detail=detail)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RFC 7807 Problem Details
 # ═══════════════════════════════════════════════════════════════════════════════

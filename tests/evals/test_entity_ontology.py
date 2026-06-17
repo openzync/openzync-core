@@ -20,9 +20,9 @@ from typing import Any
 
 import pytest
 
+from schemas.llm_outputs import EntityExtractionOutput
 from services.worker.prompt_renderer import render_prompt
 from tests.evals.conftest import load_golden, load_prompt_text
-from workers.tasks.extract_entities import _parse_entity_response
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +39,8 @@ async def test_entity_ontology_accuracy() -> None:
     1. Render the ``extract_entities_v1`` prompt with the conversation
        and the domain-specific entity_types injected.
     2. Call the LLM backend.
-    3. Parse the JSON response (reuses the existing
-       ``_parse_entity_response`` parser).
+    3. Parse and validate the JSON response via
+        ``EntityExtractionOutput.model_validate_json()``.
     4. Validate every output entity type is in the allowed set.
     5. Check that expected entities appear with correct names.
 
@@ -92,9 +92,14 @@ async def test_entity_ontology_accuracy() -> None:
                 temperature=0.0,
             )
 
-            parsed = _parse_entity_response(response.content)
-
-            if parsed is None:
+            try:
+                parsed = EntityExtractionOutput.model_validate_json(
+                    response.content
+                )
+                entities: list[dict] = [
+                    e.model_dump() for e in parsed.entities
+                ]
+            except Exception:
                 errors.append(
                     {
                         "index": i,
@@ -104,8 +109,6 @@ async def test_entity_ontology_accuracy() -> None:
                     }
                 )
                 continue
-
-            entities: list[dict[str, Any]] = parsed.get("entities", [])
 
             # ── Validate: all output entity types are in the allowed set ──
             allowed_types: set[str] = (

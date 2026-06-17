@@ -81,6 +81,7 @@ async def classify_dialog(
     from core.db import get_async_session
     from core.llm import resolve_backend
     from core.org_config import get_org_config
+    from schemas.llm_outputs import ClassificationOutput
 
     logger.info(
         "classification.started",
@@ -158,7 +159,7 @@ async def classify_dialog(
             )
             llm_config_dict = org_cfg.to_llm_config_dict()
 
-            # ── 8. Call LLM ────────────────────────────────────────────────
+            # ── 8-9. Call LLM with structured-output validation ────────────
             try:
                 llm = await resolve_backend(org_config=llm_config_dict)
                 response = await llm.chat(
@@ -166,12 +167,12 @@ async def classify_dialog(
                         {
                             "role": "system",
                             "content": (
-                                "You are a dialog classification system. "
-                                "Output ONLY valid JSON."
+                                "You are a dialog classification system."
                             ),
                         },
                         {"role": "user", "content": prompt},
                     ],
+                    response_model=ClassificationOutput,
                     temperature=0.0,
                     max_tokens=300,
                 )
@@ -183,81 +184,40 @@ async def classify_dialog(
                 )
                 raise  # Let @with_retry handle transient failures
 
-            # ── 9. Parse JSON response ─────────────────────────────────────
-            parsed = _parse_classification_response(response.content)
-
-            # Recovery attempt if first parse failed
-            if parsed is None:
-                logger.warning(
-                    "classification.parse_recovery",
-                    episode_id=episode_id,
-                )
-                try:
-                    response2 = await llm.chat(
-                        [
-                            {
-                                "role": "system",
-                                "content": (
-                                    "CRITICAL: You MUST output valid JSON only. "
-                                    "No other text, no markdown fences, "
-                                    "no explanation."
-                                ),
-                            },
-                            {"role": "user", "content": prompt},
-                        ],
-                        temperature=0.0,
-                        max_tokens=300,
-                    )
-                    parsed = _parse_classification_response(response2.content)
-                except Exception as exc:
-                    logger.error(
-                        "classification.recovery_failed",
-                        episode_id=episode_id,
-                        error=str(exc),
-                    )
-
-            # ── 10. Validate labels against allowed sets ────────────────────
+            # Validate and normalise against org's label sets
             validation_sets = await _fetch_validation_sets(db, org_id)
 
-            intent = None
-            emotion = None
-            valence = None
-            arousal = None
-            confidence = 0.0
-            raw = None
+            parsed = ClassificationOutput.model_validate_json(response.content)
 
-            if parsed is not None:
-                intent = _validate_label(
-                    parsed.get("intent"), validation_sets["intent_set"]
-                )
-                emotion = _validate_label(
-                    parsed.get("emotion"), validation_sets["emotion_set"]
-                )
-                valence_raw = parsed.get("valence")
-                valence = (
-                    valence_raw if valence_raw in ALLOWED_VALENCES else None
-                )
-                arousal_raw = parsed.get("arousal")
-                arousal = (
-                    arousal_raw if arousal_raw in ALLOWED_AROUSALS else None
-                )
-                confidence = min(max(float(parsed.get("confidence", 0.0)), 0.0), 1.0)
-                raw = parsed
+            intent = _validate_label(
+                parsed.intent, validation_sets["intent_set"]
+            )
+            emotion = _validate_label(
+                parsed.emotion, validation_sets["emotion_set"]
+            )
+            valence = (
+                parsed.valence if parsed.valence in ALLOWED_VALENCES else None
+            )
+            arousal = (
+                parsed.arousal if parsed.arousal in ALLOWED_AROUSALS else None
+            )
+            confidence = min(max(parsed.confidence, 0.0), 1.0)
+            raw = parsed.model_dump()
 
-                if intent is None and parsed.get("intent") is not None:
-                    logger.warning(
-                        "classification.invalid_intent",
-                        episode_id=episode_id,
-                        received=parsed.get("intent"),
-                        allowed=list(validation_sets["intent_set"]),
-                    )
-                if emotion is None and parsed.get("emotion") is not None:
-                    logger.warning(
-                        "classification.invalid_emotion",
-                        episode_id=episode_id,
-                        received=parsed.get("emotion"),
-                        allowed=list(validation_sets["emotion_set"]),
-                    )
+            if intent is None and parsed.intent is not None:
+                logger.warning(
+                    "classification.invalid_intent",
+                    episode_id=episode_id,
+                    received=parsed.intent,
+                    allowed=list(validation_sets["intent_set"]),
+                )
+            if emotion is None and parsed.emotion is not None:
+                logger.warning(
+                    "classification.invalid_emotion",
+                    episode_id=episode_id,
+                    received=parsed.emotion,
+                    allowed=list(validation_sets["emotion_set"]),
+                )
 
             # ── 11. Insert classification row ──────────────────────────────
             await db.execute(
@@ -376,60 +336,6 @@ async def _fetch_validation_sets(
             "neutral", "surprise", "fear", "disgust",
         },
     }
-
-
-def _parse_classification_response(content: str) -> dict | None:
-    """Parse LLM JSON response for classification.
-
-    Handles markdown code fences, trailing commas, and extra text before/after.
-
-    Args:
-        content: Raw response text from the LLM.
-
-    Returns:
-        A dict with classification fields, or ``None`` if parsing failed.
-    """
-    # Strip markdown code fences
-    if "```json" in content:
-        content = content.split("```json", 1)[1].split("```", 1)[0].strip()
-    elif "```" in content:
-        content = content.split("```", 1)[1].split("```", 1)[0].strip()
-
-    content = content.strip()
-
-    # Find the first JSON object
-    json_start = content.find("{")
-    if json_start < 0:
-        return None
-    content = content[json_start:]
-
-    # Find matching closing brace
-    depth = 0
-    for i, ch in enumerate(content):
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                content = content[: i + 1]
-                break
-
-    if not content:
-        return None
-
-    try:
-        data: dict = json.loads(content)
-    except json.JSONDecodeError:
-        logger.warning(
-            "classification.parse_failed",
-            content_preview=content[:300],
-        )
-        return None
-
-    if not isinstance(data, dict):
-        return None
-
-    return data
 
 
 def _validate_label(label: Any, allowed_set: set[str]) -> str | None:

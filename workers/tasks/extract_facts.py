@@ -92,6 +92,7 @@ async def extract_facts(
     from core.llm import resolve_backend
     from core.org_config import get_org_config
     from repositories.fact_repository import FactRepository
+    from schemas.llm_outputs import FactExtractionOutput
 
     logger.info(
         "fact_extraction.started",
@@ -146,7 +147,7 @@ async def extract_facts(
             exc_info=True,
         )
 
-    # ── 2. Call LLM ───────────────────────────────────────────────────────────
+    # ── 2-3. Call LLM with structured-output validation ───────────────────────
     try:
         llm = await resolve_backend(org_config=llm_config_dict)
         response = await llm.chat(
@@ -154,11 +155,12 @@ async def extract_facts(
                 {
                     "role": "system",
                     "content": (
-                        "You are a fact extraction system. Output ONLY valid JSON."
+                        "You are a fact extraction system."
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
+            response_model=FactExtractionOutput,
             temperature=0.1,
         )
     except Exception as exc:
@@ -169,8 +171,8 @@ async def extract_facts(
         )
         raise  # Let the @with_retry decorator handle transient failures
 
-    # ── 3. Parse JSON response ────────────────────────────────────────────────
-    facts = _parse_facts_response(response.content)
+    parsed = FactExtractionOutput.model_validate_json(response.content)
+    facts: list[dict] = [f.model_dump() for f in parsed.facts]
 
     # ── 4. Filter, resolve entities, persist, and set enrichment bit ─────────
     # Uses the shared engine from worker ctx (set earlier in this function).
@@ -379,91 +381,6 @@ async def _set_enrichment_bit(
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
-
-
-def _parse_facts_response(content: str) -> list[dict]:
-    """Parse LLM JSON response for fact triples.
-
-    Handles common LLM output quirks: markdown code fences, trailing
-    commas, and both list and dict-with-key wrappers.
-
-    Args:
-        content: Raw response text from the LLM.
-
-    Returns:
-        A list of fact dicts, or an empty list if parsing failed or the
-        response contained no facts.
-    """
-    # Strip markdown code fences if present
-    if "```json" in content:
-        content = content.split("```json", 1)[1].split("```", 1)[0].strip()
-    elif "```" in content:
-        content = content.split("```", 1)[1].split("```", 1)[0].strip()
-
-    # Strip leading/trailing whitespace that may remain after fence removal
-    content = content.strip()
-
-    # Strip deepseek-r1 thinking blocks: find first JSON object or array.
-    # Only strip text that appears BEFORE the first [ or {, not the bracket itself.
-    first_array = content.find("[")
-    first_object = content.find("{")
-    if first_array >= 0 and (first_object < 0 or first_array < first_object):
-        json_start = first_array
-    elif first_object >= 0:
-        json_start = first_object
-    else:
-        json_start = -1
-    if json_start > 0:  # only strip if there's text before the bracket
-        content = content[json_start:].strip()
-    elif json_start == -1:
-        return []
-
-    # Proactive handling: LLMs often return comma-separated JSON objects
-    # without an array wrapper:
-    #   {"subject":"Bob",...},
-    #   {"subject":"Bob",...}
-    # Detect this pattern and wrap in an array before the first parse attempt.
-    stripped = content.strip()
-    if stripped.startswith("{") and "},{" in stripped:
-        try:
-            data = json.loads(f"[{stripped}]")
-        except json.JSONDecodeError:
-            pass  # fall through to regular parse below
-        else:
-            logger.debug(
-                "fact_extraction.array_wrapped", content_preview=stripped[:100]
-            )
-            return (
-                data
-                if isinstance(data, list)
-                else data.get("facts", data.get("triples", []))
-            )
-
-    try:
-        data = json.loads(content)
-    except json.JSONDecodeError:
-        # Fallback: maybe the content is a single dict with a "facts" key
-        if stripped.startswith("{"):
-            try:
-                data = json.loads(content)
-            except json.JSONDecodeError:
-                pass
-        logger.warning(
-            "fact_extraction.parse_failed",
-            content_preview=content[:200],
-        )
-        return []
-
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        return data.get("facts", data.get("triples", []))
-
-    logger.warning(
-        "fact_extraction.unexpected_type",
-        json_type=type(data).__name__,
-    )
-    return []
 
 
 def _filter_facts(facts: list[dict]) -> list[dict]:

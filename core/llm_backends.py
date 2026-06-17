@@ -68,7 +68,7 @@ class OllamaBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self.DEFAULT_EMBED_DIM
 
-    async def chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+    async def _chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
         """Send a chat completion request to Ollama's ``/api/chat``.
 
         Supported kwargs (forwarded to Ollama):
@@ -222,7 +222,7 @@ class OpenAIBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self.DEFAULT_EMBED_DIM
 
-    async def chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+    async def _chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
         """Send a chat completion request.
 
         Supported kwargs: ``temperature``, ``max_tokens``, ``top_p``,
@@ -380,7 +380,7 @@ class AzureBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self.DEFAULT_EMBED_DIM
 
-    async def chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+    async def _chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
         """Send a chat completion request to Azure OpenAI.
 
         Supported kwargs: ``temperature``, ``max_tokens``, ``top_p``, etc.
@@ -496,7 +496,7 @@ class AnthropicBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return 0  # Anthropic does not offer a public embedding API.
 
-    async def chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+    async def _chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
         """Send a chat completion request to the Anthropic API.
 
         Handles Anthropic's ``system`` message convention: if the first
@@ -633,7 +633,7 @@ class OpenRouterBackend(LLMBackend):
     def embedding_dim(self) -> int:
         raise NotImplementedError("OpenRouter does not support embeddings")
 
-    async def chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+    async def _chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
         """Send a chat completion via OpenRouter."""
         import time
 

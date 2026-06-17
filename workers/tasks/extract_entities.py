@@ -92,6 +92,7 @@ async def extract_entities(
     from core.llm import resolve_backend
     from core.org_config import get_org_config
     from repositories.entity_repository import EntityRepository
+    from schemas.llm_outputs import EntityExtractionOutput
 
     logger.info(
         "entity_extraction.started",
@@ -148,7 +149,7 @@ async def extract_entities(
             exc_info=True,
         )
 
-    # ── 3. Call LLM ───────────────────────────────────────────────────────────
+    # ── 3-4. Call LLM with structured-output validation ──────────────────────
     try:
         llm = await resolve_backend(org_config=llm_config_dict)
         response = await llm.chat(
@@ -156,11 +157,12 @@ async def extract_entities(
                 {
                     "role": "system",
                     "content": (
-                        "You are an entity extraction system. Output ONLY valid JSON."
+                        "You are an entity extraction system."
                     ),
                 },
                 {"role": "user", "content": prompt},
             ],
+            response_model=EntityExtractionOutput,
             temperature=0.1,
         )
     except Exception as exc:
@@ -171,349 +173,312 @@ async def extract_entities(
         )
         raise  # Let the @with_retry decorator handle transient failures
 
-    # ── 4. Parse JSON response with recovery for malformed output ────────────
-    data = _parse_entity_response(response.content)
+    parsed = EntityExtractionOutput.model_validate_json(response.content)
+    entities: list[dict] = [e.model_dump() for e in parsed.entities]
+    relationships: list[dict] = [r.model_dump() for r in parsed.relationships]
 
-    # Recovery attempt: if the first parse failed, retry with a stricter
-    # system prompt and temperature 0.0 for determinism.
-    if data is None:
-        logger.warning(
-            "entity_extraction.parse_recovery",
-            episode_id=episode_id,
-        )
-        try:
-            # Reuse the already-rendered prompt with a stricter system message.
-            recovery_prompt = prompt
-            response2 = await llm.chat(
-                [
-                    {
-                        "role": "system",
-                        "content": (
-                            "CRITICAL: You MUST output valid JSON only. "
-                            "No other text, no markdown fences, no explanation."
-                        ),
-                    },
-                    {"role": "user", "content": recovery_prompt},
-                ],
-                temperature=0.0,
-            )
-            data = _parse_entity_response(response2.content)
-        except Exception as exc:
-            logger.error(
-                "entity_extraction.recovery_failed",
+    # ── Pronoun filter — skip entities that are pronouns or common    ───
+    #    misspellings.  Pronouns like "I", "me", "my" should never be
+    #    persisted as graph entities — they are resolved to the speaker
+    #    during fact extraction (see _match_entity in extract_facts.py).
+    _PRONOUN_SKIP_NAMES: set[str] = {
+        # First‑person
+        "i",
+        "me",
+        "my",
+        "mine",
+        "myself",
+        "we",
+        "us",
+        "our",
+        "ours",
+        "ourselves",
+        # Second‑person
+        "you",
+        "your",
+        "yours",
+        "yourself",
+        "yourselves",
+        # Third‑person
+        "he",
+        "him",
+        "his",
+        "himself",
+        "she",
+        "her",
+        "hers",
+        "herself",
+        "it",
+        "its",
+        "itself",
+        "they",
+        "them",
+        "their",
+        "theirs",
+        "themselves",
+        # Ambiguous / filler
+        "this",
+        "that",
+        "these",
+        "those",
+        "someone",
+        "somebody",
+        "everyone",
+        "everybody",
+        "nobody",
+        "anyone",
+        "anybody",
+        # Common misspellings (observed: "shhe")
+        "shhe",
+        "hhe",
+        "thei",
+        "theyr",
+        "thereselves",
+        # Questions / catch‑all that leak through extraction
+        "what",
+        "who",
+        "whom",
+        "whose",
+        "which",
+    }
+
+    filtered_entities: list[dict] = []
+    for entity in entities:
+        name = (entity.get("name") or "").strip()
+        if not name:
+            continue
+        if name.lower() in _PRONOUN_SKIP_NAMES:
+            logger.info(
+                "entity_extraction.pronoun_skipped",
                 episode_id=episode_id,
-                error=str(exc),
+                name=name,
             )
-            return
+            continue
+        filtered_entities.append(entity)
+    entities = filtered_entities
 
-    if data is None:
-        logger.warning("entity_extraction.no_result", episode_id=episode_id)
-    else:
-        entities: list[dict] = data.get("entities", [])
-        relationships: list[dict] = data.get("relationships", [])
+    # Clean relationships that reference skipped pronouns
+    clean_relationships: list[dict] = []
+    for rel in relationships:
+        subj = (rel.get("subject") or "").strip()
+        obj = (rel.get("object") or "").strip()
+        if (
+            subj.lower() in _PRONOUN_SKIP_NAMES
+            or obj.lower() in _PRONOUN_SKIP_NAMES
+        ):
+            logger.info(
+                "entity_extraction.relationship_pronoun_skipped",
+                episode_id=episode_id,
+                subject=subj,
+                predicate=rel.get("predicate"),
+                object=obj,
+            )
+            continue
+        clean_relationships.append(rel)
+    relationships = clean_relationships
 
-        # ── Pronoun filter — skip entities that are pronouns or common    ───
-        #    misspellings.  Pronouns like "I", "me", "my" should never be
-        #    persisted as graph entities — they are resolved to the speaker
-        #    during fact extraction (see _match_entity in extract_facts.py).
-        _PRONOUN_SKIP_NAMES: set[str] = {
-            # First‑person
-            "i",
-            "me",
-            "my",
-            "mine",
-            "myself",
-            "we",
-            "us",
-            "our",
-            "ours",
-            "ourselves",
-            # Second‑person
-            "you",
-            "your",
-            "yours",
-            "yourself",
-            "yourselves",
-            # Third‑person
-            "he",
-            "him",
-            "his",
-            "himself",
-            "she",
-            "her",
-            "hers",
-            "herself",
-            "it",
-            "its",
-            "itself",
-            "they",
-            "them",
-            "their",
-            "theirs",
-            "themselves",
-            # Ambiguous / filler
-            "this",
-            "that",
-            "these",
-            "those",
-            "someone",
-            "somebody",
-            "everyone",
-            "everybody",
-            "nobody",
-            "anyone",
-            "anybody",
-            # Common misspellings (observed: "shhe")
-            "shhe",
-            "hhe",
-            "thei",
-            "theyr",
-            "thereselves",
-            # Questions / catch‑all that leak through extraction
-            "what",
-            "who",
-            "whom",
-            "whose",
-            "which",
-        }
+    if not entities and not relationships:
+        logger.info("entity_extraction.empty", episode_id=episode_id)
 
-        filtered_entities: list[dict] = []
-        for entity in entities:
-            name = (entity.get("name") or "").strip()
-            if not name:
-                continue
-            if name.lower() in _PRONOUN_SKIP_NAMES:
-                logger.info(
-                    "entity_extraction.pronoun_skipped",
-                    episode_id=episode_id,
-                    name=name,
+    logger.info(
+        "entity_extraction.parsed",
+        episode_id=episode_id,
+        entities=len(entities),
+        relationships=len(relationships),
+    )
+
+    # ── 5. Validate entity types against allowed ontology ────────────────
+    allowed_types: set[str] = set(entity_types) | {"Custom"}
+    for entity in entities:
+        raw_type = entity.get("type")
+        if not raw_type or raw_type not in allowed_types:
+            logger.warning(
+                "entity_extraction.invalid_type",
+                episode_id=episode_id,
+                name=entity.get("name"),
+                original_type=raw_type,
+                reassigned_to="Custom",
+                allowed=sorted(allowed_types),
+            )
+            entity["type"] = "Custom"
+
+    # ── 6. Persist entities to graph (if available) ─────────────────────
+    # Uses the shared engine from worker ctx (set earlier in this function).
+
+    name_to_node: dict[str, dict] = {}
+
+    # ── Failure counters for enrichment-bit gating ──────────────────────
+    entity_failure_count: int = 0
+    relationship_failure_count: int = 0
+    relationship_skip_count: int = 0
+
+    try:
+        async with session_factory() as _db:
+            entity_repo = EntityRepository(db=_db)
+
+            for entity in entities:
+                entity_name = entity.get("name", "")
+                entity_type = entity.get("type", "Custom")
+                mentions: list[str] = entity.get("mentions", [])
+
+                # ── Normalize entity name casing ─────────────────────────
+                # Use the first mention's casing if available (it preserves
+                # the user's original casing), otherwise capitalize the
+                # first letter of a lowercase name.
+                normalized_name = entity_name
+                if mentions:
+                    first_mention = mentions[0].strip()
+                    # Only override if the mention looks like a user-typed
+                    # name (not a generic noun) — trust the LLM's name field
+                    # for the canonical form but prefer title-case mentions.
+                    if first_mention and len(first_mention) > 1:
+                        normalized_name = first_mention
+                elif entity_name and entity_name.islower():
+                    normalized_name = entity_name.capitalize()
+
+                summary = (
+                    f"{normalized_name} ({entity_type}) — "
+                    f"mentioned as: {', '.join(set(mentions))}"
+                    if mentions
+                    else f"{normalized_name} ({entity_type})"
                 )
-                continue
-            filtered_entities.append(entity)
-        entities = filtered_entities
 
-        # Clean relationships that reference skipped pronouns
-        clean_relationships: list[dict] = []
-        for rel in relationships:
-            subj = (rel.get("subject") or "").strip()
-            obj = (rel.get("object") or "").strip()
-            if (
-                subj.lower() in _PRONOUN_SKIP_NAMES
-                or obj.lower() in _PRONOUN_SKIP_NAMES
-            ):
-                logger.info(
-                    "entity_extraction.relationship_pronoun_skipped",
-                    episode_id=episode_id,
-                    subject=subj,
-                    predicate=rel.get("predicate"),
-                    object=obj,
+                node = await entity_repo.upsert_entity(
+                    org_id=uuid.UUID(org_id),
+                    name=normalized_name,
+                    entity_type=entity_type,
+                    summary=summary,
                 )
-                continue
-            clean_relationships.append(rel)
-        relationships = clean_relationships
-
-        if not entities and not relationships:
-            logger.info("entity_extraction.empty", episode_id=episode_id)
-
-        logger.info(
-            "entity_extraction.parsed",
-            episode_id=episode_id,
-            entities=len(entities),
-            relationships=len(relationships),
-        )
-
-        # ── 5. Validate entity types against allowed ontology ────────────────
-        allowed_types: set[str] = set(entity_types) | {"Custom"}
-        for entity in entities:
-            raw_type = entity.get("type")
-            if not raw_type or raw_type not in allowed_types:
-                logger.warning(
-                    "entity_extraction.invalid_type",
-                    episode_id=episode_id,
-                    name=entity.get("name"),
-                    original_type=raw_type,
-                    reassigned_to="Custom",
-                    allowed=sorted(allowed_types),
-                )
-                entity["type"] = "Custom"
-
-        # ── 6. Persist entities to graph (if available) ─────────────────────
-        # Uses the shared engine from worker ctx (set earlier in this function).
-
-        name_to_node: dict[str, dict] = {}
-
-        # ── Failure counters for enrichment-bit gating ──────────────────────
-        entity_failure_count: int = 0
-        relationship_failure_count: int = 0
-        relationship_skip_count: int = 0
-
-        try:
-            async with session_factory() as _db:
-                entity_repo = EntityRepository(db=_db)
-
-                for entity in entities:
-                    entity_name = entity.get("name", "")
-                    entity_type = entity.get("type", "Custom")
-                    mentions: list[str] = entity.get("mentions", [])
-
-                    # ── Normalize entity name casing ─────────────────────────
-                    # Use the first mention's casing if available (it preserves
-                    # the user's original casing), otherwise capitalize the
-                    # first letter of a lowercase name.
-                    normalized_name = entity_name
-                    if mentions:
-                        first_mention = mentions[0].strip()
-                        # Only override if the mention looks like a user-typed
-                        # name (not a generic noun) — trust the LLM's name field
-                        # for the canonical form but prefer title-case mentions.
-                        if first_mention and len(first_mention) > 1:
-                            normalized_name = first_mention
-                    elif entity_name and entity_name.islower():
-                        normalized_name = entity_name.capitalize()
-
-                    summary = (
-                        f"{normalized_name} ({entity_type}) — "
-                        f"mentioned as: {', '.join(set(mentions))}"
-                        if mentions
-                        else f"{normalized_name} ({entity_type})"
-                    )
-
-                    node = await entity_repo.upsert_entity(
-                        org_id=uuid.UUID(org_id),
-                        name=normalized_name,
+                if node is not None:
+                    # Key by normalized name so relationship lookups work
+                    name_to_node[normalized_name] = node
+                    # Also key by original name as fallback for callers
+                    # that might use the raw LLM output
+                    if normalized_name != entity_name:
+                        name_to_node[entity_name] = node
+                else:
+                    entity_failure_count += 1
+                    logger.warning(
+                        "entity_extraction.entity_upsert_skipped",
+                        episode_id=episode_id,
+                        entity_name=normalized_name,
                         entity_type=entity_type,
-                        summary=summary,
                     )
-                    if node is not None:
-                        # Key by normalized name so relationship lookups work
-                        name_to_node[normalized_name] = node
-                        # Also key by original name as fallback for callers
-                        # that might use the raw LLM output
-                        if normalized_name != entity_name:
-                            name_to_node[entity_name] = node
-                    else:
-                        entity_failure_count += 1
-                        logger.warning(
-                            "entity_extraction.entity_upsert_skipped",
-                            episode_id=episode_id,
-                            entity_name=normalized_name,
-                            entity_type=entity_type,
-                        )
 
-                # ── 7. Persist relationships to graph ─────────────────────────
-                for rel in relationships:
-                    subject = rel.get("subject", "")
-                    predicate = rel.get("predicate", "")
-                    obj = rel.get("object", "")
+            # ── 7. Persist relationships to graph ─────────────────────────
+            for rel in relationships:
+                subject = rel.get("subject", "")
+                predicate = rel.get("predicate", "")
+                obj = rel.get("object", "")
 
-                    if not subject or not predicate or not obj:
-                        continue
+                if not subject or not predicate or not obj:
+                    continue
 
-                    # ── On-the-fly entity recovery pass ─────────────────────
-                    # If the LLM included a name in a relationship but didn't
-                    # declare it in the entities array, auto-create it as a
-                    # "Custom" type entity so the graph edge is not lost.
-                    for name in (subject, obj):
-                        if name not in name_to_node:
-                            fallback_node = await entity_repo.upsert_entity(
-                                org_id=uuid.UUID(org_id),
-                                name=name,
-                                entity_type="Custom",
-                                summary=(
-                                    f"Auto-created from relationship: "
-                                    f"{subject} {predicate} {obj}"
-                                ),
-                            )
-                            if fallback_node is not None:
-                                name_to_node[name] = fallback_node
-                                logger.info(
-                                    "entity_extraction.relationship_entity_recovered",
-                                    episode_id=episode_id,
-                                    entity_name=name,
-                                    relationship=f"{subject} {predicate} {obj}",
-                                )
-
-                    if subject in name_to_node and obj in name_to_node:
-                        result = await entity_repo.upsert_relationship(
-                            subject=subject,
-                            predicate=predicate,
-                            obj=obj,
+                # ── On-the-fly entity recovery pass ─────────────────────
+                # If the LLM included a name in a relationship but didn't
+                # declare it in the entities array, auto-create it as a
+                # "Custom" type entity so the graph edge is not lost.
+                for name in (subject, obj):
+                    if name not in name_to_node:
+                        fallback_node = await entity_repo.upsert_entity(
                             org_id=uuid.UUID(org_id),
+                            name=name,
+                            entity_type="Custom",
+                            summary=(
+                                f"Auto-created from relationship: "
+                                f"{subject} {predicate} {obj}"
+                            ),
                         )
-                        if result is None:
-                            relationship_failure_count += 1
-                    else:
-                        relationship_skip_count += 1
-                        logger.warning(
-                            "entity_extraction.relationship_skipped_missing_entity",
-                            episode_id=episode_id,
-                            subject=subject,
-                            predicate=predicate,
-                            object=obj,
-                            subject_in_graph=subject in name_to_node,
-                            object_in_graph=obj in name_to_node,
-                        )
+                        if fallback_node is not None:
+                            name_to_node[name] = fallback_node
+                            logger.info(
+                                "entity_extraction.relationship_entity_recovered",
+                                episode_id=episode_id,
+                                entity_name=name,
+                                relationship=f"{subject} {predicate} {obj}",
+                            )
 
-                # ── 8. Link entities to this episode in graph_episode_entities ───
-                # This replaces the separate sync_to_graph ARQ task.  Linking
-                # happens inline so it's always consistent with entity extraction.
-                episode_uuid = uuid.UUID(episode_id)
-                for entity_name, entity_node in name_to_node.items():
-                    await _db.execute(
-                        text(
-                            """
-                            INSERT INTO graph_episode_entities
-                                (episode_id, entity_id, created_at)
-                            VALUES (:episode_id, :entity_id, now())
-                            ON CONFLICT (episode_id, entity_id) DO NOTHING
-                            """
-                        ),
-                        {
-                            "episode_id": episode_uuid,
-                            "entity_id": uuid.UUID(entity_node["id"]),
-                        },
+                if subject in name_to_node and obj in name_to_node:
+                    result = await entity_repo.upsert_relationship(
+                        subject=subject,
+                        predicate=predicate,
+                        obj=obj,
+                        org_id=uuid.UUID(org_id),
+                    )
+                    if result is None:
+                        relationship_failure_count += 1
+                else:
+                    relationship_skip_count += 1
+                    logger.warning(
+                        "entity_extraction.relationship_skipped_missing_entity",
+                        episode_id=episode_id,
+                        subject=subject,
+                        predicate=predicate,
+                        object=obj,
+                        subject_in_graph=subject in name_to_node,
+                        object_in_graph=obj in name_to_node,
                     )
 
-                # ⚠️ Commit is required — SQLAlchemy AsyncSession does NOT
-                # auto-commit when the context manager exits. Without this,
-                # all entity/relationship writes are silently rolled back.
-                await _db.commit()
-        finally:
-            if _own_engine:
-                await engine.dispose()
+            # ── 8. Link entities to this episode in graph_episode_entities ───
+            # This replaces the separate sync_to_graph ARQ task.  Linking
+            # happens inline so it's always consistent with entity extraction.
+            episode_uuid = uuid.UUID(episode_id)
+            for entity_name, entity_node in name_to_node.items():
+                await _db.execute(
+                    text(
+                        """
+                        INSERT INTO graph_episode_entities
+                            (episode_id, entity_id, created_at)
+                        VALUES (:episode_id, :entity_id, now())
+                        ON CONFLICT (episode_id, entity_id) DO NOTHING
+                        """
+                    ),
+                    {
+                        "episode_id": episode_uuid,
+                        "entity_id": uuid.UUID(entity_node["id"]),
+                    },
+                )
 
-        # ── 8b. Guard enrichment bit against persistence failures ────────────
-        # If entities failed to persist, raise so @with_retry can retry.
-        # Enrichment bit will NOT be set on this attempt (line 524 won't run).
-        if entity_failure_count > 0:
-            logger.error(
-                "entity_extraction.entity_persistence_failures",
-                episode_id=episode_id,
-                entity_failure_count=entity_failure_count,
-                entity_success_count=len(name_to_node),
-                relationship_failure_count=relationship_failure_count,
-                relationship_skip_count=relationship_skip_count,
-            )
-            raise ExternalServiceError(
-                message=f"Failed to persist {entity_failure_count} entities to graph "
-                f"(backend returned None). {len(name_to_node)} entities succeeded.",
-                detail={
-                    "episode_id": episode_id,
-                    "entity_failure_count": entity_failure_count,
-                    "entity_success_count": len(name_to_node),
-                    "relationship_failure_count": relationship_failure_count,
-                    "relationship_skip_count": relationship_skip_count,
-                },
-            )
+            # ⚠️ Commit is required — SQLAlchemy AsyncSession does NOT
+            # auto-commit when the context manager exits. Without this,
+            # all entity/relationship writes are silently rolled back.
+            await _db.commit()
+    finally:
+        if _own_engine:
+            await engine.dispose()
 
-        logger.info(
-            "entity_extraction.persisted",
+    # ── 8b. Guard enrichment bit against persistence failures ────────────
+    # If entities failed to persist, raise so @with_retry can retry.
+    # Enrichment bit will NOT be set on this attempt (line 524 won't run).
+    if entity_failure_count > 0:
+        logger.error(
+            "entity_extraction.entity_persistence_failures",
             episode_id=episode_id,
-            entity_count=len(name_to_node),
             entity_failure_count=entity_failure_count,
+            entity_success_count=len(name_to_node),
             relationship_failure_count=relationship_failure_count,
             relationship_skip_count=relationship_skip_count,
         )
+        raise ExternalServiceError(
+            message=f"Failed to persist {entity_failure_count} entities to graph "
+            f"(backend returned None). {len(name_to_node)} entities succeeded.",
+            detail={
+                "episode_id": episode_id,
+                "entity_failure_count": entity_failure_count,
+                "entity_success_count": len(name_to_node),
+                "relationship_failure_count": relationship_failure_count,
+                "relationship_skip_count": relationship_skip_count,
+            },
+        )
+
+    logger.info(
+        "entity_extraction.persisted",
+        episode_id=episode_id,
+        entity_count=len(name_to_node),
+        entity_failure_count=entity_failure_count,
+        relationship_failure_count=relationship_failure_count,
+        relationship_skip_count=relationship_skip_count,
+    )
 
     # ── 9. Set enrichment_status bit 0 ───────────────────────────────────────
     # Only reached if entity persistence succeeded (no ExternalServiceError
@@ -525,7 +490,7 @@ async def extract_entities(
         db_session_factory=session_factory,
     )
 
-    entity_count = len(entities if data else [])
+    entity_count = len(entities)
     if entity_count:
         logger.info(
             "entity_extraction.completed",
@@ -537,63 +502,6 @@ async def extract_entities(
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
-
-
-def _parse_entity_response(content: str) -> dict | None:
-    """Parse LLM JSON response for entities and relationships.
-
-    Handles common LLM output quirks: markdown code fences, trailing
-    commas, and extra text before/after the JSON object.
-
-    Args:
-        content: Raw response text from the LLM.
-
-    Returns:
-        A dict with ``entities`` and ``relationships`` keys, or ``None``
-        if parsing failed or the structure is invalid.
-    """
-    # Strip markdown code fences if present — handles both ```json and ```
-    if "```json" in content:
-        content = content.split("```json", 1)[1].split("```", 1)[0].strip()
-    elif "```" in content:
-        content = content.split("```", 1)[1].split("```", 1)[0].strip()
-
-    # Strip leading/trailing whitespace that may remain after fence removal
-    content = content.strip()
-
-    # Strip deepseek-r1 thinking blocks: find first JSON object or array
-    json_start = content.find("{")
-    if json_start < 0:
-        json_start = content.find("[")
-    if json_start >= 0:
-        content = content[json_start:].strip()
-
-    if not content:
-        return None
-
-    try:
-        data = json.loads(content)
-    except json.JSONDecodeError:
-        logger.warning(
-            "entity_extraction.parse_failed",
-            content_preview=content[:300],
-        )
-        return None
-
-    if not isinstance(data, dict):
-        logger.warning(
-            "entity_extraction.unexpected_type",
-            json_type=type(data).__name__,
-        )
-        return None
-
-    # Normalise: ensure both arrays exist so callers don't need to check
-    if "entities" not in data:
-        data["entities"] = []
-    if "relationships" not in data:
-        data["relationships"] = []
-
-    return data
 
 
 async def _set_enrichment_bit(

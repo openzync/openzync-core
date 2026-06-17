@@ -16,11 +16,16 @@ Usage::
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+
+from pydantic import BaseModel
+
+from core.exceptions import LLMStructuredOutputError
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +76,33 @@ class EmbeddingResponse:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Helpers
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _last_validation_error(content: str, model: type[BaseModel]) -> str:
+    """Return a short diagnostic message for a validation failure.
+
+    Tries to parse *content* and validate it against *model*, then returns
+    the validation error string.  If even JSON parsing fails, returns a
+    message indicating that.
+    """
+    # Try JSON parse first
+    try:
+        parsed: Any = json.loads(content)
+    except json.JSONDecodeError as exc:
+        return f"Invalid JSON: {exc}"
+
+    # Try model validation
+    try:
+        model.model_validate(parsed)
+    except Exception as exc:
+        return str(exc)
+
+    return "Unknown validation error"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Abstract backend
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -78,25 +110,228 @@ class EmbeddingResponse:
 class LLMBackend(ABC):
     """Abstract base class for all LLM providers.
 
-    Subclasses implement ``chat`` and ``embed`` using the provider's SDK or
+    Subclasses implement ``_chat`` and ``embed`` using the provider's SDK or
     HTTP API.  Every backend reports which model it is using and the embedding
     dimensionality.
+
+    The public ``chat`` method adds optional structured-output validation:
+    when a ``response_model`` is provided, the method auto-injects a system
+    prompt with the expected JSON schema, validates the response against the
+    model, and retries up to ``validation_retries`` times on failure with
+    error-context feedback in the retry messages.
     """
 
-    @abstractmethod
-    async def chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
-        """Send a chat completion request.
+    #: Number of validation retries when a Pydantic ``response_model`` is
+    #: provided but the LLM output fails to parse into it.
+    VALIDATION_RETRIES: int = 2
+
+    async def chat(
+        self,
+        messages: list[dict],
+        response_model: type[BaseModel] | None = None,
+        validation_retries: int | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
+        """Send a chat completion, optionally validating against a Pydantic model.
+
+        When ``response_model`` is ``None`` (default) this method delegates
+        directly to ``_chat()`` — the per-backend provider call.
+
+        When ``response_model`` is provided:
+
+        1. A system instruction with the model's JSON schema is injected into
+           *messages* so the LLM knows the expected output shape.
+        2. The provider is called via ``_chat()``.
+        3. The response is parsed and validated against *response_model*.
+        4. On success the ``ChatResponse`` is returned as-is.
+        5. On failure the conversation history is amended with the bad output
+           and a retry prompt explaining *why* it failed, then the provider
+           is called again.
+        6. After exhausting ``validation_retries`` attempts a
+           :class:`LLMStructuredOutputError` is raised.
 
         Args:
             messages: List of message dicts with ``role`` and ``content``
                 keys, following the OpenAI message format.
+            response_model: Optional Pydantic model to validate the output
+                content against.  When provided, the LLM is instructed to
+                emit JSON matching the model's schema.
+            validation_retries: Override for the number of validation retry
+                attempts.  Defaults to :attr:`VALIDATION_RETRIES`.
             **kwargs: Additional provider-specific parameters (temperature,
                 max_tokens, top_p, etc.).
 
         Returns:
             A ``ChatResponse`` with the generated text and token usage.
+
+        Raises:
+            LLMStructuredOutputError: If the output cannot be validated
+                against *response_model* after exhausting retries.
+        """
+        retries = (
+            validation_retries
+            if validation_retries is not None
+            else self.VALIDATION_RETRIES
+        )
+
+        # No schema — fast path, delegate directly.
+        if response_model is None:
+            return await self._chat(messages, **kwargs)
+
+        messages = self._inject_schema_instr(messages, response_model)
+
+        for attempt in range(retries + 1):
+            response: ChatResponse = await self._chat(messages, **kwargs)
+
+            # ── Try clean model_validate_json first ───────────────────────────
+            try:
+                response_model.model_validate_json(response.content)
+                return response
+            except Exception:
+                pass
+
+            # ── Fallback: strip fences, hunt for JSON, try again ──────────────
+            extracted: Any = self._extract_json(response.content)
+            if extracted is not None:
+                try:
+                    response_model.model_validate(extracted)
+                    # Normalise content to clean JSON so callers can use
+                    # ``model_validate_json()`` without pre-processing.
+                    response.content = json.dumps(extracted)
+                    return response
+                except Exception:
+                    pass  # fall through to retry
+
+            # ── Retry or exhaust ──────────────────────────────────────────────
+            if attempt >= retries:
+                raise LLMStructuredOutputError(
+                    f"LLM output failed to match {response_model.__name__} "
+                    f"after {retries + 1} attempt(s).",
+                    model_name=self.model_name,
+                    content_preview=response.content[:300],
+                    validation_error=_last_validation_error(response.content, response_model),
+                )
+
+            messages = self._build_retry_messages(
+                messages,
+                response.content,
+                response_model,
+            )
+
+        raise RuntimeError("unreachable")  # pragma: no cover
+
+    @abstractmethod
+    async def _chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+        """Provider-specific chat implementation.
+
+        Override this in each backend.  The public :meth:`chat` wraps
+        this with validation, retry, and structured-output logic.
+
+        Args:
+            messages: List of message dicts following OpenAI format.
+            **kwargs: Provider-specific parameters.
+
+        Returns:
+            A ``ChatResponse``.
         """
         ...
+
+    # ── Structured-output helpers ──────────────────────────────────────────────
+
+    @staticmethod
+    def _inject_schema_instr(
+        messages: list[dict], model: type[BaseModel]
+    ) -> list[dict]:
+        """Prepend (or append to existing) system instruction with JSON schema.
+
+        Builds a directive telling the LLM to output valid JSON matching
+        the Pydantic model's schema, then injects it into *messages*.
+
+        If the first message already has ``role == "system"`` the schema
+        instruction is appended to its content.  Otherwise a new system
+        message is prepended.
+        """
+        schema_json: str = json.dumps(model.model_json_schema(), indent=2)
+        instruction: str = (
+            "You MUST respond with valid JSON only. "
+            "Do NOT include markdown code blocks, explanations, "
+            "or any text outside the JSON object.\n\n"
+            f"Expected JSON schema:\n{schema_json}"
+        )
+
+        if messages and messages[0].get("role") == "system":
+            return [
+                {**messages[0], "content": f"{messages[0]['content']}\n\n{instruction}"},
+                *messages[1:],
+            ]
+
+        return [{"role": "system", "content": instruction}, *messages]
+
+    @staticmethod
+    def _build_retry_messages(
+        messages: list[dict],
+        bad_content: str,
+        model: type[BaseModel],
+    ) -> list[dict]:
+        """Append assistant error + user retry prompt after a validation failure.
+
+        Adds the failed output as an ``assistant`` message and follows it
+        with a ``user`` message explaining the failure and repeating the
+        expected schema.
+        """
+        schema_json: str = json.dumps(model.model_json_schema(), indent=2)
+        return [
+            *messages,
+            {"role": "assistant", "content": bad_content},
+            {
+                "role": "user",
+                "content": (
+                    "The previous response was NOT valid JSON matching the "
+                    "expected schema.\n\n"
+                    "Please try again. Output ONLY valid JSON. "
+                    "No markdown fences, no extra text.\n"
+                    f"Expected schema:\n{schema_json}"
+                ),
+            },
+        ]
+
+    @staticmethod
+    def _extract_json(text: str) -> Any | None:
+        """Strip markdown fences and other wrappers, then parse JSON.
+
+        Attempts to recover a JSON value from text that may be wrapped in
+        `````json```` markers, preceded by thinking blocks (e.g. deepseek-r1),
+        or contain leading/trailing non-JSON text.
+
+        Returns the parsed Python value (dict / list / str / etc.) on
+        success, or ``None`` if no valid JSON could be extracted.
+        """
+        # Strip markdown code fences
+        if "```json" in text:
+            text = text.split("```json", 1)[1].split("```", 1)[0].strip()
+        elif "```" in text:
+            text = text.split("```", 1)[1].split("```", 1)[0].strip()
+
+        text = text.strip()
+
+        # Find the first JSON object or array start
+        json_start: int = -1
+        for c in ("{", "["):
+            pos: int = text.find(c)
+            if pos >= 0 and (json_start < 0 or pos < json_start):
+                json_start = pos
+
+        if json_start < 0:
+            return None
+
+        text = text[json_start:]
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            return None
+
+    # ── Abstract members ───────────────────────────────────────────────────────
 
     @abstractmethod
     async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:

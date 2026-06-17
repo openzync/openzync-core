@@ -74,6 +74,7 @@ async def extract_structured(
     from core.db import get_async_session
     from core.llm import resolve_backend
     from core.org_config import get_org_config
+    from schemas.llm_outputs import StructuredExtractionOutput
     from services.worker.worker_settings import settings as worker_settings
 
     logger.info(
@@ -173,7 +174,7 @@ async def extract_structured(
             )
             llm_config_dict = org_cfg.to_llm_config_dict()
 
-            # ── 8. Call LLM ────────────────────────────────────────────────
+            # ── 8-9. Call LLM with structured-output validation ─────────────
             try:
                 llm = await resolve_backend(org_config=llm_config_dict)
                 response = await llm.chat(
@@ -181,12 +182,12 @@ async def extract_structured(
                         {
                             "role": "system",
                             "content": (
-                                "You are a structured data extraction system. "
-                                "Output ONLY valid JSON."
+                                "You are a structured data extraction system."
                             ),
                         },
                         {"role": "user", "content": prompt},
                     ],
+                    response_model=StructuredExtractionOutput,
                     temperature=0.0,
                     max_tokens=max_tokens,
                 )
@@ -198,47 +199,19 @@ async def extract_structured(
                 )
                 raise  # Let @with_retry handle transient failures
 
-            # ── 9. Parse JSON response ─────────────────────────────────────
-            parsed = _parse_structured_response(response.content)
-
-            # Recovery attempt if first parse failed
-            if parsed is None:
-                logger.warning(
-                    "structured_extraction.parse_recovery",
-                    episode_id=episode_id,
-                )
-                try:
-                    response2 = await llm.chat(
-                        [
-                            {
-                                "role": "system",
-                                "content": (
-                                    "CRITICAL: You MUST output valid JSON only. "
-                                    "No other text, no markdown fences, "
-                                    "no explanation."
-                                ),
-                            },
-                            {"role": "user", "content": prompt},
-                        ],
-                        temperature=0.0,
-                        max_tokens=max_tokens,
-                    )
-                    parsed = _parse_structured_response(response2.content)
-                except Exception as exc:
-                    logger.error(
-                        "structured_extraction.recovery_failed",
-                        episode_id=episode_id,
-                        error=str(exc),
-                    )
-
             # ── 10. Validate & insert per schema ───────────────────────────
+            parsed = StructuredExtractionOutput.model_validate_json(
+                response.content
+            )
+            raw_dict: dict[str, Any] = parsed.model_dump()
+
             schema_map: dict[str, dict[str, Any]] = {
                 s["name"]: s for s in schemas
             }
 
-            if parsed and isinstance(parsed, dict):
+            if raw_dict:
                 inserted_count = 0
-                for schema_name, data in parsed.items():
+                for schema_name, data in raw_dict.items():
                     schema_info = schema_map.get(schema_name)
                     if schema_info is None:
                         logger.warning(
@@ -356,57 +329,6 @@ async def extract_structured(
 
 
 # ── Private helpers ────────────────────────────────────────────────────────────
-
-
-def _parse_structured_response(content: str) -> dict[str, Any] | None:
-    """Parse LLM JSON response for structured extraction.
-
-    Handles markdown code fences, trailing commas, and extra text before/after.
-
-    Returns:
-        A dict keyed by schema name, or ``None`` if parsing failed.
-    """
-    # Strip markdown code fences
-    if "```json" in content:
-        content = content.split("```json", 1)[1].split("```", 1)[0].strip()
-    elif "```" in content:
-        content = content.split("```", 1)[1].split("```", 1)[0].strip()
-
-    content = content.strip()
-
-    # Find the first JSON object
-    json_start = content.find("{")
-    if json_start < 0:
-        return None
-    content = content[json_start:]
-
-    # Find matching closing brace
-    depth = 0
-    for i, ch in enumerate(content):
-        if ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                content = content[: i + 1]
-                break
-
-    if not content:
-        return None
-
-    try:
-        data: dict[str, Any] = json.loads(content)
-    except json.JSONDecodeError:
-        logger.warning(
-            "structured_extraction.parse_failed",
-            content_preview=content[:300],
-        )
-        return None
-
-    if not isinstance(data, dict):
-        return None
-
-    return data
 
 
 def _validate_against_schema(data: dict, schema: dict) -> None:
