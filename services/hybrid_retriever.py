@@ -19,8 +19,10 @@ import time
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import Select, func, literal_column, select, text
+from sqlalchemy import Float, Select, cast, func, literal, literal_column, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from pgvector.sqlalchemy import Vector
 
 from models.episode import Episode
 from models.fact import Fact
@@ -274,8 +276,15 @@ class HybridRetriever:
             logger.debug("hybrid_retriever.episode_vector_fallback_bm25")
             return await self._bm25_search_episodes(query, user_id, limit)
 
+        dim: int = (
+            self._org_config.embedding_dim
+            if self._org_config and self._org_config.embedding_dim
+            else 1536
+        )
+
         vector_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
-        embedding_expr = literal_column(f"'{vector_str}'::vector")
+        embedding_col = cast(Episode.embedding, Vector(dim))
+        query_literal = literal_column(f"'{vector_str}'::vector({dim})")
 
         stmt = (
             select(
@@ -284,10 +293,10 @@ class HybridRetriever:
                 Episode.role,
                 Episode.created_at,
                 (
-                    1.0
+                    literal(1.0, Float)
                     - func.coalesce(
-                        Episode.embedding.op("<=>")(embedding_expr),
-                        1.0,
+                        embedding_col.op("<=>")(query_literal),
+                        literal(1.0, Float),
                     )
                 ).label("score"),
             )
@@ -295,6 +304,7 @@ class HybridRetriever:
                 Episode.user_id == user_id,
                 Episode.is_deleted.is_(False),
                 Episode.embedding.isnot(None),
+                func.cardinality(Episode.embedding) > 0,
             )
             .order_by(text("score DESC"))
             .limit(limit)
@@ -333,8 +343,18 @@ class HybridRetriever:
             logger.debug("hybrid_retriever.fact_vector_fallback_bm25")
             return await self._bm25_search_facts(query, user_id, limit)
 
+        # Resolve embedding dimension from org config so the runtime
+        # ``::vector(N)`` cast matches the model that produced the data.
+        # Defaults to 1536 (text-embedding-3-small) when not configured.
+        dim: int = (
+            self._org_config.embedding_dim
+            if self._org_config and self._org_config.embedding_dim
+            else 1536
+        )
+
         vector_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
-        embedding_expr = literal_column(f"'{vector_str}'::vector")
+        embedding_col = cast(Fact.embedding, Vector(dim))
+        query_literal = literal_column(f"'{vector_str}'::vector({dim})")
 
         stmt = (
             select(
@@ -346,10 +366,10 @@ class HybridRetriever:
                 Fact.confidence,
                 Fact.created_at,
                 (
-                    1.0
+                    literal(1.0, Float)
                     - func.coalesce(
-                        Fact.embedding.op("<=>")(embedding_expr),
-                        1.0,
+                        embedding_col.op("<=>")(query_literal),
+                        literal(1.0, Float),
                     )
                 ).label("score"),
             )
@@ -357,6 +377,7 @@ class HybridRetriever:
                 Fact.user_id == user_id,
                 Fact.invalid_at.is_(None),
                 Fact.embedding.isnot(None),
+                func.cardinality(Fact.embedding) > 0,
             )
             .order_by(text("score DESC"))
             .limit(limit)

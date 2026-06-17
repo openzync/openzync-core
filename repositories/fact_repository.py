@@ -221,7 +221,7 @@ class FactRepository:
                     "valid_to": f.get("valid_to"),
                     "subject_entity_id": f.get("subject_entity_id"),
                     "object_entity_id": f.get("object_entity_id"),
-                    "embedding": [],
+                    "embedding": None,
                 }
             )
 
@@ -300,7 +300,7 @@ class FactRepository:
                 "valid_from": now,
                 "subject_entity_id": f.get("subject_entity_id"),
                 "object_entity_id": f.get("object_entity_id"),
-                "embedding": [],
+                "embedding": None,
             }
             for f in facts
         ]
