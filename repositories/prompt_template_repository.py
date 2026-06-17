@@ -362,11 +362,14 @@ class PromptTemplateRepository:
     # ═══════════════════════════════════════════════════════════════════════════
 
     async def seed_default_prompts(self, org_id: UUID) -> int:
-        """Seed all manifest-defined prompt templates into an organisation.
+        """Seed the active default prompt templates into an organisation.
 
         Reads ``manifest.yaml`` and the corresponding ``.jinja2`` files
         from disk and creates an org-scoped copy at ``version = 1`` for
-        each template entry.
+        each manifest entry where ``is_default_for_type == true``.
+
+        Only the **current defaults** are seeded.  Legacy versions
+        (e.g. ``extract_facts_v3``) are available via the import endpoint.
 
         Template names that the org already has are skipped — idempotent.
 
@@ -380,6 +383,8 @@ class PromptTemplateRepository:
         count = 0
 
         for entry in MANIFEST.templates:
+            if not entry.get("is_default_for_type"):
+                continue
             name = entry["name"]
 
             # Skip if the org already has this template name.
