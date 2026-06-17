@@ -173,7 +173,7 @@ async def extract_entities(
         )
         raise  # Let the @with_retry decorator handle transient failures
 
-    parsed = EntityExtractionOutput.model_validate_json(response.content)
+    parsed = response.validated_data  # EntityExtractionOutput instance
     entities: list[dict] = [e.model_dump() for e in parsed.entities]
     relationships: list[dict] = [r.model_dump() for r in parsed.relationships]
 

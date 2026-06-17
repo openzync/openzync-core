@@ -59,11 +59,18 @@ class TokenUsage:
 
 @dataclass
 class ChatResponse:
-    """Uniform response from any LLM chat backend."""
+    """Uniform response from any LLM chat backend.
+
+    When ``response_model`` was passed to :meth:`LLMBackend.chat` and
+    validation succeeded, :attr:`validated_data` holds the parsed Pydantic
+    model instance so callers can access typed fields directly instead
+    of re-parsing ``content``.
+    """
 
     content: str
     model: str
     usage: TokenUsage = field(default_factory=TokenUsage)
+    validated_data: BaseModel | None = None
 
 
 @dataclass
@@ -185,7 +192,9 @@ class LLMBackend(ABC):
 
             # ── Try clean model_validate_json first ───────────────────────────
             try:
-                response_model.model_validate_json(response.content)
+                response.validated_data = response_model.model_validate_json(
+                    response.content
+                )
                 return response
             except Exception:
                 pass
@@ -194,7 +203,9 @@ class LLMBackend(ABC):
             extracted: Any = self._extract_json(response.content)
             if extracted is not None:
                 try:
-                    response_model.model_validate(extracted)
+                    response.validated_data = response_model.model_validate(
+                        extracted
+                    )
                     # Normalise content to clean JSON so callers can use
                     # ``model_validate_json()`` without pre-processing.
                     response.content = json.dumps(extracted)

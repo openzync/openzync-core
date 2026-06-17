@@ -171,7 +171,7 @@ async def extract_facts(
         )
         raise  # Let the @with_retry decorator handle transient failures
 
-    parsed = FactExtractionOutput.model_validate_json(response.content)
+    parsed = response.validated_data  # FactExtractionOutput instance
     facts: list[dict] = [f.model_dump() for f in parsed.facts]
 
     # ── 4. Filter, resolve entities, persist, and set enrichment bit ─────────

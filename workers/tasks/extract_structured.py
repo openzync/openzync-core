@@ -200,10 +200,7 @@ async def extract_structured(
                 raise  # Let @with_retry handle transient failures
 
             # ── 10. Validate & insert per schema ───────────────────────────
-            parsed = StructuredExtractionOutput.model_validate_json(
-                response.content
-            )
-            raw_dict: dict[str, Any] = parsed.model_dump()
+            raw_dict: dict[str, Any] = response.validated_data.model_dump()
 
             schema_map: dict[str, dict[str, Any]] = {
                 s["name"]: s for s in schemas

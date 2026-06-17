@@ -187,7 +187,7 @@ async def classify_dialog(
             # Validate and normalise against org's label sets
             validation_sets = await _fetch_validation_sets(db, org_id)
 
-            parsed = ClassificationOutput.model_validate_json(response.content)
+            parsed = response.validated_data  # ClassificationOutput instance
 
             intent = _validate_label(
                 parsed.intent, validation_sets["intent_set"]
