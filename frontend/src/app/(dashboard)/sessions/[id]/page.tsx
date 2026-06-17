@@ -1,4 +1,5 @@
 "use client";
+import { RequireAuth } from "../../require-auth";
 
 import { useState, useEffect } from "react";
 import { useParams, useSearchParams, usePathname, useRouter } from "next/navigation";
@@ -15,6 +16,10 @@ import {
   User as UserIcon,
   ExternalLink,
 } from "lucide-react";
+import { get, ApiError } from "@/lib/api-client";
+import { smartTimestamp, truncateId, copyToClipboard } from "@/lib/utils";
+import { ErrorState } from "@/components/shared/error-state";
+import { Badge } from "@/components/ui/badge";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -33,7 +38,7 @@ interface SessionDetail {
 
 interface Tab {
   label: string;
-  path: string; // relative path segment after session id
+  path: string;
 }
 
 const TABS: Tab[] = [
@@ -44,45 +49,16 @@ const TABS: Tab[] = [
   { label: "Extractions", path: "extractions" },
 ];
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-
-function formatDate(dateStr: string): string {
-  const date = new Date(dateStr);
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function formatDateTime(dateStr: string): string {
-  const date = new Date(dateStr);
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function shortId(id: string): string {
-  if (id.length <= 12) return id;
-  return `${id.slice(0, 6)}…${id.slice(-4)}`;
-}
-
 // ─── Copy Button ───────────────────────────────────────────────────────────────
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
   async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(text);
+    const ok = await copyToClipboard(text);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // Clipboard API not available
     }
   }
 
@@ -94,27 +70,6 @@ function CopyButton({ text }: { text: string }) {
     >
       {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
     </button>
-  );
-}
-
-// ─── Status Chip ───────────────────────────────────────────────────────────────
-
-function StatusChip({ isActive }: { isActive: boolean }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
-        isActive
-          ? "bg-success/10 text-success"
-          : "bg-surface-700 text-surface-400"
-      }`}
-    >
-      <span
-        className={`mr-1.5 h-1.5 w-1.5 rounded-full ${
-          isActive ? "bg-success" : "bg-surface-500"
-        }`}
-      />
-      {isActive ? "Active" : "Closed"}
-    </span>
   );
 }
 
@@ -160,7 +115,6 @@ export default function SessionDetailPage() {
     for (const tab of TABS) {
       if (pathname.endsWith(`/${tab.path}`)) return tab.path;
     }
-    // If we're at the base detail path, no tab is active
     return null;
   })();
 
@@ -177,26 +131,16 @@ export default function SessionDetailPage() {
       setError("");
 
       try {
-        const token = sessionStorage.getItem("mg_access_token");
-        const headers: Record<string, string> = {};
-        if (token) headers["Authorization"] = `Bearer ${token}`;
-
-        const res = await fetch(
-          `http://localhost:8000/v1/users/${userId}/sessions/${sessionId}`,
-          { headers },
+        const data = await get<SessionDetail>(
+          `/v1/users/${userId}/sessions/${sessionId}`,
         );
-
-        if (res.ok) {
-          const data: SessionDetail = await res.json();
-          setSession(data);
-        } else if (res.status === 404) {
+        setSession(data);
+      } catch (err) {
+        if (err instanceof ApiError && err.isNotFound) {
           setError("Session not found.");
         } else {
-          const err = await res.json().catch(() => ({}));
-          setError(err.detail ?? `Failed to load session (${res.status})`);
+          setError(err instanceof ApiError ? err.message : "Network error. Please try again.");
         }
-      } catch {
-        setError("Network error. Please try again.");
       } finally {
         setLoading(false);
       }
@@ -234,6 +178,7 @@ export default function SessionDetailPage() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
+    <RequireAuth>
     <div className="space-y-6">
       {/* ═══ Back button ═══ */}
       <button
@@ -264,15 +209,7 @@ export default function SessionDetailPage() {
           </div>
         ) : error ? (
           /* Error state */
-          <div className="flex flex-col items-center justify-center py-10">
-            <p className="text-sm text-surface-400 mb-3">{error}</p>
-            <button
-              onClick={() => window.location.reload()}
-              className="btn-secondary text-xs"
-            >
-              Retry
-            </button>
-          </div>
+          <ErrorState message={error} onRetry={() => window.location.reload()} />
         ) : session ? (
           <>
             {/* Title row */}
@@ -285,7 +222,10 @@ export default function SessionDetailPage() {
                   Session overview
                 </p>
               </div>
-              <StatusChip isActive={session.is_active} />
+              <Badge variant={session.is_active ? "success" : "default"} size="sm">
+                <span className={`mr-1.5 h-1.5 w-1.5 rounded-full ${session.is_active ? "bg-success" : "bg-surface-500"}`} />
+                {session.is_active ? "Active" : "Closed"}
+              </Badge>
             </div>
 
             {/* Metadata grid */}
@@ -297,7 +237,7 @@ export default function SessionDetailPage() {
               >
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-xs bg-surface-800 rounded px-2 py-0.5">
-                    {shortId(session.id)}
+                    {truncateId(session.id)}
                   </span>
                   <CopyButton text={session.id} />
                 </div>
@@ -310,7 +250,7 @@ export default function SessionDetailPage() {
               >
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-xs bg-surface-800 rounded px-2 py-0.5">
-                    {shortId(session.user_id)}
+                    {truncateId(session.user_id)}
                   </span>
                   <CopyButton text={session.user_id} />
                 </div>
@@ -321,7 +261,7 @@ export default function SessionDetailPage() {
                 icon={<Calendar size={16} />}
                 label="Created"
               >
-                <span>{formatDateTime(session.created_at)}</span>
+                <span>{smartTimestamp(session.created_at)}</span>
               </MetadataRow>
 
               {/* Closed */}
@@ -330,7 +270,7 @@ export default function SessionDetailPage() {
                 label="Closed"
               >
                 {session.closed_at ? (
-                  <span>{formatDateTime(session.closed_at)}</span>
+                  <span>{smartTimestamp(session.closed_at)}</span>
                 ) : (
                   <span className="text-surface-500">—</span>
                 )}
@@ -395,5 +335,6 @@ export default function SessionDetailPage() {
         </div>
       )}
     </div>
+    </RequireAuth>
   );
 }

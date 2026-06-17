@@ -1,9 +1,16 @@
 "use client";
+import { RequireAuth } from "../../../require-auth";
 
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { FileText, AlertCircle } from "lucide-react";
+import { FileText } from "lucide-react";
+import { get, ApiError } from "@/lib/api-client";
+import { formatDate } from "@/lib/utils";
 import SessionTabs from "../tabs";
+import { EmptyState } from "@/components/shared/empty-state";
+import { ErrorState } from "@/components/shared/error-state";
+import { Badge } from "@/components/ui/badge";
+import { TableSkeleton } from "@/components/shared/skeleton";
 
 interface FactRow {
   id: string;
@@ -15,21 +22,10 @@ interface FactRow {
   created_at: string;
 }
 
-function formatDate(raw: string): string {
-  try { return new Date(raw).toLocaleDateString(); }
-  catch { return raw; }
-}
-
-function confidenceColor(score: number): string {
-  if (score >= 0.8) return "text-success";
-  if (score >= 0.5) return "text-warning";
-  return "text-error";
-}
-
-function confidenceBg(score: number): string {
-  if (score >= 0.8) return "bg-success/10";
-  if (score >= 0.5) return "bg-warning/10";
-  return "bg-error/10";
+function confidenceVariant(score: number): "success" | "warning" | "error" {
+  if (score >= 0.8) return "success";
+  if (score >= 0.5) return "warning";
+  return "error";
 }
 
 export default function SessionFactsPage() {
@@ -48,19 +44,12 @@ export default function SessionFactsPage() {
       setLoading(true);
       setError("");
       try {
-        const token = sessionStorage.getItem("mg_access_token");
-        const headers: Record<string, string> = {};
-        if (token) headers["Authorization"] = `Bearer ${token}`;
-
-        const res = await fetch(
-          `http://localhost:8000/v1/users/${userId}/sessions/${sessionId}/facts?limit=50`,
-          { headers },
+        const json = await get<{ data: FactRow[] }>(
+          `/v1/users/${userId}/sessions/${sessionId}/facts?limit=50`,
         );
-        if (!res.ok) throw new Error("Failed to load facts");
-        const data = await res.json();
-        setFacts((data.data ?? []) as FactRow[]);
-      } catch (err: any) {
-        setError(err.message ?? "An error occurred");
+        setFacts(json.data ?? []);
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : "Failed to load facts");
       } finally {
         setLoading(false);
       }
@@ -69,23 +58,20 @@ export default function SessionFactsPage() {
   }, [userId, sessionId]);
 
   return (
+    <RequireAuth>
     <div>
       <SessionTabs sessionId={sessionId} userId={userId} activeTab="facts" />
 
       {loading ? (
-        <div className="card-base p-6 space-y-3">
-          {[1,2,3].map(i => <div key={i} className="h-12 bg-surface-800 animate-pulse rounded" />)}
-        </div>
+        <TableSkeleton rows={3} cols={4} colWidths={["w-48", "w-40", "w-16", "w-24"]} />
       ) : error ? (
-        <div className="card-base p-6 flex items-center gap-3 text-error">
-          <AlertCircle size={18} />
-          <span className="text-sm">{error}</span>
-        </div>
+        <ErrorState message={error} onRetry={() => window.location.reload()} />
       ) : facts.length === 0 ? (
-        <div className="card-base p-6 text-center text-surface-500 text-sm">
-          <FileText size={32} className="mx-auto mb-3 opacity-50" />
-          No facts extracted from this session yet. Facts appear after messages are processed by the extraction worker.
-        </div>
+        <EmptyState
+          icon={FileText}
+          title="No facts extracted from this session yet"
+          description="Facts appear after messages are processed by the extraction worker."
+        />
       ) : (
         <div className="card-base overflow-hidden">
           <table className="w-full">
@@ -105,11 +91,13 @@ export default function SessionFactsPage() {
                     {fact.subject ?? "?"} → {fact.predicate ?? "?"} → {fact.object ?? "?"}
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${confidenceBg(fact.confidence)} ${confidenceColor(fact.confidence)}`}>
+                    <Badge variant={confidenceVariant(fact.confidence)}>
                       {(fact.confidence * 100).toFixed(0)}%
-                    </span>
+                    </Badge>
                   </td>
-                  <td className="px-4 py-3 text-right text-sm text-surface-400">{formatDate(fact.created_at)}</td>
+                  <td className="px-4 py-3 text-right text-sm text-surface-400">
+                    {formatDate(fact.created_at)}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -117,5 +105,6 @@ export default function SessionFactsPage() {
         </div>
       )}
     </div>
+    </RequireAuth>
   );
 }

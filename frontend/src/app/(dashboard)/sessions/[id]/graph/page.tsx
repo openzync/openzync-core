@@ -1,18 +1,24 @@
 "use client";
+import { RequireAuth } from "../../../require-auth";
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { ForceGraph, type GraphNodeData, type GraphEdgeData } from "@/components/force-graph";
+import { get, API_BASE, getAccessToken, ApiError } from "@/lib/api-client";
 import SessionTabs from "../tabs";
 
-const API_BASE = "http://localhost:8000";
+interface NodesResponse {
+  data: { items: GraphNodeData[] };
+}
 
-function authHeaders(): Record<string, string> {
+interface EdgesResponse {
+  data: { items: GraphEdgeData[] };
+}
+
+function buildAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (typeof window !== "undefined") {
-    const token = sessionStorage.getItem("mg_access_token");
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-  }
+  const token = getAccessToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
   return headers;
 }
 
@@ -35,20 +41,11 @@ export default function SessionGraphPage() {
 
     try {
       // Step 1: fetch session-scoped nodes
-      const nodeRes = await fetch(
-        `${API_BASE}/v1/users/${userId}/graph/nodes?limit=200&session_id=${sessionId}`,
-        { headers: authHeaders() },
+      const nodeData = await get<NodesResponse>(
+        `/v1/users/${userId}/graph/nodes?limit=200&session_id=${sessionId}`,
       );
 
-      if (!nodeRes.ok) {
-        const errBody = await nodeRes.json().catch(() => ({}));
-        throw new Error(
-          (errBody as { detail?: string }).detail ?? `Failed to load graph data (${nodeRes.status})`,
-        );
-      }
-
-      const nodeData = await nodeRes.json();
-      const items: GraphNodeData[] = (nodeData.data as { items: GraphNodeData[] })?.items ?? [];
+      const items: GraphNodeData[] = nodeData.data?.items ?? [];
 
       if (items.length === 0) {
         setGraphData({ nodes: [], edges: [] });
@@ -64,12 +61,9 @@ export default function SessionGraphPage() {
         const batch = items.slice(i, i + 5);
         const batchResults = await Promise.allSettled(
           batch.map((node) =>
-            fetch(`${API_BASE}/v1/users/${userId}/graph/edges?subject_id=${node.id}&limit=50`, { headers: authHeaders() })
-              .then((r) => {
-                if (!r.ok) throw new Error(`Edge fetch failed for ${node.id}`);
-                return r.json();
-              })
-              .then((d: { data?: { items?: GraphEdgeData[] } }) => d.data?.items ?? []),
+            get<EdgesResponse>(
+              `/v1/users/${userId}/graph/edges?subject_id=${node.id}&limit=50`,
+            ).then((d) => d.data?.items ?? []),
           ),
         );
 
@@ -88,7 +82,7 @@ export default function SessionGraphPage() {
 
       setGraphData({ nodes: items, edges: allEdges });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "An unknown error occurred");
+      setError(err instanceof ApiError ? err.message : "An unknown error occurred");
     } finally {
       setLoading(false);
     }
@@ -101,16 +95,19 @@ export default function SessionGraphPage() {
   // ── Missing userId guard ─────────────────────────────────────────────
   if (!userId) {
     return (
+      <RequireAuth>
       <div>
         <SessionTabs sessionId={sessionId} userId="" activeTab="graph" />
         <div className="card-base p-8 flex flex-col items-center justify-center gap-3 text-surface-500 mt-4">
           <p className="text-sm">No user selected. Provide a <code className="text-surface-300 font-mono text-xs bg-surface-800 px-1.5 py-0.5 rounded">userId</code> query parameter.</p>
         </div>
       </div>
+      </RequireAuth>
     );
   }
 
   return (
+    <RequireAuth>
     <div>
       <SessionTabs sessionId={sessionId} userId={userId} activeTab="graph" />
       <ForceGraph
@@ -122,7 +119,7 @@ export default function SessionGraphPage() {
         apiConfig={{
           baseUrl: API_BASE,
           userId,
-          headers: authHeaders(),
+          headers: buildAuthHeaders(),
         }}
         showFilter
         showControls
@@ -130,5 +127,6 @@ export default function SessionGraphPage() {
         emptyMessage="No entities found for this session. Facts must be extracted first."
       />
     </div>
+    </RequireAuth>
   );
 }

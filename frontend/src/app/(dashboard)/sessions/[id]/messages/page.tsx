@@ -1,4 +1,5 @@
 "use client";
+import { RequireAuth } from "../../../require-auth";
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useSearchParams } from "next/navigation";
@@ -13,8 +14,11 @@ import {
   Hash,
   ArrowUp,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, smartTimestamp } from "@/lib/utils";
+import { get, ApiError } from "@/lib/api-client";
 import SessionTabs from "../tabs";
+import { EmptyState } from "@/components/shared/empty-state";
+import { ErrorState } from "@/components/shared/error-state";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -28,33 +32,6 @@ interface Message {
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
-
-function getHeaders(): Record<string, string> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (typeof window !== "undefined") {
-    const token = sessionStorage.getItem("mg_access_token");
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-  }
-  return headers;
-}
-
-function formatTime(iso?: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  const diffMins = Math.floor(diffMs / 60_000);
-
-  if (diffMins < 1) return "just now";
-  if (diffMins < 60) return `${diffMins}m ago`;
-
-  const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-
-  if (diffMins < 1440) return timeStr;
-
-  const dateStr = d.toLocaleDateString([], { month: "short", day: "numeric" });
-  return `${dateStr} ${timeStr}`;
-}
 
 function isUserMessage(role: string): boolean {
   return role === "user";
@@ -103,19 +80,13 @@ export default function MessagesPage() {
       setError(null);
 
       try {
-        const url = `http://localhost:8000/v1/users/${userId}/sessions/${sessionId}/messages?limit=${limit}`;
-        const res = await fetch(url, { headers: getHeaders() });
-
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}${res.statusText ? `: ${res.statusText}` : ""}`);
-        }
-
-        const json = await res.json();
+        const json = await get<{ data: Message[] }>(
+          `/v1/users/${userId}/sessions/${sessionId}/messages?limit=${limit}`,
+        );
         const items: Message[] = json.data ?? [];
         const msgList: Message[] = Array.isArray(items) ? items : [];
 
         if (prepend) {
-          // Prepend older messages — keep existing + new
           setMessages((prev) => {
             const existingIds = new Set(prev.map((m) => m.id ?? m.content));
             const newItems = msgList.filter((m) => !existingIds.has(m.id ?? m.content));
@@ -123,7 +94,6 @@ export default function MessagesPage() {
           });
           if (msgList.length < limit) setAllLoaded(true);
         } else {
-          // Initial load: sort chronologically (oldest first), scroll to bottom
           const sorted = [...msgList].sort(
             (a, b) =>
               new Date(a.created_at ?? 0).getTime() - new Date(b.created_at ?? 0).getTime(),
@@ -132,7 +102,7 @@ export default function MessagesPage() {
           setAllLoaded(msgList.length < limit);
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load messages");
+        setError(err instanceof ApiError ? err.message : "Failed to load messages");
       } finally {
         setLoadingFn(false);
       }
@@ -156,7 +126,6 @@ export default function MessagesPage() {
   useEffect(() => {
     if (!loading && messages.length > 0 && !initialScrollDone.current) {
       initialScrollDone.current = true;
-      // Small delay to let the DOM paint
       setTimeout(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
       }, 50);
@@ -167,13 +136,10 @@ export default function MessagesPage() {
 
   const handleLoadOlder = () => {
     if (loadOlderLoading || allLoaded) return;
-    // Remember current scroll height so we can maintain position after prepend
     const container = scrollContainerRef.current;
     const prevScrollHeight = container?.scrollHeight ?? 0;
 
-    // Fetch with larger limit to get more messages
     fetchMessages(messages.length + 100, true).then(() => {
-      // Restore scroll position after older messages are prepended
       requestAnimationFrame(() => {
         if (container) {
           const newScrollHeight = container.scrollHeight;
@@ -193,20 +159,24 @@ export default function MessagesPage() {
 
   if (!userId) {
     return (
+      <RequireAuth>
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Messages</h1>
           <p className="text-sm text-surface-400 mt-1">Conversation messages for this session</p>
         </div>
-        <div className="card-base p-8 flex flex-col items-center justify-center gap-3 text-surface-500">
-          <AlertCircle size={24} />
-          <p className="text-sm">No user selected. Provide a <code className="text-surface-300 font-mono text-xs bg-surface-800 px-1.5 py-0.5 rounded">userId</code> query parameter.</p>
-        </div>
+        <EmptyState
+          icon={AlertCircle}
+          title="No user selected"
+          description='Provide a userId query parameter to view messages.'
+        />
       </div>
+      </RequireAuth>
     );
   }
 
   return (
+    <RequireAuth>
     <div className="space-y-4">
       <SessionTabs sessionId={sessionId} userId={userId ?? ""} activeTab="messages" />
       {/* Header */}
@@ -276,18 +246,18 @@ export default function MessagesPage() {
 
         {/* Error state */}
         {error && !loading && (
-          <div className="mx-4 mt-2 mb-4 flex items-start gap-2 rounded-md bg-error/10 border border-error/30 p-3 text-sm text-error">
-            <AlertCircle size={16} className="mt-0.5 shrink-0" />
-            <span>{error}</span>
+          <div className="mx-4 mt-2 mb-4">
+            <ErrorState message={error} onRetry={() => fetchMessages(100, false)} />
           </div>
         )}
 
         {/* Empty state */}
         {!loading && !error && messages.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 gap-3 text-surface-500">
-            <MessageSquare size={32} />
-            <p className="text-sm">No messages in this session yet.</p>
-          </div>
+          <EmptyState
+            icon={MessageSquare}
+            title="No messages in this session yet"
+            description="Messages will appear once the conversation starts."
+          />
         )}
 
         {/* Message bubbles */}
@@ -354,7 +324,7 @@ export default function MessagesPage() {
                       {msg.created_at && (
                         <span className="flex items-center gap-0.5">
                           <Clock size={10} />
-                          {formatTime(msg.created_at)}
+                          {smartTimestamp(msg.created_at)}
                         </span>
                       )}
                       {isUser && msg.token_count !== undefined && (
@@ -375,5 +345,6 @@ export default function MessagesPage() {
         )}
       </div>
     </div>
+    </RequireAuth>
   );
 }

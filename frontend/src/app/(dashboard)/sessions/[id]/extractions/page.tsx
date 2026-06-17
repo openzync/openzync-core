@@ -1,9 +1,14 @@
 "use client";
+import { RequireAuth } from "../../../require-auth";
 
 import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Database, AlertCircle } from "lucide-react";
+import { Database } from "lucide-react";
+import { get, ApiError } from "@/lib/api-client";
 import SessionTabs from "../tabs";
+import { EmptyState } from "@/components/shared/empty-state";
+import { ErrorState } from "@/components/shared/error-state";
+import { TableSkeleton } from "@/components/shared/skeleton";
 
 interface Extraction {
   id: string;
@@ -28,15 +33,12 @@ export default function SessionExtractionsPage() {
       setLoading(true);
       setError("");
       try {
-        const token = sessionStorage.getItem("mg_access_token");
-        const headers: Record<string, string> = {};
-        if (token) headers["Authorization"] = `Bearer ${token}`;
-        const res = await fetch(`http://localhost:8000/v1/users/${userId}/sessions/${sessionId}/structured-extractions`, { headers });
-        if (!res.ok) throw new Error("Failed to load extractions");
-        const json = await res.json();
+        const json = await get<{ items: Extraction[] }>(
+          `/v1/users/${userId}/sessions/${sessionId}/structured-extractions`,
+        );
         setData(json.items ?? []);
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : "Failed to load extractions");
       } finally {
         setLoading(false);
       }
@@ -45,19 +47,19 @@ export default function SessionExtractionsPage() {
   }, [userId, sessionId]);
 
   return (
+    <RequireAuth>
     <div>
       <SessionTabs sessionId={sessionId} userId={userId} activeTab="extractions" />
       {loading ? (
-        <div className="card-base p-6 space-y-3">
-          {[1,2].map(i => <div key={i} className="h-24 bg-surface-800 animate-pulse rounded" />)}
-        </div>
+        <TableSkeleton rows={2} cols={1} colWidths={["w-full"]} />
       ) : error ? (
-        <div className="card-base p-6 flex items-center gap-3 text-error text-sm"><AlertCircle size={18} />{error}</div>
+        <ErrorState message={error} onRetry={() => window.location.reload()} />
       ) : data.length === 0 ? (
-        <div className="card-base p-6 text-center text-surface-500 text-sm">
-          <Database size={32} className="mx-auto mb-3 opacity-50" />
-          No structured extractions available yet.
-        </div>
+        <EmptyState
+          icon={Database}
+          title="No structured extractions available yet"
+          description="Extractions will appear here once data is processed."
+        />
       ) : (
         <div className="space-y-3">
           {data.map((ext) => (
@@ -72,5 +74,6 @@ export default function SessionExtractionsPage() {
         </div>
       )}
     </div>
+    </RequireAuth>
   );
 }

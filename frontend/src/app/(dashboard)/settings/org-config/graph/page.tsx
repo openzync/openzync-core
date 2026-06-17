@@ -2,14 +2,11 @@
 import { RequireAuth } from "../../../require-auth";
 
 import { useEffect, useState, useCallback } from "react";
-import {
-  Save,
-  CheckCircle,
-  AlertCircle,
-  X,
-  GitBranch,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Save, X, GitBranch } from "lucide-react";
+import { toast } from "sonner";
+import { get, patch, ApiError } from "@/lib/api-client";
+import { ErrorState } from "@/components/shared/error-state";
+import { Button } from "@/components/ui/button";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -27,16 +24,7 @@ interface FormState {
   falkordb_url: string;
 }
 
-interface ToastState {
-  visible: boolean;
-  message: string;
-  type: "success" | "error";
-}
-
 // ─── Constants ─────────────────────────────────────────────────────────────────
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-const TOAST_DURATION = 4000;
 
 const FIELDS: (keyof FormState)[] = [
   "graph_backend",
@@ -57,48 +45,6 @@ const SEARCH_TYPE_OPTIONS: { value: GraphSearchType; label: string }[] = [
   { value: "vector", label: "Vector" },
 ];
 
-// ─── Helpers ───────────────────────────────────────────────────────────────────
-
-function authHeaders(): Record<string, string> {
-  const token = sessionStorage.getItem("mg_access_token");
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  return headers;
-}
-
-// ─── Toast ─────────────────────────────────────────────────────────────────────
-
-function Toast({ toast, onDismiss }: { toast: ToastState; onDismiss: () => void }) {
-  useEffect(() => {
-    if (!toast.visible) return;
-    const timer = setTimeout(onDismiss, TOAST_DURATION);
-    return () => clearTimeout(timer);
-  }, [toast.visible, onDismiss]);
-
-  if (!toast.visible) return null;
-
-  const isSuccess = toast.type === "success";
-
-  return (
-    <div className="fixed bottom-6 right-6 z-[60] animate-slide-up">
-      <div
-        className={cn(
-          "flex items-center gap-3 rounded-lg px-4 py-3 shadow-lg shadow-black/30 border min-w-[280px] max-w-sm",
-          isSuccess
-            ? "bg-surface-900 border-success/40 text-success"
-            : "bg-surface-900 border-error/40 text-error",
-        )}
-      >
-        {isSuccess ? <CheckCircle size={18} /> : <AlertCircle size={18} />}
-        <span className="text-sm text-white flex-1">{toast.message}</span>
-        <button onClick={onDismiss} className="text-surface-400 hover:text-white shrink-0">
-          <X size={14} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function GraphConfigPage() {
@@ -114,61 +60,48 @@ export default function GraphConfigPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [toast, setToast] = useState<ToastState>({ visible: false, message: "", type: "success" });
-
-  const showToast = useCallback((message: string, type: "success" | "error") => {
-    setToast({ visible: true, message, type });
-  }, []);
-
-  const dismissToast = useCallback(() => {
-    setToast((prev) => ({ ...prev, visible: false }));
-  }, []);
-
   // ── Fetch config ──────────────────────────────────────────────────────────
 
   const fetchConfig = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/admin/org/config`, { headers: authHeaders() });
-      if (!res.ok) throw new Error("Failed to load configuration");
-      const data: OrgConfigResponse = await res.json();
-
-      const stored = data.stored as Record<string, unknown>;
-      const hasAnyStored = FIELDS.some((f) => stored[f] != null);
+      const data = await get<OrgConfigResponse>("/admin/org/config");
+      const stored_: Record<string, unknown> = data.stored as Record<string, unknown>;
+      const hasAnyStored = FIELDS.some((f) => stored_[f] != null);
 
       // If no stored values exist for this tab, pull onboarding defaults from API
       let defaults: Record<string, unknown> = {};
       if (!hasAnyStored) {
         try {
-          const defRes = await fetch(`${API_BASE}/admin/org/config/defaults`);
-          if (defRes.ok) {
-            defaults = await defRes.json();
-          }
+          defaults = await get<Record<string, unknown>>(
+            "/admin/org/config/defaults",
+          );
         } catch {
           // best-effort; fall through to inline fallbacks
         }
       }
 
       const val = (field: string, fallback: unknown) =>
-        (stored[field] as unknown) ?? (defaults[field] as unknown) ?? fallback;
+        (stored_[field] as unknown) ?? (defaults[field] as unknown) ?? fallback;
 
-      setForm({
+      const current: FormState = {
         graph_backend: val("graph_backend", "postgres") as GraphBackend,
         graph_search_type: val("graph_search_type", "hybrid") as GraphSearchType,
         graph_max_traversal_depth: val("graph_max_traversal_depth", 3) as number,
         falkordb_url: val("falkordb_url", "") as string,
-      });
-      setInitialForm({
-        graph_backend: val("graph_backend", "postgres") as GraphBackend,
-        graph_search_type: val("graph_search_type", "hybrid") as GraphSearchType,
-        graph_max_traversal_depth: val("graph_max_traversal_depth", 3) as number,
-        falkordb_url: val("falkordb_url", "") as string,
-      });
+      };
+      setForm(current);
+      setInitialForm(current);
       setStored(data.stored ?? {});
-      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load configuration");
+      if (err instanceof ApiError) {
+        setError(err.message);
+      } else if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        setError("Failed to load configuration");
+      }
     } finally {
       setLoading(false);
     }
@@ -196,16 +129,17 @@ export default function GraphConfigPage() {
 
   async function handleResetField(field: keyof FormState) {
     try {
-      const res = await fetch(`${API_BASE}/admin/org/config`, {
-        method: "PATCH",
-        headers: authHeaders(),
-        body: JSON.stringify({ [field]: null }),
-      });
-      if (!res.ok) throw new Error("Failed to reset field");
-      showToast(`"${field}" reset to default`, "success");
+      await patch("/admin/org/config", { [field]: null });
+      toast.success(`"${field}" reset to default`);
       await fetchConfig();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : "Failed to reset field", "error");
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Failed to reset field";
+      toast.error(message);
     }
   }
 
@@ -224,22 +158,18 @@ export default function GraphConfigPage() {
         }
       }
 
-      const res = await fetch(`${API_BASE}/admin/org/config`, {
-        method: "PATCH",
-        headers: authHeaders(),
-        body: JSON.stringify(changed),
-      });
-
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.detail ?? "Failed to save configuration");
-      }
-
-      showToast("Graph configuration saved successfully", "success");
+      await patch("/admin/org/config", changed);
+      toast.success("Graph configuration saved successfully");
       await fetchConfig();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save configuration");
-      showToast(err instanceof Error ? err.message : "Failed to save configuration", "error");
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Failed to save configuration";
+      setError(message);
+      toast.error(message);
     } finally {
       setSaving(false);
     }
@@ -270,18 +200,12 @@ export default function GraphConfigPage() {
           </div>
         ) : (
           <>
-            {error && (
-              <div className="rounded-md bg-error/10 border border-error/30 px-3 py-2 mb-4 text-sm text-error flex items-center gap-2">
-                <AlertCircle size={14} />
-                {error}
-              </div>
-            )}
-            <div className="space-y-4 max-w-md">
+            {error && <ErrorState message={error} onRetry={fetchConfig} />}
+            <div className={error ? "space-y-4 max-w-md mt-4" : "space-y-4 max-w-md"}>
               {/* graph_backend */}
               <div>
                 <label className="block text-sm font-medium text-surface-300 mb-1">
                   Graph Backend
-                  
                 </label>
                 <div className="flex gap-2 items-start">
                   <select
@@ -309,7 +233,6 @@ export default function GraphConfigPage() {
               <div>
                 <label className="block text-sm font-medium text-surface-300 mb-1">
                   Search Type
-                  
                 </label>
                 <div className="flex gap-2 items-start">
                   <select
@@ -338,7 +261,6 @@ export default function GraphConfigPage() {
                 <div>
                   <label className="block text-sm font-medium text-surface-300 mb-1">
                     FalkorDB URL
-                    
                   </label>
                   <div className="flex gap-2 items-start">
                     <input
@@ -366,7 +288,6 @@ export default function GraphConfigPage() {
               <div>
                 <label className="block text-sm font-medium text-surface-300 mb-1">
                   Max Traversal Depth
-                  
                 </label>
                 <div className="flex gap-2 items-start">
                   <input
@@ -397,30 +318,19 @@ export default function GraphConfigPage() {
       {/* ── Save Button ───────────────────────────────────────────────────────── */}
       {!loading && (
         <div className="flex items-center gap-3">
-          <button
-            onClick={handleSave}
-            disabled={saving || !hasChanged()}
-            className="btn-primary text-sm"
-          >
-            <Save size={14} />
-            {saving ? "Saving..." : "Save Changes"}
-          </button>
+          <Button variant="primary" size="sm" icon={<Save size={14} />} loading={saving} disabled={saving || !hasChanged()} onClick={handleSave}>
+            Save Changes
+          </Button>
           {!hasChanged() && (
             <span className="text-xs text-surface-500">No changes to save</span>
           )}
           {hasChanged() && (
-            <button
-              onClick={() => setForm({ ...initialForm })}
-              className="btn-secondary text-sm"
-            >
+            <Button variant="secondary" size="sm" onClick={() => setForm({ ...initialForm })}>
               Discard Changes
-            </button>
+            </Button>
           )}
         </div>
       )}
-
-      {/* ── Toast ─────────────────────────────────────────────────────────────── */}
-      <Toast toast={toast} onDismiss={dismissToast} />
     </div>
   </RequireAuth>
   );
