@@ -1,0 +1,72 @@
+# Prompt template manifest — source of truth for system-default prompts.
+#
+# Templates listed here are seeded into every new organisation at signup and
+# auto-seeded on first access if missing.  The source of truth is git — only
+# one template per type may have ``is_default_for_type: true`` at any time.
+#
+# Adding a new template:    1. Add the .jinja2 file    2. Add a manifest entry
+# Promoting a new default:  change is_default_for_type from one entry to another
+# Retiring a template:      remove its .jinja2 file AND its manifest entry
+
+version: 1
+
+templates:
+  - file: classify_dialog_v1.jinja2
+    name: classify_dialog_v1
+    type: classification
+    description: Classify dialog turns into predefined categories
+    is_default_for_type: true
+
+  - file: extract_entities_v4.jinja2
+    name: extract_entities_v4
+    type: entity_extraction
+    description: Extract structured entities from dialog (v4 — current)
+    is_default_for_type: true
+
+  - file: extract_entities_v3.jinja2
+    name: extract_entities_v3
+    type: entity_extraction
+    description: Legacy entity extraction v3
+    is_default_for_type: false
+
+  - file: extract_entities_v1.jinja2
+    name: extract_entities_v1
+    type: entity_extraction
+    description: Legacy entity extraction v1
+    is_default_for_type: false
+
+  - file: extract_facts_v4.jinja2
+    name: extract_facts_v4
+    type: fact_extraction
+    description: Extract factual statements from dialog (v4 — current)
+    is_default_for_type: true
+
+  - file: extract_facts_v3.jinja2
+    name: extract_facts_v3
+    type: fact_extraction
+    description: Legacy fact extraction v3
+    is_default_for_type: false
+
+  - file: extract_facts_v2.jinja2
+    name: extract_facts_v2
+    type: fact_extraction
+    description: Legacy fact extraction v2 (fact-only output)
+    is_default_for_type: false
+
+  - file: extract_facts_v1.jinja2
+    name: extract_facts_v1
+    type: fact_extraction
+    description: Legacy fact extraction v1
+    is_default_for_type: false
+
+  - file: extract_structured_v1.jinja2
+    name: extract_structured_v1
+    type: structured_extraction
+    description: Extract structured data using org-defined schemas
+    is_default_for_type: true
+
+  - file: summarise_user_v1.jinja2
+    name: summarise_user_v1
+    type: user_summary
+    description: Generate user summary from episode history
+    is_default_for_type: true

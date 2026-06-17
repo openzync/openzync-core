@@ -96,9 +96,10 @@ class AuthRepository:
         return org
 
     async def seed_prompts_for_org(self, org_id: uuid.UUID) -> int:
-        """Seed the latest system-default prompt templates for a new org.
+        """Seed prompt templates from the disk manifest into a new org.
 
-        Delegates to :class:`PromptTemplateRepository.seed_default_prompts`.
+        Delegates to :class:`PromptTemplateRepository.seed_default_prompts`
+        which reads ``services/worker/prompts/manifest.yaml`` + ``.jinja2`` files.
 
         Args:
             org_id: UUID of the newly created organisation.

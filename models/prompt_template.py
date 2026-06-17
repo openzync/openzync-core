@@ -1,7 +1,9 @@
-"""Prompt template model — versioned system and organization prompt templates.
+"""Prompt template model — versioned organization prompt templates.
 
-System-level templates have ``organization_id IS NULL``. Organizations can
-override them with custom versions that get higher ``version`` numbers.
+All templates are org-scoped (``organization_id`` is always set).
+System-level rows (``organization_id IS NULL``) no longer exist (Option A).
+The source of truth for defaults is ``services/worker/prompts/manifest.yaml``
+plus ``.jinja2`` files on disk, seeded at signup.
 Only one template per (organization_id, template_name) can be active at a time.
 """
 
@@ -65,7 +67,12 @@ class PromptTemplate(TimestampMixin, Base):
 
     @property
     def is_system_default(self) -> bool:
-        """``True`` when this is the active system default (org_id IS NULL and active)."""
+        """``True`` when this was seeded from the system manifest.
+
+        Post-Option-A, all rows have ``organization_id`` set, so this
+        always returns ``False``.  The property is retained for backward
+        compatibility with the admin API response shape.
+        """
         return self.organization_id is None and self.is_active
 
     def __repr__(self) -> str:

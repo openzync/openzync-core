@@ -5,8 +5,11 @@ resolved at runtime via :func:`resolve_prompt_template_by_type`.  The resolved
 ``template_text`` is returned as-is (plain text, no Jinja2) — context is
 assembled and injected by the caller via :func:`build_enrichment_prompt`.
 
-The ``.jinja2`` files under ``prompts/`` exist solely as seed sources for
-the database migration — they are **never** loaded at runtime.
+The ``.jinja2`` files under ``prompts/`` are the canonical source of truth
+for system-default prompts (Option A).  They are read at signup time by
+:meth:`PromptTemplateRepository.seed_default_prompts` and at import time by
+:meth:`~.PromptTemplateRepository.import_system_template`.  The runtime
+resolution path (``get_active_by_type``) only queries org-scoped DB rows.
 
 Usage (workers):
     from services.worker.prompt_renderer import render_prompt
@@ -906,9 +909,9 @@ async def resolve_prompt_template_by_type(
 ) -> str | None:
     """Resolve the active default prompt template for a given type.
 
-    Looks up the org-specific default for this type first (``is_default_for_type
-    = True``), then falls back to the system default.  Returns ``None`` if no
-    default template exists for the given type.
+    Looks up the org-specific default for this type (``is_default_for_type
+    = True``).  Returns ``None`` if no default exists (no system-level
+    fallback — defaults come from disk manifest).
 
     Args:
         type: The template type (e.g. ``"fact_extraction"``).

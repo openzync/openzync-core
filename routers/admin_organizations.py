@@ -2,6 +2,11 @@
 
 Provides CRUD for prompt templates and custom instructions,
 scoped to the authenticated user's organization.
+
+After Option A:
+- No more system-level prompt rows (``organization_id IS NULL``).
+- Defaults are seeded from ``manifest.yaml`` + ``.jinja2`` files on disk.
+- The ``promote`` endpoint has been removed — defaults change via git.
 """
 
 from __future__ import annotations
@@ -155,8 +160,8 @@ async def get_prompt_template(
 ) -> PromptTemplateDetail:
     """Get the active template for an organization.
 
-    Returns the org-specific override if one exists, otherwise the system
-    default.  Raises 404 when no template exists at either level.
+    Returns the org-specific template if it exists.  Raises 404 if not
+    found (no system default fallback — defaults come from disk manifest).
     """
     repo = PromptTemplateRepository(db)
     template = await repo.get_active(uuid.UUID(org_id), name)
@@ -178,11 +183,10 @@ async def list_prompt_template_versions(
     org_id: str = Depends(require_org_id),
     _user_id: str = Depends(get_dashboard_user),
 ) -> PromptTemplateVersionsResponse:
-    """List all versions of a named template visible to this org.
+    """List all versions of a named template for this org.
 
-    Includes both system default versions and org-specific versions,
-    ordered by version descending (newest first).  Raises 404 if the
-    template name does not exist in either scope.
+    Returns only org-scoped versions, ordered by version descending
+    (newest first).  Raises 404 if no template exists with this name.
     """
     repo = PromptTemplateRepository(db)
 
@@ -217,34 +221,18 @@ async def set_prompt_template(
 ) -> PromptTemplateDetail:
     """Create a new org-specific version of a prompt template.
 
-    If no system default exists for this template name, a system-level
-    default is created first from the provided text so other organizations
-    have a fallback to inherit.  The org-specific version is then created
-    as a higher-version override.
+    Creates an org-scoped copy at ``version = max(existing) + 1``.
+    If no version exists yet for this template name, version starts at 1.
 
     Invalidates any Redis cache entries for this template after update.
+
+    Note:
+        System-level defaults no longer exist (Option A).  Defaults come
+        from ``manifest.yaml`` on disk.  If you want to start from the
+        disk default, import it first via ``POST /admin/org/prompts/import``
+        and then edit the org-specific copy.
     """
     repo = PromptTemplateRepository(db)
-
-    # ── Ensure a system default exists for this name ────────────────────
-    # TechLead note: This inline model usage is a pragmatic short-cut until
-    # PromptTemplateRepository gains a create_system_default() method.
-    system_default = await repo.get_system_default(name)
-    if system_default is None:
-        from models.prompt_template import PromptTemplate
-
-        system_template = PromptTemplate(
-            organization_id=None,
-            template_name=name,
-            template_text=body.template_text,
-            version=1,
-            description=body.description,
-            type=body.type,
-            is_active=True,
-        )
-        db.add(system_template)
-        await db.flush()
-        await db.refresh(system_template)
 
     # ── Create the org-specific override ────────────────────────────────
     template = await repo.set_for_org(
@@ -278,8 +266,8 @@ async def rollback_prompt_template(
 
     Creates a **new** version whose ``template_text`` is copied from the
     target version.  The new version is activated and all previously active
-    org-specific versions are deactivated.  Raises 404 if the target
-    version does not exist in either the org or system scope.
+    versions are deactivated.  Raises 404 if the target version does not
+    exist in the org scope.
     """
     repo = PromptTemplateRepository(db)
     try:
@@ -306,21 +294,20 @@ async def delete_prompt_template_override(
 ) -> None:
     """Delete all org-specific versions of a prompt template.
 
-    After deletion the organization falls back to the system default for
-    this template.  Raises 404 if no org-specific override currently
-    exists.
+    After deletion the organisation no longer has a copy of this
+    template.  Re-import from the disk manifest via
+    ``POST /admin/org/prompts/import`` if needed.  Raises 404 if no
+    org-specific override currently exists.
     """
     repo = PromptTemplateRepository(db)
 
     # Check that an org-specific override actually exists.
-    # get_active() falls back to system default, so we verify the source.
     active = await repo.get_active(uuid.UUID(org_id), name)
-    if active is None or active.organization_id != uuid.UUID(org_id):
+    if active is None:
         raise HTTPException(
             status_code=404,
             detail=(
-                f"No org-specific override found for template '{name}'; "
-                f"the organization is already using the system default."
+                f"No template found with name '{name}' for this organisation."
             ),
         )
 
@@ -336,45 +323,13 @@ async def delete_prompt_template_override(
     await repo.delete_for_org(org_id=uuid.UUID(org_id), name=name)
 
 
-@router.post(
-    "/prompts/{name}/promote/{version}",
-    response_model=PromptTemplateDetail,
-    status_code=201,
-)
-async def promote_prompt_template(
-    name: str,
-    version: int,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_id),
-    _user_id: str = Depends(get_dashboard_user),
-) -> PromptTemplateDetail:
-    """Promote a prompt template version to system default.
-
-    The target version is looked up in the caller's org scope first,
-    then the system scope.  After promotion, all organizations without
-    a custom override will use this version.
-
-    **This is a global action** — it affects every organization on the
-    platform that has not created its own override for this template.
-    """
-    repo = PromptTemplateRepository(db)
-    try:
-        template = await repo.promote_to_system_default(
-            caller_org_id=uuid.UUID(org_id),
-            name=name,
-            target_version=version,
-        )
-    except ValueError as err:
-        raise HTTPException(status_code=404, detail=str(err)) from err
-
-    # Invalidate Redis cache for the system default so workers pick up
-    # the change without waiting for TTL expiry.
-    redis = getattr(request.app.state, "redis", None)
-    if redis is not None:
-        await redis.delete(f"prompt_template:default:{name}")
-
-    return PromptTemplateDetail.model_validate(template)
+# ── ``POST /prompts/{name}/promote/{version}`` removed (Option A) ──────────
+#
+# System-level prompt rows (organization_id IS NULL) no longer exist.
+# The source of truth for defaults is services/worker/prompts/manifest.yaml
+# plus the .jinja2 files on disk.  Defaults change via git, not via the API.
+# If hot-promotion is needed later, implement a ``promoted_defaults`` table
+# that overlays on the manifest at seeding time.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
