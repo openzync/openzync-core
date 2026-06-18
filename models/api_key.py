@@ -50,6 +50,12 @@ class ApiKey(TimestampMixin, Base):
         nullable=False,
         # index defined explicitly in __table_args__ below
     )
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+        comment="Optional project scope — NULL means org-wide access.",
+    )
     lookup_hash: Mapped[str] = mapped_column(
         Text,
         nullable=False,
