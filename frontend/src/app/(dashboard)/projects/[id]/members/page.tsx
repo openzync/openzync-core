@@ -75,10 +75,10 @@ export default function ProjectMembersPage() {
     setLoading(true);
     setFetchError("");
     try {
-      const json = await get<{ data: Member[] }>(
+      const json = await get<Member[] | { data: Member[] }>(
         `/v1/projects/${projectId}/members`,
       );
-      setMembers(json.data ?? []);
+      setMembers(extractList<Member>(json));
     } catch (err) {
       setFetchError(
         err instanceof ApiError ? err.message : "Failed to load members",

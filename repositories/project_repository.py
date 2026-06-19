@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.project import Project
@@ -331,3 +331,29 @@ class ProjectRepository:
             )
         )
         return len(result.scalars().all())
+
+    async def count_members_for_projects(
+        self, project_ids: list[UUID]
+    ) -> dict[UUID, int]:
+        """Batch-count members for multiple projects (single query).
+
+        Args:
+            project_ids: List of project UUIDs to count members for.
+
+        Returns:
+            A dict mapping ``{project_id: member_count}``.  Projects with
+            no members are omitted from the dict (caller should default
+            to ``0``).
+        """
+        if not project_ids:
+            return {}
+
+        result = await self._db.execute(
+            select(
+                ProjectMember.project_id,
+                func.count(ProjectMember.id).label("count"),
+            )
+            .where(ProjectMember.project_id.in_(project_ids))
+            .group_by(ProjectMember.project_id)
+        )
+        return {row[0]: row[1] for row in result.all()}

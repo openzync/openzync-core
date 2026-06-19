@@ -98,6 +98,7 @@ class ProjectService:
             name=project.name,
             description=project.description or "",
             created_by=project.created_by,
+            member_count=1,  # we just added the creator as an owner
             created_at=project.created_at,
             updated_at=project.updated_at,
         )
@@ -120,11 +121,13 @@ class ProjectService:
                 message=f"Project {project_id} not found",
                 detail={"project_id": str(project_id)},
             )
+        member_count = await self._repo.count_members(project_id)
         return ProjectResponse(
             id=project.id,
             name=project.name,
             description=project.description or "",
             created_by=project.created_by,
+            member_count=member_count,
             created_at=project.created_at,
             updated_at=project.updated_at,
         )
@@ -151,12 +154,16 @@ class ProjectService:
             limit=limit,
             offset=offset,
         )
+        # Batch-load member counts for all projects in a single query
+        project_ids = [p.id for p in projects]
+        counts = await self._repo.count_members_for_projects(project_ids)
         return [
             ProjectResponse(
                 id=p.id,
                 name=p.name,
                 description=p.description or "",
                 created_by=p.created_by,
+                member_count=counts.get(p.id, 0),
                 created_at=p.created_at,
                 updated_at=p.updated_at,
             )
@@ -200,11 +207,13 @@ class ProjectService:
                 detail={"project_id": str(project_id)},
             )
 
+        member_count = await self._repo.count_members(project_id)
         return ProjectResponse(
             id=project.id,
             name=project.name,
             description=project.description or "",
             created_by=project.created_by,
+            member_count=member_count,
             created_at=project.created_at,
             updated_at=project.updated_at,
         )

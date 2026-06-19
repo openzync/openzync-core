@@ -105,6 +105,7 @@ class TestProjectService:
         """Getting a project returns the response."""
         service, mock_repo = self._make_service()
         mock_repo.get_by_id.return_value = self._make_mock_project()
+        mock_repo.count_members.return_value = 3
 
         result = await service.get_project(
             organization_id=self.ORG_ID,
@@ -112,6 +113,7 @@ class TestProjectService:
         )
         assert result.id == self.PROJECT_ID
         assert result.name == "Test Project"
+        assert result.member_count == 3
 
     @pytest.mark.asyncio
     async def test_get_project_not_found_raises_404(self) -> None:
@@ -136,6 +138,10 @@ class TestProjectService:
             self._make_mock_project(name="Project B", id=uuid4()),
         ]
         mock_repo.list.return_value = mock_projects
+        mock_repo.count_members_for_projects.return_value = {
+            mock_projects[0].id: 5,
+            mock_projects[1].id: 3,
+        }
 
         results = await service.list_projects(
             organization_id=self.ORG_ID,
@@ -145,6 +151,8 @@ class TestProjectService:
         )
         assert len(results) == 2
         assert results[0].name == "Project A"
+        assert results[0].member_count == 5
+        assert results[1].member_count == 3
         mock_repo.list.assert_awaited_once_with(
             organization_id=self.ORG_ID,
             user_id=self.USER_ID,
@@ -157,6 +165,7 @@ class TestProjectService:
         """Listing projects returns empty list when the user has none."""
         service, mock_repo = self._make_service()
         mock_repo.list.return_value = []
+        mock_repo.count_members_for_projects.return_value = {}
 
         results = await service.list_projects(
             organization_id=self.ORG_ID,
@@ -175,6 +184,7 @@ class TestProjectService:
             name="Updated Name",
             description="Updated description",
         )
+        mock_repo.count_members.return_value = 2
         payload = UpdateProjectRequest(
             name="Updated Name",
             description="Updated description",
@@ -187,6 +197,7 @@ class TestProjectService:
         )
         assert result.name == "Updated Name"
         assert result.description == "Updated description"
+        assert result.member_count == 2
 
     @pytest.mark.asyncio
     async def test_update_project_duplicate_name_raises_validation(self) -> None:
@@ -214,6 +225,7 @@ class TestProjectService:
         same_project = self._make_mock_project(name="Same Name")
         mock_repo.get_by_name.return_value = same_project
         mock_repo.update.return_value = same_project
+        mock_repo.count_members.return_value = 2
         payload = UpdateProjectRequest(name="Same Name")
 
         result = await service.update_project(
@@ -222,6 +234,7 @@ class TestProjectService:
             payload=payload,
         )
         assert result.name == "Same Name"
+        assert result.member_count == 2
         mock_repo.update.assert_awaited_once()
 
     @pytest.mark.asyncio
