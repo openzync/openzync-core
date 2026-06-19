@@ -31,10 +31,12 @@ import {
   FileCode,
   SlidersHorizontal,
   FolderKanban,
+  MapPin,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/api-client";
 import { Breadcrumb } from "@/components/breadcrumb";
+import { usePinnedProjects } from "@/hooks/use-pinned-projects";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -71,6 +73,7 @@ function Sidebar({
   const inProject = isInProject(pathname);
   const onProjectList = isOnProjectList(pathname);
   const projectId = extractProjectId(pathname);
+  const { pinned } = usePinnedProjects();
 
   const isActive = (href: string) => {
     if (href === "/overview") return pathname === "/overview";
@@ -143,7 +146,7 @@ function Sidebar({
           </div>
         )}
 
-        {/* ── Projects / Back to projects ── */}
+        {/* ── Projects / Pinned projects / View all ── */}
         <div>
           {!collapsed && (
             <div className="px-2 mb-1.5">
@@ -153,9 +156,52 @@ function Sidebar({
             </div>
           )}
           <div className="space-y-0.5">
-            {inProject ? (
+            {/* Pinned projects (always visible when any are pinned) */}
+            {pinned.map((p) => {
+              const isActiveProject = pathname.startsWith(`/projects/${p.id}`);
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => { router.push(`/projects/${p.id}/sessions`); onClose?.(); }}
+                  className={cn(
+                    "flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors",
+                    collapsed && "justify-center px-0",
+                    isActiveProject
+                      ? "bg-brand-500/10 text-brand-300 border-l-[3px] border-brand-500"
+                      : "text-surface-300 hover:bg-surface-800 hover:text-[#F2F2F2] border-l-[3px] border-transparent",
+                  )}
+                >
+                  <span className={cn("shrink-0", isActiveProject ? "text-brand-300" : "text-surface-400")}>
+                    <MapPin size={18} />
+                  </span>
+                  {!collapsed && <span className="truncate">{p.name}</span>}
+                </button>
+              );
+            })}
+
+            {/* View all projects */}
+            <button
+              onClick={() => { router.push("/projects"); onClose?.(); }}
+              className={cn(
+                "flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors",
+                collapsed && "justify-center px-0",
+                onProjectList
+                  ? "bg-brand-500/10 text-brand-300 border-l-[3px] border-brand-500"
+                  : "text-surface-300 hover:bg-surface-800 hover:text-[#F2F2F2] border-l-[3px] border-transparent",
+              )}
+            >
+              <span className="shrink-0 text-surface-400">
+                <FolderKanban size={18} />
+              </span>
+              {!collapsed && <span className="truncate">View all projects</span>}
+            </button>
+
+            {/* Project-scoped nav items (only inside a project) */}
+            {inProject && (
               <>
-                {/* Project-scoped nav items */}
+                {!collapsed && (
+                  <div className="my-1 border-t border-surface-800" />
+                )}
                 {[
                   { label: "Sessions", href: `/projects/${projectId}/sessions`, icon: <MessageSquare size={18} /> },
                   { label: "Memory", href: `/projects/${projectId}/memory`, icon: <BrainCircuit size={18} /> },
@@ -183,22 +229,6 @@ function Sidebar({
                   );
                 })}
               </>
-            ) : (
-              <button
-                onClick={() => { router.push("/projects"); onClose?.(); }}
-                className={cn(
-                  "flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors",
-                  collapsed && "justify-center px-0",
-                  onProjectList
-                    ? "bg-brand-500/10 text-brand-300 border-l-[3px] border-brand-500"
-                    : "text-surface-300 hover:bg-surface-800 hover:text-[#F2F2F2] border-l-[3px] border-transparent",
-                )}
-              >
-                <span className="shrink-0 text-surface-400">
-                  <FolderKanban size={18} />
-                </span>
-                {!collapsed && <span className="truncate">Projects</span>}
-              </button>
             )}
           </div>
         </div>

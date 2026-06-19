@@ -11,6 +11,7 @@ import {
   ArrowRight,
   X,
   AlertTriangle,
+  MapPin,
 } from "lucide-react";
 import { get, post, ApiError, extractList } from "@/lib/api-client";
 import { formatDate } from "@/lib/utils";
@@ -18,6 +19,7 @@ import { toast } from "sonner";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Button } from "@/components/ui/button";
+import { usePinnedProjects } from "@/hooks/use-pinned-projects";
 
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -44,6 +46,8 @@ export default function ProjectsPage() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState("");
+
+  const { togglePin, isPinned, isMaxPinned } = usePinnedProjects();
 
   // Create dialog
   const [showCreate, setShowCreate] = useState(false);
@@ -184,10 +188,36 @@ export default function ProjectsPage() {
                       )}
                     </div>
                   </div>
-                  <ArrowRight
-                    size={16}
-                    className="text-surface-500 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-1"
-                  />
+                  <div className="flex items-center gap-0.5 shrink-0 mt-1">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        togglePin(project.id, project.name);
+                      }}
+                      disabled={isMaxPinned && !isPinned(project.id)}
+                      title={
+                        isPinned(project.id)
+                          ? "Unpin project"
+                          : isMaxPinned
+                            ? "Maximum 3 pinned projects"
+                            : "Pin project"
+                      }
+                      className="p-1.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-surface-800 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                      <MapPin
+                        size={15}
+                        className={
+                          isPinned(project.id)
+                            ? "text-brand-400 fill-brand-400"
+                            : "text-surface-500"
+                        }
+                      />
+                    </button>
+                    <ArrowRight
+                      size={16}
+                      className="text-surface-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                    />
+                  </div>
                 </div>
                 <div className="flex items-center gap-4 text-xs text-surface-500">
                   <span className="flex items-center gap-1">
