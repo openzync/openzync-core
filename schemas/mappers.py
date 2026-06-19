@@ -32,7 +32,8 @@ def session_to_dict(
     """
     return {
         "id": session.id,
-        "user_id": session.user_id,
+        "project_id": session.project_id,
+        "created_by": session.user_id,
         "external_id": session.external_id,
         "metadata": session.metadata_ or {},
         "is_active": session.is_active,
@@ -57,7 +58,8 @@ def session_to_list_dict(
     """
     return {
         "id": session.id,
-        "user_id": session.user_id,
+        "project_id": session.project_id,
+        "created_by": session.user_id,
         "external_id": session.external_id,
         "is_active": session.is_active,
         "created_at": session.created_at,

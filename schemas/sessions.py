@@ -1,6 +1,6 @@
 """Pydantic schemas for session and message CRUD operations.
 
-Corresponds to the ``/v1/users/{user_id}/sessions`` endpoints.
+Corresponds to the ``/v1/projects/{project_id}/sessions`` endpoints.
 Schemas must never import from ``models/``, ``services/``, or ``routers/``.
 """
 
@@ -14,11 +14,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class CreateSessionRequest(BaseModel):
-    """Request body for POST /v1/users/{user_id}/sessions.
+    """Request body for POST /v1/projects/{project_id}/sessions.
 
     Attributes:
         external_id: Caller-defined session identifier. Must be unique per
-            user (enforced by a DB unique constraint on (user_id, external_id)).
+            project (enforced by a DB unique constraint on
+            (project_id, external_id)).
         metadata: Optional metadata key-value pairs. Deep-merged on subsequent
             PATCH operations (not yet implemented).
     """
@@ -27,7 +28,7 @@ class CreateSessionRequest(BaseModel):
         ...,
         min_length=1,
         max_length=255,
-        description="Caller-defined session identifier. Must be unique per user.",
+        description="Caller-defined session identifier. Must be unique per project.",
         examples=["session_abc", "ticket_4492", "chat_8f3a"],
     )
     metadata: dict[str, Any] = Field(
@@ -44,7 +45,12 @@ class SessionResponse(BaseModel):
     """
 
     id: UUID = Field(..., description="Internal OpenZep session UUID.")
-    user_id: UUID = Field(..., description="User UUID this session belongs to.")
+    project_id: UUID = Field(
+        ..., description="Project UUID this session belongs to."
+    )
+    created_by: UUID = Field(
+        ..., description="UUID of the user who created this session."
+    )
     external_id: str = Field(..., description="Caller-defined session identifier.")
     metadata: dict[str, Any] = Field(
         default_factory=dict,
@@ -83,7 +89,12 @@ class SessionListResponse(BaseModel):
     """
 
     id: UUID = Field(..., description="Internal OpenZep session UUID.")
-    user_id: UUID = Field(..., description="User UUID this session belongs to.")
+    project_id: UUID = Field(
+        ..., description="Project UUID this session belongs to."
+    )
+    created_by: UUID = Field(
+        ..., description="UUID of the user who created this session."
+    )
     external_id: str = Field(..., description="Caller-defined session identifier.")
     is_active: bool = Field(
         default=True, description="Whether the session is accepting new messages."
