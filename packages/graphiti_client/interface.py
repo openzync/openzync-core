@@ -6,8 +6,9 @@ satisfy.  Shipped implementations:
 - :class:`~.backends.falkordb.FalkorDBBackend` — Graphiti / FalkorDB (legacy)
 - :class:`~.backends.postgres.PostgresGraphBackend` — PostgreSQL-native
 
-Every method requires ``org_id`` as the first parameter — OpenZep enforces
-strict organisational isolation.  No cross-org graph traversal is possible.
+Every method requires ``org_id`` and ``project_id`` — OpenZep enforces
+strict organisational and project-level isolation.  No cross-project
+graph traversal is possible.
 """
 
 from __future__ import annotations
@@ -23,6 +24,9 @@ class GraphBackend(ABC):
     Implementations map these operations to the underlying graph engine
     (FalkorDB / RedisGraph, Neo4j, etc.) and translate engine-specific
     exceptions into the OpenZep exception hierarchy.
+
+    Every data-access method accepts ``org_id`` (tenant isolation) and
+    ``project_id`` (project-level scoping).
     """
 
     # ── Entity CRUD ────────────────────────────────────────────────────────────
@@ -31,6 +35,7 @@ class GraphBackend(ABC):
     async def create_entity(
         self,
         org_id: UUID,
+        project_id: UUID,
         name: str,
         entity_type: str,
         summary: str | None = None,
@@ -39,6 +44,7 @@ class GraphBackend(ABC):
 
         Args:
             org_id: Organisational scope — the entity belongs to this org.
+            project_id: Project scope — the entity belongs to this project.
             name: Human-readable name for the entity.
             entity_type: Type label (e.g. ``"person"``, ``"document"``,
                 ``"topic"``).
@@ -51,25 +57,31 @@ class GraphBackend(ABC):
         ...
 
     @abstractmethod
-    async def get_entity(self, org_id: UUID, entity_id: UUID) -> dict | None:
+    async def get_entity(
+        self, org_id: UUID, project_id: UUID, entity_id: UUID
+    ) -> dict | None:
         """Retrieve an entity node by its ID.
 
         Args:
             org_id: Organisational scope for isolation.
+            project_id: Project scope for isolation.
             entity_id: The UUID of the entity to fetch.
 
         Returns:
             The entity dict, or ``None`` if no entity with that ID exists
-            within the given org.
+            within the given org and project.
         """
         ...
 
     @abstractmethod
-    async def delete_entity(self, org_id: UUID, entity_id: UUID) -> bool:
+    async def delete_entity(
+        self, org_id: UUID, project_id: UUID, entity_id: UUID
+    ) -> bool:
         """Remove an entity node from the graph.
 
         Args:
             org_id: Organisational scope.
+            project_id: Project scope.
             entity_id: The UUID of the entity to delete.
 
         Returns:
@@ -83,6 +95,7 @@ class GraphBackend(ABC):
     async def create_relationship(
         self,
         org_id: UUID,
+        project_id: UUID,
         source_id: UUID,
         target_id: UUID,
         relationship_type: str,
@@ -94,6 +107,7 @@ class GraphBackend(ABC):
 
         Args:
             org_id: Organisational scope.
+            project_id: Project scope.
             source_id: UUID of the source entity.
             target_id: UUID of the target entity.
             relationship_type: Label for the edge (e.g. ``"mentions"``,
@@ -115,6 +129,7 @@ class GraphBackend(ABC):
     async def traverse(
         self,
         org_id: UUID,
+        project_id: UUID,
         start_node_id: UUID,
         max_depth: int = 2,
         edge_types: list[str] | None = None,
@@ -123,6 +138,7 @@ class GraphBackend(ABC):
 
         Args:
             org_id: Organisational scope.
+            project_id: Project scope.
             start_node_id: UUID of the node to begin traversal from.
             max_depth: Maximum number of edge hops (default 2).
             edge_types: Optional filter — only follow edges with these labels.
@@ -139,6 +155,7 @@ class GraphBackend(ABC):
     async def search_entities(
         self,
         org_id: UUID,
+        project_id: UUID,
         query: str,
         types: list[str] | None = None,
         limit: int = 50,
@@ -151,6 +168,7 @@ class GraphBackend(ABC):
 
         Args:
             org_id: Organisational scope.
+            project_id: Project scope.
             query: Free-text search string.
             types: Optional filter — only return entities matching these
                 type labels.
@@ -169,6 +187,7 @@ class GraphBackend(ABC):
     async def list_entities(
         self,
         org_id: UUID,
+        project_id: UUID,
         *,
         entity_type: str | None = None,
         limit: int = 50,
@@ -178,6 +197,7 @@ class GraphBackend(ABC):
 
         Args:
             org_id: Organisational scope.
+            project_id: Project scope.
             entity_type: Optional filter by entity type (e.g. ``"Person"``).
             limit: Maximum results per page (max 200).
             cursor: Opaque cursor for cursor-based pagination.
@@ -192,6 +212,7 @@ class GraphBackend(ABC):
     async def list_entity_edges(
         self,
         org_id: UUID,
+        project_id: UUID,
         entity_id: UUID,
         *,
         predicate: str | None = None,
@@ -202,6 +223,7 @@ class GraphBackend(ABC):
 
         Args:
             org_id: Organisational scope.
+            project_id: Project scope.
             entity_id: UUID of the entity node whose edges to list.
             predicate: Optional filter by edge label.
             limit: Maximum results per page (max 200).
@@ -217,12 +239,14 @@ class GraphBackend(ABC):
     async def get_entity_with_edges(
         self,
         org_id: UUID,
+        project_id: UUID,
         entity_id: UUID,
     ) -> dict | None:
         """Retrieve a single entity node with all its incident edges.
 
         Args:
             org_id: Organisational scope.
+            project_id: Project scope.
             entity_id: UUID of the entity to fetch.
 
         Returns:

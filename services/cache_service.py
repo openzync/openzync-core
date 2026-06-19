@@ -231,26 +231,26 @@ class CacheService:
     @staticmethod
     def build_context_cache_key(
         org_id: str,
-        user_id: str,
+        project_id: str,
         query: str,
     ) -> str:
         """Build a namespaced cache key for context assembly results.
 
-        Key format: ``ctx:{org_id}:{user_id}:{query_hash}``
+        Key format: ``ctx:{org_id}:{project_id}:{query_hash}``
 
         The query is SHA-256 hashed to keep keys a bounded length
         regardless of query length.
 
         Args:
             org_id: The organization UUID string.
-            user_id: The user UUID string.
+            project_id: The project UUID string.
             query: The natural-language query string.
 
         Returns:
             A namespaced Redis key string.
         """
         query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
-        return f"ctx:{org_id}:{user_id}:{query_hash}"
+        return f"ctx:{org_id}:{project_id}:{query_hash}"
 
     @staticmethod
     def build_user_cache_pattern(org_id: str, user_id: str) -> str:

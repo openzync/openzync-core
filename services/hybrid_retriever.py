@@ -70,7 +70,7 @@ class HybridRetriever:
     async def hybrid_search(
         self,
         query: str,
-        user_id: UUID,
+        project_id: UUID,
         limit: int = 20,
     ) -> dict[str, Any]:
         """Run hybrid search across all sources and return RRF-merged results.
@@ -85,7 +85,7 @@ class HybridRetriever:
 
         Args:
             query: The natural-language search query.
-            user_id: Scoped user UUID.
+            project_id: Scoped user UUID.
             limit: Max items per source type before RRF merge.
 
         Returns:
@@ -111,22 +111,22 @@ class HybridRetriever:
         # Vector search for episodes and facts
         try:
             episode_vector_results = await self._vector_search_episodes(
-                query, user_id, limit
+                query, project_id, limit
             )
         except Exception:
             logger.warning(
                 "hybrid_retriever.episode_vector_failed",
-                extra={"user_id": str(user_id), "query": query},
+                extra={"project_id": str(project_id), "query": query},
                 exc_info=True,
             )
             await self._db.rollback()
 
         try:
-            fact_vector_results = await self._vector_search_facts(query, user_id, limit)
+            fact_vector_results = await self._vector_search_facts(query, project_id, limit)
         except Exception:
             logger.warning(
                 "hybrid_retriever.fact_vector_failed",
-                extra={"user_id": str(user_id), "query": query},
+                extra={"project_id": str(project_id), "query": query},
                 exc_info=True,
             )
             await self._db.rollback()
@@ -134,33 +134,33 @@ class HybridRetriever:
         # BM25 search for episodes and facts
         try:
             episode_bm25_results = await self._bm25_search_episodes(
-                query, user_id, limit
+                query, project_id, limit
             )
         except Exception:
             logger.warning(
                 "hybrid_retriever.episode_bm25_failed",
-                extra={"user_id": str(user_id), "query": query},
+                extra={"project_id": str(project_id), "query": query},
                 exc_info=True,
             )
             await self._db.rollback()
 
         try:
-            fact_bm25_results = await self._bm25_search_facts(query, user_id, limit)
+            fact_bm25_results = await self._bm25_search_facts(query, project_id, limit)
         except Exception:
             logger.warning(
                 "hybrid_retriever.fact_bm25_failed",
-                extra={"user_id": str(user_id), "query": query},
+                extra={"project_id": str(project_id), "query": query},
                 exc_info=True,
             )
             await self._db.rollback()
 
         # Graph BFS via entity name search
         try:
-            entity_results = await self._graph_bfs_search(query, user_id)
+            entity_results = await self._graph_bfs_search(query, project_id)
         except Exception:
             logger.warning(
                 "hybrid_retriever.graph_bfs_failed",
-                extra={"user_id": str(user_id), "query": query},
+                extra={"project_id": str(project_id), "query": query},
                 exc_info=True,
             )
             await self._db.rollback()
@@ -249,7 +249,7 @@ class HybridRetriever:
     async def _vector_search_episodes(
         self,
         query: str,
-        user_id: UUID,
+        project_id: UUID,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         """Semantic search over episodes using pgvector cosine similarity.
@@ -264,7 +264,7 @@ class HybridRetriever:
 
         Args:
             query: Natural-language query text.
-            user_id: Scoped user UUID.
+            project_id: Scoped user UUID.
             limit: Max results.
 
         Returns:
@@ -274,7 +274,7 @@ class HybridRetriever:
         query_embedding = await self._embed_query(query)
         if query_embedding is None:
             logger.debug("hybrid_retriever.episode_vector_fallback_bm25")
-            return await self._bm25_search_episodes(query, user_id, limit)
+            return await self._bm25_search_episodes(query, project_id, limit)
 
         dim: int = (
             self._org_config.embedding_dim
@@ -301,7 +301,7 @@ class HybridRetriever:
                 ).label("score"),
             )
             .where(
-                Episode.user_id == user_id,
+                Episode.project_id == project_id,
                 Episode.is_deleted.is_(False),
                 Episode.embedding.isnot(None),
                 func.cardinality(Episode.embedding) > 0,
@@ -320,7 +320,7 @@ class HybridRetriever:
     async def _vector_search_facts(
         self,
         query: str,
-        user_id: UUID,
+        project_id: UUID,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         """Semantic search over facts using pgvector cosine similarity.
@@ -331,7 +331,7 @@ class HybridRetriever:
 
         Args:
             query: Natural-language query text.
-            user_id: Scoped user UUID.
+            project_id: Scoped user UUID.
             limit: Max results.
 
         Returns:
@@ -341,7 +341,7 @@ class HybridRetriever:
         query_embedding = await self._embed_query(query)
         if query_embedding is None:
             logger.debug("hybrid_retriever.fact_vector_fallback_bm25")
-            return await self._bm25_search_facts(query, user_id, limit)
+            return await self._bm25_search_facts(query, project_id, limit)
 
         # Resolve embedding dimension from org config so the runtime
         # ``::vector(N)`` cast matches the model that produced the data.
@@ -374,7 +374,7 @@ class HybridRetriever:
                 ).label("score"),
             )
             .where(
-                Fact.user_id == user_id,
+                Fact.project_id == project_id,
                 Fact.invalid_at.is_(None),
                 Fact.embedding.isnot(None),
                 func.cardinality(Fact.embedding) > 0,
@@ -395,7 +395,7 @@ class HybridRetriever:
     async def _bm25_search_episodes(
         self,
         query: str,
-        user_id: UUID,
+        project_id: UUID,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         """Keyword search over episodes using PostgreSQL full-text search.
@@ -405,7 +405,7 @@ class HybridRetriever:
 
         Args:
             query: Keyword query string.
-            user_id: Scoped user UUID.
+            project_id: Scoped user UUID.
             limit: Max results.
 
         Returns:
@@ -425,7 +425,7 @@ class HybridRetriever:
                 ).label("score"),
             )
             .where(
-                Episode.user_id == user_id,
+                Episode.project_id == project_id,
                 Episode.is_deleted.is_(False),
                 func.to_tsvector("english", Episode.content).op("@@")(ts_query),
             )
@@ -437,14 +437,14 @@ class HybridRetriever:
     async def _bm25_search_facts(
         self,
         query: str,
-        user_id: UUID,
+        project_id: UUID,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         """Keyword search over facts using PostgreSQL full-text search.
 
         Args:
             query: Keyword query string.
-            user_id: Scoped user UUID.
+            project_id: Scoped user UUID.
             limit: Max results.
 
         Returns:
@@ -467,7 +467,7 @@ class HybridRetriever:
                 ).label("score"),
             )
             .where(
-                Fact.user_id == user_id,
+                Fact.project_id == project_id,
                 Fact.invalid_at.is_(None),
                 func.to_tsvector("english", Fact.content).op("@@")(ts_query),
             )
@@ -481,7 +481,7 @@ class HybridRetriever:
     async def _graph_bfs_search(
         self,
         query: str,
-        user_id: UUID,
+        project_id: UUID,
     ) -> list[dict[str, Any]]:
         """BFS traversal from entities matching the query text.
 
@@ -496,7 +496,7 @@ class HybridRetriever:
 
         Args:
             query: Natural-language query for entity matching.
-            user_id: Scoped user UUID.
+            project_id: Scoped user UUID.
 
         Returns:
             A list of entity dicts with ``id``, ``name``, ``type``,

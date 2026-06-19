@@ -1,7 +1,7 @@
 """Session repository — all database access for the Session model.
 
-Every query is scoped to a ``user_id`` (which itself is tenant-scoped via
-the users table).  The repository returns ORM models only — no business
+Every query is scoped to a ``project_id`` (which itself is tenant-scoped via
+the projects table).  The repository returns ORM models only — no business
 logic, no schema construction.
 """
 
@@ -18,8 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.episode import Episode
 from models.fact import Fact
+from models.project import Project
 from models.session import Session
-from models.user import User
 
 
 class SessionRepository:
@@ -37,19 +37,21 @@ class SessionRepository:
     async def create(
         self,
         organization_id: UUID,
-        user_id: UUID,
+        project_id: UUID,
+        created_by: UUID,
         external_id: str,
         metadata: dict[str, Any] | None = None,
     ) -> Session:
-        """Create a new session for a user.
+        """Create a new session within a project.
 
-        The unique constraint on ``(user_id, external_id)`` provides the
+        The unique constraint on ``(project_id, external_id)`` provides the
         final guard against duplicates — the service layer checks first,
         but a race is still possible.
 
         Args:
             organization_id: The organization UUID for tenant isolation.
-            user_id: The owning user's UUID.
+            project_id: The project UUID the session belongs to.
+            created_by: The UUID of the user who created the session.
             external_id: Caller-defined session identifier.
             metadata: Optional session metadata.
 
@@ -58,7 +60,8 @@ class SessionRepository:
         """
         session = Session(
             organization_id=organization_id,
-            user_id=user_id,
+            project_id=project_id,
+            user_id=created_by,
             external_id=external_id,
             metadata_=metadata or {},
         )
@@ -68,9 +71,9 @@ class SessionRepository:
         return session
 
     async def get_or_create_default(
-        self, org_id: UUID, user_id: UUID
+        self, org_id: UUID, project_id: UUID
     ) -> Session:
-        """Get or create the ``__default__`` session for a user.
+        """Get or create the ``__default__`` session for a project.
 
         The default session is used when callers send messages without
         specifying a ``session_id``.  It is hidden from session list
@@ -78,22 +81,23 @@ class SessionRepository:
 
         Args:
             org_id: The organization UUID for tenant isolation.
-            user_id: The owning user's UUID.
+            project_id: The project UUID.
 
         Returns:
             An existing or newly created default Session.
         """
-        session = await self.get_by_external_id(org_id, user_id, "__default__")
+        session = await self.get_by_external_id(org_id, project_id, "__default__")
         if session is not None:
             return session
 
-        # Race-safe: the unique constraint on (user_id, external_id)
+        # Race-safe: the unique constraint on (project_id, external_id)
         # will prevent a duplicate insert from a concurrent request.
         from sqlalchemy.exc import IntegrityError
 
         session = Session(
             organization_id=org_id,
-            user_id=user_id,
+            project_id=project_id,
+            user_id=None,  # system-created, no specific user
             external_id="__default__",
             metadata_={"auto_created": True},
         )
@@ -103,10 +107,10 @@ class SessionRepository:
             await self._db.refresh(session)
         except IntegrityError:
             await self._db.rollback()
-            session = await self.get_by_external_id(org_id, user_id, "__default__")
+            session = await self.get_by_external_id(org_id, project_id, "__default__")
             if session is None:
                 raise RuntimeError(
-                    f"Failed to get-or-create default session for user {user_id}"
+                    f"Failed to get-or-create default session for project {project_id}"
                 ) from None
 
         return session
@@ -114,13 +118,13 @@ class SessionRepository:
     # ── Read ────────────────────────────────────────────────────────────────
 
     async def get_by_external_id(
-        self, org_id: UUID, user_id: UUID, external_id: str
+        self, org_id: UUID, project_id: UUID, external_id: str
     ) -> Session | None:
-        """Look up a session by ``user_id`` and ``external_id``, scoped to org.
+        """Look up a session by ``project_id`` and ``external_id``, scoped to org.
 
         Args:
             org_id: The organization UUID for tenant isolation.
-            user_id: The owning user's UUID.
+            project_id: The project UUID.
             external_id: The caller-defined session identifier.
 
         Returns:
@@ -128,41 +132,41 @@ class SessionRepository:
         """
         result = await self._db.execute(
             select(Session)
-            .join(User, Session.user_id == User.id)
+            .join(Project, Session.project_id == Project.id)
             .where(
-                Session.user_id == user_id,
+                Session.project_id == project_id,
                 Session.external_id == external_id,
-                User.organization_id == org_id,
+                Project.organization_id == org_id,
                 Session.is_deleted.is_(False),
             )
         )
         return result.scalar_one_or_none()
 
     async def get_by_uuid(
-        self, org_id: UUID, session_id: UUID, user_id: UUID | None = None
+        self, org_id: UUID, session_id: UUID, project_id: UUID | None = None
     ) -> Session | None:
-        """Look up a session by its internal UUID, scoped to org and optionally user.
+        """Look up a session by its internal UUID, scoped to org and optionally project.
 
         Args:
             org_id: The organization UUID for tenant isolation.
             session_id: The session's UUID primary key.
-            user_id: Optional user UUID for intra-org isolation. When provided,
-                only sessions belonging to this user are returned.
+            project_id: Optional project UUID for intra-org isolation. When provided,
+                only sessions belonging to this project are returned.
 
         Returns:
             The Session if found and not soft-deleted, ``None`` otherwise.
         """
         query = (
             select(Session)
-            .join(User, Session.user_id == User.id)
+            .join(Project, Session.project_id == Project.id)
             .where(
                 Session.id == session_id,
-                User.organization_id == org_id,
+                Project.organization_id == org_id,
                 Session.is_deleted.is_(False),
             )
         )
-        if user_id is not None:
-            query = query.where(Session.user_id == user_id)
+        if project_id is not None:
+            query = query.where(Session.project_id == project_id)
 
         result = await self._db.execute(query)
         return result.scalar_one_or_none()
@@ -172,13 +176,13 @@ class SessionRepository:
     async def list(  # noqa: A003 — shadowing built-in is idiomatic for repos
         self,
         org_id: UUID,
-        user_id: UUID,
+        project_id: UUID,
         limit: int = 50,
         cursor: str | None = None,
         include_closed: bool = False,
         exclude_default: bool = True,
     ) -> tuple[list[Session], str | None]:
-        """List sessions for a user with cursor-based pagination, scoped to org.
+        """List sessions for a project with cursor-based pagination, scoped to org.
 
         The default excludes:
         - The ``__default__`` auto-created session.
@@ -189,7 +193,7 @@ class SessionRepository:
 
         Args:
             org_id: The organization UUID for tenant isolation.
-            user_id: The owning user's UUID.
+            project_id: The project UUID.
             limit: Maximum results per page (capped at 200).
             cursor: Opaque base64 cursor from a previous page.
             include_closed: If ``True``, include closed sessions.
@@ -203,10 +207,10 @@ class SessionRepository:
 
         query = (
             select(Session)
-            .join(User, Session.user_id == User.id)
+            .join(Project, Session.project_id == Project.id)
             .where(
-                Session.user_id == user_id,
-                User.organization_id == org_id,
+                Session.project_id == project_id,
+                Project.organization_id == org_id,
                 Session.is_deleted.is_(False),
             )
         )
@@ -274,10 +278,10 @@ class SessionRepository:
         # Verify the session belongs to the organization before fetching messages.
         session_check = (
             select(Session.id)
-            .join(User, Session.user_id == User.id)
+            .join(Project, Session.project_id == Project.id)
             .where(
                 Session.id == session_id,
-                User.organization_id == org_id,
+                Project.organization_id == org_id,
                 Session.is_deleted.is_(False),
             )
         )
@@ -365,10 +369,10 @@ class SessionRepository:
         """
         result = await self._db.execute(
             select(Session)
-            .join(User, Session.user_id == User.id)
+            .join(Project, Session.project_id == Project.id)
             .where(
                 Session.id == session_id,
-                User.organization_id == org_id,
+                Project.organization_id == org_id,
                 Session.is_deleted.is_(False),
             )
         )
@@ -409,10 +413,10 @@ class SessionRepository:
         """
         result = await self._db.execute(
             select(Session)
-            .join(User, Session.user_id == User.id)
+            .join(Project, Session.project_id == Project.id)
             .where(
                 Session.id == session_id,
-                User.organization_id == org_id,
+                Project.organization_id == org_id,
                 Session.is_deleted.is_(False),
             )
         )
@@ -428,47 +432,37 @@ class SessionRepository:
     # ── Soft Delete ─────────────────────────────────────────────────────────
 
     async def soft_delete(
-        self, org_id: UUID, session_id: UUID, user_id: UUID | None = None
+        self, org_id: UUID, session_id: UUID, project_id: UUID | None = None
     ) -> Session | None:
-        """Soft-delete a session, scoped to org and optionally user.
+        """Soft-delete a session, scoped to org and optionally project.
 
-        Sets ``is_deleted = True`` and unlinks episodes from the session
-        (episodes are preserved as orphaned history for audit, then
-        purged by the GDPR worker).
+        Sets ``is_deleted = True``.
 
         Args:
             org_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
-            user_id: Optional user UUID for intra-org isolation.
+            project_id: Optional project UUID for intra-org isolation.
 
         Returns:
             The updated Session, or ``None`` if not found or already deleted.
         """
         query = (
             select(Session)
-            .join(User, Session.user_id == User.id)
+            .join(Project, Session.project_id == Project.id)
             .where(
                 Session.id == session_id,
-                User.organization_id == org_id,
+                Project.organization_id == org_id,
                 Session.is_deleted.is_(False),
             )
         )
-        if user_id is not None:
-            query = query.where(Session.user_id == user_id)
+        if project_id is not None:
+            query = query.where(Session.project_id == project_id)
         result = await self._db.execute(query)
         session = result.scalar_one_or_none()
         if session is None:
             return None
 
         session.is_deleted = True
-
-        # TechLead: The unlink step was removed because the episodes FK
-        # uses ondelete=CASCADE + nullable=False — setting session_id=NULL
-        # violates the NOT NULL constraint. Episodes remain linked to the
-        # soft-deleted session, which is safe since queries filter on
-        # session.is_deleted. A follow-up migration (SET NULL + nullable)
-        # can restore the unlink intent if GDPR/orphaning requirements
-        # demand it.
 
         await self._db.flush()
         await self._db.refresh(session)

@@ -75,61 +75,32 @@ class FactService:
     async def ingest_facts(
         self,
         org_id: UUID,
-        user_uuid: UUID,
+        project_id: UUID,
+        created_by: UUID,
         facts: list[FactTriple],
         session_external_id: str | None = None,
     ) -> FactBatchResponse:
-        """Ingest a batch of facts for a user.
+        """Ingest a batch of facts for a project.
 
         Flow:
-        1. Resolve the user by UUID.
-        2. Compute content hash for batch-level dedup.
-        3. Optional: resolve session if session_external_id provided.
-        4. Bulk-insert facts into PostgreSQL.
-        5. Enqueue ARQ embedding task for each fact.
-        6. Return 202 response with job_id.
+        1. Compute content hash for batch-level dedup.
+        2. Optional: resolve session if session_external_id provided.
+        3. Bulk-insert facts into PostgreSQL.
+        4. Enqueue ARQ embedding task for each fact.
+        5. Return 202 response with job_id.
 
         Args:
             org_id: The authenticated organization UUID.
-            user_uuid: The internal user UUID.
+            project_id: The project UUID.
+            created_by: The authenticated user's UUID (attribution).
             facts: List of validated fact triples.
             session_external_id: Optional session external ID.
 
         Returns:
             A ``FactBatchResponse`` with job_id and accepted_count.
-
-        Raises:
-            NotFoundError: If the user does not exist.
         """
-        # ── Step 1: Resolve user ──────────────────────────────────────────
-        user = await self._user_repo.get_by_uuid(org_id, user_uuid)
-        if user is None:
-            raise NotFoundError(
-                message=f"User {user_uuid} not found in organization {org_id}",
-                detail={"user_id": str(user_uuid), "org_id": str(org_id)},
-            )
-        user_id = user.id
-
-        # ── Step 2: Optional session resolution ───────────────────────────
-        session_id: UUID | None = None
-        if session_external_id is not None:
-            session = await self._session_repo.get_by_external_id(
-                org_id=org_id,
-                user_id=user_id,
-                external_id=session_external_id,
-            )
-            if session is None:
-                raise NotFoundError(
-                    message=f"Session '{session_external_id}' not found for user {user_uuid}",
-                    detail={
-                        "session_id": session_external_id,
-                        "user_id": str(user_uuid),
-                    },
-                )
-            session_id = session.id
-
-        # ── Step 3: Content-level dedup check ─────────────────────────────
-        content_hash = self._compute_batch_hash(user_id, facts)
+        # ── Step 1: Content-level dedup check ─────────────────────────────
+        content_hash = self._compute_batch_hash(project_id, facts)
         existing_job_id = await self._check_dedup(content_hash)
         if existing_job_id is not None:
             logger.info(
@@ -137,7 +108,7 @@ class FactService:
                 extra={
                     "content_hash": content_hash,
                     "existing_job_id": existing_job_id,
-                    "user_id": str(user_id),
+                    "project_id": str(project_id),
                 },
             )
             return FactBatchResponse(
@@ -147,7 +118,26 @@ class FactService:
                 message="Facts already ingested; returning existing job_id",
             )
 
-        # ── Step 4: Bulk-insert facts ─────────────────────────────────────
+        # ── Step 2: Optional session resolution ───────────────────────────
+        session_id: UUID | None = None
+        if session_external_id is not None:
+            session = await self._session_repo.get_by_external_id(
+                org_id=org_id,
+                project_id=project_id,
+                external_id=session_external_id,
+            )
+            if session is None:
+                raise NotFoundError(
+                    message=f"Session '{session_external_id}' not found "
+                    f"in project {project_id}",
+                    detail={
+                        "session_external_id": session_external_id,
+                        "project_id": str(project_id),
+                    },
+                )
+            session_id = session.id
+
+        # ── Step 3: Bulk-insert facts ─────────────────────────────────────
         fact_dicts: list[dict[str, Any]] = []
         for f in facts:
             fact_dicts.append({
@@ -162,21 +152,22 @@ class FactService:
 
         created = await self._fact_repo.batch_create(
             organization_id=org_id,
-            user_id=user_id,
+            project_id=project_id,
+            user_id=created_by,
             facts=fact_dicts,
         )
 
-        # ── Step 5: Generate job_id and enqueue embedding tasks ───────────
+        # ── Step 4: Generate job_id and enqueue embedding tasks ───────────
         job_id = str(uuid4())
 
         await self._enqueue_embedding_tasks(
             job_id=job_id,
             org_id=str(org_id),
-            user_id=str(user_id),
+            project_id=str(project_id),
             fact_ids=[str(fact.id) for fact in created],
         )
 
-        # ── Step 6: Cache content hash for future dedup ───────────────────
+        # ── Step 5: Cache content hash for future dedup ───────────────────
         await self._cache_dedup(content_hash, job_id)
 
         # ── Emit webhook event ────────────────────────────────────────
@@ -186,8 +177,8 @@ class FactService:
                 event_type=EventType.FACT_EXTRACTED,
                 payload={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "session_id": str(session_id) if session_id else None,
-                    "user_id": str(user_id),
                     "fact_count": len(created),
                     "job_id": job_id,
                 },
@@ -198,7 +189,7 @@ class FactService:
             extra={
                 "job_id": job_id,
                 "count": len(created),
-                "user_id": str(user_id),
+                "project_id": str(project_id),
                 "org_id": str(org_id),
             },
         )
@@ -214,16 +205,16 @@ class FactService:
 
     @staticmethod
     def _compute_batch_hash(
-        user_id: UUID,
+        project_id: UUID,
         facts: list[FactTriple],
     ) -> str:
-        """Compute a SHA-256 hash of (user_id, sorted facts).
+        """Compute a SHA-256 hash of (project_id, sorted facts).
 
         Used for content-level deduplication: identical fact batches from
         different clients produce the same hash and return the same job_id.
 
         Args:
-            user_id: The user's UUID.
+            project_id: The project's UUID.
             facts: The fact triples to hash.
 
         Returns:
@@ -231,7 +222,7 @@ class FactService:
         """
         canonical = json.dumps(
             {
-                "user_id": str(user_id),
+                "project_id": str(project_id),
                 "facts": sorted(
                     [
                         {
@@ -278,7 +269,7 @@ class FactService:
         self,
         job_id: str,
         org_id: str,
-        user_id: str,
+        project_id: str,
         fact_ids: list[str],
     ) -> None:
         """Enqueue ARQ embedding tasks for each ingested fact.
@@ -286,12 +277,12 @@ class FactService:
         Args:
             job_id: The composite job ID for this ingestion.
             org_id: The organization UUID string.
-            user_id: The user UUID string.
+            project_id: The project UUID string.
             fact_ids: List of fact UUIDs to embed.
         """
-        # Propagate trace_id from the current request context so the
-        # embedding worker can correlate back to the originating request.
-        trace_id = structlog.contextvars.get_contextvars().get("request_id", str(uuid4()))
+        trace_id = structlog.contextvars.get_contextvars().get(
+            "request_id", str(uuid4())
+        )
         try:
             arq_pool = get_arq()
             qname = _arq_queue_name(ARQ_QUEUE)
@@ -302,7 +293,7 @@ class FactService:
                     queue_name=qname,
                     fact_id=fact_id,
                     org_id=org_id,
-                    user_id=user_id,
+                    project_id=project_id,
                     trace_id=trace_id,
                 )
 
@@ -315,15 +306,12 @@ class FactService:
                 },
             )
         except Exception:
-            # ⚠️ Facts are already committed. ARQ failure does not
-            # roll back the insert. A reconciliation worker will pick
-            # up facts without embeddings.
             logger.critical(
                 "fact_service.arq_enqueue_failed",
                 extra={
                     "job_id": job_id,
                     "org_id": org_id,
-                    "user_id": user_id,
+                    "project_id": project_id,
                     "fact_ids": fact_ids,
                     "error": "ARQ pool unavailable — tasks not enqueued. "
                     "Facts are safe in PostgreSQL; reconciliation needed.",
