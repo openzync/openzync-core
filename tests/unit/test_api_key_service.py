@@ -218,3 +218,63 @@ class TestApiKeyService:
         assert len(keys_b) == 0
         second_call_project = mock_repo.list_by_org.call_args.kwargs["project_id"]
         assert second_call_project == other_project
+
+    # ── Cache invalidation on revoke ──────────────────────────────────────────
+
+    async def test_revoke_invalidates_auth_cache(self) -> None:
+        """Revoke deletes the positive and negative Redis auth cache entries."""
+        service, mock_repo = self._make_service()
+        mock_redis = AsyncMock()
+        service._redis = mock_redis
+
+        revoked_key = self._make_mock_key(lookup_hash="mykey123", is_revoked=True)
+        mock_repo.revoke.return_value = revoked_key
+
+        result = await service.revoke_project_key(
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            key_id=self.KEY_ID,
+        )
+
+        assert result is not None
+        assert result.is_revoked is True
+        mock_redis.delete.assert_awaited_once_with(
+            "auth:key:mykey123",
+            "auth:neg:mykey123",
+        )
+
+    async def test_revoke_no_redis_does_not_crash(self) -> None:
+        """Revoke succeeds gracefully when Redis is None (no cache configured)."""
+        service, mock_repo = self._make_service()
+        service._redis = None  # explicitly no Redis
+
+        revoked_key = self._make_mock_key(is_revoked=True)
+        mock_repo.revoke.return_value = revoked_key
+
+        result = await service.revoke_project_key(
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            key_id=self.KEY_ID,
+        )
+
+        assert result is not None
+        assert result.is_revoked is True
+
+    async def test_revoke_not_found_does_not_call_redis(self) -> None:
+        """Revoke of a non-existent key should NOT attempt cache invalidation."""
+        service, mock_repo = self._make_service()
+        mock_redis = AsyncMock()
+        service._redis = mock_redis
+        mock_repo.revoke.return_value = None
+
+        result = await service.revoke_project_key(
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            key_id=uuid4(),
+        )
+
+        assert result is None
+        # repo.revoke was called
+        mock_repo.revoke.assert_awaited_once()
+        # redis.delete should NOT have been called (no key to invalidate)
+        mock_redis.delete.assert_not_awaited()

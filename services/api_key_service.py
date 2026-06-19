@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import redis.asyncio as aioredis
 import structlog
 
 from models.api_key import ApiKey
@@ -21,16 +22,28 @@ from utils.crypto import compute_lookup_hash, generate_api_key, hash_api_key
 
 logger = structlog.get_logger(__name__)
 
+# Cache key prefixes — must match middleware/auth.py.
+_AUTH_CACHE_PREFIX = "auth:key:"
+_AUTH_NEG_CACHE_PREFIX = "auth:neg:"
+
 
 class ApiKeyService:
     """Business logic for API key lifecycle management.
 
     Args:
         repo: The API key repository instance.
+        redis: Optional async Redis client for auth cache invalidation.
+            When ``None`` (e.g. no Redis configured), cache invalidation
+            is a no-op.
     """
 
-    def __init__(self, repo: ApiKeyRepository) -> None:
+    def __init__(
+        self,
+        repo: ApiKeyRepository,
+        redis: aioredis.Redis | None = None,
+    ) -> None:
         self._repo = repo
+        self._redis = redis
 
     async def create_project_key(
         self,
@@ -101,6 +114,35 @@ class ApiKeyService:
             )
         )
 
+    async def _invalidate_auth_cache(self, api_key: ApiKey) -> None:
+        """Delete Redis auth cache entries so revoked keys are rejected immediately.
+
+        Clears both the positive cache (``auth:key:{lookup_hash}``) and
+        negative cache (``auth:neg:{lookup_hash}``).  Safe to call when
+        Redis is not available — logs a warning and continues.
+
+        Args:
+            api_key: The revoked ``ApiKey`` record (must have
+                ``lookup_hash`` populated).
+        """
+        if self._redis is None:
+            return
+        try:
+            await self._redis.delete(
+                f"{_AUTH_CACHE_PREFIX}{api_key.lookup_hash}",
+                f"{_AUTH_NEG_CACHE_PREFIX}{api_key.lookup_hash}",
+            )
+            logger.info(
+                "api_key.cache_invalidated",
+                key_id=str(api_key.id),
+            )
+        except Exception:
+            logger.warning(
+                "api_key.cache_invalidation_failed",
+                key_id=str(api_key.id),
+                exc_info=True,
+            )
+
     async def revoke_project_key(
         self,
         organization_id: UUID,
@@ -108,6 +150,9 @@ class ApiKeyService:
         key_id: UUID,
     ) -> ApiKey | None:
         """Revoke (soft-delete) an API key scoped to a project.
+
+        Persists the revocation to the database and invalidates the
+        Redis auth cache so the key is rejected on the next request.
 
         Args:
             organization_id: The owning organization UUID.
@@ -125,6 +170,7 @@ class ApiKeyService:
         )
 
         if api_key is not None:
+            await self._invalidate_auth_cache(api_key)
             logger.info(
                 "api_key.revoked",
                 key_id=str(key_id),

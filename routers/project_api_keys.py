@@ -12,9 +12,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
+import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.redis import get_redis
 from dependencies.auth import require_org_id
 from dependencies.db import get_db
 from dependencies.project_auth import require_project_owner
@@ -33,9 +35,12 @@ router = APIRouter(
 )
 
 
-def _get_service(db: AsyncSession = Depends(get_db)) -> ApiKeyService:
+def _get_service(
+    db: AsyncSession = Depends(get_db),
+    redis: aioredis.Redis = Depends(get_redis),
+) -> ApiKeyService:
     """Dependency factory for ``ApiKeyService``."""
-    return ApiKeyService(repo=ApiKeyRepository(db=db))
+    return ApiKeyService(repo=ApiKeyRepository(db=db), redis=redis)
 
 
 @router.get(
