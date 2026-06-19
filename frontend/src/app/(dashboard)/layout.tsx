@@ -157,7 +157,7 @@ function Sidebar({
           )}
           <div className="space-y-0.5">
             {/* Pinned projects (always visible when any are pinned) */}
-            {pinned.map((p) => {
+            {(inProject ? pinned.filter((p) => p.id !== projectId) : pinned).map((p) => {
               const isActiveProject = pathname.startsWith(`/projects/${p.id}`);
               return (
                 <button
@@ -179,22 +179,24 @@ function Sidebar({
               );
             })}
 
-            {/* View all projects */}
-            <button
-              onClick={() => { router.push("/projects"); onClose?.(); }}
-              className={cn(
-                "flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors",
-                collapsed && "justify-center px-0",
-                onProjectList
-                  ? "bg-brand-500/10 text-brand-300 border-l-[3px] border-brand-500"
-                  : "text-surface-300 hover:bg-surface-800 hover:text-[#F2F2F2] border-l-[3px] border-transparent",
-              )}
-            >
-              <span className="shrink-0 text-surface-400">
-                <FolderKanban size={18} />
-              </span>
-              {!collapsed && <span className="truncate">View all projects</span>}
-            </button>
+            {/* View all projects — hidden inside a project, shown in bottom section instead */}
+            {!inProject && (
+              <button
+                onClick={() => { router.push("/projects"); onClose?.(); }}
+                className={cn(
+                  "flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm transition-colors",
+                  collapsed && "justify-center px-0",
+                  onProjectList
+                    ? "bg-brand-500/10 text-brand-300 border-l-[3px] border-brand-500"
+                    : "text-surface-300 hover:bg-surface-800 hover:text-[#F2F2F2] border-l-[3px] border-transparent",
+                )}
+              >
+                <span className="shrink-0 text-surface-400">
+                  <FolderKanban size={18} />
+                </span>
+                {!collapsed && <span className="truncate">View all projects</span>}
+              </button>
+            )}
 
             {/* Project-scoped nav items (only inside a project) */}
             {inProject && (
@@ -359,7 +361,29 @@ function Sidebar({
       </nav>
 
       {/* Bottom section */}
-      <div className="border-t border-surface-800 p-2">
+      <div className="border-t border-surface-800 p-2 space-y-1">
+        {/* View all projects — bottom section when inside a project */}
+        {inProject && (
+          collapsed ? (
+            <button
+              onClick={() => { router.push("/projects"); onClose?.(); }}
+              className="flex w-full items-center justify-center rounded-md p-2 text-surface-400 hover:bg-surface-800 hover:text-[#F2F2F2]"
+              title="View all projects"
+            >
+              <FolderKanban size={18} />
+            </button>
+          ) : (
+            <button
+              onClick={() => { router.push("/projects"); onClose?.(); }}
+              className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-surface-400 hover:bg-surface-800 hover:text-[#F2F2F2]"
+            >
+              <FolderKanban size={18} />
+              <span className="truncate">View all projects</span>
+            </button>
+          )
+        )}
+
+        {/* Collapse toggle */}
         {collapsed ? (
           <button
             onClick={onToggle}
