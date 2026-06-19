@@ -33,6 +33,7 @@ class ProjectRepository:
         name: str,
         created_by: UUID,
         description: str | None = None,
+        metadata_: dict | None = None,
     ) -> Project:
         """Create a new project.
 
@@ -41,6 +42,7 @@ class ProjectRepository:
             name: Human-readable project name (unique within org).
             created_by: UUID of the user creating the project (becomes owner).
             description: Optional project description.
+            metadata_: Optional project metadata dict.
 
         Returns:
             The newly created Project.
@@ -50,6 +52,7 @@ class ProjectRepository:
             name=name,
             description=description or "",
             created_by=created_by,
+            metadata_=metadata_ or {},
         )
         self._db.add(project)
         await self._db.flush()
@@ -101,13 +104,16 @@ class ProjectRepository:
     async def list(
         self,
         organization_id: UUID,
+        user_id: UUID,
         limit: int = 50,
         offset: int = 0,
     ) -> list[Project]:
-        """List all non-archived projects in an organisation.
+        """List non-archived projects in an organisation that the user is a member of.
 
         Args:
             organization_id: Tenant scope.
+            user_id: The authenticated user's UUID — only projects where this
+                user is a member are returned.
             limit: Maximum results per page (capped at 200).
             offset: Number of results to skip.
 
@@ -117,9 +123,11 @@ class ProjectRepository:
         effective_limit = min(limit, 200)
         result = await self._db.execute(
             select(Project)
+            .join(ProjectMember, Project.id == ProjectMember.project_id)
             .where(
                 Project.organization_id == organization_id,
                 Project.is_archived.is_(False),
+                ProjectMember.user_id == user_id,
             )
             .order_by(Project.created_at.desc())
             .limit(effective_limit)

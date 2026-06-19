@@ -88,6 +88,19 @@ async def require_project_membership(
             detail="Not a member of this project",
         )
 
+    # ── API key project scope enforcement ────────────────────────────────
+    # If the request is authenticated via an API key that is scoped to a
+    # specific project (non-null project_id), reject access to any other
+    # project.
+    api_key_project_id: str | None = getattr(
+        request.state, "api_key_project_id", None
+    )
+    if api_key_project_id is not None and UUID(api_key_project_id) != project_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This API key is scoped to a different project",
+        )
+
 
 async def require_project_owner(
     request: Request,
@@ -130,4 +143,14 @@ async def require_project_owner(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Project owner access required",
+        )
+
+    # ── API key project scope enforcement ────────────────────────────────
+    api_key_project_id: str | None = getattr(
+        request.state, "api_key_project_id", None
+    )
+    if api_key_project_id is not None and UUID(api_key_project_id) != project_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This API key is scoped to a different project",
         )

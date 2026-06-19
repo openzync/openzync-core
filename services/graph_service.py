@@ -130,6 +130,7 @@ class GraphService:
             entities = await self._fact_repo.get_entities_for_session(
                 session_id=session_id,
                 organization_id=org_id,
+                project_id=project_id,
             )
 
             # Apply optional entity_type filter client-side

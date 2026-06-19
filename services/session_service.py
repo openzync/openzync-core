@@ -181,7 +181,10 @@ class SessionService:
         )
 
     async def get_session_by_uuid(
-        self, org_id: UUID, session_id: UUID
+        self,
+        org_id: UUID,
+        session_id: UUID,
+        project_id: UUID | None = None,
     ) -> SessionResponse:
         """Get a session by its internal UUID (alias for ``get_session``).
 
@@ -191,6 +194,7 @@ class SessionService:
         Args:
             org_id: The organization UUID for tenant isolation.
             session_id: The session's UUID.
+            project_id: Optional project UUID for intra-org isolation.
 
         Returns:
             The session response with aggregate statistics.
@@ -198,7 +202,7 @@ class SessionService:
         Raises:
             NotFoundError: Session not found or soft-deleted.
         """
-        return await self.get_session(org_id, session_id)
+        return await self.get_session(org_id, session_id, project_id=project_id)
 
     # ── List ────────────────────────────────────────────────────────────────
 

@@ -73,6 +73,7 @@ class ProjectService:
             name=payload.name,
             created_by=user_id,
             description=payload.description,
+            metadata_=payload.metadata,
         )
 
         # Add creator as owner
@@ -131,12 +132,22 @@ class ProjectService:
     async def list_projects(
         self,
         organization_id: UUID,
+        user_id: UUID,
         limit: int = 50,
         offset: int = 0,
     ) -> list[ProjectResponse]:
-        """List all non-archived projects in an organisation."""
+        """List non-archived projects in an organisation that the user belongs to.
+
+        Args:
+            organization_id: Tenant scope.
+            user_id: The authenticated user — only projects where this user
+                is a member are returned.
+            limit: Maximum results per page (capped at 200).
+            offset: Number of results to skip.
+        """
         projects = await self._repo.list(
             organization_id=organization_id,
+            user_id=user_id,
             limit=limit,
             offset=offset,
         )

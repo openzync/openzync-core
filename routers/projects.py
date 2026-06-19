@@ -68,9 +68,10 @@ async def list_projects(
     offset: int = Query(default=0, ge=0),
     service: ProjectService = Depends(_get_project_service),
 ) -> list[ProjectResponse]:
-    """List all non-archived projects for the authenticated user's organization."""
+    """List non-archived projects the authenticated user is a member of."""
     return await service.list_projects(
         organization_id=request.state.org_id,
+        user_id=UUID(request.state.user_id),
         limit=limit,
         offset=offset,
     )
