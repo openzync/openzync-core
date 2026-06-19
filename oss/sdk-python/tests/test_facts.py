@@ -14,19 +14,19 @@ class TestFactsClient:
     @pytest.mark.asyncio
     async def test_add_facts(self, async_client, mock_http):
         """POST /facts returns FactBatchResponse."""
-        user_id = "user-123"
+        project_id = "p1"
         expected = {
             "job_id": "job-789",
             "accepted_count": 2,
             "status": "accepted",
             "message": "2 facts accepted",
         }
-        mock_http.post(f"/v1/users/{user_id}/facts").respond(
+        mock_http.post(f"/v1/projects/{project_id}/facts").respond(
             status_code=202, json=expected
         )
 
         result = await async_client.facts.add(
-            user_id=user_id,
+            project_id=project_id,
             facts=[
                 {"subject": "Alice", "predicate": "works_at", "object": "Acme"},
                 {"subject": "Alice", "predicate": "likes", "object": "hiking"},
@@ -40,13 +40,13 @@ class TestFactsClient:
     @pytest.mark.asyncio
     async def test_add_facts_with_session(self, async_client, mock_http):
         """POST /facts with session_id."""
-        user_id = "user-123"
-        mock_http.post(f"/v1/users/{user_id}/facts").respond(
+        project_id = "p1"
+        mock_http.post(f"/v1/projects/{project_id}/facts").respond(
             status_code=202, json={"job_id": "j1", "accepted_count": 1, "status": "accepted"}
         )
 
         result = await async_client.facts.add(
-            user_id=user_id,
+            project_id=project_id,
             facts=[{"subject": "X", "predicate": "y", "object": "z"}],
             session_id="s1",
         )

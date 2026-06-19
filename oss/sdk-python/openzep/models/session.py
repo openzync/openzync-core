@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 
 class SessionCreateRequest(BaseModel):
-    """Request body for ``POST /v1/users/{user_id}/sessions``."""
+    """Request body for ``POST /v1/projects/{project_id}/sessions``."""
 
     external_id: str = Field(..., min_length=1, max_length=255, description="Caller-defined session identifier.")
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -18,7 +18,8 @@ class SessionResponse(BaseModel):
     """Response from session CRUD endpoints."""
 
     id: str = Field(..., description="Internal UUID.")
-    user_id: str = Field(..., description="Owning user UUID.")
+    project_id: str = Field(..., description="Owning project UUID.")
+    created_by: str = Field(..., description="User UUID who created the session.")
     external_id: str = Field(..., description="Caller-defined identifier.")
     metadata: dict[str, Any] = Field(default_factory=dict)
     is_active: bool = Field(default=True)
@@ -28,7 +29,7 @@ class SessionResponse(BaseModel):
 
 
 class SessionListResponse(BaseModel):
-    """Response from ``GET /v1/users/{user_id}/sessions``."""
+    """Response from ``GET /v1/projects/{project_id}/sessions``."""
 
     data: list[SessionResponse] = Field(..., description="List of sessions.")
     next_cursor: str | None = Field(default=None, description="Cursor for the next page.")
@@ -36,7 +37,7 @@ class SessionListResponse(BaseModel):
 
 
 class SessionMessagesResponse(BaseModel):
-    """Response from ``GET /v1/users/{user_id}/sessions/{session_id}/messages``."""
+    """Response from ``GET /v1/projects/{project_id}/sessions/{session_id}/messages``."""
 
     class MessageItem(BaseModel):
         id: str = Field(..., description="Episode UUID.")

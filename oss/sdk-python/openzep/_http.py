@@ -60,7 +60,7 @@ class AsyncHTTPTransport:
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
-                "User-Agent": f"openzep-py/0.1.0",
+                "User-Agent": f"openzep-py/0.2.0",
             },
         )
 

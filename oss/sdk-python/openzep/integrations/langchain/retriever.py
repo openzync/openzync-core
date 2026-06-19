@@ -20,7 +20,7 @@ class OZGraphRetriever(BaseRetriever):
     """Retriever that searches OpenZep's knowledge graph.
 
     Uses OpenZep's hybrid search (semantic + keyword + graph traversal)
-    to retrieve contextually relevant documents from a user's memory.
+    to retrieve contextually relevant documents from a project's memory.
 
     .. code-block:: python
 
@@ -30,7 +30,7 @@ class OZGraphRetriever(BaseRetriever):
         client = AsyncOpenZep(api_key="...")
         retriever = OZGraphRetriever(
             client=client,
-            user_id="user-abc",
+            project_id="project-abc",
             types="episodes,facts",
             k=5,
         )
@@ -38,7 +38,7 @@ class OZGraphRetriever(BaseRetriever):
 
     Args:
         client: An ``AsyncOpenZep`` client instance.
-        user_id: OpenZep user UUID to search within.
+        project_id: OpenZep project UUID to search within.
         types: Comma-separated result types to include
             (``"episodes"``, ``"facts"``, ``"entities"``).
             Defaults to ``"episodes,facts"``.
@@ -48,7 +48,7 @@ class OZGraphRetriever(BaseRetriever):
     """
 
     client: AsyncOpenZep
-    user_id: str
+    project_id: str
     types: str = "episodes,facts"
     k: int = 5
     score_threshold: float | None = None
@@ -89,7 +89,7 @@ class OZGraphRetriever(BaseRetriever):
         """
         limit = kwargs.get("limit", self.k)
         results = await self.client.graph.search(
-            self.user_id,
+            self.project_id,
             query,
             types=kwargs.get("types", self.types),
             limit=limit,
@@ -105,7 +105,7 @@ class OZGraphRetriever(BaseRetriever):
             content = result.get("content", "") or result.get("name", "")
             metadata: dict[str, Any] = {
                 "source": "openzep_graph",
-                "user_id": self.user_id,
+                "project_id": self.project_id,
                 "score": score,
                 "type": result.get("type"),
                 "node_name": result.get("node_name"),

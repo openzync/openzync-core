@@ -40,14 +40,14 @@ class TestGraphSearchTool:
         assert tool.args_schema == GraphSearchInput
 
     def test_input_schema_valid(self):
-        inp = GraphSearchInput(query="test query", user_id="user-1")
+        inp = GraphSearchInput(query="test query", project_id="project-1")
         assert inp.query == "test query"
-        assert inp.user_id == "user-1"
+        assert inp.project_id == "project-1"
 
     def test_input_schema_with_optionals(self):
         inp = GraphSearchInput(
             query="test",
-            user_id="user-1",
+            project_id="project-1",
             types="facts",
             limit=10,
         )
@@ -61,7 +61,7 @@ class TestGraphSearchTool:
         ]
 
         tool = GraphSearchTool(client=mock_client)
-        result = await tool._arun(query="Alice", user_id="user-1")
+        result = await tool._arun(query="Alice", project_id="project-1")
 
         assert "Alice works at Acme" in result
         assert "0.950" in result
@@ -71,7 +71,7 @@ class TestGraphSearchTool:
         mock_client.graph.search.return_value = []
 
         tool = GraphSearchTool(client=mock_client)
-        result = await tool._arun(query="nothing", user_id="user-1")
+        result = await tool._arun(query="nothing", project_id="project-1")
         assert result == "No results found."
 
 
@@ -103,7 +103,7 @@ class TestAddFactsTool:
             {"subject": "Alice", "predicate": "works_at", "object": "Acme"},
             {"subject": "Alice", "predicate": "role", "object": "Engineer"},
         ]
-        result = await tool._arun(user_id="user-1", facts=facts)
+        result = await tool._arun(project_id="project-1", facts=facts)
 
         assert "Accepted 2 fact(s)" in result
         assert "job-1" in result
@@ -116,12 +116,12 @@ class TestAddFactsTool:
 
         tool = AddFactsTool(client=mock_client)
         facts = [{"subject": "Alice", "predicate": "likes", "object": "Python"}]
-        await tool._arun(user_id="user-1", facts=facts)
+        await tool._arun(project_id="project-1", facts=facts)
 
         # The tool normalizes dicts, adding content/confidence defaults
         mock_client.facts.add.assert_awaited_once()
         call_args = mock_client.facts.add.await_args
-        assert call_args.args[0] == "user-1"
+        assert call_args.args[0] == "project-1"
         expected = [
             {"subject": "Alice", "predicate": "likes", "object": "Python",
              "content": None, "confidence": 1.0},

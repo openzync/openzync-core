@@ -33,7 +33,7 @@ class OZMemory(BaseMemory):
         client = AsyncOpenZep(api_key="...")
         memory = OZMemory(
             session_id="session-123",
-            user_id="user-abc",
+            project_id="project-abc",
             client=client,
             memory_key="chat_history",
             return_messages=True,
@@ -42,7 +42,7 @@ class OZMemory(BaseMemory):
 
     Args:
         session_id: LangChain conversation / session identifier.
-        user_id: OpenZep user UUID.
+        project_id: OpenZep project UUID.
         client: An ``AsyncOpenZep`` client instance.
         memory_key: Key under which memory variables are stored (default
             ``"chat_history"``).
@@ -56,7 +56,7 @@ class OZMemory(BaseMemory):
     """
 
     session_id: str
-    user_id: str
+    project_id: str
     client: Any  # typed as Any to avoid import issues — must be AsyncOpenZep
     memory_key: str = "chat_history"
     return_messages: bool = True
@@ -71,7 +71,7 @@ class OZMemory(BaseMemory):
         """Create the underlying chat message history after init."""
         self._chat_memory = OZChatMessageHistory(
             session_id=self.session_id,
-            user_id=self.user_id,
+            project_id=self.project_id,
             client=self.client,
             max_messages=self.max_messages,
         )
@@ -148,7 +148,7 @@ class OZMemory(BaseMemory):
             use as a system-prompt prefix.
         """
         return await self.client.memory.get_context(
-            self.user_id,
+            self.project_id,
             query=query,
             limit=limit,
         )

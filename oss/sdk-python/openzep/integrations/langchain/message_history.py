@@ -79,7 +79,7 @@ class OZChatMessageHistory(BaseChatMessageHistory):
         client = AsyncOpenZep(api_key="...")
         history = OZChatMessageHistory(
             session_id="session-123",
-            user_id="user-abc",
+            project_id="project-abc",
             client=client,
         )
         history.add_user_message("Hi!")
@@ -87,7 +87,7 @@ class OZChatMessageHistory(BaseChatMessageHistory):
 
     Args:
         session_id: LangChain conversation identifier.
-        user_id: OpenZep user UUID.
+        project_id: OpenZep project UUID.
         client: An ``AsyncOpenZep`` client instance.
         max_messages: Maximum number of messages to fetch from the server.
 
@@ -101,13 +101,13 @@ class OZChatMessageHistory(BaseChatMessageHistory):
     def __init__(
         self,
         session_id: str,
-        user_id: str,
+        project_id: str,
         client: AsyncOpenZep,
         *,
         max_messages: int = 1000,
     ) -> None:
         self.session_id = session_id
-        self.user_id = user_id
+        self.project_id = project_id
         self._client = client
         self._max_messages = max_messages
         # None = not loaded; [] = loaded but empty; list = loaded with messages
@@ -124,7 +124,7 @@ class OZChatMessageHistory(BaseChatMessageHistory):
         """Fetch messages from the OpenZep server for the given session."""
         try:
             resp = await self._client.sessions.messages(
-                self.user_id,
+                self.project_id,
                 self.session_id,
                 limit=self._max_messages,
             )
@@ -147,7 +147,7 @@ class OZChatMessageHistory(BaseChatMessageHistory):
             self._messages.append(message)
         _run_async(
             self._client.memory.ingest(
-                self.user_id,
+                self.project_id,
                 messages=[_oz_message_from_base(message)],
                 session_id=self.session_id,
             )
@@ -159,7 +159,7 @@ class OZChatMessageHistory(BaseChatMessageHistory):
             self._messages.extend(messages)
         _run_async(
             self._client.memory.ingest(
-                self.user_id,
+                self.project_id,
                 messages=[_oz_message_from_base(m) for m in messages],
                 session_id=self.session_id,
             )
@@ -167,7 +167,7 @@ class OZChatMessageHistory(BaseChatMessageHistory):
 
     def clear(self) -> None:
         self._messages = []
-        _run_async(self._client.memory.delete(self.user_id))
+        _run_async(self._client.memory.delete(self.project_id))
 
     # ── Async interface (primitive) ─────────────────────────────────────
 
@@ -185,11 +185,11 @@ class OZChatMessageHistory(BaseChatMessageHistory):
             self._messages.extend(messages)
         # Persist to server
         await self._client.memory.ingest(
-            self.user_id,
+            self.project_id,
             messages=[_oz_message_from_base(m) for m in messages],
             session_id=self.session_id,
         )
 
     async def aclear(self) -> None:
         self._messages = []
-        await self._client.memory.delete(self.user_id)
+        await self._client.memory.delete(self.project_id)

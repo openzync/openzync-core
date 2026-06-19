@@ -51,11 +51,11 @@ class TestOZChatMessageHistory:
         """Initialise with required args."""
         history = OZChatMessageHistory(
             session_id="session-1",
-            user_id="user-1",
+            project_id="project-1",
             client=mock_client,
         )
         assert history.session_id == "session-1"
-        assert history.user_id == "user-1"
+        assert history.project_id == "project-1"
         assert history._messages is None
 
     @pytest.mark.asyncio
@@ -67,7 +67,7 @@ class TestOZChatMessageHistory:
 
         history = OZChatMessageHistory(
             session_id="session-1",
-            user_id="user-1",
+            project_id="project-1",
             client=mock_client,
         )
         messages = await history.aget_messages()
@@ -81,7 +81,7 @@ class TestOZChatMessageHistory:
 
         history = OZChatMessageHistory(
             session_id="session-1",
-            user_id="user-1",
+            project_id="project-1",
             client=mock_client,
         )
         messages = await history.aget_messages()
@@ -104,15 +104,15 @@ class TestOZChatMessageHistory:
 
         history = OZChatMessageHistory(
             session_id="session-1",
-            user_id="user-1",
+            project_id="project-1",
             client=mock_client,
         )
         await history.aadd_messages([HumanMessage(content="Hi")])
 
         mock_client.memory.ingest.assert_awaited_once()
         call_args = mock_client.memory.ingest.await_args
-        # user_id is the first positional arg
-        assert call_args.args[0] == "user-1"
+        # project_id is the first positional arg
+        assert call_args.args[0] == "project-1"
         assert call_args.kwargs["session_id"] == "session-1"
         assert call_args.kwargs["messages"] == [{"role": "user", "content": "Hi"}]
 
@@ -126,7 +126,7 @@ class TestOZChatMessageHistory:
 
         history = OZChatMessageHistory(
             session_id="session-1",
-            user_id="user-1",
+            project_id="project-1",
             client=mock_client,
         )
         await history.aadd_messages([HumanMessage(content="Hi")])
@@ -142,13 +142,13 @@ class TestOZChatMessageHistory:
 
         history = OZChatMessageHistory(
             session_id="session-1",
-            user_id="user-1",
+            project_id="project-1",
             client=mock_client,
         )
         history._messages = [HumanMessage(content="Hi")]  # seed cache
         await history.aclear()
 
-        mock_client.memory.delete.assert_awaited_once_with("user-1")
+        mock_client.memory.delete.assert_awaited_once_with("project-1")
         assert history._messages == []
 
     def test_add_message_sync_ingests(self, mock_client):
@@ -157,7 +157,7 @@ class TestOZChatMessageHistory:
 
         history = OZChatMessageHistory(
             session_id="session-1",
-            user_id="user-1",
+            project_id="project-1",
             client=mock_client,
         )
         # Seed cache to avoid network call in _load_messages_if_needed
@@ -170,7 +170,7 @@ class TestOZChatMessageHistory:
         """Messages property returns cached messages."""
         history = OZChatMessageHistory(
             session_id="session-1",
-            user_id="user-1",
+            project_id="project-1",
             client=mock_client,
         )
         # Seed cache
@@ -183,7 +183,7 @@ class TestOZChatMessageHistory:
         """Messages property returns a copy, not the internal list."""
         history = OZChatMessageHistory(
             session_id="session-1",
-            user_id="user-1",
+            project_id="project-1",
             client=mock_client,
         )
         history._messages = [HumanMessage(content="Hello")]
