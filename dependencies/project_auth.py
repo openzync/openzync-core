@@ -36,10 +36,17 @@ async def require_project_membership(
     project_id: UUID = Path(...),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Verify the authenticated user is a member of the given project.
+    """Unified authentication + authorization for project-scoped endpoints.
 
-    Reads the authenticated user ID from ``request.state.user_id`` (set
-    by the auth middleware).  If the user is not a member, raises 403.
+    Verifies that:
+    1. The request has a valid authenticated user (401 if missing).
+    2. The organization ID is present (401 if missing).
+    3. The project exists within the organization (404 if missing).
+    4. The authenticated user is a member of the project (403 if not).
+
+    Use this as the sole auth dependency for all ``/v1/projects/...``
+    endpoints — it replaces both ``require_org_id`` and a separate
+    membership check.
 
     Raises:
         HTTPException 401: If the user is not authenticated.
@@ -53,9 +60,16 @@ async def require_project_membership(
             detail="Authentication required",
         )
 
+    org_id: str | None = getattr(request.state, "org_id", None)
+    if org_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Organization context is required",
+        )
+
     repo = ProjectRepository(db)
     project = await repo.get_by_id(
-        organization_id=request.state.org_id,
+        organization_id=org_id,
         project_id=project_id,
     )
     if project is None:

@@ -1,14 +1,13 @@
 """Search endpoint — HTTP adapter layer only.
 
 Provides:
-- ``GET /v1/users/{user_id}/search`` — hybrid search across a user's
-  memory (episodes, facts, entities).
+- ``GET /v1/projects/{project_id}/search`` — hybrid search across a
+  project's memory (episodes, facts, entities).
 
 Every handler is a thin adapter that:
 1. Extracts input from the request (path params, query params).
-2. Resolves the user to verify existence and org ownership.
-3. Calls the service layer.
-4. Returns the raw search results.
+2. Calls the service layer.
+3. Returns the raw search results.
 
 No business logic. No database queries.
 """
@@ -17,40 +16,38 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.exceptions import NotFoundError
-from dependencies.auth import require_org_id
 from dependencies.db import get_db
 from dependencies.org_config import get_org_config
+from dependencies.project_auth import require_project_membership
 from packages.graphiti_client.backends.postgres import PostgresGraphBackend
-from repositories.user_repository import UserRepository
 from schemas.organization_config import OrgConfigBase
 from services.hybrid_retriever import HybridRetriever
 
 router = APIRouter(
-    prefix="/v1/users/{user_id}/search",
+    prefix="/v1/projects/{project_id}/search",
     tags=["Memory"],
 )
 
 
 @router.get(
     "",
-    summary="Hybrid search across user memory",
-    description="Search across a user's memory using hybrid retrieval "
+    summary="Hybrid search across project memory",
+    description="Search across a project's memory using hybrid retrieval "
     "(vector + BM25 + RRF).  Returns episodes, facts, and optionally "
     "entities matching the query.  Results can be filtered by type "
     "using the ``types`` parameter.",
     responses={
         200: {"description": "Search results returned successfully."},
         401: {"description": "Missing or invalid authentication."},
-        404: {"description": "User not found in organization."},
+        403: {"description": "Not a member of this project."},
         422: {"description": "Validation error (e.g., empty query)."},
     },
 )
 async def search_memory(
-    user_id: UUID,
+    request: Request,
     query: str = Query(
         ...,
         min_length=1,
@@ -70,12 +67,12 @@ async def search_memory(
         "``communities``.",
     ),
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_id),
+    _: None = Depends(require_project_membership),
     org_config: OrgConfigBase = Depends(get_org_config),
 ) -> dict:
-    """Hybrid search across a user's memory.
+    """Hybrid search across a project's memory.
 
-    Searches across the user's episodes (conversation history), extracted
+    Searches across the project's episodes (conversation history), extracted
     facts (knowledge triplets), and knowledge-graph entities using a
     three-legged hybrid retrieval pipeline:
 
@@ -89,38 +86,29 @@ async def search_memory(
     backend).
 
     Args:
-        user_id: The UUID of the user to search across.
+        request: The FastAPI request object — used to access org/project IDs.
         query: The search query string.
         limit: Maximum results per source type.
         types: Comma-separated result type filter.
         db: An async SQLAlchemy session (injected).
-        org_id: The authenticated organization ID (injected).
+        org_config: Org-level configuration (injected).
 
     Returns:
         A dict with ``query`` (the original query), ``results`` (the
         filtered and merged result list), and ``total`` (the count of
         results returned).
-
-    Raises:
-        NotFoundError: If the user does not exist in the organization.
     """
-    org_uuid = UUID(org_id)
-
-    # ── Resolve user ────────────────────────────────────────────────────
-    # Verify the user exists and belongs to the authenticated organization.
-    user_repo = UserRepository(db)
-    user = await user_repo.get_by_uuid(org_uuid, user_id)
-    if user is None:
-        raise NotFoundError(
-            f"User {user_id} not found in organization {org_id}",
-        )
+    org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
 
     # ── Run hybrid search ───────────────────────────────────────────────
     graph_backend = PostgresGraphBackend(db=db)
-    retriever = HybridRetriever(db, org_uuid, graph_backend=graph_backend, org_config=org_config)
+    retriever = HybridRetriever(
+        db, org_id, graph_backend=graph_backend, org_config=org_config
+    )
     results = await retriever.hybrid_search(
         query=query,
-        user_id=user_id,
+        project_id=project_id,
         limit=limit,
     )
 

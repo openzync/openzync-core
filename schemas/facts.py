@@ -60,7 +60,7 @@ class FactTriple(BaseModel):
 
 
 class FactBatchRequest(BaseModel):
-    """Request body for ``POST /v1/users/{user_id}/facts``.
+    """Request body for ``POST /v1/projects/{project_id}/facts``.
 
     Attributes:
         session_id: Optional session external ID to associate facts with.

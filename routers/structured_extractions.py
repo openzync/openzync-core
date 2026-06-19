@@ -1,26 +1,28 @@
 """Structured extraction query endpoints — retrieve extraction results.
 
 Endpoints:
-    GET /v1/users/{user_id}/sessions/{session_id}/structured-extractions
+    GET /v1/projects/{project_id}/sessions/{session_id}/structured-extractions
         — List extractions for all episodes in a session.
-    GET /v1/users/{user_id}/sessions/{session_id}/structured-extractions/{episode_id}
+    GET /v1/projects/{project_id}/sessions/{session_id}/structured-extractions/{episode_id}
         — Get extraction for a specific episode.
+
+Every endpoint is guarded by ``require_project_membership`` for unified
+authentication and project authorization.
 """
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies.auth import require_org_id
 from dependencies.db import get_db
+from dependencies.project_auth import require_project_membership
 from repositories.session_repository import SessionRepository
 from repositories.structured_extraction_repository import (
     StructuredExtractionRepository,
 )
-from repositories.user_repository import UserRepository
 from schemas.structured_extractions import (
     StructuredExtractionListResponse,
     StructuredExtractionResponse,
@@ -30,7 +32,7 @@ from services.structured_extraction_service import (
 )
 
 router = APIRouter(
-    prefix="/v1/users/{user_id}/sessions/{session_id}/structured-extractions",
+    prefix="/v1/projects/{project_id}/sessions/{session_id}/structured-extractions",
     tags=["Structured Extraction"],
 )
 
@@ -41,7 +43,6 @@ def _get_extraction_service(
     """Dependency factory for ``StructuredExtractionService``."""
     return StructuredExtractionService(
         repo=StructuredExtractionRepository(db),
-        user_repo=UserRepository(db),
         session_repo=SessionRepository(db),
     )
 
@@ -49,12 +50,12 @@ def _get_extraction_service(
 @router.get(
     "",
     response_model=StructuredExtractionListResponse,
+    dependencies=[Depends(require_project_membership)],
 )
 async def list_structured_extractions(
-    user_id: UUID,
-    session_id: UUID,
+    request: Request,
+    session_id: UUID = Path(...),
     service: StructuredExtractionService = Depends(_get_extraction_service),
-    org_id: str = Depends(require_org_id),
 ) -> StructuredExtractionListResponse:
     """List all structured extractions for episodes in a session.
 
@@ -62,9 +63,9 @@ async def list_structured_extractions(
     by the ``extract_structured`` worker yet, or if no structured schemas
     are configured for the organization.
     """
+    org_id = UUID(request.state.org_id)
     return await service.get_session_extractions(
-        org_id=UUID(org_id),
-        user_id=user_id,
+        org_id=org_id,
         session_id=session_id,
     )
 
@@ -72,28 +73,26 @@ async def list_structured_extractions(
 @router.get(
     "/{episode_id}",
     response_model=StructuredExtractionResponse,
+    dependencies=[Depends(require_project_membership)],
 )
 async def get_episode_extraction(
-    user_id: UUID,
-    session_id: UUID,
-    episode_id: UUID,
+    request: Request,
+    session_id: UUID = Path(...),
+    episode_id: UUID = Path(...),
     service: StructuredExtractionService = Depends(_get_extraction_service),
-    org_id: str = Depends(require_org_id),
 ) -> StructuredExtractionResponse:
     """Get the structured extraction for a specific episode in a session.
 
     Returns 404 if the episode has not been processed yet or no matching
     extraction exists.
     """
+    org_id = UUID(request.state.org_id)
     result = await service.get_episode_extraction(
-        org_id=UUID(org_id),
-        user_id=user_id,
+        org_id=org_id,
         session_id=session_id,
         episode_id=episode_id,
     )
     if result is None:
-        from fastapi import HTTPException
-
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(

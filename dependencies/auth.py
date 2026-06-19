@@ -1,6 +1,6 @@
 """FastAPI dependencies for authentication and authorization.
 
-Provides four levels of auth dependency:
+Provides five levels of auth dependency:
 
 1. ``get_org_id`` — Optional auth.  Returns the org ID if authenticated,
    ``None`` otherwise.  Works with both API keys and JWT tokens.
@@ -14,11 +14,16 @@ Provides four levels of auth dependency:
 4. ``get_dashboard_user`` — Returns ``request.state.user_id`` if the
    request is authenticated via JWT (dashboard session), ``None`` otherwise.
 
+5. ``get_current_user_id`` — Returns the authenticated user's UUID.
+   Works with both JWT and API-key auth.  Raises 401 if not authenticated.
+
 All dependencies rely on ``request.state`` attributes set by
 :class:`AuthMiddleware <openzep.middleware.auth.AuthMiddleware>`.
 """
 
 from __future__ import annotations
+
+from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -217,3 +222,42 @@ async def get_dashboard_user(
             },
         )
     return user_id
+
+
+async def get_current_user_id(
+    request: Request,
+    org_id: str = Depends(require_org_id),
+) -> UUID:
+    """Require an authenticated user and return their UUID.
+
+    Works with both JWT tokens and API keys.  The user ID is extracted
+    from ``request.state.user_id`` (set by :class:`AuthMiddleware`).
+
+    Use this dependency in project-scoped endpoints to obtain the
+    ``created_by`` value for attribution.
+
+    Args:
+        request: The incoming HTTP request.
+        org_id: The authenticated organization ID (from ``require_org_id``).
+
+    Returns:
+        The authenticated user's UUID.
+
+    Raises:
+        HTTPException: 401 if the user is not authenticated.
+    """
+    user_id: str | None = getattr(request.state, "user_id", None)
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "type": "https://errors.openzep.dev/authentication_error",
+                "title": "Authentication Required",
+                "status": 401,
+                "detail": (
+                    "A valid user session or API key is required for this endpoint. "
+                    "Provide it via the Authorization: Bearer <token> header."
+                ),
+            },
+        )
+    return UUID(user_id)

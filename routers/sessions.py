@@ -1,22 +1,25 @@
-"""Session CRUD endpoints — /v1/users/{user_id}/sessions.
+"""Session CRUD endpoints — /v1/projects/{project_id}/sessions.
 
-Provides five endpoints for managing conversation sessions:
+Provides six endpoints for managing conversation sessions within a project:
 - Create a session (POST)
 - List sessions with pagination (GET)
 - Get a single session by UUID (GET)
 - Get paginated messages for a session (GET)
+- Get paginated facts for a session (GET)
 - Delete (soft-delete) a session (DELETE)
 
-Every endpoint requires authentication (``require_org_id``).
+Every endpoint requires project membership (``require_project_membership``).
 """
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from dependencies.auth import require_org_id
+from core.exceptions import NotFoundError
+from dependencies.auth import get_current_user_id
+from dependencies.project_auth import require_project_membership
 from dependencies.services import get_fact_service, get_session_service
 from schemas.common import PaginatedResponse
 from schemas.facts import FactResponse
@@ -30,7 +33,7 @@ from services.fact_service import FactService
 from services.session_service import SessionService
 
 router = APIRouter(
-    prefix="/v1/users/{user_id}/sessions",
+    prefix="/v1/projects/{project_id}/sessions",
     tags=["Sessions"],
 )
 
@@ -40,32 +43,37 @@ router = APIRouter(
     response_model=SessionResponse,
     status_code=201,
     summary="Create a session",
-    description="Create a new session for the given user.  The `external_id` "
-    "is caller-defined and must be unique per user.",
+    description="Create a new session within a project. The `external_id` "
+    "is caller-defined and must be unique per project.",
     responses={
         201: {"description": "Session created successfully."},
         401: {"description": "Missing or invalid authentication."},
+        403: {"description": "Not a member of this project."},
         409: {
             "description": "A session with this `external_id` already exists "
-            "for this user."
+            "for this project."
         },
     },
 )
 async def create_session(
-    user_id: UUID,
+    request: Request,
     body: CreateSessionRequest,
     service: SessionService = Depends(get_session_service),
-    org_id: str = Depends(require_org_id),
+    _: None = Depends(require_project_membership),
+    created_by: UUID = Depends(get_current_user_id),
 ) -> SessionResponse:
-    """Create a new session for a user.
+    """Create a new session within a project.
 
     The ``external_id`` is chosen by the caller and must be unique per
-    user.  Returns 409 if a session with this ``external_id`` already
+    project.  Returns 409 if a session with this ``external_id`` already
     exists.
     """
+    org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
     return await service.create_session(
-        organization_id=UUID(org_id) if isinstance(org_id, str) else org_id,
-        user_id=user_id,
+        organization_id=org_id,
+        project_id=project_id,
+        created_by=created_by,
         external_id=body.external_id,
         metadata=body.metadata,
     )
@@ -75,18 +83,19 @@ async def create_session(
     "",
     response_model=PaginatedResponse[SessionListResponse],
     summary="List sessions",
-    description="List sessions for a user with cursor-based pagination. "
+    description="List sessions for a project with cursor-based pagination. "
     "Excludes the ``__default__`` auto-created session and closed sessions "
     "by default.",
     responses={
         200: {"description": "Paginated list of sessions."},
         401: {"description": "Missing or invalid authentication."},
+        403: {"description": "Not a member of this project."},
     },
 )
 async def list_sessions(
-    user_id: UUID,
+    request: Request,
     service: SessionService = Depends(get_session_service),
-    org_id: str = Depends(require_org_id),
+    _: None = Depends(require_project_membership),
     limit: int = Query(
         default=50,
         ge=1,
@@ -103,14 +112,16 @@ async def list_sessions(
         description="If true, include closed sessions in the results.",
     ),
 ) -> PaginatedResponse[SessionListResponse]:
-    """List sessions for a user with pagination.
+    """List sessions for a project with pagination.
 
     By default excludes the ``__default__`` auto-created session and
     closed sessions.  Set ``include_closed=true`` to include them.
     """
+    org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
     return await service.list_sessions(
-        org_id=UUID(org_id) if isinstance(org_id, str) else org_id,
-        user_id=user_id,
+        org_id=org_id,
+        project_id=project_id,
         limit=limit,
         cursor=cursor,
         include_closed=include_closed,
@@ -126,23 +137,26 @@ async def list_sessions(
     responses={
         200: {"description": "Session details."},
         401: {"description": "Missing or invalid authentication."},
+        403: {"description": "Not a member of this project."},
         404: {"description": "Session not found."},
     },
 )
 async def get_session(
-    user_id: UUID,
+    request: Request,
     session_id: UUID,
     service: SessionService = Depends(get_session_service),
-    org_id: str = Depends(require_org_id),
+    _: None = Depends(require_project_membership),
 ) -> SessionResponse:
     """Get session details including aggregate statistics.
 
     Returns message count, fact count, and session metadata.
     """
+    org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
     return await service.get_session(
-        org_id=UUID(org_id) if isinstance(org_id, str) else org_id,
+        org_id=org_id,
         session_id=session_id,
-        user_id=user_id,
+        project_id=project_id,
     )
 
 
@@ -155,14 +169,15 @@ async def get_session(
     responses={
         200: {"description": "Paginated list of messages."},
         401: {"description": "Missing or invalid authentication."},
+        403: {"description": "Not a member of this project."},
         404: {"description": "Session not found."},
     },
 )
 async def get_session_messages(
-    user_id: UUID,
+    request: Request,
     session_id: UUID,
     service: SessionService = Depends(get_session_service),
-    org_id: str = Depends(require_org_id),
+    _: None = Depends(require_project_membership),
     limit: int = Query(
         default=100,
         ge=1,
@@ -180,12 +195,14 @@ async def get_session_messages(
     Messages are ordered by ``sequence_number`` for deterministic
     ordering (not by ``created_at``, which can have ties).
     """
+    org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
     return await service.get_messages(
-        org_id=UUID(org_id) if isinstance(org_id, str) else org_id,
+        org_id=org_id,
         session_id=session_id,
         limit=limit,
         cursor=cursor,
-        user_id=user_id,
+        project_id=project_id,
     )
 
 
@@ -198,15 +215,16 @@ async def get_session_messages(
     responses={
         200: {"description": "Paginated list of facts."},
         401: {"description": "Missing or invalid authentication."},
+        403: {"description": "Not a member of this project."},
         404: {"description": "Session not found."},
     },
 )
 async def get_session_facts(
-    user_id: UUID,
+    request: Request,
     session_id: UUID,
     service: SessionService = Depends(get_session_service),
     fact_service: FactService = Depends(get_fact_service),
-    org_id: str = Depends(require_org_id),
+    _: None = Depends(require_project_membership),
     limit: int = Query(
         default=50,
         ge=1,
@@ -223,14 +241,15 @@ async def get_session_facts(
     Returns facts extracted from messages in this session, ordered by
     creation time (newest first).  Only non-invalidated facts are included.
     """
-    org_uuid = UUID(org_id) if isinstance(org_id, str) else org_id
+    org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
 
     # Verify the session exists before fetching facts.
     # NotFoundError propagates to global exception handler → 404.
-    await service.get_session(org_uuid, session_id, user_id=user_id)
+    await service.get_session(org_id, session_id, project_id=project_id)
 
     facts, next_cursor = await fact_service.list_facts_by_session(
-        organization_id=org_uuid,
+        organization_id=org_id,
         session_id=session_id,
         limit=limit,
         cursor=cursor,
@@ -254,22 +273,25 @@ async def get_session_facts(
     responses={
         204: {"description": "Session deleted successfully (no content)."},
         401: {"description": "Missing or invalid authentication."},
+        403: {"description": "Not a member of this project."},
         404: {"description": "Session not found."},
     },
 )
 async def delete_session(
-    user_id: UUID,
+    request: Request,
     session_id: UUID,
     service: SessionService = Depends(get_session_service),
-    org_id: str = Depends(require_org_id),
+    _: None = Depends(require_project_membership),
 ) -> None:
     """Delete (soft-delete) a session.
 
     Sets ``is_deleted = True`` and unlinks episodes from the session.
     Episodes are preserved as orphaned history for audit purposes.
     """
+    org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
     await service.delete_session(
-        org_id=UUID(org_id) if isinstance(org_id, str) else org_id,
+        org_id=org_id,
         session_id=session_id,
-        user_id=user_id,
+        project_id=project_id,
     )

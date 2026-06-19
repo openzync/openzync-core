@@ -41,7 +41,7 @@ class ContextMetadata(BaseModel):
 
 
 class ContextRequest(BaseModel):
-    """Query parameters for ``GET /v1/users/{user_id}/context``.
+    """Query parameters for ``GET /v1/projects/{project_id}/context``.
 
     Attributes:
         query: Natural-language query to retrieve relevant context for.
