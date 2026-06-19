@@ -30,6 +30,7 @@ async def extract_structured(
     ctx: object,
     episode_id: str,
     org_id: str,
+    project_id: str,
     user_id: str,
     session_id: str,
     content: str,
@@ -58,6 +59,7 @@ async def extract_structured(
         ctx: ARQ worker context (unused — required by ARQ contract).
         episode_id: UUID of the source episode (string, from ARQ).
         org_id: UUID of the owning organization.
+        project_id: UUID of the project for project scoping.
         user_id: UUID of the user (for episode FK context).
         session_id: UUID of the session (for FK to structured_extractions).
         content: The message text to extract data from.
@@ -81,6 +83,7 @@ async def extract_structured(
         "structured_extraction.started",
         episode_id=episode_id,
         org_id=org_id,
+        project_id=project_id,
         session_id=session_id,
         content_length=len(content),
         trace_id=trace_id,
@@ -263,10 +266,11 @@ async def extract_structured(
                     await db.execute(
                         text("""
                             INSERT INTO structured_extractions
-                                (organization_id, session_id, episode_id, schema_id, data,
-                                 created_at, updated_at)
+                                (organization_id, project_id, session_id, episode_id,
+                                 schema_id, data, created_at, updated_at)
                             VALUES
-                                (:org_id, :session_id, :episode_id, :schema_id, CAST(:data AS jsonb),
+                                (:org_id, :project_id, :session_id, :episode_id,
+                                 :schema_id, CAST(:data AS jsonb),
                                  now(), now())
                             ON CONFLICT (episode_id, schema_id)
                             DO UPDATE SET data = CAST(:data AS jsonb),
@@ -274,6 +278,7 @@ async def extract_structured(
                         """),
                         {
                             "org_id": uuid.UUID(org_id),
+                            "project_id": uuid.UUID(project_id),
                             "session_id": uuid.UUID(session_id),
                             "episode_id": uuid.UUID(episode_id),
                             "schema_id": uuid.UUID(schema_info["id"]),

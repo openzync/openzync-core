@@ -39,6 +39,7 @@ async def extract_entities(
     ctx: object,
     episode_id: str,
     org_id: str,
+    project_id: str,
     user_id: str,
     content: str,
     session_id: str | None = None,
@@ -72,6 +73,7 @@ async def extract_entities(
         ctx: ARQ worker context (unused — required by ARQ contract).
         episode_id: UUID of the source episode (string, from ARQ).
         org_id: UUID of the owning organization.
+        project_id: UUID of the project for project scoping.
         user_id: UUID of the user who authored the message.
         content: The message text to extract entities from.
         session_id: UUID of the session (passed from MemoryService).
@@ -98,6 +100,7 @@ async def extract_entities(
         "entity_extraction.started",
         episode_id=episode_id,
         org_id=org_id,
+        project_id=project_id,
         session_id=session_id,
         content_length=len(content),
         trace_id=trace_id,
@@ -345,6 +348,7 @@ async def extract_entities(
 
                 node = await entity_repo.upsert_entity(
                     org_id=uuid.UUID(org_id),
+                    project_id=uuid.UUID(project_id),
                     name=normalized_name,
                     entity_type=entity_type,
                     summary=summary,
@@ -382,6 +386,7 @@ async def extract_entities(
                     if name not in name_to_node:
                         fallback_node = await entity_repo.upsert_entity(
                             org_id=uuid.UUID(org_id),
+                            project_id=uuid.UUID(project_id),
                             name=name,
                             entity_type="Custom",
                             summary=(
@@ -404,6 +409,7 @@ async def extract_entities(
                         predicate=predicate,
                         obj=obj,
                         org_id=uuid.UUID(org_id),
+                        project_id=uuid.UUID(project_id),
                     )
                     if result is None:
                         relationship_failure_count += 1
@@ -428,14 +434,15 @@ async def extract_entities(
                     text(
                         """
                         INSERT INTO graph_episode_entities
-                            (episode_id, entity_id, created_at)
-                        VALUES (:episode_id, :entity_id, now())
+                            (episode_id, entity_id, project_id, created_at)
+                        VALUES (:episode_id, :entity_id, :project_id, now())
                         ON CONFLICT (episode_id, entity_id) DO NOTHING
                         """
                     ),
                     {
                         "episode_id": episode_uuid,
                         "entity_id": uuid.UUID(entity_node["id"]),
+                        "project_id": uuid.UUID(project_id),
                     },
                 )
 
@@ -474,6 +481,8 @@ async def extract_entities(
     logger.info(
         "entity_extraction.persisted",
         episode_id=episode_id,
+        org_id=org_id,
+        project_id=project_id,
         entity_count=len(name_to_node),
         entity_failure_count=entity_failure_count,
         relationship_failure_count=relationship_failure_count,

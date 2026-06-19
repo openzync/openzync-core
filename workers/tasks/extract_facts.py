@@ -42,6 +42,7 @@ async def extract_facts(
     ctx: object,
     episode_id: str,
     org_id: str,
+    project_id: str,
     user_id: str,
     content: str,
     session_id: str | None = None,
@@ -71,6 +72,7 @@ async def extract_facts(
         ctx: ARQ worker context (unused — required by ARQ contract).
         episode_id: UUID of the source episode (string, from ARQ).
         org_id: UUID of the owning organization.
+        project_id: UUID of the project for project scoping.
         user_id: UUID of the user who authored the message.
         content: The message text to extract facts from.
         session_id: UUID of the session (passed from MemoryService).
@@ -98,6 +100,7 @@ async def extract_facts(
         "fact_extraction.started",
         episode_id=episode_id,
         org_id=org_id,
+        project_id=project_id,
         session_id=session_id,
         content_length=len(content),
         trace_id=trace_id,
@@ -219,6 +222,7 @@ async def extract_facts(
                             facts=resolved_facts,
                             user_id=uuid.UUID(user_id),
                             organization_id=uuid.UUID(org_id),
+                            project_id=uuid.UUID(project_id),
                             source_episode_id=uuid.UUID(episode_id),
                         )
 
@@ -264,6 +268,7 @@ async def extract_facts(
                             if subj_id is None:
                                 subj_node = await entity_repo.get_entity_by_name(
                                     org_id=uuid.UUID(org_id),
+                                    project_id=uuid.UUID(project_id),
                                     name=input_fact["subject"],
                                 )
                                 if subj_node is not None:
@@ -279,6 +284,7 @@ async def extract_facts(
                             if obj_id is None:
                                 obj_node = await entity_repo.get_entity_by_name(
                                     org_id=uuid.UUID(org_id),
+                                    project_id=uuid.UUID(project_id),
                                     name=input_fact["object"],
                                 )
                                 if obj_node is not None:
@@ -298,6 +304,7 @@ async def extract_facts(
                                         predicate=input_fact["predicate"],
                                         obj=input_fact["object"],
                                         org_id=uuid.UUID(org_id),
+                                        project_id=uuid.UUID(project_id),
                                     )
                                 except Exception:
                                     # Non-fatal: fact is already persisted,
@@ -325,9 +332,18 @@ async def extract_facts(
             await engine.dispose()
 
     if persisted:
-        logger.info("fact_extraction.completed", episode_id=episode_id, facts=persisted)
+        logger.info(
+            "fact_extraction.completed",
+            episode_id=episode_id,
+            project_id=project_id,
+            facts=persisted,
+        )
     else:
-        logger.info("fact_extraction.no_facts", episode_id=episode_id)
+        logger.info(
+            "fact_extraction.no_facts",
+            episode_id=episode_id,
+            project_id=project_id,
+        )
 
 
 async def _set_enrichment_bit(

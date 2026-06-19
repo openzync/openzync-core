@@ -21,6 +21,7 @@ async def embed_episode(
     ctx: object,
     episode_id: str,
     org_id: str,
+    project_id: str,
     content: str,
     trace_id: str = "",
     metadata: dict | None = None,
@@ -37,6 +38,7 @@ async def embed_episode(
         ctx: ARQ worker context (unused — required by ARQ contract).
         episode_id: UUID of the episode to embed.
         org_id: UUID of the owning organisation (for observability / RLS).
+        project_id: UUID of the project for project scoping (observability).
         content: Episode message text to embed.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
@@ -53,7 +55,13 @@ async def embed_episode(
     from core.llm import resolve_backend
     from sqlalchemy import text
 
-    logger.info("embed_episode.started", episode_id=episode_id, trace_id=trace_id)
+    logger.info(
+        "embed_episode.started",
+        episode_id=episode_id,
+        org_id=org_id,
+        project_id=project_id,
+        trace_id=trace_id,
+    )
 
     # ── 1. Resolve DB engine / session factory ─────────────────────────────
     # Moved up from the DB write section — needed here for org config fetch.

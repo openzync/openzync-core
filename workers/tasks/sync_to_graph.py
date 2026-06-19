@@ -24,6 +24,7 @@ async def sync_to_graph(
     ctx: object,
     episode_id: str,
     org_id: str,
+    project_id: str,
     user_id: str,
     content: str,
     role: str,
@@ -46,6 +47,7 @@ async def sync_to_graph(
         ctx: ARQ worker context (unused, required by ARQ contract).
         episode_id: UUID of the episode to sync.
         org_id: UUID of the owning organization.
+        project_id: UUID of the project for project scoping.
         user_id: UUID of the user who authored the episode.
         content: Episode message text (used for entity name matching).
         role: Message role (user/assistant/system/tool).
@@ -94,6 +96,8 @@ async def sync_to_graph(
                 logger.warning(
                     "sync_to_graph.episode_not_found",
                     episode_id=episode_id,
+                    org_id=org_id,
+                    project_id=project_id,
                 )
                 return
 
@@ -114,19 +118,24 @@ async def sync_to_graph(
                     continue
                 # Search for entities whose name matches (fuzzy via pg_trgm).
                 # Skip merged/deprecated entities so episodes are only linked
-                # to active entities.
+                # to active entities. Filter by project_id for project isolation.
                 entity_result = await db.execute(
                     text(
                         """
                         SELECT id FROM graph_entities
                         WHERE organization_id = :org_id
+                          AND project_id = :project_id
                           AND is_merged = false
                           AND (name ILIKE :word
                                OR similarity(name, :word) > 0.3)
                         LIMIT 5
                         """
                     ),
-                    {"org_id": UUID(org_id), "word": f"%{word}%"},
+                    {
+                        "org_id": UUID(org_id),
+                        "project_id": UUID(project_id),
+                        "word": f"%{word}%",
+                    },
                 )
                 entity_rows = entity_result.all()
                 if entity_rows:
@@ -139,14 +148,15 @@ async def sync_to_graph(
                         text(
                             """
                             INSERT INTO graph_episode_entities
-                                (episode_id, entity_id, created_at)
-                            VALUES (:episode_id, :entity_id, :created_at)
+                                (episode_id, entity_id, project_id, created_at)
+                            VALUES (:episode_id, :entity_id, :project_id, :created_at)
                             ON CONFLICT (episode_id, entity_id) DO NOTHING
                             """
                         ),
                         {
                             "episode_id": UUID(episode_id),
                             "entity_id": UUID(entity_id),
+                            "project_id": UUID(project_id),
                             "created_at": now,
                         },
                     )
@@ -195,6 +205,8 @@ async def sync_to_graph(
             logger.info(
                 "sync_to_graph.completed",
                 episode_id=episode_id,
+                org_id=org_id,
+                project_id=project_id,
                 entities_linked=linked,
                 words_analyzed=len(words),
                 words_matched=words_matched,
