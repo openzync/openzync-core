@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/api-client";
+import { Breadcrumb } from "@/components/breadcrumb";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -416,6 +417,52 @@ export default function DashboardLayout({
     }
   }, []);
 
+  // Build breadcrumb items from the current pathname
+  const breadcrumbItems = (() => {
+    // Project pages
+    if (pathname.startsWith("/projects/")) {
+      const pageLabel = (() => {
+        if (pathname.endsWith("/sessions")) return "Sessions";
+        if (pathname.endsWith("/memory")) return "Memory";
+        if (pathname.includes("/graph/communities")) return "Communities";
+        if (pathname.endsWith("/graph")) return "Graph Explorer";
+        if (pathname.endsWith("/members")) return "Members";
+        if (pathname.endsWith("/settings")) return "Project Settings";
+        if (pathname.match(/\/sessions\/[^/]+$/)) return "Session";
+        if (pathname.includes("/messages")) return "Messages";
+        if (pathname.includes("/facts")) return "Facts";
+        if (pathname.includes("/classifications")) return "Classifications";
+        if (pathname.includes("/extractions")) return "Extractions";
+        return "Project";
+      })();
+      return [
+        { label: "Projects", href: "/projects" },
+        ...(projectName ? [{ label: projectName }] : []),
+        { label: pageLabel },
+      ];
+    }
+
+    // Non-project pages
+    if (pathname === "/projects") return [{ label: "Projects" }];
+    if (pathname === "/overview") return [{ label: "Insights" }, { label: "Overview" }];
+    if (pathname === "/analytics") return [{ label: "Insights" }, { label: "Analytics" }];
+    if (pathname.startsWith("/monitoring")) return [{ label: "Insights" }, { label: "Monitoring" }];
+    if (pathname.startsWith("/users")) return [{ label: "Administration" }, { label: "Users" }];
+    if (pathname.startsWith("/audit")) return [{ label: "System" }, { label: "Audit Log" }];
+    if (pathname.startsWith("/settings")) {
+      if (pathname.includes("/api-keys")) return [{ label: "Administration" }, { label: "API Keys" }];
+      if (pathname.includes("/schemas")) return [{ label: "Administration" }, { label: "Extraction Schemas" }];
+      if (pathname.includes("/classifications")) return [{ label: "Administration" }, { label: "Classifications" }];
+      if (pathname.includes("/extractions")) return [{ label: "Administration" }, { label: "Extractions" }];
+      if (pathname.includes("/webhooks")) return [{ label: "Administration" }, { label: "Webhooks" }];
+      if (pathname.includes("/extraction-instructions")) return [{ label: "Administration" }, { label: "Extraction Instructions" }];
+      if (pathname.includes("/prompts")) return [{ label: "Administration" }, { label: "Prompts" }];
+      if (pathname.includes("/org-config")) return [{ label: "Administration" }, { label: "Org Config" }];
+      return [{ label: "System" }, { label: "Settings" }];
+    }
+    return [];
+  })();
+
   // Dynamic page title
   const pageTitle = (() => {
     // Project pages
@@ -495,12 +542,6 @@ export default function DashboardLayout({
 
           {/* Page title */}
           <div className="hidden sm:flex items-center gap-2 text-sm">
-            {inProject && projectName && (
-              <>
-                <span className="text-[#F2F2F2] font-medium">{projectName}</span>
-                <span className="text-surface-500">—</span>
-              </>
-            )}
             <span className="text-[#F2F2F2] font-medium">{pageTitle}</span>
           </div>
 
@@ -573,6 +614,13 @@ export default function DashboardLayout({
             )}
           </div>
         </header>
+
+        {/* Breadcrumb */}
+        {breadcrumbItems.length > 0 && (
+          <div className="flex items-center px-6 py-2 border-b border-surface-800 bg-surface-950/40">
+            <Breadcrumb items={breadcrumbItems} />
+          </div>
+        )}
 
         {/* Page content */}
         <main className="flex-1 overflow-y-auto p-6">
