@@ -36,12 +36,15 @@ class StructuredExtractionService:
         self,
         org_id: UUID,
         session_id: UUID,
+        project_id: UUID | None = None,
     ) -> StructuredExtractionListResponse:
         """Return all extractions for episodes in a session.
 
         Args:
             org_id: The authenticated organization UUID.
             session_id: The session UUID.
+            project_id: Optional project UUID for intra-org isolation
+                of the session ownership check.
 
         Returns:
             ``StructuredExtractionListResponse`` with items ordered by
@@ -50,9 +53,9 @@ class StructuredExtractionService:
         Raises:
             NotFoundError: If the session does not exist.
         """
-        # Verify session exists
+        # Verify session exists (optionally scoped to project)
         session = await self._session_repo.get_by_uuid(
-            org_id=org_id, session_id=session_id
+            org_id=org_id, session_id=session_id, project_id=project_id
         )
         if session is None:
             raise NotFoundError(f"Session '{session_id}' not found")
@@ -71,6 +74,7 @@ class StructuredExtractionService:
         org_id: UUID,
         session_id: UUID,
         episode_id: UUID,
+        project_id: UUID | None = None,
     ) -> StructuredExtractionResponse | None:
         """Return the extraction for a specific episode, or ``None``.
 
@@ -78,6 +82,8 @@ class StructuredExtractionService:
             org_id: The authenticated organization UUID.
             session_id: The session UUID.
             episode_id: The episode UUID.
+            project_id: Optional project UUID for intra-org isolation
+                of the session ownership check.
 
         Returns:
             A ``StructuredExtractionResponse`` or ``None`` if not yet extracted.
@@ -86,7 +92,7 @@ class StructuredExtractionService:
             NotFoundError: If the session does not exist.
         """
         session = await self._session_repo.get_by_uuid(
-            org_id=org_id, session_id=session_id
+            org_id=org_id, session_id=session_id, project_id=project_id
         )
         if session is None:
             raise NotFoundError(f"Session '{session_id}' not found")

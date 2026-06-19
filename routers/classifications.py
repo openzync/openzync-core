@@ -63,9 +63,11 @@ async def list_classifications(
     yet (the ``classify_dialog`` worker may not have run yet).
     """
     org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
     classifications = await service.get_classifications_for_session(
         org_id=org_id,
         session_id=session_id,
+        project_id=project_id,
     )
     return ClassificationListResponse(
         data=classifications,

@@ -8,12 +8,8 @@ Provides:
 - ``GET    /v1/projects/{project_id}/graph/communities``        — List community summaries
 
 Every endpoint is guarded by ``require_project_membership`` for unified
-authentication and project authorization.
-
-Note: The graph backend does not yet support project-level data isolation
-(org-scoped only).  Project membership is verified at the auth layer; full
-project-scoped graph filtering will be added in a future graph backend
-migration.
+authentication and project authorization, and ``project_id`` is passed to
+the graph service layer for backend-level project isolation.
 """
 
 from __future__ import annotations
@@ -85,9 +81,11 @@ async def list_graph_nodes(
 ) -> GraphNodesListResponse:
     """List entity nodes with optional type filter and cursor pagination."""
     org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
 
     result = await service.get_entities(
         org_id=org_id,
+        project_id=project_id,
         entity_type=entity_type,
         session_id=session_id,
         limit=limit,
@@ -127,9 +125,11 @@ async def get_graph_node(
 ) -> GraphNodeDetailResponse:
     """Get a single entity node with all its incident edges."""
     org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
 
     result = await service.get_entity(
         org_id=org_id,
+        project_id=project_id,
         entity_id=node_id,
     )
 
@@ -165,9 +165,11 @@ async def delete_graph_node(
 ) -> None:
     """Delete an entity node from the knowledge graph."""
     org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
 
     deleted = await service.delete_entity(
         org_id=org_id,
+        project_id=project_id,
         entity_id=node_id,
     )
     if not deleted:
@@ -218,6 +220,7 @@ async def list_graph_edges(
 ) -> GraphEdgesListResponse:
     """List relationship edges with optional predicate filtering."""
     org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
 
     if subject_id is None:
         raise HTTPException(
@@ -227,6 +230,7 @@ async def list_graph_edges(
 
     result = await service.get_edges(
         org_id=org_id,
+        project_id=project_id,
         subject_id=subject_id,
         predicate=predicate,
         limit=limit,
@@ -265,8 +269,12 @@ async def list_communities(
 ) -> GraphCommunitiesListResponse:
     """List community summary nodes."""
     org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
 
-    communities = await service.get_communities(org_id=org_id)
+    communities = await service.get_communities(
+        org_id=org_id,
+        project_id=project_id,
+    )
 
     return GraphCommunitiesListResponse(
         data=[GraphCommunity(**c) for c in communities],

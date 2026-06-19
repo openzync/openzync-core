@@ -71,7 +71,7 @@ class SessionRepository:
         return session
 
     async def get_or_create_default(
-        self, org_id: UUID, project_id: UUID
+        self, org_id: UUID, project_id: UUID, created_by: UUID
     ) -> Session:
         """Get or create the ``__default__`` session for a project.
 
@@ -82,6 +82,9 @@ class SessionRepository:
         Args:
             org_id: The organization UUID for tenant isolation.
             project_id: The project UUID.
+            created_by: The UUID of the authenticated user creating the
+                default session.  Used for attribution — ownership is
+                via the project membership.
 
         Returns:
             An existing or newly created default Session.
@@ -97,7 +100,7 @@ class SessionRepository:
         session = Session(
             organization_id=org_id,
             project_id=project_id,
-            user_id=None,  # system-created, no specific user
+            user_id=created_by,
             external_id="__default__",
             metadata_={"auto_created": True},
         )

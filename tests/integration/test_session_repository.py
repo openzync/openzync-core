@@ -55,7 +55,9 @@ class TestSessionRepository:
             session_repo = SessionRepository(db)
             user_id = await self._seed_user(user_repo)
 
-            session = await session_repo.get_or_create_default(self.ORG_ID, user_id)
+            session = await session_repo.get_or_create_default(
+                self.ORG_ID, user_id, created_by=user_id
+            )
             assert session.external_id == "__default__"
             assert session.id is not None
 
@@ -66,8 +68,12 @@ class TestSessionRepository:
             session_repo = SessionRepository(db)
             user_id = await self._seed_user(user_repo)
 
-            s1 = await session_repo.get_or_create_default(self.ORG_ID, user_id)
-            s2 = await session_repo.get_or_create_default(self.ORG_ID, user_id)
+            s1 = await session_repo.get_or_create_default(
+                self.ORG_ID, user_id, created_by=user_id
+            )
+            s2 = await session_repo.get_or_create_default(
+                self.ORG_ID, user_id, created_by=user_id
+            )
             assert s1.id == s2.id
 
     async def test_get_by_external_id_found(self, engine) -> None:

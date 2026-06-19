@@ -36,12 +36,15 @@ class ClassificationService:
         self,
         org_id: UUID,
         session_id: UUID,
+        project_id: UUID | None = None,
     ) -> list[ClassificationResponse]:
         """Return all classifications for episodes in a session.
 
         Args:
             org_id: The authenticated organization UUID.
             session_id: The session UUID.
+            project_id: Optional project UUID for intra-org isolation
+                of the session ownership check.
 
         Returns:
             List of ``ClassificationResponse`` objects, ordered by episode
@@ -50,9 +53,9 @@ class ClassificationService:
         Raises:
             NotFoundError: If the session does not exist.
         """
-        # Verify session exists
+        # Verify session exists (optionally scoped to project)
         session = await self._session_repo.get_by_uuid(
-            org_id=org_id, session_id=session_id
+            org_id=org_id, session_id=session_id, project_id=project_id
         )
         if session is None:
             raise NotFoundError(f"Session '{session_id}' not found")
@@ -85,6 +88,14 @@ class ClassificationService:
         self,
         org_id: UUID,
         session_id: UUID,
+        project_id: UUID | None = None,
     ) -> int:
-        """Count how many classified episodes exist in a session."""
+        """Count how many classified episodes exist in a session.
+
+        Args:
+            org_id: The authenticated organization UUID.
+            session_id: The session UUID.
+            project_id: Optional project UUID (reserved for future
+                defense-in-depth — not yet used by the repo layer).
+        """
         return await self._repo.count_for_session(org_id, session_id)

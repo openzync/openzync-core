@@ -82,6 +82,7 @@ class GraphService:
     async def get_entities(
         self,
         org_id: UUID,
+        project_id: UUID,
         *,
         entity_type: str | None = None,
         limit: int = 50,
@@ -97,6 +98,7 @@ class GraphService:
 
         Args:
             org_id: The authenticated organization UUID.
+            project_id: The project UUID for intra-org isolation.
             entity_type: Optional filter by entity type.
             limit: Maximum results per page (max 200).
             cursor: Opaque cursor for pagination.
@@ -152,6 +154,7 @@ class GraphService:
 
         return await self._backend.list_entities(
             org_id=org_id,
+            project_id=project_id,
             entity_type=entity_type,
             limit=min(limit, 200),
             cursor=cursor,
@@ -160,12 +163,14 @@ class GraphService:
     async def get_entity(
         self,
         org_id: UUID,
+        project_id: UUID,
         entity_id: UUID,
     ) -> dict[str, Any]:
         """Get a single entity node with all its incident edges.
 
         Args:
             org_id: The authenticated organization UUID.
+            project_id: The project UUID for intra-org isolation.
             entity_id: The UUID of the entity to fetch.
 
         Returns:
@@ -185,7 +190,7 @@ class GraphService:
             )
 
         result = await self._backend.get_entity_with_edges(
-            org_id=org_id, entity_id=entity_id
+            org_id=org_id, project_id=project_id, entity_id=entity_id
         )
         if result is None:
             raise EntityNotFoundError(
@@ -198,12 +203,14 @@ class GraphService:
     async def delete_entity(
         self,
         org_id: UUID,
+        project_id: UUID,
         entity_id: UUID,
     ) -> bool:
         """Delete an entity node from the knowledge graph.
 
         Args:
             org_id: The authenticated organization UUID.
+            project_id: The project UUID for intra-org isolation.
             entity_id: The UUID of the entity to delete.
 
         Returns:
@@ -219,11 +226,14 @@ class GraphService:
             )
             return False
 
-        return await self._backend.delete_entity(org_id=org_id, entity_id=entity_id)
+        return await self._backend.delete_entity(
+            org_id=org_id, project_id=project_id, entity_id=entity_id
+        )
 
     async def get_edges(
         self,
         org_id: UUID,
+        project_id: UUID,
         *,
         subject_id: UUID | None = None,
         predicate: str | None = None,
@@ -239,6 +249,7 @@ class GraphService:
 
         Args:
             org_id: The authenticated organization UUID.
+            project_id: The project UUID for intra-org isolation.
             subject_id: Optional filter by source entity UUID.
             predicate: Optional filter by edge label.
             limit: Maximum results per page.
@@ -256,6 +267,7 @@ class GraphService:
         if subject_id is not None:
             return await self._backend.list_entity_edges(
                 org_id=org_id,
+                project_id=project_id,
                 entity_id=subject_id,
                 predicate=predicate,
                 limit=min(limit, 200),
@@ -273,6 +285,7 @@ class GraphService:
     async def get_communities(
         self,
         org_id: UUID,
+        project_id: UUID,
     ) -> list[dict[str, Any]]:
         """List community summary nodes.
 
@@ -282,6 +295,7 @@ class GraphService:
 
         Args:
             org_id: The authenticated organization UUID.
+            project_id: The project UUID for intra-org isolation.
 
         Returns:
             A list of community dicts with ``id``, ``name``, ``summary``,
@@ -297,6 +311,7 @@ class GraphService:
 
         result = await self._backend.list_entities(
             org_id=org_id,
+            project_id=project_id,
             entity_type="community",
             limit=200,
         )

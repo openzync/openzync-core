@@ -64,9 +64,11 @@ async def list_structured_extractions(
     are configured for the organization.
     """
     org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
     return await service.get_session_extractions(
         org_id=org_id,
         session_id=session_id,
+        project_id=project_id,
     )
 
 
@@ -87,10 +89,12 @@ async def get_episode_extraction(
     extraction exists.
     """
     org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
     result = await service.get_episode_extraction(
         org_id=org_id,
         session_id=session_id,
         episode_id=episode_id,
+        project_id=project_id,
     )
     if result is None:
         raise HTTPException(

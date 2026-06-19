@@ -5,7 +5,7 @@ Uses the cache-aside pattern with optional ``SET NX EX`` stampede
 protection so that concurrent requests for the same cache key
 serialise the recompute behind a single distributed lock.
 
-Key namespace convention: ``ctx:{org_id}:{user_id}:{query_hash}``
+Key namespace convention: ``ctx:{org_id}:{project_id}:{query_hash}``
 """
 
 from __future__ import annotations
