@@ -88,7 +88,7 @@ class ProjectService:
             extra={
                 "org_id": str(organization_id),
                 "project_id": str(project.id),
-                "name": payload.name,
+                "project_name": payload.name,
                 "created_by": str(user_id),
             },
         )
