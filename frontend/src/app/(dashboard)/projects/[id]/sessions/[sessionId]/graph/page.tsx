@@ -1,10 +1,11 @@
 "use client";
-import { RequireAuth } from "../../../require-auth";
+import { RequireAuth } from "../../../../../require-auth";
 
 import { useEffect, useRef, useState, useCallback } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { ForceGraph, type GraphNodeData, type GraphEdgeData } from "@/components/force-graph";
 import { get, API_BASE, getAccessToken, ApiError } from "@/lib/api-client";
+import { useProject } from "@/stores/project-context";
 import SessionTabs from "../tabs";
 
 interface NodesResponse {
@@ -24,9 +25,9 @@ function buildAuthHeaders(): Record<string, string> {
 
 export default function SessionGraphPage() {
   const params = useParams();
-  const searchParams = useSearchParams();
-  const sessionId = params.id as string;
-  const userId = searchParams.get("userId") ?? "";
+  const sessionId = params.sessionId as string;
+  const { project } = useProject();
+  const projectId = project?.id;
   const loadAttempted = useRef(false);
 
   const [graphData, setGraphData] = useState<{ nodes: GraphNodeData[]; edges: GraphEdgeData[] } | null>(null);
@@ -34,7 +35,7 @@ export default function SessionGraphPage() {
   const [error, setError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
-    if (!userId || !sessionId) return;
+    if (!projectId || !sessionId) return;
     setLoading(true);
     setError(null);
     loadAttempted.current = true;
@@ -42,7 +43,7 @@ export default function SessionGraphPage() {
     try {
       // Step 1: fetch session-scoped nodes
       const nodeData = await get<NodesResponse>(
-        `/v1/users/${userId}/graph/nodes?limit=200&session_id=${sessionId}`,
+        `/v1/projects/${projectId}/graph/nodes?limit=200&session_id=${sessionId}`,
       );
 
       const items: GraphNodeData[] = nodeData.data?.items ?? [];
@@ -62,7 +63,7 @@ export default function SessionGraphPage() {
         const batchResults = await Promise.allSettled(
           batch.map((node) =>
             get<EdgesResponse>(
-              `/v1/users/${userId}/graph/edges?subject_id=${node.id}&limit=50`,
+              `/v1/projects/${projectId}/graph/edges?subject_id=${node.id}&limit=50`,
             ).then((d) => d.data?.items ?? []),
           ),
         );
@@ -86,20 +87,19 @@ export default function SessionGraphPage() {
     } finally {
       setLoading(false);
     }
-  }, [userId, sessionId]);
+  }, [projectId, sessionId]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  // ── Missing userId guard ─────────────────────────────────────────────
-  if (!userId) {
+  if (!projectId) {
     return (
       <RequireAuth>
       <div>
-        <SessionTabs sessionId={sessionId} userId="" activeTab="graph" />
+        <SessionTabs sessionId={sessionId} activeTab="graph" />
         <div className="card-base p-8 flex flex-col items-center justify-center gap-3 text-surface-500 mt-4">
-          <p className="text-sm">No user selected. Provide a <code className="text-surface-300 font-mono text-xs bg-surface-800 px-1.5 py-0.5 rounded">userId</code> query parameter.</p>
+          <p className="text-sm">No project selected.</p>
         </div>
       </div>
       </RequireAuth>
@@ -109,7 +109,7 @@ export default function SessionGraphPage() {
   return (
     <RequireAuth>
     <div>
-      <SessionTabs sessionId={sessionId} userId={userId} activeTab="graph" />
+      <SessionTabs sessionId={sessionId} activeTab="graph" />
       <ForceGraph
         nodes={graphData?.nodes ?? []}
         edges={graphData?.edges ?? []}
@@ -118,7 +118,7 @@ export default function SessionGraphPage() {
         onRetry={loadData}
         apiConfig={{
           baseUrl: API_BASE,
-          userId,
+          projectId,
           headers: buildAuthHeaders(),
         }}
         showFilter

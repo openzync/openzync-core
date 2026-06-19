@@ -1,7 +1,7 @@
 "use client";
-import { RequireAuth } from "../require-auth";
+import { RequireAuth } from "../../../require-auth";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import {
   Upload,
   Search,
@@ -10,20 +10,13 @@ import {
   CheckCircle2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { get, post, extractList } from "@/lib/api-client";
+import { get, post } from "@/lib/api-client";
+import { useProject } from "@/stores/project-context";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import { Badge } from "@/components/ui/badge";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
-
-interface UserItem {
-  id: string;
-  user_id?: string;
-  email?: string;
-  name?: string;
-}
 
 interface IngestResponse {
   job_id?: string;
@@ -63,46 +56,9 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
 
 const ROLES = ["user", "assistant", "system", "tool"] as const;
 
-// ─── User Selector ──────────────────────────────────────────────────────────────
-
-function UserSelect({
-  users, loading, error, value, onChange, label,
-}: {
-  users: UserItem[]; loading: boolean; error: string | null;
-  value: string; onChange: (val: string) => void; label?: string;
-}) {
-  return (
-    <div className="space-y-1.5">
-      {label && <label className="text-xs font-medium text-surface-400">{label}</label>}
-      {loading ? (
-        <div className="h-9 rounded-md bg-surface-800 animate-pulse" />
-      ) : error ? (
-        <div className="flex items-center gap-2 text-xs text-error h-9"><AlertCircle size={14} />{error}</div>
-      ) : (
-        <select value={value} onChange={(e) => onChange(e.target.value)}
-          className="input-base cursor-pointer appearance-none"
-          style={{
-            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238A99AB' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")`,
-            backgroundRepeat: "no-repeat", backgroundPosition: "right 10px center", paddingRight: "32px",
-          }}
-        >
-          <option value="" disabled>Select a user...</option>
-          {users.map((u) => {
-            const uid = u.id ?? u.user_id ?? "";
-            return <option key={uid} value={uid}>{u.email ?? u.name ?? uid}</option>;
-          })}
-        </select>
-      )}
-    </div>
-  );
-}
-
 // ─── Ingest Tab ────────────────────────────────────────────────────────────────
 
-function IngestTab({ users, loadingUsers, usersError }: {
-  users: UserItem[]; loadingUsers: boolean; usersError: string | null;
-}) {
-  const [selectedUser, setSelectedUser] = useState("");
+function IngestTab({ projectId }: { projectId: string }) {
   const [sessionId, setSessionId] = useState("");
   const [messagesText, setMessagesText] = useState("");
   const [selectedRole, setSelectedRole] = useState<string>("user");
@@ -111,7 +67,6 @@ function IngestTab({ users, loadingUsers, usersError }: {
   const [error, setError] = useState<string | null>(null);
 
   const handleIngest = useCallback(async () => {
-    if (!selectedUser) { setError("Please select a user"); return; }
     if (!messagesText.trim()) { setError("Please enter at least one message"); return; }
     setIngesting(true); setError(null); setResult(null);
 
@@ -124,21 +79,20 @@ function IngestTab({ users, loadingUsers, usersError }: {
     try {
       const body: Record<string, unknown> = { messages };
       if (sessionId.trim()) body.session_id = sessionId.trim();
-      const data = await post<IngestResponse>(`/v1/users/${selectedUser}/memory`, body);
+      const data = await post<IngestResponse>(`/v1/projects/${projectId}/memory`, body);
       setResult(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ingest failed");
     } finally { setIngesting(false); }
-  }, [selectedUser, messagesText, selectedRole, sessionId]);
+  }, [projectId, messagesText, selectedRole, sessionId]);
 
   return (
     <div className="card-base p-5 space-y-5">
       <h2 className="text-sm font-semibold flex items-center gap-2"><Upload size={16} className="text-brand-300" />Ingest Messages</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <UserSelect users={users} loading={loadingUsers} error={usersError} value={selectedUser} onChange={setSelectedUser} label="User" />
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-surface-400">Session ID (optional)</label>
-          <input type="text" value={sessionId} onChange={(e) => setSessionId(e.target.value)} placeholder="uuid or leave empty" className="input-base" />
+          <input type="text" value={sessionId} onChange={(e) => setSessionId(e.target.value)} placeholder="uuid or leave empty for default" className="input-base" />
         </div>
       </div>
       <div className="space-y-1.5">
@@ -160,7 +114,7 @@ function IngestTab({ users, loadingUsers, usersError }: {
             {ROLES.map((role) => (<option key={role} value={role}>{role}</option>))}
           </select>
         </div>
-        <Button variant="primary" onClick={handleIngest} loading={ingesting} disabled={!selectedUser} icon={<Upload size={16} />}>Ingest</Button>
+        <Button variant="primary" onClick={handleIngest} loading={ingesting} icon={<Upload size={16} />}>Ingest</Button>
       </div>
       {error && (<div className="flex items-start gap-2 rounded-md bg-error/10 border border-error/30 p-3 text-sm text-error"><AlertCircle size={16} className="mt-0.5 shrink-0" /><span>{error}</span></div>)}
       {result && (
@@ -179,10 +133,7 @@ function IngestTab({ users, loadingUsers, usersError }: {
 
 // ─── Context Tab ───────────────────────────────────────────────────────────────
 
-function ContextTab({ users, loadingUsers, usersError }: {
-  users: UserItem[]; loadingUsers: boolean; usersError: string | null;
-}) {
-  const [selectedUser, setSelectedUser] = useState("");
+function ContextTab({ projectId }: { projectId: string }) {
   const [query, setQuery] = useState("");
   const [limit, setLimit] = useState(10);
   const [fetching, setFetching] = useState(false);
@@ -190,22 +141,20 @@ function ContextTab({ users, loadingUsers, usersError }: {
   const [error, setError] = useState<string | null>(null);
 
   const handleGetContext = useCallback(async () => {
-    if (!selectedUser) { setError("Please select a user"); return; }
     if (!query.trim()) { setError("Please enter a query"); return; }
     setFetching(true); setError(null); setResult(null);
     try {
       const encodedQuery = encodeURIComponent(query.trim());
-      const data = await get<ContextResult>(`/v1/users/${selectedUser}/context?query=${encodedQuery}&limit=${limit}`);
+      const data = await get<ContextResult>(`/v1/projects/${projectId}/context?query=${encodedQuery}&limit=${limit}`);
       setResult(data);
     } catch (err) { setError(err instanceof Error ? err.message : "Failed to fetch context"); }
     finally { setFetching(false); }
-  }, [selectedUser, query, limit]);
+  }, [projectId, query, limit]);
 
   return (
     <div className="card-base p-5 space-y-5">
       <h2 className="text-sm font-semibold flex items-center gap-2"><FileText size={16} className="text-brand-300" />Query Context</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <UserSelect users={users} loading={loadingUsers} error={usersError} value={selectedUser} onChange={setSelectedUser} label="User" />
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-surface-400">
             <div className="flex items-center justify-between"><span>Limit</span><span className="text-surface-500 font-mono text-[11px]">{limit}</span></div>
@@ -223,7 +172,7 @@ function ContextTab({ users, loadingUsers, usersError }: {
         <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="e.g. What did the user say about their project?"
           className="input-base" onKeyDown={(e) => { if (e.key === "Enter" && !fetching) handleGetContext(); }} />
       </div>
-      <Button variant="primary" onClick={handleGetContext} loading={fetching} disabled={!selectedUser || !query.trim()} icon={<FileText size={16} />}>Get Context</Button>
+      <Button variant="primary" onClick={handleGetContext} loading={fetching} disabled={!query.trim()} icon={<FileText size={16} />}>Get Context</Button>
       {error && (<div className="flex items-start gap-2 rounded-md bg-error/10 border border-error/30 p-3 text-sm text-error"><AlertCircle size={16} className="mt-0.5 shrink-0" /><span>{error}</span></div>)}
       {result && (
         <div className="space-y-2">
@@ -237,10 +186,7 @@ function ContextTab({ users, loadingUsers, usersError }: {
 
 // ─── Search Tab ────────────────────────────────────────────────────────────────
 
-function SearchTab({ users, loadingUsers, usersError }: {
-  users: UserItem[]; loadingUsers: boolean; usersError: string | null;
-}) {
-  const [selectedUser, setSelectedUser] = useState("");
+function SearchTab({ projectId }: { projectId: string }) {
   const [query, setQuery] = useState("");
   const [searchEpisodes, setSearchEpisodes] = useState(true);
   const [searchFacts, setSearchFacts] = useState(true);
@@ -250,7 +196,6 @@ function SearchTab({ users, loadingUsers, usersError }: {
   const [error, setError] = useState<string | null>(null);
 
   const handleSearch = useCallback(async () => {
-    if (!selectedUser) { setError("Please select a user"); return; }
     if (!query.trim()) { setError("Please enter a query"); return; }
     setSearching(true); setError(null); setResults(null);
     try {
@@ -261,17 +206,16 @@ function SearchTab({ users, loadingUsers, usersError }: {
       const params = new URLSearchParams();
       params.set("query", query.trim());
       if (selectedTypes.length > 0 && selectedTypes.length < 3) params.set("type", selectedTypes.join(","));
-      const data = await get<SearchResponse>(`/v1/users/${selectedUser}/search?${params.toString()}`);
+      const data = await get<SearchResponse>(`/v1/projects/${projectId}/search?${params.toString()}`);
       setResults(Array.isArray(data.results ?? data.items) ? (data.results ?? data.items ?? []) : []);
     } catch (err) { setError(err instanceof Error ? err.message : "Search failed"); }
     finally { setSearching(false); }
-  }, [selectedUser, query, searchEpisodes, searchFacts, searchEntities]);
+  }, [projectId, query, searchEpisodes, searchFacts, searchEntities]);
 
   return (
     <div className="card-base p-5 space-y-5">
       <h2 className="text-sm font-semibold flex items-center gap-2"><Search size={16} className="text-brand-300" />Search Memory</h2>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <UserSelect users={users} loading={loadingUsers} error={usersError} value={selectedUser} onChange={setSelectedUser} label="User" />
         <div className="space-y-1.5">
           <label className="text-xs font-medium text-surface-400">Type Filter</label>
           <div className="flex flex-wrap gap-3 h-9 items-center">
@@ -294,7 +238,7 @@ function SearchTab({ users, loadingUsers, usersError }: {
         <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search across episodes, facts, and entities..."
           className="input-base" onKeyDown={(e) => { if (e.key === "Enter" && !searching) handleSearch(); }} />
       </div>
-      <Button variant="primary" onClick={handleSearch} loading={searching} disabled={!selectedUser || !query.trim()} icon={<Search size={16} />}>Search</Button>
+      <Button variant="primary" onClick={handleSearch} loading={searching} disabled={!query.trim()} icon={<Search size={16} />}>Search</Button>
       {error && (<div className="flex items-start gap-2 rounded-md bg-error/10 border border-error/30 p-3 text-sm text-error"><AlertCircle size={16} className="mt-0.5 shrink-0" /><span>{error}</span></div>)}
       {results !== null && (
         <div className="space-y-2">
@@ -346,30 +290,27 @@ function SearchTab({ users, loadingUsers, usersError }: {
 
 export default function MemoryPage() {
   const [activeTab, setActiveTab] = useState<TabId>("ingest");
-  const [users, setUsers] = useState<UserItem[]>([]);
-  const [loadingUsers, setLoadingUsers] = useState(true);
-  const [usersError, setUsersError] = useState<string | null>(null);
+  const { project } = useProject();
+  const projectId = project?.id;
 
-  useEffect(() => {
-    let cancelled = false;
-    async function loadUsers() {
-      setLoadingUsers(true); setUsersError(null);
-      try {
-        const data = await get<{ data: UserItem[] }>("/v1/users?limit=200");
-        const list = extractList<UserItem>(data);
-        if (!cancelled) setUsers(list);
-      } catch (err) {
-        if (!cancelled) setUsersError(err instanceof Error ? err.message : "Failed to load users");
-      } finally { if (!cancelled) setLoadingUsers(false); }
-    }
-    loadUsers();
-    return () => { cancelled = true; };
-  }, []);
+  if (!projectId) {
+    return (
+      <RequireAuth>
+      <div className="space-y-6">
+        <PageHeader title="Memory" description="Ingest messages, query context, and search across memory" />
+        <div className="card-base p-8 flex flex-col items-center justify-center text-surface-500">
+          <AlertCircle size={24} className="mb-2" />
+          <p className="text-sm">Select a project to access memory features.</p>
+        </div>
+      </div>
+      </RequireAuth>
+    );
+  }
 
   return (
     <RequireAuth>
     <div className="space-y-6">
-      <PageHeader title="Memory" description="Ingest messages, query context, and search across memory" />
+      <PageHeader title="Memory" description={`Ingest messages, query context, and search across memory${project ? ` · ${project.name}` : ""}`} />
 
       <div className="flex gap-1 rounded-lg bg-surface-950 p-1 border border-surface-800 w-fit">
         {TABS.map((tab) => (
@@ -382,10 +323,10 @@ export default function MemoryPage() {
         ))}
       </div>
 
-      {activeTab === "ingest" && <IngestTab users={users} loadingUsers={loadingUsers} usersError={usersError} />}
-      {activeTab === "context" && <ContextTab users={users} loadingUsers={loadingUsers} usersError={usersError} />}
-      {activeTab === "search" && <SearchTab users={users} loadingUsers={loadingUsers} usersError={usersError} />}
+      {activeTab === "ingest" && <IngestTab projectId={projectId} />}
+      {activeTab === "context" && <ContextTab projectId={projectId} />}
+      {activeTab === "search" && <SearchTab projectId={projectId} />}
     </div>
-  </RequireAuth>
+    </RequireAuth>
   );
 }

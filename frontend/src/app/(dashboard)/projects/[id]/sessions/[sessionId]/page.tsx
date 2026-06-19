@@ -1,8 +1,8 @@
 "use client";
-import { RequireAuth } from "../../require-auth";
+import { RequireAuth } from "../../../../require-auth";
 
 import { useState, useEffect } from "react";
-import { useParams, useSearchParams, usePathname, useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { get, ApiError } from "@/lib/api-client";
 import { smartTimestamp, truncateId, copyToClipboard } from "@/lib/utils";
+import { useProject } from "@/stores/project-context";
 import { ErrorState } from "@/components/shared/error-state";
 import { Badge } from "@/components/ui/badge";
 
@@ -99,18 +100,18 @@ function MetadataRow({
 
 export default function SessionDetailPage() {
   const params = useParams();
-  const searchParams = useSearchParams();
   const pathname = usePathname();
   const router = useRouter();
 
-  const sessionId = params.id as string;
-  const userId = searchParams.get("userId") ?? "";
+  const sessionId = params.sessionId as string;
+  const { project, loading: projectLoading } = useProject();
+  const projectId = project?.id;
 
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  // ── Determine active tab from current path ────────────────────────────────
+  // Determine active tab from current path
   const activeTab = (() => {
     for (const tab of TABS) {
       if (pathname.endsWith(`/${tab.path}`)) return tab.path;
@@ -118,11 +119,11 @@ export default function SessionDetailPage() {
     return null;
   })();
 
-  // ── Fetch session ─────────────────────────────────────────────────────────
+  // Fetch session
   useEffect(() => {
-    if (!sessionId || !userId) {
+    if (!sessionId || !projectId) {
       setLoading(false);
-      setError(!userId ? "No user ID provided." : "No session ID provided.");
+      setError(!projectId ? "No project selected." : "No session ID provided.");
       return;
     }
 
@@ -132,7 +133,7 @@ export default function SessionDetailPage() {
 
       try {
         const data = await get<SessionDetail>(
-          `/v1/users/${userId}/sessions/${sessionId}`,
+          `/v1/projects/${projectId}/sessions/${sessionId}`,
         );
         setSession(data);
       } catch (err) {
@@ -147,20 +148,19 @@ export default function SessionDetailPage() {
     }
 
     fetchSession();
-  }, [sessionId, userId]);
+  }, [sessionId, projectId]);
 
-  // ── Build tab href ────────────────────────────────────────────────────────
+  // Build tab href
   function tabHref(tab: Tab): string {
-    const prefix = userId ? `?userId=${encodeURIComponent(userId)}` : "";
-    return `/sessions/${sessionId}/${tab.path}${prefix}`;
+    return `/projects/${projectId}/sessions/${sessionId}/${tab.path}`;
   }
 
-  // ── Breadcrumb ────────────────────────────────────────────────────────────
+  // Breadcrumb
   function Breadcrumb() {
     return (
       <nav className="flex items-center gap-2 text-sm text-surface-400 mb-4">
         <Link
-          href="/sessions"
+          href={`/projects/${projectId}/sessions`}
           className="hover:text-surface-200 transition-colors"
         >
           Sessions
@@ -175,27 +175,36 @@ export default function SessionDetailPage() {
     );
   }
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // Loading guard
+  if (projectLoading) {
+    return (
+      <RequireAuth>
+        <div className="space-y-6">
+          <div className="h-6 w-48 rounded bg-surface-800 animate-pulse" />
+        </div>
+      </RequireAuth>
+    );
+  }
 
+  // Render
   return (
     <RequireAuth>
     <div className="space-y-6">
-      {/* ═══ Back button ═══ */}
+      {/* Back button */}
       <button
-        onClick={() => router.push("/sessions")}
+        onClick={() => router.push(`/projects/${projectId}/sessions`)}
         className="btn-ghost text-xs -ml-2"
       >
         <ArrowLeft size={14} />
         Back to Sessions
       </button>
 
-      {/* ═══ Breadcrumb ═══ */}
-      <Breadcrumb />
+      {/* Breadcrumb */}
+      {projectId && <Breadcrumb />}
 
-      {/* ═══ Metadata card ═══ */}
+      {/* Metadata card */}
       <div className="card-base p-6">
         {loading ? (
-          /* Loading skeleton */
           <div className="space-y-4">
             <div className="h-6 w-48 rounded bg-surface-800 animate-pulse" />
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -208,11 +217,9 @@ export default function SessionDetailPage() {
             </div>
           </div>
         ) : error ? (
-          /* Error state */
           <ErrorState message={error} onRetry={() => window.location.reload()} />
         ) : session ? (
           <>
-            {/* Title row */}
             <div className="flex items-start justify-between mb-6">
               <div>
                 <h1 className="text-xl font-bold tracking-tight">
@@ -228,13 +235,8 @@ export default function SessionDetailPage() {
               </Badge>
             </div>
 
-            {/* Metadata grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-              {/* Session ID */}
-              <MetadataRow
-                icon={<Hash size={16} />}
-                label="Session ID"
-              >
+              <MetadataRow icon={<Hash size={16} />} label="Session ID">
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-xs bg-surface-800 rounded px-2 py-0.5">
                     {truncateId(session.id)}
@@ -243,11 +245,7 @@ export default function SessionDetailPage() {
                 </div>
               </MetadataRow>
 
-              {/* User ID */}
-              <MetadataRow
-                icon={<UserIcon size={16} />}
-                label="User ID"
-              >
+              <MetadataRow icon={<UserIcon size={16} />} label="Created By">
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-xs bg-surface-800 rounded px-2 py-0.5">
                     {truncateId(session.user_id)}
@@ -256,19 +254,11 @@ export default function SessionDetailPage() {
                 </div>
               </MetadataRow>
 
-              {/* Created */}
-              <MetadataRow
-                icon={<Calendar size={16} />}
-                label="Created"
-              >
+              <MetadataRow icon={<Calendar size={16} />} label="Created">
                 <span>{smartTimestamp(session.created_at)}</span>
               </MetadataRow>
 
-              {/* Closed */}
-              <MetadataRow
-                icon={<Clock size={16} />}
-                label="Closed"
-              >
+              <MetadataRow icon={<Clock size={16} />} label="Closed">
                 {session.closed_at ? (
                   <span>{smartTimestamp(session.closed_at)}</span>
                 ) : (
@@ -276,21 +266,13 @@ export default function SessionDetailPage() {
                 )}
               </MetadataRow>
 
-              {/* Messages count */}
-              <MetadataRow
-                icon={<MessageSquare size={16} />}
-                label="Messages"
-              >
+              <MetadataRow icon={<MessageSquare size={16} />} label="Messages">
                 <span className="font-semibold">
                   {session.message_count.toLocaleString()}
                 </span>
               </MetadataRow>
 
-              {/* Facts count */}
-              <MetadataRow
-                icon={<Database size={16} />}
-                label="Facts"
-              >
+              <MetadataRow icon={<Database size={16} />} label="Facts">
                 <span className="font-semibold">
                   {session.fact_count.toLocaleString()}
                 </span>
@@ -300,7 +282,7 @@ export default function SessionDetailPage() {
         ) : null}
       </div>
 
-      {/* ═══ Tab navigation ═══ */}
+      {/* Tab navigation */}
       {session && (
         <div className="border-b border-surface-800">
           <nav className="flex gap-6 -mb-px">
@@ -324,7 +306,7 @@ export default function SessionDetailPage() {
         </div>
       )}
 
-      {/* ═══ Tab content — sub-routes render here ═══ */}
+      {/* Tab content placeholder */}
       {session && !activeTab && (
         <div className="card-base p-6 flex flex-col items-center justify-center py-12 text-surface-500">
           <ExternalLink size={32} className="mb-3 text-surface-600" />

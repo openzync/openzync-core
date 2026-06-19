@@ -2,10 +2,10 @@
 
 import Link from "next/link";
 import { cn } from "@/lib/utils";
+import { useProject } from "@/stores/project-context";
 
 interface SessionTabsProps {
   sessionId: string;
-  userId: string;
   activeTab: "messages" | "facts" | "graph" | "classifications" | "extractions";
 }
 
@@ -17,7 +17,12 @@ const TABS = [
   { id: "extractions", label: "Extractions", href: "extractions" },
 ] as const;
 
-export default function SessionTabs({ sessionId, userId, activeTab }: SessionTabsProps) {
+export default function SessionTabs({ sessionId, activeTab }: SessionTabsProps) {
+  const { project } = useProject();
+  const projectId = project?.id;
+
+  if (!projectId) return null;
+
   return (
     <div className="mb-4 border-b border-surface-800">
       <nav className="flex gap-0 -mb-px">
@@ -26,7 +31,7 @@ export default function SessionTabs({ sessionId, userId, activeTab }: SessionTab
           return (
             <Link
               key={tab.id}
-              href={`/sessions/${sessionId}/${tab.href}?userId=${userId}`}
+              href={`/projects/${projectId}/sessions/${sessionId}/${tab.href}`}
               className={cn(
                 "px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap",
                 isActive

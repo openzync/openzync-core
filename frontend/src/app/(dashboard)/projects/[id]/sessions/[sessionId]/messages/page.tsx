@@ -1,8 +1,8 @@
 "use client";
-import { RequireAuth } from "../../../require-auth";
+import { RequireAuth } from "../../../../../require-auth";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import {
   MessageSquare,
   User,
@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn, smartTimestamp } from "@/lib/utils";
 import { get, ApiError } from "@/lib/api-client";
+import { useProject } from "@/stores/project-context";
 import SessionTabs from "../tabs";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ErrorState } from "@/components/shared/error-state";
@@ -45,8 +46,6 @@ function isSystemOrTool(role: string): boolean {
   return role === "system" || role === "tool";
 }
 
-// ─── Role Icons ────────────────────────────────────────────────────────────────
-
 function RoleIcon({ role }: { role: string }) {
   if (isUserMessage(role)) return <User size={14} />;
   if (isAssistantMessage(role)) return <Bot size={14} />;
@@ -57,9 +56,9 @@ function RoleIcon({ role }: { role: string }) {
 
 export default function MessagesPage() {
   const params = useParams();
-  const searchParams = useSearchParams();
-  const sessionId = params.id as string;
-  const userId = searchParams.get("userId");
+  const sessionId = params.sessionId as string;
+  const { project, loading: projectLoading } = useProject();
+  const projectId = project?.id;
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
@@ -73,7 +72,7 @@ export default function MessagesPage() {
 
   const fetchMessages = useCallback(
     async (limit: number, prepend: boolean = false) => {
-      if (!userId || !sessionId) return;
+      if (!projectId || !sessionId) return;
 
       const setLoadingFn = prepend ? setLoadOlderLoading : setLoading;
       setLoadingFn(true);
@@ -81,7 +80,7 @@ export default function MessagesPage() {
 
       try {
         const json = await get<{ data: Message[] }>(
-          `/v1/users/${userId}/sessions/${sessionId}/messages?limit=${limit}`,
+          `/v1/projects/${projectId}/sessions/${sessionId}/messages?limit=${limit}`,
         );
         const items: Message[] = json.data ?? [];
         const msgList: Message[] = Array.isArray(items) ? items : [];
@@ -107,22 +106,20 @@ export default function MessagesPage() {
         setLoadingFn(false);
       }
     },
-    [userId, sessionId],
+    [projectId, sessionId],
   );
 
-  // ── Initial load ──────────────────────────────────────────────────────────
-
+  // Initial load
   useEffect(() => {
-    if (!userId || !sessionId) {
+    if (!projectId || !sessionId) {
       setLoading(false);
       return;
     }
     initialScrollDone.current = false;
     fetchMessages(100, false);
-  }, [userId, sessionId, fetchMessages]);
+  }, [projectId, sessionId, fetchMessages]);
 
-  // ── Auto-scroll to bottom on initial load ─────────────────────────────────
-
+  // Auto-scroll to bottom on initial load
   useEffect(() => {
     if (!loading && messages.length > 0 && !initialScrollDone.current) {
       initialScrollDone.current = true;
@@ -132,8 +129,7 @@ export default function MessagesPage() {
     }
   }, [loading, messages.length]);
 
-  // ── Load older ────────────────────────────────────────────────────────────
-
+  // Load older
   const handleLoadOlder = () => {
     if (loadOlderLoading || allLoaded) return;
     const container = scrollContainerRef.current;
@@ -149,15 +145,12 @@ export default function MessagesPage() {
     });
   };
 
-  // ── Scroll to bottom ──────────────────────────────────────────────────────
-
+  // Scroll to bottom
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // ── Missing userId/sessionId guard ────────────────────────────────────────
-
-  if (!userId) {
+  if (!projectId) {
     return (
       <RequireAuth>
       <div className="space-y-6">
@@ -167,8 +160,8 @@ export default function MessagesPage() {
         </div>
         <EmptyState
           icon={AlertCircle}
-          title="No user selected"
-          description='Provide a userId query parameter to view messages.'
+          title="No project selected"
+          description="Select a project to view messages."
         />
       </div>
       </RequireAuth>
@@ -178,7 +171,7 @@ export default function MessagesPage() {
   return (
     <RequireAuth>
     <div className="space-y-4">
-      <SessionTabs sessionId={sessionId} userId={userId ?? ""} activeTab="messages" />
+      <SessionTabs sessionId={sessionId} activeTab="messages" />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -187,11 +180,6 @@ export default function MessagesPage() {
             Session:{" "}
             <span className="font-mono text-surface-300 text-xs" title={sessionId}>
               {sessionId.slice(0, 8)}…
-            </span>
-            <span className="mx-2 text-surface-600">·</span>
-            User:{" "}
-            <span className="font-mono text-surface-300 text-xs" title={userId}>
-              {userId.slice(0, 8)}…
             </span>
           </p>
         </div>
@@ -268,7 +256,6 @@ export default function MessagesPage() {
               const isAssistant = isAssistantMessage(msg.role);
               const isSysTool = isSystemOrTool(msg.role);
 
-              // System/tool messages: centered subtle style
               if (isSysTool) {
                 return (
                   <div key={msg.id ?? idx} className="flex justify-center">
@@ -294,7 +281,6 @@ export default function MessagesPage() {
                   className={cn("flex", isUser ? "justify-end" : "justify-start")}
                 >
                   <div className={cn("max-w-[75%] space-y-1", isUser ? "items-end" : "items-start")}>
-                    {/* Bubble */}
                     <div
                       className={cn(
                         "px-3.5 py-2 text-sm leading-relaxed",
@@ -304,8 +290,6 @@ export default function MessagesPage() {
                       )}
                     >
                       {msg.content}
-
-                      {/* Token count inline for assistant messages */}
                       {isAssistant && msg.token_count !== undefined && (
                         <span className="ml-2 text-[11px] text-surface-500 font-mono inline-flex items-center gap-0.5">
                           <Hash size={10} />
@@ -314,7 +298,6 @@ export default function MessagesPage() {
                       )}
                     </div>
 
-                    {/* Timestamp + metadata row */}
                     <div
                       className={cn(
                         "flex items-center gap-2 text-[11px] text-surface-500 px-1",
@@ -339,7 +322,6 @@ export default function MessagesPage() {
                 </div>
               );
             })}
-            {/* Invisible anchor for auto-scroll */}
             <div ref={messagesEndRef} />
           </div>
         )}

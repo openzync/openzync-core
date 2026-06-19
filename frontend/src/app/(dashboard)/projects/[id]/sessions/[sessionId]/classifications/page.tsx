@@ -1,10 +1,11 @@
 "use client";
-import { RequireAuth } from "../../../require-auth";
+import { RequireAuth } from "../../../../../require-auth";
 
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Tags } from "lucide-react";
 import { get, ApiError } from "@/lib/api-client";
+import { useProject } from "@/stores/project-context";
 import SessionTabs from "../tabs";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ErrorState } from "@/components/shared/error-state";
@@ -21,22 +22,22 @@ interface Classification {
 
 export default function SessionClassificationsPage() {
   const params = useParams();
-  const searchParams = useSearchParams();
-  const sessionId = params.id as string;
-  const userId = searchParams.get("userId") ?? "";
+  const sessionId = params.sessionId as string;
+  const { project } = useProject();
+  const projectId = project?.id;
 
   const [data, setData] = useState<Classification[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!userId) return;
+    if (!projectId) return;
     async function loadData() {
       setLoading(true);
       setError("");
       try {
         const json = await get<{ data: Classification[] }>(
-          `/v1/users/${userId}/sessions/${sessionId}/classifications`,
+          `/v1/projects/${projectId}/sessions/${sessionId}/classifications`,
         );
         setData(json.data ?? []);
       } catch (err) {
@@ -46,12 +47,12 @@ export default function SessionClassificationsPage() {
       }
     }
     loadData();
-  }, [userId, sessionId]);
+  }, [projectId, sessionId]);
 
   return (
     <RequireAuth>
     <div>
-      <SessionTabs sessionId={sessionId} userId={userId} activeTab="classifications" />
+      <SessionTabs sessionId={sessionId} activeTab="classifications" />
       {loading ? (
         <TableSkeleton rows={3} cols={4} colWidths={["w-32", "w-24", "w-16", "w-24"]} />
       ) : error ? (

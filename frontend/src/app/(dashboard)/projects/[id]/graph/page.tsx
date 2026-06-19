@@ -1,18 +1,15 @@
 "use client";
-import { RequireAuth } from "../require-auth";
+import { RequireAuth } from "../../../require-auth";
 
 import { useEffect, useState, useCallback } from "react";
 import { RotateCcw } from "lucide-react";
 import { ForceGraph, type GraphNodeData, type GraphEdgeData } from "@/components/force-graph";
 import { get, API_BASE, getAccessToken } from "@/lib/api-client";
+import { useProject } from "@/stores/project-context";
 import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
-
-interface UsersApiResponse {
-  data: { id: string; name: string | null }[];
-}
 
 interface NodesApiResponse {
   data: { items: GraphNodeData[]; has_more: boolean };
@@ -34,22 +31,18 @@ function authHeaders(): Record<string, string> {
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
 export default function GraphExplorerPage() {
+  const { project } = useProject();
+  const projectId = project?.id;
+
   const [graphData, setGraphData] = useState<{ nodes: GraphNodeData[]; edges: GraphEdgeData[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
-  const [userName, setUserName] = useState<string>("");
-  const [userId, setUserId] = useState<string>("");
 
   const loadData = useCallback(async () => {
+    if (!projectId) return;
     setLoading(true); setHasError(false);
     try {
-      const usersData = await get<UsersApiResponse>("/v1/users?limit=1");
-      const user = usersData.data?.[0];
-      if (!user) { setGraphData({ nodes: [], edges: [] }); setLoading(false); return; }
-      setUserName(user.name ?? user.id);
-      setUserId(user.id);
-
-      const nodesData = await get<NodesApiResponse>(`/v1/users/${user.id}/graph/nodes?limit=100`);
+      const nodesData = await get<NodesApiResponse>(`/v1/projects/${projectId}/graph/nodes?limit=100`);
       const nodes: GraphNodeData[] = nodesData.data?.items ?? [];
       if (nodes.length === 0) { setGraphData({ nodes: [], edges: [] }); setLoading(false); return; }
 
@@ -59,7 +52,7 @@ export default function GraphExplorerPage() {
         const batch = nodes.slice(i, i + 5);
         const batchResults = await Promise.allSettled(
           batch.map((node) =>
-            get<EdgesApiResponse>(`/v1/users/${user.id}/graph/edges?subject_id=${node.id}&limit=50`)
+            get<EdgesApiResponse>(`/v1/projects/${projectId}/graph/edges?subject_id=${node.id}&limit=50`)
               .then((d) => d.data?.items ?? []),
           ),
         );
@@ -78,16 +71,26 @@ export default function GraphExplorerPage() {
       setGraphData({ nodes, edges: allEdges });
     } catch { setHasError(true); }
     finally { setLoading(false); }
-  }, []);
+  }, [projectId]);
 
-  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { if (projectId) loadData(); }, [projectId, loadData]);
+
+  if (!projectId) {
+    return (
+      <RequireAuth>
+        <div className="space-y-6">
+          <PageHeader title="Graph Explorer" description="Select a project to explore the knowledge graph" />
+        </div>
+      </RequireAuth>
+    );
+  }
 
   return (
     <RequireAuth>
       <div className="space-y-6">
         <PageHeader
           title="Graph Explorer"
-          description={"Explore entities and relationships in your knowledge graph" + (userName ? ` · ${userName}` : "")}
+          description={`Explore entities and relationships in your knowledge graph${project ? ` · ${project.name}` : ""}`}
           actions={
             <Button variant="secondary" size="sm" onClick={loadData} loading={loading} icon={<RotateCcw size={14} />}>
               Refresh
@@ -101,8 +104,7 @@ export default function GraphExplorerPage() {
           loading={loading}
           error={hasError ? "Failed to load graph" : null}
           onRetry={loadData}
-          userName={userName}
-          apiConfig={{ baseUrl: API_BASE, userId, headers: authHeaders() }}
+          apiConfig={{ baseUrl: API_BASE, projectId, headers: authHeaders() }}
           showFilter showControls showLegend
         />
       </div>

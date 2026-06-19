@@ -1,9 +1,10 @@
 "use client";
-import { RequireAuth } from "../../require-auth";
+import { RequireAuth } from "../../../../require-auth";
 
 import { useEffect, useState } from "react";
-import { Shield, AlertCircle, Users as UsersIcon } from "lucide-react";
+import { Shield, Users as UsersIcon } from "lucide-react";
 import { get, ApiError, extractList } from "@/lib/api-client";
+import { useProject } from "@/stores/project-context";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ErrorState } from "@/components/shared/error-state";
@@ -13,32 +14,41 @@ interface Community {
 }
 
 export default function CommunitiesPage() {
+  const { project } = useProject();
+  const projectId = project?.id;
+
   const [data, setData] = useState<Community[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!projectId) return;
     async function fetchCommunities() {
       setLoading(true); setError(null);
       try {
-        // First get a user
-        const userData = await get<{ data: { id: string }[] }>("/v1/users?limit=1");
-        const users = extractList<{ id: string }>(userData);
-        const userId = users[0]?.id;
-        if (!userId) throw new Error("No user available");
-        const json = await get<{ data: Community[] }>(`/v1/users/${userId}/graph/communities`);
+        const json = await get<{ data: Community[] }>(`/v1/projects/${projectId}/graph/communities`);
         setData(json.data ?? []);
       } catch (err) {
         setError(err instanceof ApiError ? err.message : "Failed to load communities");
       } finally { setLoading(false); }
     }
     fetchCommunities();
-  }, []);
+  }, [projectId]);
+
+  if (!projectId) {
+    return (
+      <RequireAuth>
+        <div className="space-y-6">
+          <PageHeader title="Communities" description="Select a project to view communities" />
+        </div>
+      </RequireAuth>
+    );
+  }
 
   return (
     <RequireAuth>
     <div className="space-y-6">
-      <PageHeader title="Communities" description="Community clusters from Label Propagation" />
+      <PageHeader title="Communities" description={`Community clusters from Label Propagation${project ? ` · ${project.name}` : ""}`} />
 
       {error && <ErrorState message={error} />}
 
