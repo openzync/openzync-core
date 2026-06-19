@@ -1,5 +1,5 @@
 "use client";
-import { RequireAuth } from "../../require-auth";
+import { RequireAuth } from "../../../../require-auth";
 
 import { useEffect, useState, useCallback } from "react";
 import {
@@ -15,6 +15,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { get, post, del, ApiError } from "@/lib/api-client";
 import { timeAgo, formatDate, copyToClipboard } from "@/lib/utils";
+import { useProject } from "@/stores/project-context";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ErrorState } from "@/components/shared/error-state";
@@ -29,6 +30,7 @@ interface ApiKey {
   id: string;
   name: string;
   prefix: string;
+  project_id: string;
   scopes: string[];
   is_revoked: boolean;
   last_used_at: string | null;
@@ -39,13 +41,15 @@ interface ApiKeyCreateResponse {
   id: string;
   name: string;
   prefix: string;
+  project_id: string;
   raw_key: string;
   message: string;
 }
 
 // ─── Page ──────────────────────────────────────────────────────────────────────
 
-export default function ApiKeysPage() {
+export default function ProjectApiKeysPage() {
+  const { project, loading: projectLoading } = useProject();
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,27 +69,35 @@ export default function ApiKeysPage() {
   // ── Fetch ──────────────────────────────────────────────────────────────────
 
   const fetchKeys = useCallback(async () => {
+    if (!project?.id) return;
     setLoading(true);
     setError(null);
     try {
-      const data = await get<{ data: ApiKey[] }>("/v1/admin/api-keys");
+      const data = await get<{ data: ApiKey[] }>(
+        `/v1/projects/${project.id}/api-keys`
+      );
       setKeys(data.data ?? []);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to load API keys");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [project?.id]);
 
-  useEffect(() => { fetchKeys(); }, [fetchKeys]);
+  useEffect(() => {
+    if (project?.id) fetchKeys();
+  }, [project?.id, fetchKeys]);
 
   // ── Create key ─────────────────────────────────────────────────────────────
 
   const handleCreate = async () => {
-    if (!newName.trim()) return;
+    if (!newName.trim() || !project?.id) return;
     setCreating(true);
     try {
-      const result = await post<ApiKeyCreateResponse>("/v1/admin/api-keys", { name: newName.trim() });
+      const result = await post<ApiKeyCreateResponse>(
+        `/v1/projects/${project.id}/api-keys`,
+        { name: newName.trim() }
+      );
       setCreatedKey(result);
       toast.success("API key created");
     } catch (err) {
@@ -109,10 +121,10 @@ export default function ApiKeysPage() {
   // ── Revoke key ─────────────────────────────────────────────────────────────
 
   const handleRevoke = async () => {
-    if (!revokeTarget) return;
+    if (!revokeTarget || !project?.id) return;
     setRevoking(true);
     try {
-      await del(`/v1/admin/api-keys/${revokeTarget.id}`);
+      await del(`/v1/projects/${project.id}/api-keys/${revokeTarget.id}`);
       setRevokeTarget(null);
       toast.success("API key revoked");
       fetchKeys();
@@ -143,7 +155,11 @@ export default function ApiKeysPage() {
     <div className="space-y-6">
       <PageHeader
         title="API Keys"
-        description="Manage API keys for programmatic access"
+        description={
+          project
+            ? `Manage API keys for programmatic access to ${project.name}`
+            : "Manage API keys for programmatic access"
+        }
         actions={
           <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setShowCreate(true)}>
             Create Key
@@ -151,90 +167,99 @@ export default function ApiKeysPage() {
         }
       />
 
+      {/* Loading state (project not yet loaded) */}
+      {projectLoading && (
+        <div className="card-base overflow-hidden">
+          <TableSkeleton rows={4} cols={7} colWidths={["w-32", "w-20", "w-28", "w-20", "w-24", "w-16", "w-16"]} />
+        </div>
+      )}
+
       {/* Error */}
       {error && <ErrorState message={error} onRetry={fetchKeys} />}
 
       {/* Table */}
-      <div className="card-base overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="bg-surface-800">
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-surface-400">Name</th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-surface-400">Prefix</th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-surface-400">Scopes</th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-surface-400">Last Used</th>
-                <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-surface-400">Created</th>
-                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-surface-400">Status</th>
-                <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-surface-400 w-20">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-surface-800">
-              {loading ? (
-                <TableSkeleton rows={4} cols={7} colWidths={["w-32", "w-20", "w-28", "w-20", "w-24", "w-16", "w-16"]} />
-              ) : keys.length === 0 ? (
-                <tr>
-                  <td colSpan={7}>
-                    <EmptyState
-                      icon={Key}
-                      title="No API keys yet"
-                      description="Create your first API key to get started"
-                      action={<Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setShowCreate(true)}>Create Key</Button>}
-                    />
-                  </td>
+      {!projectLoading && (
+        <div className="card-base overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-surface-800">
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-surface-400">Name</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-surface-400">Prefix</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-surface-400">Scopes</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-surface-400">Last Used</th>
+                  <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wider text-surface-400">Created</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-surface-400">Status</th>
+                  <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wider text-surface-400 w-20">Actions</th>
                 </tr>
-              ) : (
-                keys.map((key, idx) => (
-                  <tr
-                    key={key.id}
-                    className={cn("transition-colors hover:bg-surface-800/50", idx % 2 === 0 ? "bg-surface-950/50" : "")}
-                  >
-                    <td className="px-4 py-3">
-                      <span className="text-surface-200 font-medium">{key.name}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <code className="text-xs bg-surface-800 text-surface-300 px-1.5 py-0.5 rounded font-mono">{key.prefix}...</code>
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1">
-                        {key.scopes.length === 0 ? (
-                          <span className="text-surface-500 text-xs">—</span>
-                        ) : (
-                          key.scopes.map((scope) => (
-                            <Badge key={scope} variant="info" size="sm">{scope}</Badge>
-                          ))
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-surface-400 text-xs">{timeAgo(key.last_used_at)}</span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="text-surface-400 text-xs">{formatDate(key.created_at)}</span>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <Badge variant={key.is_revoked ? "error" : "success"} size="sm">
-                        {key.is_revoked ? "Revoked" : "Active"}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      {!key.is_revoked && (
-                        <button
-                          onClick={() => setRevokeTarget(key)}
-                          className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-error"
-                          title="Revoke key"
-                        >
-                          <Ban size={14} />
-                        </button>
-                      )}
+              </thead>
+              <tbody className="divide-y divide-surface-800">
+                {loading ? (
+                  <TableSkeleton rows={4} cols={7} colWidths={["w-32", "w-20", "w-28", "w-20", "w-24", "w-16", "w-16"]} />
+                ) : keys.length === 0 ? (
+                  <tr>
+                    <td colSpan={7}>
+                      <EmptyState
+                        icon={Key}
+                        title="No API keys yet"
+                        description="Create an API key to enable programmatic access to this project"
+                        action={<Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setShowCreate(true)}>Create Key</Button>}
+                      />
                     </td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  keys.map((key, idx) => (
+                    <tr
+                      key={key.id}
+                      className={cn("transition-colors hover:bg-surface-800/50", idx % 2 === 0 ? "bg-surface-950/50" : "")}
+                    >
+                      <td className="px-4 py-3">
+                        <span className="text-surface-200 font-medium">{key.name}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <code className="text-xs bg-surface-800 text-surface-300 px-1.5 py-0.5 rounded font-mono">{key.prefix}...</code>
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-wrap gap-1">
+                          {key.scopes.length === 0 ? (
+                            <span className="text-surface-500 text-xs">—</span>
+                          ) : (
+                            key.scopes.map((scope) => (
+                              <Badge key={scope} variant="info" size="sm">{scope}</Badge>
+                            ))
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-surface-400 text-xs">{timeAgo(key.last_used_at)}</span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <span className="text-surface-400 text-xs">{formatDate(key.created_at)}</span>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <Badge variant={key.is_revoked ? "error" : "success"} size="sm">
+                          {key.is_revoked ? "Revoked" : "Active"}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {!key.is_revoked && (
+                          <button
+                            onClick={() => setRevokeTarget(key)}
+                            className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-error"
+                            title="Revoke key"
+                          >
+                            <Ban size={14} />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* ── Create Dialog ──────────────────────────────────────────────────────── */}
       {showCreate && (

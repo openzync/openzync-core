@@ -27,14 +27,13 @@ class ApiKeyRepository:
         include_revoked: bool = False,
         project_id: uuid.UUID | None = None,
     ) -> Sequence[ApiKey]:
-        """List API keys for an organization, optionally filtered by project.
+        """List API keys for an organization, filtered by project scope.
 
         Args:
             organization_id: Tenant scope.
             include_revoked: If ``True``, include revoked keys.
-            project_id: Optional project scope — when provided, only keys
-                scoped to this project (or org-wide with NULL project_id)
-                are returned.
+            project_id: When provided, only keys scoped to this exact
+                project are returned.
 
         Returns:
             All matching ApiKey records, ordered by creation date (newest first).
@@ -43,9 +42,7 @@ class ApiKeyRepository:
             ApiKey.organization_id == organization_id,
         )
         if project_id is not None:
-            query = query.where(
-                (ApiKey.project_id == project_id) | (ApiKey.project_id.is_(None))
-            )
+            query = query.where(ApiKey.project_id == project_id)
         if not include_revoked:
             query = query.where(ApiKey.is_revoked.is_(False))
         query = query.order_by(ApiKey.created_at.desc())
@@ -74,9 +71,7 @@ class ApiKeyRepository:
             ApiKey.organization_id == organization_id,
         )
         if project_id is not None:
-            query = query.where(
-                (ApiKey.project_id == project_id) | (ApiKey.project_id.is_(None))
-            )
+            query = query.where(ApiKey.project_id == project_id)
         result = await self._db.execute(query)
         return result.scalar_one_or_none()
 
@@ -122,23 +117,29 @@ class ApiKeyRepository:
         return api_key
 
     async def revoke(
-        self, organization_id: uuid.UUID, key_id: uuid.UUID
+        self,
+        organization_id: uuid.UUID,
+        key_id: uuid.UUID,
+        project_id: uuid.UUID | None = None,
     ) -> ApiKey | None:
-        """Revoke an API key (soft delete).
+        """Revoke an API key (soft delete), scoped to project.
 
         Args:
             organization_id: Tenant scope.
             key_id: The API key UUID to revoke.
+            project_id: Optional project scope for additional access
+                control filtering.
 
         Returns:
             The revoked ApiKey, or ``None`` if not found.
         """
-        result = await self._db.execute(
-            select(ApiKey).where(
-                ApiKey.id == key_id,
-                ApiKey.organization_id == organization_id,
-            )
+        query = select(ApiKey).where(
+            ApiKey.id == key_id,
+            ApiKey.organization_id == organization_id,
         )
+        if project_id is not None:
+            query = query.where(ApiKey.project_id == project_id)
+        result = await self._db.execute(query)
         api_key = result.scalar_one_or_none()
         if api_key is None:
             return None

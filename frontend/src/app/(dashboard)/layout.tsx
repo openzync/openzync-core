@@ -246,6 +246,7 @@ function Sidebar({
             <div className="space-y-0.5">
               {[
                 { label: "Members", href: `/projects/${projectId}/members`, icon: <Users size={18} /> },
+                { label: "API Keys", href: `/projects/${projectId}/settings/api-keys`, icon: <Key size={18} /> },
                 { label: "Settings", href: `/projects/${projectId}/settings`, icon: <Settings size={18} /> },
               ].map((item) => {
                 const active = isActive(item.href);
@@ -285,7 +286,6 @@ function Sidebar({
             <div className="space-y-0.5">
               {[
                 { label: "Users", href: "/users", icon: <Users size={18} /> },
-                { label: "API Keys", href: "/settings/api-keys", icon: <Key size={18} /> },
                 { label: "Extraction Schemas", href: "/settings/schemas", icon: <FileJson size={18} /> },
                 { label: "Classifications", href: "/settings/classifications", icon: <Tags size={18} /> },
                 { label: "Extractions", href: "/settings/extractions", icon: <Database size={18} /> },
@@ -458,6 +458,7 @@ export default function DashboardLayout({
         if (pathname.endsWith("/graph")) return "Graph Explorer";
         if (pathname.endsWith("/members")) return "Members";
         if (pathname.endsWith("/settings")) return "Project Settings";
+        if (pathname.includes("/settings/api-keys")) return "API Keys";
         if (pathname.match(/\/sessions\/[^/]+$/)) return "Session";
         if (pathname.includes("/messages")) return "Messages";
         if (pathname.includes("/facts")) return "Facts";
@@ -503,6 +504,7 @@ export default function DashboardLayout({
       if (pathname.endsWith("/graph")) return "Graph Explorer";
       if (pathname.endsWith("/members")) return "Members";
       if (pathname.endsWith("/settings")) return "Project Settings";
+      if (pathname.includes("/settings/api-keys")) return "API Keys";
       if (pathname.match(/\/sessions\/[^/]+$/)) return "Session";
       if (pathname.includes("/messages")) return "Messages";
       if (pathname.includes("/facts")) return "Facts";

@@ -1,7 +1,8 @@
-"""Pydantic schemas for API key management.
+"""Pydantic schemas for project-scoped API key management.
 
-Used by the admin dashboard for listing, creating, and revoking API keys.
-The raw key value is returned exactly once at creation time.
+Used by project settings for listing, creating, and revoking API keys
+scoped to a specific project.  The raw key value is returned exactly
+once at creation time.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class CreateApiKeyRequest(BaseModel):
-    """Request body for ``POST /v1/admin/api-keys``."""
+    """Request body for ``POST /v1/projects/{project_id}/api-keys``."""
 
     name: str = Field(
         ...,
@@ -34,6 +35,9 @@ class ApiKeyResponse(BaseModel):
     id: UUID = Field(..., description="API key UUID.")
     name: str = Field(..., description="Human-readable label.")
     prefix: str = Field(..., description="Key prefix (e.g. ``mg_live_``).")
+    project_id: UUID = Field(
+        ..., description="Project UUID this key is scoped to."
+    )
     scopes: list[str] = Field(
         ..., description="Permission scopes.", examples=[["read", "write"]]
     )
@@ -73,7 +77,7 @@ class ApiKeyCreatedResponse(ApiKeyResponse):
 
 
 class ApiKeyListResponse(BaseModel):
-    """Paginated response for ``GET /v1/admin/api-keys``."""
+    """Paginated response for ``GET /v1/projects/{project_id}/api-keys``."""
 
     data: list[ApiKeyResponse] = Field(
         ..., description="List of API keys."

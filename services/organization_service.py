@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.api_key import ApiKey
 from models.organization import Organization
+from models.project import Project
 from schemas.organizations import CreateOrgRequest, CreateOrgResponse
 from utils.crypto import compute_lookup_hash, generate_api_key, hash_api_key
 
@@ -33,13 +34,14 @@ class OrganizationService:
     async def create_organization(
         self, payload: CreateOrgRequest
     ) -> CreateOrgResponse:
-        """Create a new organization and generate an admin API key.
+        """Create a new organization with a default project and admin API key.
 
         Performs a single atomic transaction:
         1. Creates an ``Organization`` record.
-        2. Generates a ``mg_live_`` API key with ``read``, ``write``, and
-           ``admin`` scopes.
-        3. Returns the raw API key — this is the **only** time it is visible.
+        2. Creates a default project scoped to the organization.
+        3. Generates a ``mg_live_`` API key scoped to the default project.
+        4. Seeds default prompt templates.
+        5. Returns the raw API key — this is the **only** time it is visible.
 
         Args:
             payload: Organization name and optional plan.
@@ -53,13 +55,23 @@ class OrganizationService:
         await self._db.flush()
         await self._db.refresh(org)
 
-        # ── 2. Generate API key ──────────────────────────────────────────
+        # ── 2. Create default project ────────────────────────────────────
+        project = Project(
+            organization_id=org.id,
+            name=f"{payload.name} - Default",
+        )
+        self._db.add(project)
+        await self._db.flush()
+        await self._db.refresh(project)
+
+        # ── 3. Generate API key scoped to the default project ────────────
         raw_key = generate_api_key(prefix="mg_live_")
         key_hash, salt = hash_api_key(raw_key)
         lookup_hash = compute_lookup_hash(raw_key)
 
         api_key = ApiKey(
             organization_id=org.id,
+            project_id=project.id,
             key_hash=key_hash,
             lookup_hash=lookup_hash,
             salt=salt,
@@ -71,7 +83,7 @@ class OrganizationService:
         self._db.add(api_key)
         await self._db.flush()
 
-        # ── 3. Seed default prompt templates for the new org ─────────────
+        # ── 4. Seed default prompt templates for the new org ─────────────
         from repositories.prompt_template_repository import PromptTemplateRepository
 
         seeded = await PromptTemplateRepository(self._db).seed_default_prompts(org.id)
@@ -82,13 +94,14 @@ class OrganizationService:
                 count=seeded,
             )
 
-        # ── 4. Commit everything atomically ──────────────────────────────
+        # ── 5. Commit everything atomically ──────────────────────────────
         await self._db.commit()
 
         logger.info(
             "organization.created",
             org_id=str(org.id),
             org_name=org.name,
+            project_id=str(project.id),
             org_plan=payload.plan,
         )
 

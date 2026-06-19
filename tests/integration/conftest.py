@@ -100,6 +100,20 @@ async def engine():
                     "VALUES ('00000000-0000-0000-0000-000000000001', 'Bootstrap Org', 'free')"
                 )
             )
+        # Seed a project for tests that need project-scoped entities
+        result = await conn.execute(
+            text(
+                "SELECT 1 FROM projects WHERE id = '00000000-0000-0000-0000-000000000002'"
+            )
+        )
+        if not result.scalar():
+            await conn.execute(
+                text(
+                    "INSERT INTO projects (id, organization_id, name) "
+                    "VALUES ('00000000-0000-0000-0000-000000000002', "
+                    "'00000000-0000-0000-0000-000000000001', 'Integration Test Project')"
+                )
+            )
         await conn.commit()
 
     yield async_engine

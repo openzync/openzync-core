@@ -23,11 +23,15 @@ from models.base import Base, TimestampMixin
 
 
 class ApiKey(TimestampMixin, Base):
-    """An API key credential scoped to an organization.
+    """An API key credential scoped to a project.
+
+    Every API key belongs to exactly one project — there are no org-wide
+    keys.  When the parent project is deleted, its keys are cascade-deleted.
 
     Attributes:
         id: UUID primary key.
         organization_id: Foreign key to the owning organization.
+        project_id: Foreign key to the owning project (NOT NULL).
         key_hash: SHA-256 (or bcrypt) hash of the full API key. Unique.
         prefix: First few characters for identification — one of
             ``mg_live_`` or ``mg_test_``.
@@ -48,13 +52,12 @@ class ApiKey(TimestampMixin, Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
-        # index defined explicitly in __table_args__ below
     )
-    project_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("projects.id", ondelete="SET NULL"),
-        nullable=True,
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
         index=True,
-        comment="Optional project scope — NULL means org-wide access.",
+        comment="Project scope — every key belongs to exactly one project.",
     )
     lookup_hash: Mapped[str] = mapped_column(
         Text,
