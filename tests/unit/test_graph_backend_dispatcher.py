@@ -201,6 +201,73 @@ class TestGraphBackendDispatcher:
 
         mock_cls.assert_called_once_with(db=mock_db)
 
+    # ── create_all_backends ─────────────────────────────────────────────────────
+
+    def test_create_all_backends_empty(self, mock_db: MagicMock) -> None:
+        """Empty registry → empty list."""
+        disp = GraphBackendDispatcher()
+        backends = disp.create_all_backends(mock_db)
+        assert backends == []
+
+    def test_create_all_backends_single(
+        self, dispatcher: GraphBackendDispatcher, mock_db: MagicMock
+    ) -> None:
+        """One registered backend → list with one instance."""
+        backends = dispatcher.create_all_backends(mock_db)
+        assert len(backends) == 1
+
+    def test_create_all_backends_multiple(self, mock_db: MagicMock) -> None:
+        """Multiple registered backends → each gets an instance."""
+        disp = GraphBackendDispatcher()
+        cls_a = MagicMock()
+        cls_b = MagicMock()
+        disp.register("backend_a", cls_a)
+        disp.register("backend_b", cls_b)
+
+        backends = disp.create_all_backends(mock_db)
+
+        assert len(backends) == 2
+        cls_a.assert_called_once_with(db=mock_db)
+        cls_b.assert_called_once_with(db=mock_db)
+
+    def test_create_all_backends_passes_depth_to_postgres(
+        self, mock_db: MagicMock
+    ) -> None:
+        """Postgres backend receives max_traversal_depth from org_config."""
+        disp = GraphBackendDispatcher()
+        mock_cls = MagicMock()
+        disp.register("postgres", mock_cls)
+
+        cfg = MagicMock(graph_backend="postgres")
+        cfg.graph_max_traversal_depth = 4
+        backends = disp.create_all_backends(mock_db, cfg)
+
+        assert len(backends) == 1
+        mock_cls.assert_called_once_with(db=mock_db, max_traversal_depth=4)
+
+    def test_create_all_backends_without_org_config(
+        self, mock_db: MagicMock
+    ) -> None:
+        """No org_config → backends created without extra kwargs."""
+        disp = GraphBackendDispatcher()
+        mock_cls = MagicMock()
+        disp.register("postgres", mock_cls)
+
+        backends = disp.create_all_backends(mock_db)
+        assert len(backends) == 1
+        mock_cls.assert_called_once_with(db=mock_db)
+
+    def test_create_all_backends_returns_all_registered(
+        self, mock_db: MagicMock
+    ) -> None:
+        """create_all_backends includes every registered name."""
+        disp = GraphBackendDispatcher()
+        disp.register("alpha", MagicMock())
+        disp.register("beta", MagicMock())
+
+        backends = disp.create_all_backends(mock_db)
+        assert len(backends) == 2
+
     # ── init_dispatcher factory ─────────────────────────────────────────────────
 
     def test_init_dispatcher(self) -> None:

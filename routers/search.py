@@ -102,9 +102,9 @@ async def search_memory(
 
     # ── Run hybrid search ───────────────────────────────────────────────
     dispatcher = request.app.state.graph_backend_dispatcher
-    graph_backend = dispatcher.resolve_and_create(org_config, db)
+    graph_backends = dispatcher.create_all_backends(db, org_config)
     retriever = HybridRetriever(
-        db, org_id, graph_backend=graph_backend, org_config=org_config
+        db, org_id, graph_backends=graph_backends, org_config=org_config
     )
     results = await retriever.hybrid_search(
         query=query,

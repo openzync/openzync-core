@@ -850,6 +850,119 @@ class PostgresGraphBackend(GraphBackend):
                 detail={"org_id": str(org_id), "query": query},
             ) from exc
 
+    async def retrieve_graph(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        query: str,
+        *,
+        match_limit: int = 5,
+        max_depth: int = 2,
+        max_results: int = 50,
+    ) -> list[dict]:
+        """Search entities matching query, then BFS-traverse outward.
+
+        Combines entity text search with graph traversal into a single
+        call so the caller (HybridRetriever) can run multiple backends
+        in parallel and merge results.
+
+        Steps:
+          1. Search entities whose name or summary matches the query.
+          2. For each matched entity, BFS-traverse to depth ``max_depth``.
+          3. Deduplicate by entity id, shape results with distance key.
+          4. Sort by distance ascending and limit.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            query: Free-text search string.
+            match_limit: Max entities to match before traversal.
+            max_depth: Max BFS depth from each matched entity.
+            max_results: Max total results to return.
+
+        Returns:
+            Entity dicts with id, name, type, summary, and distance keys.
+            Distance 0 = directly matched, 1+ = reached via traversal.
+        """
+        try:
+            # Step 1: Search for entities matching the query
+            matched_entities = await self.search_entities(
+                org_id=org_id,
+                project_id=project_id,
+                query=query,
+                limit=match_limit,
+            )
+
+            if not matched_entities:
+                return []
+
+            # Step 2: BFS traverse from each matched entity
+            seen: set[str] = set()
+            results: list[dict] = []
+
+            for entity in matched_entities:
+                entity_id_str = entity.get("id", "")
+                if not entity_id_str or entity_id_str in seen:
+                    continue
+                seen.add(entity_id_str)
+
+                # Add the matched entity itself with distance 0
+                results.append({
+                    "id": entity_id_str,
+                    "name": entity.get("name", ""),
+                    "type": entity.get("type", ""),
+                    "summary": entity.get("summary", ""),
+                    "distance": 0,
+                })
+
+                # BFS up to max_depth
+                try:
+                    entity_id = UUID(entity_id_str)
+                except (ValueError, TypeError):
+                    continue
+
+                try:
+                    related = await self.traverse(
+                        org_id=org_id,
+                        project_id=project_id,
+                        start_node_id=entity_id,
+                        max_depth=max_depth,
+                    )
+                except Exception:
+                    logger.warning(
+                        "pg_graph.retrieve_graph.traverse_failed",
+                        extra={
+                            "entity_id": entity_id_str,
+                            "query": query,
+                        },
+                    )
+                    continue
+
+                for node in related:
+                    node_id = node.get("id", "")
+                    depth = node.get("depth", 1)
+                    if node_id and node_id not in seen:
+                        seen.add(node_id)
+                        results.append({
+                            "id": node_id,
+                            "name": node.get("name", ""),
+                            "type": node.get("type", ""),
+                            "summary": node.get("summary", ""),
+                            "distance": depth,
+                        })
+
+            # Sort by distance (closest first), limit to max_results
+            results.sort(key=lambda x: x.get("distance", 99))
+            return results[:max_results]
+
+        except Exception:
+            logger.warning(
+                "pg_graph.retrieve_graph_failed",
+                extra={"query": query},
+                exc_info=True,
+            )
+            return []
+
     # ── Entity Listing ────────────────────────────────────────────────────────
 
     async def list_entities(

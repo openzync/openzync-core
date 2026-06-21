@@ -51,14 +51,14 @@ class ContextService:
         db: object,
         org_id: UUID,
         redis: object | None = None,
-        graph_backend: object | None = None,
+        graph_backends: list | None = None,
         org_config: OrgConfigBase | None = None,
 
 
 
     ) -> None:
         self._retriever = HybridRetriever(
-            db, org_id, redis, graph_backend=graph_backend, org_config=org_config,
+            db, org_id, redis, graph_backends=graph_backends, org_config=org_config,
         )
         self._cache = (
             CacheService(redis, default_ttl=org_config.context_cache_ttl if org_config else None)

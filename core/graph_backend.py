@@ -144,6 +144,45 @@ class GraphBackendDispatcher:
         )
         return backend
 
+    def create_all_backends(
+        self,
+        db: AsyncSession,
+        org_config: OrgConfigBase | None = None,
+    ) -> list[GraphBackend]:
+        """Create one instance of every registered backend.
+
+        This is the multi-backend equivalent of ``resolve_and_create``.
+        Instead of picking one backend from the org config, it creates
+        **all** registered backends.  Each backend receives the same
+        ``db`` session and any backend-specific kwargs extracted from
+        ``org_config``.
+
+        Callers (e.g. ``HybridRetriever``) run these backends in parallel
+        and merge results.  An empty list is returned when no backends
+        are registered (graceful degradation).
+
+        Args:
+            db: A request-scoped ``AsyncSession``.
+            org_config: Optional per-org config for backend-specific kwargs
+                such as ``graph_max_traversal_depth``.
+
+        Returns:
+            A list of initialised ``GraphBackend`` instances (may be empty).
+        """
+        instances: list[GraphBackend] = []
+        for backend_name, cls in self._registry.items():
+            kwargs: dict = {}
+            if backend_name == "postgres" and org_config is not None:
+                if org_config.graph_max_traversal_depth is not None:
+                    kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
+            instances.append(cls(db=db, **kwargs))
+
+        logger.info(
+            "graph_backend.all_created",
+            extra={"count": len(instances), "backends": list(self._registry.keys())},
+        )
+        return instances
+
     # ── Resolution only (no instance) ────────────────────────────────────────────
 
     def resolve_backend_name(self, org_config: OrgConfigBase | None) -> str | None:

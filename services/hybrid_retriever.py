@@ -14,6 +14,7 @@ top-N by merged score are returned.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -55,13 +56,13 @@ class HybridRetriever:
         db: AsyncSession,
         org_id: UUID,
         redis: object | None = None,
-        graph_backend: GraphBackend | None = None,
+        graph_backends: list[GraphBackend] | None = None,
         org_config: OrgConfigBase | None = None,
     ) -> None:
         self._db = db
         self._org_id = org_id
         self._redis = redis
-        self._graph_backend = graph_backend
+        self._graph_backends = graph_backends or []
         self._org_config = org_config
 
     # ── Public API ──────────────────────────────────────────────────────────────
@@ -485,15 +486,15 @@ class HybridRetriever:
         query: str,
         project_id: UUID,
     ) -> list[dict[str, Any]]:
-        """BFS traversal from entities matching the query text.
+        """BFS traversal from entities across all configured graph backends.
 
-        Searches for entity nodes whose name or summary matches the query,
-        then performs a breadth-first traversal to find related entities.
-        This provides graph-aware context that pure vector/BM25 search
-        would miss (e.g., indirect relationships).
+        Runs ``retrieve_graph`` on every registered backend in parallel,
+        then merges results deduplicating by entity ``id``.  Gracefully
+        degrades to an empty list when no backends are available.
 
-        Uses the configured ``GraphBackend`` when available.  Gracefully
-        degrades to an empty list when the graph backend is not configured.
+        Each backend independently searches for entities matching the
+        query text, BFS-traverses from those entities, and returns shaped
+        results.  Merging favours lower ``distance`` (closest match first).
 
         Args:
             query: Natural-language query for entity matching.
@@ -501,96 +502,53 @@ class HybridRetriever:
 
         Returns:
             A list of entity dicts with ``id``, ``name``, ``type``,
-            ``summary``, and ``distance`` keys.
+            ``summary``, and ``distance`` keys, deduplicated and sorted
+            by distance ascending.
         """
-        if self._graph_backend is None:
+        if not self._graph_backends:
             logger.debug(
                 "hybrid_retriever.graph_bfs_unavailable",
                 extra={
                     "query": query,
-                    "hint": (
-                        "Graph BFS requires a configured graph backend. "
-                        "Set MG_GRAPH_BACKEND=postgres to use the native backend."
-                    ),
+                    "hint": "No graph backends configured for this project.",
                 },
             )
             return []
 
         try:
-            # Step 1: Search for entities matching the query
-            matched_entities = await self._graph_backend.search_entities(
-                org_id=self._org_id,
-                project_id=project_id,
-                query=query,
-                limit=5,
-            )
-
-            if not matched_entities:
-                return []
-
-            # Step 2: BFS traverse from each matched entity
-            seen: set[str] = set()
-            results: list[dict[str, Any]] = []
-
-            for entity in matched_entities:
-                entity_id_str = entity.get("id", "")
-                if not entity_id_str or entity_id_str in seen:
-                    continue
-                seen.add(entity_id_str)
-
-                # Add the matched entity itself with distance 0
-                results.append(
-                    {
-                        "id": entity_id_str,
-                        "name": entity.get("name", ""),
-                        "type": entity.get("type", ""),
-                        "summary": entity.get("summary", ""),
-                        "distance": 0,
-                    }
-                )
-
-                # BFS up to depth 2
-                try:
-                    entity_id = UUID(entity_id_str)
-                except (ValueError, TypeError):
-                    continue
-
-                try:
-                    related = await self._graph_backend.traverse(
+            # Run each backend's retrieve_graph in parallel
+            results = await asyncio.gather(
+                *[
+                    backend.retrieve_graph(
                         org_id=self._org_id,
                         project_id=project_id,
-                        start_node_id=entity_id,
-                        max_depth=2,
+                        query=query,
                     )
-                except Exception:
+                    for backend in self._graph_backends
+                ],
+                return_exceptions=True,
+            )
+
+            # Merge: deduplicate by id, keep first occurrence (lower distance wins)
+            seen: set[str] = set()
+            merged: list[dict[str, Any]] = []
+            for r in results:
+                if isinstance(r, Exception):
                     logger.warning(
-                        "hybrid_retriever.graph_bfs_traverse_failed",
-                        extra={
-                            "entity_id": entity_id_str,
-                            "query": query,
-                        },
-                        exc_info=True,
+                        "hybrid_retriever.backend_failed",
+                        exc_info=r,
+                        extra={"query": query},
                     )
                     continue
-
-                for node in related:
-                    node_id = node.get("id", "")
-                    depth = node.get("depth", 1)
-                    if node_id and node_id not in seen:
-                        seen.add(node_id)
-                        results.append(
-                            {
-                                "id": node_id,
-                                "name": node.get("name", ""),
-                                "type": node.get("type", ""),
-                                "summary": node.get("summary", ""),
-                                "distance": depth,
-                            }
-                        )
+                for item in r:
+                    item_id = item.get("id", "")
+                    if item_id and item_id not in seen:
+                        seen.add(item_id)
+                        merged.append(item)
 
             # Sort by distance (closest first), limit to MAX_BFS_RESULTS
-            results.sort(key=lambda x: x.get("distance", 99))
-            return results[:MAX_BFS_RESULTS]
+            merged.sort(key=lambda x: x.get("distance", 99))
+            return merged[:MAX_BFS_RESULTS]
 
         except Exception:
             logger.warning(
