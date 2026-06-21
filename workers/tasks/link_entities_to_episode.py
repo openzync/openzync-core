@@ -14,13 +14,13 @@ from __future__ import annotations
 import structlog
 from sqlalchemy import text
 
-from workers.tasks.base import ENRICHMENT_SYNC_GRAPH, with_retry
+from workers.tasks.base import ENRICHMENT_ENTITY_LINKS, with_retry
 
 logger = structlog.get_logger()
 
 
 @with_retry(max_retries=3, base_delay_s=2.0)
-async def sync_to_graph(
+async def link_entities_to_episode(
     ctx: object,
     episode_id: str,
     org_id: str,
@@ -51,9 +51,6 @@ async def sync_to_graph(
         role: Message role (user/assistant/system/tool).
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
-    Raises:
-        RuntimeError: If Graphiti is required but not installed or
-            initialised.
     """
     if trace_id:
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
@@ -92,7 +89,7 @@ async def sync_to_graph(
             episode = result.scalar_one_or_none()
             if episode is None:
                 logger.warning(
-                    "sync_to_graph.episode_not_found",
+                    "link_entities_to_episode.episode_not_found",
                     episode_id=episode_id,
                     org_id=org_id,
                     project_id=project_id,
@@ -166,7 +163,7 @@ async def sync_to_graph(
                 .where(Episode.id == episode_id)
                 .values(
                     enrichment_status=Episode.enrichment_status.op("|")(
-                        ENRICHMENT_SYNC_GRAPH
+                        ENRICHMENT_ENTITY_LINKS
                     ),
                 )
             )
@@ -191,17 +188,17 @@ async def sync_to_graph(
                             # Prevent re-enqueueing within 1 hour per org
                             await arq_redis.set(dedup_key, "1", ex=3600)
                             logger.info(
-                                "sync_to_graph.scheduled_community_detection",
+                                "link_entities_to_episode.scheduled_community_detection",
                                 org_id=org_id,
                             )
                 except Exception as exc:
                     logger.warning(
-                        "sync_to_graph.community_enqueue_failed",
+                        "link_entities_to_episode.community_enqueue_failed",
                         extra={"org_id": org_id, "error": str(exc)},
                     )
 
             logger.info(
-                "sync_to_graph.completed",
+                "link_entities_to_episode.completed",
                 episode_id=episode_id,
                 org_id=org_id,
                 project_id=project_id,

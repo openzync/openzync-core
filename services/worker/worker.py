@@ -105,7 +105,7 @@ from workers.tasks.extract_structured import extract_structured
 from services.worker.tasks.audit_log import write_audit_log
 from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
 from workers.tasks.summarise_community import summarise_community
-from workers.tasks.sync_to_graph import sync_to_graph
+from workers.tasks.link_entities_to_episode import link_entities_to_episode
 from services.worker.tasks.deliver_webhook import deliver_webhook
 from workers.tasks.generate_user_summary import generate_user_summary
 
@@ -120,7 +120,7 @@ HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
 """Tasks assigned to the high-priority queue (real-time ingestion)."""
 
 LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
-    sync_to_graph,
+    link_entities_to_episode,
     summarise_community,
     merge_duplicate_entities,
     write_audit_log,
@@ -459,7 +459,7 @@ async def main() -> NoReturn:
 
     # ── Community detection scheduling ─────────────────────────────
     # Two modes controlled by AUTO_RUN_COMMUNITY_DETECTION:
-    #   true  → event-driven (chained after sync_to_graph, with dedup)
+    #   true  → event-driven (chained after link_entities_to_episode, with dedup)
     #   false → nightly cron at 02:00 UTC (default)
     community_cron_jobs: list[CronJob] = []
     if not settings.AUTO_RUN_COMMUNITY_DETECTION:
@@ -481,7 +481,7 @@ async def main() -> NoReturn:
     else:
         logger.info(
             "worker.cron.community_detection_enabled",
-            mode="event-driven (after sync_to_graph)",
+            mode="event-driven (after link_entities_to_episode)",
         )
 
     low_worker = create_arq_worker(

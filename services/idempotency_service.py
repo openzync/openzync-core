@@ -115,12 +115,12 @@ class IdempotencyResult:
 ENRICHMENT_ENTITIES: int = 1 << 0      # bit 0: entity extraction
 ENRICHMENT_EMBEDDING: int = 1 << 1     # bit 1: episode embedding
 ENRICHMENT_FACTS: int = 1 << 2         # bit 2: fact extraction
-ENRICHMENT_SYNC_GRAPH: int = 1 << 3    # bit 3: sync to graphiti
+ENRICHMENT_ENTITY_LINKS: int = 1 << 3    # bit 3: entity-episode linking
 ENRICHMENT_ALL: int = (
     ENRICHMENT_ENTITIES
     | ENRICHMENT_EMBEDDING
     | ENRICHMENT_FACTS
-    | ENRICHMENT_SYNC_GRAPH
+    | ENRICHMENT_ENTITY_LINKS
 )
 """Bitmask with all bits set — used to check if an episode is fully enriched."""
 

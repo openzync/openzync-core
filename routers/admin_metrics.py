@@ -193,7 +193,7 @@ async def _fetch_db_counts(
         Tuple of (EpisodeStats, GraphStats, user_count).
     """
     # Define enrichment bitmask constants (mirrors services/worker/tasks/base.py)
-    ENRICHMENT_SYNC_GRAPH = 1 << 3
+    ENRICHMENT_ENTITY_LINKS = 1 << 3
     ENRICHMENT_NONE = 0
 
     # ── Episode counts ──────────────────────────────────────────────────

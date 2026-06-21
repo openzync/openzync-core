@@ -47,14 +47,14 @@ ENRICHMENT_EMBEDDING: int = 1 << 1
 ENRICHMENT_FACTS: int = 1 << 2
 """Bit 2 — fact extraction task completed."""
 
-ENRICHMENT_SYNC_GRAPH: int = 1 << 3
-"""Bit 3 — graphiti synchronisation task completed."""
+ENRICHMENT_ENTITY_LINKS: int = 1 << 3
+"""Bit 3 — entity-episode linking task completed."""
 
 ENRICHMENT_ALL: int = (
     ENRICHMENT_ENTITIES
     | ENRICHMENT_EMBEDDING
     | ENRICHMENT_FACTS
-    | ENRICHMENT_SYNC_GRAPH
+    | ENRICHMENT_ENTITY_LINKS
 )
 """Mask with all enrichment bits set — use to check if an episode is fully enriched."""
 
@@ -77,7 +77,7 @@ def with_retry(
 
     Does **not** retry on:
     - Validation errors, bad requests (4xx except 408/429).
-    - Graphiti bad requests or other non-transient errors.
+    - Other non-transient errors.
 
     Each retry waits ``base_delay * 2^attempt`` seconds (exponential backoff).
     After exhausting ``max_retries`` the last exception is re-raised and

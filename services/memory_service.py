@@ -64,7 +64,7 @@ CONTEXT_CACHE_PATTERN = "ctx:{org_id}:{project_id}:*"
 
 ARQ_TASKS = [
     "classify_dialog",
-    "sync_to_graph",
+                    "link_entities_to_episode",
     "extract_entities",
     "embed_episode",
     "extract_structured",
@@ -152,7 +152,7 @@ class MemoryService:
         5. Build episode dicts from validated messages.
         6. PII detection & redaction (if enabled in org quotas).
         7. Batch-insert episodes into PostgreSQL.
-        8. Enqueue ARQ enrichment tasks (sync_to_graph, extract_entities,
+        8. Enqueue ARQ enrichment tasks (link_entities_to_episode, extract_entities,
            extract_facts, embed_episode).
         9. Cache idempotency key and content hash for future dedup.
         10. Invalidate context cache for this project.
@@ -594,7 +594,7 @@ class MemoryService:
         """Enqueue ARQ background tasks for episode enrichment.
 
         Tasks are enqueued on the ``high`` priority queue:
-        - ``sync_to_graph``: Populates Graphiti episodic nodes.
+        - ``link_entities_to_episode``: Links extracted entities to the episode.
         - ``extract_entities``: LLM-based entity + relationship extraction.
         - ``extract_facts``: LLM-based zero-shot fact extraction.
         - ``embed_episode``: Generates embeddings via the configured API.
@@ -647,7 +647,7 @@ class MemoryService:
                     "embed_episode", queue_name=qname, **common
                 )
                 await arq_pool.enqueue(
-                    "sync_to_graph",
+    "link_entities_to_episode",
                     queue_name=_arq_queue_name("low"),
                     **common,
                     role=role,

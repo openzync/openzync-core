@@ -18,7 +18,7 @@ from workers.tasks.base import (
     ENRICHMENT_ENTITIES,
     ENRICHMENT_FACTS,
     ENRICHMENT_STRUCTURED_EXTRACTION,
-    ENRICHMENT_SYNC_GRAPH,
+    ENRICHMENT_ENTITY_LINKS,
 )
 
 
@@ -39,9 +39,9 @@ class TestEnrichmentBitmask:
         """ENRICHMENT_FACTS must be ``1 << 2 = 4``."""
         assert ENRICHMENT_FACTS == 4
 
-    def test_sync_graph_is_bit_3(self) -> None:
-        """ENRICHMENT_SYNC_GRAPH must be ``1 << 3 = 8``."""
-        assert ENRICHMENT_SYNC_GRAPH == 8
+    def test_entity_links_is_bit_3(self) -> None:
+        """ENRICHMENT_ENTITY_LINKS must be ``1 << 3 = 8``."""
+        assert ENRICHMENT_ENTITY_LINKS == 8
 
     def test_classification_is_bit_4(self) -> None:
         """ENRICHMENT_CLASSIFICATION must be ``1 << 4 = 16``."""
@@ -60,7 +60,7 @@ class TestEnrichmentBitmask:
         will not increase the population count.
         """
         all_bits = ENRICHMENT_ENTITIES | ENRICHMENT_EMBEDDING | ENRICHMENT_FACTS
-        all_bits |= ENRICHMENT_SYNC_GRAPH | ENRICHMENT_CLASSIFICATION
+        all_bits |= ENRICHMENT_ENTITY_LINKS | ENRICHMENT_CLASSIFICATION
         all_bits |= ENRICHMENT_STRUCTURED_EXTRACTION
 
         # With 6 distinct bits the combined mask must have exactly 6 bits set
@@ -77,7 +77,7 @@ class TestEnrichmentBitmask:
         assert status & ENRICHMENT_ENTITIES != 0
         assert status & ENRICHMENT_EMBEDDING == 0
         assert status & ENRICHMENT_FACTS == 0
-        assert status & ENRICHMENT_SYNC_GRAPH == 0
+        assert status & ENRICHMENT_ENTITY_LINKS == 0
         assert status & ENRICHMENT_CLASSIFICATION == 0
         assert status & ENRICHMENT_STRUCTURED_EXTRACTION == 0
 
@@ -90,7 +90,7 @@ class TestEnrichmentBitmask:
         assert status & ENRICHMENT_EMBEDDING != 0
         assert status & ENRICHMENT_FACTS != 0
         # Ensure bits we did NOT set are still 0
-        assert status & ENRICHMENT_SYNC_GRAPH == 0
+        assert status & ENRICHMENT_ENTITY_LINKS == 0
         assert status & ENRICHMENT_CLASSIFICATION == 0
         assert status & ENRICHMENT_STRUCTURED_EXTRACTION == 0
 
@@ -100,14 +100,14 @@ class TestEnrichmentBitmask:
             ENRICHMENT_ENTITIES
             | ENRICHMENT_EMBEDDING
             | ENRICHMENT_FACTS
-            | ENRICHMENT_SYNC_GRAPH
+            | ENRICHMENT_ENTITY_LINKS
             | ENRICHMENT_CLASSIFICATION
             | ENRICHMENT_STRUCTURED_EXTRACTION
         )
         assert all_bits & ENRICHMENT_ENTITIES != 0
         assert all_bits & ENRICHMENT_EMBEDDING != 0
         assert all_bits & ENRICHMENT_FACTS != 0
-        assert all_bits & ENRICHMENT_SYNC_GRAPH != 0
+        assert all_bits & ENRICHMENT_ENTITY_LINKS != 0
         assert all_bits & ENRICHMENT_CLASSIFICATION != 0
         assert all_bits & ENRICHMENT_STRUCTURED_EXTRACTION != 0
 
@@ -137,7 +137,7 @@ class TestEnrichmentBitmask:
         assert status == 0b000111
 
         # Worker 4 completes
-        status |= ENRICHMENT_SYNC_GRAPH
+        status |= ENRICHMENT_ENTITY_LINKS
         assert status == 0b001111
 
         # Worker 5 completes
@@ -162,7 +162,7 @@ class TestEnrichmentBitmask:
         # Should NOT skip: embedding, sync_graph, classification,
         # structured_extraction are still 0
         assert status & ENRICHMENT_EMBEDDING == 0
-        assert status & ENRICHMENT_SYNC_GRAPH == 0
+        assert status & ENRICHMENT_ENTITY_LINKS == 0
         assert status & ENRICHMENT_CLASSIFICATION == 0
         assert status & ENRICHMENT_STRUCTURED_EXTRACTION == 0
 
@@ -174,7 +174,7 @@ class TestEnrichmentBitmask:
             ENRICHMENT_ENTITIES
             | ENRICHMENT_EMBEDDING
             | ENRICHMENT_FACTS
-            | ENRICHMENT_SYNC_GRAPH
+            | ENRICHMENT_ENTITY_LINKS
             | ENRICHMENT_CLASSIFICATION
             | ENRICHMENT_STRUCTURED_EXTRACTION
         )
