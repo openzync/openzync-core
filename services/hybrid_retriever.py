@@ -519,6 +519,7 @@ class HybridRetriever:
             # Step 1: Search for entities matching the query
             matched_entities = await self._graph_backend.search_entities(
                 org_id=self._org_id,
+                project_id=project_id,
                 query=query,
                 limit=5,
             )
@@ -556,6 +557,7 @@ class HybridRetriever:
                 try:
                     related = await self._graph_backend.traverse(
                         org_id=self._org_id,
+                        project_id=project_id,
                         start_node_id=entity_id,
                         max_depth=2,
                     )
