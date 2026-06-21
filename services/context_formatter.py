@@ -13,7 +13,6 @@ Provides two formatting modes:
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 

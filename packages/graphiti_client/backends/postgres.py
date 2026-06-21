@@ -14,7 +14,7 @@ Usage::
 from __future__ import annotations
 
 import base64
-import json
+import orjson
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -299,7 +299,7 @@ class PostgresGraphBackend(GraphBackend):
             updates["entity_type"] = entity_type
             update_cols.append("entity_type = :entity_type")
         if attributes is not None:
-            updates["attributes_json"] = json.dumps(attributes)
+            updates["attributes_json"] = orjson.dumps(attributes)
             update_cols.append("attributes = CAST(:attributes_json AS jsonb)")
 
         if not update_cols:
@@ -455,7 +455,7 @@ class PostgresGraphBackend(GraphBackend):
                         "source_id": str(source_id),
                         "target_id": str(target_id),
                         "rel_type": relationship_type,
-                        "properties": json.dumps(properties or {}),
+                        "properties": orjson.dumps(properties or {}),
                         "fact": "",
                         "confidence": 1.0,
                         "valid_from": valid_from.isoformat() if valid_from else None,
@@ -882,7 +882,7 @@ class PostgresGraphBackend(GraphBackend):
 
         if cursor:
             try:
-                decoded = json.loads(base64.b64decode(cursor))
+                decoded = orjson.loads(base64.b64decode(cursor))
                 cursor_created_at = decoded["c"]
                 cursor_id = decoded["i"]
                 where_clause += (
@@ -905,8 +905,8 @@ class PostgresGraphBackend(GraphBackend):
             next_cursor = None
             if has_more and items:
                 last = items[-1]
-                cursor_payload = json.dumps({"c": last["created_at"], "i": last["id"]})
-                next_cursor = base64.b64encode(cursor_payload.encode()).decode()
+                cursor_payload = orjson.dumps({"c": last["created_at"], "i": last["id"]})
+                next_cursor = base64.b64encode(cursor_payload).decode()
 
             return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
         except Exception as exc:
@@ -955,7 +955,7 @@ class PostgresGraphBackend(GraphBackend):
 
         if cursor:
             try:
-                decoded = json.loads(base64.b64decode(cursor))
+                decoded = orjson.loads(base64.b64decode(cursor))
                 conditions += (
                     " AND (r.created_at, r.id) > (:cursor_ts, :cursor_id::uuid)"
                 )
@@ -977,8 +977,8 @@ class PostgresGraphBackend(GraphBackend):
             next_cursor = None
             if has_more and items:
                 last = items[-1]
-                cursor_payload = json.dumps({"c": last["created_at"], "i": last["id"]})
-                next_cursor = base64.b64encode(cursor_payload.encode()).decode()
+                cursor_payload = orjson.dumps({"c": last["created_at"], "i": last["id"]})
+                next_cursor = base64.b64encode(cursor_payload).decode()
 
             return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
         except Exception as exc:

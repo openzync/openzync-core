@@ -10,7 +10,7 @@ Critical rules:
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import sys
 
@@ -27,7 +27,7 @@ def _write_response(response: dict | None) -> None:
     """
     if response is None:
         return
-    sys.stdout.write(json.dumps(response) + "\n")
+    sys.stdout.write(orjson.dumps(response).decode() + "\n")
     sys.stdout.flush()
 
 
@@ -58,8 +58,8 @@ async def run_stdio_server(server: MemGraphMCPServer) -> None:
             continue
 
         try:
-            request = json.loads(line)
-        except json.JSONDecodeError as e:
+            request = orjson.loads(line.encode())
+        except orjson.JSONDecodeError as e:
             _write_error(None, PARSE_ERROR, f"Parse error: {e}")
             continue
 
