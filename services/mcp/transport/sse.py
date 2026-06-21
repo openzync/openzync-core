@@ -8,7 +8,7 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
-import json
+import orjson
 import logging
 import uuid
 
@@ -88,7 +88,7 @@ class SSETransport:
                 if message is None:  # Shutdown signal
                     break
                 await response.write(
-                    f"event: message\ndata: {json.dumps(message)}\n\n".encode()
+                    f"event: message\ndata: {orjson.dumps(message).decode()}\n\n".encode()
                 )
         except (asyncio.CancelledError, ConnectionResetError):
             pass

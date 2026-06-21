@@ -17,7 +17,7 @@ This design means:
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import re
 import uuid
@@ -76,7 +76,7 @@ async def _resolve_audit_body_capture(
             cache_key = f"{CACHE_KEY_PREFIX}:{org_id}"
             cached = await redis.get(cache_key)
             if cached:
-                raw = json.loads(cached)
+                raw = orjson.loads(cached.encode())
                 org_val = raw.get("audit_log_response_body")
                 if org_val is not None:
                     return bool(org_val)
@@ -327,7 +327,7 @@ class AuditMiddleware:
             action=action,
             resource_type=resource_type,
             resource_id=resource_id,
-            details=json.dumps(details),
+            details=orjson.dumps(details),
             ip_address=ip_address,
             trace_id=request_id or str(uuid.uuid4()),
         )

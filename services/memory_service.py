@@ -16,11 +16,11 @@ expressions in this file.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
+import orjson
 import structlog
 
 if TYPE_CHECKING:
@@ -478,7 +478,7 @@ class MemoryService:
         cached = await self._redis.get(f"{IDEMPOTENCY_PREFIX}{key}")
         if cached is None:
             return None
-        data = json.loads(cached)
+        data = orjson.loads(cached.encode())
         return IngestMemoryResponse(**data)
 
     async def _cache_idempotency(
@@ -517,7 +517,7 @@ class MemoryService:
         Returns:
             A hex-encoded SHA-256 digest.
         """
-        canonical = json.dumps(
+        canonical = orjson.dumps(
             {
                 "project_id": project_id,
                 "session_id": session_id,
@@ -530,9 +530,9 @@ class MemoryService:
                     for m in messages
                 ],
             },
-            sort_keys=True,
+            option=orjson.OPT_SORT_KEYS,
         )
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return hashlib.sha256(canonical).hexdigest()
 
     async def _check_content_dedup(self, content_hash: str) -> str | None:
         """Check if this exact content has been ingested before.

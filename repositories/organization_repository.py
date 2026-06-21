@@ -6,7 +6,7 @@ No business logic — pure query construction and execution.
 
 from __future__ import annotations
 
-import json
+import orjson
 from typing import Any
 from uuid import UUID
 
@@ -65,7 +65,7 @@ class OrganizationRepository:
                 "UPDATE organizations SET config = :config "
                 "WHERE id = :org_id RETURNING config"
             ),
-            {"org_id": org_id, "config": json.dumps(config)},
+            {"org_id": org_id, "config": orjson.dumps(config)},
         )
         row = result.one_or_none()
         if row is None:

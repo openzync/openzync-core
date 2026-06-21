@@ -19,7 +19,7 @@ with a warning logged.
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import time
 from typing import Any
@@ -237,7 +237,7 @@ class RateLimitMiddleware:
 
         if not is_allowed:
             # ── Respond with 429 directly ───────────────────────────────
-            body = json.dumps({
+            body = orjson.dumps({
                 "type": RFC_7807_TYPE,
                 "title": "Too Many Requests",
                 "status": 429,
@@ -246,7 +246,7 @@ class RateLimitMiddleware:
                     f"per window.  Retry after {retry_after} seconds."
                 ),
                 "instance": path,
-            }).encode("utf-8")
+            })
             headers = [
                 (b"content-type", b"application/problem+json"),
                 (b"content-length", str(len(body)).encode()),

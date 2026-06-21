@@ -39,9 +39,9 @@ class TestIdempotencyService:
     @pytest.mark.asyncio
     async def test_check_idempotency_key_replay(self, mock_redis: AsyncMock) -> None:
         """An existing key with matching hash returns REPLAY."""
-        import json
+        import orjson
 
-        cached = json.dumps(
+        cached = orjson.dumps(
             {
                 "request_body_hash": "hash123",
                 "response_body": {"job_id": "job-123", "episode_count": 2},
@@ -57,9 +57,9 @@ class TestIdempotencyService:
     @pytest.mark.asyncio
     async def test_check_idempotency_key_conflict(self, mock_redis: AsyncMock) -> None:
         """An existing key with different hash returns CONFLICT."""
-        import json
+        import orjson
 
-        cached = json.dumps(
+        cached = orjson.dumps(
             {
                 "request_body_hash": "original-hash",
                 "response_body": {"job_id": "job-123"},

@@ -140,11 +140,11 @@ class TestContextAssembly:
         assert "context" in body
 
         # JSON format context should itself be valid JSON
-        import json as json_lib
+        import orjson
 
         try:
-            parsed = json_lib.loads(body["context"])
-        except json_lib.JSONDecodeError:
+            parsed = orjson.loads(body["context"].encode())
+        except orjson.JSONDecodeError:
             pytest.fail("Context should be valid JSON when format=json")
 
         assert isinstance(parsed, dict), "JSON context should be a dict"

@@ -11,7 +11,7 @@ Bitmask:
 
 from __future__ import annotations
 
-import json
+import orjson
 import uuid
 from typing import Any
 
@@ -281,7 +281,7 @@ async def extract_structured(
                             "session_id": uuid.UUID(session_id),
                             "episode_id": uuid.UUID(episode_id),
                             "schema_id": uuid.UUID(schema_info["id"]),
-                            "data": json.dumps(cleaned),
+                            "data": orjson.dumps(cleaned),
                         },
                     )
                     inserted_count += 1

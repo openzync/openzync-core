@@ -467,7 +467,7 @@ class FalkorDBBackend(GraphBackend):
         ``project_id`` is accepted for interface compliance; scoping is via
         the org-level ``group_id``.
         """
-        import json as _json
+        import orjson
         from base64 import b64decode, b64encode
 
         try:
@@ -480,7 +480,7 @@ class FalkorDBBackend(GraphBackend):
             uuid_cursor: str | None = None
             if cursor:
                 try:
-                    cursor_data = _json.loads(b64decode(cursor).decode())
+                    cursor_data = orjson.loads(b64decode(cursor))
                     uuid_cursor = cursor_data.get("node_id")
                 except Exception:
                     logger.warning(
@@ -506,8 +506,8 @@ class FalkorDBBackend(GraphBackend):
 
             next_cursor: str | None = None
             if has_more and nodes:
-                cursor_data = _json.dumps({"node_id": str(nodes[-1].uuid)})
-                next_cursor = b64encode(cursor_data.encode()).decode()
+                cursor_data = orjson.dumps({"node_id": str(nodes[-1].uuid)})
+                next_cursor = b64encode(cursor_data).decode()
 
             return {
                 "items": items,

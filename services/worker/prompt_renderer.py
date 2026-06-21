@@ -27,7 +27,7 @@ Usage (workers):
 
 from __future__ import annotations
 
-import json
+import orjson
 from collections.abc import AsyncGenerator
 from enum import Enum
 from pathlib import Path
@@ -960,7 +960,7 @@ def build_enrichment_prompt(system_prompt: str, ctx: dict[str, Any]) -> str:
     # ── Metadata ─────────────────────────────────────────────────────────
     metadata = ctx.get("message_metadata")
     if metadata:
-        parts.append(f"\n\n## MESSAGE METADATA\n\n{json.dumps(metadata, indent=2)}")
+        parts.append(f"\n\n## MESSAGE METADATA\n\n{orjson.dumps(metadata, option=orjson.OPT_INDENT_2).decode()}")
 
     # ── Known entities ──────────────────────────────────────────────────
     known_entities: list = ctx.get("known_entities", [])

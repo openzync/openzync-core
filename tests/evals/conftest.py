@@ -6,7 +6,7 @@ by default and only run when ``--run-eval`` is passed to pytest.
 
 from __future__ import annotations
 
-import json
+import orjson
 from pathlib import Path
 from typing import Any
 
@@ -48,7 +48,7 @@ def load_golden(filename: str) -> list[dict[str, Any]]:
             f"Golden dataset '{filename}' not found at {path}"
         )
     with open(path) as f:
-        return json.load(f)
+        return orjson.loads(f.read().encode())
 
 
 def parse_classification_response(raw: str) -> dict | None:
@@ -78,8 +78,8 @@ def parse_classification_response(raw: str) -> dict | None:
                 break
 
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
+        return orjson.loads(raw.encode())
+    except orjson.JSONDecodeError:
         return None
 
 
@@ -110,8 +110,8 @@ def parse_structured_response(raw: str) -> dict | None:
                 break
 
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
+        return orjson.loads(raw.encode())
+    except orjson.JSONDecodeError:
         return None
 
 
