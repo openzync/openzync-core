@@ -166,7 +166,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Upload deployment files to VPS
-        uses: appleboy/scp-action@v1.0.3
+        uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
