@@ -203,11 +203,14 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         env:
           GHCR_PAT: ${{ secrets.GHCR_PAT }}
+          MG_DATABASE_URL: ${{ secrets.MG_DATABASE_URL }}
+          MG_SECRET_KEY: ${{ secrets.MG_SECRET_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: GHCR_PAT
+          envs: GHCR_PAT, MG_DATABASE_URL, MG_SECRET_KEY, VPS_HOST
           script: |
             # Log in to ghcr.io so Docker can pull our private images
             echo "$GHCR_PAT" | docker login ghcr.io -u rohnsha0 --password-stdin
@@ -215,6 +218,27 @@ jobs:
             tar xzf deploy-files.tar.gz
             rm deploy-files.tar.gz
             chmod +x scripts/deploy.sh scripts/backup.sh
+
+            # ── Create infra/.env from template + secrets ──────────────────
+            cat > infra/.env << ENVEOF
+            MG_DATABASE_URL=$MG_DATABASE_URL
+            MG_REDIS_URL=redis://redis:6379/0
+            MG_SECRET_KEY=$MG_SECRET_KEY
+            MG_ENVIRONMENT=production
+            MG_LOG_LEVEL=INFO
+            MG_CORS_ORIGINS=http://$VPS_HOST:8000,http://localhost:3000
+            MG_HOSTS_ALLOWED=$VPS_HOST,localhost
+            MG_GRAPH_BACKEND=postgres
+            MG_CONTEXT_CACHE_TTL=30
+            MG_RATE_LIMIT_IP_MAX=60
+            MG_RATE_LIMIT_WINDOW_SEC=60
+            MG_JWT_ACCESS_TOKEN_TTL_MINUTES=30
+            MG_JWT_REFRESH_TOKEN_TTL_DAYS=7
+            MG_EMBEDDING_BACKEND=ollama
+            MG_EMBEDDING_MODEL=nomic-embed-text
+            MG_EMBEDDING_DIM=768
+            ENVEOF
+
             bash scripts/deploy.sh
 
   # ═════════════════════════════════════════════════════════════════════════════
