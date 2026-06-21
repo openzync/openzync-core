@@ -205,7 +205,10 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          envs: GHCR_PAT
           script: |
+            # Log in to ghcr.io so Docker can pull our private images
+            echo "$GHCR_PAT" | docker login ghcr.io -u rohnsha0 --password-stdin
             cd /home/deploy/openzep
             tar xzf deploy-files.tar.gz
             rm deploy-files.tar.gz
