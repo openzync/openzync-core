@@ -3,14 +3,14 @@
 The middleware:
 1. Reads ``X-Request-ID`` from the incoming request headers, or generates a
    UUID if absent.
-2. Stores it on ``request.state.request_id`` for use by downstream code.
+2. Stores it on ``scope["state"]["request_id"]`` for use by downstream code.
 3. Binds it to structlog contextvars so all log entries in the request lifecycle
    include the request ID.
 4. Adds ``X-Request-ID`` to the response headers for client-side tracing.
 
 Usage in ``main.py``:
 
-    app.add_middleware(RequestIDMiddleware)  # must be first middleware
+    app.add_middleware(RequestIDMiddleware)  # must be innermost middleware
 """
 
 from __future__ import annotations
@@ -18,51 +18,47 @@ from __future__ import annotations
 import uuid
 
 import structlog
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
-from starlette.responses import Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 
-class RequestIDMiddleware(BaseHTTPMiddleware):
-    """Add or propagate ``X-Request-ID`` across the request lifecycle.
+class RequestIDMiddleware:
+    """Raw ASGI middleware that adds or propagates ``X-Request-ID``.
 
-    This middleware **must** be registered first in the middleware stack so
-    that every downstream layer (logging, auth, rate-limiting) has access to
-    the request ID via ``request.state.request_id`` or structlog context.
+    Registered innermost (closest to the router) so every downstream layer
+    (logging, auth, rate-limiting) has access to the request ID via
+    ``scope["state"]["request_id"]``.
     """
 
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: RequestResponseEndpoint,
-    ) -> Response:
-        """Extract or generate request ID, bind to context, and set response header.
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
 
-        Args:
-            request: Incoming HTTP request.
-            call_next: The next middleware or route handler in the chain.
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-        Returns:
-            HTTP response with ``X-Request-ID`` header set.
-        """
-        request_id: str = request.headers.get(
-            "X-Request-ID",
-            str(uuid.uuid4()),
-        )
-        request.state.request_id = request_id
+        # ── Resolve or generate request ID ────────────────────────────────
+        headers = dict(scope.get("headers") or [])
+        raw_id = headers.get(b"x-request-id", b"").decode()
+        request_id: str = raw_id if raw_id else str(uuid.uuid4())
 
-        # Bind to structlog context so all downstream logs include this ID.
+        # ── Store on scope state ──────────────────────────────────────────
+        scope.setdefault("state", {})["request_id"] = request_id
         structlog.contextvars.bind_contextvars(request_id=request_id)
 
+        # ── Wrap send to inject X-Request-ID response header ──────────────
+        async def send_wrapper(message: dict) -> None:
+            if message["type"] == "http.response.start":
+                headers_list = list(message.get("headers", []))
+                headers_list.append(
+                    (b"X-Request-ID", request_id.encode())
+                )
+                message["headers"] = headers_list
+            await send(message)
+
         try:
-            response = await call_next(request)
+            await self.app(scope, receive, send_wrapper)
         except BaseException:
-            # Ensure response still gets the header even on middleware failure.
-            response = Response(status_code=500)
-            response.headers["X-Request-ID"] = request_id
             raise
         finally:
             structlog.contextvars.clear_contextvars()
-
-        response.headers["X-Request-ID"] = request_id
-        return response

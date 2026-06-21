@@ -2,8 +2,8 @@
 
 Provides two components:
 
-1. ``LoggingMiddleware`` — a ``BaseHTTPMiddleware`` that records start time,
-   calls the next handler, and logs a structured ``"request.completed"``
+1. ``LoggingMiddleware`` — a raw ASGI middleware that records start time,
+   processes the request, and logs a structured ``"request.completed"``
    message at INFO with method, path, status code, and duration.
 
 2. ``add_request_context`` — a structlog processor that injects bound context
@@ -32,9 +32,7 @@ import logging
 import time
 
 import structlog
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
-from starlette.responses import Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = structlog.get_logger(__name__)
 
@@ -84,7 +82,7 @@ def add_request_context(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class LoggingMiddleware(BaseHTTPMiddleware):
+class LoggingMiddleware:
     """Structured request/response logging middleware.
 
     Logs every HTTP request at INFO level after completion with:
@@ -93,46 +91,48 @@ class LoggingMiddleware(BaseHTTPMiddleware):
     - ``status_code`` (HTTP response status)
     - ``duration_ms`` (wall-clock time in milliseconds)
     - ``request_id`` (from :class:`RequestIDMiddleware`)
-
-    This middleware should be registered **after** ``RequestIDMiddleware`` so
-    that ``request.state.request_id`` is available.
     """
 
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: RequestResponseEndpoint,
-    ) -> Response:
-        """Log request completion after the response is generated.
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
 
-        Args:
-            request: Incoming HTTP request.
-            call_next: The next middleware or route handler in the chain.
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-        Returns:
-            HTTP response (unchanged).
-        """
         start_time: float = time.monotonic()
-        response = await call_next(request)
-        duration_ms: float = (time.monotonic() - start_time) * 1000
+        status_code: int = 200
 
-        # We intentionally read these AFTER the response so that auth middleware
-        # has had a chance to populate them.
-        structlog.contextvars.bind_contextvars(
-            method=request.method,
-            path=request.url.path,
-            status_code=response.status_code,
-            duration_ms=round(duration_ms, 1),
-        )
+        async def send_wrapper(message: dict) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message.get("status", 200)
+            await send(message)
 
-        logger.info(
-            "request.completed",
-            method=request.method,
-            path=request.url.path,
-            status_code=response.status_code,
-            duration_ms=round(duration_ms, 1),
-        )
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except BaseException:
+            status_code = 500
+            raise
+        finally:
+            duration_ms: float = (time.monotonic() - start_time) * 1000
+            method = scope.get("method", "UNKNOWN")
+            path = scope.get("path", "/unknown")
 
-        structlog.contextvars.clear_contextvars()
+            structlog.contextvars.bind_contextvars(
+                method=method,
+                path=path,
+                status_code=status_code,
+                duration_ms=round(duration_ms, 1),
+            )
 
-        return response
+            logger.info(
+                "request.completed",
+                method=method,
+                path=path,
+                status_code=status_code,
+                duration_ms=round(duration_ms, 1),
+            )
+
+            structlog.contextvars.clear_contextvars()

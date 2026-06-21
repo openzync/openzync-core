@@ -19,14 +19,13 @@ with a warning logged.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any
 
 import redis.asyncio as aioredis
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core.config import settings
 
@@ -56,27 +55,25 @@ RFC_7807_TYPE = "https://errors.openzep.dev/rate_limit_exceeded"
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _get_client_ip(request: Request) -> str:
-    """Extract the originating client IP from request headers.
+def _get_client_ip(scope: Scope) -> str:
+    """Extract the originating client IP from the ASGI scope.
 
     Respects ``X-Forwarded-For`` when behind a reverse proxy, falling back
     to the direct client address.
 
     Args:
-        request: The incoming HTTP request.
+        scope: The ASGI connection scope.
 
     Returns:
         The client IP address as a string.
     """
-    forwarded = request.headers.get("X-Forwarded-For")
+    headers = dict(scope.get("headers") or [])
+    forwarded = headers.get(b"x-forwarded-for", b"").decode()
     if forwarded:
-        # X-Forwarded-For can be a comma-separated list; the leftmost is the
-        # original client.
         return forwarded.split(",")[0].strip()
-    # Fallback to the direct connection address.
-    client = request.client
+    client = scope.get("client")
     if client is not None:
-        return client.host
+        return client[0]
     return "unknown"
 
 
@@ -96,9 +93,6 @@ async def _get_org_rate_limit(
     Returns:
         Tuple of ``(max_requests, window_seconds)``.
     """
-    # note: Org rate limits could be cached from the organizations
-    # table.  For now we use a Redis hash per org that is set during org
-    # provisioning.  This avoids a DB query on every request.
     try:
         quota_key = f"org:quota:{org_id}"
         quota_data = await redis.hgetall(quota_key)
@@ -139,83 +133,24 @@ async def _check_rate_limit(
     window_ms: int = window_seconds * 1000
     now_ms: int = int(time.time() * 1000)
     cutoff_ms: int = now_ms - window_ms
-    # Convert to seconds for the Retry-After header.
     now_s: float = time.time()
 
     pipe = redis.pipeline(transaction=True)
 
-    # Step 1: Remove entries outside the sliding window.
     pipe.zremrangebyscore(key, 0, cutoff_ms)
-
-    # Step 2: Count entries remaining in the window.
     pipe.zcard(key)
-
-    # Step 3: Add the current request's timestamp.
     pipe.zadd(key, {str(now_ms): now_ms})  # type: ignore[arg-type]
+    pipe.expire(key, window_seconds + 5)
 
-    # Step 4: Set TTL on the key to avoid stale data accumulation.
-    pipe.expire(key, window_seconds + 5)  # slight buffer
-
-    # Execute pipeline.
     results = await pipe.execute()
 
-    # Results order matches the pipeline commands.
-    _removed_count: Any = results[0]  # noqa: F841 — ZREMRANGEBYSCORE result
-    current_count: int = results[1]  # ZCARD result
-    _added_count: Any = results[2]  # noqa: F841 — ZADD result
-    _expire_set: Any = results[3]  # noqa: F841 — EXPIRE result
+    current_count: int = results[1]
 
     is_allowed: bool = current_count <= max_requests
     remaining: int = max(0, max_requests - current_count)
-    # Reset time is the end of the current window.
     reset_time: int = int(now_s) + window_seconds
 
     return is_allowed, remaining, reset_time
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# RFC 7807 429 response
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-def _rate_limit_response(
-    retry_after: int,
-    path: str,
-    limit: int,
-    remaining: int,
-    reset: int,
-) -> JSONResponse:
-    """Build an RFC 7807 429 Too Many Requests response.
-
-    Args:
-        retry_after: Seconds the client should wait before retrying.
-        path: The request URL path.
-        limit: The rate limit ceiling for this endpoint.
-        remaining: Requests remaining in the current window (0 when exceeded).
-        reset: Unix timestamp when the window resets.
-
-    Returns:
-        A :class:`JSONResponse` with 429 status and rate-limit headers.
-    """
-    return JSONResponse(
-        status_code=429,
-        headers={
-            "X-RateLimit-Limit": str(limit),
-            "X-RateLimit-Remaining": str(remaining),
-            "X-RateLimit-Reset": str(reset),
-            "Retry-After": str(retry_after),
-        },
-        content={
-            "type": RFC_7807_TYPE,
-            "title": "Too Many Requests",
-            "status": 429,
-            "detail": (
-                f"You have exceeded the rate limit of {limit} requests "
-                f"per window.  Retry after {retry_after} seconds."
-            ),
-            "instance": path,
-        },
-    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -223,69 +158,64 @@ def _rate_limit_response(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Sliding-window rate limiting via Redis sorted sets.
+class RateLimitMiddleware:
+    """Sliding-window rate limiting via Redis sorted sets — raw ASGI.
 
-    This middleware depends on ``request.app.state.redis`` — an async Redis
-    client initialised during the application lifespan.
+    This middleware depends on ``app.state.redis`` — an async Redis client
+    initialised during the application lifespan.
 
-    Registration order (in ``main.py``):
-
-        app.add_middleware(RequestIDMiddleware)    # 1st
-        app.add_middleware(LoggingMiddleware)      # 2nd
-        app.add_middleware(AuthMiddleware)         # 3rd
-        app.add_middleware(RateLimitMiddleware)    # 4th — uses request.state.org_id
-        app.add_middleware(TracingMiddleware)      # 5th
+    If the rate limit is exceeded the middleware responds with a 429 RFC 7807
+    JSON body directly — it never calls the downstream app.
     """
 
-    # ╠ Public paths that bypass rate limiting completely.
     BYPASS_PATHS: set[str] = {"/health", "/ready"}
 
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: RequestResponseEndpoint,
-    ) -> Response:
-        """Enforce rate limits before passing the request downstream.
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+        self._bypass_paths: set[str] = self.BYPASS_PATHS
 
-        Args:
-            request: Incoming HTTP request.
-            call_next: The next middleware or route handler.
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-        Returns:
-            HTTP response — possibly a 429 if the rate limit is exceeded.
-        """
+        path = scope.get("path", "")
+
         # ── Bypass for critical infrastructure paths ────────────────────
-        if request.url.path in self.BYPASS_PATHS:
-            return await call_next(request)
+        if path in self._bypass_paths:
+            await self.app(scope, receive, send)
+            return
 
         # ── Get Redis client (graceful degradation if unavailable) ──────
-        redis: aioredis.Redis | None = getattr(request.app.state, "redis", None)
+        app_state = scope.get("app", {}).state if hasattr(scope.get("app"), "state") else {}
+        redis: aioredis.Redis | None = getattr(app_state, "redis", None) if not isinstance(app_state, dict) else None
+
         if redis is None:
-            logger.warning(
-                "Redis not available — rate limiting disabled for this request"
-            )
-            return await call_next(request)
+            # Fallback: try scope["app"].state.redis (Starlette app state)
+            _app = scope.get("app", None)
+            redis = getattr(_app.state, "redis", None) if _app is not None else None
+
+        if redis is None:
+            logger.warning("Redis not available — rate limiting disabled")
+            await self.app(scope, receive, send)
+            return
 
         try:
             await redis.ping()
         except Exception:
-            logger.warning(
-                "Redis unreachable — rate limiting disabled for this request",
-                exc_info=True,
-            )
-            return await call_next(request)
+            logger.warning("Redis unreachable — rate limiting disabled", exc_info=True)
+            await self.app(scope, receive, send)
+            return
 
         # ── Determine rate-limit key and parameters ─────────────────────
-        org_id: str | None = getattr(request.state, "org_id", None)
+        state = scope.get("state") or {}
+        org_id: str | None = state.get("org_id", None)
 
         if org_id:
-            # Authenticated request — use org-based rate limit.
             max_req, window = await _get_org_rate_limit(redis, org_id)
             rate_key = f"rate:api:{org_id}"
         else:
-            # Unauthenticated request — use IP-based rate limit.
-            client_ip = _get_client_ip(request)
+            client_ip = _get_client_ip(scope)
             max_req = settings.RATE_LIMIT_IP_MAX
             window = settings.RATE_LIMIT_WINDOW_SEC
             rate_key = f"rate:auth:{client_ip}"
@@ -300,26 +230,52 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             )
         except Exception:
             logger.exception("Rate-limit check failed — allowing request")
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        # ── Attach rate-limit headers (even on allowed requests) ────────
         retry_after = max(1, reset_time - int(time.time()))
 
         if not is_allowed:
-            return _rate_limit_response(
-                retry_after=retry_after,
-                path=request.url.path,
-                limit=max_req,
-                remaining=0,
-                reset=reset_time,
-            )
+            # ── Respond with 429 directly ───────────────────────────────
+            body = json.dumps({
+                "type": RFC_7807_TYPE,
+                "title": "Too Many Requests",
+                "status": 429,
+                "detail": (
+                    f"You have exceeded the rate limit of {max_req} requests "
+                    f"per window.  Retry after {retry_after} seconds."
+                ),
+                "instance": path,
+            }).encode("utf-8")
+            headers = [
+                (b"content-type", b"application/problem+json"),
+                (b"content-length", str(len(body)).encode()),
+                (b"X-RateLimit-Limit", str(max_req).encode()),
+                (b"X-RateLimit-Remaining", b"0"),
+                (b"X-RateLimit-Reset", str(reset_time).encode()),
+                (b"Retry-After", str(retry_after).encode()),
+            ]
+            await send({
+                "type": "http.response.start",
+                "status": 429,
+                "headers": headers,
+            })
+            await send({
+                "type": "http.response.body",
+                "body": body,
+            })
+            return
 
-        # Allowed — pass through and add rate-limit headers to response.
-        # ⚠️ HEADERS INJECTION: We set headers on the response object
-        # returned by call_next.  This works because Response headers are
-        # mutable (a MutableHeaders object).
-        response = await call_next(request)
-        response.headers["X-RateLimit-Limit"] = str(max_req)
-        response.headers["X-RateLimit-Remaining"] = str(remaining)
-        response.headers["X-RateLimit-Reset"] = str(reset_time)
-        return response
+        # ── Allowed — wrap send to add rate-limit headers ───────────────
+        async def send_wrapper(message: dict) -> None:
+            if message["type"] == "http.response.start":
+                headers_list = list(message.get("headers", []))
+                headers_list.extend([
+                    (b"X-RateLimit-Limit", str(max_req).encode()),
+                    (b"X-RateLimit-Remaining", str(remaining).encode()),
+                    (b"X-RateLimit-Reset", str(reset_time).encode()),
+                ])
+                message["headers"] = headers_list
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)
