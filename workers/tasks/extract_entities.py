@@ -40,7 +40,6 @@ async def extract_entities(
     episode_id: str,
     org_id: str,
     project_id: str,
-    user_id: str,
     content: str,
     session_id: str | None = None,
     trace_id: str = "",
@@ -74,7 +73,6 @@ async def extract_entities(
         episode_id: UUID of the source episode (string, from ARQ).
         org_id: UUID of the owning organization.
         project_id: UUID of the project for project scoping.
-        user_id: UUID of the user who authored the message.
         content: The message text to extract entities from.
         session_id: UUID of the session (passed from MemoryService).
             Used to fetch known entities for delta extraction.
@@ -120,6 +118,26 @@ async def extract_entities(
     session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
     if session_factory is None:
         session_factory = get_async_session(engine)
+
+    # ── 0. Resolve user_id from episode record ──────────────────────────────
+    # user_id is stored on the episode at creation time (from the API key's
+    # created_by via the auth middleware).  The worker resolves it from the
+    # episode rather than receiving it as an ARQ parameter.
+    from sqlalchemy import select
+    from models.episode import Episode
+
+    async with session_factory() as resolve_db:
+        result = await resolve_db.execute(
+            select(Episode.user_id).where(Episode.id == episode_id)
+        )
+        user_id_row = result.scalar_one_or_none()
+    if user_id_row is None:
+        logger.warning(
+            "entity_extraction.episode_not_found",
+            episode_id=episode_id,
+        )
+        return
+    user_id: str = str(user_id_row)
 
     # ── 1-2. Render prompt (system instructions) with auto-injected context ──
     system_prompt, prompt_context = await render_prompt(

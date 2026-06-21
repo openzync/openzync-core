@@ -330,23 +330,24 @@ async def _fetch_similar_episodes(
 
     from models.episode import Episode  # noqa: PLC0415 — lazy import
 
-    # Fetch current episode content to use as search query
+    # Fetch current episode content + project_id to use as search query
     ep_result = await db.execute(
-        select(Episode.content).where(
+        select(Episode.content, Episode.project_id).where(
             Episode.id == episode_id,
             Episode.organization_id == org_id,
         )
     )
-    query = ep_result.scalar_one_or_none()
-    if not query:
+    row = ep_result.one_or_none()
+    if not row:
         return {"similar_episodes": []}
+    query, project_id = row
 
     from repositories.episode_repository import EpisodeRepository  # noqa: PLC0415
 
     repo = EpisodeRepository(db)
     results = await repo.search_by_bm25(
         query=query,
-        user_id=user_id,
+        project_id=project_id,
         org_id=org_id,
         limit=5,
     )
@@ -376,23 +377,24 @@ async def _fetch_similar_facts(
 
     from models.episode import Episode  # noqa: PLC0415 — lazy import
 
-    # Fetch current episode content to use as search query
+    # Fetch current episode content + project_id to use as search query
     ep_result = await db.execute(
-        select(Episode.content).where(
+        select(Episode.content, Episode.project_id).where(
             Episode.id == episode_id,
             Episode.organization_id == org_id,
         )
     )
-    query = ep_result.scalar_one_or_none()
-    if not query:
+    row = ep_result.one_or_none()
+    if not row:
         return {"related_facts": []}
+    query, project_id = row
 
     from repositories.fact_repository import FactRepository  # noqa: PLC0415
 
     repo = FactRepository(db)
     results = await repo.search_by_bm25(
         query=query,
-        user_id=user_id,
+        project_id=project_id,
         org_id=org_id,
         limit=5,
     )

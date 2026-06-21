@@ -25,7 +25,6 @@ async def sync_to_graph(
     episode_id: str,
     org_id: str,
     project_id: str,
-    user_id: str,
     content: str,
     role: str,
     trace_id: str = "",
@@ -48,7 +47,6 @@ async def sync_to_graph(
         episode_id: UUID of the episode to sync.
         org_id: UUID of the owning organization.
         project_id: UUID of the project for project scoping.
-        user_id: UUID of the user who authored the episode.
         content: Episode message text (used for entity name matching).
         role: Message role (user/assistant/system/tool).
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.

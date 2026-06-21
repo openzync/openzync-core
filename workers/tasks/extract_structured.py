@@ -31,7 +31,6 @@ async def extract_structured(
     episode_id: str,
     org_id: str,
     project_id: str,
-    user_id: str,
     session_id: str,
     content: str,
     trace_id: str = "",
@@ -60,7 +59,6 @@ async def extract_structured(
         episode_id: UUID of the source episode (string, from ARQ).
         org_id: UUID of the owning organization.
         project_id: UUID of the project for project scoping.
-        user_id: UUID of the user (for episode FK context).
         session_id: UUID of the session (for FK to structured_extractions).
         content: The message text to extract data from.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
@@ -115,7 +113,7 @@ async def extract_structured(
             # ── 3. Idempotency check — skip if already extracted ──────────
             result = await db.execute(
                 text(
-                    "SELECT enrichment_status FROM episodes "
+                    "SELECT enrichment_status, user_id FROM episodes "
                     "WHERE id = :episode_id FOR UPDATE"
                 ),
                 {"episode_id": uuid.UUID(episode_id)},
@@ -128,6 +126,7 @@ async def extract_structured(
                 )
                 return
             current_status: int = row[0]
+            user_id: str = str(row[1])
             if current_status & ENRICHMENT_STRUCTURED_EXTRACTION:
                 logger.info(
                     "structured_extraction.skipped_already_done",
