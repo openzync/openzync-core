@@ -353,6 +353,7 @@ async def _query_key_from_db(
         "id": str(api_key.id),
         "org_id": str(api_key.organization_id),
         "project_id": str(api_key.project_id) if api_key.project_id else None,
+        "created_by": str(api_key.created_by) if api_key.created_by else None,
         "scopes": list(api_key.scopes),
         "key_hash": api_key.key_hash,
         "salt": api_key.salt,
@@ -610,6 +611,7 @@ class AuthMiddleware:
                 if cached is not None:
                     scope["state"]["auth_type"] = "api_key"
                     scope["state"]["org_id"] = cached["org_id"]
+                    scope["state"]["user_id"] = cached.get("created_by")
                     scope["state"]["api_key_scopes"] = cached.get("scopes", [])
                     scope["state"]["api_key_project_id"] = cached.get("project_id")
                     await self.app(scope, receive, send)
@@ -744,9 +746,11 @@ class AuthMiddleware:
         # ── Set request state ────────────────────────────────────────────
         org_id_val: str = key_data["org_id"]
         scopes: list[str] = key_data["scopes"]
+        created_by: str | None = key_data.get("created_by")
 
         scope["state"]["auth_type"] = "api_key"
         scope["state"]["org_id"] = org_id_val
+        scope["state"]["user_id"] = created_by  # None if key has no creator
         scope["state"]["api_key_scopes"] = scopes
         scope["state"]["api_key_project_id"] = key_data.get("project_id")
 
@@ -768,6 +772,7 @@ class AuthMiddleware:
                         "org_id": org_id_val,
                         "scopes": scopes,
                         "project_id": key_data.get("project_id"),
+                        "created_by": created_by,
                     },
                 )
             except Exception:

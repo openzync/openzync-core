@@ -107,23 +107,27 @@ class AsyncProjectsClient:
         limit: int = 50,
         cursor: str | None = None,
     ) -> dict:
-        """List projects with cursor-based pagination.
+        """List projects with offset-based pagination.
 
         Args:
             limit: Maximum results per page.
-            cursor: Opaque cursor from a previous response.
+            cursor: Opaque cursor from a previous response (offset value).
 
         Returns:
             Dict with ``data``, ``next_cursor``, and ``has_more`` keys.
         """
-        params: dict[str, str | int] = {"limit": limit}
+        params: dict[str, str | int] = {"limit": limit, "offset": 0}
         if cursor is not None:
-            params["cursor"] = cursor
-        return await self._http.request(
+            params["offset"] = int(cursor)
+        data = await self._http.request(
             "GET",
             "/v1/projects",
             params=params,
         )
+        # Backend returns a flat array — wrap in paginated envelope
+        if isinstance(data, list):
+            return {"data": data, "next_cursor": None, "has_more": False}
+        return data
 
     def list_iter(self, *, limit: int = 50) -> AsyncPaginatedIterator:
         """Iterate over all projects with auto-pagination.

@@ -48,6 +48,9 @@ OPENROUTER_BASE_URL: str = os.environ.get(
 DEFAULT_USER_EXTERNAL_ID: str = os.environ.get(
     "DEFAULT_USER_EXTERNAL_ID", "streamlit-chat-user"
 )
+PROJECT_NAME: str = os.environ.get("PROJECT_NAME", "Streamlit Chat")
+PROJECT_ID: str | None = os.environ.get("PROJECT_ID", None)
+"""Optional pre-configured project UUID.  When set, skips project discovery."""
 
 # Validate critical env vars.
 missing: list[str] = []
@@ -137,13 +140,42 @@ def _ensure_user(client: AsyncOpenZep, external_id: str) -> str:
     return _create_user(client, external_id)
 
 
+# ── Project Management ─────────────────────────────────────────────────
+
+
+def _ensure_project(client: AsyncOpenZep, name: str) -> str:
+    """Find or create a project. Returns the project UUID.
+
+    Uses the ``PROJECT_ID`` env var if set, otherwise discovers the first
+    available project or creates a new one named *name*.
+    """
+    if PROJECT_ID:
+        logger.info("Using configured project ID: %s", PROJECT_ID)
+        return PROJECT_ID
+
+    try:
+        result = _await(client.projects.list(limit=1))
+        items = result.get("data", []) if isinstance(result, dict) else result.data
+        if items:
+            pid = items[0]["id"] if isinstance(items[0], dict) else items[0].id
+            logger.info("Using existing project: %s (id=%s)", name, pid)
+            return pid
+    except Exception as exc:
+        logger.warning("Failed to list projects, will create: %s", exc)
+
+    project = _await(client.projects.create(name=name, description="Auto-created for Streamlit Chat"))
+    pid: str = project.id if hasattr(project, "id") else project["id"]
+    logger.info("Created project: %s (id=%s)", name, pid)
+    return pid
+
+
 # ── Session Management ────────────────────────────────────────────────────────
 
 
-def _list_sessions(client: AsyncOpenZep, user_id: str) -> list[dict[str, Any]]:
-    """List all sessions for a user (newest first)."""
+def _list_sessions(client: AsyncOpenZep, project_id: str) -> list[dict[str, Any]]:
+    """List all sessions for a project (newest first)."""
     try:
-        result = _await(client.sessions.list(user_id, limit=100))
+        result = _await(client.sessions.list(project_id, limit=100))
         sessions_raw = result.get("data", []) if isinstance(result, dict) else result.data
         sessions_raw.sort(key=lambda s: (
             s.get("created_at") if isinstance(s, dict) else s.created_at
@@ -155,10 +187,23 @@ def _list_sessions(client: AsyncOpenZep, user_id: str) -> list[dict[str, Any]]:
         return []
 
 
-def _create_session(client: AsyncOpenZep, user_id: str) -> tuple[str, str]:
-    """Create a new session. Returns ``(internal_id, external_id)``."""
+def _create_session(client: AsyncOpenZep, project_id: str) -> tuple[str, str]:
+    """Create a new session. Returns ``(internal_id, external_id)``.
+
+    Raises:
+        RuntimeError: If the session cannot be created (e.g. API key not
+            scoped to the project).
+    """
     external_id = f"chat-{uuid.uuid4().hex[:12]}"
-    session = _await(client.sessions.create(user_id=user_id, external_id=external_id))
+    try:
+        session = _await(client.sessions.create(project_id, external_id=external_id))
+    except Exception as exc:
+        logger.error("Failed to create session: %s", exc)
+        raise RuntimeError(
+            f"Cannot create session in project {project_id}. "
+            f"Make sure your API key is scoped to this project. "
+            f"Error: {exc}"
+        ) from exc
     sid: str = session.id if hasattr(session, "id") else session["id"]
     logger.info("Created session: %s (id=%s)", external_id, sid)
     return sid, external_id
@@ -187,8 +232,12 @@ if "user_id" not in st.session_state:
     st.session_state.user_external_id = DEFAULT_USER_EXTERNAL_ID
     logger.info("User initialized: %s", st.session_state.user_id)
 
+if "project_id" not in st.session_state:
+    st.session_state.project_id = _ensure_project(_async_oz, PROJECT_NAME)
+    logger.info("Project initialized: %s", st.session_state.project_id)
+
 if "session_id" not in st.session_state:
-    sessions = _list_sessions(_async_oz, st.session_state.user_id)
+    sessions = _list_sessions(_async_oz, st.session_state.project_id)
     if sessions:
         latest = sessions[0]
         st.session_state.session_id = (
@@ -198,14 +247,25 @@ if "session_id" not in st.session_state:
             latest.external_id if hasattr(latest, "external_id") else latest["external_id"]
         )
     else:
-        sid, ext = _create_session(_async_oz, st.session_state.user_id)
+        try:
+            sid, ext = _create_session(_async_oz, st.session_state.project_id)
+        except RuntimeError as exc:
+            st.error(str(exc))
+            st.info(
+                "To use this app you need a project-scoped API key. "
+                "Either:\n"
+                "1. Set `PROJECT_ID` in `.env` with an existing project UUID, or\n"
+                "2. Create a project-scoped API key in the OpenZep dashboard "
+                "and use it in `.env`."
+            )
+            st.stop()
         st.session_state.session_id = sid
         st.session_state.session_external_id = ext
 
     # Create OZMemory instance for the active session.
     st.session_state.memory = OZMemory(
         session_id=st.session_state.session_id,
-        user_id=st.session_state.user_id,
+        project_id=st.session_state.project_id,
         client=_async_oz,
         return_messages=True,
         max_messages=500,
@@ -233,7 +293,7 @@ with st.sidebar:
     st.divider()
     st.subheader("Sessions")
 
-    sessions_list = _list_sessions(_async_oz, st.session_state.user_id)
+    sessions_list = _list_sessions(_async_oz, st.session_state.project_id)
 
     for s in sessions_list:
         s_id = s.id if hasattr(s, "id") else s["id"]
@@ -256,7 +316,7 @@ with st.sidebar:
             st.session_state.session_external_id = s_ext
             st.session_state.memory = OZMemory(
                 session_id=s_id,
-                user_id=st.session_state.user_id,
+                project_id=st.session_state.project_id,
                 client=_async_oz,
                 return_messages=True,
                 max_messages=500,
@@ -267,12 +327,16 @@ with st.sidebar:
     # New session button
     st.divider()
     if st.button("+ New Session", use_container_width=True, type="primary"):
-        sid, ext = _create_session(_async_oz, st.session_state.user_id)
+        try:
+            sid, ext = _create_session(_async_oz, st.session_state.project_id)
+        except RuntimeError as exc:
+            st.error(str(exc))
+            st.rerun()
         st.session_state.session_id = sid
         st.session_state.session_external_id = ext
         st.session_state.memory = OZMemory(
             session_id=sid,
-            user_id=st.session_state.user_id,
+            project_id=st.session_state.project_id,
             client=_async_oz,
             return_messages=True,
             max_messages=500,

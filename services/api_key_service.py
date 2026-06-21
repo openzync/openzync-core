@@ -50,6 +50,7 @@ class ApiKeyService:
         organization_id: UUID,
         project_id: UUID,
         payload: CreateApiKeyRequest,
+        created_by: UUID | None = None,
     ) -> tuple[ApiKey, str]:
         """Create a new API key scoped to a specific project.
 
@@ -60,13 +61,11 @@ class ApiKeyService:
             organization_id: The owning organization UUID.
             project_id: The project UUID to scope this key to.
             payload: Key name from the request body.
+            created_by: Optional UUID of the user creating the key.
+                Populated from the JWT session when called via the dashboard.
 
         Returns:
             A tuple of ``(ApiKey record, raw_key_string)``.
-
-        Raises:
-            No database-level exceptions are expected (FK constraints
-            guarantee org and project exist, checked by the auth dependency).
         """
         raw_key = generate_api_key(prefix="mg_live_")
         key_hash, salt = hash_api_key(raw_key)
@@ -81,6 +80,7 @@ class ApiKeyService:
             prefix="mg_live_",
             name=payload.name,
             scopes=["read", "write"],
+            created_by=created_by,
         )
 
         logger.info(

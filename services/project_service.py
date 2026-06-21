@@ -40,14 +40,20 @@ class ProjectService:
     async def create_project(
         self,
         organization_id: UUID,
-        user_id: UUID,
+        user_id: UUID | None,
         payload: CreateProjectRequest,
     ) -> ProjectResponse:
-        """Create a new project and add the creator as an owner.
+        """Create a new project and optionally add the creator as an owner.
+
+        When ``user_id`` is ``None`` (API-key-authenticated request), the
+        project is created without a ``created_by`` attribution and without
+        an initial owner member.  Owner management must be handled through
+        the dashboard.
 
         Args:
             organization_id: Tenant scope.
-            user_id: The creating user (becomes the initial owner).
+            user_id: The creating user (becomes the initial owner), or
+                ``None`` for API-key-authenticated requests.
             payload: Name, optional description, and optional metadata.
 
         Returns:
@@ -76,12 +82,13 @@ class ProjectService:
             metadata_=payload.metadata,
         )
 
-        # Add creator as owner
-        await self._repo.add_member(
-            project_id=project.id,
-            user_id=user_id,
-            role="owner",
-        )
+        # Add creator as owner (skipped for API-key requests with no user context)
+        if user_id is not None:
+            await self._repo.add_member(
+                project_id=project.id,
+                user_id=user_id,
+                role="owner",
+            )
 
         logger.info(
             "project_service.project_created",
@@ -89,7 +96,7 @@ class ProjectService:
                 "org_id": str(organization_id),
                 "project_id": str(project.id),
                 "project_name": payload.name,
-                "created_by": str(user_id),
+                "created_by": str(user_id) if user_id else None,
             },
         )
 
@@ -98,7 +105,7 @@ class ProjectService:
             name=project.name,
             description=project.description or "",
             created_by=project.created_by,
-            member_count=1,  # we just added the creator as an owner
+            member_count=1 if user_id is not None else 0,
             created_at=project.created_at,
             updated_at=project.updated_at,
         )
@@ -135,16 +142,20 @@ class ProjectService:
     async def list_projects(
         self,
         organization_id: UUID,
-        user_id: UUID,
+        user_id: UUID | None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[ProjectResponse]:
-        """List non-archived projects in an organisation that the user belongs to.
+        """List non-archived projects in an organisation.
+
+        When ``user_id`` is provided, only projects where the user is a
+        member are returned.  When ``user_id`` is ``None`` (API key auth),
+        all non-archived projects in the org are returned.
 
         Args:
             organization_id: Tenant scope.
-            user_id: The authenticated user — only projects where this user
-                is a member are returned.
+            user_id: The authenticated user's UUID, or ``None`` for
+                API-key-authenticated requests.
             limit: Maximum results per page (capped at 200).
             offset: Number of results to skip.
         """

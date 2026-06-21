@@ -48,9 +48,13 @@ async def create_project(
 ) -> ProjectResponse:
     """Create a new project.
 
-    The authenticated user is automatically added as the project owner.
+    For JWT-authenticated (dashboard) users, the creator is automatically
+    added as the project owner.  For API-key-authenticated requests, the
+    project is created without owner attribution — use the dashboard to
+    manage members.
     """
-    user_id = UUID(request.state.user_id)
+    raw_user_id: str | None = getattr(request.state, "user_id", None)
+    user_id: UUID | None = UUID(raw_user_id) if raw_user_id else None
     return await service.create_project(
         organization_id=request.state.org_id,
         user_id=user_id,
@@ -68,10 +72,25 @@ async def list_projects(
     offset: int = Query(default=0, ge=0),
     service: ProjectService = Depends(_get_project_service),
 ) -> list[ProjectResponse]:
-    """List non-archived projects the authenticated user is a member of."""
+    """List non-archived projects in the organisation.
+
+    For JWT-authenticated dashboard users, returns only projects the user
+    is a member of.  For API-key-authenticated SDK requests, returns all
+    non-archived projects in the org.
+    """
+    raw_user_id: str | None = getattr(request.state, "user_id", None)
+    auth_type: str | None = getattr(request.state, "auth_type", None)
+    # API key auth: list all org projects without membership filter.
+    # The key's creator UUID (created_by) is available as user_id for
+    # attribution on write endpoints, but for listing we show all projects
+    # in the org.  The key's project scope is enforced individually by
+    # require_project_membership on project-scoped endpoints.
+    user_id: UUID | None = (
+        UUID(raw_user_id) if raw_user_id and auth_type != "api_key" else None
+    )
     return await service.list_projects(
         organization_id=request.state.org_id,
-        user_id=UUID(request.state.user_id),
+        user_id=user_id,
         limit=limit,
         offset=offset,
     )

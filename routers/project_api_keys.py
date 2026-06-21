@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.redis import get_redis
-from dependencies.auth import require_org_id
+from dependencies.auth import get_current_user_id, require_org_id
 from dependencies.db import get_db
 from dependencies.project_auth import require_project_owner
 from repositories.api_key_repository import ApiKeyRepository
@@ -96,6 +96,7 @@ async def create_api_key(
     service: ApiKeyService = Depends(_get_service),
     _: None = Depends(require_project_owner),
     org_id: str = Depends(require_org_id),
+    user_id: UUID = Depends(get_current_user_id),
 ) -> ApiKeyCreatedResponse:
     """Create a new project-scoped API key.
 
@@ -105,6 +106,8 @@ async def create_api_key(
         service: API key service.
         _: Project owner auth guard.
         org_id: Authenticated organization ID.
+        user_id: Authenticated user UUID (stored as ``created_by`` for
+            attribution in API-key-authenticated requests).
 
     Returns:
         The new key with the raw value (shown once).
@@ -113,6 +116,7 @@ async def create_api_key(
         organization_id=UUID(org_id),
         project_id=project_id,
         payload=payload,
+        created_by=user_id,
     )
 
     return ApiKeyCreatedResponse(

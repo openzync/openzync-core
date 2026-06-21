@@ -38,6 +38,11 @@ class ApiKeyResponse(BaseModel):
     project_id: UUID = Field(
         ..., description="Project UUID this key is scoped to."
     )
+    created_by: UUID | None = Field(
+        default=None,
+        description="UUID of the user who created this key. "
+        "``None`` for keys created before this field was added.",
+    )
     scopes: list[str] = Field(
         ..., description="Permission scopes.", examples=[["read", "write"]]
     )

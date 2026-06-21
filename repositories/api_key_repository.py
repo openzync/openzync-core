@@ -85,6 +85,7 @@ class ApiKeyRepository:
         name: str,
         scopes: list[str] | None = None,
         project_id: uuid.UUID | None = None,
+        created_by: uuid.UUID | None = None,
     ) -> ApiKey:
         """Create a new API key record.
 
@@ -97,6 +98,8 @@ class ApiKeyRepository:
             name: Human-readable label.
             scopes: Permission scopes (defaults to ``["read", "write"]``).
             project_id: Optional project scope. ``None`` means org-wide key.
+            created_by: Optional UUID of the user creating this key.
+                Populated from the JWT session when created via the dashboard.
 
         Returns:
             The newly created ApiKey.
@@ -110,6 +113,7 @@ class ApiKeyRepository:
             prefix=prefix,
             name=name,
             scopes=scopes or ["read", "write"],
+            created_by=created_by,
         )
         self._db.add(api_key)
         await self._db.flush()

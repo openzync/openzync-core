@@ -31,7 +31,7 @@ class ProjectRepository:
         self,
         organization_id: UUID,
         name: str,
-        created_by: UUID,
+        created_by: UUID | None = None,
         description: str | None = None,
         metadata_: dict | None = None,
     ) -> Project:
@@ -40,7 +40,8 @@ class ProjectRepository:
         Args:
             organization_id: Tenant scope.
             name: Human-readable project name (unique within org).
-            created_by: UUID of the user creating the project (becomes owner).
+            created_by: Optional UUID of the user creating the project.
+                ``None`` for API-key-authenticated requests.
             description: Optional project description.
             metadata_: Optional project metadata dict.
 
@@ -104,16 +105,20 @@ class ProjectRepository:
     async def list(
         self,
         organization_id: UUID,
-        user_id: UUID,
+        user_id: UUID | None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[Project]:
-        """List non-archived projects in an organisation that the user is a member of.
+        """List non-archived projects in an organisation.
+
+        When ``user_id`` is provided, only projects where that user is a
+        member are returned.  When ``user_id`` is ``None`` (API key auth),
+        all non-archived projects in the org are returned.
 
         Args:
             organization_id: Tenant scope.
-            user_id: The authenticated user's UUID — only projects where this
-                user is a member are returned.
+            user_id: The authenticated user's UUID, or ``None`` for
+                API-key-authenticated requests.
             limit: Maximum results per page (capped at 200).
             offset: Number of results to skip.
 
@@ -121,14 +126,21 @@ class ProjectRepository:
             A list of Project ORM instances.
         """
         effective_limit = min(limit, 200)
-        result = await self._db.execute(
-            select(Project)
-            .join(ProjectMember, Project.id == ProjectMember.project_id)
-            .where(
-                Project.organization_id == organization_id,
-                Project.is_archived.is_(False),
-                ProjectMember.user_id == user_id,
+
+        query = select(Project).where(
+            Project.organization_id == organization_id,
+            Project.is_archived.is_(False),
+        )
+
+        if user_id is not None:
+            query = (
+                query
+                .join(ProjectMember, Project.id == ProjectMember.project_id)
+                .where(ProjectMember.user_id == user_id)
             )
+
+        result = await self._db.execute(
+            query
             .order_by(Project.created_at.desc())
             .limit(effective_limit)
             .offset(offset)
