@@ -28,7 +28,7 @@ from models.episode import Episode
 from models.fact import Fact
 
 if TYPE_CHECKING:
-    from packages.graphiti_client.interface import GraphBackend
+    from packages.graph_backend.interface import GraphBackend
     from schemas.organization_config import OrgConfigBase
 
 logger = logging.getLogger(__name__)

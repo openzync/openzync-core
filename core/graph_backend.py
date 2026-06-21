@@ -20,7 +20,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.graphiti_client.interface import GraphBackend
+from packages.graph_backend.interface import GraphBackend
 
 if TYPE_CHECKING:
     from schemas.organization_config import OrgConfigBase
@@ -69,7 +69,7 @@ async def init_graph_backend(
     if backend_name == "postgres":
         if db is None:
             raise ValueError("db is required for postgres graph backend")
-        from packages.graphiti_client.backends.postgres import PostgresGraphBackend
+        from packages.graph_backend.postgres import PostgresGraphBackend
 
         if org_config is None or org_config.graph_max_traversal_depth is None:
             raise ValueError(

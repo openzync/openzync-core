@@ -1,10 +1,9 @@
 """Abstract interface for graph-database operations.
 
 The ``GraphBackend`` ABC defines the contract every graph backend must
-satisfy.  Shipped implementations:
+satisfy.  The shipped implementation is:
 
-- :class:`~.backends.falkordb.FalkorDBBackend` — Graphiti / FalkorDB (legacy)
-- :class:`~.backends.postgres.PostgresGraphBackend` — PostgreSQL-native
+- :class:`PostgresGraphBackend` — PostgreSQL-native
 
 Every method requires ``org_id`` and ``project_id`` — OpenZep enforces
 strict organisational and project-level isolation.  No cross-project
@@ -20,10 +19,6 @@ from uuid import UUID
 
 class GraphBackend(ABC):
     """Abstract interface for graph database operations.
-
-    Implementations map these operations to the underlying graph engine
-    (FalkorDB / RedisGraph, Neo4j, etc.) and translate engine-specific
-    exceptions into the OpenZep exception hierarchy.
 
     Every data-access method accepts ``org_id`` (tenant isolation) and
     ``project_id`` (project-level scoping).

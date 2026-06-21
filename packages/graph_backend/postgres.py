@@ -23,7 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import ExternalServiceError
-from packages.graphiti_client.interface import GraphBackend
+from packages.graph_backend.interface import GraphBackend
 
 logger = structlog.get_logger(__name__)
 

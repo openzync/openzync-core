@@ -1,8 +1,8 @@
 """Graph service — business logic for knowledge-graph query operations.
 
-This service wraps a ``GraphBackend`` implementation (e.g.
-``PostgresGraphBackend`` or legacy ``FalkorDBBackend``) to provide
-a clean service-layer interface for the graph query endpoints.
+This service wraps a ``GraphBackend`` implementation (typically
+``PostgresGraphBackend``) to provide a clean service-layer interface
+for the graph query endpoints.
 
 Every method enforces org_id isolation. All methods gracefully degrade when
 no graph backend is available — returning empty results rather than erroring.
@@ -16,7 +16,7 @@ from uuid import UUID
 
 from core.events import EventType
 from core.exceptions import EntityNotFoundError, NotFoundError
-from packages.graphiti_client.interface import GraphBackend
+from packages.graph_backend.interface import GraphBackend
 from repositories.fact_repository import FactRepository
 from repositories.user_repository import UserRepository
 from services.webhook_service import WebhookService

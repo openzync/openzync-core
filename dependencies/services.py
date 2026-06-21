@@ -167,7 +167,7 @@ async def get_graph_service(
     ``UserRepository`` for user-existence checks and ``FactRepository``
     for session-scoped entity queries.
     """
-    from packages.graphiti_client.backends.postgres import PostgresGraphBackend
+    from packages.graph_backend.postgres import PostgresGraphBackend
 
     graph_backend = PostgresGraphBackend(db=db)
     return GraphService(
