@@ -66,7 +66,6 @@ ARQ_TASKS = [
     "classify_dialog",
     "sync_to_graph",
     "extract_entities",
-    "extract_facts",
     "embed_episode",
     "extract_structured",
 ]
@@ -640,12 +639,6 @@ class MemoryService:
                 )
                 await arq_pool.enqueue(
                     "extract_entities",
-                    queue_name=qname,
-                    **common,
-                    session_id=session_id,
-                )
-                await arq_pool.enqueue(
-                    "extract_facts",
                     queue_name=qname,
                     **common,
                     session_id=session_id,

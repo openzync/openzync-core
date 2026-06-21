@@ -277,12 +277,9 @@ async def extract_facts(
                             obj_id = input_fact.get("object_entity_id")
 
                             # ── Live entity lookup fallback ────────────────
-                            # If entity IDs weren't resolved from the session
-                            # snapshot (race condition: extract_entities may
-                            # not have committed yet, or known_entities was
-                            # fetched before entity extraction completed),
-                            # attempt a fresh DB lookup so graph edges are
-                            # created even when the snapshot is stale.
+                            # extract_entities always completes before this
+                            # worker runs (it chains after via enqueue), so
+                            # entities are guaranteed to be in the DB.
                             if subj_id is None:
                                 subj_node = await entity_repo.get_entity_by_name(
                                     org_id=uuid.UUID(org_id),

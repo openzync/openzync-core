@@ -527,6 +527,33 @@ async def extract_entities(
     else:
         logger.info("entity_extraction.done", episode_id=episode_id)
 
+    # ── 10. Enqueue fact extraction (now that entities are committed) ──
+    # extract_facts must run AFTER entities are in the DB so that entity
+    # IDs can be resolved for graph_relationship edges.  Chaining via
+    # enqueue eliminates the race condition.
+    try:
+        from services.worker.worker_settings import get_queue_name, settings as w_settings
+
+        arq_redis = ctx.get("redis") if isinstance(ctx, dict) else None
+        if arq_redis is not None:
+            await arq_redis.enqueue_job(
+                "extract_facts",
+                episode_id=episode_id,
+                org_id=org_id,
+                project_id=project_id,
+                content=content,
+                session_id=session_id,
+                trace_id=trace_id,
+                metadata=metadata,
+                _queue_name=get_queue_name(w_settings.ENV, "high"),
+            )
+    except Exception:
+        logger.warning(
+            "entity_extraction.facts_enqueue_failed",
+            episode_id=episode_id,
+            exc_info=True,
+        )
+
 
 # ── Private helpers ───────────────────────────────────────────────────────────
 
