@@ -166,30 +166,50 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Upload deployment files to VPS
-        uses: appleboy/scp-action@v1
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          source: |
-            infra/docker-compose.yml
-            infra/docker-compose.vps.yml
-            infra/docker-compose.prod.yml
-            infra/nginx/
-            scripts/deploy.sh
-            scripts/backup.sh
-          target: /home/deploy/openzep
-          rm: false
+        shell: bash
+        run: |
+          # Prepare SSH key
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
 
-      - name: Run deployment
+          HOST="${{ secrets.VPS_HOST }}"
+          USER="${{ secrets.VPS_USER }}"
+          TARGET="/home/deploy/openzep"
+
+          # Ensure target directory exists on VPS
+          ssh -i ~/.ssh/id_ed25519 \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            "${USER}@${HOST}" "mkdir -p ${TARGET}"
+
+          # Create tar archive of deployment files (runs on runner — resolves correctly)
+          tar czf /tmp/deploy-files.tar.gz \
+            infra/docker-compose.yml \
+            infra/docker-compose.vps.yml \
+            infra/docker-compose.prod.yml \
+            infra/nginx/ \
+            scripts/deploy.sh \
+            scripts/backup.sh
+
+          # Upload via SCP directly
+          scp -i ~/.ssh/id_ed25519 \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            /tmp/deploy-files.tar.gz \
+            "${USER}@${HOST}:${TARGET}/"
+
+      - name: Extract and run deployment
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
-            chmod +x /home/deploy/openzep/scripts/deploy.sh /home/deploy/openzep/scripts/backup.sh
             cd /home/deploy/openzep
+            tar xzf deploy-files.tar.gz
+            rm deploy-files.tar.gz
+            chmod +x scripts/deploy.sh scripts/backup.sh
             bash scripts/deploy.sh
 
   # ═════════════════════════════════════════════════════════════════════════════
