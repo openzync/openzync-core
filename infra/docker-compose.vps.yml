@@ -46,6 +46,10 @@ services:
     # Pull pre-built image from ghcr.io instead of building locally.
     # Pushed by the CI build job on every push to main.
     image: ghcr.io/rohnsha0/openzep/api:latest
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
     environment:
       MG_ENVIRONMENT: production
       MG_LOG_LEVEL: INFO
@@ -61,6 +65,10 @@ services:
 
   # ── PostgreSQL ──────────────────────────────────────────────────────────
   postgres:
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - backup-data:/backups:z
