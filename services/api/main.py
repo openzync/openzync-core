@@ -29,9 +29,6 @@ from core.config import Settings
 from core.db import close_db_engine, get_async_session, init_db_engine
 from core.exceptions import register_exception_handlers
 from core.graph_backend import init_graph_backend
-# graphiti is only used when GRAPH_BACKEND=graphiti (legacy)
-# The factory handles the conditional import; this shutdown guard
-# avoids importing the 361-line module on every startup.
 from core.logging import setup_logging
 from core.redis import close_redis, init_redis
 from middleware.audit import AuditMiddleware

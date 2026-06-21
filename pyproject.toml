@@ -13,7 +13,7 @@ authors = [
     { name = "Rohan Shaw", email = "rohnsha0@gmail.com" },
 ]
 
-keywords = ["agent", "memory", "graph", "ai", "RAG", "llm", "falkordb", "neo4j"]
+keywords = ["agent", "memory", "graph", "ai", "RAG", "llm"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -59,18 +59,13 @@ llm = [
     "openai>=1.30.0",
     "anthropic>=0.30.0",
 ]
-neo4j = [
-    "neo4j>=5.20.0",
-]
-falkordb = [
-    "redis>=5.0.0",
-]
+
 doc = [
     "mkdocs>=1.6.0",
     "mkdocs-material>=9.5.0",
 ]
 all = [
-    "openzep[dev,llm,neo4j,falkordb,doc]",
+    "openzep[dev,llm,doc]",
 ]
 
 [tool.setuptools.packages.find]

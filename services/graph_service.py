@@ -29,9 +29,9 @@ class GraphService:
 
     Args:
         graph_backend: An initialised ``GraphBackend`` implementation
-            (e.g. ``FalkorDBBackend``).  May be ``None`` if the graph
-            backend is not available — all methods gracefully return
-            empty results.
+            (e.g. ``PostgresGraphBackend``).  May be ``None`` if the
+            graph backend is not available — all methods gracefully
+            return empty results.
         user_repo: Optional ``UserRepository`` for user existence checks.
             When provided, ``ensure_user_exists`` can be called by
             routers before graph queries.

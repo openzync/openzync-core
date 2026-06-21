@@ -19,10 +19,9 @@ import time
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import Float, Select, cast, func, literal, literal_column, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from pgvector.sqlalchemy import Vector
 
 from models.episode import Episode
 from models.fact import Fact
@@ -122,7 +121,9 @@ class HybridRetriever:
             await self._db.rollback()
 
         try:
-            fact_vector_results = await self._vector_search_facts(query, project_id, limit)
+            fact_vector_results = await self._vector_search_facts(
+                query, project_id, limit
+            )
         except Exception:
             logger.warning(
                 "hybrid_retriever.fact_vector_failed",
@@ -182,6 +183,7 @@ class HybridRetriever:
         entities = entity_results[:limit]
 
         from middleware.metrics import graph_search_latency_seconds
+
         graph_search_latency_seconds.observe(time.monotonic() - _search_start)
 
         return {
@@ -227,12 +229,12 @@ class HybridRetriever:
             from core.llm import resolve_backend
 
             org_config_dict = (
-                self._org_config.to_llm_config_dict()
-                if self._org_config
-                else None
+                self._org_config.to_llm_config_dict() if self._org_config else None
             )
             backend = await resolve_backend(
-                provider=self._org_config.embedding_backend if self._org_config else None,
+                provider=self._org_config.embedding_backend
+                if self._org_config
+                else None,
                 org_config=org_config_dict,
             )
             response = await backend.embed([query])
@@ -490,9 +492,8 @@ class HybridRetriever:
         This provides graph-aware context that pure vector/BM25 search
         would miss (e.g., indirect relationships).
 
-        Uses the configured ``GraphBackend`` (FalkorDBBackend / Graphiti)
-        when available.  Gracefully degrades to an empty list when the
-        graph backend is not configured.
+        Uses the configured ``GraphBackend`` when available.  Gracefully
+        degrades to an empty list when the graph backend is not configured.
 
         Args:
             query: Natural-language query for entity matching.

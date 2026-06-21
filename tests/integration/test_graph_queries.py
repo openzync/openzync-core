@@ -9,7 +9,7 @@ Endpoints under test:
     GET    /v1/users/{user_id}/graph/communities       — List community summaries
 
 All graph endpoints gracefully return empty results when the graph backend
-(Graphiti / FalkorDB) is not available.  These tests verify that behaviour.
+is not available.  These tests verify that behaviour.
 
 Auth strategy:
     Each test creates a fresh org via the admin bootstrap fixture and
