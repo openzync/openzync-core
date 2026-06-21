@@ -25,6 +25,13 @@ on:
         type: boolean
         default: false
 
+# Grant write permission to ghcr.io for the build job.
+# The GITHUB_TOKEN defaults to read-only for packages — this elevates it.
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
 env:
   PYTHON_VERSION: "3.12"
   MG_DATABASE_URL: "postgresql+asyncpg://postgres:postgres@localhost:5432/test"
