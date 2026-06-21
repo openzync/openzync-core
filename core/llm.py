@@ -16,9 +16,10 @@ Usage::
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from abc import ABC, abstractmethod
+
+import orjson
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -96,8 +97,8 @@ def _last_validation_error(content: str, model: type[BaseModel]) -> str:
     """
     # Try JSON parse first
     try:
-        parsed: Any = json.loads(content)
-    except json.JSONDecodeError as exc:
+        parsed: Any = orjson.loads(content.encode())
+    except orjson.JSONDecodeError as exc:
         return f"Invalid JSON: {exc}"
 
     # Try model validation
@@ -208,7 +209,7 @@ class LLMBackend(ABC):
                     )
                     # Normalise content to clean JSON so callers can use
                     # ``model_validate_json()`` without pre-processing.
-                    response.content = json.dumps(extracted)
+                    response.content = orjson.dumps(extracted).decode()
                     return response
                 except Exception:
                     pass  # fall through to retry
@@ -262,7 +263,9 @@ class LLMBackend(ABC):
         instruction is appended to its content.  Otherwise a new system
         message is prepended.
         """
-        schema_json: str = json.dumps(model.model_json_schema(), indent=2)
+        schema_json: str = orjson.dumps(
+            model.model_json_schema(), option=orjson.OPT_INDENT_2
+        ).decode()
         instruction: str = (
             "You MUST respond with valid JSON only. "
             "Do NOT include markdown code blocks, explanations, "
@@ -290,7 +293,9 @@ class LLMBackend(ABC):
         with a ``user`` message explaining the failure and repeating the
         expected schema.
         """
-        schema_json: str = json.dumps(model.model_json_schema(), indent=2)
+        schema_json: str = orjson.dumps(
+            model.model_json_schema(), option=orjson.OPT_INDENT_2
+        ).decode()
         return [
             *messages,
             {"role": "assistant", "content": bad_content},
@@ -338,8 +343,8 @@ class LLMBackend(ABC):
         text = text[json_start:]
 
         try:
-            return json.loads(text)
-        except json.JSONDecodeError:
+            return orjson.loads(text.encode())
+        except orjson.JSONDecodeError:
             return None
 
     # ── Abstract members ───────────────────────────────────────────────────────

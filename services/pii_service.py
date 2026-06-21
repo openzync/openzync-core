@@ -21,6 +21,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+import orjson
 import structlog
 
 from core.exceptions import ValidationError
@@ -426,8 +427,6 @@ class PIIDetector:
         Returns:
             Parsed list of dicts, or ``None`` if parsing failed.
         """
-        import json
-
         if "```json" in raw:
             raw = raw.split("```json", 1)[1].split("```", 1)[0].strip()
         elif "```" in raw:
@@ -440,11 +439,11 @@ class PIIDetector:
         raw = raw[json_start:]
 
         try:
-            data = json.loads(raw)
+            data = orjson.loads(raw.encode())
             if isinstance(data, list):
                 return data
             return None
-        except json.JSONDecodeError:
+        except orjson.JSONDecodeError:
             return None
 
     # ── Post-processing ───────────────────────────────────────────────────
