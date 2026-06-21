@@ -66,3 +66,4 @@ docker-compose.override.yml
 generated/
 *.generated.py
 graphify-out/
+.plan/

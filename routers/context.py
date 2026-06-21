@@ -22,7 +22,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dependencies.db import get_db
 from dependencies.org_config import get_org_config
 from dependencies.project_auth import require_project_membership
-from packages.graph_backend.postgres import PostgresGraphBackend
 from schemas.context import ContextResponse
 from schemas.organization_config import OrgConfigBase
 from services.context_service import ContextService
@@ -107,7 +106,8 @@ async def get_context(
 
     # ── Assemble context ────────────────────────────────────────────────
     redis = getattr(request.app.state, "redis", None) if request else None
-    graph_backend = PostgresGraphBackend(db=db)
+    dispatcher = request.app.state.graph_backend_dispatcher
+    graph_backend = dispatcher.resolve_and_create(org_config, db)
     service = ContextService(
         db, org_id, redis, graph_backend=graph_backend, org_config=org_config
     )

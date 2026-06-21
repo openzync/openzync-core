@@ -28,7 +28,7 @@ from core.arq import close_arq, init_arq
 from core.config import Settings
 from core.db import close_db_engine, get_async_session, init_db_engine
 from core.exceptions import register_exception_handlers
-from core.graph_backend import init_graph_backend
+from core.graph_backend import init_dispatcher
 from core.logging import setup_logging
 from core.redis import close_redis, init_redis
 from middleware.audit import AuditMiddleware
@@ -88,25 +88,12 @@ def create_app() -> FastAPI:
         arq_pool = await init_arq(str(settings.REDIS_URL))
         app.state.arq_pool = arq_pool
 
-        # Init graph backend — selected by GRAPH_BACKEND config
-        # Supports: postgres (default), none
-        # For the postgres backend, we create a dedicated session that stays
-        # alive for the entire app lifetime (yield keeps the async with open).
-        session_factory = get_async_session(db_engine)
-        async with session_factory() as graph_session:
-            try:
-                app.state.graph_backend = await init_graph_backend(db=graph_session)
-            except Exception:
-                import structlog
+        # Init graph-backend dispatcher — a singleton registry of backend
+        # classes.  Actual backend instances are created per-request by
+        # dependencies using ``resolve_and_create(org_config, db)``.
+        app.state.graph_backend_dispatcher = init_dispatcher()
 
-                structlog.get_logger().warning(
-                    "graph_backend.init_failed",
-                    error="Graph backend could not be initialised. "
-                    "Graph-backed memory features will be unavailable.",
-                )
-                app.state.graph_backend = None
-
-            yield
+        yield
 
         # ── Shutdown (reverse order of initialisation) ────────────────────
         await close_arq()
