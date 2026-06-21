@@ -1,8 +1,10 @@
-"""Session model — a conversational session owned by a user.
+"""Session model — a conversational session scoped to a project.
 
 Sessions group related episodes (messages) into a single conversation context.
-Each user may have multiple sessions; the combination ``(user_id, external_id)``
-is unique within a user.
+Each project may have multiple sessions; the combination
+``(project_id, external_id)`` is unique within a project. The ``user_id``
+field tracks who created the session for attribution only — ownership is
+at the project level.
 """
 
 import uuid
@@ -16,7 +18,7 @@ from models.base import Base, TimestampMixin
 
 
 class Session(TimestampMixin, Base):
-    """A conversation session belonging to a user."""
+    """A conversation session belonging to a project."""
 
     __tablename__ = "sessions"
 
@@ -28,9 +30,15 @@ class Session(TimestampMixin, Base):
         nullable=False,
         index=True,
     )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
+        comment="The user who created this session (attribution only — ownership is via project).",
     )
     external_id: Mapped[str] = mapped_column(Text, nullable=False)
     # 'metadata' is reserved by SQLAlchemy — use trailing underscore for the
@@ -58,9 +66,9 @@ class Session(TimestampMixin, Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "user_id",
+            "project_id",
             "external_id",
-            name="uq_session_user_external",
+            name="uq_session_project_external",
         ),
         Index("ix_session_user_id", "user_id"),
     )

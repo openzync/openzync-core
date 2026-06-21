@@ -36,6 +36,7 @@ from repositories.episode_repository import EpisodeRepository
 pytestmark = pytest.mark.integration
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 ALT_ORG_ID = UUID("00000000-0000-0000-0000-000000000099")
+PROJECT_ID = UUID("00000000-0000-0000-0000-000000000002")
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -78,25 +79,52 @@ class TestApiKeyRepository:
             repo = ApiKeyRepository(db)
             key = await repo.create(
                 organization_id=ORG_ID,
+                project_id=PROJECT_ID,
                 key_hash="hash123", salt="salty", prefix="mg_test_",
                 lookup_hash="lookup123", name="Test Key",
             )
             assert key.id is not None
             assert key.prefix == "mg_test_"
+            assert key.project_id == PROJECT_ID
 
+            # List by org without project_id returns all for the org
             keys = await repo.list_by_org(ORG_ID)
             assert len(keys) >= 1
+
+            # List by org + project returns only project-scoped keys
+            project_keys = await repo.list_by_org(ORG_ID, project_id=PROJECT_ID)
+            assert len(project_keys) >= 1
+
+            # List by a different project returns empty
+            other_keys = await repo.list_by_org(
+                ORG_ID,
+                project_id=UUID("00000000-0000-0000-0000-000000000099"),
+            )
+            assert len(other_keys) == 0
 
     async def test_get_by_id_found(self, engine) -> None:
         async with AsyncSession(engine) as db:
             repo = ApiKeyRepository(db)
             key = await repo.create(
-                organization_id=ORG_ID, key_hash="h2", salt="s2",
+                organization_id=ORG_ID,
+                project_id=PROJECT_ID,
+                key_hash="h2", salt="s2",
                 prefix="mg_test_", lookup_hash="l2", name="Key 2",
             )
             found = await repo.get_by_id(ORG_ID, key.id)
             assert found is not None
             assert found.id == key.id
+
+            # Found with project_id filter
+            found = await repo.get_by_id(ORG_ID, key.id, project_id=PROJECT_ID)
+            assert found is not None
+
+            # Not found with wrong project_id
+            not_found = await repo.get_by_id(
+                ORG_ID, key.id,
+                project_id=UUID("00000000-0000-0000-0000-000000000099"),
+            )
+            assert not_found is None
 
     async def test_get_by_id_not_found(self, engine) -> None:
         async with AsyncSession(engine) as db:
@@ -108,10 +136,45 @@ class TestApiKeyRepository:
         async with AsyncSession(engine) as db:
             repo = ApiKeyRepository(db)
             key = await repo.create(
-                organization_id=ORG_ID, key_hash="h3", salt="s3",
+                organization_id=ORG_ID,
+                project_id=PROJECT_ID,
+                key_hash="h3", salt="s3",
                 prefix="mg_test_", lookup_hash="l3", name="Key 3",
             )
             revoked = await repo.revoke(ORG_ID, key.id)
+            assert revoked is not None
+            assert revoked.is_revoked is True
+
+            # Cannot revoke with wrong project_id
+            key2 = await repo.create(
+                organization_id=ORG_ID,
+                project_id=PROJECT_ID,
+                key_hash="h4", salt="s4",
+                prefix="mg_test_", lookup_hash="l4", name="Key 4",
+            )
+            not_revoked = await repo.revoke(
+                ORG_ID, key2.id,
+                project_id=UUID("00000000-0000-0000-0000-000000000099"),
+            )
+            assert not_revoked is None
+            # Key should still be active
+            still_active = await repo.get_by_id(ORG_ID, key2.id)
+            assert still_active is not None
+            assert still_active.is_revoked is False
+
+    async def test_revoke_with_project_id(self, engine) -> None:
+        """Revoke should succeed when project_id matches."""
+        async with AsyncSession(engine) as db:
+            repo = ApiKeyRepository(db)
+            key = await repo.create(
+                organization_id=ORG_ID,
+                project_id=PROJECT_ID,
+                key_hash="h5", salt="s5",
+                prefix="mg_test_", lookup_hash="l5", name="Key 5",
+            )
+            revoked = await repo.revoke(
+                ORG_ID, key.id, project_id=PROJECT_ID,
+            )
             assert revoked is not None
             assert revoked.is_revoked is True
 

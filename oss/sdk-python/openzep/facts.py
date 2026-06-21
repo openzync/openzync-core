@@ -18,14 +18,14 @@ class AsyncFactsClient:
 
     async def add(
         self,
-        user_id: str,
+        project_id: str,
         facts: list[FactTriple | dict],
         session_id: str | None = None,
     ) -> FactBatchResponse:
         """Ingest a batch of fact triples.
 
         Args:
-            user_id: The internal UUID of the user.
+            project_id: The internal UUID of the project.
             facts: List of fact triples (max 500).
             session_id: Optional session external ID.
 
@@ -43,7 +43,7 @@ class AsyncFactsClient:
 
         data = await self._http.request(
             "POST",
-            f"/v1/users/{user_id}/facts",
+            f"/v1/projects/{project_id}/facts",
             json_body=body,
         )
         return FactBatchResponse(**data)

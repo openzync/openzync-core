@@ -5,7 +5,7 @@ Uses the cache-aside pattern with optional ``SET NX EX`` stampede
 protection so that concurrent requests for the same cache key
 serialise the recompute behind a single distributed lock.
 
-Key namespace convention: ``ctx:{org_id}:{user_id}:{query_hash}``
+Key namespace convention: ``ctx:{org_id}:{project_id}:{query_hash}``
 """
 
 from __future__ import annotations
@@ -231,32 +231,35 @@ class CacheService:
     @staticmethod
     def build_context_cache_key(
         org_id: str,
-        user_id: str,
+        project_id: str,
         query: str,
     ) -> str:
         """Build a namespaced cache key for context assembly results.
 
-        Key format: ``ctx:{org_id}:{user_id}:{query_hash}``
+        Key format: ``ctx:{org_id}:{project_id}:{query_hash}``
 
         The query is SHA-256 hashed to keep keys a bounded length
         regardless of query length.
 
         Args:
             org_id: The organization UUID string.
-            user_id: The user UUID string.
+            project_id: The project UUID string.
             query: The natural-language query string.
 
         Returns:
             A namespaced Redis key string.
         """
         query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
-        return f"ctx:{org_id}:{user_id}:{query_hash}"
+        return f"ctx:{org_id}:{project_id}:{query_hash}"
 
     @staticmethod
     def build_user_cache_pattern(org_id: str, user_id: str) -> str:
         """Build a Redis key pattern for all context cache entries of a user.
 
-        Used by the invalidation routine on new message ingestion.
+        .. deprecated::
+            Use :meth:`build_project_cache_pattern` instead.  Context cache
+            invalidation is now project-scoped.  Kept for backward compatibility
+            of existing tests.
 
         Args:
             org_id: The organization UUID string.
@@ -267,6 +270,21 @@ class CacheService:
         """
         return f"ctx:{org_id}:{user_id}:*"
 
+    @staticmethod
+    def build_project_cache_pattern(org_id: str, project_id: str) -> str:
+        """Build a Redis key pattern for all context cache entries of a project.
+
+        Used by the invalidation routine on new message ingestion.
+
+        Args:
+            org_id: The organization UUID string.
+            project_id: The project UUID string.
+
+        Returns:
+            A glob pattern string for ``SCAN`` / ``KEYS``.
+        """
+        return f"ctx:{org_id}:{project_id}:*"
+
     # ── Invalidation ───────────────────────────────────────────────────────────
 
     async def invalidate_user_context(
@@ -276,9 +294,12 @@ class CacheService:
     ) -> int:
         """Invalidate all context cache entries for a user.
 
+        .. deprecated::
+            Use :meth:`invalidate_project_context` instead.  Context cache
+            invalidation is now project-scoped.  Kept for backward compatibility
+            of existing tests.
+
         Uses ``SCAN`` + ``DEL`` to match ``ctx:{org_id}:{user_id}:*``.
-        This is called by the ingestion service after new messages arrive
-        so that subsequent context queries fetch fresh data.
 
         Args:
             org_id: The organization UUID string.
@@ -320,6 +341,62 @@ class CacheService:
             logger.warning(
                 "cache_service.invalidation_failed",
                 extra={"org_id": org_id, "user_id": user_id},
+                exc_info=True,
+            )
+
+        return deleted
+
+    async def invalidate_project_context(
+        self,
+        org_id: str,
+        project_id: str,
+    ) -> int:
+        """Invalidate all context cache entries for a project.
+
+        Uses ``SCAN`` + ``DEL`` to match ``ctx:{org_id}:{project_id}:*``.
+        Called after new message ingestion so subsequent context queries
+        fetch fresh data from the database.
+
+        Args:
+            org_id: The organization UUID string.
+            project_id: The project UUID string.
+
+        Returns:
+            Number of cache keys deleted.
+        """
+        if self._redis is None:
+            return 0
+
+        pattern = self.build_project_cache_pattern(org_id, project_id)
+        cursor: int = 0
+        deleted = 0
+
+        try:
+            from redis.asyncio import Redis as AsyncRedis
+
+            r: AsyncRedis = self._redis  # type: ignore[assignment]
+            while True:
+                cursor, keys = await r.scan(
+                    cursor=cursor, match=pattern, count=100
+                )
+                if keys:
+                    deleted += await r.delete(*keys)
+                if cursor == 0:
+                    break
+
+            if deleted > 0:
+                logger.info(
+                    "cache_service.project_context_cache_invalidated",
+                    extra={
+                        "org_id": org_id,
+                        "project_id": project_id,
+                        "keys_deleted": deleted,
+                    },
+                )
+        except Exception:
+            logger.warning(
+                "cache_service.project_invalidation_failed",
+                extra={"org_id": org_id, "project_id": project_id},
                 exc_info=True,
             )
 

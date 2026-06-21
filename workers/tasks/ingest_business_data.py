@@ -30,6 +30,7 @@ ARQ_QUEUE = "low"
 async def ingest_business_data(
     ctx: dict,  # noqa: ARG001
     org_id: str,
+    project_id: str,
     user_id: str,
     facts: list[dict],
     job_id: str | None = None,  # noqa: ARG001
@@ -43,6 +44,7 @@ async def ingest_business_data(
     Args:
         ctx: ARQ worker context (unused, required by ARQ signature).
         org_id: Organization UUID string.
+        project_id: Project UUID string for project scoping.
         user_id: User UUID string.
         facts: List of fact dicts with keys: ``subject``, ``predicate``,
             ``object``, ``content`` (optional), ``confidence`` (optional).
@@ -61,6 +63,7 @@ async def ingest_business_data(
         "ingest_business_data.started",
         extra={
             "org_id": org_id,
+            "project_id": project_id,
             "user_id": user_id,
             "fact_count": len(facts),
             "trace_id": trace_id,
@@ -145,6 +148,7 @@ async def ingest_business_data(
             repo = FactRepository(db)
             created = await repo.batch_create(
                 organization_id=org_uuid,
+                project_id=UUID(project_id),
                 user_id=user_uuid,
                 facts=valid_facts,
             )
@@ -156,6 +160,7 @@ async def ingest_business_data(
     # Enqueue embedding tasks for each newly created fact
     await _enqueue_embedding_tasks(
         org_id=org_id,
+        project_id=project_id,
         user_id=user_id,
         fact_ids=[str(f.id) for f in created],
         trace_id=trace_id,
@@ -165,6 +170,7 @@ async def ingest_business_data(
         "ingest_business_data.completed",
         extra={
             "org_id": org_id,
+            "project_id": project_id,
             "user_id": user_id,
             "accepted": len(created),
             "errors": len(errors),
@@ -181,6 +187,7 @@ async def ingest_business_data(
 
 async def _enqueue_embedding_tasks(
     org_id: str,
+    project_id: str,
     user_id: str,
     fact_ids: list[str],
     trace_id: str = "",
@@ -189,6 +196,7 @@ async def _enqueue_embedding_tasks(
 
     Args:
         org_id: Organization UUID string.
+        project_id: Project UUID string for project scoping.
         user_id: User UUID string.
         fact_ids: List of fact UUID strings to embed.
         trace_id: Request trace ID for end-to-end correlation.
@@ -203,6 +211,7 @@ async def _enqueue_embedding_tasks(
                 queue_name=qname,
                 fact_id=fact_id,
                 org_id=org_id,
+                project_id=project_id,
                 user_id=user_id,
                 trace_id=trace_id,
             )

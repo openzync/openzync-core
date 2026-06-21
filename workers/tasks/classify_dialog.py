@@ -36,6 +36,7 @@ async def classify_dialog(
     ctx: object,
     episode_id: str,
     org_id: str,
+    project_id: str,
     content: str,
     trace_id: str = "",
     session_id: str | None = None,
@@ -68,6 +69,7 @@ async def classify_dialog(
         ctx: ARQ worker context (unused — required by ARQ contract).
         episode_id: UUID of the source episode (string, from ARQ).
         org_id: UUID of the owning organization.
+        project_id: UUID of the project for project scoping.
         content: The message text to classify.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
@@ -87,6 +89,7 @@ async def classify_dialog(
         "classification.started",
         episode_id=episode_id,
         org_id=org_id,
+        project_id=project_id,
         content_length=len(content),
         trace_id=trace_id,
     )
@@ -223,17 +226,18 @@ async def classify_dialog(
             await db.execute(
                 text("""
                     INSERT INTO dialog_classifications
-                        (organization_id, episode_id, intent, emotion,
-                         valence, arousal, confidence, raw,
+                        (organization_id, episode_id, project_id, intent,
+                         emotion, valence, arousal, confidence, raw,
                          created_at, updated_at)
                     VALUES
-                        (:org_id, :episode_id, :intent, :emotion,
-                         :valence, :arousal, :confidence, CAST(:raw AS jsonb),
-                         now(), now())
+                        (:org_id, :episode_id, :project_id, :intent,
+                         :emotion, :valence, :arousal, :confidence,
+                         CAST(:raw AS jsonb), now(), now())
                 """),
                 {
                     "org_id": uuid.UUID(org_id),
                     "episode_id": uuid.UUID(episode_id),
+                    "project_id": uuid.UUID(project_id),
                     "intent": intent,
                     "emotion": emotion,
                     "valence": valence,

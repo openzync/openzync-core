@@ -2,10 +2,10 @@
 
 Usage::
 
-    from openzep import OpenZep
+    from openzep import AsyncOpenZep
 
-    client = OpenZep(api_key="mg_live_...")
-    resp = client.memory.ingest("user-id", messages=[{"role":"user","content":"Hello"}])
+    async with AsyncOpenZep(api_key="mg_live_...") as client:
+        resp = await client.memory.ingest("project-id", messages=[{"role":"user","content":"Hello"}])
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from openzep._http import AsyncHTTPTransport
 from openzep.facts import AsyncFactsClient
 from openzep.graph import AsyncGraphClient
 from openzep.memory import AsyncMemoryClient
+from openzep.projects import AsyncProjectsClient
 from openzep.sessions import AsyncSessionsClient
 from openzep.users import AsyncUsersClient
 
@@ -34,7 +35,7 @@ class AsyncOpenZep:
     Usage::
 
         async with AsyncOpenZep(api_key="...") as client:
-            resp = await client.memory.ingest("user-id", messages=[...])
+            resp = await client.memory.ingest("project-id", messages=[...])
     """
 
     def __init__(
@@ -53,6 +54,7 @@ class AsyncOpenZep:
         self.graph = AsyncGraphClient(self._http)
         self.users = AsyncUsersClient(self._http)
         self.sessions = AsyncSessionsClient(self._http)
+        self.projects = AsyncProjectsClient(self._http)
 
     async def close(self) -> None:
         """Close the underlying HTTP connection pool."""
@@ -79,7 +81,7 @@ class OpenZep:
     Usage::
 
         client = OpenZep(api_key="...")
-        resp = client.memory.ingest("user-id", messages=[...])
+        resp = client.memory.ingest("project-id", messages=[...])
     """
 
     def __init__(
@@ -94,6 +96,7 @@ class OpenZep:
         self.graph = _SyncDomainWrapper(self._async.graph)
         self.users = _SyncDomainWrapper(self._async.users)
         self.sessions = _SyncDomainWrapper(self._async.sessions)
+        self.projects = _SyncDomainWrapper(self._async.projects)
 
     def close(self) -> None:
         """Close the underlying HTTP connection pool."""

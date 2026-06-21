@@ -58,6 +58,12 @@ class Fact(TimestampMixin, Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="Denormalized for efficient project-scoped queries without joining through session.",
+    )
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,

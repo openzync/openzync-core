@@ -42,7 +42,7 @@ async def extract_facts(
     ctx: object,
     episode_id: str,
     org_id: str,
-    user_id: str,
+    project_id: str,
     content: str,
     session_id: str | None = None,
     trace_id: str = "",
@@ -71,7 +71,7 @@ async def extract_facts(
         ctx: ARQ worker context (unused — required by ARQ contract).
         episode_id: UUID of the source episode (string, from ARQ).
         org_id: UUID of the owning organization.
-        user_id: UUID of the user who authored the message.
+        project_id: UUID of the project for project scoping.
         content: The message text to extract facts from.
         session_id: UUID of the session (passed from MemoryService).
             Used to fetch previously extracted entities and recent
@@ -98,6 +98,7 @@ async def extract_facts(
         "fact_extraction.started",
         episode_id=episode_id,
         org_id=org_id,
+        project_id=project_id,
         session_id=session_id,
         content_length=len(content),
         trace_id=trace_id,
@@ -115,6 +116,26 @@ async def extract_facts(
     session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
     if session_factory is None:
         session_factory = get_async_session(engine)
+
+    # ── 0. Resolve user_id from episode record ──────────────────────────────
+    # user_id is stored on the episode at creation time (from the API key's
+    # created_by via the auth middleware).  The worker resolves it from the
+    # episode rather than receiving it as an ARQ parameter.
+    from sqlalchemy import select
+    from models.episode import Episode
+
+    async with session_factory() as resolve_db:
+        result = await resolve_db.execute(
+            select(Episode.user_id).where(Episode.id == episode_id)
+        )
+        user_id_row = result.scalar_one_or_none()
+    if user_id_row is None:
+        logger.warning(
+            "fact_extraction.episode_not_found",
+            episode_id=episode_id,
+        )
+        return
+    user_id: str = str(user_id_row)
 
     # ── 1. Render prompt (system instructions) with auto-injected context ──
     system_prompt, prompt_context = await render_prompt(
@@ -219,6 +240,7 @@ async def extract_facts(
                             facts=resolved_facts,
                             user_id=uuid.UUID(user_id),
                             organization_id=uuid.UUID(org_id),
+                            project_id=uuid.UUID(project_id),
                             source_episode_id=uuid.UUID(episode_id),
                         )
 
@@ -255,15 +277,13 @@ async def extract_facts(
                             obj_id = input_fact.get("object_entity_id")
 
                             # ── Live entity lookup fallback ────────────────
-                            # If entity IDs weren't resolved from the session
-                            # snapshot (race condition: extract_entities may
-                            # not have committed yet, or known_entities was
-                            # fetched before entity extraction completed),
-                            # attempt a fresh DB lookup so graph edges are
-                            # created even when the snapshot is stale.
+                            # extract_entities always completes before this
+                            # worker runs (it chains after via enqueue), so
+                            # entities are guaranteed to be in the DB.
                             if subj_id is None:
                                 subj_node = await entity_repo.get_entity_by_name(
                                     org_id=uuid.UUID(org_id),
+                                    project_id=uuid.UUID(project_id),
                                     name=input_fact["subject"],
                                 )
                                 if subj_node is not None:
@@ -279,6 +299,7 @@ async def extract_facts(
                             if obj_id is None:
                                 obj_node = await entity_repo.get_entity_by_name(
                                     org_id=uuid.UUID(org_id),
+                                    project_id=uuid.UUID(project_id),
                                     name=input_fact["object"],
                                 )
                                 if obj_node is not None:
@@ -298,6 +319,7 @@ async def extract_facts(
                                         predicate=input_fact["predicate"],
                                         obj=input_fact["object"],
                                         org_id=uuid.UUID(org_id),
+                                        project_id=uuid.UUID(project_id),
                                     )
                                 except Exception:
                                     # Non-fatal: fact is already persisted,
@@ -325,9 +347,18 @@ async def extract_facts(
             await engine.dispose()
 
     if persisted:
-        logger.info("fact_extraction.completed", episode_id=episode_id, facts=persisted)
+        logger.info(
+            "fact_extraction.completed",
+            episode_id=episode_id,
+            project_id=project_id,
+            facts=persisted,
+        )
     else:
-        logger.info("fact_extraction.no_facts", episode_id=episode_id)
+        logger.info(
+            "fact_extraction.no_facts",
+            episode_id=episode_id,
+            project_id=project_id,
+        )
 
 
 async def _set_enrichment_bit(

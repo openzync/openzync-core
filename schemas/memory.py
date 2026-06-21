@@ -66,7 +66,7 @@ class Message(BaseModel):
 
 
 class IngestMemoryRequest(BaseModel):
-    """Request body for ``POST /v1/users/{user_id}/memory``.
+    """Request body for ``POST /v1/projects/{project_id}/memory``.
 
     Attributes:
         session_id: Optional session external ID. If omitted, a session
@@ -118,7 +118,7 @@ class IngestMemoryResponse(BaseModel):
 
 
 class DeleteMemoryResponse(BaseModel):
-    """Response body for ``DELETE /v1/users/{user_id}/memory``.
+    """Response body for ``DELETE /v1/projects/{project_id}/memory``.
 
     Attributes:
         status: Outcome of the deletion operation.

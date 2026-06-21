@@ -71,15 +71,15 @@ class ContextService:
 
     async def assemble(
         self,
-        user_id: UUID,
+        project_id: UUID,
         query: str,
         limit: int = 20,
         format: str = "text",  # noqa: A002
     ) -> dict:
-        """Assemble a context block for a user from a natural-language query.
+        """Assemble a context block for a project from a natural-language query.
 
         Full pipeline:
-        1. Build a cache key from (org_id, user_id, query) and check Redis.
+        1. Build a cache key from (org_id, project_id, query) and check Redis.
         2. On cache miss, run hybrid search across episodes, facts,
            entities, and communities.
         3. Format results as plain text or structured JSON.
@@ -88,7 +88,7 @@ class ContextService:
            (cache hit, timing, source counts).
 
         Args:
-            user_id: The UUID of the user to retrieve context for.
+            project_id: The UUID of the project to retrieve context for.
             query: A natural-language query describing the context needed.
             limit: Maximum items per source type (1–100).
             format: Output format — ``"text"`` (default) or ``"json"``.
@@ -98,10 +98,6 @@ class ContextService:
             - ``context``: The assembled context string.
             - ``metadata``: Dict with ``cache_hit``, ``assembly_time_ms``,
               ``source_counts``, and ``total_items``.
-
-        Raises:
-            NotFoundError: If the user does not exist (caller should
-                resolve the user before calling this method).
         """
         start = time.monotonic()
 
@@ -112,7 +108,7 @@ class ContextService:
         if self._cache is not None:
             cache_key = self._cache.build_context_cache_key(
                 str(self._org_id),
-                str(user_id),
+                str(project_id),
                 query,
             )
             cached = await self._cache.get(cache_key)
@@ -122,7 +118,7 @@ class ContextService:
                 logger.debug(
                     "context.cache_hit",
                     org_id=str(self._org_id),
-                    user_id=str(user_id),
+                    project_id=str(project_id),
                     query_hash=query,
                     assembly_time_ms=round(elapsed, 1),
                 )
@@ -139,10 +135,7 @@ class ContextService:
         # ═══════════════════════════════════════════════════════════════════
         # Step 2 — Run hybrid search
         # ═══════════════════════════════════════════════════════════════════
-        # note: The hybrid search may raise if the DB connection
-        # is broken.  We let the exception propagate to the global exception
-        # handler which maps it to a 502 (ExternalServiceError).
-        results = await self._retriever.hybrid_search(query, user_id, limit)
+        results = await self._retriever.hybrid_search(query, project_id, limit)
 
         # ═══════════════════════════════════════════════════════════════════
         # Step 3 — Format
@@ -169,9 +162,6 @@ class ContextService:
         # Step 4 — Cache result
         # ═══════════════════════════════════════════════════════════════════
         if self._cache is not None and cache_key is not None:
-            # ⚠️ TTL is intentionally short (30s default) so that
-            # context never goes stale for more than one cache window
-            # after a new message ingestion.
             await self._cache.set(cache_key, context_str, ttl=30)
 
         elapsed = (time.monotonic() - start) * 1000
@@ -179,7 +169,7 @@ class ContextService:
         logger.debug(
             "context.assembled",
             org_id=str(self._org_id),
-            user_id=str(user_id),
+            project_id=str(project_id),
             query_hash=query,
             format=format,
             assembly_time_ms=round(elapsed, 1),

@@ -1,29 +1,25 @@
 """Graph query endpoints — HTTP adapter layer only.
 
 Provides:
-- ``GET    /v1/users/{user_id}/graph/nodes``         — List entity nodes
-- ``GET    /v1/users/{user_id}/graph/nodes/{node_id}`` — Get single node with edges
-- ``DELETE /v1/users/{user_id}/graph/nodes/{node_id}`` — Delete entity node
-- ``GET    /v1/users/{user_id}/graph/edges``          — List relationship edges
-- ``GET    /v1/users/{user_id}/graph/communities``    — List community summaries
+- ``GET    /v1/projects/{project_id}/graph/nodes``              — List entity nodes
+- ``GET    /v1/projects/{project_id}/graph/nodes/{node_id}``    — Get single node with edges
+- ``DELETE /v1/projects/{project_id}/graph/nodes/{node_id}``    — Delete entity node
+- ``GET    /v1/projects/{project_id}/graph/edges``              — List relationship edges
+- ``GET    /v1/projects/{project_id}/graph/communities``        — List community summaries
 
-Every handler is a thin adapter that:
-1. Extracts input from the request (path params, query params).
-2. Calls the service layer.
-3. Returns a Pydantic response with appropriate HTTP status code.
-
-No business logic. No database queries.
+Every endpoint is guarded by ``require_project_membership`` for unified
+authentication and project authorization, and ``project_id`` is passed to
+the graph service layer for backend-level project isolation.
 """
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from core.exceptions import NotFoundError
-from dependencies.auth import require_org_id
-from dependencies.db import get_db
+from dependencies.project_auth import require_project_membership
 from dependencies.services import get_graph_service
 from schemas.graph import (
     GraphCommunitiesListResponse,
@@ -40,7 +36,7 @@ from schemas.graph import (
 from services.graph_service import GraphService
 
 router = APIRouter(
-    prefix="/v1/users/{user_id}/graph",
+    prefix="/v1/projects/{project_id}/graph",
     tags=["Knowledge Graph"],
 )
 
@@ -51,17 +47,18 @@ router = APIRouter(
 @router.get(
     "/nodes",
     response_model=GraphNodesListResponse,
+    dependencies=[Depends(require_project_membership)],
     summary="List entity nodes",
-    description="List entity nodes in the user's knowledge graph with "
+    description="List entity nodes in the project's knowledge graph with "
     "optional type filtering and cursor-based pagination.",
     responses={
         200: {"description": "Paginated list of entity nodes."},
         401: {"description": "Missing or invalid authentication."},
-        404: {"description": "User not found in organization."},
+        403: {"description": "Not a member of this project."},
     },
 )
 async def list_graph_nodes(
-    user_id: UUID,
+    request: Request,
     entity_type: str | None = Query(
         default=None,
         description="Optional filter by entity type (e.g. 'Person', 'Organization').",
@@ -80,16 +77,15 @@ async def list_graph_nodes(
         default=None,
         description="Opaque cursor for pagination from a previous response.",
     ),
-    db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_id),
     service: GraphService = Depends(get_graph_service),
 ) -> GraphNodesListResponse:
     """List entity nodes with optional type filter and cursor pagination."""
-    org_uuid = UUID(org_id)
-    await service.ensure_user_exists(org_uuid, user_id)
+    org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
 
     result = await service.get_entities(
-        org_id=org_uuid,
+        org_id=org_id,
+        project_id=project_id,
         entity_type=entity_type,
         session_id=session_id,
         limit=limit,
@@ -111,28 +107,29 @@ async def list_graph_nodes(
 @router.get(
     "/nodes/{node_id}",
     response_model=GraphNodeDetailResponse,
+    dependencies=[Depends(require_project_membership)],
     summary="Get entity node with incident edges",
     description="Retrieve a single entity node and all its incident "
     "edges from the knowledge graph.",
     responses={
         200: {"description": "Entity node with incident edges."},
         401: {"description": "Missing or invalid authentication."},
-        404: {"description": "Entity or user not found."},
+        403: {"description": "Not a member of this project."},
+        404: {"description": "Entity not found."},
     },
 )
 async def get_graph_node(
-    user_id: UUID,
+    request: Request,
     node_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_id),
     service: GraphService = Depends(get_graph_service),
 ) -> GraphNodeDetailResponse:
     """Get a single entity node with all its incident edges."""
-    org_uuid = UUID(org_id)
-    await service.ensure_user_exists(org_uuid, user_id)
+    org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
 
     result = await service.get_entity(
-        org_id=org_uuid,
+        org_id=org_id,
+        project_id=project_id,
         entity_id=node_id,
     )
 
@@ -150,28 +147,29 @@ async def get_graph_node(
 @router.delete(
     "/nodes/{node_id}",
     status_code=204,
+    dependencies=[Depends(require_project_membership)],
     summary="Delete entity node",
     description="Delete an entity node and all its incident edges "
     "from the knowledge graph.",
     responses={
         204: {"description": "Entity deleted successfully (no content)."},
         401: {"description": "Missing or invalid authentication."},
-        404: {"description": "Entity or user not found."},
+        403: {"description": "Not a member of this project."},
+        404: {"description": "Entity not found."},
     },
 )
 async def delete_graph_node(
-    user_id: UUID,
+    request: Request,
     node_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_id),
     service: GraphService = Depends(get_graph_service),
 ) -> None:
     """Delete an entity node from the knowledge graph."""
-    org_uuid = UUID(org_id)
-    await service.ensure_user_exists(org_uuid, user_id)
+    org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
 
     deleted = await service.delete_entity(
-        org_id=org_uuid,
+        org_id=org_id,
+        project_id=project_id,
         entity_id=node_id,
     )
     if not deleted:
@@ -187,18 +185,19 @@ async def delete_graph_node(
 @router.get(
     "/edges",
     response_model=GraphEdgesListResponse,
+    dependencies=[Depends(require_project_membership)],
     summary="List relationship edges",
     description="List relationship edges for a specific entity with "
     "optional predicate filtering.",
     responses={
         200: {"description": "Paginated list of relationship edges."},
         401: {"description": "Missing or invalid authentication."},
-        404: {"description": "User not found in organization."},
+        403: {"description": "Not a member of this project."},
         422: {"description": "Missing required subject_id parameter."},
     },
 )
 async def list_graph_edges(
-    user_id: UUID,
+    request: Request,
     subject_id: UUID | None = Query(
         default=None,
         description="Required: UUID of the source entity whose edges to list.",
@@ -217,13 +216,11 @@ async def list_graph_edges(
         default=None,
         description="Opaque cursor for pagination from a previous response.",
     ),
-    db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_id),
     service: GraphService = Depends(get_graph_service),
 ) -> GraphEdgesListResponse:
     """List relationship edges with optional predicate filtering."""
-    org_uuid = UUID(org_id)
-    await service.ensure_user_exists(org_uuid, user_id)
+    org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
 
     if subject_id is None:
         raise HTTPException(
@@ -232,7 +229,8 @@ async def list_graph_edges(
         )
 
     result = await service.get_edges(
-        org_id=org_uuid,
+        org_id=org_id,
+        project_id=project_id,
         subject_id=subject_id,
         predicate=predicate,
         limit=limit,
@@ -254,27 +252,29 @@ async def list_graph_edges(
 @router.get(
     "/communities",
     response_model=GraphCommunitiesListResponse,
+    dependencies=[Depends(require_project_membership)],
     summary="List community summaries",
-    description="List community summary nodes for the user's knowledge graph. "
-    "Community detection runs as a scheduled background task — this endpoint "
-    "returns an empty list until communities are computed.",
+    description="List community summary nodes for the project's knowledge "
+    "graph.  Community detection runs as a scheduled background task — "
+    "this endpoint returns an empty list until communities are computed.",
     responses={
         200: {"description": "List of community summary nodes."},
         401: {"description": "Missing or invalid authentication."},
-        404: {"description": "User not found in organization."},
+        403: {"description": "Not a member of this project."},
     },
 )
 async def list_communities(
-    user_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_id),
+    request: Request,
     service: GraphService = Depends(get_graph_service),
 ) -> GraphCommunitiesListResponse:
     """List community summary nodes."""
-    org_uuid = UUID(org_id)
-    await service.ensure_user_exists(org_uuid, user_id)
+    org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
 
-    communities = await service.get_communities(org_id=org_uuid)
+    communities = await service.get_communities(
+        org_id=org_id,
+        project_id=project_id,
+    )
 
     return GraphCommunitiesListResponse(
         data=[GraphCommunity(**c) for c in communities],

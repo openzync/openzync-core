@@ -1,7 +1,7 @@
 """LangChain tools for OpenZep fact operations.
 
 Provides tools that give LLM agents write access to the OpenZep facts
-system — adding structured fact triples to a user's knowledge graph.
+system — adding structured fact triples to a project's knowledge graph.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ class FactTripleInput(BaseModel):
 class AddFactsInput(BaseModel):
     """Input schema for adding facts."""
 
-    user_id: str = Field(..., description="OpenZep user UUID.")
+    project_id: str = Field(..., description="OpenZep project UUID.")
     facts: List[FactTripleInput] = Field(
         ..., min_length=1, max_length=500, description="Fact triples to add."
     )
@@ -52,18 +52,18 @@ class AddFactsTool(BaseTool):
     name: str = "add_facts"
     description: str = (
         "Add structured fact triples (subject-predicate-object) to the "
-        "user's persistent knowledge graph. Use this to store business "
+        "project's persistent knowledge graph. Use this to store business "
         "data, user preferences, or relationship information extracted "
         "from conversations."
     )
     args_schema: Type[BaseModel] = AddFactsInput
     client: AsyncOpenZep
 
-    def _run(self, user_id: str, facts: list[dict[str, Any]]) -> str:
+    def _run(self, project_id: str, facts: list[dict[str, Any]]) -> str:
         """Add facts (sync)."""
-        return _run_async(self._arun(user_id=user_id, facts=facts))
+        return _run_async(self._arun(project_id=project_id, facts=facts))
 
-    async def _arun(self, user_id: str, facts: list[dict[str, Any]]) -> str:
+    async def _arun(self, project_id: str, facts: list[dict[str, Any]]) -> str:
         """Add facts (async)."""
         # Convert dicts to FactTriple-compatible dicts
         normalized: list[dict[str, Any]] = []
@@ -78,7 +78,7 @@ class AddFactsTool(BaseTool):
                 }
             )
 
-        result = await self.client.facts.add(user_id, normalized)
+        result = await self.client.facts.add(project_id, normalized)
         return (
             f"Accepted {result.accepted_count} fact(s) "
             f"(job_id: {result.job_id})."

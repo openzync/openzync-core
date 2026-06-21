@@ -14,7 +14,7 @@ from repositories.session_repository import SessionRepository
 from repositories.structured_extraction_repository import (
     StructuredExtractionRepository,
 )
-from repositories.user_repository import UserRepository
+
 from schemas.structured_extractions import (
     StructuredExtractionListResponse,
     StructuredExtractionResponse,
@@ -27,47 +27,38 @@ class StructuredExtractionService:
     def __init__(
         self,
         repo: StructuredExtractionRepository,
-        user_repo: UserRepository,
         session_repo: SessionRepository,
     ) -> None:
         self._repo = repo
-        self._user_repo = user_repo
         self._session_repo = session_repo
 
     async def get_session_extractions(
         self,
         org_id: UUID,
-        user_id: UUID,
         session_id: UUID,
+        project_id: UUID | None = None,
     ) -> StructuredExtractionListResponse:
         """Return all extractions for episodes in a session.
 
         Args:
             org_id: The authenticated organization UUID.
-            user_id: The user UUID (must belong to the org).
-            session_id: The session UUID (must belong to the user).
+            session_id: The session UUID.
+            project_id: Optional project UUID for intra-org isolation
+                of the session ownership check.
 
         Returns:
             ``StructuredExtractionListResponse`` with items ordered by
             episode sequence number.  May be empty if no extractions exist.
 
         Raises:
-            NotFoundError: If the user or session does not exist or does
-                not belong to the org.
+            NotFoundError: If the session does not exist.
         """
-        # Verify user belongs to org
-        user = await self._user_repo.get_by_uuid(org_id, user_id)
-        if user is None:
-            raise NotFoundError(f"User '{user_id}' not found in organization")
-
-        # Verify session belongs to user
+        # Verify session exists (optionally scoped to project)
         session = await self._session_repo.get_by_uuid(
-            org_id=org_id, session_id=session_id, user_id=user_id
+            org_id=org_id, session_id=session_id, project_id=project_id
         )
         if session is None:
-            raise NotFoundError(
-                f"Session '{session_id}' not found for user '{user_id}'"
-            )
+            raise NotFoundError(f"Session '{session_id}' not found")
 
         extractions = await self._repo.get_by_session(org_id, session_id)
         return StructuredExtractionListResponse(
@@ -81,36 +72,30 @@ class StructuredExtractionService:
     async def get_episode_extraction(
         self,
         org_id: UUID,
-        user_id: UUID,
         session_id: UUID,
         episode_id: UUID,
+        project_id: UUID | None = None,
     ) -> StructuredExtractionResponse | None:
         """Return the extraction for a specific episode, or ``None``.
 
         Args:
             org_id: The authenticated organization UUID.
-            user_id: The user UUID (must belong to the org).
-            session_id: The session UUID (must belong to the user).
+            session_id: The session UUID.
             episode_id: The episode UUID.
+            project_id: Optional project UUID for intra-org isolation
+                of the session ownership check.
 
         Returns:
             A ``StructuredExtractionResponse`` or ``None`` if not yet extracted.
 
         Raises:
-            NotFoundError: If the user or session does not exist or does
-                not belong to the org.
+            NotFoundError: If the session does not exist.
         """
-        user = await self._user_repo.get_by_uuid(org_id, user_id)
-        if user is None:
-            raise NotFoundError(f"User '{user_id}' not found in organization")
-
         session = await self._session_repo.get_by_uuid(
-            org_id=org_id, session_id=session_id, user_id=user_id
+            org_id=org_id, session_id=session_id, project_id=project_id
         )
         if session is None:
-            raise NotFoundError(
-                f"Session '{session_id}' not found for user '{user_id}'"
-            )
+            raise NotFoundError(f"Session '{session_id}' not found")
 
         extraction = await self._repo.get_by_episode(org_id, episode_id)
         if extraction is None:

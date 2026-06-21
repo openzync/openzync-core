@@ -118,7 +118,6 @@ async def get_fact_service(
         db=db,
         redis_client=redis_client,
         fact_repo=FactRepository(db),
-        user_repo=UserRepository(db),
         session_repo=SessionRepository(db),
         webhook_service=webhook,
     )

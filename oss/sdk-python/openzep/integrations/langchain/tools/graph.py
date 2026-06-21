@@ -21,7 +21,7 @@ class GraphSearchInput(BaseModel):
     """Input schema for graph search."""
 
     query: str = Field(..., description="Natural-language search query.")
-    user_id: str = Field(..., description="OpenZep user UUID to search within.")
+    project_id: str = Field(..., description="OpenZep project UUID to search within.")
     types: str | None = Field(
         default=None,
         description="Comma-separated result types: episodes, facts, entities.",
@@ -32,14 +32,14 @@ class GraphSearchInput(BaseModel):
 class GraphNodeDetailInput(BaseModel):
     """Input schema for node detail lookup."""
 
-    user_id: str = Field(..., description="OpenZep user UUID.")
+    project_id: str = Field(..., description="OpenZep project UUID.")
     node_id: str = Field(..., description="UUID of the node to retrieve.")
 
 
 class ListGraphNodesInput(BaseModel):
     """Input schema for listing graph nodes."""
 
-    user_id: str = Field(..., description="OpenZep user UUID.")
+    project_id: str = Field(..., description="OpenZep project UUID.")
     entity_type: str | None = Field(
         default=None,
         description="Optional entity type filter.",
@@ -54,12 +54,12 @@ class GraphSearchTool(BaseTool):
     """Tool that searches the OpenZep knowledge graph.
 
     Agents can use this to retrieve contextually relevant episodes, facts,
-    or entities from a user's persistent memory.
+    or entities from a project's persistent memory.
     """
 
     name: str = "graph_search"
     description: str = (
-        "Search the user's knowledge graph for contextually relevant "
+        "Search the project's knowledge graph for contextually relevant "
         "episodes, facts, or entities. Use this to recall past "
         "conversations, user preferences, or business data."
     )
@@ -69,7 +69,7 @@ class GraphSearchTool(BaseTool):
     def _run(
         self,
         query: str,
-        user_id: str,
+        project_id: str,
         types: str | None = None,
         limit: int | None = None,
     ) -> str:
@@ -77,7 +77,7 @@ class GraphSearchTool(BaseTool):
 
         Args:
             query: Search query.
-            user_id: OpenZep user UUID.
+            project_id: OpenZep project UUID.
             types: Result type filter.
             limit: Max results.
 
@@ -85,19 +85,19 @@ class GraphSearchTool(BaseTool):
             Formatted search results string.
         """
         return _run_async(
-            self._arun(query, user_id=user_id, types=types, limit=limit)
+            self._arun(query, project_id=project_id, types=types, limit=limit)
         )
 
     async def _arun(
         self,
         query: str,
-        user_id: str,
+        project_id: str,
         types: str | None = None,
         limit: int | None = None,
     ) -> str:
         """Execute the search (async)."""
         results = await self.client.graph.search(
-            user_id,
+            project_id,
             query,
             types=types or "episodes,facts",
             limit=limit or 20,
@@ -126,13 +126,13 @@ class GraphNodeDetailTool(BaseTool):
     args_schema: Type[BaseModel] = GraphNodeDetailInput
     client: AsyncOpenZep
 
-    def _run(self, user_id: str, node_id: str) -> str:
+    def _run(self, project_id: str, node_id: str) -> str:
         """Retrieve node details (sync)."""
-        return _run_async(self._arun(user_id=user_id, node_id=node_id))
+        return _run_async(self._arun(project_id=project_id, node_id=node_id))
 
-    async def _arun(self, user_id: str, node_id: str) -> str:
+    async def _arun(self, project_id: str, node_id: str) -> str:
         """Retrieve node details (async)."""
-        detail = await self.client.graph.node_detail(user_id, node_id)
+        detail = await self.client.graph.node_detail(project_id, node_id)
         lines: list[str] = [
             f"Node: {detail.node.name} ({detail.node.type})",
             f"Summary: {detail.node.summary}",
@@ -151,7 +151,7 @@ class ListGraphNodesTool(BaseTool):
 
     name: str = "list_graph_nodes"
     description: str = (
-        "List entity nodes in the user's knowledge graph, optionally "
+        "List entity nodes in the project's knowledge graph, optionally "
         "filtered by entity type."
     )
     args_schema: Type[BaseModel] = ListGraphNodesInput
@@ -159,24 +159,24 @@ class ListGraphNodesTool(BaseTool):
 
     def _run(
         self,
-        user_id: str,
+        project_id: str,
         entity_type: str | None = None,
         limit: int | None = None,
     ) -> str:
         """List nodes (sync)."""
         return _run_async(
-            self._arun(user_id=user_id, entity_type=entity_type, limit=limit)
+            self._arun(project_id=project_id, entity_type=entity_type, limit=limit)
         )
 
     async def _arun(
         self,
-        user_id: str,
+        project_id: str,
         entity_type: str | None = None,
         limit: int | None = None,
     ) -> str:
         """List nodes (async)."""
         paginator = await self.client.graph.nodes(
-            user_id,
+            project_id,
             entity_type=entity_type,
             limit=limit or 50,
         )

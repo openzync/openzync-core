@@ -56,6 +56,12 @@ class Episode(TimestampMixin, Base):
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
     )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="Denormalized for efficient project-scoped queries without joining through session.",
+    )
     session_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("sessions.id", ondelete="CASCADE"),
         nullable=False,

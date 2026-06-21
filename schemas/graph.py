@@ -110,7 +110,7 @@ class PaginatedGraphEdges(BaseModel):
 
 
 class GraphNodesListResponse(BaseModel):
-    """Response wrapper for ``GET /v1/users/{user_id}/graph/nodes``.
+    """Response wrapper for ``GET /v1/projects/{project_id}/graph/nodes``.
 
     Attributes:
         data: Paginated entity node results.
@@ -120,7 +120,7 @@ class GraphNodesListResponse(BaseModel):
 
 
 class GraphNodeDetailResponse(BaseModel):
-    """Response wrapper for ``GET /v1/users/{user_id}/graph/nodes/{node_id}``.
+    """Response wrapper for ``GET /v1/projects/{project_id}/graph/nodes/{node_id}``.
 
     Attributes:
         data: The entity node with its incident edges.
@@ -130,7 +130,7 @@ class GraphNodeDetailResponse(BaseModel):
 
 
 class GraphEdgesListResponse(BaseModel):
-    """Response wrapper for ``GET /v1/users/{user_id}/graph/edges``.
+    """Response wrapper for ``GET /v1/projects/{project_id}/graph/edges``.
 
     Attributes:
         data: Paginated edge results.
@@ -140,7 +140,7 @@ class GraphEdgesListResponse(BaseModel):
 
 
 class GraphCommunitiesListResponse(BaseModel):
-    """Response wrapper for ``GET /v1/users/{user_id}/graph/communities``.
+    """Response wrapper for ``GET /v1/projects/{project_id}/graph/communities``.
 
     Attributes:
         data: List of community summary nodes.

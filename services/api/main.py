@@ -43,7 +43,6 @@ from middleware.request_id import RequestIDMiddleware
 from middleware.tracing import TracingMiddleware
 from routers import (
     admin,
-    admin_api_keys,
     admin_metrics,
     admin_org_config,
     admin_organizations,
@@ -59,6 +58,8 @@ from routers import (
     health,
     memory,
     metrics,
+    project_api_keys,
+    projects,
     search,
     sessions,
     structured_extractions,
@@ -203,7 +204,6 @@ def create_app() -> FastAPI:
     # ── Routers ──────────────────────────────────────────────────────────
     app.include_router(health.router, prefix="/v1", tags=["Health"])
     app.include_router(admin.router)
-    app.include_router(admin_api_keys.router)
     app.include_router(admin_metrics.router)
     app.include_router(admin_schemas.router)
     app.include_router(admin_stats.router)
@@ -222,6 +222,8 @@ def create_app() -> FastAPI:
     app.include_router(search.router)
     app.include_router(graph.router)
     app.include_router(facts.router)
+    app.include_router(projects.router)
+    app.include_router(project_api_keys.router)
 
     # Metrics: intentionally registered last and outside /v1 so it responds
     # at ``/metrics`` (not ``/v1/metrics``) for standard Prometheus scraping.

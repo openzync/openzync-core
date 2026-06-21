@@ -39,7 +39,7 @@ async def extract_entities(
     ctx: object,
     episode_id: str,
     org_id: str,
-    user_id: str,
+    project_id: str,
     content: str,
     session_id: str | None = None,
     trace_id: str = "",
@@ -72,7 +72,7 @@ async def extract_entities(
         ctx: ARQ worker context (unused — required by ARQ contract).
         episode_id: UUID of the source episode (string, from ARQ).
         org_id: UUID of the owning organization.
-        user_id: UUID of the user who authored the message.
+        project_id: UUID of the project for project scoping.
         content: The message text to extract entities from.
         session_id: UUID of the session (passed from MemoryService).
             Used to fetch known entities for delta extraction.
@@ -98,6 +98,7 @@ async def extract_entities(
         "entity_extraction.started",
         episode_id=episode_id,
         org_id=org_id,
+        project_id=project_id,
         session_id=session_id,
         content_length=len(content),
         trace_id=trace_id,
@@ -117,6 +118,26 @@ async def extract_entities(
     session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
     if session_factory is None:
         session_factory = get_async_session(engine)
+
+    # ── 0. Resolve user_id from episode record ──────────────────────────────
+    # user_id is stored on the episode at creation time (from the API key's
+    # created_by via the auth middleware).  The worker resolves it from the
+    # episode rather than receiving it as an ARQ parameter.
+    from sqlalchemy import select
+    from models.episode import Episode
+
+    async with session_factory() as resolve_db:
+        result = await resolve_db.execute(
+            select(Episode.user_id).where(Episode.id == episode_id)
+        )
+        user_id_row = result.scalar_one_or_none()
+    if user_id_row is None:
+        logger.warning(
+            "entity_extraction.episode_not_found",
+            episode_id=episode_id,
+        )
+        return
+    user_id: str = str(user_id_row)
 
     # ── 1-2. Render prompt (system instructions) with auto-injected context ──
     system_prompt, prompt_context = await render_prompt(
@@ -345,6 +366,7 @@ async def extract_entities(
 
                 node = await entity_repo.upsert_entity(
                     org_id=uuid.UUID(org_id),
+                    project_id=uuid.UUID(project_id),
                     name=normalized_name,
                     entity_type=entity_type,
                     summary=summary,
@@ -382,6 +404,7 @@ async def extract_entities(
                     if name not in name_to_node:
                         fallback_node = await entity_repo.upsert_entity(
                             org_id=uuid.UUID(org_id),
+                            project_id=uuid.UUID(project_id),
                             name=name,
                             entity_type="Custom",
                             summary=(
@@ -404,6 +427,7 @@ async def extract_entities(
                         predicate=predicate,
                         obj=obj,
                         org_id=uuid.UUID(org_id),
+                        project_id=uuid.UUID(project_id),
                     )
                     if result is None:
                         relationship_failure_count += 1
@@ -428,14 +452,15 @@ async def extract_entities(
                     text(
                         """
                         INSERT INTO graph_episode_entities
-                            (episode_id, entity_id, created_at)
-                        VALUES (:episode_id, :entity_id, now())
+                            (episode_id, entity_id, project_id, created_at)
+                        VALUES (:episode_id, :entity_id, :project_id, now())
                         ON CONFLICT (episode_id, entity_id) DO NOTHING
                         """
                     ),
                     {
                         "episode_id": episode_uuid,
                         "entity_id": uuid.UUID(entity_node["id"]),
+                        "project_id": uuid.UUID(project_id),
                     },
                 )
 
@@ -474,6 +499,8 @@ async def extract_entities(
     logger.info(
         "entity_extraction.persisted",
         episode_id=episode_id,
+        org_id=org_id,
+        project_id=project_id,
         entity_count=len(name_to_node),
         entity_failure_count=entity_failure_count,
         relationship_failure_count=relationship_failure_count,
@@ -499,6 +526,33 @@ async def extract_entities(
         )
     else:
         logger.info("entity_extraction.done", episode_id=episode_id)
+
+    # ── 10. Enqueue fact extraction (now that entities are committed) ──
+    # extract_facts must run AFTER entities are in the DB so that entity
+    # IDs can be resolved for graph_relationship edges.  Chaining via
+    # enqueue eliminates the race condition.
+    try:
+        from services.worker.worker_settings import get_queue_name, settings as w_settings
+
+        arq_redis = ctx.get("redis") if isinstance(ctx, dict) else None
+        if arq_redis is not None:
+            await arq_redis.enqueue_job(
+                "extract_facts",
+                episode_id=episode_id,
+                org_id=org_id,
+                project_id=project_id,
+                content=content,
+                session_id=session_id,
+                trace_id=trace_id,
+                metadata=metadata,
+                _queue_name=get_queue_name(w_settings.ENV, "high"),
+            )
+    except Exception:
+        logger.warning(
+            "entity_extraction.facts_enqueue_failed",
+            episode_id=episode_id,
+            exc_info=True,
+        )
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────

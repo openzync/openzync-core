@@ -26,9 +26,7 @@ import logging
 import os
 from typing import Any
 
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-from starlette.requests import Request
-from starlette.responses import Response
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core.config import settings
 
@@ -153,76 +151,76 @@ def _init_tracer() -> Any | None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class TracingMiddleware(BaseHTTPMiddleware):
-    """OpenTelemetry tracing middleware.
+class TracingMiddleware:
+    """OpenTelemetry tracing middleware — raw ASGI, no BaseHTTPMiddleware.
 
     Creates a span for each request with HTTP semantic convention attributes.
     If OpenTelemetry is not configured (``MG_OTLP_ENDPOINT`` not set), this
     middleware is a zero-overhead pass-through.
     """
 
-    def __init__(self, app: Any, **kwargs: Any) -> None:
-        """Initialise the middleware and attempt OpenTelemetry setup.
-
-        Args:
-            app: The ASGI application.
-            **kwargs: Additional arguments for ``BaseHTTPMiddleware``.
-        """
-        super().__init__(app, **kwargs)
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
         # Initialise tracer once at startup.
         global _tracer, _tracer_initialised  # noqa: PLW0603
         if not _tracer_initialised:
             _tracer = _init_tracer()
 
-    async def dispatch(
-        self,
-        request: Request,
-        call_next: RequestResponseEndpoint,
-    ) -> Response:
-        """Create an OpenTelemetry span for the request if tracing is enabled.
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
-        Args:
-            request: Incoming HTTP request.
-            call_next: The next middleware or route handler.
-
-        Returns:
-            HTTP response (unchanged).
-        """
         if _tracer is None:
             # OpenTelemetry not configured — pass through with zero overhead.
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
+
+        method = scope.get("method", "UNKNOWN")
+        path = scope.get("path", "/unknown")
+
+        status_code: int = 200
+
+        async def send_wrapper(message: dict) -> None:
+            nonlocal status_code
+            if message["type"] == "http.response.start":
+                status_code = message.get("status", 200)
+            await send(message)
 
         with _tracer.start_as_current_span(
-            name=f"{request.method} {request.url.path}",
+            name=f"{method} {path}",
             kind=1,  # SpanKind.SERVER = 1
         ) as span:
             # ── Span attributes (OpenTelemetry HTTP semantic conventions) ─
-            span.set_attribute("HTTPMethod", request.method)
-            span.set_attribute("HTTPUrl", str(request.url))
-            span.set_attribute("HTTPTarget", request.url.path)
-            span.set_attribute("HTTPHost", request.url.hostname or "")
-            span.set_attribute("HTTPRequestId", getattr(request.state, "request_id", ""))
+            span.set_attribute("HTTPMethod", method)
+            span.set_attribute("HTTPTarget", path)
 
-            org_id: str | None = getattr(request.state, "org_id", None)
+            # Extract host from scope headers
+            headers = dict(scope.get("headers") or [])
+            host = headers.get(b"host", b"").decode()
+            span.set_attribute("HTTPHost", host)
+
+            request_id = (scope.get("state") or {}).get("request_id", "")
+            span.set_attribute("HTTPRequestId", str(request_id))
+
+            org_id = (scope.get("state") or {}).get("org_id", None)
             if org_id:
-                span.set_attribute("org_id", org_id)
+                span.set_attribute("org_id", str(org_id))
 
             try:
-                response = await call_next(request)
-                span.set_attribute("HTTPStatusCode", response.status_code)
+                await self.app(scope, receive, send_wrapper)
+                span.set_attribute("HTTPStatusCode", status_code)
 
-                if response.status_code >= 500:
+                if status_code >= 500:
                     span.set_status(
                         1,  # StatusCode.ERROR
-                        f"Server error: {response.status_code}",
+                        f"Server error: {status_code}",
                     )
-                elif response.status_code >= 400:
+                elif status_code >= 400:
                     span.set_status(
                         1,  # StatusCode.ERROR
-                        f"Client error: {response.status_code}",
+                        f"Client error: {status_code}",
                     )
-
-                return response
             except Exception as exc:
                 span.set_attribute("HTTPStatusCode", 500)
                 span.set_status(1, f"Unhandled exception: {exc}")  # StatusCode.ERROR

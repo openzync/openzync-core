@@ -23,14 +23,14 @@ class AsyncSessionsClient:
 
     async def create(
         self,
-        user_id: str,
+        project_id: str,
         external_id: str,
         metadata: dict | None = None,
     ) -> SessionResponse:
-        """Create a new session for a user.
+        """Create a new session within a project.
 
         Args:
-            user_id: The internal UUID of the user.
+            project_id: The internal UUID of the project.
             external_id: Caller-defined session identifier.
             metadata: Optional metadata dict.
 
@@ -40,55 +40,55 @@ class AsyncSessionsClient:
         body = SessionCreateRequest(external_id=external_id, metadata=metadata or {})
         data = await self._http.request(
             "POST",
-            f"/v1/users/{user_id}/sessions",
+            f"/v1/projects/{project_id}/sessions",
             json_body=body.model_dump(exclude_none=True),
         )
         return SessionResponse(**data)
 
     async def get(
         self,
-        user_id: str,
+        project_id: str,
         session_id: str,
     ) -> SessionResponse:
         """Get session details by internal UUID.
 
         Args:
-            user_id: The internal UUID of the user.
+            project_id: The internal UUID of the project.
             session_id: The internal UUID of the session.
         """
         data = await self._http.request(
             "GET",
-            f"/v1/users/{user_id}/sessions/{session_id}",
+            f"/v1/projects/{project_id}/sessions/{session_id}",
         )
         return SessionResponse(**data)
 
     async def delete(
         self,
-        user_id: str,
+        project_id: str,
         session_id: str,
     ) -> None:
         """Close and soft-delete a session.
 
         Args:
-            user_id: The internal UUID of the user.
+            project_id: The internal UUID of the project.
             session_id: The internal UUID of the session.
         """
         await self._http.request(
             "DELETE",
-            f"/v1/users/{user_id}/sessions/{session_id}",
+            f"/v1/projects/{project_id}/sessions/{session_id}",
         )
 
     async def list(
         self,
-        user_id: str,
+        project_id: str,
         *,
         limit: int = 50,
         cursor: str | None = None,
     ) -> dict:
-        """List sessions for a user with cursor-based pagination.
+        """List sessions for a project with cursor-based pagination.
 
         Args:
-            user_id: The internal UUID of the user.
+            project_id: The internal UUID of the project.
             limit: Maximum results per page.
             cursor: Opaque cursor from a previous response.
 
@@ -100,13 +100,13 @@ class AsyncSessionsClient:
             params["cursor"] = cursor
         return await self._http.request(
             "GET",
-            f"/v1/users/{user_id}/sessions",
+            f"/v1/projects/{project_id}/sessions",
             params=params,
         )
 
     async def messages(
         self,
-        user_id: str,
+        project_id: str,
         session_id: str,
         *,
         limit: int = 50,
@@ -115,7 +115,7 @@ class AsyncSessionsClient:
         """Get messages for a session.
 
         Args:
-            user_id: The internal UUID of the user.
+            project_id: The internal UUID of the project.
             session_id: The internal UUID of the session.
             limit: Maximum results per page.
             cursor: Opaque cursor from a previous response.
@@ -128,7 +128,7 @@ class AsyncSessionsClient:
             params["cursor"] = cursor
         data = await self._http.request(
             "GET",
-            f"/v1/users/{user_id}/sessions/{session_id}/messages",
+            f"/v1/projects/{project_id}/sessions/{session_id}/messages",
             params=params,
         )
         return SessionMessagesResponse(**data)

@@ -35,7 +35,7 @@ export interface GraphEdgeData {
 
 export interface ApiConfig {
   baseUrl: string;
-  userId: string;
+  projectId: string;
   headers: Record<string, string>;
 }
 
@@ -269,7 +269,7 @@ export function ForceGraph({
     (async () => {
       try {
         const res = await fetch(
-          `${apiConfig.baseUrl}/v1/users/${apiConfig.userId}/graph/nodes/${selectedNode.id}`,
+          `${apiConfig.baseUrl}/v1/projects/${apiConfig.projectId}/graph/nodes/${selectedNode.id}`,
           { headers: apiConfig.headers },
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -298,7 +298,7 @@ export function ForceGraph({
     })();
 
     return () => { cancelled = true; };
-  }, [selectedNode, apiConfig.baseUrl, apiConfig.userId, apiConfig.headers, allEdges]);
+  }, [selectedNode, apiConfig.baseUrl, apiConfig.projectId, apiConfig.headers, allEdges]);
 
   // ╔══════════════════════════════════════════════════════════════════════╗
   // ║ D3 Force Graph Rendering                                            ║

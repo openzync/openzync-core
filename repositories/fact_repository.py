@@ -44,6 +44,7 @@ class FactRepository:
         self,
         user_id: UUID,
         organization_id: UUID,
+        project_id: UUID,
         content: str,
         subject: str | None = None,
         predicate: str | None = None,
@@ -59,8 +60,9 @@ class FactRepository:
         """Insert a new fact and return the ORM instance.
 
         Args:
-            user_id: FK to the owning user.
+            user_id: FK to the user who created the fact.
             organization_id: Denormalized org ID for RLS.
+            project_id: Denormalized project ID for project isolation.
             content: Human-readable fact statement.
             subject: Subject entity of the triple.
             predicate: Relationship verb of the triple.
@@ -85,6 +87,7 @@ class FactRepository:
         fact = Fact(
             user_id=user_id,
             organization_id=organization_id,
+            project_id=project_id,
             content=content,
             subject=subject,
             predicate=predicate,
@@ -107,6 +110,7 @@ class FactRepository:
         self,
         user_id: UUID,
         organization_id: UUID,
+        project_id: UUID,
         content: str,
         subject: str | None = None,
         predicate: str | None = None,
@@ -127,7 +131,7 @@ class FactRepository:
         caller can log a duplicate skip without crashing the transaction.
 
         Args:
-            Same as :meth:`create`.
+            Same as :meth:`create` plus ``project_id``.
 
         Returns:
             The newly created :class:`Fact` instance, or ``None`` if a
@@ -143,6 +147,7 @@ class FactRepository:
                 id=func.gen_random_uuid(),
                 user_id=user_id,
                 organization_id=organization_id,
+                project_id=project_id,
                 content=content,
                 subject=subject,
                 predicate=predicate,
@@ -170,6 +175,7 @@ class FactRepository:
     async def batch_create(
         self,
         organization_id: UUID,
+        project_id: UUID,
         user_id: UUID,
         facts: list[dict],
     ) -> list[Fact]:
@@ -181,7 +187,8 @@ class FactRepository:
 
         Args:
             organization_id: Denormalized org ID for RLS.
-            user_id: FK to the owning user.
+            project_id: Denormalized project ID for project isolation.
+            user_id: FK to the user who created the facts.
             facts: List of dicts, each with optional keys: ``subject``,
                 ``predicate``, ``object``, ``content``, ``confidence``,
                 ``source_episode_id``, ``valid_from``.
@@ -209,6 +216,7 @@ class FactRepository:
                 {
                     "user_id": user_id,
                     "organization_id": organization_id,
+                    "project_id": project_id,
                     "content": content,
                     "subject": subject,
                     "predicate": predicate,
@@ -243,6 +251,7 @@ class FactRepository:
             extra={
                 "count": len(created),
                 "user_id": str(user_id),
+                "project_id": str(project_id),
                 "organization_id": str(organization_id),
             },
         )
@@ -251,10 +260,11 @@ class FactRepository:
 
     async def batch_create_or_skip(
         self,
-        facts: list[dict[str, Any]],
-        user_id: UUID,
         organization_id: UUID,
+        project_id: UUID,
+        user_id: UUID,
         source_episode_id: UUID,
+        facts: list[dict[str, Any]],
     ) -> list[Fact]:
         """Batch-insert facts with ``ON CONFLICT DO NOTHING``.
 
@@ -266,12 +276,13 @@ class FactRepository:
         silently skipped.
 
         Args:
+            organization_id: Denormalized org ID for RLS.
+            project_id: Denormalized project ID for project isolation.
+            user_id: FK to the user who created the facts.
+            source_episode_id: FK back to the source episode.
             facts: List of fact dicts with keys: ``subject``, ``predicate``,
                 ``object``, ``confidence``, ``subject_type``, ``object_type``,
                 ``subject_entity_id``, ``object_entity_id``.
-            user_id: FK to the owning user.
-            organization_id: Denormalized org ID for RLS.
-            source_episode_id: FK back to the source episode.
 
         Returns:
             List of newly created :class:`Fact` ORM instances (conflicting
@@ -289,6 +300,7 @@ class FactRepository:
             {
                 "user_id": user_id,
                 "organization_id": organization_id,
+                "project_id": project_id,
                 "content": f"{f['subject']} {f['predicate']} {f['object']}",
                 "subject": f["subject"],
                 "predicate": f["predicate"],
@@ -327,15 +339,15 @@ class FactRepository:
 
     # ── Soft Delete by User ──────────────────────────────────────────────────
 
-    async def soft_delete_by_user(self, user_id: UUID) -> int:
-        """Soft-delete all facts for a user by setting ``invalid_at``.
+    async def soft_delete_by_project(self, project_id: UUID) -> int:
+        """Soft-delete all facts for a project by setting ``invalid_at``.
 
         Uses the ORM ``update()`` construct rather than raw SQL so that
         SQLAlchemy's column-level ``onupdate`` hook fires for
         ``updated_at`` on each row.
 
         Args:
-            user_id: The user's UUID.
+            project_id: The project's UUID.
 
         Returns:
             Number of facts invalidated.
@@ -343,7 +355,7 @@ class FactRepository:
         now = datetime.now()
         result = await self._db.execute(
             update(Fact)
-            .where(Fact.user_id == user_id)
+            .where(Fact.project_id == project_id)
             .where(Fact.invalid_at.is_(None))
             .values(invalid_at=now, updated_at=now)
         )
@@ -356,6 +368,7 @@ class FactRepository:
         self,
         session_id: UUID,
         organization_id: UUID,
+        project_id: UUID | None = None,
     ) -> list[dict[str, Any]]:
         """Return all distinct graph entities linked to episodes in a session.
 
@@ -366,13 +379,25 @@ class FactRepository:
         Args:
             session_id: The session to fetch entities for.
             organization_id: Tenant scope.
+            project_id: Optional project UUID for defense-in-depth isolation.
+                The query is already scoped via session_id/project relationship,
+                but this adds project_id as an additional filter.
 
         Returns:
             A list of dicts with keys ``id``, ``name``, ``entity_type``,
             ``summary``.
         """
+        base_params: dict[str, Any] = {
+            "session_id": session_id,
+            "org_id": organization_id,
+        }
+        project_clause = ""
+        if project_id is not None:
+            project_clause = " AND e.project_id = :project_id"
+            base_params["project_id"] = project_id
+
         result = await self._db.execute(
-            text("""
+            text(f"""
                 SELECT DISTINCT ge.id, ge.name, ge.entity_type, ge.summary
                 FROM graph_entities ge
                 JOIN graph_episode_entities gee ON ge.id = gee.entity_id
@@ -381,10 +406,10 @@ class FactRepository:
                   AND e.organization_id = :org_id
                   AND ge.organization_id = :org_id
                   AND e.is_deleted = false
-                  AND ge.is_merged = false
+                  AND ge.is_merged = false{project_clause}
                 ORDER BY ge.name
             """),
-            {"session_id": session_id, "org_id": organization_id},
+            base_params,
         )
         rows = result.mappings().all()
         return [
@@ -523,7 +548,7 @@ class FactRepository:
     # ── Vector Search ─────────────────────────────────────────────────────────
 
     async def search_by_vector(
-        self, embedding: list[float], user_id: UUID, limit: int = 50
+        self, embedding: list[float], project_id: UUID, limit: int = 50
     ) -> list[dict[str, Any]]:
         """Search facts by vector similarity (pgvector cosine distance).
 
@@ -533,7 +558,7 @@ class FactRepository:
 
         Args:
             embedding: The query embedding vector.
-            user_id: Scope results to this user.
+            project_id: Scope results to this project.
             limit: Maximum results (capped at 200).
 
         Returns:
@@ -547,13 +572,13 @@ class FactRepository:
                 SELECT id, content, subject, predicate, "object", confidence,
                        1 - (embedding <=> :embedding) AS score
                 FROM facts
-                WHERE user_id = :user_id
+                WHERE project_id = :project_id
                   AND embedding IS NOT NULL
                 ORDER BY embedding <=> :embedding
                 LIMIT :limit
                 """
             ),
-            {"embedding": embedding, "user_id": user_id, "limit": effective_limit},
+            {"embedding": embedding, "project_id": project_id, "limit": effective_limit},
         )
         return [
             {
@@ -571,7 +596,7 @@ class FactRepository:
     # ── BM25 Full-Text Search ─────────────────────────────────────────────────
 
     async def search_by_bm25(
-        self, query: str, user_id: UUID, org_id: UUID, limit: int = 50
+        self, query: str, project_id: UUID, org_id: UUID, limit: int = 50
     ) -> list[dict[str, Any]]:
         """Search facts by BM25 full-text (PostgreSQL ``ts_rank``).
 
@@ -581,7 +606,7 @@ class FactRepository:
 
         Args:
             query: Raw search text (no special syntax needed).
-            user_id: Scope results to this user.
+            project_id: Scope results to this project.
             org_id: Tenant scope for multi-tenant isolation.
             limit: Maximum results (capped at 200).
 
@@ -599,7 +624,7 @@ class FactRepository:
                            plainto_tsquery('english', :query)
                        ) AS score
                 FROM facts
-                WHERE user_id = :user_id
+                WHERE project_id = :project_id
                   AND organization_id = :org_id
                   AND to_tsvector('english', content)
                       @@ plainto_tsquery('english', :query)
@@ -607,7 +632,7 @@ class FactRepository:
                 LIMIT :limit
                 """
             ),
-            {"query": query, "user_id": user_id, "org_id": org_id, "limit": effective_limit},
+            {"query": query, "project_id": project_id, "org_id": org_id, "limit": effective_limit},
         )
         return [
             {

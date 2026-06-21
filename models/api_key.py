@@ -23,11 +23,19 @@ from models.base import Base, TimestampMixin
 
 
 class ApiKey(TimestampMixin, Base):
-    """An API key credential scoped to an organization.
+    """An API key credential scoped to a project.
+
+    Every API key belongs to exactly one project — there are no org-wide
+    keys.  When the parent project is deleted, its keys are cascade-deleted.
 
     Attributes:
         id: UUID primary key.
         organization_id: Foreign key to the owning organization.
+        project_id: Foreign key to the owning project (NOT NULL).
+        created_by: The user who created this API key. Populated when
+            the key is created via the dashboard (JWT session). Used for
+            attribution in API-key-authenticated requests such as session
+            creation. ``None`` for keys created prior to this migration.
         key_hash: SHA-256 (or bcrypt) hash of the full API key. Unique.
         prefix: First few characters for identification — one of
             ``mg_live_`` or ``mg_test_``.
@@ -48,7 +56,17 @@ class ApiKey(TimestampMixin, Base):
     organization_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("organizations.id", ondelete="CASCADE"),
         nullable=False,
-        # index defined explicitly in __table_args__ below
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="Project scope — every key belongs to exactly one project.",
+    )
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="The user who created this API key — used for attribution in API-key-authenticated requests.",
     )
     lookup_hash: Mapped[str] = mapped_column(
         Text,
@@ -92,6 +110,7 @@ class ApiKey(TimestampMixin, Base):
             name="ck_api_key_prefix",
         ),
         Index("ix_api_key_organization_id", "organization_id"),
+        Index("ix_api_key_created_by", "created_by"),
     )
 
     def __repr__(self) -> str:

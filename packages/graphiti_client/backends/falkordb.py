@@ -76,16 +76,20 @@ class FalkorDBBackend(GraphBackend):
     async def create_entity(
         self,
         org_id: UUID,
+        project_id: UUID,
         name: str,
         entity_type: str,
         summary: str | None = None,
     ) -> dict:
-        """Create a new entity node scoped to the organisation.
+        """Create a new entity node scoped to the organisation and project.
 
         Uses the public ``EntityNode`` constructor + ``save()`` API.
+        The ``project_id`` is stored in the node's ``attributes`` dict for
+        query filtering.
         """
-        from graphiti_core.nodes import EntityNode
         from datetime import datetime, timezone
+
+        from graphiti_core.nodes import EntityNode
 
         try:
             driver = self._get_driver()
@@ -95,7 +99,7 @@ class FalkorDBBackend(GraphBackend):
                 labels=[entity_type],
                 summary=summary or "",
                 created_at=datetime.now(timezone.utc),
-                attributes={},
+                attributes={"project_id": str(project_id)},
             )
             await self._run_sync(node.save, driver)
 
@@ -103,6 +107,7 @@ class FalkorDBBackend(GraphBackend):
                 "graphiti.entity_created",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "entity_id": str(node.uuid),
                     "entity_type": entity_type,
                 },
@@ -113,6 +118,7 @@ class FalkorDBBackend(GraphBackend):
                 "graphiti.create_entity_failed",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "name": name,
                     "error": str(exc),
                 },
@@ -122,10 +128,14 @@ class FalkorDBBackend(GraphBackend):
                 detail={"org_id": str(org_id), "name": name},
             ) from exc
 
-    async def get_entity(self, org_id: UUID, entity_id: UUID) -> dict | None:
-        """Retrieve an entity by ID, respecting org isolation.
+    async def get_entity(
+        self, org_id: UUID, project_id: UUID, entity_id: UUID
+    ) -> dict | None:
+        """Retrieve an entity by ID, respecting org and project isolation.
 
         Uses ``EntityNode.get_by_uuid()`` — returns ``None`` if not found.
+        ``project_id`` is accepted for interface compliance; entity lookup
+        is by UUID and org-level ``group_id``.
         """
         from graphiti_core.nodes import EntityNode
 
@@ -144,6 +154,7 @@ class FalkorDBBackend(GraphBackend):
                 "graphiti.get_entity_failed",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
                 },
@@ -153,10 +164,13 @@ class FalkorDBBackend(GraphBackend):
                 detail={"org_id": str(org_id), "entity_id": str(entity_id)},
             ) from exc
 
-    async def delete_entity(self, org_id: UUID, entity_id: UUID) -> bool:
+    async def delete_entity(
+        self, org_id: UUID, project_id: UUID, entity_id: UUID
+    ) -> bool:
         """Delete an entity node.
 
         Fetches via ``EntityNode.get_by_uuid()``, then calls ``.delete()``.
+        ``project_id`` is accepted for interface compliance.
         """
         from graphiti_core.nodes import EntityNode
 
@@ -170,7 +184,11 @@ class FalkorDBBackend(GraphBackend):
             if node is None:
                 logger.info(
                     "graphiti.delete_entity_not_found",
-                    extra={"org_id": str(org_id), "entity_id": str(entity_id)},
+                    extra={
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                        "entity_id": str(entity_id),
+                    },
                 )
                 return False
 
@@ -179,6 +197,7 @@ class FalkorDBBackend(GraphBackend):
                 "graphiti.entity_deleted",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "entity_id": str(entity_id),
                 },
             )
@@ -188,6 +207,7 @@ class FalkorDBBackend(GraphBackend):
                 "graphiti.delete_entity_failed",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
                 },
@@ -202,6 +222,7 @@ class FalkorDBBackend(GraphBackend):
     async def create_relationship(
         self,
         org_id: UUID,
+        project_id: UUID,
         source_id: UUID,
         target_id: UUID,
         relationship_type: str,
@@ -214,13 +235,16 @@ class FalkorDBBackend(GraphBackend):
         Uses the public ``EntityEdge`` constructor + ``save()`` API.
         Validates both endpoints exist before creating.
 
+        ``project_id`` is stored in the edge's ``attributes`` dict.
+
         Note: ``valid_from`` and ``valid_to`` are accepted for ABC
         compatibility but ignored (Graphiti does not support temporal
         edges through this API).
         """
+        from datetime import datetime, timezone
+
         from graphiti_core.edges import EntityEdge
         from graphiti_core.nodes import EntityNode
-        from datetime import datetime, timezone
 
         try:
             driver = self._get_driver()
@@ -243,6 +267,9 @@ class FalkorDBBackend(GraphBackend):
                     detail={"entity_id": str(target_id), "org_id": str(org_id)},
                 )
 
+            edge_properties = dict(properties or {})
+            edge_properties["project_id"] = str(project_id)
+
             edge = EntityEdge(
                 source_node_uuid=str(source_id),
                 target_node_uuid=str(target_id),
@@ -250,7 +277,7 @@ class FalkorDBBackend(GraphBackend):
                 group_id=f"org:{org_id}",
                 fact="",
                 created_at=datetime.now(timezone.utc),
-                attributes=properties or {},
+                attributes=edge_properties,
             )
             await self._run_sync(edge.save, driver)
 
@@ -258,6 +285,7 @@ class FalkorDBBackend(GraphBackend):
                 "graphiti.relationship_created",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
                     "type": relationship_type,
@@ -271,6 +299,7 @@ class FalkorDBBackend(GraphBackend):
                 "graphiti.create_relationship_failed",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "source_id": str(source_id),
                     "target_id": str(target_id),
                     "error": str(exc),
@@ -290,6 +319,7 @@ class FalkorDBBackend(GraphBackend):
     async def traverse(
         self,
         org_id: UUID,
+        project_id: UUID,
         start_node_id: UUID,
         max_depth: int = 2,
         edge_types: list[str] | None = None,  # noqa: ARG002
@@ -298,6 +328,8 @@ class FalkorDBBackend(GraphBackend):
 
         Uses Graphiti's ``graphiti.search()`` with ``center_node_uuid``
         set to the start node, which performs BFS up to the configured depth.
+        ``project_id`` is accepted for interface compliance; scoping is via
+        the org-level ``group_id``.
         """
         try:
             results = await self._run_sync(
@@ -336,6 +368,7 @@ class FalkorDBBackend(GraphBackend):
                 "graphiti.traverse_failed",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "start_node": str(start_node_id),
                     "max_depth": max_depth,
                     "error": str(exc),
@@ -352,6 +385,7 @@ class FalkorDBBackend(GraphBackend):
     async def search_entities(
         self,
         org_id: UUID,
+        project_id: UUID,
         query: str,
         types: list[str] | None = None,
         limit: int = 50,
@@ -361,6 +395,8 @@ class FalkorDBBackend(GraphBackend):
 
         Uses Graphiti's ``graphiti.search()`` which returns ranked entity
         edges.  Results are deduplicated and returned as entity dicts.
+        ``project_id`` is accepted for interface compliance; scoping is via
+        the org-level ``group_id``.
 
         Note: ``offset`` is accepted for ABC compatibility but ignored
         (Graphiti does not support pagination through this API).
@@ -402,6 +438,7 @@ class FalkorDBBackend(GraphBackend):
                 "graphiti.search_entities_failed",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "query": query,
                     "error": str(exc),
                 },
@@ -416,6 +453,7 @@ class FalkorDBBackend(GraphBackend):
     async def list_entities(
         self,
         org_id: UUID,
+        project_id: UUID,
         *,
         entity_type: str | None = None,
         limit: int = 50,
@@ -426,6 +464,8 @@ class FalkorDBBackend(GraphBackend):
         Uses ``EntityNode.get_by_group_ids()`` with ``uuid_cursor`` for
         cursor-based pagination (fetch ``limit + 1``, use last item's uuid
         as next cursor).
+        ``project_id`` is accepted for interface compliance; scoping is via
+        the org-level ``group_id``.
         """
         import json as _json
         from base64 import b64decode, b64encode
@@ -479,6 +519,7 @@ class FalkorDBBackend(GraphBackend):
                 "graphiti.list_entities_failed",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "entity_type": entity_type,
                     "error": str(exc),
                 },
@@ -491,6 +532,7 @@ class FalkorDBBackend(GraphBackend):
     async def list_entity_edges(
         self,
         org_id: UUID,
+        project_id: UUID,
         entity_id: UUID,
         *,
         predicate: str | None = None,
@@ -500,6 +542,7 @@ class FalkorDBBackend(GraphBackend):
         """List all edges incident to a specific entity node.
 
         Uses ``EntityEdge.get_by_node_uuid()`` with optional predicate filter.
+        ``project_id`` is accepted for interface compliance.
         """
         try:
             from graphiti_core.edges import EntityEdge
@@ -532,6 +575,7 @@ class FalkorDBBackend(GraphBackend):
                 "graphiti.list_entity_edges_failed",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
                 },
@@ -544,14 +588,15 @@ class FalkorDBBackend(GraphBackend):
     async def get_entity_with_edges(
         self,
         org_id: UUID,
+        project_id: UUID,
         entity_id: UUID,
     ) -> dict | None:
         """Retrieve a single entity node with all its incident edges."""
-        node = await self.get_entity(org_id, entity_id)
+        node = await self.get_entity(org_id, project_id, entity_id)
         if node is None:
             return None
 
-        edges_result = await self.list_entity_edges(org_id, entity_id)
+        edges_result = await self.list_entity_edges(org_id, project_id, entity_id)
         return {
             "node": node,
             "edges": edges_result.get("items", []),

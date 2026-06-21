@@ -48,19 +48,21 @@ class EpisodeRepository:
     async def batch_create(
         self,
         organization_id: UUID,
+        project_id: UUID,
         session_id: UUID,
         user_id: UUID,
         messages: list[dict[str, Any]],
     ) -> list[Episode]:
         """Insert multiple episodes in a single round-trip with RETURNING.
 
-        Uses raw SQL to include ``organization_id`` (the ORM model does not
-        yet map this column, but the schema requires it for RLS).
+        Uses raw SQL to include ``organization_id`` and ``project_id``
+        (the schema requires them for RLS and project isolation).
 
         Args:
             organization_id: Tenant scope (included for RLS enforcement).
+            project_id: Project scope (included for project isolation).
             session_id: The parent session's UUID.
-            user_id: The owning user's UUID.
+            user_id: The creating user's UUID.
             messages: List of message dicts, each containing ``role``,
                 ``content``, ``metadata``, and optionally ``created_at``.
 
@@ -81,6 +83,7 @@ class EpisodeRepository:
 
             params[f"id_{i}"] = episode_id
             params[f"org_id_{i}"] = organization_id
+            params[f"project_id_{i}"] = project_id
             params[f"session_id_{i}"] = session_id
             params[f"user_id_{i}"] = user_id
             params[f"role_{i}"] = msg["role"]
@@ -90,7 +93,7 @@ class EpisodeRepository:
             params[f"seq_{i}"] = seq
 
             placeholders = (
-                f"(:id_{i}, :org_id_{i}, :session_id_{i}, :user_id_{i}, "
+                f"(:id_{i}, :org_id_{i}, :project_id_{i}, :session_id_{i}, :user_id_{i}, "
                 f":role_{i}, :content_{i}, :metadata_{i}, "
                 f":created_at_{i}, :seq_{i})"
             )
@@ -99,7 +102,7 @@ class EpisodeRepository:
         stmt = text(
             f"""
             INSERT INTO episodes (
-                id, organization_id, session_id, user_id,
+                id, organization_id, project_id, session_id, user_id,
                 role, content, metadata, created_at, sequence_number
             )
             VALUES {', '.join(values)}
@@ -193,18 +196,18 @@ class EpisodeRepository:
 
         return episodes, next_cursor
 
-    # ── Read — Paginated by User ─────────────────────────────────────────────
+    # ── Read — Paginated by Project ─────────────────────────────────────────
 
-    async def get_by_user_id(
+    async def get_by_project_id(
         self,
-        user_id: UUID,
+        project_id: UUID,
         limit: int = 100,
         cursor: str | None = None,
     ) -> tuple[list[Episode], str | None]:
-        """Get paginated episodes for a user, ordered by created_at DESC.
+        """Get paginated episodes for a project, ordered by created_at DESC.
 
         Args:
-            user_id: The user's UUID.
+            project_id: The project's UUID.
             limit: Maximum results per page (capped at 500).
             cursor: Opaque base64 cursor from a previous page.
 
@@ -214,7 +217,7 @@ class EpisodeRepository:
         effective_limit = min(limit, 500) + 1
 
         query = select(Episode).where(
-            Episode.user_id == user_id,
+            Episode.project_id == project_id,
             Episode.is_deleted.is_(False),
         )
 
@@ -311,14 +314,14 @@ class EpisodeRepository:
 
     # ── Soft Delete by User ──────────────────────────────────────────────────
 
-    async def soft_delete_by_user(self, user_id: UUID) -> int:
-        """Soft-delete all episodes for a user.
+    async def soft_delete_by_project(self, project_id: UUID) -> int:
+        """Soft-delete all episodes for a project.
 
         Sets ``is_deleted = True`` and ``updated_at = now()`` for every
-        episode belonging to the user. Returns the count of affected rows.
+        episode belonging to the project. Returns the count of affected rows.
 
         Args:
-            user_id: The user's UUID.
+            project_id: The project's UUID.
 
         Returns:
             Number of episodes soft-deleted.
@@ -326,16 +329,16 @@ class EpisodeRepository:
         result = await self._db.execute(
             text(
                 "UPDATE episodes SET is_deleted = true, updated_at = now() "
-                "WHERE user_id = :user_id AND is_deleted = false"
+                "WHERE project_id = :project_id AND is_deleted = false"
             ),
-            {"user_id": user_id},
+            {"project_id": project_id},
         )
         return result.rowcount  # type: ignore[return-value]
 
     # ── Vector Search ─────────────────────────────────────────────────────────
 
     async def search_by_vector(
-        self, embedding: list[float], user_id: UUID, limit: int = 50
+        self, embedding: list[float], project_id: UUID, limit: int = 50
     ) -> list[dict[str, Any]]:
         """Search episodes by vector similarity (pgvector cosine distance).
 
@@ -344,7 +347,7 @@ class EpisodeRepository:
 
         Args:
             embedding: The query embedding vector.
-            user_id: Scope results to this user.
+            project_id: Scope results to this project.
             limit: Maximum results (capped at 200).
 
         Returns:
@@ -358,14 +361,14 @@ class EpisodeRepository:
                 SELECT id, content, role, created_at,
                        1 - (embedding <=> :embedding) AS score
                 FROM episodes
-                WHERE user_id = :user_id
+                WHERE project_id = :project_id
                   AND is_deleted = false
                   AND embedding IS NOT NULL
                 ORDER BY embedding <=> :embedding
                 LIMIT :limit
                 """
             ),
-            {"embedding": embedding, "user_id": user_id, "limit": effective_limit},
+            {"embedding": embedding, "project_id": project_id, "limit": effective_limit},
         )
         return [
             {
@@ -381,7 +384,7 @@ class EpisodeRepository:
     # ── BM25 Full-Text Search ─────────────────────────────────────────────────
 
     async def search_by_bm25(
-        self, query: str, user_id: UUID, org_id: UUID, limit: int = 50
+        self, query: str, project_id: UUID, org_id: UUID, limit: int = 50
     ) -> list[dict[str, Any]]:
         """Search episodes by BM25 full-text (PostgreSQL ``ts_rank``).
 
@@ -390,7 +393,7 @@ class EpisodeRepository:
 
         Args:
             query: Raw search text (no special syntax needed).
-            user_id: Scope results to this user.
+            project_id: Scope results to this project.
             org_id: Tenant scope for multi-tenant isolation.
             limit: Maximum results (capped at 200).
 
@@ -408,7 +411,7 @@ class EpisodeRepository:
                            plainto_tsquery('english', :query)
                        ) AS score
                 FROM episodes
-                WHERE user_id = :user_id
+                WHERE project_id = :project_id
                   AND organization_id = :org_id
                   AND is_deleted = false
                   AND to_tsvector('english', content)
@@ -417,7 +420,7 @@ class EpisodeRepository:
                 LIMIT :limit
                 """
             ),
-            {"query": query, "user_id": user_id, "org_id": org_id, "limit": effective_limit},
+            {"query": query, "project_id": project_id, "org_id": org_id, "limit": effective_limit},
         )
         return [
             {
@@ -432,18 +435,18 @@ class EpisodeRepository:
 
     # ── Count by User ────────────────────────────────────────────────────────
 
-    async def count_by_user(self, user_id: UUID) -> int:
-        """Count non-deleted episodes for a user.
+    async def count_by_project(self, project_id: UUID) -> int:
+        """Count non-deleted episodes for a project.
 
         Args:
-            user_id: The user's UUID.
+            project_id: The project's UUID.
 
         Returns:
-            Total number of active episodes for the user.
+            Total number of active episodes for the project.
         """
         result = await self._db.execute(
             select(func.count(Episode.id)).where(
-                Episode.user_id == user_id,
+                Episode.project_id == project_id,
                 Episode.is_deleted.is_(False),
             )
         )

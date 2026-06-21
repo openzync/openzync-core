@@ -48,6 +48,7 @@ class EntityRepository:
     async def upsert_entity(
         self,
         org_id: UUID,
+        project_id: UUID,
         name: str,
         entity_type: str,
         summary: str | None = None,
@@ -64,7 +65,7 @@ class EntityRepository:
             return None
 
         # Check if entity with this name already exists (for logging only)
-        existing = await self.get_entity_by_name(org_id, name)
+        existing = await self.get_entity_by_name(org_id, project_id, name)
         action = "created"
         changed_fields: list[str] = []
 
@@ -83,6 +84,7 @@ class EntityRepository:
         try:
             entity = await self._backend.create_entity(
                 org_id=org_id,
+                project_id=project_id,
                 name=name,
                 entity_type=entity_type,
                 summary=summary,
@@ -91,6 +93,7 @@ class EntityRepository:
                 "entity_repository.entity_upserted",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "entity_name": name,
                     "entity_type": entity_type,
                     "entity_id": entity.get("id"),
@@ -106,6 +109,7 @@ class EntityRepository:
                 "entity_repository.upsert_failed",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "entity_name": name,
                     "entity_type": entity_type,
                     "action": action,
@@ -118,6 +122,7 @@ class EntityRepository:
     async def get_entity_by_name(
         self,
         org_id: UUID,
+        project_id: UUID,
         name: str,
     ) -> dict | None:
         """Find an entity by name using fuzzy (contains) matching.
@@ -132,6 +137,7 @@ class EntityRepository:
         try:
             results = await self._backend.search_entities(
                 org_id=org_id,
+                project_id=project_id,
                 query=name,
                 limit=10,
             )
@@ -152,7 +158,12 @@ class EntityRepository:
         except Exception as exc:
             logger.warning(
                 "entity_repository.search_failed",
-                extra={"org_id": str(org_id), "entity_name": name, "error": str(exc)},
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "entity_name": name,
+                    "error": str(exc),
+                },
                 exc_info=True,
             )
             return None
@@ -160,6 +171,7 @@ class EntityRepository:
     async def get_entity_by_id(
         self,
         org_id: UUID,
+        project_id: UUID,
         entity_id: UUID,
     ) -> dict | None:
         """Retrieve an entity by its UUID."""
@@ -167,12 +179,15 @@ class EntityRepository:
             return None
 
         try:
-            return await self._backend.get_entity(org_id=org_id, entity_id=entity_id)
+            return await self._backend.get_entity(
+                org_id=org_id, project_id=project_id, entity_id=entity_id
+            )
         except Exception as exc:
             logger.error(
                 "entity_repository.get_by_id_failed",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "entity_id": str(entity_id),
                     "error": str(exc),
                 },
@@ -188,6 +203,7 @@ class EntityRepository:
         predicate: str,
         obj: str,
         org_id: UUID,
+        project_id: UUID,
     ) -> dict | None:
         """Create a relationship between two entities by name.
 
@@ -200,19 +216,27 @@ class EntityRepository:
             return None
 
         # Look up both endpoints by name
-        subject_node = await self.get_entity_by_name(org_id, subject)
+        subject_node = await self.get_entity_by_name(org_id, project_id, subject)
         if subject_node is None:
             logger.warning(
                 "entity_repository.relationship_subject_not_found",
-                extra={"org_id": str(org_id), "subject": subject},
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "subject": subject,
+                },
             )
             return None
 
-        object_node = await self.get_entity_by_name(org_id, obj)
+        object_node = await self.get_entity_by_name(org_id, project_id, obj)
         if object_node is None:
             logger.warning(
                 "entity_repository.relationship_object_not_found",
-                extra={"org_id": str(org_id), "object": obj},
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "object": obj,
+                },
             )
             return None
 
@@ -220,6 +244,7 @@ class EntityRepository:
         try:
             relationship = await self._backend.create_relationship(
                 org_id=org_id,
+                project_id=project_id,
                 source_id=UUID(subject_node["id"]),
                 target_id=UUID(object_node["id"]),
                 relationship_type=predicate,
@@ -228,6 +253,7 @@ class EntityRepository:
                 "entity_repository.relationship_created",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "subject": subject,
                     "predicate": predicate,
                     "object": obj,
@@ -240,6 +266,7 @@ class EntityRepository:
                 "entity_repository.relationship_create_duplicate",
                 extra={
                     "org_id": str(org_id),
+                    "project_id": str(project_id),
                     "subject": subject,
                     "predicate": predicate,
                     "object": obj,
