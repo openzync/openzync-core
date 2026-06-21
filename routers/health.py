@@ -2,7 +2,7 @@
 
 - ``GET /v1/health`` — lightweight liveness check (always returns 200).
 - ``GET /v1/ready`` — readiness check that validates connectivity to
-  PostgreSQL, Redis, and Graphiti (FalkorDB).
+  PostgreSQL and Redis.
 """
 
 from __future__ import annotations
@@ -41,12 +41,9 @@ async def readiness(request: Request) -> JSONResponse:
         - ``503`` with ``"status": "degraded"`` and per-check results
           when one or more dependencies are unreachable.
     """
-    graphiti_health = await _check_graphiti_health()
-
     checks = {
         "database": db_health,
         "redis": redis_health,
-        "graphiti": graphiti_health,
     }
     all_healthy = all(checks.values())
 
@@ -75,19 +72,3 @@ async def _check_redis_health(request: Request) -> bool:
 
     return await _check(request.app.state.redis)
 
-
-async def _check_graphiti_health() -> bool:
-    """Ping the Graphiti / FalkorDB instance (optional dependency).
-
-    Returns ``True`` when Graphiti is configured and reachable, or
-    ``False`` if it was never initialised or has become unreachable.
-    """
-    try:
-        from core.graphiti import get_graphiti
-
-        client = get_graphiti()
-        if client is None:
-            return False
-        return await client.health_check()
-    except Exception:
-        return False

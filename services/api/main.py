@@ -92,7 +92,7 @@ def create_app() -> FastAPI:
         app.state.arq_pool = arq_pool
 
         # Init graph backend — selected by GRAPH_BACKEND config
-        # Supports: postgres (default), graphiti (legacy FalkorDB), none
+        # Supports: postgres (default), none
         # For the postgres backend, we create a dedicated session that stays
         # alive for the entire app lifetime (yield keeps the async with open).
         session_factory = get_async_session(db_engine)
@@ -112,13 +112,6 @@ def create_app() -> FastAPI:
             yield
 
         # ── Shutdown (reverse order of initialisation) ────────────────────
-        # Close Graphiti client if it was initialized by the factory
-        if hasattr(app.state, 'graph_backend'):
-            from core.graphiti import close_graphiti
-            try:
-                await close_graphiti()
-            except Exception:
-                pass
         await close_arq()
         await close_redis(redis_client)
         await close_db_engine(db_engine)

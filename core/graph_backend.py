@@ -7,8 +7,8 @@ Usage::
     backend = await init_graph_backend(db=async_session, org_config=org_config)
     entity = await backend.create_entity(org_id=..., name="Acme", ...)
 
-There are **no** defaults.  ``org_config`` must contain ``graph_backend``
-and ``graph_max_traversal_depth``.  If the graph is intentionally disabled,
+There are **no** defaults.  ``org_config`` must contain ``graph_backend``.
+If the graph is intentionally disabled,
 set ``graph_backend`` to ``"none"`` in the per-org config.
 """
 
@@ -42,19 +42,13 @@ async def init_graph_backend(
 
     - ``"postgres"``: :class:`PostgresGraphBackend` (requires ``db`` and
       ``graph_max_traversal_depth`` in ``org_config``)
-    - ``"graphiti"`` (legacy): :class:`FalkorDBBackend` (requires
-      ``falkordb_url`` in ``org_config``)
     - ``"none"``: returns ``None`` — graph features disabled
-
-    Legacy aliases ``"falkordb"`` and ``"neo4j"`` are mapped to
-    ``"graphiti"``.
 
     Args:
         db: An async SQLAlchemy session. Required for ``postgres`` backend.
-            Ignored for ``graphiti`` backend.
         org_config: **Required** — the resolved per-org configuration.
             Must contain ``graph_backend``.  ``graph_max_traversal_depth``
-            is required for ``postgres``; ``falkordb_url`` for ``graphiti``.
+            is required for ``postgres``.
 
     Returns:
         An initialised ``GraphBackend`` instance, or ``None`` if graph
@@ -82,31 +76,6 @@ async def init_graph_backend(
         logger.info("graph_backend.initialized", extra={"backend": "postgres"})
         return backend
 
-    elif backend_name == "graphiti":
-        from core.graphiti import init_graphiti, get_graphiti
-
-        if org_config is None or not org_config.falkordb_url:
-            raise ValueError(
-                "falkordb_url is required in per-org configuration "
-                "for the graphiti graph backend. "
-                "Set it via PATCH /admin/org/config."
-            )
-        falkordb_url = org_config.falkordb_url
-        try:
-            await init_graphiti(str(falkordb_url))
-            client = get_graphiti()
-            from packages.graphiti_client.backends.falkordb import FalkorDBBackend
-
-            backend = FalkorDBBackend(client.client)
-            logger.info("graph_backend.initialized", extra={"backend": "graphiti"})
-            return backend
-        except Exception as exc:
-            logger.warning(
-                "graph_backend.graphiti_failed",
-                extra={"error": str(exc)},
-            )
-            return None
-
     elif backend_name == "none":
         logger.info("graph_backend.disabled")
         return None
@@ -118,7 +87,7 @@ async def init_graph_backend(
 def _resolve_backend(
     org_config: OrgConfigBase | None = None,
 ) -> str:
-    """Resolve the effective backend name, handling legacy aliases.
+    """Resolve the effective backend name.
 
     ``org_config`` is **required** — there is no fallback default.
     The caller must have ``graph_backend`` set in the per-org config.
@@ -129,8 +98,7 @@ def _resolve_backend(
             ``graph_backend``.
 
     Returns:
-        The resolved backend name (``"postgres"``, ``"graphiti"``, or
-        ``"none"``).
+        The resolved backend name (``"postgres"`` or ``"none"``).
 
     Raises:
         ValueError: If ``org_config`` is ``None`` or ``graph_backend``
@@ -142,9 +110,4 @@ def _resolve_backend(
             "Set graph_backend in the per-org configuration "
             "via PATCH /admin/org/config."
         )
-    backend: str = org_config.graph_backend
-    alias_map = {
-        "falkordb": "graphiti",
-        "neo4j": "graphiti",
-    }
-    return alias_map.get(backend, backend)
+    return org_config.graph_backend
