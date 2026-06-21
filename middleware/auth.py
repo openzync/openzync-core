@@ -25,7 +25,7 @@ RFC 7807 error bodies are returned for all 401/403 responses.
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 from typing import Any, cast
 
@@ -186,7 +186,7 @@ async def _send_rfc7807(
         path: The request URL path (used as ``instance``).
         **extra: Additional fields to include in the response body.
     """
-    body = json.dumps(
+    body = orjson.dumps(
         {
             "type": f"https://errors.openzep.dev/{title.lower().replace(' ', '_')}",
             "title": title,
@@ -195,7 +195,7 @@ async def _send_rfc7807(
             "instance": path,
             **extra,
         },
-    ).encode("utf-8")
+    )
     await send(
         {
             "type": "http.response.start",
@@ -233,8 +233,8 @@ async def _lookup_key_in_redis(
         try:
             # ⚠️: Data is stored as JSON string.  type: ignore is safe
             # because we wrote it ourselves.
-            return cast(dict[str, Any], json.loads(cached))
-        except (json.JSONDecodeError, TypeError):
+            return cast(dict[str, Any], orjson.loads(cached.encode()))
+        except (orjson.JSONDecodeError, TypeError):
             logger.warning("Corrupted auth cache entry, ignoring", key=cache_key)
             await redis.delete(cache_key)
     return None
@@ -255,7 +255,7 @@ async def _cache_key_in_redis(
         ttl: TTL in seconds (default: 300).
     """
     cache_key = f"{AUTH_CACHE_PREFIX}{lookup_hash}"
-    await redis.setex(cache_key, ttl, json.dumps(data))
+    await redis.setex(cache_key, ttl, orjson.dumps(data))
 
 
 # ── Negative cache + auth miss-rate limiting ─────────────────────────────

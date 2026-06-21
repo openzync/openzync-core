@@ -11,10 +11,11 @@ Key namespace convention: ``ctx:{org_id}:{project_id}:{query_hash}``
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from typing import Any, Callable, TypeVar
 from uuid import UUID
+
+import orjson
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +213,7 @@ class CacheService:
             await self.set(key, value, ttl=effective_ttl)
         else:
             # Serialise non-string types to JSON for caching.
-            await self.set(key, json.dumps(value), ttl=effective_ttl)
+            await self.set(key, orjson.dumps(value), ttl=effective_ttl)
 
         # Release the stampede lock if we acquired it
         if enable_stampede_protection and self._redis is not None:

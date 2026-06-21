@@ -10,7 +10,7 @@ Pipeline:
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 from datetime import datetime, timezone
 from uuid import UUID
@@ -269,7 +269,7 @@ async def _create_community(
             "org_id": org_id,
             "name": community_name,
             "summary": summary,
-            "attributes": json.dumps({"member_count": len(entity_ids)}),
+            "attributes": orjson.dumps({"member_count": len(entity_ids)}),
             "created_at": now,
         },
     )

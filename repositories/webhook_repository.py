@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import orjson
 import uuid
 
 from sqlalchemy import select, update
@@ -48,7 +48,7 @@ class WebhookRepository:
             organization_id=organization_id,
             name=name,
             url=url,
-            events=json.dumps(events or []),
+            events=orjson.dumps(events or []),
         )
         self._db.add(endpoint)
         await self._db.flush()
@@ -69,7 +69,7 @@ class WebhookRepository:
         update_data: dict[str, object] = {}
         if "events" in kwargs:
             events_val = kwargs["events"]
-            update_data["events"] = json.dumps(events_val) if isinstance(events_val, list) else events_val
+            update_data["events"] = orjson.dumps(events_val) if isinstance(events_val, list) else events_val
         for key in ("name", "url", "is_active", "last_delivery_at"):
             if key in kwargs:
                 update_data[key] = kwargs[key]
@@ -118,8 +118,8 @@ class WebhookRepository:
     ) -> bool:
         """Check if an endpoint subscribes to a given event type."""
         try:
-            subscribed = json.loads(endpoint.events)
-        except (json.JSONDecodeError, TypeError):
+            subscribed = orjson.loads(endpoint.events.encode())
+        except (orjson.JSONDecodeError, TypeError):
             return False
         # Empty list = subscribe to all events
         if not subscribed:

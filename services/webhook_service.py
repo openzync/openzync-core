@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import json
+import orjson
 import logging
 import time
 import uuid
@@ -172,7 +172,8 @@ class WebhookService:
             return
 
         payload = payload or {}
-        body = json.dumps({"type": event_type, "payload": payload})
+        body_bytes = orjson.dumps({"type": event_type, "payload": payload})
+        body = body_bytes.decode()
         signing_secret = settings.WEBHOOK_SIGNING_SECRET
 
         try:
@@ -182,8 +183,6 @@ class WebhookService:
             return
 
         queue_name = _arq_queue_name("low")
-        body_bytes = body.encode()
-
         async def _enqueue_one(ep: object) -> None:
             """Enqueue a single webhook delivery."""
             from models.webhook import WebhookEndpoint as WE
@@ -218,8 +217,8 @@ class WebhookService:
         if not isinstance(endpoint, WE):
             return {}
         try:
-            events_list = json.loads(endpoint.events) if endpoint.events else []
-        except (json.JSONDecodeError, TypeError):
+            events_list = orjson.loads(endpoint.events.encode()) if endpoint.events else []
+        except (orjson.JSONDecodeError, TypeError):
             events_list = []
 
         return {

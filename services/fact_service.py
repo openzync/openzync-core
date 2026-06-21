@@ -7,10 +7,11 @@ the embedding worker for each ingested fact.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
+
+import orjson
 
 import structlog
 
@@ -220,7 +221,7 @@ class FactService:
         Returns:
             A hex-encoded SHA-256 digest.
         """
-        canonical = json.dumps(
+        canonical = orjson.dumps(
             {
                 "project_id": str(project_id),
                 "facts": sorted(
@@ -236,9 +237,9 @@ class FactService:
                     key=lambda x: (x["subject"], x["predicate"], x["object"]),
                 ),
             },
-            sort_keys=True,
+            option=orjson.OPT_SORT_KEYS,
         )
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return hashlib.sha256(canonical).hexdigest()
 
     async def _check_dedup(self, content_hash: str) -> str | None:
         """Check if this exact fact batch has been ingested before.

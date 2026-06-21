@@ -40,9 +40,10 @@ Usage
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 from datetime import datetime, timezone
+
+import orjson
 from enum import Enum
 from typing import Any
 from uuid import UUID  # noqa: TCH003 — used in type hints for callers
@@ -195,8 +196,8 @@ class IdempotencyService:
 
         # Key exists — parse cached entry and validate body hash.
         try:
-            entry: dict[str, Any] = json.loads(cached)
-        except (json.JSONDecodeError, TypeError):
+            entry: dict[str, Any] = orjson.loads(cached.encode())
+        except (orjson.JSONDecodeError, TypeError):
             # Corrupted cache entry — treat as new (cache will be overwritten).
             logger.warning(
                 "idempotency.corrupted_cache_entry",
@@ -254,7 +255,7 @@ class IdempotencyService:
         await self._redis.setex(
             cache_key,
             self._idem_ttl,
-            json.dumps(entry, default=str),
+            orjson.dumps(entry),
         )
 
         logger.debug(
@@ -292,7 +293,7 @@ class IdempotencyService:
         Returns:
             SHA-256 hex digest string (64 characters).
         """
-        canonical = json.dumps(
+        canonical = orjson.dumps(
             {
                 "org_id": org_id,
                 "user_id": user_id,
@@ -307,10 +308,9 @@ class IdempotencyService:
                     for m in messages
                 ],
             },
-            sort_keys=True,
-            ensure_ascii=False,
+            option=orjson.OPT_SORT_KEYS,
         )
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        return hashlib.sha256(canonical).hexdigest()
 
     async def check_content_hash(
         self,
@@ -551,5 +551,5 @@ class IdempotencyService:
         Returns:
             SHA-256 hex digest string (64 characters).
         """
-        canonical = json.dumps(body, sort_keys=True, ensure_ascii=False)
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        canonical = orjson.dumps(body, option=orjson.OPT_SORT_KEYS)
+        return hashlib.sha256(canonical).hexdigest()

@@ -11,7 +11,7 @@ Bitmask:
 
 from __future__ import annotations
 
-import json
+import orjson
 import uuid
 from typing import Any
 
@@ -243,7 +243,7 @@ async def classify_dialog(
                     "valence": valence,
                     "arousal": arousal,
                     "confidence": confidence,
-                    "raw": json.dumps(raw) if raw else None,
+                    "raw": orjson.dumps(raw) if raw else None,
                 },
             )
 

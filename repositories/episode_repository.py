@@ -15,7 +15,7 @@ Key patterns:
 from __future__ import annotations
 
 import base64
-import json
+import orjson
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -88,7 +88,7 @@ class EpisodeRepository:
             params[f"user_id_{i}"] = user_id
             params[f"role_{i}"] = msg["role"]
             params[f"content_{i}"] = msg["content"]
-            params[f"metadata_{i}"] = json.dumps(msg.get("metadata", {}))
+            params[f"metadata_{i}"] = orjson.dumps(msg.get("metadata", {}))
             params[f"created_at_{i}"] = msg.get("created_at") or now
             params[f"seq_{i}"] = seq
 

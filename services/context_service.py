@@ -147,9 +147,9 @@ class ContextService:
                 results.get("entities", []),
                 results.get("communities", []),
             )
-            import json as json_lib
+            import orjson
 
-            context_str: str = json_lib.dumps(context_data, default=str)
+            context_str: str = orjson.dumps(context_data).decode()
         else:
             context_str = format_text(
                 results.get("episodes", []),

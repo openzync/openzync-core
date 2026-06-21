@@ -7,7 +7,7 @@ block data-processing tasks.
 
 from __future__ import annotations
 
-import json
+import orjson
 import logging
 import traceback
 from typing import Any
@@ -57,7 +57,7 @@ async def write_audit_log(
     from core.db import get_async_session, init_db_engine
 
     org_uuid: UUID | None = UUID(organization_id) if organization_id else None
-    parsed_details: dict[str, Any] = json.loads(details) if details else {}
+    parsed_details: dict[str, Any] = orjson.loads(details.encode()) if details else {}
 
     _engine = init_db_engine(
         str(settings.DATABASE_URL),
