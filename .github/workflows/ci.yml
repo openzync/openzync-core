@@ -133,8 +133,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - run: |
-          TAG=${GITHUB_REF#refs/tags/}
-          TAG=${TAG:-${{ github.sha }}}
+          # If pushed with a tag (v*), use the tag name.
+          # Otherwise, use the commit SHA.
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="${{ github.sha }}"
+          fi
+          echo "Building with tag: $TAG"
           docker build -t ghcr.io/${{ github.repository }}/api:$TAG -f services/api/Dockerfile .
           docker build -t ghcr.io/${{ github.repository }}/worker:$TAG -f services/worker/Dockerfile .
           docker tag ghcr.io/${{ github.repository }}/api:$TAG ghcr.io/${{ github.repository }}/api:latest
