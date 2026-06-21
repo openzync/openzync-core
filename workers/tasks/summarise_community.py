@@ -269,7 +269,7 @@ async def _create_community(
             "org_id": org_id,
             "name": community_name,
             "summary": summary,
-            "attributes": orjson.dumps({"member_count": len(entity_ids)}),
+            "attributes": orjson.dumps({"member_count": len(entity_ids)}).decode("utf-8"),
             "created_at": now,
         },
     )

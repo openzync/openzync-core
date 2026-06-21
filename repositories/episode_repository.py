@@ -88,7 +88,7 @@ class EpisodeRepository:
             params[f"user_id_{i}"] = user_id
             params[f"role_{i}"] = msg["role"]
             params[f"content_{i}"] = msg["content"]
-            params[f"metadata_{i}"] = orjson.dumps(msg.get("metadata", {}))
+            params[f"metadata_{i}"] = orjson.dumps(msg.get("metadata", {})).decode("utf-8")
             params[f"created_at_{i}"] = msg.get("created_at") or now
             params[f"seq_{i}"] = seq
 

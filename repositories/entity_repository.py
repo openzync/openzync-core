@@ -263,7 +263,7 @@ class EntityRepository:
             return relationship
         except Exception as exc:
             logger.warning(
-                "entity_repository.relationship_create_duplicate",
+                "entity_repository.relationship_create_failed",
                 extra={
                     "org_id": str(org_id),
                     "project_id": str(project_id),

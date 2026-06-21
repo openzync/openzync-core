@@ -243,7 +243,7 @@ async def classify_dialog(
                     "valence": valence,
                     "arousal": arousal,
                     "confidence": confidence,
-                    "raw": orjson.dumps(raw) if raw else None,
+                    "raw": orjson.dumps(raw).decode("utf-8") if raw else None,
                 },
             )
 

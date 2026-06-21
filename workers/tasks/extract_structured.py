@@ -281,7 +281,7 @@ async def extract_structured(
                             "session_id": uuid.UUID(session_id),
                             "episode_id": uuid.UUID(episode_id),
                             "schema_id": uuid.UUID(schema_info["id"]),
-                            "data": orjson.dumps(cleaned),
+                            "data": orjson.dumps(cleaned).decode("utf-8"),
                         },
                     )
                     inserted_count += 1
