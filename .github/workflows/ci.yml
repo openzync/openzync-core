@@ -1,11 +1,12 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# OpenZep — GitHub Actions CI pipeline
+# OpenZep — GitHub Actions CI/CD pipeline
 # ──────────────────────────────────────────────────────────────────────────────
 # Stages:
 #   lint            → ruff, mypy
 #   test-unit       → pytest with coverage
 #   test-integration → pytest with Postgres + Redis (testcontainers)
-#   build           → Docker image (main/tags only)
+#   build           → Docker image (main/tags only) pushed to ghcr.io
+#   deploy          → SSH into VPS, pull images, migrate, restart  (main only)
 #   sdk-publish     → PyPI (tags only)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -131,8 +132,47 @@ jobs:
           TAG=${TAG:-${{ github.sha }}}
           docker build -t ghcr.io/${{ github.repository }}/api:$TAG -f services/api/Dockerfile .
           docker build -t ghcr.io/${{ github.repository }}/worker:$TAG -f services/worker/Dockerfile .
-          docker push ghcr.io/${{ github.repository }}/api:$TAG
-          docker push ghcr.io/${{ github.repository }}/worker:$TAG
+          docker tag ghcr.io/${{ github.repository }}/api:$TAG ghcr.io/${{ github.repository }}/api:latest
+          docker tag ghcr.io/${{ github.repository }}/worker:$TAG ghcr.io/${{ github.repository }}/worker:latest
+          docker push --all-tags ghcr.io/${{ github.repository }}/api
+          docker push --all-tags ghcr.io/${{ github.repository }}/worker
+
+  # ═════════════════════════════════════════════════════════════════════════════
+  # DEPLOY  (VPS — main branch only)
+  # ═════════════════════════════════════════════════════════════════════════════
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Upload deployment files to VPS
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: |
+            infra/docker-compose.yml
+            infra/docker-compose.vps.yml
+            infra/docker-compose.prod.yml
+            infra/nginx/
+            scripts/deploy.sh
+            scripts/backup.sh
+          target: /home/deploy/openzep
+          rm: false
+
+      - name: Run deployment
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script: |
+            chmod +x /home/deploy/openzep/scripts/deploy.sh /home/deploy/openzep/scripts/backup.sh
+            cd /home/deploy/openzep
+            bash scripts/deploy.sh
 
   # ═════════════════════════════════════════════════════════════════════════════
   # SDK PUBLISH  (PyPI — tags only)
