@@ -443,7 +443,7 @@ async def extract_entities(
                     )
 
             # ── 8. Link entities to this episode in graph_episode_entities ───
-            # This replaces the separate sync_to_graph ARQ task.  Linking
+            # This replaces the separate link_entities_to_episode ARQ task.  Linking
             # happens inline so it's always consistent with entity extraction.
             episode_uuid = uuid.UUID(episode_id)
             for entity_name, entity_node in name_to_node.items():

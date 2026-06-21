@@ -1,9 +1,9 @@
 """Entity repository — interface to the graph backend for entity CRUD.
 
-This repository delegates to a ``GraphBackend`` instance (either
-``PostgresGraphBackend`` or ``FalkorDBBackend``) for all entity and
-relationship operations.  Gracefully degrades when no backend is
-available — all public methods return ``None``.
+This repository delegates to a ``GraphBackend`` instance (typically
+``PostgresGraphBackend``) for all entity and relationship operations.
+Gracefully degrades when no backend is available — all public methods
+return ``None``.
 """
 
 from __future__ import annotations
@@ -13,8 +13,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.graphiti_client.backends.postgres import PostgresGraphBackend
-from packages.graphiti_client.interface import GraphBackend
+from packages.graph_backend.postgres import PostgresGraphBackend
+from packages.graph_backend.interface import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -263,7 +263,7 @@ class EntityRepository:
             return relationship
         except Exception as exc:
             logger.warning(
-                "entity_repository.relationship_create_duplicate",
+                "entity_repository.relationship_create_failed",
                 extra={
                     "org_id": str(org_id),
                     "project_id": str(project_id),

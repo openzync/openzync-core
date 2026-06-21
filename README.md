@@ -138,7 +138,7 @@ Configuration is via environment variables (all prefixed with `MG_`). Copy `.env
 |---|---|---|
 | `MG_DATABASE_URL` | — | PostgreSQL connection string (`postgresql+asyncpg://...`) |
 | `MG_REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
-| `MG_GRAPH_BACKEND` | `postgres` | Graph backend (`postgres`, `graphiti`, or `none`) |
+| `MG_GRAPH_BACKEND` | `postgres` | Graph backend (`postgres` or `none`) |
 | `MG_LLM_BACKEND` | `ollama` | LLM provider (`ollama`, `openai`, `azure`, `anthropic`, `openrouter`) |
 | `MG_LLM_MODEL` | `llama3.2:3b` | Model name for the LLM provider |
 | `MG_AUTO_RUN_COMMUNITY_DETECTION` | `false` | When `true`, runs community detection after each graph sync (deduped to once/hour/org); when `false`, runs nightly at 02:00 UTC |

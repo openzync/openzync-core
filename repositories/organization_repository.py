@@ -65,7 +65,7 @@ class OrganizationRepository:
                 "UPDATE organizations SET config = :config "
                 "WHERE id = :org_id RETURNING config"
             ),
-            {"org_id": org_id, "config": orjson.dumps(config)},
+            {"org_id": org_id, "config": orjson.dumps(config).decode("utf-8")},
         )
         row = result.one_or_none()
         if row is None:

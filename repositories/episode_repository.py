@@ -88,7 +88,7 @@ class EpisodeRepository:
             params[f"user_id_{i}"] = user_id
             params[f"role_{i}"] = msg["role"]
             params[f"content_{i}"] = msg["content"]
-            params[f"metadata_{i}"] = orjson.dumps(msg.get("metadata", {}))
+            params[f"metadata_{i}"] = orjson.dumps(msg.get("metadata", {})).decode("utf-8")
             params[f"created_at_{i}"] = msg.get("created_at") or now
             params[f"seq_{i}"] = seq
 
@@ -110,7 +110,7 @@ class EpisodeRepository:
                 id, organization_id, session_id, user_id,
                 role, content, metadata, embedding, token_count,
                 sequence_number, enrichment_status, is_deleted,
-                graphiti_node_id, created_at, updated_at
+                created_at, updated_at
             """
         )
 
@@ -134,7 +134,6 @@ class EpisodeRepository:
                 sequence_number=mapping["sequence_number"],
                 enrichment_status=mapping["enrichment_status"],
                 is_deleted=mapping["is_deleted"],
-                graphiti_node_id=mapping["graphiti_node_id"],
             )
             # Manually set timestamps since we bypassed the ORM
             episode.created_at = mapping["created_at"]

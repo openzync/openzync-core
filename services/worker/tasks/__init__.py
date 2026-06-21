@@ -67,7 +67,7 @@ data ingestion for business data, GDPR purges.
 #   from services.worker.tasks.extract_entities import extract_entities
 #   from services.worker.tasks.embed_episode import embed_episode
 #   from services.worker.tasks.extract_facts import extract_facts
-#   from services.worker.tasks.sync_to_graph import sync_to_graph
+#   from services.worker.tasks.link_entities_to_episode import link_entities_to_episode
 #   from services.worker.tasks.classify_dialog import classify_dialog
 #   from services.worker.tasks.extract_structured import extract_structured
 #   from services.worker.tasks.summarise_community import summarise_community
@@ -81,7 +81,7 @@ from services.worker.tasks.audit_log import write_audit_log
 #       extract_entities,
 #       embed_episode,
 #       extract_facts,
-#       sync_to_graph,
+#       link_entities_to_episode,
 #       classify_dialog,
 #       extract_structured,
 #   ])

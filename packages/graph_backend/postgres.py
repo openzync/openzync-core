@@ -23,7 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import ExternalServiceError
-from packages.graphiti_client.interface import GraphBackend
+from packages.graph_backend.interface import GraphBackend
 
 logger = structlog.get_logger(__name__)
 
@@ -455,7 +455,7 @@ class PostgresGraphBackend(GraphBackend):
                         "source_id": str(source_id),
                         "target_id": str(target_id),
                         "rel_type": relationship_type,
-                        "properties": orjson.dumps(properties or {}),
+                        "properties": orjson.dumps(properties or {}).decode("utf-8"),
                         "fact": "",
                         "confidence": 1.0,
                         "valid_from": valid_from.isoformat() if valid_from else None,

@@ -327,7 +327,7 @@ class AuditMiddleware:
             action=action,
             resource_type=resource_type,
             resource_id=resource_id,
-            details=orjson.dumps(details),
+            details=orjson.dumps(details).decode("utf-8"),
             ip_address=ip_address,
             trace_id=request_id or str(uuid.uuid4()),
         )

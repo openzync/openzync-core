@@ -1,26 +1,42 @@
-"""Graph backend factory — selects backend based on per-org config.
+"""Graph backend registry + resolver — selects backend based on per-org config.
+
+The :class:`GraphBackendDispatcher` is an app-level singleton that holds a
+registry of backend **classes** (not instances).  Callers use
+:meth:`resolve_and_create` to obtain a request-scoped backend instance:
 
 Usage::
 
-    from core.graph_backend import init_graph_backend
+    from core.graph_backend import init_dispatcher
 
-    backend = await init_graph_backend(db=async_session, org_config=org_config)
+    # App startup:
+    app.state.graph_backend_dispatcher = init_dispatcher()
+
+    # Per-request:
+    dispatcher = request.app.state.graph_backend_dispatcher
+    backend = dispatcher.resolve_and_create(org_config, db)
     entity = await backend.create_entity(org_id=..., name="Acme", ...)
 
-There are **no** defaults.  ``org_config`` must contain ``graph_backend``
-and ``graph_max_traversal_depth``.  If the graph is intentionally disabled,
+There are **no** defaults.  ``org_config`` must contain ``graph_backend``.
+If the graph is intentionally disabled,
 set ``graph_backend`` to ``"none"`` in the per-org config.
+
+To add a new backend in the future:
+
+1. Create a class implementing :class:`GraphBackend`.
+2. Register it: ``dispatcher.register("my_backend", MyBackend)``.
+3. Set ``org_config.graph_backend = "my_backend"`` for the target org.
+
+No callers change.
 """
 
 from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING
-from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from packages.graphiti_client.interface import GraphBackend
+from packages.graph_backend.interface import GraphBackend
 
 if TYPE_CHECKING:
     from schemas.organization_config import OrgConfigBase
@@ -28,123 +44,157 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def init_graph_backend(
-    db: AsyncSession | None = None,
-    org_config: OrgConfigBase | None = None,
-) -> GraphBackend | None:
-    """Initialise the configured graph backend.
+class GraphBackendDispatcher:
+    """Registry of backend classes + per-org resolution.
 
-    **There are no defaults.**  ``org_config`` must be provided and must
-    contain ``graph_backend``.  If the graph is intentionally disabled,
-    set ``graph_backend`` to ``"none"`` in the per-org config.
+    This is an app-level singleton.  It does **not** hold backend instances
+    because backends need a request-scoped ``AsyncSession``.  Instead, it
+    holds the **classes** and creates a fresh instance on every call to
+    :meth:`resolve_and_create`.
 
-    Supported backends:
+    Example::
 
-    - ``"postgres"``: :class:`PostgresGraphBackend` (requires ``db`` and
-      ``graph_max_traversal_depth`` in ``org_config``)
-    - ``"graphiti"`` (legacy): :class:`FalkorDBBackend` (requires
-      ``falkordb_url`` in ``org_config``)
-    - ``"none"``: returns ``None`` — graph features disabled
+        dispatcher = GraphBackendDispatcher()
+        dispatcher.register("postgres", PostgresGraphBackend)
+        # future: dispatcher.register("neo4j", Neo4jGraphBackend)
 
-    Legacy aliases ``"falkordb"`` and ``"neo4j"`` are mapped to
-    ``"graphiti"``.
-
-    Args:
-        db: An async SQLAlchemy session. Required for ``postgres`` backend.
-            Ignored for ``graphiti`` backend.
-        org_config: **Required** — the resolved per-org configuration.
-            Must contain ``graph_backend``.  ``graph_max_traversal_depth``
-            is required for ``postgres``; ``falkordb_url`` for ``graphiti``.
-
-    Returns:
-        An initialised ``GraphBackend`` instance, or ``None`` if graph
-        features are disabled.
-
-    Raises:
-        ValueError: If ``org_config`` is ``None``, or required fields are
-            missing, or the backend name is unknown.
+        # Per-request:
+        backend = dispatcher.resolve_and_create(org_config, db)
     """
-    backend_name = _resolve_backend(org_config)
 
-    if backend_name == "postgres":
-        if db is None:
-            raise ValueError("db is required for postgres graph backend")
-        from packages.graphiti_client.backends.postgres import PostgresGraphBackend
+    def __init__(self) -> None:
+        self._registry: dict[str, type[GraphBackend]] = {}
 
-        if org_config is None or org_config.graph_max_traversal_depth is None:
-            raise ValueError(
-                "graph_max_traversal_depth is required in per-org "
-                "configuration for the postgres graph backend. "
-                "Set it via PATCH /admin/org/config."
-            )
-        max_depth = org_config.graph_max_traversal_depth
-        backend: GraphBackend = PostgresGraphBackend(db, max_traversal_depth=max_depth)
-        logger.info("graph_backend.initialized", extra={"backend": "postgres"})
-        return backend
+    # ── Registration ────────────────────────────────────────────────────────────
 
-    elif backend_name == "graphiti":
-        from core.graphiti import init_graphiti, get_graphiti
+    def register(self, name: str, backend_cls: type[GraphBackend]) -> None:
+        """Register a backend class under a short name (e.g. ``"postgres"``).
 
-        if org_config is None or not org_config.falkordb_url:
-            raise ValueError(
-                "falkordb_url is required in per-org configuration "
-                "for the graphiti graph backend. "
-                "Set it via PATCH /admin/org/config."
-            )
-        falkordb_url = org_config.falkordb_url
-        try:
-            await init_graphiti(str(falkordb_url))
-            client = get_graphiti()
-            from packages.graphiti_client.backends.falkordb import FalkorDBBackend
+        If the name is already registered, the new class overwrites the
+        previous one.  This is intentional — it allows test suites to
+        replace backends without reference counting.
 
-            backend = FalkorDBBackend(client.client)
-            logger.info("graph_backend.initialized", extra={"backend": "graphiti"})
-            return backend
-        except Exception as exc:
-            logger.warning(
-                "graph_backend.graphiti_failed",
-                extra={"error": str(exc)},
-            )
+        Args:
+            name: Short identifier (e.g. ``"postgres"``, ``"neo4j"``).
+            backend_cls: A class that implements the ``GraphBackend`` ABC.
+        """
+        self._registry[name] = backend_cls
+        logger.info("graph_backend.registered", extra={"backend": name})
+
+    # ── Resolution + Creation ───────────────────────────────────────────────────
+
+    def resolve_and_create(
+        self,
+        org_config: OrgConfigBase | None,
+        db: AsyncSession,
+    ) -> GraphBackend | None:
+        """Resolve the backend name from ``org_config`` and create an instance.
+
+        Steps:
+
+        1. If ``org_config`` is ``None`` or ``org_config.graph_backend``
+           is not set or equals ``"none"`` → returns ``None`` (graph disabled).
+        2. Looks up the backend name in the registry.
+        3. Creates a new instance with the given ``db`` and any
+           backend-specific kwargs extracted from ``org_config``.
+
+        Currently supported backends:
+
+        - **``"postgres"``**: Creates a :class:`PostgresGraphBackend`.
+          Reads ``graph_max_traversal_depth`` from ``org_config``.
+
+        Args:
+            org_config: The resolved per-org configuration.  May be ``None``
+                (treated as graph disabled).
+            db: A request-scoped ``AsyncSession``.  Required for backends
+                that use SQL (all current implementations).
+
+        Returns:
+            An initialised ``GraphBackend`` instance, or ``None`` if graph
+            features are disabled for this org.
+
+        Raises:
+            ValueError: If the backend name from ``org_config`` is not
+                registered and is not ``"none"``.
+        """
+        backend_name = self._resolve_backend_name(org_config)
+        if backend_name is None:
+            logger.debug("graph_backend.disabled")
             return None
 
-    elif backend_name == "none":
-        logger.info("graph_backend.disabled")
-        return None
+        cls = self._registry.get(backend_name)
+        if cls is None:
+            raise ValueError(
+                f"Unknown graph backend: '{backend_name}'. "
+                f"Available backends: {list(self._registry.keys())}. "
+                f"Set graph_backend in the per-org configuration "
+                f"via PATCH /admin/org/config."
+            )
 
-    else:
-        raise ValueError(f"Unknown graph backend: {backend_name}")
+        # Backend-specific kwargs extracted from org_config
+        kwargs: dict = {}
+        if backend_name == "postgres":
+            if org_config is not None and org_config.graph_max_traversal_depth is not None:
+                kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
 
-
-def _resolve_backend(
-    org_config: OrgConfigBase | None = None,
-) -> str:
-    """Resolve the effective backend name, handling legacy aliases.
-
-    ``org_config`` is **required** — there is no fallback default.
-    The caller must have ``graph_backend`` set in the per-org config.
-    Use ``"none"`` to disable graph features.
-
-    Args:
-        org_config: The resolved per-org configuration.  Must contain
-            ``graph_backend``.
-
-    Returns:
-        The resolved backend name (``"postgres"``, ``"graphiti"``, or
-        ``"none"``).
-
-    Raises:
-        ValueError: If ``org_config`` is ``None`` or ``graph_backend``
-            is not set.
-    """
-    if org_config is None or not org_config.graph_backend:
-        raise ValueError(
-            "graph_backend is not configured. "
-            "Set graph_backend in the per-org configuration "
-            "via PATCH /admin/org/config."
+        backend = cls(db=db, **kwargs)
+        logger.info(
+            "graph_backend.instance_created",
+            extra={"backend": backend_name},
         )
-    backend: str = org_config.graph_backend
-    alias_map = {
-        "falkordb": "graphiti",
-        "neo4j": "graphiti",
-    }
-    return alias_map.get(backend, backend)
+        return backend
+
+    # ── Resolution only (no instance) ────────────────────────────────────────────
+
+    def resolve_backend_name(self, org_config: OrgConfigBase | None) -> str | None:
+        """Determine which backend name this org should use.
+
+        This is a pure lookup — it does **not** create an instance.
+        Useful when the caller only needs to know *which* backend is
+        configured without instantiating it.
+
+        Args:
+            org_config: The resolved per-org configuration.
+
+        Returns:
+            The backend name string (e.g. ``"postgres"``), or ``None`` if
+            graph features are disabled.
+        """
+        return self._resolve_backend_name(org_config)
+
+    # ── Internals ───────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _resolve_backend_name(org_config: OrgConfigBase | None) -> str | None:
+        """Extract the backend name from org config.
+
+        Returns ``None`` when the graph is intentionally disabled
+        (config is ``None``, field is empty or ``"none"``).
+        """
+        if org_config is None:
+            return None
+        backend_name = org_config.graph_backend
+        if not backend_name or backend_name == "none":
+            return None
+        return backend_name
+
+
+def init_dispatcher() -> GraphBackendDispatcher:
+    """Create and populate the dispatcher with all registered backends.
+
+    Call once during the application lifespan and store the result in
+    ``app.state``::
+
+        from core.graph_backend import init_dispatcher
+
+        app.state.graph_backend_dispatcher = init_dispatcher()
+
+    To add a new backend, import its class and register it here.
+    """
+    from packages.graph_backend.postgres import PostgresGraphBackend
+
+    dispatcher = GraphBackendDispatcher()
+    dispatcher.register("postgres", PostgresGraphBackend)
+    # Future: dispatcher.register("neo4j", Neo4jGraphBackend)
+    # Future: dispatcher.register("in_memory", InMemoryGraphBackend)
+    return dispatcher

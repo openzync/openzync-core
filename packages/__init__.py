@@ -1,5 +1,5 @@
 """OpenZep packages — bundled sub-packages for graph and database abstraction.
 
-``packages/graphiti-client/`` — Abstract ``GraphBackend`` interface and
-``FalkorDBBackend`` concrete implementation for knowledge-graph operations.
+``packages/graph_backend/`` — Abstract ``GraphBackend`` interface and
+``PostgresGraphBackend`` concrete implementation for knowledge-graph operations.
 """

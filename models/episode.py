@@ -35,8 +35,6 @@ class Episode(TimestampMixin, Base):
         metadata: Arbitrary JSONB metadata.
         embedding: pgvector embedding (placeholder — migrated to ``vector(1536)``
             via Alembic). Nullable; populated after enrichment.
-        graphiti_node_id: Optional reference to the corresponding node in the
-            Graphiti knowledge graph.
         token_count: Approximate token count for the message.
         sequence_number: Order within the session (0-based).
         enrichment_status: Bitmask tracking which enrichment passes have been
@@ -86,7 +84,6 @@ class Episode(TimestampMixin, Base):
     # may not be installed in the dev/test environment. The actual DDL must
     # use ``vector(1536)`` — the Alembic migration will handle this.
     embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
-    graphiti_node_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     token_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,

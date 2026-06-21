@@ -22,7 +22,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dependencies.db import get_db
 from dependencies.org_config import get_org_config
 from dependencies.project_auth import require_project_membership
-from packages.graphiti_client.backends.postgres import PostgresGraphBackend
 from schemas.organization_config import OrgConfigBase
 from services.hybrid_retriever import HybridRetriever
 
@@ -102,7 +101,8 @@ async def search_memory(
     project_id = UUID(request.path_params["project_id"])
 
     # ── Run hybrid search ───────────────────────────────────────────────
-    graph_backend = PostgresGraphBackend(db=db)
+    dispatcher = request.app.state.graph_backend_dispatcher
+    graph_backend = dispatcher.resolve_and_create(org_config, db)
     retriever = HybridRetriever(
         db, org_id, graph_backend=graph_backend, org_config=org_config
     )

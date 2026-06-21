@@ -90,7 +90,7 @@ class OrgConfigBase(BaseModel):
     # ── Graph ──────────────────────────────────────────────────────────────
     graph_backend: str | None = Field(
         default=None,
-        description="Graph backend (postgres, graphiti, none).",
+        description="Graph backend (postgres, none).",
     )
     graph_search_type: str | None = Field(
         default=None,
@@ -102,11 +102,6 @@ class OrgConfigBase(BaseModel):
         le=10,
         description="Maximum BFS traversal depth for the graph backend.",
     )
-    falkordb_url: str | None = Field(
-        default=None,
-        description="FalkorDB connection string (required for graphiti backend).",
-    )
-
     # ── Behaviour ──────────────────────────────────────────────────────────
     context_cache_ttl: int | None = Field(
         default=None,
@@ -198,7 +193,6 @@ class UpdateOrgConfigRequest(BaseModel):
     graph_backend: str | None = None
     graph_search_type: str | None = None
     graph_max_traversal_depth: int | None = Field(default=None, ge=1, le=10)
-    falkordb_url: str | None = None
     context_cache_ttl: int | None = Field(default=None, ge=1)
     audit_log_response_body: bool | None = None
 

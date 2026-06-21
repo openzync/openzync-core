@@ -23,10 +23,17 @@ Usage in a router::
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.db import get_db
+from dependencies.org_config import get_org_config
+
+if TYPE_CHECKING:
+    from core.graph_backend import GraphBackendDispatcher
+    from schemas.organization_config import OrgConfigBase
 from middleware.auth_throttle import AuthThrottle
 from repositories.auth_repository import AuthRepository
 from repositories.episode_repository import EpisodeRepository
@@ -158,18 +165,21 @@ async def get_memory_service(
 
 
 async def get_graph_service(
+    request: Request,
+    org_config: OrgConfigBase = Depends(get_org_config),
     db: AsyncSession = Depends(get_db),
     webhook: WebhookService = Depends(get_webhook_service),
 ) -> GraphService:
     """Dependency that yields an initialised GraphService.
 
-    Creates a request-scoped ``PostgresGraphBackend`` and wires in the
-    ``UserRepository`` for user-existence checks and ``FactRepository``
-    for session-scoped entity queries.
+    Uses the ``GraphBackendDispatcher`` (registered in the app lifespan)
+    to resolve the per-org backend and create a request-scoped instance.
+    Wires in the ``UserRepository`` for user-existence checks and
+    ``FactRepository`` for session-scoped entity queries.
     """
-    from packages.graphiti_client.backends.postgres import PostgresGraphBackend
+    dispatcher: GraphBackendDispatcher = request.app.state.graph_backend_dispatcher
+    graph_backend = dispatcher.resolve_and_create(org_config, db)
 
-    graph_backend = PostgresGraphBackend(db=db)
     return GraphService(
         graph_backend=graph_backend,
         user_repo=UserRepository(db),

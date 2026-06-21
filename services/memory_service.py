@@ -64,7 +64,7 @@ CONTEXT_CACHE_PATTERN = "ctx:{org_id}:{project_id}:*"
 
 ARQ_TASKS = [
     "classify_dialog",
-    "sync_to_graph",
+    "link_entities_to_episode",
     "extract_entities",
     "embed_episode",
     "extract_structured",
@@ -152,7 +152,7 @@ class MemoryService:
         5. Build episode dicts from validated messages.
         6. PII detection & redaction (if enabled in org quotas).
         7. Batch-insert episodes into PostgreSQL.
-        8. Enqueue ARQ enrichment tasks (sync_to_graph, extract_entities,
+        8. Enqueue ARQ enrichment tasks (link_entities_to_episode, extract_entities,
            extract_facts, embed_episode).
         9. Cache idempotency key and content hash for future dedup.
         10. Invalidate context cache for this project.
@@ -255,8 +255,8 @@ class MemoryService:
             pii_service = PIIService(pii_config_raw)
             for msg_dict in episode_dicts:
                 content = msg_dict["content"]
-                redacted, detections, was_blocked = (
-                    await pii_service.process_message(content)
+                redacted, detections, was_blocked = await pii_service.process_message(
+                    content
                 )
                 if redacted != content:
                     msg_dict["content"] = redacted
@@ -450,8 +450,7 @@ class MemoryService:
                     )
             if session is None:
                 raise NotFoundError(
-                    f"Session '{session_external_id}' not found "
-                    f"in project {project_id}"
+                    f"Session '{session_external_id}' not found in project {project_id}"
                 )
             return session
 
@@ -464,9 +463,7 @@ class MemoryService:
 
     # ── Idempotency ──────────────────────────────────────────────────────────
 
-    async def _check_idempotency(
-        self, key: str
-    ) -> IngestMemoryResponse | None:
+    async def _check_idempotency(self, key: str) -> IngestMemoryResponse | None:
         """Check Redis for a cached response for this idempotency key.
 
         Args:
@@ -543,14 +540,10 @@ class MemoryService:
         Returns:
             The existing ``job_id`` if found, or ``None``.
         """
-        existing = await self._redis.get(
-            f"{CONTENT_HASH_PREFIX}{content_hash}"
-        )
+        existing = await self._redis.get(f"{CONTENT_HASH_PREFIX}{content_hash}")
         return existing if existing else None
 
-    async def _cache_content_hash(
-        self, content_hash: str, job_id: str
-    ) -> None:
+    async def _cache_content_hash(self, content_hash: str, job_id: str) -> None:
         """Cache a content hash to prevent re-ingestion of identical content.
 
         Args:
@@ -594,7 +587,7 @@ class MemoryService:
         """Enqueue ARQ background tasks for episode enrichment.
 
         Tasks are enqueued on the ``high`` priority queue:
-        - ``sync_to_graph``: Populates Graphiti episodic nodes.
+        - ``link_entities_to_episode``: Links extracted entities to the episode.
         - ``extract_entities``: LLM-based entity + relationship extraction.
         - ``extract_facts``: LLM-based zero-shot fact extraction.
         - ``embed_episode``: Generates embeddings via the configured API.
@@ -643,11 +636,9 @@ class MemoryService:
                     **common,
                     session_id=session_id,
                 )
+                await arq_pool.enqueue("embed_episode", queue_name=qname, **common)
                 await arq_pool.enqueue(
-                    "embed_episode", queue_name=qname, **common
-                )
-                await arq_pool.enqueue(
-                    "sync_to_graph",
+                    "link_entities_to_episode",
                     queue_name=_arq_queue_name("low"),
                     **common,
                     role=role,
@@ -684,9 +675,7 @@ class MemoryService:
 
     # ── Context Cache Invalidation ───────────────────────────────────────────
 
-    async def _invalidate_context_cache(
-        self, org_id: str, project_id: str
-    ) -> None:
+    async def _invalidate_context_cache(self, org_id: str, project_id: str) -> None:
         """Invalidate all context cache entries for a project.
 
         Called after ingestion so that subsequent context-assembly
@@ -699,9 +688,7 @@ class MemoryService:
             org_id: The organization UUID string.
             project_id: The project UUID string.
         """
-        pattern = CONTEXT_CACHE_PATTERN.format(
-            org_id=org_id, project_id=project_id
-        )
+        pattern = CONTEXT_CACHE_PATTERN.format(org_id=org_id, project_id=project_id)
         cursor: int = 0
         deleted = 0
         while True:
@@ -721,4 +708,3 @@ class MemoryService:
                     "keys_deleted": deleted,
                 },
             )
-
