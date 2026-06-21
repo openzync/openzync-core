@@ -53,12 +53,29 @@ class TokenUsage:
 
 
 @dataclass
+class ToolCall:
+    """A tool/function call requested by the LLM.
+
+    Attributes:
+        id: Unique call identifier (matches ``tool_call_id`` in
+            subsequent ``tool`` role messages).
+        name: The tool name the LLM wants to invoke.
+        arguments: Parsed keyword arguments for the tool.
+    """
+
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass
 class ChatResponse:
     """Uniform response from any LLM chat backend."""
 
     content: str
     model: str
     usage: TokenUsage = field(default_factory=TokenUsage)
+    tool_calls: list[ToolCall] | None = None
 
 
 @dataclass
@@ -84,17 +101,31 @@ class LLMBackend(ABC):
     """
 
     @abstractmethod
-    async def chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+    async def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
         """Send a chat completion request.
 
         Args:
             messages: List of message dicts with ``role`` and ``content``
                 keys, following the OpenAI message format.
+            tools: Optional list of tool/function definitions in
+                OpenAI-compatible format.  When provided, the LLM may
+                return ``tool_calls`` instead of (or in addition to) text.
+            tool_choice: Controls tool selection behaviour:
+                ``"auto"`` (default), ``"none"``, or ``"required"``
+                (or a specific tool name as ``{"type": "function",
+                "function": {"name": "..."}}``).
             **kwargs: Additional provider-specific parameters (temperature,
                 max_tokens, top_p, etc.).
 
         Returns:
-            A ``ChatResponse`` with the generated text and token usage.
+            A ``ChatResponse`` with the generated text, token usage,
+            and optionally ``tool_calls``.
         """
         ...
 

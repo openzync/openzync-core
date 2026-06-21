@@ -26,6 +26,7 @@ from core.llm import (
     EmbeddingResponse,
     LLMBackend,
     LLMBackendRegistry,
+    ToolCall,
     TokenUsage,
 )
 
@@ -69,20 +70,29 @@ class OllamaBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self.DEFAULT_EMBED_DIM
 
-    async def chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+    async def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
         """Send a chat completion request to Ollama's ``/api/chat``.
 
         Supported kwargs (forwarded to Ollama):
             ``model``, ``temperature``, ``top_p``, ``max_tokens``, ``stream``.
         """
+        import json
+
         model = kwargs.pop("model", self._chat_model)
-        payload = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "stream": False,
-            "num_predict": 2048,
             **kwargs,
         }
+        if tools is not None:
+            payload["tools"] = tools
 
         start = time.monotonic()
         try:
@@ -105,7 +115,21 @@ class OllamaBackend(LLMBackend):
             raise
 
         elapsed = time.monotonic() - start
-        content: str = data.get("message", {}).get("content", "")
+        msg = data.get("message", {})
+        content: str = msg.get("content", "")
+
+        # Parse tool calls (Ollama follows OpenAI format)
+        tool_calls: list[ToolCall] | None = None
+        raw_tool_calls = msg.get("tool_calls")
+        if raw_tool_calls:
+            tool_calls = []
+            for tc in raw_tool_calls:
+                fn = tc.get("function", tc)
+                tool_calls.append(ToolCall(
+                    id=tc.get("id", ""),
+                    name=fn.get("name", ""),
+                    arguments=fn.get("arguments", {}),
+                ))
 
         usage_data = data.get("metrics", {})
         usage = TokenUsage(
@@ -121,10 +145,16 @@ class OllamaBackend(LLMBackend):
                 "duration_ms": round(elapsed * 1000),
                 "prompt_tokens": usage.prompt_tokens,
                 "completion_tokens": usage.completion_tokens,
+                "tool_calls": len(tool_calls) if tool_calls else 0,
             },
         )
 
-        return ChatResponse(content=content, model=data.get("model", model), usage=usage)
+        return ChatResponse(
+            content=content,
+            model=data.get("model", model),
+            usage=usage,
+            tool_calls=tool_calls,
+        )
 
     async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:
         """Generate embeddings via Ollama's ``/api/embeddings`` endpoint.
@@ -223,33 +253,61 @@ class OpenAIBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self.DEFAULT_EMBED_DIM
 
-    async def chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+    async def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
         """Send a chat completion request.
 
         Supported kwargs: ``temperature``, ``max_tokens``, ``top_p``,
         ``frequency_penalty``, ``presence_penalty``, ``stop``, ``model``.
         """
+        import json
+
         model = kwargs.pop("model", self._chat_model)
         temperature = kwargs.pop("temperature", 0.0)
+
+        # Build OpenAI-compatible API kwargs
+        api_kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,  # type: ignore[arg-type]
+            "temperature": temperature,
+        }
+        if tools is not None:
+            api_kwargs["tools"] = tools
+        if tool_choice is not None:
+            api_kwargs["tool_choice"] = tool_choice
+        api_kwargs.update(kwargs)
 
         last_exception: Exception | None = None
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
                 start = time.monotonic()
-                response = await self._client.chat.completions.create(
-                    model=model,
-                    messages=messages,  # type: ignore[arg-type]
-                    temperature=temperature,
-                    **kwargs,
-                )
+                response = await self._client.chat.completions.create(**api_kwargs)
                 elapsed = time.monotonic() - start
 
-                content = response.choices[0].message.content or ""
+                message = response.choices[0].message
+                content = message.content or ""
                 usage_data = response.usage
                 usage = TokenUsage(
                     prompt_tokens=usage_data.prompt_tokens if usage_data else 0,
                     completion_tokens=usage_data.completion_tokens if usage_data else 0,
                 )
+
+                # Parse tool calls if any
+                tool_calls: list[ToolCall] | None = None
+                if hasattr(message, "tool_calls") and message.tool_calls:
+                    tool_calls = [
+                        ToolCall(
+                            id=tc.id,
+                            name=tc.function.name,
+                            arguments=json.loads(tc.function.arguments),
+                        )
+                        for tc in message.tool_calls
+                    ]
 
                 logger.info(
                     "llm.chat_completed",
@@ -259,10 +317,16 @@ class OpenAIBackend(LLMBackend):
                         "duration_ms": round(elapsed * 1000),
                         "prompt_tokens": usage.prompt_tokens,
                         "completion_tokens": usage.completion_tokens,
+                        "tool_calls": len(tool_calls) if tool_calls else 0,
                     },
                 )
 
-                return ChatResponse(content=content, model=model, usage=usage)
+                return ChatResponse(
+                    content=content,
+                    model=model,
+                    usage=usage,
+                    tool_calls=tool_calls,
+                )
 
             except Exception as exc:
                 last_exception = exc
@@ -497,7 +561,13 @@ class AnthropicBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return 0  # Anthropic does not offer a public embedding API.
 
-    async def chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+    async def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
         """Send a chat completion request to the Anthropic API.
 
         Handles Anthropic's ``system`` message convention: if the first
@@ -518,24 +588,57 @@ class AnthropicBackend(LLMBackend):
             system = messages[0]["content"]
             anthropic_messages = messages[1:]
 
+        # Build API kwargs
+        api_kwargs: dict[str, Any] = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "system": system,
+            "messages": anthropic_messages,  # type: ignore[arg-type]
+        }
+        # Convert tool definitions from OpenAI format to Anthropic format
+        if tools is not None:
+            anthropic_tools = []
+            for t in tools:
+                fn = t.get("function", t)
+                anthropic_tools.append({
+                    "name": fn.get("name", ""),
+                    "description": fn.get("description", ""),
+                    "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+                })
+            api_kwargs["tools"] = anthropic_tools
+        if tool_choice is not None:
+            if tool_choice == "any":
+                api_kwargs["tool_choice"] = {"type": "any"}
+            elif tool_choice == "auto":
+                api_kwargs["tool_choice"] = {"type": "auto"}
+            elif tool_choice == "none":
+                api_kwargs["tool_choice"] = {"type": "none"}
+            else:
+                api_kwargs["tool_choice"] = {"type": "tool", "name": tool_choice}
+        api_kwargs.update(kwargs)
+
         last_exception: Exception | None = None
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
                 start = time.monotonic()
-                response = await self._client.messages.create(
-                    model=model,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    system=system,
-                    messages=anthropic_messages,  # type: ignore[arg-type]
-                    **kwargs,
-                )
+                response = await self._client.messages.create(**api_kwargs)
                 elapsed = time.monotonic() - start
 
-                # Extract text from content blocks.
-                content_parts = [
-                    block.text for block in response.content if block.type == "text"
-                ]
+                # Extract text + tool calls from content blocks.
+                content_parts: list[str] = []
+                tool_calls: list[ToolCall] | None = None
+                for block in response.content:
+                    if block.type == "text":
+                        content_parts.append(block.text)
+                    elif block.type == "tool_use":
+                        if tool_calls is None:
+                            tool_calls = []
+                        tool_calls.append(ToolCall(
+                            id=block.id,
+                            name=block.name,
+                            arguments=dict(block.input) if block.input else {},
+                        ))
                 content = "\n".join(content_parts)
 
                 usage = TokenUsage(
@@ -554,7 +657,12 @@ class AnthropicBackend(LLMBackend):
                     },
                 )
 
-                return ChatResponse(content=content, model=model, usage=usage)
+                return ChatResponse(
+                    content=content,
+                    model=model,
+                    usage=usage,
+                    tool_calls=tool_calls,
+                )
 
             except Exception as exc:
                 last_exception = exc

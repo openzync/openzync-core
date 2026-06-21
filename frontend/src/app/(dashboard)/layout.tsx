@@ -33,6 +33,7 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ChatProvider, ChatButton, ChatDrawer } from "@/components/chat";
 
 // ─── Navigation items ─────────────────────────────────────────────────────────
 
@@ -252,6 +253,7 @@ export default function DashboardLayout({
   })();
 
   return (
+    <ChatProvider>
     <div className="flex h-screen overflow-hidden bg-surface-950">
       {/* Mobile sidebar overlay */}
       {mobileOpen && (
@@ -380,6 +382,11 @@ export default function DashboardLayout({
           </div>
         </main>
       </div>
+
+      {/* Chat button + drawer */}
+      <ChatButton />
+      <ChatDrawer />
     </div>
+    </ChatProvider>
   );
 }

@@ -233,6 +233,26 @@ class Settings(BaseSettings):
         validation_alias="MG_JWT_REFRESH_TOKEN_TTL_DAYS",
     )
 
+    # ── MCP Server ──────────────────────────────────────────────────────────
+    MCP_SERVER_HOST: str = Field(
+        default="0.0.0.0",
+        description="Host to bind the MCP HTTP server to.",
+        validation_alias="MG_MCP_SERVER_HOST",
+    )
+    MCP_SERVER_PORT: int = Field(
+        default=8100,
+        ge=1024,
+        le=65535,
+        description="Port for the MCP HTTP server.",
+        validation_alias="MG_MCP_SERVER_PORT",
+    )
+    MCP_SERVER_URL: str = Field(
+        default="http://localhost:8100/mcp",
+        description="URL the backend MCP client connects to. "
+                    "Must match MCP_SERVER_HOST:PORT/mcp.",
+        validation_alias="MG_MCP_SERVER_URL",
+    )
+
     # ── Webhooks ───────────────────────────────────────────────────────────
     WEBHOOK_SIGNING_SECRET: str = Field(
         default="dev-webhook-secret-change-in-production-00",

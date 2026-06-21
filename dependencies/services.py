@@ -36,8 +36,10 @@ from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
 from repositories.webhook_repository import WebhookRepository
 from services.auth_service import AuthService
+from services.chat_service import ChatService
 from services.fact_service import FactService
 from services.graph_service import GraphService
+from services.mcp_client import OpenZepMCPClient
 from services.memory_service import MemoryService
 from services.session_service import SessionService
 from services.user_service import UserService
@@ -196,6 +198,33 @@ async def get_auth_throttle(
             "Ensure init_redis() was called during the application lifespan."
         )
     return AuthThrottle(redis)
+
+
+# ── Chat ────────────────────────────────────────────────────────────────────────
+
+
+async def get_chat_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    session_service: SessionService = Depends(get_session_service),
+) -> ChatService:
+    """Dependency that yields an initialised ChatService.
+
+    Reads the MCP client and settings from ``request.app.state``.
+    """
+    mcp_client: OpenZepMCPClient | None = getattr(request.app.state, "mcp_client", None)
+    if mcp_client is None:
+        raise RuntimeError(
+            "MCP client not found on app.state. "
+            "Ensure the MCP client was initialised during the application lifespan."
+        )
+    settings = getattr(request.app.state, "settings", None)
+    return ChatService(
+        mcp_client=mcp_client,
+        session_service=session_service,
+        db=db,
+        settings=settings,
+    )
 
 
 

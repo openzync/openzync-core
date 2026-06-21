@@ -1,6 +1,5 @@
-"""OpenZep MCP Server — exposes memory capabilities as LLM-accessible tools.
+"""FastMCP server for OpenZep — auto-discovers tools from FastAPI route definitions.
 
 Usage:
-    python -m services.mcp --transport stdio
-    python -m services.mcp --transport sse --port 8100
+    python -m services.mcp
 """

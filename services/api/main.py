@@ -27,6 +27,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from core.arq import close_arq, init_arq
 from core.config import Settings
 from core.db import close_db_engine, get_async_session, init_db_engine
+from services.mcp_client import OpenZepMCPClient
 from core.exceptions import register_exception_handlers
 from core.graph_backend import init_graph_backend
 # graphiti is only used when GRAPH_BACKEND=graphiti (legacy)
@@ -52,6 +53,7 @@ from routers import (
     admin_webhooks,
     audit_log,
     auth,
+    chat,
     classifications,
     context,
     facts,
@@ -108,6 +110,28 @@ def create_app() -> FastAPI:
                 )
                 app.state.graph_backend = None
 
+            # Init MCP client (connects to the FastMCP server)
+            mcp_client = OpenZepMCPClient(url=str(settings.MCP_SERVER_URL))
+            try:
+                await mcp_client.start()
+                app.state.mcp_client = mcp_client
+                import structlog
+
+                structlog.get_logger().info(
+                    "mcp_client.connected",
+                    url=str(settings.MCP_SERVER_URL),
+                )
+            except Exception:
+                import structlog
+
+                structlog.get_logger().warning(
+                    "mcp_client.connect_failed",
+                    url=str(settings.MCP_SERVER_URL),
+                    error="MCP client could not connect. "
+                    "Chat features will be unavailable.",
+                )
+                app.state.mcp_client = None
+
             yield
 
         # ── Shutdown (reverse order of initialisation) ────────────────────
@@ -116,6 +140,12 @@ def create_app() -> FastAPI:
             from core.graphiti import close_graphiti
             try:
                 await close_graphiti()
+            except Exception:
+                pass
+        # Close MCP client
+        if hasattr(app.state, "mcp_client") and app.state.mcp_client is not None:
+            try:
+                await app.state.mcp_client.stop()
             except Exception:
                 pass
         await close_arq()
@@ -222,6 +252,7 @@ def create_app() -> FastAPI:
     app.include_router(search.router)
     app.include_router(graph.router)
     app.include_router(facts.router)
+    app.include_router(chat.router)
 
     # Metrics: intentionally registered last and outside /v1 so it responds
     # at ``/metrics`` (not ``/v1/metrics``) for standard Prometheus scraping.
