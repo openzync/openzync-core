@@ -67,8 +67,8 @@ class TestContextService:
             user_id=user_id, query="test query", limit=10, format="json",
         )
         assert "context" in result
-        import json
-        parsed = json.loads(result["context"])
+        import orjson
+        parsed = orjson.loads(result["context"].encode())
         assert isinstance(parsed, dict)
 
     @pytest.mark.asyncio

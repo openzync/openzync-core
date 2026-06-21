@@ -196,7 +196,7 @@ class IdempotencyService:
 
         # Key exists — parse cached entry and validate body hash.
         try:
-            entry: dict[str, Any] = orjson.loads(cached.encode())
+            entry: dict[str, Any] = orjson.loads(cached)
         except (orjson.JSONDecodeError, TypeError):
             # Corrupted cache entry — treat as new (cache will be overwritten).
             logger.warning(
