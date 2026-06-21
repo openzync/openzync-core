@@ -60,6 +60,7 @@ networkx==3.6.1
 nodeenv==1.10.0
 numpy==2.4.6
 openai==2.41.0
+orjson==3.11.9
 -e git+ssh://git@github.com/rohnsha0/openzep.git@087f686a16a7a9725037782a18ecdaf0f22d2cd2#egg=openzep_py&subdirectory=oss/sdk-python
 packaging==26.2
 pathspec==1.1.1
