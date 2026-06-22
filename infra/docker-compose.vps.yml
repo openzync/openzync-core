@@ -35,7 +35,7 @@ services:
         max-file: "3"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "nginx", "-t"]
+      test: ["CMD", "pgrep", "nginx"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -45,6 +45,8 @@ services:
     # Pull pre-built image from ghcr.io instead of building locally.
     # Pushed by the CI build job on every push to main.
     image: ghcr.io/rohnsha0/openzep/api:latest
+    # Single worker: 1-CPU VPS can't handle multiprocessing
+    command: ["uvicorn", "services.api.asgi:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
     deploy:
       replicas: 1
       resources:
@@ -56,12 +58,16 @@ services:
       MG_LOG_LEVEL: INFO
       # ⚠️ Update MG_CORS_ORIGINS and MG_HOSTS_ALLOWED in your .env file
       #    to match your frontend domain.
-    # Port 8000 is exposed internally only — nginx sits in front.
     ports:
-      - "8000"
+      - "8000:8000"
 
   # ── Worker overrides ─────────────────────────────────────────────────────
   worker:
     image: ghcr.io/rohnsha0/openzep/worker:latest
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "1G"
 
 
