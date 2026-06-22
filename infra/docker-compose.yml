@@ -17,14 +17,11 @@ services:
       - "8000:8000"
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://openzep:openzep@postgres:5432/openzep
       REDIS_URL: redis://redis:6379/0
       OLLAMA_BASE_URL: http://ollama:11434
       OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
       LOG_LEVEL: DEBUG
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     logging: *default-logging
@@ -37,7 +34,6 @@ services:
       dockerfile: services/worker/Dockerfile
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://openzep:openzep@postgres:5432/openzep
       REDIS_URL: redis://redis:6379/0
       LOG_LEVEL: DEBUG
     depends_on:
@@ -45,25 +41,6 @@ services:
         condition: service_started
       redis:
         condition: service_healthy
-    logging: *default-logging
-    restart: unless-stopped
-
-  # ── PostgreSQL (with pgvector) ─────────────────────────────────────────────
-  postgres:
-    image: pgvector/pgvector:pg15
-    ports:
-      - "5432:5432"
-    environment:
-      POSTGRES_USER: openzep
-      POSTGRES_PASSWORD: openzep
-      POSTGRES_DB: openzep
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U openzep"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
     logging: *default-logging
     restart: unless-stopped
 
@@ -145,7 +122,6 @@ services:
     restart: unless-stopped
 
 volumes:
-  pgdata:
   redis-data:
   ollama-data:
   grafana-data:

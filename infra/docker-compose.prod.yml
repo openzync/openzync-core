@@ -30,16 +30,6 @@ services:
     #    in front of the API service.  Mount certs and configure
     #    ``allowed_hosts`` in ``CORS_ORIGINS`` / ``TrustedHostMiddleware``.
 
-  postgres:
-    deploy:
-      resources:
-        limits:
-          cpus: "2"
-          memory: "4G"
-    # note: In production, prefer a managed PostgreSQL (RDS, Cloud SQL)
-    # or configure WAL archiving + point-in-time recovery.  The stock pgvector
-    # image is suitable for dev/staging only.
-
   redis:
     deploy:
       replicas: 1

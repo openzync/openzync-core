@@ -184,13 +184,12 @@ jobs:
             "${USER}@${HOST}" "mkdir -p ${TARGET}"
 
           # Create tar archive of deployment files (runs on runner — resolves correctly)
-          tar czf /tmp/deploy-files.tar.gz \
-            infra/docker-compose.yml \
-            infra/docker-compose.vps.yml \
-            infra/docker-compose.prod.yml \
-            infra/nginx/ \
-            scripts/deploy.sh \
-            scripts/backup.sh
+            tar czf /tmp/deploy-files.tar.gz \
+              infra/docker-compose.yml \
+              infra/docker-compose.vps.yml \
+              infra/docker-compose.prod.yml \
+              infra/nginx/ \
+              scripts/deploy.sh
 
           # Upload via SCP directly
           scp -i ~/.ssh/id_ed25519 \
@@ -217,7 +216,7 @@ jobs:
             cd /home/deploy/openzep
             tar xzf deploy-files.tar.gz
             rm deploy-files.tar.gz
-            chmod +x scripts/deploy.sh scripts/backup.sh
+            chmod +x scripts/deploy.sh
 
             # ── Create infra/.env from template + secrets ──────────────────
             cat > infra/.env << ENVEOF

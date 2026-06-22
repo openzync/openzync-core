@@ -12,7 +12,6 @@
 # Covers:
 #   - nginx reverse proxy (HTTP, IP-based)
 #   - Production log levels & env overrides
-#   - Shared backup volume for PostgreSQL
 #   - Health check dependencies
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -63,16 +62,4 @@ services:
   worker:
     image: ghcr.io/rohnsha0/openzep/worker:latest
 
-  # ── PostgreSQL ──────────────────────────────────────────────────────────
-  postgres:
-    deploy:
-      resources:
-        limits:
-          cpus: "1"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-      - backup-data:/backups:z
 
-volumes:
-  backup-data:
-    driver: local
