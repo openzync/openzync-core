@@ -61,6 +61,20 @@ services:
     ports:
       - "8000:8000"
 
+  # ── Frontend ─────────────────────────────────────────────────────────────
+  frontend:
+    image: ghcr.io/rohnsha0/openzep/frontend:latest
+    ports:
+      - "3100:3000"
+    depends_on:
+      - api
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512M"
+    restart: unless-stopped
+
   # ── Worker overrides ─────────────────────────────────────────────────────
   worker:
     image: ghcr.io/rohnsha0/openzep/worker:latest

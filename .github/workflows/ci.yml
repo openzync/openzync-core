@@ -150,10 +150,13 @@ jobs:
           echo "Building with tag: $TAG"
           docker build -t ghcr.io/${{ github.repository }}/api:$TAG -f services/api/Dockerfile .
           docker build -t ghcr.io/${{ github.repository }}/worker:$TAG -f services/worker/Dockerfile .
+          docker build -t ghcr.io/${{ github.repository }}/frontend:$TAG -f frontend/Dockerfile frontend/
           docker tag ghcr.io/${{ github.repository }}/api:$TAG ghcr.io/${{ github.repository }}/api:latest
           docker tag ghcr.io/${{ github.repository }}/worker:$TAG ghcr.io/${{ github.repository }}/worker:latest
+          docker tag ghcr.io/${{ github.repository }}/frontend:$TAG ghcr.io/${{ github.repository }}/frontend:latest
           docker push --all-tags ghcr.io/${{ github.repository }}/api
           docker push --all-tags ghcr.io/${{ github.repository }}/worker
+          docker push --all-tags ghcr.io/${{ github.repository }}/frontend
 
   # ═════════════════════════════════════════════════════════════════════════════
   # DEPLOY  (VPS — main branch only)
@@ -225,7 +228,7 @@ jobs:
             MG_SECRET_KEY=$MG_SECRET_KEY
             MG_ENVIRONMENT=production
             MG_LOG_LEVEL=INFO
-            MG_CORS_ORIGINS=http://$VPS_HOST:8000,http://localhost:3000
+            MG_CORS_ORIGINS=http://$VPS_HOST,http://$VPS_HOST:3100,http://localhost:3100
             MG_HOSTS_ALLOWED=$VPS_HOST,localhost
             MG_GRAPH_BACKEND=postgres
             MG_CONTEXT_CACHE_TTL=30
