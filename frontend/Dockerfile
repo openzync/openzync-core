@@ -20,7 +20,7 @@ WORKDIR /app
 
 # Install ALL dependencies (dev deps needed for build).
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --legacy-peer-deps
 
 # Copy source and build the standalone server.
 COPY . .
