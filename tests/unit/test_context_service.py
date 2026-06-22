@@ -28,7 +28,7 @@ class TestContextService:
             db=mock_db,
             org_id=self.ORG_ID,
             redis=mock_redis,
-            graph_backend=mock_graph_backend,
+            graph_backends=[mock_graph_backend],
             org_config=OrgConfigBase(context_cache_ttl=300),
         )
         # Mock the internal retriever to control its output

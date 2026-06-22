@@ -250,6 +250,37 @@ class GraphBackend(ABC):
         """
         ...
 
+    @abstractmethod
+    async def retrieve_graph(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        query: str,
+        *,
+        match_limit: int = 5,
+        max_depth: int = 2,
+        max_results: int = 50,
+    ) -> list[dict]:
+        """Search entities matching query, then BFS-traverse outward.
+
+        Combines entity text search with graph traversal so each backend
+        can use its native strengths (recursive CTE, Cypher, etc.).
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            query: Free-text search string.
+            match_limit: Max entities to match before traversal.
+            max_depth: Max BFS depth from each matched entity.
+            max_results: Max total results to return.
+
+        Returns:
+            Entity dicts with id, name, type, summary, and distance keys.
+            Distance 0 = directly matched, 1+ = reached via traversal.
+            Sorted by distance ascending.
+        """
+        ...
+
     # ── Observability ──────────────────────────────────────────────────────────
 
     @abstractmethod

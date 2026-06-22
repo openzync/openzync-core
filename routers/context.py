@@ -107,9 +107,9 @@ async def get_context(
     # ── Assemble context ────────────────────────────────────────────────
     redis = getattr(request.app.state, "redis", None) if request else None
     dispatcher = request.app.state.graph_backend_dispatcher
-    graph_backend = dispatcher.resolve_and_create(org_config, db)
+    graph_backends = dispatcher.create_all_backends(db, org_config)
     service = ContextService(
-        db, org_id, redis, graph_backend=graph_backend, org_config=org_config
+        db, org_id, redis, graph_backends=graph_backends, org_config=org_config
     )
     result = await service.assemble(
         project_id=project_id,
