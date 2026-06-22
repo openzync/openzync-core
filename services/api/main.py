@@ -29,6 +29,7 @@ from core.config import Settings
 from core.db import close_db_engine, get_async_session, init_db_engine
 from core.exceptions import register_exception_handlers
 from core.graph_backend import init_dispatcher
+from core.surreal_pool import SurrealConnectionPool
 from core.logging import setup_logging
 from core.redis import close_redis, init_redis
 from middleware.audit import AuditMiddleware
@@ -93,9 +94,15 @@ def create_app() -> FastAPI:
         # dependencies using ``resolve_and_create(org_config, db)``.
         app.state.graph_backend_dispatcher = init_dispatcher()
 
+        # Init SurrealDB per-org connection pool.  Connections are created
+        # lazily per org on first use (see ``core.surreal_pool``).
+        app.state.surreal_connection_pool = SurrealConnectionPool()
+        logger.info("surreal_pool.initialised")
+
         yield
 
         # ── Shutdown (reverse order of initialisation) ────────────────────
+        await app.state.surreal_connection_pool.close_all()
         await close_arq()
         await close_redis(redis_client)
         await close_db_engine(db_engine)
