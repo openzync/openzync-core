@@ -5,8 +5,8 @@
 #
 #   docker compose \
 #     -f infra/docker-compose.yml \
-#     -f infra/docker-compose.vps.yml \
 #     -f infra/docker-compose.prod.yml \
+#     -f infra/docker-compose.vps.yml \
 #     up -d --build
 #
 # Covers:
@@ -46,9 +46,11 @@ services:
     # Pushed by the CI build job on every push to main.
     image: ghcr.io/rohnsha0/openzep/api:latest
     deploy:
+      replicas: 1
       resources:
         limits:
           cpus: "1"
+          memory: "2G"
     environment:
       MG_ENVIRONMENT: production
       MG_LOG_LEVEL: INFO

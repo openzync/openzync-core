@@ -35,8 +35,8 @@ err()   { echo -e "${RED}[ERROR]${NC} $*"; }
 # ── Compose files ─────────────────────────────────────────────────────────────
 COMPOSE_FILES=(
     -f "$PROJECT_ROOT/infra/docker-compose.yml"
-    -f "$PROJECT_ROOT/infra/docker-compose.vps.yml"
     -f "$PROJECT_ROOT/infra/docker-compose.prod.yml"
+    -f "$PROJECT_ROOT/infra/docker-compose.vps.yml"
 )
 
 # ── Step 1: Pull latest images ────────────────────────────────────────────────
