@@ -20,9 +20,14 @@ class TestOrgConfigBase:
     """Validate the raw-DB-shape schema."""
 
     def test_defaults_are_none(self) -> None:
-        """Every field in OrgConfigBase should default to None."""
+        """Every field in OrgConfigBase should default to None,
+        except ``graph_backend`` which defaults to ``"surrealdb"``.
+        """
         cfg = OrgConfigBase()
         for field_name in OrgConfigBase.model_fields:
+            if field_name == "graph_backend":
+                assert getattr(cfg, field_name) == "surrealdb"
+                continue
             assert getattr(cfg, field_name) is None, (
                 f"Expected {field_name} to be None, got {getattr(cfg, field_name)!r}"
             )
@@ -42,7 +47,7 @@ class TestOrgConfigBase:
         assert cfg.llm_backend == "openai"
         assert cfg.embedding_dim == 1536
         assert cfg.llm_model is None  # not set
-        assert cfg.graph_backend is None  # not set
+        assert cfg.graph_backend == "surrealdb"  # default when not provided
 
 
 class TestOrgConfigBaseToDict:
@@ -153,6 +158,13 @@ class TestOrgConfigResponse:
         assert resp.stored.llm_backend == "openai"
 
     def test_response_stored_all_none_when_empty(self) -> None:
-        """Response with empty stored config should have all-None fields."""
+        """Response with empty stored config should have all-None fields,
+        except ``graph_backend`` which defaults to ``"surrealdb"``.
+        """
         resp = OrgConfigResponse(stored=OrgConfigBase())
-        assert all(v is None for v in resp.stored.model_dump().values())
+        dumped = resp.stored.model_dump()
+        for field_name, value in dumped.items():
+            if field_name == "graph_backend":
+                assert value == "surrealdb"
+            else:
+                assert value is None, f"Expected {field_name} to be None, got {value!r}"

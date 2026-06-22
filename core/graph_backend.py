@@ -19,7 +19,8 @@ Usage::
     # Per-request (SurrealDB):
     backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
 
-There are **no** defaults.  ``org_config`` must contain ``graph_backend``.
+    The default backend is ``"surrealdb"`` (set in
+:class:`~schemas.organization_config.OrgConfigBase`).
 If the graph is intentionally disabled,
 set ``graph_backend`` to ``"none"`` in the per-org config.
 
@@ -276,6 +277,6 @@ def init_dispatcher() -> GraphBackendDispatcher:
     from packages.graph_backend.surrealdb import SurrealGraphBackend
 
     dispatcher = GraphBackendDispatcher()
-    dispatcher.register("postgres", PostgresGraphBackend)
     dispatcher.register("surrealdb", SurrealGraphBackend)
+    dispatcher.register("postgres", PostgresGraphBackend)
     return dispatcher

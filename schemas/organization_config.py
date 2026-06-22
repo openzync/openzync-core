@@ -89,8 +89,8 @@ class OrgConfigBase(BaseModel):
 
     # ── Graph ──────────────────────────────────────────────────────────────
     graph_backend: str | None = Field(
-        default=None,
-        description="Graph backend (postgres, surrealdb, none).",
+        default="surrealdb",
+        description="Graph backend (surrealdb, postgres, none).",
     )
     graph_search_type: str | None = Field(
         default=None,
