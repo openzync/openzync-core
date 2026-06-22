@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { API_BASE } from "@/lib/api-client";
 
 function getPasswordStrength(pw: string): {
   score: number;
@@ -40,7 +41,7 @@ export default function SignupPage() {
     setSubmitting(true);
 
     try {
-      const res = await fetch("http://localhost:8000/v1/auth/signup", {
+      const res = await fetch(`${API_BASE}/v1/auth/signup`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

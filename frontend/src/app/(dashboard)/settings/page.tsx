@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { API_BASE } from "@/lib/api-client";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -32,8 +33,6 @@ interface ToastState {
 }
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
-
-const API_BASE = "http://localhost:8000";
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 

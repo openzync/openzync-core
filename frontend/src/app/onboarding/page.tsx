@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Eye, EyeOff, Brain, AudioWaveform, GitBranch, Settings2, Save, CheckCircle, AlertCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { API_BASE } from "@/lib/api-client";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -44,7 +45,6 @@ type GraphSearchType = "hybrid" | "bm25" | "vector";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const TOAST_DURATION = 4000;
 
 const LLM_BACKEND_OPTIONS: { value: LlmBackend; label: string }[] = [

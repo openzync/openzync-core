@@ -30,6 +30,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { API_BASE } from "@/lib/api-client";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -71,7 +72,6 @@ interface ToastState {
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
-const API_BASE = "http://localhost:8000";
 const POLL_INTERVAL_MS = 5000;
 const POLL_TIMEOUT_MS = 120_000; // 2 minutes
 
