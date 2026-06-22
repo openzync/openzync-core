@@ -20,7 +20,6 @@ import time
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import Float, Select, cast, func, literal, literal_column, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -285,6 +284,8 @@ class HybridRetriever:
             else 1536
         )
 
+        from pgvector.sqlalchemy import Vector  # lazy: numpy CPU compat; caught by outer try/except
+
         vector_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
         embedding_col = cast(Episode.embedding, Vector(dim))
         query_literal = literal_column(f"'{vector_str}'::vector({dim})")
@@ -354,6 +355,8 @@ class HybridRetriever:
             if self._org_config and self._org_config.embedding_dim
             else 1536
         )
+
+        from pgvector.sqlalchemy import Vector  # lazy: numpy CPU compat; caught by outer try/except
 
         vector_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
         embedding_col = cast(Fact.embedding, Vector(dim))
