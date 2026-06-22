@@ -95,6 +95,7 @@ class GraphBackend(ABC):
         target_id: UUID,
         relationship_type: str,
         properties: dict | None = None,
+        confidence: float | None = None,
         valid_from: datetime | None = None,
         valid_to: datetime | None = None,
     ) -> dict:

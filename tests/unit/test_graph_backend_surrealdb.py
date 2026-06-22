@@ -444,7 +444,8 @@ class TestSurrealGraphBackendRelationships:
         assert "RELATE $source_id -> likes -> $target_id" in query
         assert result["source_id"] == str(ENTITY_ID)
         assert result["target_id"] == str(TARGET_ID)
-        assert result["type"] == ""
+        # The type is extracted from the edge RecordID's table_name
+        assert result["type"] == "likes"
 
     @staticmethod
     async def test_create_relationship_existing(

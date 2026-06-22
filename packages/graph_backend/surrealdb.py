@@ -113,7 +113,8 @@ class SurrealGraphBackend(GraphBackend):
 
     Args:
         surreal: An optional connected ``AsyncSurreal`` instance.  When
-            ``None``, all methods degrade gracefully (return empty results).
+            ``None``, all methods raise ``ExternalServiceError`` with
+            message ``"SurrealDB not connected"``.
         max_traversal_depth: Maximum BFS depth (default 2, max 5).
     """
 
@@ -224,12 +225,24 @@ class SurrealGraphBackend(GraphBackend):
         The returned dict uses the ``GraphBackend`` interface keys:
         ``id``, ``source_id``, ``target_id``, ``type``, ``properties``,
         ``fact``, ``confidence``, ``valid_from``, ``valid_to``, ``created_at``.
+
+        The ``type`` field is resolved in priority order:
+        1. Explicit ``relationship_type`` field (set by queries that JOIN).
+        2. ``edge_table_name`` (set via ``meta::tb(id)`` in list queries).
+        3. The edge ``RecordID``'s ``table_name`` attribute (available on
+           raw ``RELATE`` returns).
         """
+        rid = row.get("id")
+        edge_type = (
+            row.get("relationship_type")
+            or row.get("edge_table_name")
+            or (rid.table_name if hasattr(rid, "table_name") else "")
+        )
         return {
-            "id": cls._record_id_to_str(row.get("id")),
+            "id": cls._record_id_to_str(rid),
             "source_id": cls._record_id_to_str(row.get("in")),
             "target_id": cls._record_id_to_str(row.get("out")),
-            "type": row.get("relationship_type", row.get("edge_table_name", "")),
+            "type": edge_type,
             "properties": row.get("properties") or {},
             "fact": row.get("fact") or "",
             "confidence": float(row["confidence"]) if row.get("confidence") is not None else 1.0,
@@ -553,6 +566,7 @@ class SurrealGraphBackend(GraphBackend):
         target_id: UUID,
         relationship_type: str,
         properties: dict | None = None,
+        confidence: float | None = None,
         valid_from: datetime | None = None,
         valid_to: datetime | None = None,
     ) -> dict:
@@ -584,6 +598,7 @@ class SurrealGraphBackend(GraphBackend):
             "source_id": source_rid,
             "target_id": target_rid,
             "properties": properties or {},
+            "confidence": confidence if confidence is not None else 1.0,
             "valid_from": valid_from.isoformat() if valid_from else None,
             "valid_to": valid_to.isoformat() if valid_to else None,
         }
@@ -595,7 +610,7 @@ class SurrealGraphBackend(GraphBackend):
         RETURN IF array::len($existing) > 0 THEN
             (UPDATE $existing[0].id SET
                 properties = $properties,
-                confidence = math::max(confidence, 1.0),
+                confidence = math::max(confidence, $confidence),
                 valid_from = IF $valid_from IS NOT NONE
                     THEN $valid_from ELSE $existing[0].valid_from END,
                 valid_to = IF $valid_to IS NOT NONE
@@ -609,7 +624,7 @@ class SurrealGraphBackend(GraphBackend):
                 project_id: $project_id,
                 properties: $properties,
                 fact: "",
-                confidence: 1.0,
+                confidence: $confidence,
                 valid_from: $valid_from,
                 valid_to: $valid_to,
                 created_at: time::now(),
