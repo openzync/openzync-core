@@ -66,6 +66,8 @@ services:
     image: ghcr.io/rohnsha0/openzep/frontend:latest
     ports:
       - "3100:3000"
+    env_file:
+      - .env
     depends_on:
       - api
     deploy:
