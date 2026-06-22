@@ -180,6 +180,29 @@ jobs:
           docker tag ghcr.io/${{ github.repository }}/frontend:$TAG ghcr.io/${{ github.repository }}/frontend:latest
           docker push --all-tags ghcr.io/${{ github.repository }}/frontend
 
+      - name: Deploy frontend on VPS
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: GHCR_PAT
+          script: |
+            echo "$GHCR_PAT" | docker login ghcr.io -u rohnsha0 --password-stdin
+            cd /home/deploy/openzep
+            docker compose \
+              -f infra/docker-compose.yml \
+              -f infra/docker-compose.prod.yml \
+              -f infra/docker-compose.vps.yml \
+              pull frontend
+            docker compose \
+              -f infra/docker-compose.yml \
+              -f infra/docker-compose.prod.yml \
+              -f infra/docker-compose.vps.yml \
+              up -d frontend
+
   # ═════════════════════════════════════════════════════════════════════════════
   # DEPLOY  (VPS — main branch only)
   # ═════════════════════════════════════════════════════════════════════════════
