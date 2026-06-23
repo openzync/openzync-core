@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/openzync)](https://pypi.org/project/openzync/)
 [![License](https://img.shields.io/pypi/l/openzync)](https://www.apache.org/licenses/LICENSE-2.0)
 
-Python SDK for [OpenZep](https://github.com/rohnsha0/openzep) — the open-source agent memory platform with persistent, queryable, graph-based memory for AI agents.
+Python SDK for [OpenZep](https://github.com/rohnsha0/openzync) — the open-source agent memory platform with persistent, queryable, graph-based memory for AI agents.
 
 ## Installation
 

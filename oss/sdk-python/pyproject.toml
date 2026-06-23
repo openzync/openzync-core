@@ -42,9 +42,9 @@ langchain = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/rohnsha0/openzep/tree/master/oss/sdk-python"
-Issues = "https://github.com/rohnsha0/openzep/issues"
-Changelog = "https://github.com/rohnsha0/openzep/blob/master/oss/sdk-python/CHANGELOG.md"
+Homepage = "https://github.com/rohnsha0/openzync/tree/master/oss/sdk-python"
+Issues = "https://github.com/rohnsha0/openzync/issues"
+Changelog = "https://github.com/rohnsha0/openzync/blob/master/oss/sdk-python/CHANGELOG.md"
 
 [tool.hatch.version]
 source = "vcs"
