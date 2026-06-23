@@ -40,12 +40,20 @@ def mock_db() -> AsyncMock:
     ``self.return_value`` directly — it does **not** try to await the
     return value).  The ``MagicMock`` has ``all`` and ``rowcount`` set up
     so that tests can override them inline.
+
+    Methods called synchronously (``add``) are plain ``MagicMock`` to
+    avoid ``PytestUnraisableExceptionWarning`` from unawaited coroutines.
     """
     db = AsyncMock()
     mock_result = MagicMock()
     mock_result.all = MagicMock(return_value=[])
     mock_result.rowcount = 0
     db.execute = AsyncMock(return_value=mock_result)
+    # Methods called without ``await`` — must be sync MagicMock
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
     return db
 
 
@@ -231,20 +239,22 @@ class TestMergeCluster:
 
         await _merge_cluster(mock_db, org_id, sample_cluster)
 
-        # Find the audit_log INSERT call by inspecting execute call args
-        audit_insert_found = any(
-            "INSERT INTO audit_logs" in str(call)
-            for call in mock_db.execute.call_args_list
-        )
-        assert audit_insert_found, "Expected an audit_log INSERT"
-
-        # Verify the audit log contains the merge action identifier
-        all_calls_text = str(mock_db.execute.call_args_list)
-        assert "entity.merge" in all_calls_text, (
+        # Audit log is created via ``AuditLogService`` which uses
+        # ``db.add(entry)`` — check ``add`` calls, not ``execute`` calls.
+        all_add_text = str(mock_db.add.call_args_list)
+        assert "entity.merge" in all_add_text, (
             "Audit log action should be 'entity.merge'"
         )
-        assert "before" in all_calls_text, (
-            "Audit log should contain 'before' snapshot"
+        # Verify the entry passed to add has details containing 'before'
+        audit_calls = [
+            call for call in mock_db.add.call_args_list
+            if hasattr(call[0][0], "action")
+            and call[0][0].action == "entity.merge"
+        ]
+        assert len(audit_calls) == 1, "Expected exactly one audit log entry"
+        entry = audit_calls[0][0][0]
+        assert "before" in entry.details, (
+            "Audit log details should contain 'before' snapshot"
         )
 
 

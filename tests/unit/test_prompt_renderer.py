@@ -219,16 +219,21 @@ class TestBasicRender:
     """render_prompt with explicit kwargs and template_text — no DB needed."""
 
     @pytest.mark.asyncio
-    async def test_simple_template_renders_correctly(self) -> None:
+    async def test_simple_template_returns_as_is(self) -> None:
+        """Template text is returned as plain text (no Jinja2 rendering).
+
+        Context injection is handled by ``build_enrichment_prompt()``, not
+        by the template renderer.
+        """
         prompt = await render_prompt(
             "test_type",
             template_text="Hello {{ name }}!",
             name="World",
         )
-        assert prompt == "Hello World!"
+        assert prompt == "Hello {{ name }}!"
 
     @pytest.mark.asyncio
-    async def test_template_with_multiple_variables(self) -> None:
+    async def test_template_with_variables_returns_as_is(self) -> None:
         prompt = await render_prompt(
             "test_type",
             template_text="{{ a }} + {{ b }} = {{ c }}",
@@ -236,25 +241,25 @@ class TestBasicRender:
             b=2,
             c=3,
         )
-        assert prompt == "1 + 2 = 3"
+        assert prompt == "{{ a }} + {{ b }} = {{ c }}"
 
     @pytest.mark.asyncio
-    async def test_template_with_jinja_conditional(self) -> None:
+    async def test_template_with_jinja_syntax_returns_as_is(self) -> None:
         prompt = await render_prompt(
             "test_type",
             template_text="{% if show %}VISIBLE{% else %}HIDDEN{% endif %}",
             show=True,
         )
-        assert prompt == "VISIBLE"
+        assert prompt == "{% if show %}VISIBLE{% else %}HIDDEN{% endif %}"
 
     @pytest.mark.asyncio
-    async def test_template_with_loop(self) -> None:
+    async def test_template_with_loop_syntax_returns_as_is(self) -> None:
         prompt = await render_prompt(
             "test_type",
             template_text="{% for x in items %}{{ x }},{% endfor %}",
             items=["a", "b", "c"],
         )
-        assert prompt == "a,b,c,"
+        assert prompt == "{% for x in items %}{{ x }},{% endfor %}"
 
     @pytest.mark.asyncio
     async def test_raises_value_error_without_template_text_and_org_id(self) -> None:
@@ -269,7 +274,8 @@ class TestBasicRender:
             template_text="{{ key }}",
             key="explicit",
         )
-        assert prompt == "explicit"
+        # Template text is returned as-is — no Jinja2 rendering.
+        assert prompt == "{{ key }}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -351,8 +357,9 @@ class TestAutoInjection:
             db_session_factory=make_fake_session_factory(),
             template_text="Extract: {{ conversation }}",
         )
-        assert "Hello from mock" in prompt
-        assert prompt == "Extract: Hello from mock"
+        # Template text is returned as-is (no Jinja2).  Context is available
+        # in the dict when return_context=True but the template is not rendered.
+        assert prompt == "Extract: {{ conversation }}"
 
     @pytest.mark.asyncio
     async def test_extra_context_overrides_auto_injected(
@@ -397,7 +404,9 @@ class TestAutoInjection:
             template_text="Data: {{ conversation }}",
             conversation="from_caller",
         )
-        assert prompt == "Data: from_caller"
+        # Template text is returned as-is (no Jinja2).  Context is
+        # injected by build_enrichment_prompt() downstream.
+        assert prompt == "Data: {{ conversation }}"
 
     @pytest.mark.asyncio
     async def test_return_context_returns_tuple(
@@ -446,7 +455,8 @@ class TestAutoInjection:
         )
         assert isinstance(result, tuple)
         prompt_str, context = result
-        assert prompt_str == "Test: ctx_data"
+        # Template text is returned as-is (no Jinja2 rendering).
+        assert prompt_str == "Test: {{ conversation }}"
         assert "known_entities" in context
         assert context["known_entities"] == ["e1", "e2"]
         assert "existing_facts" in context
@@ -456,13 +466,14 @@ class TestAutoInjection:
     async def test_injects_missing_org_id_no_auto_injection(
         self,
     ) -> None:
-        """Without org_id, no providers are called — only extra_context renders."""
+        """Without org_id, no providers are called — no context injection."""
         prompt = await render_prompt(
             "fact_extraction",
             template_text="{{ conversation }}",
             conversation="no_db_needed",
         )
-        assert prompt == "no_db_needed"
+        # Template text is returned as-is — no Jinja2 rendering.
+        assert prompt == "{{ conversation }}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -509,7 +520,8 @@ class TestUserSummaryComputed:
             return_context=True,
         )
         assert ctx["episode_count"] == 2
-        assert prompt == "Count: 2"
+        # Template text is returned as-is (no Jinja2 rendering).
+        assert prompt == "Count: {{ episode_count }}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════

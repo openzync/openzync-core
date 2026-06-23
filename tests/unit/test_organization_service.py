@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
@@ -17,13 +18,36 @@ class TestOrganizationService:
     @pytest.mark.asyncio
     async def test_create_organization_returns_keys(self) -> None:
         """Creating an org returns org_id + api_key."""
-        mock_db = AsyncMock(spec=AsyncSession)
-        # Mock flush/refresh to set the org id
+        # MagicMock + real async functions for methods that need ``await``.
+        # Avoids ``AsyncMock`` altogether — its ``__call__`` creates a
+        # coroutine on every invocation, and if *any* code path calls the
+        # mock without ``await`` (even transitively through another
+        # repository), Python warns about an unawaited coroutine at GC.
+        mock_exec_result = MagicMock()
+        mock_exec_result.scalar_one_or_none = MagicMock(return_value=None)
+
+        async def mock_execute(*args: Any, **kwargs: Any) -> MagicMock:
+            return mock_exec_result
+
+        async def mock_flush(*args: Any, **kwargs: Any) -> None:
+            return None
+
+        async def mock_commit(*args: Any, **kwargs: Any) -> None:
+            return None
+
+        async def mock_refresh(*args: Any, **kwargs: Any) -> None:
+            return None
+
+        mock_db = MagicMock()
+        mock_db.add = MagicMock()
+        mock_db.execute = mock_execute
+        mock_db.flush = mock_flush
+        mock_db.commit = mock_commit
+        mock_db.refresh = mock_refresh
+        # Mock the org model
         mock_org = MagicMock()
         mock_org.id = UUID("00000000-0000-0000-0000-000000000001")
         mock_org.name = "Test Org"
-        mock_db.refresh = AsyncMock()
-        mock_db.refresh.return_value = None
 
         service = OrganizationService(db=mock_db)
         # Replace the Organization constructor to return our mock

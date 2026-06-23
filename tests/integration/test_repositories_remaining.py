@@ -251,6 +251,7 @@ class TestFactRepository:
             repo = FactRepository(db)
             fact = await repo.create(
                 user_id=user_id, organization_id=ORG_ID,
+                project_id=PROJECT_ID,
                 content="Python is great", subject="Python",
                 predicate="is", obj="great", confidence=0.95,
             )
@@ -263,6 +264,7 @@ class TestFactRepository:
             repo = FactRepository(db)
             await repo.create(
                 user_id=user_id, organization_id=ORG_ID,
+                project_id=PROJECT_ID,
                 content="Delete me", subject="X", predicate="is", obj="Y",
             )
             deleted = await repo.soft_delete_by_user(user_id)
