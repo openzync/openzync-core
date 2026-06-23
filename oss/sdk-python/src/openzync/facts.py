@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from openzep._http import AsyncHTTPTransport
-from openzep.models.facts import FactBatchResponse, FactTriple
+from openzync._http import AsyncHTTPTransport
+from openzync.models.facts import FactBatchResponse, FactTriple
 
 
 class AsyncFactsClient:

@@ -2,7 +2,7 @@
 
 Usage::
 
-    from openzep import OpenZep
+    from openzync import OpenZep
 
     client = OpenZep(api_key="mg_live_...")
     result = client.memory.ingest("project-id", messages=[
@@ -13,16 +13,15 @@ Usage::
 
 from __future__ import annotations
 
-from openzep.client import AsyncOpenZep, OpenZep
+from openzync._version import __version__
+from openzync.client import AsyncOpenZep, OpenZep
 
 __all__ = [
     "AsyncOpenZep",
     "OpenZep",
 ]
 
-# LangChain integration classes live under openzep.integrations.langchain.
+# LangChain integration classes live under openzync.integrations.langchain.
 # Import them with:
-#   from openzep.integrations.langchain import OZChatMessageHistory, OZMemory, ...
-# Requires: pip install openzep-py[langchain]
-
-__version__ = "0.2.0"
+#   from openzync.integrations.langchain import OZChatMessageHistory, OZMemory, ...
+# Requires: pip install openzync[langchain]

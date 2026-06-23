@@ -14,8 +14,8 @@ from langchain_core.memory import BaseMemory
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from pydantic import BaseModel, Field
 
-from openzep.integrations.langchain.message_history import OZChatMessageHistory
-from openzep.models.memory import ContextResponse
+from openzync.integrations.langchain.message_history import OZChatMessageHistory
+from openzync.models.memory import ContextResponse
 
 
 class OZMemory(BaseMemory):
@@ -27,8 +27,8 @@ class OZMemory(BaseMemory):
     .. code-block:: python
 
         from langchain.chains import ConversationChain
-        from openzep import AsyncOpenZep
-        from openzep.integrations.langchain import OZMemory
+        from openzync import AsyncOpenZep
+        from openzync.integrations.langchain import OZMemory
 
         client = AsyncOpenZep(api_key="...")
         memory = OZMemory(

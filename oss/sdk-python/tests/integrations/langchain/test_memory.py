@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
-from openzep.integrations.langchain.memory import OZMemory, _messages_to_string
+from openzync.integrations.langchain.memory import OZMemory, _messages_to_string
 
 
 @pytest.fixture

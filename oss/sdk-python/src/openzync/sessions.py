@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from openzep._http import AsyncHTTPTransport
-from openzep._pagination import AsyncPaginatedIterator
-from openzep.models.session import (
+from openzync._http import AsyncHTTPTransport
+from openzync._pagination import AsyncPaginatedIterator
+from openzync.models.session import (
     SessionCreateRequest,
     SessionMessagesResponse,
     SessionResponse,

@@ -2,7 +2,7 @@
 
 Requires ``langchain-core``. Install with::
 
-    pip install openzep-py[langchain]
+    pip install openzync[langchain]
 
 Provides LangChain-native wrappers around OpenZep's memory, graph,
 and fact APIs so they can be plugged into LangChain chains, agents,
@@ -11,11 +11,11 @@ and retrievers.
 
 from __future__ import annotations
 
-from openzep.integrations.langchain.memory import OZMemory
-from openzep.integrations.langchain.message_history import OZChatMessageHistory
-from openzep.integrations.langchain.retriever import OZGraphRetriever
-from openzep.integrations.langchain.tools.facts import AddFactsTool
-from openzep.integrations.langchain.tools.graph import (
+from openzync.integrations.langchain.memory import OZMemory
+from openzync.integrations.langchain.message_history import OZChatMessageHistory
+from openzync.integrations.langchain.retriever import OZGraphRetriever
+from openzync.integrations.langchain.tools.facts import AddFactsTool
+from openzync.integrations.langchain.tools.graph import (
     GraphNodeDetailTool,
     GraphSearchTool,
     ListGraphNodesTool,

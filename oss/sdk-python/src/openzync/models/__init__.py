@@ -1,17 +1,17 @@
 """Re-export all Pydantic models for convenient imports."""
 
-from openzep.models.memory import (
+from openzync.models.memory import (
     IngestMemoryRequest,
     IngestMemoryResponse,
     ContextResponse,
     Message,
 )
-from openzep.models.facts import (
+from openzync.models.facts import (
     FactTriple,
     FactBatchRequest,
     FactBatchResponse,
 )
-from openzep.models.graph import (
+from openzync.models.graph import (
     GraphNode,
     GraphEdge,
     GraphNodeDetail,
@@ -19,13 +19,13 @@ from openzep.models.graph import (
     PaginatedGraphNodes,
     PaginatedGraphEdges,
 )
-from openzep.models.user import (
+from openzync.models.user import (
     UserCreateRequest,
     UserUpdateRequest,
     UserResponse,
     UserListResponse,
 )
-from openzep.models.session import (
+from openzync.models.session import (
     SessionCreateRequest,
     SessionResponse,
     SessionListResponse,

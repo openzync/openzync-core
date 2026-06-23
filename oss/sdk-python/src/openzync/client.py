@@ -2,7 +2,7 @@
 
 Usage::
 
-    from openzep import AsyncOpenZep
+    from openzync import AsyncOpenZep
 
     async with AsyncOpenZep(api_key="mg_live_...") as client:
         resp = await client.memory.ingest("project-id", messages=[{"role":"user","content":"Hello"}])
@@ -13,13 +13,13 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from openzep._http import AsyncHTTPTransport
-from openzep.facts import AsyncFactsClient
-from openzep.graph import AsyncGraphClient
-from openzep.memory import AsyncMemoryClient
-from openzep.projects import AsyncProjectsClient
-from openzep.sessions import AsyncSessionsClient
-from openzep.users import AsyncUsersClient
+from openzync._http import AsyncHTTPTransport
+from openzync.facts import AsyncFactsClient
+from openzync.graph import AsyncGraphClient
+from openzync.memory import AsyncMemoryClient
+from openzync.projects import AsyncProjectsClient
+from openzync.sessions import AsyncSessionsClient
+from openzync.users import AsyncUsersClient
 
 
 class AsyncOpenZep:

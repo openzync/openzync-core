@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from openzep.integrations.langchain.tools.facts import AddFactsTool
-from openzep.integrations.langchain.tools.graph import (
+from openzync.integrations.langchain.tools.facts import AddFactsTool
+from openzync.integrations.langchain.tools.graph import (
     GraphNodeDetailTool,
     GraphSearchTool,
     ListGraphNodesTool,

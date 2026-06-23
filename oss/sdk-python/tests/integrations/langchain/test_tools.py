@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from openzep.client import AsyncOpenZep
-from openzep.integrations.langchain.tools.facts import AddFactsInput, AddFactsTool
-from openzep.integrations.langchain.tools.graph import (
+from openzync.client import AsyncOpenZep
+from openzync.integrations.langchain.tools.facts import AddFactsInput, AddFactsTool
+from openzync.integrations.langchain.tools.graph import (
     GraphNodeDetailInput,
     GraphNodeDetailTool,
     GraphSearchInput,

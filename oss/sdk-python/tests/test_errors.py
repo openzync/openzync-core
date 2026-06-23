@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from httpx import Response
 
-from openzep._errors import (
+from openzync._errors import (
     AuthenticationError,
     NotFoundError,
     RateLimitError,

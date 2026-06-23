@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from openzep._errors import NotFoundError
-from openzep.client import AsyncOpenZep
-from openzep.integrations.langchain.message_history import OZChatMessageHistory
-from openzep.models.session import SessionMessagesResponse
+from openzync._errors import NotFoundError
+from openzync.client import AsyncOpenZep
+from openzync.integrations.langchain.message_history import OZChatMessageHistory
+from openzync.models.session import SessionMessagesResponse
 
 # Sample messages as returned by the API
 SAMPLE_MESSAGES = [

@@ -3,7 +3,7 @@
 Each integration lives in its own sub-package and is an optional dependency.
 Install with::
 
-    pip install openzep-py[langchain]
+    pip install openzync[langchain]
 """
 
 from __future__ import annotations

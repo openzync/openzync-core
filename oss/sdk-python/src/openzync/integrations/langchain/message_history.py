@@ -18,8 +18,8 @@ from langchain_core.messages import (
     SystemMessage,
 )
 
-from openzep._errors import NotFoundError
-from openzep.client import AsyncOpenZep
+from openzync._errors import NotFoundError
+from openzync.client import AsyncOpenZep
 
 # ── Message conversion helpers ──────────────────────────────────────────────
 
@@ -73,8 +73,8 @@ class OZChatMessageHistory(BaseChatMessageHistory):
 
     .. code-block:: python
 
-        from openzep import AsyncOpenZep
-        from openzep.integrations.langchain import OZChatMessageHistory
+        from openzync import AsyncOpenZep
+        from openzync.integrations.langchain import OZChatMessageHistory
 
         client = AsyncOpenZep(api_key="...")
         history = OZChatMessageHistory(

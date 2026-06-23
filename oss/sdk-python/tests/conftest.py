@@ -9,7 +9,7 @@ import pytest_asyncio
 import respx
 from httpx import AsyncClient, Response
 
-from openzep.client import AsyncOpenZep, OpenZep
+from openzync.client import AsyncOpenZep, OpenZep
 
 
 TEST_API_KEY = "mg_test_" + "a" * 64

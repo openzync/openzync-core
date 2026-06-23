@@ -1,0 +1,106 @@
+# Publish openzync Python SDK to PyPI.
+#
+# Required GitHub secrets (set in repo → Settings → Secrets and variables → Actions):
+#   PYPI_API_TOKEN      — PyPI project-scoped API token for openzync
+#   TESTPYPI_API_TOKEN  — TestPyPI project-scoped API token for openzync
+#
+# How to create tokens:
+#   1. Visit https://pypi.org/manage/account/token/   (or test.pypi.org)
+#   2. Create a project-scoped token scoped to "openzync"
+#   3. Copy the token and save it as the corresponding GitHub secret above
+
+name: Publish openzync Python SDK
+
+on:
+  push:
+    paths:
+      - "oss/sdk-python/**"
+  pull_request:
+    paths:
+      - "oss/sdk-python/**"
+
+defaults:
+  run:
+    working-directory: oss/sdk-python
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          pip install ".[dev]"
+          pip install -e "."
+      - name: Run tests
+        run: pytest tests/
+
+  build:
+    name: Build distribution
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install build tools
+        run: pip install build hatchling hatch-vcs
+      - name: Build package
+        run: python -m build
+        working-directory: oss/sdk-python
+      - uses: actions/upload-artifact@v6
+        with:
+          name: python-package-distributions
+          path: oss/sdk-python/dist/
+
+  publish-to-testpypi:
+    name: Publish to TestPyPI
+    needs: [build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Upload to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          password: ${{ secrets.TESTPYPI_API_TOKEN }}
+
+  publish-to-pypi:
+    name: Publish to PyPI
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Upload to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+
+  verify-release:
+    name: Verify PyPI release
+    needs: [publish-to-pypi]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - run: pip install openzync
+      - run: python -c "import openzync; print(openzync.__version__)" && pip show openzync

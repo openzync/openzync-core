@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from openzep.models.project import ProjectMemberResponse, ProjectResponse
+from openzync.models.project import ProjectMemberResponse, ProjectResponse
 
 
 class TestProjectsClient:

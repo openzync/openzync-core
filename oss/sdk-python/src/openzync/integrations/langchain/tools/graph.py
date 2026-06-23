@@ -12,7 +12,7 @@ from typing import Any, Type
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from openzep.client import AsyncOpenZep
+from openzync.client import AsyncOpenZep
 
 # ── Input schemas ───────────────────────────────────────────────────────────
 

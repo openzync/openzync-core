@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from openzep._http import AsyncHTTPTransport
-from openzep._pagination import AsyncPaginatedIterator
-from openzep.models.graph import (
+from openzync._http import AsyncHTTPTransport
+from openzync._pagination import AsyncPaginatedIterator
+from openzync.models.graph import (
     GraphCommunity,
     GraphEdge,
     GraphNode,

@@ -13,7 +13,7 @@ from typing import Any, List
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
-from openzep.client import AsyncOpenZep
+from openzync.client import AsyncOpenZep
 
 
 class OZGraphRetriever(BaseRetriever):
@@ -24,8 +24,8 @@ class OZGraphRetriever(BaseRetriever):
 
     .. code-block:: python
 
-        from openzep import AsyncOpenZep
-        from openzep.integrations.langchain.retriever import OZGraphRetriever
+        from openzync import AsyncOpenZep
+        from openzync.integrations.langchain.retriever import OZGraphRetriever
 
         client = AsyncOpenZep(api_key="...")
         retriever = OZGraphRetriever(
@@ -104,7 +104,7 @@ class OZGraphRetriever(BaseRetriever):
 
             content = result.get("content", "") or result.get("name", "")
             metadata: dict[str, Any] = {
-                "source": "openzep_graph",
+                "source": "openzync_graph",
                 "project_id": self.project_id,
                 "score": score,
                 "type": result.get("type"),

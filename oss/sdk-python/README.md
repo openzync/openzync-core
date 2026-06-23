@@ -1,15 +1,15 @@
 # OpenZep Python SDK
 
-[![PyPI](https://img.shields.io/pypi/v/openzep-py)](https://pypi.org/project/openzep-py/)
-[![Python](https://img.shields.io/pypi/pyversions/openzep-py)](https://pypi.org/project/openzep-py/)
-[![License](https://img.shields.io/pypi/l/openzep-py)](https://www.apache.org/licenses/LICENSE-2.0)
+[![PyPI](https://img.shields.io/pypi/v/openzync)](https://pypi.org/project/openzync/)
+[![Python](https://img.shields.io/pypi/pyversions/openzync)](https://pypi.org/project/openzync/)
+[![License](https://img.shields.io/pypi/l/openzync)](https://www.apache.org/licenses/LICENSE-2.0)
 
-Python SDK for [OpenZep](https://github.com/thelinkai/openzep) — the open-source agent memory platform with persistent, queryable, graph-based memory for AI agents.
+Python SDK for [OpenZep](https://github.com/rohnsha0/openzep) — the open-source agent memory platform with persistent, queryable, graph-based memory for AI agents.
 
 ## Installation
 
 ```bash
-pip install openzep-py
+pip install openzync
 ```
 
 Requires Python 3.11+.
@@ -17,7 +17,7 @@ Requires Python 3.11+.
 ## Quick Start
 
 ```python
-from openzep import OpenZep
+from openzync import OpenZep
 
 client = OpenZep(api_key="mg_live_your_api_key_here")
 
@@ -46,7 +46,7 @@ for r in results:
 ### Sync (default)
 
 ```python
-from openzep import OpenZep
+from openzync import OpenZep
 
 client = OpenZep(api_key="...")
 
@@ -86,7 +86,7 @@ client.sessions.delete(user_id, session_id)
 
 ```python
 import asyncio
-from openzep import AsyncOpenZep
+from openzync import AsyncOpenZep
 
 async def main():
     async with AsyncOpenZep(api_key="...") as client:
@@ -98,8 +98,8 @@ asyncio.run(main())
 ## Error Handling
 
 ```python
-from openzep import OpenZep
-from openzep._errors import NotFoundError, RateLimitError
+from openzync import OpenZep
+from openzync._errors import NotFoundError, RateLimitError
 
 client = OpenZep(api_key="...")
 
@@ -126,7 +126,7 @@ for user in client.users.list_iter():
 LangChain developers can use OpenZep as a drop-in memory provider, graph retriever, and tool set.
 
 ```bash
-pip install "openzep-py[langchain]"
+pip install "openzync[langchain]"
 ```
 
 ### Chat Message History
@@ -134,8 +134,8 @@ pip install "openzep-py[langchain]"
 Persist conversation history to OpenZep:
 
 ```python
-from openzep import OpenZep
-from openzep.integrations.langchain import OZChatMessageHistory
+from openzync import OpenZep
+from openzync.integrations.langchain import OZChatMessageHistory
 from langchain_core.messages import HumanMessage
 
 client = OpenZep(api_key="...")
@@ -154,8 +154,8 @@ print(history.messages)
 Use `OZMemory` as a standard LangChain `BaseMemory` inside chains:
 
 ```python
-from openzep import OpenZep
-from openzep.integrations.langchain import OZMemory
+from openzync import OpenZep
+from openzync.integrations.langchain import OZMemory
 from langchain_core.messages import HumanMessage, AIMessage
 
 client = OpenZep(api_key="...")
@@ -177,7 +177,7 @@ context = memory.load_memory_variables({})
 Use `OZGraphRetriever` as a LangChain retriever for RAG pipelines:
 
 ```python
-from openzep.integrations.langchain import OZGraphRetriever
+from openzync.integrations.langchain import OZGraphRetriever
 
 retriever = OZGraphRetriever(
     user_id="user-abc",
@@ -197,8 +197,8 @@ for doc in docs:
 Expose OpenZep graph search and fact management as LangChain tools:
 
 ```python
-from openzep.integrations.langchain.tools.graph import GraphSearchTool
-from openzep.integrations.langchain.tools.facts import AddFactsTool
+from openzync.integrations.langchain.tools.graph import GraphSearchTool
+from openzync.integrations.langchain.tools.facts import AddFactsTool
 
 tools = [
     GraphSearchTool(client=client),
@@ -213,10 +213,10 @@ tools = [
 
 ```bash
 # Install with dev dependencies
-pip install "openzep-py[dev]"
+pip install "openzync[dev]"
 
 # Install everything (dev + langchain)
-pip install "openzep-py[dev,langchain]"
+pip install "openzync[dev,langchain]"
 
 # Run tests
 pytest

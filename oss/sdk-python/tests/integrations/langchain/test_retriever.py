@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock
 import pytest
 from langchain_core.documents import Document
 
-from openzep.client import AsyncOpenZep
-from openzep.integrations.langchain.retriever import OZGraphRetriever
+from openzync.client import AsyncOpenZep
+from openzync.integrations.langchain.retriever import OZGraphRetriever
 
 SAMPLE_SEARCH_RESULTS = [
     {
@@ -75,7 +75,7 @@ class TestOZGraphRetriever:
         assert docs[0].page_content == SAMPLE_SEARCH_RESULTS[0]["content"]
         assert docs[0].metadata["score"] == 0.95
         assert docs[0].metadata["type"] == "fact"
-        assert docs[0].metadata["source"] == "openzep_graph"
+        assert docs[0].metadata["source"] == "openzync_graph"
 
     @pytest.mark.asyncio
     async def test_score_threshold_filters(self, mock_client):

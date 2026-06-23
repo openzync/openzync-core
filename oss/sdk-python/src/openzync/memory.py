@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from openzep._http import AsyncHTTPTransport
-from openzep.models.memory import (
+from openzync._http import AsyncHTTPTransport
+from openzync.models.memory import (
     ContextResponse,
     IngestMemoryResponse,
     Message,

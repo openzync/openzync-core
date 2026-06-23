@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from openzep.models.facts import FactBatchResponse
+from openzync.models.facts import FactBatchResponse
 from tests.conftest import mock_response
 
 

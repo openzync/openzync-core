@@ -14,7 +14,8 @@ from typing import Any
 
 import httpx
 
-from openzep._errors import OpenZepError, raise_on_error
+from openzync._errors import OpenZepError, raise_on_error
+from openzync._version import __version__ as _sdk_version
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ class AsyncHTTPTransport:
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json",
-                "User-Agent": f"openzep-py/0.2.0",
+                "User-Agent": f"openzync/{_sdk_version}",
             },
         )
 
