@@ -154,26 +154,42 @@ class TestTypeDataSourceRegistry:
         assert DataSource.SESSION_ENTITIES in sources
         assert DataSource.SESSION_FACTS in sources
         assert DataSource.SESSION_RECENT_HISTORY in sources
-        assert len(sources) == 4
+        assert DataSource.SIMILAR_EPISODES in sources
+        assert DataSource.SIMILAR_FACTS in sources
+        assert DataSource.EPISODE_METADATA in sources
+        assert len(sources) == 7
 
     def test_entity_extraction_sources(self) -> None:
         sources = TYPE_DATA_SOURCES["entity_extraction"]
         assert DataSource.EPISODE_CONTENT in sources
         assert DataSource.SESSION_ENTITIES in sources
         assert DataSource.ORG_ENTITY_TYPES in sources
-        assert len(sources) == 3
+        assert DataSource.SIMILAR_EPISODES in sources
+        assert DataSource.SIMILAR_FACTS in sources
+        assert DataSource.EPISODE_METADATA in sources
+        assert len(sources) == 6
 
     def test_classification_sources(self) -> None:
         sources = TYPE_DATA_SOURCES["classification"]
         assert DataSource.EPISODE_CONTENT in sources
         assert DataSource.ORG_CLASSIFICATION_LABELS in sources
-        assert len(sources) == 2
+        assert DataSource.SESSION_RECENT_HISTORY in sources
+        assert DataSource.SIMILAR_EPISODES in sources
+        assert DataSource.SIMILAR_FACTS in sources
+        assert DataSource.EPISODE_METADATA in sources
+        assert len(sources) == 6
 
     def test_structured_extraction_sources(self) -> None:
         sources = TYPE_DATA_SOURCES["structured_extraction"]
         assert DataSource.EPISODE_CONTENT in sources
         assert DataSource.ORG_STRUCTURED_SCHEMAS in sources
-        assert len(sources) == 2
+        assert DataSource.SESSION_ENTITIES in sources
+        assert DataSource.SESSION_FACTS in sources
+        assert DataSource.SESSION_RECENT_HISTORY in sources
+        assert DataSource.SIMILAR_EPISODES in sources
+        assert DataSource.SIMILAR_FACTS in sources
+        assert DataSource.EPISODE_METADATA in sources
+        assert len(sources) == 8
 
     def test_user_summary_sources(self) -> None:
         sources = TYPE_DATA_SOURCES["user_summary"]

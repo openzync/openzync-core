@@ -78,7 +78,14 @@ async def get_org_config(
     # 2. Fetch from DB
     repo = OrganizationRepository(db)
     raw = await repo.get_config(org_id)
-    org_config = OrgConfigBase(**raw)
+    # When no config has been stored yet, raw is {} and **raw would apply
+    # Pydantic defaults (e.g. graph_backend → "surrealdb") even though the
+    # field was never explicitly set.  We want *every* field to be None
+    # when the DB has no record, so escalate all fields explicitly.
+    if not raw:
+        org_config = OrgConfigBase(**{name: None for name in OrgConfigBase.model_fields})
+    else:
+        org_config = OrgConfigBase(**raw)
 
     # 3. Write to cache (best-effort)
     if not skip_cache and redis is not None:

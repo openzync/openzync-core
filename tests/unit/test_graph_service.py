@@ -14,12 +14,13 @@ from services.graph_service import GraphService
 @pytest.mark.unit
 class TestGraphService:
     ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+    PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
 
     @pytest.mark.asyncio
     async def test_get_entities_no_backend(self) -> None:
         """Without a backend, returns empty defaults."""
         service = GraphService(graph_backend=None)
-        result = await service.get_entities(self.ORG_ID)
+        result = await service.get_entities(self.ORG_ID, self.PROJECT_ID)
         assert result == {"items": [], "next_cursor": None, "has_more": False}
 
     @pytest.mark.asyncio
@@ -33,7 +34,7 @@ class TestGraphService:
         }
         service = GraphService(graph_backend=mock_backend)
 
-        result = await service.get_entities(self.ORG_ID)
+        result = await service.get_entities(self.ORG_ID, self.PROJECT_ID)
         assert len(result["items"]) == 1
         assert result["items"][0]["name"] == "Entity1"
 
@@ -43,7 +44,7 @@ class TestGraphService:
         service = GraphService(graph_backend=None)
 
         with pytest.raises(EntityNotFoundError):
-            await service.get_entity(self.ORG_ID, uuid4())
+            await service.get_entity(self.ORG_ID, self.PROJECT_ID, uuid4())
 
     @pytest.mark.asyncio
     async def test_get_entity_with_backend_not_found(self) -> None:
@@ -53,14 +54,14 @@ class TestGraphService:
         service = GraphService(graph_backend=mock_backend)
 
         with pytest.raises(EntityNotFoundError):
-            await service.get_entity(self.ORG_ID, uuid4())
+            await service.get_entity(self.ORG_ID, self.PROJECT_ID, uuid4())
 
     @pytest.mark.asyncio
     async def test_delete_entity_no_backend(self) -> None:
         """Without a backend, returns False."""
         service = GraphService(graph_backend=None)
 
-        result = await service.delete_entity(self.ORG_ID, uuid4())
+        result = await service.delete_entity(self.ORG_ID, self.PROJECT_ID, uuid4())
         assert result is False
 
     @pytest.mark.asyncio
@@ -70,5 +71,5 @@ class TestGraphService:
         mock_backend.delete_entity.return_value = True
         service = GraphService(graph_backend=mock_backend)
 
-        result = await service.delete_entity(self.ORG_ID, uuid4())
+        result = await service.delete_entity(self.ORG_ID, self.PROJECT_ID, uuid4())
         assert result is True

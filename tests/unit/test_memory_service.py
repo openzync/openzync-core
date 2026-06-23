@@ -16,6 +16,7 @@ from services.memory_service import MemoryService
 @pytest.mark.unit
 class TestMemoryService:
     ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+    PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
     USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 
     @pytest.fixture
@@ -51,10 +52,7 @@ class TestMemoryService:
 
     @pytest.mark.asyncio
     async def test_ingest_resolves_user(self, service: MemoryService) -> None:
-        """Ingest looks up the user by UUID."""
-        service._user_repo.get_by_uuid.return_value = MagicMock(
-            id=self.USER_ID, organization_id=self.ORG_ID,
-        )
+        """Ingest accepts a ``created_by`` UUID directly (no user look-up)."""
         service._session_repo.get_or_create_default.return_value = MagicMock(
             id=uuid4(), external_id="__default__",
         )
@@ -64,40 +62,48 @@ class TestMemoryService:
                 with patch.object(service, "_get_org_pii_config", return_value={}):
                     result = await service.ingest(
                         org_id=self.ORG_ID,
-                        user_uuid=self.USER_ID,
+                        project_id=self.PROJECT_ID,
+                        created_by=self.USER_ID,
                         session_external_id=None,
                         messages=self._sample_messages(),
                     )
         assert result.status == "accepted"
-        service._user_repo.get_by_uuid.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_ingest_user_not_found_raises_404(
+    async def test_ingest_without_user_lookup_succeeds(
         self, service: MemoryService,
     ) -> None:
-        """Ingest for non-existent user raises NotFoundError."""
-        service._user_repo.get_by_uuid.return_value = None
+        """Ingest does not look up the user when ``created_by`` is a UUID.
 
-        with pytest.raises(NotFoundError):
-            await service.ingest(
-                org_id=self.ORG_ID,
-                user_uuid=self.USER_ID,
-                session_external_id="test",
-                messages=self._sample_messages(),
-            )
+        ``MemoryService.ingest`` passes ``created_by`` directly to the
+        session resolver — it no longer calls ``user_repo.get_by_uuid``.
+        """
+        service._session_repo.get_or_create_default.return_value = MagicMock(
+            id=uuid4(), external_id="__default__",
+        )
+
+        with patch.object(service, "_enqueue_arq_tasks"):
+            with patch.object(service, "_invalidate_context_cache"):
+                with patch.object(service, "_get_org_pii_config", return_value={}):
+                    result = await service.ingest(
+                        org_id=self.ORG_ID,
+                        project_id=self.PROJECT_ID,
+                        created_by=self.USER_ID,
+                        session_external_id="test",
+                        messages=self._sample_messages(),
+                    )
+        assert result.status == "accepted"
+        service._user_repo.get_by_uuid.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_delete_user_memory(self, service: MemoryService) -> None:
         """Delete memory soft-deletes episodes and facts."""
-        service._user_repo.get_by_uuid.return_value = MagicMock(
-            id=self.USER_ID, organization_id=self.ORG_ID,
-        )
-        service._episode_repo.soft_delete_by_user.return_value = 5
-        service._fact_repo.soft_delete_by_user.return_value = 3
+        service._episode_repo.soft_delete_by_project.return_value = 5
+        service._fact_repo.soft_delete_by_project.return_value = 3
 
         with patch.object(service, "_invalidate_context_cache"):
-            episodes, facts = await service.delete_user_memory(
-                org_id=self.ORG_ID, user_uuid=self.USER_ID,
+            episodes, facts = await service.delete_project_memory(
+                org_id=self.ORG_ID, project_id=self.PROJECT_ID,
             )
         assert episodes == 5
         assert facts == 3
@@ -108,9 +114,9 @@ class TestMemoryService:
     ) -> None:
         """Same inputs produce the same hash."""
         h1 = service._compute_content_hash(
-            str(self.USER_ID), "session_1", self._sample_messages(),
+            str(self.PROJECT_ID), "session_1", self._sample_messages(),
         )
         h2 = service._compute_content_hash(
-            str(self.USER_ID), "session_1", self._sample_messages(),
+            str(self.PROJECT_ID), "session_1", self._sample_messages(),
         )
         assert h1 == h2

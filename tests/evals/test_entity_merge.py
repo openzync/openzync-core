@@ -32,9 +32,20 @@ from workers.tasks.merge_duplicate_entities import (
 
 @pytest.fixture
 def mock_db() -> AsyncMock:
-    """Create a mock async DB session."""
+    """Create a mock async DB session.
+
+    ``db.execute`` is an ``AsyncMock`` whose ``return_value`` is a
+    ``MagicMock``.  ``await db.execute(query)`` returns the ``MagicMock``
+    (because ``AsyncMock.__call__`` is async and returns
+    ``self.return_value`` directly — it does **not** try to await the
+    return value).  The ``MagicMock`` has ``all`` and ``rowcount`` set up
+    so that tests can override them inline.
+    """
     db = AsyncMock()
-    db.execute = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.all = MagicMock(return_value=[])
+    mock_result.rowcount = 0
+    db.execute = AsyncMock(return_value=mock_result)
     return db
 
 
@@ -253,11 +264,16 @@ class TestFindDuplicateClusters:
         )
 
         db = AsyncMock()
+        mock_result_1 = MagicMock()
+        mock_result_1.all = MagicMock(return_value=[])
+        mock_result_2 = MagicMock()
+        mock_result_2.all = MagicMock(return_value=[])
 
         # Phase 1: no exact duplicates
-        db.execute.return_value.all.side_effect = [
-            [],  # Phase 1: no exact cluster results
-            [],  # Phase 2: no remaining entities
+        db.execute = AsyncMock()
+        db.execute.side_effect = [
+            mock_result_1,  # First call returns mock_result_1
+            mock_result_2,  # Second call returns mock_result_2
         ]
 
         org_uuid = "550e8400-e29b-41d4-a716-446655440000"

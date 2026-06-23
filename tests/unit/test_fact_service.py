@@ -18,6 +18,7 @@ class TestFactService:
     """FactService unit tests."""
 
     ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+    PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
     USER_ID = UUID("00000000-0000-0000-0000-000000000002")
     SESSION_ID = UUID("00000000-0000-0000-0000-000000000010")
     FACT_1_ID = UUID("00000000-0000-0000-0000-000000000100")
@@ -30,18 +31,12 @@ class TestFactService:
         mock_redis.get.return_value = None  # no cached idempotency
         mock_fact_repo = AsyncMock()
         mock_fact_repo.create.return_value = MagicMock(id=UUID("00000000-0000-0000-0000-000000000099"))
-        mock_user_repo = AsyncMock()
-        mock_user_repo.get_by_uuid.return_value = MagicMock(
-            id=UUID("00000000-0000-0000-0000-000000000002"),
-            metadata_={},
-        )
         mock_session_repo = AsyncMock()
 
         s = FactService(
             db=mock_db,
             redis_client=mock_redis,
             fact_repo=mock_fact_repo,
-            user_repo=mock_user_repo,
             session_repo=mock_session_repo,
         )
         return s
@@ -61,7 +56,8 @@ class TestFactService:
         catches empty lists before reaching the service)."""
         result = await service.ingest_facts(
             org_id=self.ORG_ID,
-            user_uuid=self.USER_ID,
+            project_id=self.PROJECT_ID,
+            created_by=self.USER_ID,
             facts=[],
         )
         assert result.status == "accepted"
@@ -88,7 +84,8 @@ class TestFactService:
         with patch("services.fact_service.get_arq", return_value=mock_arq_pool):
             result = await service.ingest_facts(
                 org_id=self.ORG_ID,
-                user_uuid=self.USER_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
                 facts=facts,
                 session_external_id="session-abc",
             )
@@ -103,7 +100,7 @@ class TestFactService:
         service._fact_repo.batch_create.assert_awaited_once()
         service._session_repo.get_by_external_id.assert_awaited_once_with(
             org_id=self.ORG_ID,
-            user_id=self.USER_ID,
+            project_id=self.PROJECT_ID,
             external_id="session-abc",
         )
 
@@ -117,7 +114,8 @@ class TestFactService:
         with pytest.raises(NotFoundError) as exc_info:
             await service.ingest_facts(
                 org_id=self.ORG_ID,
-                user_uuid=self.USER_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
                 facts=facts,
                 session_external_id="nonexistent-session",
             )

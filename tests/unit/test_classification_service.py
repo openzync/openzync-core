@@ -25,21 +25,16 @@ class TestClassificationService:
 
     def _make_service(self) -> tuple[ClassificationService, AsyncMock]:
         mock_repo = AsyncMock(spec=DialogClassificationRepository)
-        mock_user_repo = AsyncMock(spec=UserRepository)
         mock_session_repo = AsyncMock(spec=SessionRepository)
         mock_episode_repo = AsyncMock(spec=EpisodeRepository)
 
-        # Stub user + session lookup so they pass
-        mock_user_repo.get_by_uuid.return_value = MagicMock(
-            id=uuid4(), organization_id=self.ORG_ID,
-        )
+        # Stub session lookup so they pass
         mock_session_repo.get_by_uuid.return_value = MagicMock(
             id=uuid4(), is_deleted=False,
         )
 
         service = ClassificationService(
             repo=mock_repo,
-            user_repo=mock_user_repo,
             session_repo=mock_session_repo,
             episode_repo=mock_episode_repo,
         )
@@ -68,7 +63,6 @@ class TestClassificationService:
 
         result = await service.get_classifications_for_session(
             org_id=self.ORG_ID,
-            user_id=uuid4(),
             session_id=uuid4(),
         )
         assert isinstance(result, list)
@@ -82,7 +76,6 @@ class TestClassificationService:
 
         result = await service.get_classifications_for_session(
             org_id=self.ORG_ID,
-            user_id=uuid4(),
             session_id=uuid4(),
         )
         assert len(result) == 1

@@ -19,11 +19,13 @@ class TestSessionService:
 
     ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
     USER_ID = UUID("00000000-0000-0000-0000-000000000002")
+    PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
 
     def _make_mock_session(self, **kwargs) -> AsyncMock:
         session = AsyncMock()
         session.id = kwargs.get("id", uuid4())
         session.organization_id = kwargs.get("org_id", self.ORG_ID)
+        session.project_id = kwargs.get("project_id", self.PROJECT_ID)
         session.user_id = kwargs.get("user_id", self.USER_ID)
         session.external_id = kwargs.get("external_id", "test-session")
         session.metadata_ = kwargs.get("metadata", {})
@@ -51,7 +53,8 @@ class TestSessionService:
 
         result = await service.create_session(
             organization_id=self.ORG_ID,
-            user_id=self.USER_ID,
+            project_id=self.PROJECT_ID,
+            created_by=self.USER_ID,
             external_id="test-session",
         )
         assert result.external_id == "test-session"
@@ -66,7 +69,8 @@ class TestSessionService:
         with pytest.raises(ConflictError):
             await service.create_session(
                 organization_id=self.ORG_ID,
-                user_id=self.USER_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
                 external_id="duplicate-session",
             )
         mock_repo.create.assert_not_awaited()
@@ -87,7 +91,7 @@ class TestSessionService:
         result = await service.get_session(
             org_id=self.ORG_ID,
             session_id=session_id,
-            user_id=self.USER_ID,
+            project_id=self.PROJECT_ID,
         )
         assert result.external_id == "test-session"
 
@@ -101,7 +105,7 @@ class TestSessionService:
             await service.get_session(
                 org_id=self.ORG_ID,
                 session_id=uuid4(),
-                user_id=self.USER_ID,
+                project_id=self.PROJECT_ID,
             )
 
     @pytest.mark.asyncio
@@ -114,7 +118,7 @@ class TestSessionService:
         await service.delete_session(
             org_id=self.ORG_ID,
             session_id=session_id,
-            user_id=self.USER_ID,
+            project_id=self.PROJECT_ID,
         )
         mock_repo.soft_delete.assert_awaited_once()
 

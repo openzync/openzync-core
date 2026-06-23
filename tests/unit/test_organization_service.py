@@ -22,6 +22,7 @@ class TestOrganizationService:
         mock_org = MagicMock()
         mock_org.id = UUID("00000000-0000-0000-0000-000000000001")
         mock_org.name = "Test Org"
+        mock_db.refresh = AsyncMock()
         mock_db.refresh.return_value = None
 
         service = OrganizationService(db=mock_db)

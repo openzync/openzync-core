@@ -50,7 +50,8 @@ async def _seed_user_and_session(engine) -> tuple[UUID, UUID]:
             organization_id=ORG_ID, external_id="repo_test_user",
         )
         session = await session_repo.create(
-            organization_id=ORG_ID, user_id=user.id, external_id="repo_test_session",
+            organization_id=ORG_ID, project_id=PROJECT_ID, created_by=user.id,
+            external_id="repo_test_session",
         )
         return user.id, session.id
 
@@ -60,6 +61,7 @@ async def _seed_episode(engine, user_id: UUID, session_id: UUID) -> UUID:
         ep_repo = EpisodeRepository(db)
         episodes = await ep_repo.batch_create(
             organization_id=ORG_ID,
+            project_id=PROJECT_ID,
             session_id=session_id,
             user_id=user_id,
             messages=[{"role": "user", "content": "test episode", "metadata": {}}],

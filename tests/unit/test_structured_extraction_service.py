@@ -16,19 +16,14 @@ class TestStructuredExtractionService:
 
     def _make_service(self) -> tuple[StructuredExtractionService, AsyncMock]:
         mock_repo = AsyncMock()
-        mock_user_repo = AsyncMock()
         mock_session_repo = AsyncMock()
 
-        mock_user_repo.get_by_uuid.return_value = MagicMock(
-            id=uuid4(), organization_id=self.ORG_ID,
-        )
         mock_session_repo.get_by_uuid.return_value = MagicMock(
             id=uuid4(), is_deleted=False,
         )
 
         service = StructuredExtractionService(
             repo=mock_repo,
-            user_repo=mock_user_repo,
             session_repo=mock_session_repo,
         )
         return service, mock_repo
@@ -42,7 +37,7 @@ class TestStructuredExtractionService:
         mock_repo.get_by_session.return_value = []
 
         result = await service.get_session_extractions(
-            org_id=self.ORG_ID, user_id=uuid4(), session_id=uuid4(),
+            org_id=self.ORG_ID, session_id=uuid4(),
         )
         assert len(result.items) == 0
         assert result.total == 0
