@@ -27,12 +27,11 @@ Usage (workers):
 
 from __future__ import annotations
 
-import orjson
-from collections.abc import AsyncGenerator
 from enum import Enum
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
+
+import orjson
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -61,7 +60,7 @@ class DataSource(Enum):
     """The ``content`` column of the current episode being enriched."""
 
     SESSION_ENTITIES = "session.entities"
-    """Known entities for a session (from ``FactRepository.get_entities_for_session``)."""
+    """Known entities for a session (from ``FactRepository``)."""
 
     SESSION_FACTS = "session.facts"
     """Existing facts for a session (from ``FactRepository.list_by_session``)."""
@@ -487,8 +486,14 @@ async def _fetch_classification_labels(
 
     if not schemas:
         return {
-            "intent_labels": "greeting, question, command, complaint, chit-chat, farewell, request, confirmation",
-            "emotion_labels": "joy, frustration, sadness, anger, neutral, surprise, fear, disgust",
+            "intent_labels": (
+                "greeting, question, command, complaint, chit-chat, "
+                "farewell, request, confirmation"
+            ),
+            "emotion_labels": (
+                "joy, frustration, sadness, anger, neutral, surprise, "
+                "fear, disgust"
+            ),
             "valence_options": "positive, negative, neutral",
             "arousal_options": "low, medium, high",
         }
@@ -513,7 +518,10 @@ async def _fetch_classification_labels(
     return {
         "intent_labels": ", ".join(sorted(all_intents))
         if all_intents
-        else "greeting, question, command, complaint, chit-chat, farewell, request, confirmation",
+        else (
+            "greeting, question, command, complaint, chit-chat, "
+            "farewell, request, confirmation"
+        ),
         "emotion_labels": ", ".join(sorted(all_emotions))
         if all_emotions
         else "joy, frustration, sadness, anger, neutral, surprise, fear, disgust",
@@ -834,9 +842,8 @@ async def render_prompt(
             )
     """
     # ── Resolve template text ──────────────────────────────────────────
-    if template_text is None:
-        if org_id is not None and db_session_factory is not None:
-            template_text = await resolve_prompt_template_by_type(
+    if template_text is None and org_id is not None and db_session_factory is not None:
+        template_text = await resolve_prompt_template_by_type(
                 prompt_type,
                 org_id,
                 db_session_factory,
@@ -960,7 +967,8 @@ def build_enrichment_prompt(system_prompt: str, ctx: dict[str, Any]) -> str:
     # ── Metadata ─────────────────────────────────────────────────────────
     metadata = ctx.get("message_metadata")
     if metadata:
-        parts.append(f"\n\n## MESSAGE METADATA\n\n{orjson.dumps(metadata, option=orjson.OPT_INDENT_2).decode()}")
+        metadata_json = orjson.dumps(metadata, option=orjson.OPT_INDENT_2).decode()
+        parts.append(f"\n\n## MESSAGE METADATA\n\n{metadata_json}")
 
     # ── Known entities ──────────────────────────────────────────────────
     known_entities: list = ctx.get("known_entities", [])
@@ -978,7 +986,8 @@ def build_enrichment_prompt(system_prompt: str, ctx: dict[str, Any]) -> str:
         parts.append("|---------|-----------|--------|\n")
         for f in existing_facts:
             parts.append(
-                f"| {f.get('subject', '')} | {f.get('predicate', '')} | {f.get('object', '')} |\n"
+                f"| {f.get('subject', '')} | {f.get('predicate', '')} "
+                f"| {f.get('object', '')} |\n"
             )
 
     # ── Recent history ──────────────────────────────────────────────────
@@ -1006,7 +1015,8 @@ def build_enrichment_prompt(system_prompt: str, ctx: dict[str, Any]) -> str:
         parts.append("|---------|-----------|--------|-------|\n")
         for f in related_facts:
             parts.append(
-                f"| {f.get('subject', '')} | {f.get('predicate', '')} | {f.get('object', '')} | {f.get('score', 0):.3f} |\n"
+                f"| {f.get('subject', '')} | {f.get('predicate', '')} "
+                f"| {f.get('object', '')} | {f.get('score', 0):.3f} |\n"
             )
 
     # ── Conversation to extract from ───────────────────────────────────

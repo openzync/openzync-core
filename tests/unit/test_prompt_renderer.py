@@ -11,7 +11,6 @@ Tests cover:
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -24,7 +23,6 @@ from services.worker.prompt_renderer import (
     render_prompt,
     resolve_prompt_template_by_type,
 )
-
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Fixtures
@@ -414,7 +412,7 @@ class TestAutoInjection:
         org_id: UUID,
         monkeypatch: MonkeyPatch,
     ) -> None:
-        """When return_context=True, both prompt string and context dict are returned."""
+        """When return_context=True, prompt string and context dict are returned."""
         from services.worker.prompt_renderer import (
             _PROVIDER_DISPATCH,
             DataSource,
@@ -496,7 +494,12 @@ class TestUserSummaryComputed:
         )
 
         async def mock_episodes(**kwargs: Any) -> dict[str, Any]:
-            return {"episodes": [{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello"}]}
+            return {
+                "episodes": [
+                    {"role": "user", "content": "Hi"},
+                    {"role": "assistant", "content": "Hello"},
+                ],
+            }
 
         async def mock_provider(**kwargs: Any) -> dict[str, Any]:
             return {}

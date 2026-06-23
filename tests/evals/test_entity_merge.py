@@ -16,8 +16,8 @@ These tests do **not** require a running LLM or database.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -25,7 +25,6 @@ from workers.tasks.merge_duplicate_entities import (
     _merge_cluster,
     _select_canonical,
 )
-
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 
@@ -66,7 +65,7 @@ def org_id() -> str:
 @pytest.fixture
 def sample_cluster() -> list[dict]:
     """A synthetic duplicate cluster of 3 entities with same name."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return [
         {
             "id": "11111111-1111-4111-a111-111111111111",
@@ -97,7 +96,7 @@ def single_entity_cluster() -> list[dict]:
             "id": "44444444-4444-4444-a444-444444444444",
             "name": "Sole Entity",
             "entity_type": "Person",
-            "updated_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(UTC),
         },
     ]
 
@@ -146,10 +145,10 @@ class TestSelectCanonical:
 
         # Make third entity most recently updated
         cluster = list(sample_cluster)
-        later = datetime.now(timezone.utc)
+        later = datetime.now(UTC)
         cluster[2]["updated_at"] = later
-        cluster[0]["updated_at"] = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        cluster[1]["updated_at"] = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        cluster[0]["updated_at"] = datetime(2024, 1, 1, tzinfo=UTC)
+        cluster[1]["updated_at"] = datetime(2024, 6, 1, tzinfo=UTC)
 
         canonical = await _select_canonical(
             mock_db, org_id, cluster,
@@ -300,7 +299,7 @@ class TestFindDuplicateClusters:
                 "id": "11111111-1111-4111-a111-111111111111",
                 "name": "Acme Corp",
                 "entity_type": "Organization",
-                "updated_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(UTC),
             },
         ]
         assert isinstance(cluster, list)
