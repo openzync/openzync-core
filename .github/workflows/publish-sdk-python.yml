@@ -13,8 +13,7 @@ name: Publish openzync Python SDK
 
 on:
   push:
-    paths:
-      - "oss/sdk-python/**"
+    branches: [master]
   pull_request:
     paths:
       - "oss/sdk-python/**"
