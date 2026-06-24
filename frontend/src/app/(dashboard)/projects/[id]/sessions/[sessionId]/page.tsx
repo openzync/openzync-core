@@ -21,6 +21,7 @@ import { smartTimestamp, truncateId, copyToClipboard } from "@/lib/utils";
 import { useProject } from "@/stores/project-context";
 import { ErrorState } from "@/components/shared/error-state";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -191,13 +192,15 @@ export default function SessionDetailPage() {
     <RequireAuth>
     <div className="space-y-6">
       {/* Back button */}
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={() => router.push(`/projects/${projectId}/sessions`)}
-        className="btn-ghost text-xs -ml-2"
+        className="-ml-2"
       >
         <ArrowLeft size={14} />
         Back to Sessions
-      </button>
+      </Button>
 
       {/* Breadcrumb */}
       {projectId && <Breadcrumb />}

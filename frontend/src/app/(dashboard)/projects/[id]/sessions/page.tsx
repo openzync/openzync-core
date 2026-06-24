@@ -227,11 +227,13 @@ export default function ProjectSessionsPage() {
                       <td className="px-4 py-3 text-surface-400 whitespace-nowrap">{formatDate(session.created_at)}</td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <button
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             onClick={() => router.push(`/projects/${projectId}/sessions/${session.id}`)}
-                            className="btn-ghost p-1.5" title="View session"><Eye size={15} /></button>
-                          <button onClick={() => setDeleteTarget(session)}
-                            className="btn-ghost p-1.5 text-surface-400 hover:text-error" title="Delete session"><Trash2 size={15} /></button>
+                            className="p-1.5" title="View session"><Eye size={15} /></Button>
+                          <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(session)}
+                            className="text-surface-400 hover:text-error" title="Delete session"><Trash2 size={15} /></Button>
                         </div>
                       </td>
                     </tr>
@@ -257,7 +259,7 @@ export default function ProjectSessionsPage() {
           <div className="fixed inset-0 z-50 bg-black/60" onClick={() => !creating && setShowCreateDialog(false)} />
           <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 card-base animate-slide-up">
             <div className="flex items-center justify-between px-6 py-4 border-b border-surface-800">
-              <h2 className="text-base font-semibold text-[#F2F2F2]">Create Session</h2>
+              <h2 className="text-base font-semibold text-text-primary">Create Session</h2>
               <button onClick={() => !creating && setShowCreateDialog(false)} className="text-surface-400 hover:text-surface-200" disabled={creating}>
                 <X size={18} />
               </button>

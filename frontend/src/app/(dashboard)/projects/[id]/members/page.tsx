@@ -260,13 +260,15 @@ export default function ProjectMembersPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       {!isOwner(member.role) && (
-                        <button
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           onClick={() => setRemoveTarget(member)}
-                          className="btn-ghost p-1.5 text-surface-400 hover:text-error"
+                          className="text-surface-400 hover:text-error"
                           title="Remove member"
                         >
                           <Trash2 size={15} />
-                        </button>
+                        </Button>
                       )}
                       {isOwner(member.role) && ownerCount <= 1 && (
                         <span className="text-xs text-surface-500">
@@ -290,7 +292,7 @@ export default function ProjectMembersPage() {
             />
             <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 card-base animate-slide-up">
               <div className="flex items-center justify-between px-6 py-4 border-b border-surface-800">
-                <h2 className="text-base font-semibold text-[#F2F2F2]">
+                <h2 className="text-base font-semibold text-text-primary">
                   Add Member
                 </h2>
                 <button

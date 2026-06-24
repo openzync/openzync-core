@@ -33,7 +33,7 @@ function ViewDialog({ schema, onClose }: { schema: Schema; onClose: () => void }
       <div className="fixed inset-0 z-50 bg-black/50 animate-fade-in" onClick={onClose} />
       <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-2xl -translate-x-1/2 -translate-y-1/2 rounded-lg border border-surface-800 bg-surface-900 p-6 shadow-xl shadow-black/40 animate-slide-up max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-[#F2F2F2]">{schema.name}</h2>
+          <h2 className="text-lg font-semibold text-text-primary">{schema.name}</h2>
           <button onClick={onClose} className="text-surface-400 hover:text-white p-1"><X size={18} /></button>
         </div>
         <div className="grid grid-cols-2 gap-4 mb-4">
@@ -128,7 +128,7 @@ export default function ExtractionsPage() {
                     <td className="px-4 py-3"><span className="text-xs text-surface-400">{schema.prompt_template ? "Yes" : "—"}</span></td>
                     <td className="px-4 py-3 text-surface-400 text-xs">{formatDate(schema.created_at)}</td>
                     <td className="px-4 py-3 text-right">
-                      <button onClick={() => setViewTarget(schema)} className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white" title="View schema"><Eye size={14} /></button>
+                      <Button variant="ghost" size="sm" onClick={() => setViewTarget(schema)} className="rounded-md text-surface-400 hover:text-white" title="View schema"><Eye size={14} /></Button>
                     </td>
                   </tr>
                 ))

@@ -32,7 +32,7 @@ export function Breadcrumb({ items, className }: BreadcrumbProps) {
               {item.label}
             </Link>
           ) : (
-            <span className="text-[#F2F2F2]">{item.label}</span>
+            <span className="text-text-primary">{item.label}</span>
           )}
         </span>
       ))}

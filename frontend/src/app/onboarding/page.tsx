@@ -6,6 +6,7 @@ import { Loader2, Eye, Brain, AudioWaveform, GitBranch, Settings2, Save, CheckCi
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/api-client";
 import { SecretInput } from "@/components/ui/secret-input";
+import { Button } from "@/components/ui/button";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -280,9 +281,9 @@ export default function OnboardingPage() {
         <div className="text-center mb-10">
           <div className="flex items-center justify-center gap-2 mb-4">
             <span className="text-brand-500 font-bold text-3xl">O</span>
-            <span className="text-2xl font-bold text-[#F2F2F2]">OpenZep</span>
+            <span className="text-2xl font-bold text-text-primary">OpenZep</span>
           </div>
-          <h1 className="text-2xl font-bold text-[#F2F2F2]">Complete Your Setup</h1>
+          <h1 className="text-2xl font-bold text-text-primary">Complete Your Setup</h1>
           <p className="text-sm text-surface-400 mt-1 max-w-md mx-auto">
             Configure your organization&apos;s LLM, embeddings, graph, and behaviour settings.
             Secrets like API keys must be filled in before you can use the platform.
@@ -648,10 +649,11 @@ export default function OnboardingPage() {
 
         {/* ── Actions ──────────────────────────────────────────────────────────── */}
         <div className="flex items-center justify-center gap-4 pb-10">
-          <button
+          <Button
+            variant="primary"
+            size="sm"
             onClick={handleSave}
             disabled={saving}
-            className="btn-primary text-sm"
           >
             {saving ? (
               <Loader2 size={16} className="animate-spin" />
@@ -659,14 +661,15 @@ export default function OnboardingPage() {
               <Save size={16} />
             )}
             {saving ? "Saving..." : "Save & Continue"}
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={() => router.replace("/overview")}
             disabled={saving}
-            className="btn-secondary text-sm"
           >
             Skip for now
-          </button>
+          </Button>
         </div>
       </div>
 

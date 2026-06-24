@@ -20,6 +20,7 @@ import { useProject } from "@/stores/project-context";
 import SessionTabs from "../tabs";
 import { EmptyState } from "@/components/shared/empty-state";
 import { ErrorState } from "@/components/shared/error-state";
+import { Button } from "@/components/ui/button";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -183,14 +184,16 @@ export default function MessagesPage() {
             </span>
           </p>
         </div>
-        <button
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={scrollToBottom}
-          className="btn-ghost text-xs flex items-center gap-1"
+          className="flex items-center gap-1"
           title="Scroll to bottom"
         >
           <ArrowUp size={14} className="rotate-180" />
           Latest
-        </button>
+        </Button>
       </div>
 
       {/* Messages container */}
@@ -204,10 +207,11 @@ export default function MessagesPage() {
           {allLoaded ? (
             <span className="text-xs text-surface-500">All messages loaded</span>
           ) : (
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={handleLoadOlder}
               disabled={loadOlderLoading}
-              className="btn-ghost text-xs"
             >
               {loadOlderLoading ? (
                 <>
@@ -220,7 +224,7 @@ export default function MessagesPage() {
                   Load older messages
                 </>
               )}
-            </button>
+            </Button>
           )}
         </div>
 

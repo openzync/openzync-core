@@ -243,13 +243,15 @@ export default function ProjectApiKeysPage() {
                       </td>
                       <td className="px-4 py-3 text-center">
                         {!key.is_revoked && (
-                          <button
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             onClick={() => setRevokeTarget(key)}
-                            className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-error"
+                            className="rounded-md text-surface-400 hover:text-error"
                             title="Revoke key"
                           >
                             <Ban size={14} />
-                          </button>
+                          </Button>
                         )}
                       </td>
                     </tr>
@@ -267,7 +269,7 @@ export default function ProjectApiKeysPage() {
           <div className="fixed inset-0 z-50 bg-black/50" onClick={closeCreate} />
           <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-surface-800 bg-surface-900 p-6 shadow-xl shadow-black/40 animate-slide-up">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-[#F2F2F2]">
+              <h3 className="text-lg font-semibold text-text-primary">
                 {createdKey ? "Key Created" : "Create API Key"}
               </h3>
               <button onClick={closeCreate} className="text-surface-400 hover:text-white">
@@ -301,13 +303,15 @@ export default function ProjectApiKeysPage() {
                 <div className="rounded-lg border border-surface-700 bg-surface-950 p-4">
                   <div className="flex items-center justify-between mb-2">
                     <span className="text-xs text-surface-500 font-medium uppercase tracking-wider">Your API Key</span>
-                    <button
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={handleCopy}
-                      className="btn-ghost p-1 text-surface-400 hover:text-white"
+                      className="text-surface-400 hover:text-white"
                       title="Copy to clipboard"
                     >
                       {copied ? <CheckCircle size={14} className="text-success" /> : <Copy size={14} />}
-                    </button>
+                    </Button>
                   </div>
                   <code className="block text-sm font-mono text-accent-300 break-all select-all">
                     {showRawKey ? createdKey.raw_key : createdKey.raw_key.slice(0, 20) + "••••"}

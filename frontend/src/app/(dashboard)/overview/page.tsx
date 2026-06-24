@@ -14,6 +14,7 @@ import { get } from "@/lib/api-client";
 import { timeAgo, actionLabel, formatNumber } from "@/lib/utils";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatCard } from "@/components/shared/stat-card";
+import { Button } from "@/components/ui/button";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -105,27 +106,33 @@ export default function OverviewPage() {
         <div className="card-base p-4">
           <h3 className="text-sm font-medium mb-2">Quick Actions</h3>
           <div className="space-y-2">
-            <button
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => router.push("/memory")}
-              className="btn-secondary w-full text-xs justify-start"
+              className="w-full justify-start"
             >
               <MessageCircle size={14} className="mr-2" />
               Ingest Memory
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => router.push("/users")}
-              className="btn-secondary w-full text-xs justify-start"
+              className="w-full justify-start"
             >
               <Users size={14} className="mr-2" />
               Create User
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => router.push("/sessions")}
-              className="btn-secondary w-full text-xs justify-start"
+              className="w-full justify-start"
             >
               <MessageSquare size={14} className="mr-2" />
               New Session
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -181,9 +188,9 @@ export default function OverviewPage() {
           <div className="h-12 rounded bg-surface-800 animate-pulse" />
         ) : (
           <div className="text-sm text-surface-400">
-            <span className="text-[#F2F2F2] font-medium">{formatNumber(stats?.total_messages ?? 0)}</span> total messages ·
-            <span className="text-[#F2F2F2] font-medium ml-1">{formatNumber(stats?.total_sessions ?? 0)}</span> sessions ·
-            <span className="text-[#F2F2F2] font-medium ml-1">{formatNumber(stats?.total_episodes ?? 0)}</span> episodes
+            <span className="text-text-primary font-medium">{formatNumber(stats?.total_messages ?? 0)}</span> total messages ·
+            <span className="text-text-primary font-medium ml-1">{formatNumber(stats?.total_sessions ?? 0)}</span> sessions ·
+            <span className="text-text-primary font-medium ml-1">{formatNumber(stats?.total_episodes ?? 0)}</span> episodes
           </div>
         )}
       </div>

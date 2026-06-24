@@ -62,7 +62,7 @@ export function ConfirmDialog({
           "rounded-lg border border-surface-800 bg-surface-900 p-6 shadow-xl shadow-black/40 animate-slide-up",
         )}
       >
-        <h3 className="text-lg font-semibold text-[#F2F2F2]">{title}</h3>
+        <h3 className="text-lg font-semibold text-text-primary">{title}</h3>
         <p className="mt-2 text-sm text-surface-400">{message}</p>
         <div className="mt-6 flex justify-end gap-3">
           <Button variant="secondary" onClick={onCancel} disabled={loading}>
