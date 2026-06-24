@@ -160,11 +160,18 @@ class FalkorGraphBackend(GraphBackend):
         except Exception as exc:
             err_str = str(exc).lower()
             if "already exists" in err_str:
-                logger.debug("falkordb_graph.schema_already_exists")
+                logger.info(
+                    "falkordb_graph.schema_already_exists",
+                    extra={"graph_key": graph.name},
+                )
                 return
             logger.warning(
                 "falkordb_graph.schema_bootstrap_failed",
-                extra={"error": str(exc)},
+                extra={
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                    "graph_key": graph.name,
+                },
             )
 
     @staticmethod
@@ -508,12 +515,13 @@ class FalkorGraphBackend(GraphBackend):
             return await self.get_entity(org_id, project_id, entity_id)
 
         set_clause = ", ".join(set_parts)
+        params["now"] = datetime.now(timezone.utc).isoformat()
 
         try:
             result = await graph.query(
                 f"""
                 MATCH (n:Entity {{id: $id}})
-                SET {set_clause}, n.updated_at = timestamp()
+                SET {set_clause}, n.updated_at = $now
                 RETURN n.id, n.name, n.entity_type, n.summary, n.attributes, n.created_at
                 """,
                 params,

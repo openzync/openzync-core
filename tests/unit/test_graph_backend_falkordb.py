@@ -481,10 +481,14 @@ class TestFalkorGraphBackendEntityCrud:
         )
 
         query = mock_graph.query.call_args[0][0]
+        params = mock_graph.query.call_args[0][1]
         assert "n.name = $name" in query
         assert "n.summary = $summary" not in query  # not provided
         assert "n.entity_type = $entity_type" not in query
         assert "n.attributes = $attributes" not in query
+        assert "n.updated_at = $now" in query
+        assert "now" in params
+        assert params["now"] != ""
 
         assert result is not None
         assert result["name"] == "updated-name"
@@ -509,10 +513,14 @@ class TestFalkorGraphBackendEntityCrud:
         )
 
         query = mock_graph.query.call_args[0][0]
+        params = mock_graph.query.call_args[0][1]
         assert "n.name = $name" in query
         assert "n.summary = $summary" in query
         assert "n.entity_type = $entity_type" in query
         assert "n.attributes = $attributes" in query
+        assert "n.updated_at = $now" in query
+        assert "now" in params
+        assert params["now"] != ""
 
     @staticmethod
     async def test_update_entity_not_found(
