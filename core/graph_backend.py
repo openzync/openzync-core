@@ -62,12 +62,16 @@ class GraphBackendDispatcher:
         dispatcher = GraphBackendDispatcher()
         dispatcher.register("postgres", PostgresGraphBackend)
         dispatcher.register("surrealdb", SurrealGraphBackend)
+        dispatcher.register("falkordb", FalkorGraphBackend)
 
         # Per-request (Postgres):
         backend = dispatcher.resolve_and_create(org_config, db)
 
         # Per-request (SurrealDB):
         backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
+
+        # Per-request (FalkorDB):
+        backend = dispatcher.resolve_and_create(org_config, db, falkordb_client=falkordb)
     """
 
     def __init__(self) -> None:
@@ -96,6 +100,7 @@ class GraphBackendDispatcher:
         org_config: OrgConfigBase | None,
         db: AsyncSession,
         surreal: Any = None,
+        falkordb_client: Any = None,
     ) -> GraphBackend | None:
         """Resolve the backend name from ``org_config`` and create an instance.
 
@@ -112,6 +117,9 @@ class GraphBackendDispatcher:
           Receives ``db`` and ``graph_max_traversal_depth``.
         - **``"surrealdb"``**: Creates a :class:`SurrealGraphBackend`.
           Receives ``surreal`` and ``graph_max_traversal_depth``.
+        - **``"falkordb"``**: Creates a :class:`FalkorGraphBackend`.
+          Receives ``client`` (the ``FalkorDB`` instance) and
+          ``max_traversal_depth``.
 
         Args:
             org_config: The resolved per-org configuration.  May be ``None``
@@ -121,6 +129,9 @@ class GraphBackendDispatcher:
             surreal: An optional ``AsyncSurreal`` instance from the per-org
                 connection pool.  Passed only to the SurrealDB backend.
                 May be ``None`` (backend degrades gracefully).
+            falkordb_client: An optional ``FalkorDB`` async client instance
+                from the app-level connection pool.  Passed only to the
+                FalkorDB backend.  May be ``None`` (backend degrades gracefully).
 
         Returns:
             An initialised ``GraphBackend`` instance, or ``None`` if graph
@@ -163,6 +174,14 @@ class GraphBackendDispatcher:
                 and org_config.graph_max_traversal_depth is not None
             ):
                 kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
+        elif backend_name == "falkordb":
+            if falkordb_client is not None:
+                kwargs["client"] = falkordb_client
+            if (
+                org_config is not None
+                and org_config.graph_max_traversal_depth is not None
+            ):
+                kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
 
         backend = cls(**kwargs)
         logger.info(
@@ -176,14 +195,15 @@ class GraphBackendDispatcher:
         db: AsyncSession,
         org_config: OrgConfigBase | None = None,
         surreal: Any = None,
+        falkordb_client: Any = None,
     ) -> list[GraphBackend]:
         """Create one instance of every registered backend.
 
         This is the multi-backend equivalent of ``resolve_and_create``.
         Instead of picking one backend from the org config, it creates
         **all** registered backends.  Each backend receives backend-
-        specific kwargs (``db`` for Postgres, ``surreal`` for SurrealDB)
-        and any shared kwargs from ``org_config``.
+        specific kwargs (``db`` for Postgres, ``surreal`` for SurrealDB,
+        ``client`` for FalkorDB) and any shared kwargs from ``org_config``.
 
         Callers (e.g. ``HybridRetriever``) run these backends in parallel
         and merge results.  An empty list is returned when no backends
@@ -196,6 +216,9 @@ class GraphBackendDispatcher:
                 such as ``graph_max_traversal_depth``.
             surreal: An optional ``AsyncSurreal`` instance from the per-org
                 connection pool.  Only passed to the SurrealDB backend.
+            falkordb_client: An optional ``FalkorDB`` async client instance
+                from the app-level connection pool.  Only passed to the
+                FalkorDB backend.
 
         Returns:
             A list of initialised ``GraphBackend`` instances (may be empty).
@@ -213,6 +236,14 @@ class GraphBackendDispatcher:
             elif backend_name == "surrealdb":
                 if surreal is not None:
                     kwargs["surreal"] = surreal
+                if (
+                    org_config is not None
+                    and org_config.graph_max_traversal_depth is not None
+                ):
+                    kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
+            elif backend_name == "falkordb":
+                if falkordb_client is not None:
+                    kwargs["client"] = falkordb_client
                 if (
                     org_config is not None
                     and org_config.graph_max_traversal_depth is not None
@@ -273,10 +304,12 @@ def init_dispatcher() -> GraphBackendDispatcher:
 
     To add a new backend, import its class and register it here.
     """
+    from packages.graph_backend.falkordb import FalkorGraphBackend
     from packages.graph_backend.postgres import PostgresGraphBackend
     from packages.graph_backend.surrealdb import SurrealGraphBackend
 
     dispatcher = GraphBackendDispatcher()
     dispatcher.register("surrealdb", SurrealGraphBackend)
     dispatcher.register("postgres", PostgresGraphBackend)
+    dispatcher.register("falkordb", FalkorGraphBackend)
     return dispatcher
