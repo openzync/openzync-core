@@ -35,6 +35,7 @@ from uuid import UUID
 import orjson
 import structlog
 from surrealdb import AsyncSurreal, RecordID
+from surrealdb.errors import InternalError, SurrealError, parse_query_error
 
 from core.exceptions import ExternalServiceError
 from packages.graph_backend.interface import GraphBackend
@@ -52,8 +53,10 @@ MAX_TRAVERSAL_DEPTH: int = 5
 _DEFINE_SURQL: str = """
 -- 1. Analyzer for entity full-text search (BM25 via @@ operator)
 DEFINE ANALYZER openzep_entity
-    TOKENIZERS blank,class
-    FILTERS lowercase,ascii,snowball;
+    TOKENIZERS blank, class
+    FILTERS lowercase
+    FILTERS ascii
+    FILTERS snowball(english);
 
 -- 2. Entity table
 DEFINE TABLE entity SCHEMAFULL;
@@ -62,9 +65,9 @@ DEFINE FIELD project_id ON entity TYPE string;
 DEFINE FIELD name ON entity TYPE string;
 DEFINE FIELD entity_type ON entity TYPE string;
 DEFINE FIELD summary ON entity TYPE string;
-DEFINE FIELD attributes ON entity TYPE object;
-DEFINE FIELD created_at ON entity TYPE datetime;
-DEFINE FIELD updated_at ON entity TYPE datetime;
+DEFINE FIELD attributes ON entity TYPE object FLEXIBLE DEFAULT {};
+DEFINE FIELD created_at ON entity TYPE datetime DEFAULT time::now();
+DEFINE FIELD updated_at ON entity TYPE datetime VALUE time::now();
 
 -- 3. Full-text BM25 indexes (required for @@ operator)
 DEFINE INDEX entity_name_fts ON entity FIELDS name
@@ -158,13 +161,28 @@ class SurrealGraphBackend(GraphBackend):
         Runs ``DEFINE ANALYZER``, ``DEFINE TABLE``, and ``DEFINE INDEX``
         statements once per backend instance.  Guarded by ``_schema_ensured``.
         Safe to call multiple times — subsequent calls are no-ops.
+
+        SurrealDB 3.x removed ``IF NOT EXISTS`` from ``DEFINE`` statements,
+        so duplicate ``DEFINE`` calls return ``InternalError`` with "already
+        exists".  This method catches that specific error and treats it as a
+        no-op, making schema bootstrap truly idempotent regardless of
+        SurrealDB version or backend instance lifecycle.
         """
         if self._schema_ensured or self._surreal is None:
             return
         try:
             await self._surreal.query(_DEFINE_SURQL)
-            self._schema_ensured = True
-            logger.info("surreal_graph.schema_ensured")
+        except InternalError as exc:
+            # SurrealDB 3.x rejects duplicate DEFINE statements with
+            # "already exists" — this is harmless, treat as idempotent.
+            if "already exists" in str(exc).lower():
+                logger.debug(
+                    "surreal_graph.schema_already_exists",
+                    extra={"error": str(exc)},
+                )
+                self._schema_ensured = True
+                return
+            raise  # some other InternalError — let the outer handler deal with it
         except Exception as exc:
             logger.error(
                 "surreal_graph.schema_bootstrap_failed",
@@ -174,6 +192,8 @@ class SurrealGraphBackend(GraphBackend):
                 message=f"SurrealDB schema bootstrap failed: {exc}",
                 detail={"error": str(exc)},
             ) from exc
+        self._schema_ensured = True
+        logger.info("surreal_graph.schema_ensured")
 
     # ── Internal Helpers ─────────────────────────────────────────────────────
 
@@ -266,6 +286,41 @@ class SurrealGraphBackend(GraphBackend):
                 detail={"reason": "surreal is None"},
             )
 
+    async def _query_last(
+        self, query: str, params: dict[str, Any] | None = None
+    ) -> list[Any]:
+        """Execute a multi-statement query and return the **last** statement's result.
+
+        The SDK's ``query()`` only returns the first statement's result, but
+        our ``LET + RETURN IF/THEN/ELSE`` upsert pattern (used in
+        :meth:`create_entity` and :meth:`create_relationship`) needs the
+        ``RETURN`` statement's output.
+
+        This helper calls ``query_raw()``, validates every statement, and
+        returns the last result set.
+
+        Returns:
+            The result list from the final statement (e.g. ``[record_dict]``
+            for a ``SELECT`` or ``RETURN AFTER`` statement, or ``[]`` for an
+            empty set).
+        """
+        response = await self._surreal.query_raw(query, params)
+        # Inline response validation (avoids calling SDK methods that are
+        # mocked as async in tests, causing unawaited-coroutine warnings).
+        if not isinstance(response, dict) or response.get("error"):
+            raise SurrealError(
+                str(response.get("error", "Invalid query response"))
+            )
+        results: list[dict[str, Any]] = response.get("result", [])
+        if not results:
+            raise SurrealError(
+                "Query returned no result statements"
+            )
+        for stmt in results:
+            if stmt.get("status") == "ERR":
+                raise parse_query_error(stmt)
+        return results[-1].get("result", [])
+
     # ── Entity CRUD ─────────────────────────────────────────────────────────
 
     async def create_entity(
@@ -341,9 +396,9 @@ class SurrealGraphBackend(GraphBackend):
         }
 
         try:
-            result = await self._surreal.query(query, params)
-            # result = [[], [record_dict]] — last statement is the RETURN
-            record = result[-1][0]
+            result = await self._query_last(query, params)
+            # result = [record_dict] — last statement is the RETURN
+            record = result[0]
             entity = self._row_to_entity(record)
 
             logger.info(
@@ -402,7 +457,7 @@ class SurrealGraphBackend(GraphBackend):
                 """,
                 params,
             )
-            rows = result[0]
+            rows = result
             if not rows:
                 return None
             return self._row_to_entity(rows[0])
@@ -452,7 +507,7 @@ class SurrealGraphBackend(GraphBackend):
                 """,
                 params,
             )
-            deleted = len(result[0]) > 0
+            deleted = len(result) > 0
             if deleted:
                 logger.info(
                     "surreal_graph.entity_deleted",
@@ -537,7 +592,7 @@ class SurrealGraphBackend(GraphBackend):
                 """,
                 params,
             )
-            rows = result[0]
+            rows = result
             if not rows:
                 return None
             return self._row_to_entity(rows[0])
@@ -634,9 +689,9 @@ class SurrealGraphBackend(GraphBackend):
         """
 
         try:
-            result = await self._surreal.query(query, params)
-            # result = [[], [edge_record_dict]]
-            record = result[-1][0]
+            result = await self._query_last(query, params)
+            # result = [edge_record_dict]
+            record = result[0]
             relationship = self._row_to_relationship(record)
 
             logger.info(
@@ -739,7 +794,7 @@ class SurrealGraphBackend(GraphBackend):
                             f"SELECT VALUE ->{safe_et}->entity.id FROM $current_id;",
                             {"current_id": RecordID("entity", current_id)},
                         )
-                        for row in (et_result[0] or []):
+                        for row in (et_result or []):
                             neighbour_ids.add(self._record_id_to_str(row))
                 else:
                     et_result = await self._surreal.query(
@@ -747,7 +802,7 @@ class SurrealGraphBackend(GraphBackend):
                         {"current_id": RecordID("entity", current_id)},
                     )
                     neighbour_ids = set()
-                    for row in (et_result[0] or []):
+                    for row in (et_result or []):
                         neighbour_ids.add(self._record_id_to_str(row))
 
                 for nid in neighbour_ids:
@@ -794,13 +849,11 @@ class SurrealGraphBackend(GraphBackend):
             "query": query,
             "entity_types": types or [],
             "entity_types_null": types is None,
-            "limit": limit,
-            "offset": offset,
         }
 
         try:
             result = await self._surreal.query(
-                """
+                f"""
                 SELECT *, search::score(0) AS score
                 FROM entity
                 WHERE organization_id = $org_id
@@ -808,11 +861,11 @@ class SurrealGraphBackend(GraphBackend):
                   AND (name @@ $query OR summary @@ $query)
                   AND ($entity_types_null OR entity_type IN $entity_types)
                 ORDER BY score DESC
-                LIMIT $limit OFFSET $offset;
+                LIMIT {limit} START {offset};
                 """,
                 params,
             )
-            rows = result[0] or []
+            rows = result or []
             entities = []
             for row in rows:
                 entity = self._row_to_entity(row)
@@ -863,8 +916,6 @@ class SurrealGraphBackend(GraphBackend):
         params: dict[str, Any] = {
             "org_id": str(org_id),
             "project_id": str(project_id),
-            "limit": limit + 1,
-            "offset": offset,
         }
 
         where_clause = (
@@ -881,11 +932,11 @@ class SurrealGraphBackend(GraphBackend):
                 SELECT * FROM entity
                 WHERE {where_clause}
                 ORDER BY created_at ASC, id ASC
-                LIMIT $limit START $offset;
+                LIMIT {limit + 1} START {offset};
                 """,
                 params,
             )
-            rows = result[0] or []
+            rows = result or []
             has_more = len(rows) > limit
             items = self._rows_to_entities(rows[:limit])
 
@@ -938,8 +989,6 @@ class SurrealGraphBackend(GraphBackend):
 
         params: dict[str, Any] = {
             "eid": RecordID("entity", str(entity_id)),
-            "limit": limit + 1,
-            "offset": offset,
         }
 
         try:
@@ -950,22 +999,22 @@ class SurrealGraphBackend(GraphBackend):
                     SELECT *, meta::tb(id) AS edge_table_name
                     FROM (SELECT VALUE ->{safe_pred} FROM $eid)
                     ORDER BY created_at DESC
-                    LIMIT $limit START $offset;
+                    LIMIT {limit + 1} START {offset};
                     """,
                     params,
                 )
             else:
                 result = await self._surreal.query(
-                    """
+                    f"""
                     SELECT *, meta::tb(id) AS edge_table_name
                     FROM (SELECT VALUE <->? FROM $eid)
                     ORDER BY created_at DESC
-                    LIMIT $limit START $offset;
+                    LIMIT {limit + 1} START {offset};
                     """,
                     params,
                 )
 
-            rows = result[0] or []
+            rows = result or []
             has_more = len(rows) > limit
             items = [self._row_to_relationship(r) for r in rows[:limit]]
 

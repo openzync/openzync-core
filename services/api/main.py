@@ -16,6 +16,7 @@ Or via the ASGI entry point:
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -63,6 +64,9 @@ from routers import (
     structured_extractions,
     users,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def create_app() -> FastAPI:

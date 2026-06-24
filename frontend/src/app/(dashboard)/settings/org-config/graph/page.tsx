@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { get, patch, ApiError } from "@/lib/api-client";
 import { ErrorState } from "@/components/shared/error-state";
 import { Button } from "@/components/ui/button";
+import { SecretInput } from "@/components/ui/secret-input";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -14,14 +15,18 @@ interface OrgConfigResponse {
   stored: Record<string, unknown>;
 }
 
-type GraphBackend = "postgres" | "graphiti" | "none";
+type GraphBackend = "postgres" | "surrealdb" | "none";
 type GraphSearchType = "hybrid" | "bm25" | "vector";
 
 interface FormState {
   graph_backend: GraphBackend;
   graph_search_type: GraphSearchType;
   graph_max_traversal_depth: number;
-  falkordb_url: string;
+  surrealdb_url: string;
+  surrealdb_user: string;
+  surrealdb_pass: string;
+  surrealdb_namespace: string;
+  surrealdb_database: string;
 }
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -30,12 +35,16 @@ const FIELDS: (keyof FormState)[] = [
   "graph_backend",
   "graph_search_type",
   "graph_max_traversal_depth",
-  "falkordb_url",
+  "surrealdb_url",
+  "surrealdb_user",
+  "surrealdb_pass",
+  "surrealdb_namespace",
+  "surrealdb_database",
 ];
 
 const GRAPH_BACKEND_OPTIONS: { value: GraphBackend; label: string }[] = [
   { value: "postgres", label: "PostgreSQL (pgvector)" },
-  { value: "graphiti", label: "Graphiti (FalkorDB)" },
+  { value: "surrealdb", label: "SurrealDB" },
   { value: "none", label: "No graph backend" },
 ];
 
@@ -52,13 +61,18 @@ export default function GraphConfigPage() {
     graph_backend: "postgres",
     graph_search_type: "hybrid",
     graph_max_traversal_depth: 3,
-    falkordb_url: "",
+    surrealdb_url: "",
+    surrealdb_user: "",
+    surrealdb_pass: "",
+    surrealdb_namespace: "",
+    surrealdb_database: "",
   });
   const [initialForm, setInitialForm] = useState<FormState>({ ...form });
   const [stored, setStored] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showSurrealDbPass, setShowSurrealDbPass] = useState(false);
 
   // ── Fetch config ──────────────────────────────────────────────────────────
 
@@ -89,7 +103,11 @@ export default function GraphConfigPage() {
         graph_backend: val("graph_backend", "postgres") as GraphBackend,
         graph_search_type: val("graph_search_type", "hybrid") as GraphSearchType,
         graph_max_traversal_depth: val("graph_max_traversal_depth", 3) as number,
-        falkordb_url: val("falkordb_url", "") as string,
+        surrealdb_url: val("surrealdb_url", "") as string,
+        surrealdb_user: val("surrealdb_user", "") as string,
+        surrealdb_pass: val("surrealdb_pass", "") as string,
+        surrealdb_namespace: val("surrealdb_namespace", "") as string,
+        surrealdb_database: val("surrealdb_database", "") as string,
       };
       setForm(current);
       setInitialForm(current);
@@ -108,6 +126,7 @@ export default function GraphConfigPage() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchConfig();
   }, [fetchConfig]);
 
@@ -256,31 +275,118 @@ export default function GraphConfigPage() {
                 </div>
               </div>
 
-              {/* falkordb_url — conditionally shown */}
-              {form.graph_backend === "graphiti" && (
-                <div>
-                  <label className="block text-sm font-medium text-surface-300 mb-1">
-                    FalkorDB URL
-                  </label>
-                  <div className="flex gap-2 items-start">
-                    <input
-                      className="input-base flex-1"
-                      type="url"
-                      placeholder="falkordb://username:password@host:port"
-                      value={form.falkordb_url}
-                      onChange={(e) => updateField("falkordb_url", e.target.value)}
-                    />
-                    {isFieldSet("falkordb_url") && (
-                      <button
-                        onClick={() => handleResetField("falkordb_url")}
-                        className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
-                        title="Reset to default"
-                      >
-                        <X size={14} />
-                      </button>
-                    )}
+              {/* SurrealDB connection fields — conditionally shown */}
+              {form.graph_backend === "surrealdb" && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-surface-300 mb-1">
+                      SurrealDB URL
+                    </label>
+                    <div className="flex gap-2 items-start">
+                      <input
+                        className="input-base flex-1"
+                        type="url"
+                        placeholder="ws://surrealdb:8000/rpc"
+                        value={form.surrealdb_url}
+                        onChange={(e) => updateField("surrealdb_url", e.target.value)}
+                      />
+                      {isFieldSet("surrealdb_url") && (
+                        <button
+                          onClick={() => handleResetField("surrealdb_url")}
+                          className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                          title="Reset to default"
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+                    <p className="text-xs text-surface-500 mt-1">Required when using SurrealDB backend</p>
                   </div>
-                  <p className="text-xs text-surface-500 mt-1">Required when using Graphiti backend</p>
+
+                  {/* surrealdb_user */}
+                  <div>
+                    <label className="block text-sm font-medium text-surface-300 mb-1">
+                      SurrealDB Username
+                    </label>
+                    <div className="flex gap-2 items-start">
+                      <input
+                        className="input-base flex-1"
+                        type="text"
+                        placeholder="SurrealDB username"
+                        value={form.surrealdb_user}
+                        onChange={(e) => updateField("surrealdb_user", e.target.value)}
+                      />
+                      {isFieldSet("surrealdb_user") && (
+                        <button
+                          onClick={() => handleResetField("surrealdb_user")}
+                          className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                          title="Reset to default"
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* surrealdb_pass */}
+                  <SecretInput
+                    label="SurrealDB Password"
+                    value={form.surrealdb_pass}
+                    onChange={(v) => updateField("surrealdb_pass", v)}
+                    placeholder="SurrealDB password"
+                    visible={showSurrealDbPass}
+                    onToggleVisibility={() => setShowSurrealDbPass((prev) => !prev)}
+                  />
+
+                  {/* surrealdb_namespace */}
+                  <div>
+                    <label className="block text-sm font-medium text-surface-300 mb-1">
+                      SurrealDB Namespace
+                    </label>
+                    <div className="flex gap-2 items-start">
+                      <input
+                        className="input-base flex-1"
+                        type="text"
+                        placeholder="SurrealDB namespace"
+                        value={form.surrealdb_namespace}
+                        onChange={(e) => updateField("surrealdb_namespace", e.target.value)}
+                      />
+                      {isFieldSet("surrealdb_namespace") && (
+                        <button
+                          onClick={() => handleResetField("surrealdb_namespace")}
+                          className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                          title="Reset to default"
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* surrealdb_database */}
+                  <div>
+                    <label className="block text-sm font-medium text-surface-300 mb-1">
+                      SurrealDB Database
+                    </label>
+                    <div className="flex gap-2 items-start">
+                      <input
+                        className="input-base flex-1"
+                        type="text"
+                        placeholder="SurrealDB database"
+                        value={form.surrealdb_database}
+                        onChange={(e) => updateField("surrealdb_database", e.target.value)}
+                      />
+                      {isFieldSet("surrealdb_database") && (
+                        <button
+                          onClick={() => handleResetField("surrealdb_database")}
+                          className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                          title="Reset to default"
+                        >
+                          <X size={14} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
                 </div>
               )}
 

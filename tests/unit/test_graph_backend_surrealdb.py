@@ -50,7 +50,7 @@ OTHER_ENTITY_ID = UUID("00000000-0000-0000-0000-000000000006")
 def mock_surreal() -> AsyncMock:
     """A mocked ``AsyncSurreal`` that returns empty results by default."""
     surreal = AsyncMock()
-    surreal.query.return_value = [[]]
+    surreal.query.return_value = []
     return surreal
 
 
@@ -93,25 +93,25 @@ def setup_traverse(mock_surreal: AsyncMock) -> Callable[..., None]:
         _neighbors.clear()
         _neighbors.update(neighbors)
 
-        async def side_effect(query: str, params: dict[str, Any] | None = None) -> list[list]:
+        async def side_effect(query: str, params: dict[str, Any] | None = None) -> list[Any]:
             if not params:
-                return [[]]
+                return []
 
             # Neighbour discovery  (SELECT VALUE ->?->entity.id FROM $current_id)
             if "SELECT VALUE" in query:
                 cid = params.get("current_id")
                 eid = str(cid.id) if hasattr(cid, "id") else ""
                 nids = _neighbors.get(eid, [])
-                return [[RecordID("entity", n) for n in nids]]
+                return [RecordID("entity", n) for n in nids]
 
             # Entity fetch  (SELECT * FROM entity WHERE id = $id …)
             if "SELECT" in query and "FROM entity" in query:
                 eid_param = params.get("id")
                 eid = str(eid_param.id) if hasattr(eid_param, "id") else ""
                 rec = _entities.get(eid)
-                return [[rec]] if rec else [[]]
+                return [rec] if rec else []
 
-            return [[]]
+            return []
 
         mock_surreal.query.side_effect = side_effect
 
@@ -224,7 +224,13 @@ class TestSurrealGraphBackendEntityCrud:
     ) -> None:
         """New entity: verifies CREATE pattern in SurrealQL and return shape."""
         record = make_entity_record(name="test", entity_type="Person")
-        mock_surreal.query.return_value = [[], [record]]
+        mock_surreal.query_raw.return_value = {
+            "result": [
+                {"status": "OK", "result": []},
+                {"status": "OK", "result": [record]},
+            ],
+            "time": "1ms",
+        }
 
         result = await backend.create_entity(
             org_id=ORG_ID,
@@ -234,7 +240,7 @@ class TestSurrealGraphBackendEntityCrud:
         )
 
         # SurrealQL contains the upsert pattern
-        call = mock_surreal.query.call_args
+        call = mock_surreal.query_raw.call_args
         query = call[0][0]
         assert "CREATE entity SET" in query
         assert "IF array::len($existing) > 0 THEN" in query
@@ -257,7 +263,13 @@ class TestSurrealGraphBackendEntityCrud:
     ) -> None:
         """Entity name is lowered and stripped before query."""
         record = make_entity_record(name="  MixedCase  ", entity_type="Custom")
-        mock_surreal.query.return_value = [[], [record]]
+        mock_surreal.query_raw.return_value = {
+            "result": [
+                {"status": "OK", "result": []},
+                {"status": "OK", "result": [record]},
+            ],
+            "time": "1ms",
+        }
 
         await backend.create_entity(
             org_id=ORG_ID,
@@ -266,7 +278,7 @@ class TestSurrealGraphBackendEntityCrud:
             entity_type="Custom",
         )
 
-        params = mock_surreal.query.call_args[0][1]
+        params = mock_surreal.query_raw.call_args[0][1]
         assert params["name"] == "mixedcase"
 
     @staticmethod
@@ -275,7 +287,7 @@ class TestSurrealGraphBackendEntityCrud:
         mock_surreal: AsyncMock,
     ) -> None:
         """SurrealDB error is wrapped in ``ExternalServiceError``."""
-        mock_surreal.query.side_effect = RuntimeError("DB connection lost")
+        mock_surreal.query_raw.side_effect = RuntimeError("DB connection lost")
 
         with pytest.raises(ExternalServiceError, match="DB connection lost"):
             await backend.create_entity(
@@ -291,8 +303,8 @@ class TestSurrealGraphBackendEntityCrud:
     @pytest.mark.parametrize(
         ("scenario", "query_return", "expected"),
         [
-            ("found", [[make_entity_record()]], "test-entity"),
-            ("not_found", [[]], None),
+            ("found", [make_entity_record()], "test-entity"),
+            ("not_found", [], None),
         ],
     )
     async def test_get_entity(
@@ -320,8 +332,8 @@ class TestSurrealGraphBackendEntityCrud:
     @pytest.mark.parametrize(
         ("scenario", "query_return", "expected"),
         [
-            ("exists", [[{"id": RecordID("entity", str(ENTITY_ID))}]], True),
-            ("not_exists", [[]], False),
+            ("exists", [{"id": RecordID("entity", str(ENTITY_ID))}], True),
+            ("not_exists", [], False),
         ],
     )
     async def test_delete_entity(
@@ -346,7 +358,7 @@ class TestSurrealGraphBackendEntityCrud:
     ) -> None:
         """Only provided fields are included in the SET clause."""
         record = make_entity_record(name="updated-name")
-        mock_surreal.query.return_value = [[record]]
+        mock_surreal.query.return_value = [record]
 
         result = await backend.update_entity(
             org_id=ORG_ID,
@@ -370,7 +382,7 @@ class TestSurrealGraphBackendEntityCrud:
         mock_surreal: AsyncMock,
     ) -> None:
         """Returns None when entity does not exist."""
-        mock_surreal.query.return_value = [[]]
+        mock_surreal.query.return_value = []
 
         result = await backend.update_entity(
             org_id=ORG_ID,
@@ -387,7 +399,7 @@ class TestSurrealGraphBackendEntityCrud:
     ) -> None:
         """No fields to update → falls through to ``get_entity``."""
         # Normal get_entity would call _surreal.query; verify it was called
-        mock_surreal.query.return_value = [[make_entity_record()]]
+        mock_surreal.query.return_value = [make_entity_record()]
 
         result = await backend.update_entity(
             org_id=ORG_ID,
@@ -430,7 +442,13 @@ class TestSurrealGraphBackendRelationships:
             "valid_to": None,
             "created_at": "2024-01-01T00:00:00",
         }
-        mock_surreal.query.return_value = [[], [edge_record]]
+        mock_surreal.query_raw.return_value = {
+            "result": [
+                {"status": "OK", "result": []},
+                {"status": "OK", "result": [edge_record]},
+            ],
+            "time": "1ms",
+        }
 
         result = await backend.create_relationship(
             org_id=ORG_ID,
@@ -440,7 +458,7 @@ class TestSurrealGraphBackendRelationships:
             relationship_type="likes",
         )
 
-        query = mock_surreal.query.call_args[0][0]
+        query = mock_surreal.query_raw.call_args[0][0]
         assert "RELATE $source_id -> likes -> $target_id" in query
         assert result["source_id"] == str(ENTITY_ID)
         assert result["target_id"] == str(TARGET_ID)
@@ -468,7 +486,13 @@ class TestSurrealGraphBackendRelationships:
             "valid_to": None,
             "created_at": "2024-01-01T00:00:00",
         }
-        mock_surreal.query.return_value = [[], [edge_record]]
+        mock_surreal.query_raw.return_value = {
+            "result": [
+                {"status": "OK", "result": []},
+                {"status": "OK", "result": [edge_record]},
+            ],
+            "time": "1ms",
+        }
 
         result = await backend.create_relationship(
             org_id=ORG_ID,
@@ -478,7 +502,7 @@ class TestSurrealGraphBackendRelationships:
             relationship_type="likes",
         )
 
-        query = mock_surreal.query.call_args[0][0]
+        query = mock_surreal.query_raw.call_args[0][0]
         # Even for "existing", the SurrealQL always contains both branches
         assert "UPDATE $existing[0].id SET" in query
         assert "RELATE $source_id -> likes -> $target_id" in query
@@ -504,7 +528,7 @@ class TestSurrealGraphBackendRelationships:
         mock_surreal: AsyncMock,
     ) -> None:
         """SurrealDB error is wrapped in ``ExternalServiceError``."""
-        mock_surreal.query.side_effect = RuntimeError("surreal timeout")
+        mock_surreal.query_raw.side_effect = RuntimeError("surreal timeout")
 
         with pytest.raises(ExternalServiceError, match="surreal timeout"):
             await backend.create_relationship(
@@ -663,7 +687,7 @@ class TestSurrealGraphBackendSearchAndListing:
         """Search uses ``@@`` operator and ``search::score(0)``."""
         record = make_entity_record(name="findable", summary="something")
         record["score"] = 0.85
-        mock_surreal.query.return_value = [[record]]
+        mock_surreal.query.return_value = [record]
 
         result = await backend.search_entities(
             org_id=ORG_ID,
@@ -683,7 +707,7 @@ class TestSurrealGraphBackendSearchAndListing:
         mock_surreal: AsyncMock,
     ) -> None:
         """No matches → empty list."""
-        mock_surreal.query.return_value = [[]]
+        mock_surreal.query.return_value = []
 
         result = await backend.search_entities(
             org_id=ORG_ID,
@@ -704,7 +728,7 @@ class TestSurrealGraphBackendSearchAndListing:
             make_entity_record(entity_id=ENTITY_ID, name="A"),
             make_entity_record(entity_id=NEIGHBOR_ID, name="B"),
         ]
-        mock_surreal.query.return_value = [records]  # 2 items, limit=3 → no overflow
+        mock_surreal.query.return_value = records  # 2 items, limit=3 → no overflow
 
         result = await backend.list_entities(
             org_id=ORG_ID,
@@ -726,7 +750,7 @@ class TestSurrealGraphBackendSearchAndListing:
             make_entity_record(entity_id=UUID(f"00000000-0000-0000-0000-{i:012d}"), name=f"E{i}")
             for i in range(6)
         ]
-        mock_surreal.query.return_value = [records]  # 6 items, limit=5 → overflow
+        mock_surreal.query.return_value = records  # 6 items, limit=5 → overflow
 
         result = await backend.list_entities(
             org_id=ORG_ID,
@@ -764,7 +788,7 @@ class TestSurrealGraphBackendSearchAndListing:
                 "edge_table_name": "likes",
             }
         ]
-        mock_surreal.query.return_value = [records]
+        mock_surreal.query.return_value = records
 
         result = await backend.list_entity_edges(
             org_id=ORG_ID,
@@ -892,7 +916,7 @@ class TestSurrealGraphBackendHealthCheck:
         mock_surreal: AsyncMock,
     ) -> None:
         """SurrealDB reachable → ``True``."""
-        mock_surreal.query.return_value = [[{"1": 1}]]
+        mock_surreal.query.return_value = [{"1": 1}]
         assert await backend.health_check() is True
         mock_surreal.query.assert_called_once_with("SELECT 1;")
 
