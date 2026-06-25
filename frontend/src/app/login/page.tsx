@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Eye, EyeOff, Loader2, LogIn } from "lucide-react";
@@ -31,6 +31,12 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const emailRef = useRef<HTMLInputElement>(null);
+
+  // Focus email input after hydration to avoid SSR mismatch with autoFocus
+  useEffect(() => {
+    emailRef.current?.focus();
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -117,14 +123,15 @@ export default function LoginPage() {
                   Email
                 </label>
                 <input
+                  ref={emailRef}
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
-                  autoFocus
                   autoComplete="email"
                   className="input-base w-full"
                   placeholder="you@example.com"
+                  suppressHydrationWarning
                 />
               </div>
 
@@ -132,7 +139,7 @@ export default function LoginPage() {
                 <label className="block text-sm font-medium text-surface-300 mb-1.5">
                   Password
                 </label>
-                <div className="relative">
+                <div className="relative" suppressHydrationWarning>
                   <input
                     type={showPassword ? "text" : "password"}
                     value={password}
@@ -141,6 +148,7 @@ export default function LoginPage() {
                     autoComplete="current-password"
                     className="input-base w-full pr-10"
                     placeholder="Enter your password"
+                    suppressHydrationWarning
                   />
                   <button
                     type="button"
