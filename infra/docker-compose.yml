@@ -13,8 +13,8 @@ services:
     build:
       context: .
       dockerfile: services/api/Dockerfile
-    ports:
-      - "8000:8000"
+    # No host port — API is reached through nginx reverse proxy.
+    # For local dev, add `docker compose -f docker-compose.override.yml`
     env_file: .env
     environment:
       REDIS_URL: redis://redis:6379/0
@@ -48,7 +48,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:

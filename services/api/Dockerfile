@@ -36,7 +36,7 @@ ENV PATH=/root/.local/bin:$PATH \
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-    CMD curl -f http://localhost:8000/v1/health || exit 1
+    CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8000/v1/health || exit 1
 
 # Override with --workers N in docker-compose overrides or at runtime.
 CMD ["uvicorn", "services.api.asgi:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

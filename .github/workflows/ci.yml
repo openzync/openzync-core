@@ -177,7 +177,7 @@ jobs:
       - run: |
           TAG="${{ needs.build-backend.outputs.tag }}"
           docker build \
-            --build-arg NEXT_PUBLIC_API_URL=http://${{ secrets.VPS_HOST }} \
+            --build-arg NEXT_PUBLIC_API_URL=https://app.openzync.tech \
             -t ghcr.io/${{ github.repository }}/frontend:$TAG \
             -f frontend/Dockerfile frontend/
           docker tag ghcr.io/${{ github.repository }}/frontend:$TAG ghcr.io/${{ github.repository }}/frontend:latest
@@ -276,8 +276,8 @@ jobs:
             MG_SECRET_KEY=$MG_SECRET_KEY
             MG_ENVIRONMENT=production
             MG_LOG_LEVEL=INFO
-            MG_CORS_ORIGINS=http://$VPS_HOST,http://$VPS_HOST:3100,http://localhost:3100
-            MG_HOSTS_ALLOWED=$VPS_HOST,localhost
+            MG_CORS_ORIGINS=http://$VPS_HOST,http://localhost:3100,https://app.openzync.tech
+            MG_HOSTS_ALLOWED=$VPS_HOST,localhost,app.openzync.tech
             MG_GRAPH_BACKEND=postgres
             MG_CONTEXT_CACHE_TTL=30
             MG_RATE_LIMIT_IP_MAX=60
@@ -287,7 +287,7 @@ jobs:
             MG_EMBEDDING_BACKEND=ollama
             MG_EMBEDDING_MODEL=nomic-embed-text
             MG_EMBEDDING_DIM=768
-            NEXT_PUBLIC_API_URL=http://$VPS_HOST
+            NEXT_PUBLIC_API_URL=https://app.openzync.tech
             ENVEOF
 
             bash scripts/deploy.sh
