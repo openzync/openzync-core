@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../require-auth";
 
 import Link from "next/link";
 import { useEffect, useState, useCallback } from "react";
@@ -208,7 +207,6 @@ export default function UsersPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <RequireAuth>
     <div className="space-y-6">
       <PageHeader
         title="Users"
@@ -302,6 +300,5 @@ export default function UsersPage() {
         onCancel={() => setDeleteTarget(null)}
       />
     </div>
-  </RequireAuth>
   );
 }

@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../require-auth";
 
 import { useEffect, useState, useCallback } from "react";
 import {
@@ -651,7 +650,6 @@ export default function PromptsPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <RequireAuth>
     <div className="space-y-6">
       <PageHeader
         title="Prompt Templates"
@@ -752,6 +750,5 @@ export default function PromptsPage() {
       {deleteTarget && <DeleteDialog templateName={deleteTarget} templateDisplay={templateDisplayName(deleteTarget)} onClose={() => setDeleteTarget(null)} onConfirm={handleDelete} />}
       {showBrowser && <BrowserDialog onClose={() => setShowBrowser(false)} onImported={fetchTemplates} />}
     </div>
-  </RequireAuth>
   );
 }

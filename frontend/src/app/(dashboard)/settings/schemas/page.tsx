@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../require-auth";
 
 import { useEffect, useState, useCallback } from "react";
 import {
@@ -141,7 +140,6 @@ export default function SchemasPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <RequireAuth>
     <div className="space-y-6">
       <PageHeader
         title="Extraction Schemas"
@@ -388,6 +386,5 @@ export default function SchemasPage() {
         onCancel={() => setDeleteTarget(null)}
       />
     </div>
-  </RequireAuth>
   );
 }

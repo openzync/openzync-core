@@ -1,6 +1,5 @@
 "use client";
 
-import { RequireAuth } from "../../require-auth";
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -695,7 +694,6 @@ export default function UserDetailPage() {
 
   if (loading) {
     return (
-      <RequireAuth>
         <div className="space-y-6">
           {/* Back button skeleton */}
           <Button variant="ghost" size="sm" disabled className="-ml-2 opacity-50">
@@ -740,14 +738,12 @@ export default function UserDetailPage() {
             </div>
           </div>
         </div>
-      </RequireAuth>
     );
   }
 
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <RequireAuth>
     <div className="space-y-6">
       {/* ═══ Back button ═══ */}
       <Button
@@ -1027,6 +1023,5 @@ export default function UserDetailPage() {
       {/* ═══ Toast ═══ */}
       <Toast toast={toast} onDismiss={dismissToast} />
     </div>
-  </RequireAuth>
   );
 }

@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../../require-auth";
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
@@ -141,29 +140,24 @@ export default function ProjectSessionsPage() {
 
   if (projectLoading) {
     return (
-      <RequireAuth>
         <div className="space-y-6">
           <PageHeader title="Sessions" description="Loading project..." />
         </div>
-      </RequireAuth>
     );
   }
 
   if (!projectId) {
     return (
-      <RequireAuth>
         <div className="card-base p-12 flex flex-col items-center justify-center">
           <AlertTriangle size={36} className="text-error mb-3" />
           <p className="text-sm text-surface-300">Project not found</p>
         </div>
-      </RequireAuth>
     );
   }
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <RequireAuth>
     <div className="space-y-6">
       <PageHeader
         title="Sessions"
@@ -295,6 +289,5 @@ export default function ProjectSessionsPage() {
         onCancel={() => setDeleteTarget(null)}
       />
     </div>
-  </RequireAuth>
   );
 }

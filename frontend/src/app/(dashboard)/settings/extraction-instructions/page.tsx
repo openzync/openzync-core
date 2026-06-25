@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../require-auth";
 
 import { useEffect, useState, useCallback } from "react";
 import {
@@ -131,7 +130,6 @@ export default function ExtractionInstructionsPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <RequireAuth>
     <div className="space-y-6">
       <PageHeader
         title="Extraction Instructions"
@@ -273,6 +271,5 @@ export default function ExtractionInstructionsPage() {
         onCancel={() => setDeleteTarget(null)}
       />
     </div>
-  </RequireAuth>
   );
 }

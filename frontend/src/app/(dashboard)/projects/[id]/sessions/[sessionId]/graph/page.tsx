@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../../../../require-auth";
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
@@ -95,19 +94,16 @@ export default function SessionGraphPage() {
 
   if (!projectId) {
     return (
-      <RequireAuth>
       <div>
         <SessionTabs sessionId={sessionId} activeTab="graph" />
         <div className="card-base p-8 flex flex-col items-center justify-center gap-3 text-surface-500 mt-4">
           <p className="text-sm">No project selected.</p>
         </div>
       </div>
-      </RequireAuth>
     );
   }
 
   return (
-    <RequireAuth>
     <div>
       <SessionTabs sessionId={sessionId} activeTab="graph" />
       <ForceGraph
@@ -127,6 +123,5 @@ export default function SessionGraphPage() {
         emptyMessage="No entities found for this session. Facts must be extracted first."
       />
     </div>
-    </RequireAuth>
   );
 }

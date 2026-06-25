@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../../../../require-auth";
 
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -48,7 +47,6 @@ export default function SessionExtractionsPage() {
   }, [projectId, sessionId]);
 
   return (
-    <RequireAuth>
     <div>
       <SessionTabs sessionId={sessionId} activeTab="extractions" />
       {loading ? (
@@ -75,6 +73,5 @@ export default function SessionExtractionsPage() {
         </div>
       )}
     </div>
-    </RequireAuth>
   );
 }

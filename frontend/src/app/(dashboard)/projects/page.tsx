@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../require-auth";
 
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
@@ -102,7 +101,6 @@ export default function ProjectsPage() {
   }
 
   return (
-    <RequireAuth>
       <div className="space-y-6">
         <PageHeader
           title="Projects"
@@ -308,6 +306,5 @@ export default function ProjectsPage() {
           </>
         )}
       </div>
-    </RequireAuth>
   );
 }

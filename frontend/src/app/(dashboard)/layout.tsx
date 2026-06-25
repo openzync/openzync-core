@@ -35,6 +35,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/api-client";
+import { RequireAuth } from "./require-auth";
 import { Breadcrumb } from "@/components/breadcrumb";
 import { usePinnedProjects } from "@/hooks/use-pinned-projects";
 
@@ -557,6 +558,7 @@ export default function DashboardLayout({
   })();
 
   return (
+    <RequireAuth>
     <div className="flex h-screen overflow-hidden bg-surface-950">
       {/* Mobile sidebar overlay */}
       {mobileOpen && (
@@ -686,5 +688,6 @@ export default function DashboardLayout({
         </main>
       </div>
     </div>
+    </RequireAuth>
   );
 }

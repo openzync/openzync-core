@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../../../require-auth";
 
 import { useState, useEffect } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
@@ -179,17 +178,14 @@ export default function SessionDetailPage() {
   // Loading guard
   if (projectLoading) {
     return (
-      <RequireAuth>
         <div className="space-y-6">
           <div className="h-6 w-48 rounded bg-surface-800 animate-pulse" />
         </div>
-      </RequireAuth>
     );
   }
 
   // Render
   return (
-    <RequireAuth>
     <div className="space-y-6">
       {/* Back button */}
       <Button
@@ -320,6 +316,5 @@ export default function SessionDetailPage() {
         </div>
       )}
     </div>
-    </RequireAuth>
   );
 }

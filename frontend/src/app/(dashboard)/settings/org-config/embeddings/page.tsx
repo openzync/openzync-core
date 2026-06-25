@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../../require-auth";
 
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
@@ -164,7 +163,6 @@ export default function EmbeddingsConfigPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <RequireAuth>
     <div className="space-y-6">
       {/* ── Embedding Backend Card ────────────────────────────────────────────── */}
       <div className="card-base p-6">
@@ -361,6 +359,5 @@ export default function EmbeddingsConfigPage() {
         </div>
       )}
     </div>
-  </RequireAuth>
   );
 }

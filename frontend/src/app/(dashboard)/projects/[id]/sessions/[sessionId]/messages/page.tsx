@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../../../../require-auth";
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
@@ -153,7 +152,6 @@ export default function MessagesPage() {
 
   if (!projectId) {
     return (
-      <RequireAuth>
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Messages</h1>
@@ -165,12 +163,10 @@ export default function MessagesPage() {
           description="Select a project to view messages."
         />
       </div>
-      </RequireAuth>
     );
   }
 
   return (
-    <RequireAuth>
     <div className="space-y-4">
       <SessionTabs sessionId={sessionId} activeTab="messages" />
       {/* Header */}
@@ -331,6 +327,5 @@ export default function MessagesPage() {
         )}
       </div>
     </div>
-    </RequireAuth>
   );
 }

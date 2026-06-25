@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../../require-auth";
 
 import { useState, useEffect, useCallback } from "react";
 import {
@@ -153,17 +152,14 @@ export default function ProjectMembersPage() {
 
   if (projectLoading) {
     return (
-      <RequireAuth>
         <div className="space-y-6">
           <PageHeader title="Members" description="Project members" />
           <TableSkeleton rows={4} cols={3} colWidths={["w-32", "w-20", "w-16"]} />
         </div>
-      </RequireAuth>
     );
   }
 
   return (
-    <RequireAuth>
       <div className="space-y-6">
         <PageHeader
           title="Members"
@@ -371,6 +367,5 @@ export default function ProjectMembersPage() {
           onCancel={() => setRemoveTarget(null)}
         />
       </div>
-    </RequireAuth>
   );
 }

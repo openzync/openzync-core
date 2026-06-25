@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../../require-auth";
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -69,7 +68,6 @@ export default function ProjectSettingsPage() {
 
   if (loading) {
     return (
-      <RequireAuth>
         <div className="space-y-6">
           <PageHeader title="Settings" description="Project settings" />
           <div className="card-base p-6 space-y-4 animate-pulse">
@@ -79,23 +77,19 @@ export default function ProjectSettingsPage() {
             <div className="h-20 w-full bg-surface-800 rounded" />
           </div>
         </div>
-      </RequireAuth>
     );
   }
 
   if (!project) {
     return (
-      <RequireAuth>
         <div className="card-base p-12 flex flex-col items-center justify-center">
           <AlertTriangle size={36} className="text-error mb-3" />
           <p className="text-sm text-surface-300">Project not found</p>
         </div>
-      </RequireAuth>
     );
   }
 
   return (
-    <RequireAuth>
       <div className="space-y-6">
         <PageHeader
           title="Project Settings"
@@ -177,6 +171,5 @@ export default function ProjectSettingsPage() {
           onCancel={() => setShowArchiveConfirm(false)}
         />
       </div>
-    </RequireAuth>
   );
 }

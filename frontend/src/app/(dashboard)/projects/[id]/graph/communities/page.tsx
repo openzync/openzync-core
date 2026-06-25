@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../../../require-auth";
 
 import { useEffect, useState } from "react";
 import { Shield, Users as UsersIcon } from "lucide-react";
@@ -37,16 +36,13 @@ export default function CommunitiesPage() {
 
   if (!projectId) {
     return (
-      <RequireAuth>
         <div className="space-y-6">
           <PageHeader title="Communities" description="Select a project to view communities" />
         </div>
-      </RequireAuth>
     );
   }
 
   return (
-    <RequireAuth>
     <div className="space-y-6">
       <PageHeader title="Communities" description={`Community clusters from Label Propagation${project ? ` · ${project.name}` : ""}`} />
 
@@ -75,6 +71,5 @@ export default function CommunitiesPage() {
         </div>
       )}
     </div>
-  </RequireAuth>
   );
 }

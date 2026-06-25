@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../require-auth";
 
 import { useEffect, useState, useRef } from "react";
 import {
@@ -224,7 +223,6 @@ export default function AnalyticsPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <RequireAuth>
     <div className="space-y-6">
       <PageHeader title="Analytics" description="Usage and performance trends" />
 
@@ -280,6 +278,5 @@ export default function AnalyticsPage() {
         ))}
       </div>
     </div>
-  </RequireAuth>
   );
 }

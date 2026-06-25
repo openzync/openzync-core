@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../require-auth";
 
 import { useEffect, useState, useCallback } from "react";
 import {
@@ -411,7 +410,6 @@ export default function WebhooksPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <RequireAuth>
     <div className="space-y-6">
       <PageHeader
         title="Webhooks"
@@ -538,6 +536,5 @@ export default function WebhooksPage() {
         onCancel={() => setDeleteTarget(null)}
       />
     </div>
-  </RequireAuth>
   );
 }

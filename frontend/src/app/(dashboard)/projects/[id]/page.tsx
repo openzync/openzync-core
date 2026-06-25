@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../require-auth";
 
 import { useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";

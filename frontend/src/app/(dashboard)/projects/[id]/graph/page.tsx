@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../../require-auth";
 
 import { useEffect, useState, useCallback } from "react";
 import { RotateCcw } from "lucide-react";
@@ -77,16 +76,13 @@ export default function GraphExplorerPage() {
 
   if (!projectId) {
     return (
-      <RequireAuth>
         <div className="space-y-6">
           <PageHeader title="Graph Explorer" description="Select a project to explore the knowledge graph" />
         </div>
-      </RequireAuth>
     );
   }
 
   return (
-    <RequireAuth>
       <div className="space-y-6">
         <PageHeader
           title="Graph Explorer"
@@ -108,6 +104,5 @@ export default function GraphExplorerPage() {
           showFilter showControls showLegend
         />
       </div>
-    </RequireAuth>
   );
 }

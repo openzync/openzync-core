@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../../require-auth";
 
 import { useState, useCallback } from "react";
 import {
@@ -295,7 +294,6 @@ export default function MemoryPage() {
 
   if (!projectId) {
     return (
-      <RequireAuth>
       <div className="space-y-6">
         <PageHeader title="Memory" description="Ingest messages, query context, and search across memory" />
         <div className="card-base p-8 flex flex-col items-center justify-center text-surface-500">
@@ -303,12 +301,10 @@ export default function MemoryPage() {
           <p className="text-sm">Select a project to access memory features.</p>
         </div>
       </div>
-      </RequireAuth>
     );
   }
 
   return (
-    <RequireAuth>
     <div className="space-y-6">
       <PageHeader title="Memory" description={`Ingest messages, query context, and search across memory${project ? ` · ${project.name}` : ""}`} />
 
@@ -327,6 +323,5 @@ export default function MemoryPage() {
       {activeTab === "context" && <ContextTab projectId={projectId} />}
       {activeTab === "search" && <SearchTab projectId={projectId} />}
     </div>
-    </RequireAuth>
   );
 }

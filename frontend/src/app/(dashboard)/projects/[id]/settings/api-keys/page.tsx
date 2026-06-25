@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../../../require-auth";
 
 import { useEffect, useState, useCallback } from "react";
 import {
@@ -151,7 +150,6 @@ export default function ProjectApiKeysPage() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <RequireAuth>
     <div className="space-y-6">
       <PageHeader
         title="API Keys"
@@ -348,6 +346,5 @@ export default function ProjectApiKeysPage() {
         onCancel={() => setRevokeTarget(null)}
       />
     </div>
-  </RequireAuth>
   );
 }

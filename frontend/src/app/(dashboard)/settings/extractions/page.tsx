@@ -1,5 +1,4 @@
 "use client";
-import { RequireAuth } from "../../require-auth";
 
 import { useEffect, useState, useCallback } from "react";
 import { Database, Eye, X } from "lucide-react";
@@ -97,7 +96,6 @@ export default function ExtractionsPage() {
   useEffect(() => { fetchSchemas(); }, [fetchSchemas]);
 
   return (
-    <RequireAuth>
     <div className="space-y-6">
       <PageHeader title="Extractions" description="Structured extraction schemas and results" />
 
@@ -140,6 +138,5 @@ export default function ExtractionsPage() {
 
       {viewTarget && <ViewDialog schema={viewTarget} onClose={() => setViewTarget(null)} />}
     </div>
-  </RequireAuth>
   );
 }
