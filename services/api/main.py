@@ -33,6 +33,8 @@ from core.graph_backend import init_dispatcher
 from core.surreal_pool import SurrealConnectionPool
 from core.logging import setup_logging
 from core.redis import close_redis, init_redis
+from falkordb.asyncio import FalkorDB
+from redis.asyncio import BlockingConnectionPool
 from middleware.audit import AuditMiddleware
 from middleware.auth import AuthMiddleware
 from middleware.logging import LoggingMiddleware
@@ -103,9 +105,21 @@ def create_app() -> FastAPI:
         app.state.surreal_connection_pool = SurrealConnectionPool()
         logger.info("surreal_pool.initialised")
 
+        # Init FalkorDB client with a single app-level connection pool.
+        falkordb_pool = BlockingConnectionPool.from_url(
+            settings.FALKORDB_URL,
+            max_connections=settings.FALKORDB_MAX_CONNECTIONS,
+            socket_timeout=settings.FALKORDB_SOCKET_TIMEOUT,
+            socket_keepalive=True,
+            decode_responses=True,
+        )
+        app.state.falkordb_client = FalkorDB(connection_pool=falkordb_pool)
+        logger.info("falkordb_pool.initialised")
+
         yield
 
         # ── Shutdown (reverse order of initialisation) ────────────────────
+        await app.state.falkordb_client.aclose()
         await app.state.surreal_connection_pool.close_all()
         await close_arq()
         await close_redis(redis_client)

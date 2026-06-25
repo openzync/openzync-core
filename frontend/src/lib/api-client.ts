@@ -14,6 +14,9 @@
 const API_BASE: string =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+/** Track if we are already refreshing to avoid infinite loops. */
+let _refreshing = false;
+
 // ─── Auth helpers ─────────────────────────────────────────────────────────────
 
 function getAccessToken(): string | null {
@@ -26,9 +29,49 @@ function getRefreshToken(): string | null {
   return sessionStorage.getItem("mg_refresh_token");
 }
 
+function storeTokens(access: string, refresh: string): void {
+  sessionStorage.setItem("mg_access_token", access);
+  sessionStorage.setItem("mg_refresh_token", refresh);
+}
+
 function clearTokens(): void {
   sessionStorage.removeItem("mg_access_token");
   sessionStorage.removeItem("mg_refresh_token");
+}
+
+/**
+ * Attempt to exchange a refresh token for a new access token.
+ * Returns the new access token, or null if the refresh fails.
+ */
+async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = getRefreshToken();
+  if (!refreshToken) return null;
+
+  try {
+    const res = await fetch(`${API_BASE}/api/auth/refresh`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+
+    if (!res.ok) {
+      // Refresh failed (e.g. expired or revoked) — force re-login.
+      clearTokens();
+      return null;
+    }
+
+    const body = (await res.json()) as {
+      access_token: string;
+      refresh_token?: string;
+    };
+
+    // Store the new pair (the backend may also issue a new refresh token).
+    storeTokens(body.access_token, body.refresh_token ?? refreshToken);
+    return body.access_token;
+  } catch {
+    // Network error during refresh — do not clear tokens, caller may retry.
+    return null;
+  }
 }
 
 function getAuthHeaders(): Record<string, string> {
@@ -92,18 +135,34 @@ async function request<T>(
     ...(options.headers as Record<string, string>),
   };
 
-  const res = await fetch(url, {
+  let res = await fetch(url, {
     ...options,
     headers,
   });
 
-  // 401 → tokens expired, redirect to login
-  if (res.status === 401) {
-    clearTokens();
-    if (typeof window !== "undefined") {
-      window.location.href = "/login?reason=not-signed-in";
+  // 401 → attempt silent token refresh, then retry once
+  if (res.status === 401 && !_refreshing) {
+    _refreshing = true;
+    try {
+      const newToken = await refreshAccessToken();
+      if (newToken) {
+        // Retry the original request with the fresh token.
+        headers["Authorization"] = `Bearer ${newToken}`;
+        res = await fetch(url, {
+          ...options,
+          headers,
+        });
+      } else {
+        // Refresh failed — nothing more to try.
+        clearTokens();
+        if (typeof window !== "undefined") {
+          window.location.href = "/login?reason=not-signed-in";
+        }
+        throw new ApiError("Unauthorized", 401, null);
+      }
+    } finally {
+      _refreshing = false;
     }
-    throw new ApiError("Unauthorized", 401, null);
   }
 
   // No content (204) — return empty

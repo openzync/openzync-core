@@ -206,13 +206,13 @@ export default function EmbeddingsConfigPage() {
                     ))}
                   </select>
                   {isFieldSet("embedding_backend") && (
-                    <button
+                    <Button
                       onClick={() => handleResetField("embedding_backend")}
-                      className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                      variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                       title="Reset to default"
                     >
                       <X size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -231,13 +231,13 @@ export default function EmbeddingsConfigPage() {
                     onChange={(e) => updateField("embedding_model", e.target.value)}
                   />
                   {isFieldSet("embedding_model") && (
-                    <button
+                    <Button
                       onClick={() => handleResetField("embedding_model")}
-                      className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                      variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                       title="Reset to default"
                     >
                       <X size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -258,13 +258,13 @@ export default function EmbeddingsConfigPage() {
                     onChange={(e) => updateField("embedding_dim", parseInt(e.target.value) || 0)}
                   />
                   {isFieldSet("embedding_dim") && (
-                    <button
+                    <Button
                       onClick={() => handleResetField("embedding_dim")}
-                      className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                      variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                       title="Reset to default"
                     >
                       <X size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -283,13 +283,13 @@ export default function EmbeddingsConfigPage() {
                     onChange={(e) => updateField("embedding_provider", e.target.value)}
                   />
                   {isFieldSet("embedding_provider") && (
-                    <button
+                    <Button
                       onClick={() => handleResetField("embedding_provider")}
-                      className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                      variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                       title="Reset to default"
                     >
                       <X size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -318,13 +318,13 @@ export default function EmbeddingsConfigPage() {
                     </button>
                   </div>
                   {isFieldSet("embedding_api_key") && (
-                    <button
+                    <Button
                       onClick={() => handleResetField("embedding_api_key")}
-                      className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                      variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                       title="Reset to default"
                     >
                       <X size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>

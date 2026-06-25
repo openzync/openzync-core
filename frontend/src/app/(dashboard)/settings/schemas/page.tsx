@@ -213,20 +213,24 @@ export default function SchemasPage() {
                     </td>
                     <td className="px-4 py-3 text-center">
                       <div className="flex items-center justify-center gap-1">
-                        <button
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           onClick={() => setViewTarget(schema)}
-                          className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white"
+                          className="rounded-md text-surface-400 hover:text-white"
                           title="View schema"
                         >
                           <Eye size={14} />
-                        </button>
-                        <button
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           onClick={() => setDeleteTarget(schema)}
-                          className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-error"
+                          className="rounded-md text-surface-400 hover:text-error"
                           title="Delete schema"
                         >
                           <Trash2 size={14} />
-                        </button>
+                        </Button>
                       </div>
                     </td>
                   </tr>
@@ -243,7 +247,7 @@ export default function SchemasPage() {
           <div className="fixed inset-0 z-50 bg-black/50" onClick={() => { setShowCreate(false); resetCreateForm(); }} />
           <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-surface-800 bg-surface-900 p-6 shadow-xl shadow-black/40 animate-slide-up max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-[#F2F2F2]">Create Schema</h3>
+              <h3 className="text-lg font-semibold text-text-primary">Create Schema</h3>
               <button onClick={() => { setShowCreate(false); resetCreateForm(); }} className="text-surface-400 hover:text-white">
                 <X size={18} />
               </button>
@@ -322,7 +326,7 @@ export default function SchemasPage() {
           <div className="fixed inset-0 z-50 bg-black/50" onClick={() => setViewTarget(null)} />
           <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-lg border border-surface-800 bg-surface-900 p-6 shadow-xl shadow-black/40 animate-slide-up max-h-[85vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-[#F2F2F2]">{viewTarget.name}</h3>
+              <h3 className="text-lg font-semibold text-text-primary">{viewTarget.name}</h3>
               <button onClick={() => setViewTarget(null)} className="text-surface-400 hover:text-white">
                 <X size={18} />
               </button>

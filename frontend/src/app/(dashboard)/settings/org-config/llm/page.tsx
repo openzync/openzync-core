@@ -241,13 +241,13 @@ export default function LlmConfigPage() {
                     ))}
                   </select>
                   {isFieldSet("llm_backend") && (
-                    <button
+                    <Button
                       onClick={() => handleResetField("llm_backend")}
-                      className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                      variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                       title="Reset to default"
                     >
                       <X size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -266,13 +266,13 @@ export default function LlmConfigPage() {
                     onChange={(e) => updateField("llm_model", e.target.value)}
                   />
                   {isFieldSet("llm_model") && (
-                    <button
+                    <Button
                       onClick={() => handleResetField("llm_model")}
-                      className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                      variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                       title="Reset to default"
                     >
                       <X size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -294,13 +294,13 @@ export default function LlmConfigPage() {
                     onChange={(e) => updateField("llm_temperature", parseFloat(e.target.value) || 0)}
                   />
                   {isFieldSet("llm_temperature") && (
-                    <button
+                    <Button
                       onClick={() => handleResetField("llm_temperature")}
-                      className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                      variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                       title="Reset to default"
                     >
                       <X size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -320,13 +320,13 @@ export default function LlmConfigPage() {
                     onChange={(e) => updateField("llm_max_tokens", parseInt(e.target.value) || 0)}
                   />
                   {isFieldSet("llm_max_tokens") && (
-                    <button
+                    <Button
                       onClick={() => handleResetField("llm_max_tokens")}
-                      className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                      variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                       title="Reset to default"
                     >
                       <X size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -373,13 +373,13 @@ export default function LlmConfigPage() {
                   </button>
                 </div>
                 {isFieldSet("openai_api_key") && (
-                  <button
+                  <Button
                     onClick={() => handleResetField("openai_api_key")}
-                    className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                    variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                     title="Reset to default"
                   >
                     <X size={14} />
-                  </button>
+                  </Button>
                 )}
               </div>
             </div>
@@ -408,13 +408,13 @@ export default function LlmConfigPage() {
                   </button>
                 </div>
                 {isFieldSet("anthropic_api_key") && (
-                  <button
+                  <Button
                     onClick={() => handleResetField("anthropic_api_key")}
-                    className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                    variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                     title="Reset to default"
                   >
                     <X size={14} />
-                  </button>
+                  </Button>
                 )}
               </div>
             </div>
@@ -443,13 +443,13 @@ export default function LlmConfigPage() {
                   </button>
                 </div>
                 {isFieldSet("openrouter_api_key") && (
-                  <button
+                  <Button
                     onClick={() => handleResetField("openrouter_api_key")}
-                    className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                    variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                     title="Reset to default"
                   >
                     <X size={14} />
-                  </button>
+                  </Button>
                 )}
               </div>
             </div>
@@ -486,13 +486,13 @@ export default function LlmConfigPage() {
                   onChange={(e) => updateField("ollama_base_url", e.target.value)}
                 />
                 {isFieldSet("ollama_base_url") && (
-                  <button
+                  <Button
                     onClick={() => handleResetField("ollama_base_url")}
-                    className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                    variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                     title="Reset to default"
                   >
                     <X size={14} />
-                  </button>
+                  </Button>
                 )}
               </div>
             </div>
@@ -530,13 +530,13 @@ export default function LlmConfigPage() {
                   onChange={(e) => updateField("azure_openai_endpoint", e.target.value)}
                 />
                 {isFieldSet("azure_openai_endpoint") && (
-                  <button
+                  <Button
                     onClick={() => handleResetField("azure_openai_endpoint")}
-                    className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                    variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                     title="Reset to default"
                   >
                     <X size={14} />
-                  </button>
+                  </Button>
                 )}
               </div>
             </div>
@@ -565,13 +565,13 @@ export default function LlmConfigPage() {
                   </button>
                 </div>
                 {isFieldSet("azure_openai_key") && (
-                  <button
+                  <Button
                     onClick={() => handleResetField("azure_openai_key")}
-                    className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                    variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                     title="Reset to default"
                   >
                     <X size={14} />
-                  </button>
+                  </Button>
                 )}
               </div>
             </div>

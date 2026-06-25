@@ -185,7 +185,12 @@ async def get_graph_service(
     org_id = UUID(request.state.org_id)
     surreal = await pool.get_or_create(org_id, org_config)
 
-    graph_backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
+    # Read the FalkorDB client from app state (may be None if not configured).
+    falkordb_client = getattr(request.app.state, "falkordb_client", None)
+
+    graph_backend = dispatcher.resolve_and_create(
+        org_config, db, surreal=surreal, falkordb_client=falkordb_client,
+    )
 
     return GraphService(
         graph_backend=graph_backend,

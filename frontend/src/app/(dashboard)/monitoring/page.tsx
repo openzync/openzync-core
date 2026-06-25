@@ -19,6 +19,7 @@ import { ErrorState } from "@/components/shared/error-state";
 import { EmptyState } from "@/components/shared/empty-state";
 import { Spinner } from "@/components/ui/spinner";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -157,10 +158,10 @@ export default function MonitoringPage() {
             {lastRefreshed && (
               <span className="text-[11px] text-surface-500 hidden sm:block">Updated {timeAgo(lastRefreshed.toISOString())}</span>
             )}
-            <button onClick={() => fetchData(false)} disabled={refreshing}
-              className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white disabled:opacity-50" title="Refresh now">
+            <Button variant="ghost" size="sm" onClick={() => fetchData(false)} disabled={refreshing}
+              className="rounded-md text-surface-400 hover:text-white disabled:opacity-50" title="Refresh now">
               {refreshing ? <Spinner /> : <RefreshCw size={16} />}
-            </button>
+            </Button>
           </div>
         }
       />

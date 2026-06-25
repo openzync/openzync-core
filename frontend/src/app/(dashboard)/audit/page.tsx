@@ -197,25 +197,29 @@ export default function AuditLogPage() {
 
           <div className="flex-1" />
 
-          {/* Auto-refresh toggle */}
+          {/* Auto-refresh toggle — accessible switch pattern */}
           <div className="flex items-center gap-2 pb-0.5">
-            <label className="flex items-center gap-2 cursor-pointer">
-              <div
-                onClick={() => setAutoRefresh((prev) => !prev)}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoRefresh}
+              onClick={() => setAutoRefresh((prev) => !prev)}
+              className={cn(
+                "relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors",
+                "focus-visible:outline-2 focus-visible:outline-accent-300 focus-visible:outline-offset-2",
+                "cursor-pointer",
+                autoRefresh ? "bg-brand-500" : "bg-surface-700",
+              )}
+              aria-label="Toggle auto-refresh"
+            >
+              <span
                 className={cn(
-                  "relative inline-flex h-5 w-9 rounded-full transition-colors",
-                  autoRefresh ? "bg-brand-500" : "bg-surface-700",
+                  "inline-block h-4 w-4 rounded-full bg-white transition-transform pointer-events-none",
+                  autoRefresh ? "translate-x-4" : "translate-x-0",
                 )}
-              >
-                <span
-                  className={cn(
-                    "inline-block h-4 w-4 rounded-full bg-white transition-transform mt-0.5 ml-0.5",
-                    autoRefresh ? "translate-x-4" : "translate-x-0",
-                  )}
-                />
-              </div>
-              <span className="text-xs text-surface-400">Auto-refresh</span>
-            </label>
+              />
+            </button>
+            <span className="text-xs text-surface-400 select-none">Auto-refresh</span>
             {lastUpdated && (
               <span className="text-[11px] text-surface-500">Updated {lastUpdated}</span>
             )}
@@ -325,22 +329,26 @@ export default function AuditLogPage() {
                 Page {currentPage} of {totalPages}
               </span>
               <div className="flex items-center gap-1">
-                <button
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={goToPrevious}
                   disabled={offset === 0}
-                  className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="rounded-md text-surface-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
                   title="Previous page"
                 >
                   <ChevronLeft size={14} />
-                </button>
-                <button
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={goToNext}
                   disabled={offset + PAGE_SIZE >= total}
-                  className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
+                  className="rounded-md text-surface-400 hover:text-white disabled:opacity-30 disabled:cursor-not-allowed"
                   title="Next page"
                 >
                   <ChevronRight size={14} />
-                </button>
+                </Button>
               </div>
             </div>
           </div>

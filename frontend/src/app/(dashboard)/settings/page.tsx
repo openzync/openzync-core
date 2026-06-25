@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/api-client";
+import { Button } from "@/components/ui/button";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -291,14 +292,15 @@ export default function SettingsPage() {
 
             {/* Save button */}
             <div className="pt-2">
-              <button
+              <Button
+                variant="primary"
                 onClick={handleSaveProfile}
                 disabled={savingProfile}
-                className="btn-primary text-sm"
+                className="text-sm"
               >
                 <Save size={14} />
                 {savingProfile ? "Saving..." : "Save Changes"}
-              </button>
+              </Button>
             </div>
           </div>
         )}
@@ -376,14 +378,15 @@ export default function SettingsPage() {
 
           {/* Update button */}
           <div className="pt-2">
-            <button
+            <Button
+              variant="primary"
               onClick={handleUpdatePassword}
               disabled={updatingPassword || !currentPassword || !newPassword || newPassword.length < 8}
-              className="btn-primary text-sm"
+              className="text-sm"
             >
               <Lock size={14} />
               {updatingPassword ? "Updating..." : "Update Password"}
-            </button>
+            </Button>
           </div>
         </div>
       </div>

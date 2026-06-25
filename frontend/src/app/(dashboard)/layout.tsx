@@ -97,7 +97,7 @@ function Sidebar({
           <Link href="/overview" className="flex items-center gap-2">
             <span className="text-brand-500 font-bold text-xl">O</span>
             <div>
-              <div className="text-sm font-semibold text-[#F2F2F2] leading-tight">OpenZep</div>
+              <div className="text-sm font-semibold text-text-primary leading-tight">OpenZep</div>
               <div className="text-[10px] text-surface-400 leading-tight">Memory Infrastructure</div>
             </div>
           </Link>
@@ -132,7 +132,7 @@ function Sidebar({
                       collapsed && "justify-center px-0",
                       active
                         ? "bg-brand-500/10 text-brand-300 border-l-[3px] border-brand-500"
-                        : "text-surface-300 hover:bg-surface-800 hover:text-[#F2F2F2] border-l-[3px] border-transparent",
+                        : "text-surface-300 hover:bg-surface-800 hover:text-text-primary border-l-[3px] border-transparent",
                     )}
                   >
                     <span className={cn("shrink-0", active ? "text-brand-300" : "text-surface-400")}>
@@ -168,7 +168,7 @@ function Sidebar({
                     collapsed && "justify-center px-0",
                     isActiveProject
                       ? "bg-brand-500/10 text-brand-300 border-l-[3px] border-brand-500"
-                      : "text-surface-300 hover:bg-surface-800 hover:text-[#F2F2F2] border-l-[3px] border-transparent",
+                      : "text-surface-300 hover:bg-surface-800 hover:text-text-primary border-l-[3px] border-transparent",
                   )}
                 >
                   <span className={cn("shrink-0", isActiveProject ? "text-brand-300" : "text-surface-400")}>
@@ -188,7 +188,7 @@ function Sidebar({
                   collapsed && "justify-center px-0",
                   onProjectList
                     ? "bg-brand-500/10 text-brand-300 border-l-[3px] border-brand-500"
-                    : "text-surface-300 hover:bg-surface-800 hover:text-[#F2F2F2] border-l-[3px] border-transparent",
+                    : "text-surface-300 hover:bg-surface-800 hover:text-text-primary border-l-[3px] border-transparent",
                 )}
               >
                 <span className="shrink-0 text-surface-400">
@@ -220,7 +220,7 @@ function Sidebar({
                         collapsed && "justify-center px-0",
                         active
                           ? "bg-brand-500/10 text-brand-300 border-l-[3px] border-brand-500"
-                          : "text-surface-300 hover:bg-surface-800 hover:text-[#F2F2F2] border-l-[3px] border-transparent",
+                          : "text-surface-300 hover:bg-surface-800 hover:text-text-primary border-l-[3px] border-transparent",
                       )}
                     >
                       <span className={cn("shrink-0", active ? "text-brand-300" : "text-surface-400")}>
@@ -261,7 +261,7 @@ function Sidebar({
                       collapsed && "justify-center px-0",
                       active
                         ? "bg-brand-500/10 text-brand-300 border-l-[3px] border-brand-500"
-                        : "text-surface-300 hover:bg-surface-800 hover:text-[#F2F2F2] border-l-[3px] border-transparent",
+                        : "text-surface-300 hover:bg-surface-800 hover:text-text-primary border-l-[3px] border-transparent",
                     )}
                   >
                     <span className={cn("shrink-0", active ? "text-brand-300" : "text-surface-400")}>
@@ -306,7 +306,7 @@ function Sidebar({
                       collapsed && "justify-center px-0",
                       active
                         ? "bg-brand-500/10 text-brand-300 border-l-[3px] border-brand-500"
-                        : "text-surface-300 hover:bg-surface-800 hover:text-[#F2F2F2] border-l-[3px] border-transparent",
+                        : "text-surface-300 hover:bg-surface-800 hover:text-text-primary border-l-[3px] border-transparent",
                     )}
                   >
                     <span className={cn("shrink-0", active ? "text-brand-300" : "text-surface-400")}>
@@ -345,7 +345,7 @@ function Sidebar({
                       collapsed && "justify-center px-0",
                       active
                         ? "bg-brand-500/10 text-brand-300 border-l-[3px] border-brand-500"
-                        : "text-surface-300 hover:bg-surface-800 hover:text-[#F2F2F2] border-l-[3px] border-transparent",
+                        : "text-surface-300 hover:bg-surface-800 hover:text-text-primary border-l-[3px] border-transparent",
                     )}
                   >
                     <span className={cn("shrink-0", active ? "text-brand-300" : "text-surface-400")}>
@@ -367,7 +367,7 @@ function Sidebar({
           collapsed ? (
             <button
               onClick={() => { router.push("/projects"); onClose?.(); }}
-              className="flex w-full items-center justify-center rounded-md p-2 text-surface-400 hover:bg-surface-800 hover:text-[#F2F2F2]"
+              className="flex w-full items-center justify-center rounded-md p-2 text-surface-400 hover:bg-surface-800 hover:text-text-primary"
               title="View all projects"
             >
               <FolderKanban size={18} />
@@ -375,7 +375,7 @@ function Sidebar({
           ) : (
             <button
               onClick={() => { router.push("/projects"); onClose?.(); }}
-              className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-surface-400 hover:bg-surface-800 hover:text-[#F2F2F2]"
+              className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-surface-400 hover:bg-surface-800 hover:text-text-primary"
             >
               <FolderKanban size={18} />
               <span className="truncate">View all projects</span>
@@ -387,14 +387,14 @@ function Sidebar({
         {collapsed ? (
           <button
             onClick={onToggle}
-            className="flex w-full items-center justify-center rounded-md p-2 text-surface-400 hover:bg-surface-800 hover:text-[#F2F2F2]"
+            className="flex w-full items-center justify-center rounded-md p-2 text-surface-400 hover:bg-surface-800 hover:text-text-primary"
           >
             <ChevronRight size={16} />
           </button>
         ) : (
           <button
             onClick={onToggle}
-            className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-surface-400 hover:bg-surface-800 hover:text-[#F2F2F2]"
+            className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-sm text-surface-400 hover:bg-surface-800 hover:text-text-primary"
           >
             <ChevronLeft size={16} />
             <span>Collapse</span>
@@ -591,28 +591,28 @@ export default function DashboardLayout({
           {/* Mobile menu toggle */}
           <button
             onClick={() => setMobileOpen(true)}
-            className="lg:hidden rounded-md p-1.5 text-surface-400 hover:bg-surface-800 hover:text-[#F2F2F2]"
+            className="lg:hidden rounded-md p-1.5 text-surface-400 hover:bg-surface-800 hover:text-text-primary"
           >
             <Menu size={20} />
           </button>
 
           {/* Page title */}
           <div className="hidden sm:flex items-center gap-2 text-sm">
-            <span className="text-[#F2F2F2] font-medium">{pageTitle}</span>
+            <span className="text-text-primary font-medium">{pageTitle}</span>
           </div>
 
           {/* Spacer */}
           <div className="flex-1" />
 
           {/* Search */}
-          <button className="rounded-md p-1.5 text-surface-400 hover:bg-surface-800 hover:text-[#F2F2F2]">
+          <button className="rounded-md p-1.5 text-surface-400 hover:bg-surface-800 hover:text-text-primary">
             <Search size={18} />
           </button>
 
           {/* Theme toggle */}
           <button
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-            className="rounded-md p-1.5 text-surface-400 hover:bg-surface-800 hover:text-[#F2F2F2]"
+            className="rounded-md p-1.5 text-surface-400 hover:bg-surface-800 hover:text-text-primary"
           >
             {!mounted ? (
               <div className="h-[18px] w-[18px]" />

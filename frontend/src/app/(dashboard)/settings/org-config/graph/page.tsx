@@ -237,13 +237,13 @@ export default function GraphConfigPage() {
                     ))}
                   </select>
                   {isFieldSet("graph_backend") && (
-                    <button
+                    <Button
                       onClick={() => handleResetField("graph_backend")}
-                      className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                      variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                       title="Reset to default"
                     >
                       <X size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -264,13 +264,13 @@ export default function GraphConfigPage() {
                     ))}
                   </select>
                   {isFieldSet("graph_search_type") && (
-                    <button
+                    <Button
                       onClick={() => handleResetField("graph_search_type")}
-                      className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                      variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                       title="Reset to default"
                     >
                       <X size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
               </div>
@@ -291,13 +291,13 @@ export default function GraphConfigPage() {
                         onChange={(e) => updateField("surrealdb_url", e.target.value)}
                       />
                       {isFieldSet("surrealdb_url") && (
-                        <button
+                        <Button
                           onClick={() => handleResetField("surrealdb_url")}
-                          className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                          variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                           title="Reset to default"
                         >
                           <X size={14} />
-                        </button>
+                        </Button>
                       )}
                     </div>
                     <p className="text-xs text-surface-500 mt-1">Required when using SurrealDB backend</p>
@@ -317,13 +317,13 @@ export default function GraphConfigPage() {
                         onChange={(e) => updateField("surrealdb_user", e.target.value)}
                       />
                       {isFieldSet("surrealdb_user") && (
-                        <button
+                        <Button
                           onClick={() => handleResetField("surrealdb_user")}
-                          className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                          variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                           title="Reset to default"
                         >
                           <X size={14} />
-                        </button>
+                        </Button>
                       )}
                     </div>
                   </div>
@@ -352,13 +352,13 @@ export default function GraphConfigPage() {
                         onChange={(e) => updateField("surrealdb_namespace", e.target.value)}
                       />
                       {isFieldSet("surrealdb_namespace") && (
-                        <button
+                        <Button
                           onClick={() => handleResetField("surrealdb_namespace")}
-                          className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                          variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                           title="Reset to default"
                         >
                           <X size={14} />
-                        </button>
+                        </Button>
                       )}
                     </div>
                   </div>
@@ -377,13 +377,13 @@ export default function GraphConfigPage() {
                         onChange={(e) => updateField("surrealdb_database", e.target.value)}
                       />
                       {isFieldSet("surrealdb_database") && (
-                        <button
+                        <Button
                           onClick={() => handleResetField("surrealdb_database")}
-                          className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                          variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                           title="Reset to default"
                         >
                           <X size={14} />
-                        </button>
+                        </Button>
                       )}
                     </div>
                   </div>
@@ -405,13 +405,13 @@ export default function GraphConfigPage() {
                     onChange={(e) => updateField("graph_max_traversal_depth", parseInt(e.target.value) || 1)}
                   />
                   {isFieldSet("graph_max_traversal_depth") && (
-                    <button
+                    <Button
                       onClick={() => handleResetField("graph_max_traversal_depth")}
-                      className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                      variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                       title="Reset to default"
                     >
                       <X size={14} />
-                    </button>
+                    </Button>
                   )}
                 </div>
                 <p className="text-xs text-surface-500 mt-1">How many hops the graph traversal will follow (1&ndash;10)</p>

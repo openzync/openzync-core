@@ -13,6 +13,7 @@ import {
   Maximize2,
   Minimize2,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 // ╔══════════════════════════════════════════════════════════════════════════════╗
 // ║ Public Types                                                                ║
@@ -677,35 +678,43 @@ export function ForceGraph({
 
           {showControls && (
             <div className="flex items-center gap-1 border-l border-surface-700 pl-3">
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={handleZoomIn}
-                className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white"
+                className="rounded-md text-surface-400 hover:text-white"
                 title="Zoom in"
               >
                 <ZoomIn size={16} />
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={handleZoomOut}
-                className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white"
+                className="rounded-md text-surface-400 hover:text-white"
                 title="Zoom out"
               >
                 <ZoomOut size={16} />
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={handleResetZoom}
-                className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white"
+                className="rounded-md text-surface-400 hover:text-white"
                 title="Reset zoom"
               >
                 <RotateCcw size={14} />
-              </button>
+              </Button>
               <div className="w-px h-4 bg-surface-700" aria-hidden="true" />
-              <button
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setIsFullscreen((p) => !p)}
-                className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white"
+                className="rounded-md text-surface-400 hover:text-white"
                 title={isFullscreen ? "Exit fullscreen (Esc)" : "Enter fullscreen"}
               >
                 {isFullscreen ? <Minimize2 size={16} /> : <Maximize2 size={16} />}
-              </button>
+              </Button>
             </div>
           )}
         </div>
@@ -737,9 +746,9 @@ export function ForceGraph({
                 Check your connection and try again
               </p>
               {onRetry && (
-                <button onClick={onRetry} className="btn-primary text-sm">
+                <Button variant="primary" size="sm" onClick={onRetry}>
                   Retry
-                </button>
+                </Button>
               )}
             </div>
           )}
@@ -759,12 +768,14 @@ export function ForceGraph({
                   : "Ingest some data to populate the knowledge graph"}
               </p>
               {isFiltered && (
-                <button
+                <Button
+                  variant="ghost"
+                  size="sm"
                   onClick={() => setFilterText("")}
-                  className="btn-ghost text-xs text-accent-300 mt-3"
+                  className="text-accent-300 mt-3"
                 >
                   Clear filter
-                </button>
+                </Button>
               )}
               {!isFiltered && emptyAction}
             </div>
@@ -805,12 +816,13 @@ export function ForceGraph({
                         {selectedNode.type}
                       </span>
                     </div>
-                    <button
+                    <Button
+                      variant="ghost"
                       onClick={() => setSelectedNode(null)}
-                      className="btn-ghost p-0.5 rounded text-surface-500 hover:text-white shrink-0"
+                      className="rounded text-surface-500 hover:text-white shrink-0"
                     >
                       <X size={14} />
-                    </button>
+                    </Button>
                   </div>
 
                   {/* Summary */}

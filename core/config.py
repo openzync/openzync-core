@@ -135,6 +135,29 @@ class Settings(BaseSettings):
         min_length=32,
     )
 
+    # ── FalkorDB (graph backend) ──────────────────────────────────────────
+    FALKORDB_URL: str = Field(
+        default="redis://localhost:6379",
+        description=(
+            "FalkorDB connection URL (Redis RESP protocol).  "
+            "Defaults to localhost:6379."
+        ),
+        validation_alias="MG_FALKORDB_URL",
+    )
+    FALKORDB_MAX_CONNECTIONS: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Max connections in the FalkorDB connection pool.",
+        validation_alias="MG_FALKORDB_MAX_CONNECTIONS",
+    )
+    FALKORDB_SOCKET_TIMEOUT: int = Field(
+        default=30,
+        ge=1,
+        description="Socket timeout in seconds for FalkorDB connections.",
+        validation_alias="MG_FALKORDB_SOCKET_TIMEOUT",
+    )
+
     # ── Rate Limiting ─────────────────────────────────────────────────────
     RATE_LIMIT_IP_MAX: int = Field(
         default=10,

@@ -77,7 +77,7 @@ function UserFormDialog({
       <div className="fixed inset-0 z-50 bg-black/50 animate-fade-in" onClick={onClose} />
       <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 rounded-lg border border-surface-800 bg-surface-900 p-6 shadow-xl shadow-black/40 animate-slide-up">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold text-[#F2F2F2]">{title}</h2>
+          <h2 className="text-lg font-semibold text-text-primary">{title}</h2>
           <button onClick={onClose} className="text-surface-400 hover:text-white p-1"><X size={18} /></button>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -258,10 +258,10 @@ export default function UsersPage() {
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
-                        <Link href={`/users/${user.id}`} className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white" title="View User"><Eye size={14} /></Link>
-                        <button onClick={() => handleCopyId(user.id)} className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white" title="Copy User ID"><Copy size={14} /></button>
-                        <button onClick={() => setEditTarget(user)} className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white" title="Edit User"><Edit size={14} /></button>
-                        <button onClick={() => setDeleteTarget(user)} className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-error" title="Delete User"><Trash2 size={14} /></button>
+                        <Link href={`/users/${user.id}`}><Button variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-white" title="View User"><Eye size={14} /></Button></Link>
+                        <Button variant="ghost" size="sm" onClick={() => handleCopyId(user.id)} className="rounded-md text-surface-400 hover:text-white" title="Copy User ID"><Copy size={14} /></Button>
+                        <Button variant="ghost" size="sm" onClick={() => setEditTarget(user)} className="rounded-md text-surface-400 hover:text-white" title="Edit User"><Edit size={14} /></Button>
+                        <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(user)} className="rounded-md text-surface-400 hover:text-error" title="Delete User"><Trash2 size={14} /></Button>
                       </div>
                     </td>
                   </tr>
@@ -274,9 +274,9 @@ export default function UsersPage() {
         {/* Load more */}
         {!loading && hasMore && (
           <div className="border-t border-surface-800 px-4 py-3 text-center">
-            <button onClick={loadMore} disabled={loadingMore} className="btn-ghost text-xs text-surface-400 hover:text-white gap-2">
+            <Button variant="ghost" size="sm" onClick={loadMore} disabled={loadingMore} className="text-surface-400 hover:text-white gap-2">
               {loadingMore ? <span className="flex items-center gap-2"><Spinner /> Loading...</span> : <span className="flex items-center gap-2"><RefreshCw size={14} /> Load More</span>}
-            </button>
+            </Button>
           </div>
         )}
       </div>

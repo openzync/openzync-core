@@ -208,15 +208,15 @@ export default function BehaviourConfigPage() {
                       }
                     />
                     {isFieldSet("context_cache_ttl") && (
-                      <button
+                      <Button
                         onClick={() =>
                           handleResetField("context_cache_ttl")
                         }
-                        className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
+                        variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300 shrink-0 mt-0.5"
                         title="Reset to default"
                       >
                         <X size={14} />
-                      </button>
+                      </Button>
                     )}
                   </div>
                   <p className="text-xs text-surface-500 mt-1">
@@ -256,15 +256,15 @@ export default function BehaviourConfigPage() {
                         </span>
                       </label>
                       {isFieldSet("audit_log_response_body") && (
-                        <button
+                        <Button
                           onClick={() =>
                             handleResetField("audit_log_response_body")
                           }
-                          className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300"
+                          variant="ghost" size="sm" className="rounded-md text-surface-400 hover:text-brand-300"
                           title="Reset to default"
                         >
                           <X size={14} />
-                        </button>
+                        </Button>
                       )}
                     </div>
                   </div>

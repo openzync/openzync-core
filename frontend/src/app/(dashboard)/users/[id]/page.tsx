@@ -31,6 +31,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/api-client";
+import { Button } from "@/components/ui/button";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -275,9 +276,9 @@ function InstructionCreateDialog({ onClose, onCreate }: InstructionCreateDialogP
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold">Add Summary Instruction</h2>
-          <button onClick={onClose} className="btn-ghost p-1 rounded-md text-surface-400 hover:text-white">
+          <Button variant="ghost" size="sm" onClick={onClose} className="rounded-md text-surface-400 hover:text-white">
             <X size={18} />
-          </button>
+          </Button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -322,10 +323,10 @@ function InstructionCreateDialog({ onClose, onCreate }: InstructionCreateDialogP
           )}
 
           <div className="flex justify-end gap-3 pt-2 border-t border-surface-800">
-            <button type="button" onClick={onClose} className="btn-secondary text-sm" disabled={submitting}>
+            <Button variant="secondary" size="sm" type="button" onClick={onClose} disabled={submitting}>
               Cancel
-            </button>
-            <button type="submit" disabled={submitting} className="btn-primary text-sm min-w-[140px] justify-center">
+            </Button>
+            <Button variant="primary" size="sm" type="submit" disabled={submitting} className="min-w-[140px] justify-center">
               {submitting ? (
                 <span className="flex items-center gap-2">
                   <Spinner /> Adding...
@@ -333,7 +334,7 @@ function InstructionCreateDialog({ onClose, onCreate }: InstructionCreateDialogP
               ) : (
                 "Add Instruction"
               )}
-            </button>
+            </Button>
           </div>
         </form>
       </div>
@@ -381,9 +382,9 @@ function InstructionEditDialog({ initial, onClose, onSave }: InstructionEditDial
       >
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold">Edit Summary Instruction</h2>
-          <button onClick={onClose} className="btn-ghost p-1 rounded-md text-surface-400 hover:text-white">
+          <Button variant="ghost" size="sm" onClick={onClose} className="rounded-md text-surface-400 hover:text-white">
             <X size={18} />
-          </button>
+          </Button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -423,10 +424,10 @@ function InstructionEditDialog({ initial, onClose, onSave }: InstructionEditDial
           )}
 
           <div className="flex justify-end gap-3 pt-2 border-t border-surface-800">
-            <button type="button" onClick={onClose} className="btn-secondary text-sm" disabled={submitting}>
+            <Button variant="secondary" size="sm" type="button" onClick={onClose} disabled={submitting}>
               Cancel
-            </button>
-            <button type="submit" disabled={submitting} className="btn-primary text-sm min-w-[120px] justify-center">
+            </Button>
+            <Button variant="primary" size="sm" type="submit" disabled={submitting} className="min-w-[120px] justify-center">
               {submitting ? (
                 <span className="flex items-center gap-2">
                   <Spinner /> Saving...
@@ -434,7 +435,7 @@ function InstructionEditDialog({ initial, onClose, onSave }: InstructionEditDial
               ) : (
                 "Save Changes"
               )}
-            </button>
+            </Button>
           </div>
         </form>
       </div>
@@ -480,20 +481,22 @@ function InstructionDeleteDialog({ instructionName, onClose, onConfirm }: Instru
         </p>
 
         <div className="flex justify-end gap-3">
-          <button onClick={onClose} className="btn-secondary text-sm" disabled={submitting}>
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={submitting}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
             onClick={async () => { setSubmitting(true); try { await onConfirm(); } finally { setSubmitting(false); } }}
             disabled={submitting}
-            className="btn-danger text-sm min-w-[100px] justify-center"
+            className="min-w-[100px] justify-center"
           >
             {submitting ? (
               <span className="flex items-center gap-2"><Spinner /> Deleting...</span>
             ) : (
               <span className="flex items-center gap-2"><Trash2 size={14} /> Delete</span>
             )}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -695,10 +698,10 @@ export default function UserDetailPage() {
       <RequireAuth>
         <div className="space-y-6">
           {/* Back button skeleton */}
-          <button disabled className="btn-ghost text-xs -ml-2 opacity-50">
+          <Button variant="ghost" size="sm" disabled className="-ml-2 opacity-50">
             <ArrowLeft size={14} />
             Back to Users
-          </button>
+          </Button>
 
           {/* Profile skeleton */}
           <div className="card-base p-6">
@@ -747,13 +750,15 @@ export default function UserDetailPage() {
     <RequireAuth>
     <div className="space-y-6">
       {/* ═══ Back button ═══ */}
-      <button
+      <Button
+        variant="ghost"
+        size="sm"
         onClick={() => router.push("/users")}
-        className="btn-ghost text-xs -ml-2"
+        className="-ml-2"
       >
         <ArrowLeft size={14} />
         Back to Users
-      </button>
+      </Button>
 
       {/* ═══ Section A: Profile header card ═══ */}
       <div className="card-base p-6">
@@ -771,12 +776,11 @@ export default function UserDetailPage() {
                 </p>
               </div>
               {/* Link to sessions list for this user */}
-              <Link
-                href={`/sessions?userId=${encodeURIComponent(user.id)}`}
-                className="btn-ghost text-xs text-surface-400 hover:text-white gap-1.5"
-              >
-                <ArrowUpRight size={14} />
-                Sessions
+              <Link href={`/sessions?userId=${encodeURIComponent(user.id)}`}>
+                <Button variant="ghost" size="sm" className="text-surface-400 hover:text-white gap-1.5">
+                  <ArrowUpRight size={14} />
+                  Sessions
+                </Button>
               </Link>
             </div>
 
@@ -885,10 +889,11 @@ export default function UserDetailPage() {
               </span>
             )}
             {/* Generate button */}
-            <button
+            <Button
+              variant="primary"
+              size="sm"
               onClick={handleGenerateSummary}
               disabled={generating || polling}
-              className="btn-primary text-sm"
             >
               {generating ? (
                 <span className="flex items-center gap-2">
@@ -900,7 +905,7 @@ export default function UserDetailPage() {
                   Generate Summary
                 </span>
               )}
-            </button>
+            </Button>
           </div>
         </div>
 
@@ -932,13 +937,14 @@ export default function UserDetailPage() {
               Custom instructions used when generating the user summary
             </p>
           </div>
-          <button
+          <Button
+            variant="primary"
+            size="sm"
             onClick={() => setShowCreateInstruction(true)}
-            className="btn-primary text-sm"
           >
             <Plus size={14} />
             Add Instruction
-          </button>
+          </Button>
         </div>
 
         {instructions.length === 0 ? (
@@ -965,20 +971,24 @@ export default function UserDetailPage() {
                   </p>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                  <button
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setEditInstructionTarget(inst)}
-                    className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-white"
+                    className="rounded-md text-surface-400 hover:text-white"
                     title="Edit instruction"
                   >
                     <Edit size={14} />
-                  </button>
-                  <button
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setDeleteInstructionTarget(inst)}
-                    className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-error"
+                    className="rounded-md text-surface-400 hover:text-error"
                     title="Delete instruction"
                   >
                     <Trash2 size={14} />
-                  </button>
+                  </Button>
                 </div>
               </div>
             ))}

@@ -174,7 +174,7 @@ function EditDialog({
             <div className="flex h-9 w-9 items-center justify-center rounded-md bg-brand-500/10 shrink-0"><FileText size={16} className="text-brand-300" /></div>
             <div><h2 className="text-lg font-semibold">{templateDisplayName(template.name)}</h2><p className="text-xs text-surface-400">Version {template.version}</p></div>
           </div>
-          <button onClick={onClose} className="btn-ghost p-1 rounded-md text-surface-400 hover:text-white"><X size={18} /></button>
+          <Button variant="ghost" size="sm" onClick={onClose} className="rounded-md text-surface-400 hover:text-white p-1"><X size={18} /></Button>
         </div>
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 mb-4">
           <AlertCircle size={13} className="text-amber-400 mt-0.5 shrink-0" />
@@ -197,11 +197,11 @@ function EditDialog({
           {error && (<div className="rounded-md bg-error/10 border border-error/30 px-3 py-2 text-sm text-error flex items-center gap-2"><AlertCircle size={14} />{error}</div>)}
           <div className="flex items-center justify-between pt-2 border-t border-surface-800">
             <div className="flex items-center gap-2">
-              <button type="button" onClick={onShowHistory} className="btn-ghost text-sm"><History size={14} /> Version History</button>
+              <Button type="button" variant="ghost" size="sm" onClick={onShowHistory}><History size={14} /> Version History</Button>
               {template.type && !template.is_default_for_type && (
-                <button type="button" onClick={handleSetDefault} disabled={settingDefault} className="btn-ghost text-xs text-amber-400 hover:text-amber-300">
+                <Button type="button" variant="ghost" size="sm" onClick={handleSetDefault} disabled={settingDefault} className="text-amber-400 hover:text-amber-300">
                   {settingDefault ? <Spinner className="text-amber-400" /> : <><Star size={12} /> Set as Default</>}
-                </button>
+                </Button>
               )}
             </div>
             <div className="flex items-center gap-3">
@@ -210,20 +210,20 @@ function EditDialog({
                   {showResetConfirm ? (
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-surface-400">Reset to default?</span>
-                      <button type="button" onClick={handleReset} disabled={resetting} className="btn-danger text-xs min-w-[80px] justify-center">
+                      <Button type="button" variant="danger" size="sm" onClick={handleReset} disabled={resetting} className="min-w-[80px] justify-center">
                         {resetting ? <span className="flex items-center gap-1"><Spinner /> Resetting...</span> : <span className="flex items-center gap-1"><Trash2 size={12} /> Confirm</span>}
-                      </button>
-                      <button type="button" onClick={() => setShowResetConfirm(false)} className="btn-ghost text-xs" disabled={resetting}>Cancel</button>
+                      </Button>
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setShowResetConfirm(false)} disabled={resetting}>Cancel</Button>
                     </div>
                   ) : (
-                    <button type="button" onClick={() => setShowResetConfirm(true)} className="btn-ghost text-xs text-surface-400 hover:text-error"><RotateCcw size={12} /> Reset to Default</button>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => setShowResetConfirm(true)} className="text-surface-400 hover:text-error"><RotateCcw size={12} /> Reset to Default</Button>
                   )}
                 </>
               )}
-              <button type="button" onClick={onClose} className="btn-secondary text-sm" disabled={saving}>Cancel</button>
-              <button type="submit" disabled={saving || (!templateText.trim() && !error)} className="btn-primary text-sm min-w-[120px] justify-center">
+              <Button type="button" variant="secondary" size="sm" onClick={onClose} disabled={saving}>Cancel</Button>
+              <Button type="submit" variant="primary" size="sm" disabled={saving || (!templateText.trim() && !error)} className="min-w-[120px] justify-center">
                 {saving ? <span className="flex items-center gap-2"><Spinner /> Saving...</span> : <span className="flex items-center gap-2"><Save size={14} /> Save as New Version</span>}
-              </button>
+              </Button>
             </div>
           </div>
         </form>
@@ -299,7 +299,7 @@ function VersionHistoryDialog({
             <div className="flex h-9 w-9 items-center justify-center rounded-md bg-surface-800 shrink-0"><History size={16} className="text-surface-300" /></div>
             <div><h2 className="text-lg font-semibold">Version History</h2><p className="text-xs text-surface-400">{templateDisplayName(templateName)}</p></div>
           </div>
-          <button onClick={onClose} className="btn-ghost p-1 rounded-md text-surface-400 hover:text-white"><X size={18} /></button>
+          <Button variant="ghost" size="sm" onClick={onClose} className="rounded-md text-surface-400 hover:text-white p-1"><X size={18} /></Button>
         </div>
         {error && (<div className="rounded-md bg-error/10 border border-error/30 px-3 py-2 text-sm text-error flex items-center gap-2 mb-4 shrink-0"><AlertCircle size={14} />{error}</div>)}
         <div className="flex gap-4 flex-1 min-h-0">
@@ -337,21 +337,21 @@ function VersionHistoryDialog({
                   </div>
                   <div className="flex items-center gap-2">
                     {!isActiveVersion(selectedVersion.version) && (
-                      <button onClick={() => handleRollback(selectedVersion.version)} disabled={rollingBack} className="btn-primary text-xs min-w-[100px] justify-center">
+                      <Button variant="primary" size="sm" onClick={() => handleRollback(selectedVersion.version)} disabled={rollingBack} className="min-w-[100px] justify-center">
                         {rollingBack ? <span className="flex items-center gap-1"><Spinner /> Rolling back...</span> : <span className="flex items-center gap-1"><RotateCcw size={12} /> Rollback to v{selectedVersion.version}</span>}
-                      </button>
+                      </Button>
                     )}
                     {!selectedVersion.is_system_default ? (
                       promoteConfirm === selectedVersion.version ? (
                         <div className="flex items-center gap-2">
                           <span className="text-xs text-amber-400">Set as global default?</span>
-                          <button onClick={() => handlePromote(selectedVersion.version)} disabled={promoting} className="btn-primary text-xs bg-amber-500/20 border-amber-500/30 hover:bg-amber-500/30 min-w-[80px] justify-center">
+                          <Button variant="primary" size="sm" onClick={() => handlePromote(selectedVersion.version)} disabled={promoting} className="bg-amber-500/20 border-amber-500/30 hover:bg-amber-500/30 min-w-[80px] justify-center">
                             {promoting ? <span className="flex items-center gap-1"><Spinner /> Promoting...</span> : <span className="flex items-center gap-1"><Star size={12} /> Confirm</span>}
-                          </button>
-                          <button onClick={() => setPromoteConfirm(null)} className="btn-ghost text-xs text-surface-400" disabled={promoting}>Cancel</button>
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => setPromoteConfirm(null)} disabled={promoting}>Cancel</Button>
                         </div>
                       ) : (
-                        <button onClick={() => setPromoteConfirm(selectedVersion.version)} className="btn-ghost text-xs text-amber-400 hover:text-amber-300"><Star size={12} /> Set as System Default</button>
+                        <Button variant="ghost" size="sm" onClick={() => setPromoteConfirm(selectedVersion.version)} className="text-amber-400 hover:text-amber-300"><Star size={12} /> Set as System Default</Button>
                       )
                     ) : (
                       <span className="inline-flex items-center gap-1 text-xs text-amber-400"><Star size={12} /> System Default</span>
@@ -420,7 +420,7 @@ function BrowserDialog({ onClose, onImported }: { onClose: () => void; onImporte
             <div className="flex h-9 w-9 items-center justify-center rounded-md bg-surface-800 shrink-0"><Download size={16} className="text-surface-300" /></div>
             <div><h2 className="text-lg font-semibold">Browse System Prompts</h2><p className="text-xs text-surface-400">Import system-default prompt templates into your organisation</p></div>
           </div>
-          <button onClick={onClose} className="btn-ghost p-1 rounded-md text-surface-400 hover:text-white"><X size={18} /></button>
+          <Button variant="ghost" size="sm" onClick={onClose} className="rounded-md text-surface-400 hover:text-white p-1"><X size={18} /></Button>
         </div>
         <div className="flex-1 overflow-y-auto space-y-4 min-h-0">
           {loading ? (
@@ -445,9 +445,9 @@ function BrowserDialog({ onClose, onImported }: { onClose: () => void; onImporte
                         {isImported ? (
                           <span className="inline-flex items-center gap-1 text-xs text-success"><CheckCircle size={12} /> Imported</span>
                         ) : (
-                          <button onClick={() => handleImport(t.name)} disabled={importing === t.name} className="btn-primary text-xs min-w-[80px] justify-center">
+                          <Button variant="primary" size="sm" onClick={() => handleImport(t.name)} disabled={importing === t.name} className="min-w-[80px] justify-center">
                             {importing === t.name ? <span className="flex items-center gap-1"><Spinner /> Importing...</span> : "Import"}
-                          </button>
+                          </Button>
                         )}
                       </div>
                     );
@@ -458,7 +458,7 @@ function BrowserDialog({ onClose, onImported }: { onClose: () => void; onImporte
           )}
         </div>
         <div className="flex justify-end mt-4 shrink-0 pt-3 border-t border-surface-800">
-          <button onClick={onClose} className="btn-ghost text-sm">Close</button>
+          <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
         </div>
       </div>
     </div>
@@ -503,7 +503,7 @@ function CreateDialog({ onClose, onCreate }: { onClose: () => void; onCreate: ()
             <div className="flex h-9 w-9 items-center justify-center rounded-md bg-brand-500/10 shrink-0"><FileText size={16} className="text-brand-300" /></div>
             <div><h2 className="text-lg font-semibold">New Prompt Template</h2><p className="text-xs text-surface-400">Create a custom prompt template for your organisation</p></div>
           </div>
-          <button onClick={onClose} className="btn-ghost p-1 rounded-md text-surface-400 hover:text-white"><X size={18} /></button>
+          <Button variant="ghost" size="sm" onClick={onClose} className="rounded-md text-surface-400 hover:text-white p-1"><X size={18} /></Button>
         </div>
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 mb-4">
           <AlertCircle size={13} className="text-amber-400 mt-0.5 shrink-0" />
@@ -532,10 +532,10 @@ function CreateDialog({ onClose, onCreate }: { onClose: () => void; onCreate: ()
           </div>
           {error && (<div className="rounded-md bg-error/10 border border-error/30 px-3 py-2 text-sm text-error flex items-center gap-2"><AlertCircle size={14} />{error}</div>)}
           <div className="flex items-center justify-end gap-3 pt-2 border-t border-surface-800">
-            <button type="button" onClick={onClose} className="btn-secondary text-sm" disabled={creating}>Cancel</button>
-            <button type="submit" disabled={creating || !name.trim() || !type || !templateText.trim()} className="btn-primary text-sm min-w-[140px] justify-center">
+            <Button type="button" variant="secondary" size="sm" onClick={onClose} disabled={creating}>Cancel</Button>
+            <Button type="submit" variant="primary" size="sm" disabled={creating || !name.trim() || !type || !templateText.trim()} className="min-w-[140px] justify-center">
               {creating ? <span className="flex items-center gap-2"><Spinner /> Creating...</span> : <span className="flex items-center gap-2"><Plus size={14} /> Create Template</span>}
-            </button>
+            </Button>
           </div>
         </form>
       </div>
@@ -560,10 +560,10 @@ function DeleteDialog({ templateName, templateDisplay, onClose, onConfirm }: {
         <p className="text-sm font-medium text-white mb-5">&ldquo;{templateDisplay}&rdquo;</p>
         <p className="text-xs text-surface-500 mb-5">All custom versions will be removed. The organisation will fall back to the system default.</p>
         <div className="flex justify-end gap-3">
-          <button onClick={onClose} className="btn-secondary text-sm" disabled={submitting}>Cancel</button>
-          <button onClick={async () => { setSubmitting(true); try { await onConfirm(); } finally { setSubmitting(false); } }} disabled={submitting} className="btn-danger text-sm min-w-[100px] justify-center">
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={submitting}>Cancel</Button>
+          <Button variant="danger" size="sm" onClick={async () => { setSubmitting(true); try { await onConfirm(); } finally { setSubmitting(false); } }} disabled={submitting} className="min-w-[100px] justify-center">
             {submitting ? <span className="flex items-center gap-2"><Spinner /> Deleting...</span> : <span className="flex items-center gap-2"><Trash2 size={14} /> Delete</span>}
-          </button>
+          </Button>
         </div>
       </div>
     </div>
@@ -722,15 +722,15 @@ export default function PromptsPage() {
                         <td className="px-4 py-3 text-right">
                           <div className="flex items-center justify-end gap-1">
                             {tmpl.type && !tmpl.is_default_for_type && (
-                              <button onClick={() => handleSetDefault(tmpl.name)} disabled={settingDefault === tmpl.name}
-                                className="btn-ghost p-1.5 rounded-md text-amber-400 hover:text-amber-300" title="Set as default for this type">
+                              <Button variant="ghost" size="sm" onClick={() => handleSetDefault(tmpl.name)} disabled={settingDefault === tmpl.name}
+                                className="rounded-md text-amber-400 hover:text-amber-300 p-1.5" title="Set as default for this type">
                                 {settingDefault === tmpl.name ? <Spinner className="text-amber-400" /> : <Star size={14} />}
-                              </button>
+                              </Button>
                             )}
-                            <button onClick={() => openEditor(tmpl.name, tmpl.is_customised)} className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-brand-300" title="Edit template"><Edit3 size={14} /></button>
-                            <button onClick={() => setHistoryTarget(tmpl.name)} className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-surface-200" title="View version history"><History size={14} /></button>
+                            <Button variant="ghost" size="sm" onClick={() => openEditor(tmpl.name, tmpl.is_customised)} className="rounded-md text-surface-400 hover:text-brand-300 p-1.5" title="Edit template"><Edit3 size={14} /></Button>
+                            <Button variant="ghost" size="sm" onClick={() => setHistoryTarget(tmpl.name)} className="rounded-md text-surface-400 hover:text-surface-200 p-1.5" title="View version history"><History size={14} /></Button>
                             {tmpl.is_customised && !tmpl.is_default_for_type && (
-                              <button onClick={() => setDeleteTarget(tmpl.name)} className="btn-ghost p-1.5 rounded-md text-surface-400 hover:text-error" title="Delete template"><Trash2 size={14} /></button>
+                              <Button variant="ghost" size="sm" onClick={() => setDeleteTarget(tmpl.name)} className="rounded-md text-surface-400 hover:text-error p-1.5" title="Delete template"><Trash2 size={14} /></Button>
                             )}
                           </div>
                         </td>
