@@ -89,8 +89,8 @@ class OrgConfigBase(BaseModel):
 
     # ── Graph ──────────────────────────────────────────────────────────────
     graph_backend: str | None = Field(
-        default=None,
-        description="Graph backend (postgres, none).",
+        default="surrealdb",
+        description="Graph backend (surrealdb, postgres, none).",
     )
     graph_search_type: str | None = Field(
         default=None,
@@ -101,6 +101,28 @@ class OrgConfigBase(BaseModel):
         ge=1,
         le=10,
         description="Maximum BFS traversal depth for the graph backend.",
+    )
+
+    # ── SurrealDB (per-org connection details) ─────────────────────────────
+    surrealdb_url: str | None = Field(
+        default=None,
+        description="SurrealDB WebSocket connection URL (e.g. ws://surrealdb:8000/rpc).",
+    )
+    surrealdb_user: str | None = Field(
+        default=None,
+        description="SurrealDB authentication username.",
+    )
+    surrealdb_pass: str | None = Field(
+        default=None,
+        description="SurrealDB authentication password.",
+    )
+    surrealdb_namespace: str | None = Field(
+        default=None,
+        description="SurrealDB namespace (tenant isolation boundary).",
+    )
+    surrealdb_database: str | None = Field(
+        default=None,
+        description="SurrealDB database within the namespace.",
     )
     # ── Behaviour ──────────────────────────────────────────────────────────
     context_cache_ttl: int | None = Field(
@@ -193,6 +215,11 @@ class UpdateOrgConfigRequest(BaseModel):
     graph_backend: str | None = None
     graph_search_type: str | None = None
     graph_max_traversal_depth: int | None = Field(default=None, ge=1, le=10)
+    surrealdb_url: str | None = None
+    surrealdb_user: str | None = None
+    surrealdb_pass: str | None = None
+    surrealdb_namespace: str | None = None
+    surrealdb_database: str | None = None
     context_cache_ttl: int | None = Field(default=None, ge=1)
     audit_log_response_body: bool | None = None
 

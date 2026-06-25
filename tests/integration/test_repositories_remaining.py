@@ -50,7 +50,8 @@ async def _seed_user_and_session(engine) -> tuple[UUID, UUID]:
             organization_id=ORG_ID, external_id="repo_test_user",
         )
         session = await session_repo.create(
-            organization_id=ORG_ID, user_id=user.id, external_id="repo_test_session",
+            organization_id=ORG_ID, project_id=PROJECT_ID, created_by=user.id,
+            external_id="repo_test_session",
         )
         return user.id, session.id
 
@@ -60,6 +61,7 @@ async def _seed_episode(engine, user_id: UUID, session_id: UUID) -> UUID:
         ep_repo = EpisodeRepository(db)
         episodes = await ep_repo.batch_create(
             organization_id=ORG_ID,
+            project_id=PROJECT_ID,
             session_id=session_id,
             user_id=user_id,
             messages=[{"role": "user", "content": "test episode", "metadata": {}}],
@@ -249,6 +251,7 @@ class TestFactRepository:
             repo = FactRepository(db)
             fact = await repo.create(
                 user_id=user_id, organization_id=ORG_ID,
+                project_id=PROJECT_ID,
                 content="Python is great", subject="Python",
                 predicate="is", obj="great", confidence=0.95,
             )
@@ -261,6 +264,7 @@ class TestFactRepository:
             repo = FactRepository(db)
             await repo.create(
                 user_id=user_id, organization_id=ORG_ID,
+                project_id=PROJECT_ID,
                 content="Delete me", subject="X", predicate="is", obj="Y",
             )
             deleted = await repo.soft_delete_by_user(user_id)

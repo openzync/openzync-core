@@ -2,9 +2,10 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Eye, EyeOff, Brain, AudioWaveform, GitBranch, Settings2, Save, CheckCircle, AlertCircle, X } from "lucide-react";
+import { Loader2, Eye, Brain, AudioWaveform, GitBranch, Settings2, Save, CheckCircle, AlertCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/api-client";
+import { SecretInput } from "@/components/ui/secret-input";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -27,7 +28,11 @@ interface UpdateOrgConfigRequest {
   graph_backend?: string | null;
   graph_search_type?: string | null;
   graph_max_traversal_depth?: number | null;
-  falkordb_url?: string | null;
+  surrealdb_url?: string | null;
+  surrealdb_user?: string | null;
+  surrealdb_pass?: string | null;
+  surrealdb_namespace?: string | null;
+  surrealdb_database?: string | null;
   context_cache_ttl?: number | null;
   audit_log_response_body?: boolean | null;
 }
@@ -40,7 +45,7 @@ interface ToastState {
 
 type LlmBackend = "openai" | "anthropic" | "ollama" | "openai_like" | "openrouter" | "azure";
 type EmbeddingBackend = "openai" | "ollama" | "huggingface" | "sentence_transformers";
-type GraphBackend = "postgres" | "graphiti" | "none";
+type GraphBackend = "postgres" | "surrealdb" | "none";
 type GraphSearchType = "hybrid" | "bm25" | "vector";
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -65,7 +70,7 @@ const EMBEDDING_BACKEND_OPTIONS: { value: EmbeddingBackend; label: string }[] = 
 
 const GRAPH_BACKEND_OPTIONS: { value: GraphBackend; label: string }[] = [
   { value: "postgres", label: "PostgreSQL (pgvector)" },
-  { value: "graphiti", label: "Graphiti (FalkorDB)" },
+  { value: "surrealdb", label: "SurrealDB" },
   { value: "none", label: "No graph backend" },
 ];
 
@@ -143,54 +148,6 @@ function SectionHeader({
 
 // ─── Empty String Input (shows required badge) ────────────────────────────────
 
-function SecretInput({
-  label,
-  value,
-  onChange,
-  placeholder,
-  visible,
-  onToggleVisibility,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder: string;
-  visible: boolean;
-  onToggleVisibility: () => void;
-}) {
-  const isEmpty = !value;
-
-  return (
-    <div>
-      <label className="block text-sm font-medium text-surface-300 mb-1.5">
-        {label}
-        {isEmpty && (
-          <span className="ml-2 text-[10px] font-medium text-error uppercase tracking-wider">Required</span>
-        )}
-      </label>
-      <div className="relative">
-        <input
-          className={cn(
-            "input-base pr-10 w-full",
-            isEmpty && "border-error/40 focus:border-error",
-          )}
-          type={visible ? "text" : "password"}
-          placeholder={placeholder}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-        />
-        <button
-          type="button"
-          onClick={onToggleVisibility}
-          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-surface-500 hover:text-surface-300"
-        >
-          {visible ? <EyeOff size={16} /> : <Eye size={16} />}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ─── Main Onboarding Page ──────────────────────────────────────────────────────
 
 export default function OnboardingPage() {
@@ -206,6 +163,7 @@ export default function OnboardingPage() {
   const [showOpenRouterKey, setShowOpenRouterKey] = useState(false);
   const [showAzureKey, setShowAzureKey] = useState(false);
   const [showEmbeddingKey, setShowEmbeddingKey] = useState(false);
+  const [showSurrealDbPass, setShowSurrealDbPass] = useState(false);
 
   // ── Form state ─────────────────────────────────────────────────────────────
 
@@ -572,18 +530,58 @@ export default function OnboardingPage() {
               </select>
             </div>
 
-            {/* falkordb_url — conditionally shown */}
-            {(form.graph_backend === "graphiti") && (
-              <div>
-                <label className="block text-sm font-medium text-surface-300 mb-1.5">FalkorDB URL</label>
-                <input
-                  className="input-base w-full"
-                  type="url"
-                  placeholder="falkordb://username:password@host:port"
-                  value={form.falkordb_url ?? ""}
-                  onChange={(e) => updateField("falkordb_url", e.target.value)}
+            {/* SurrealDB connection fields — conditionally shown */}
+            {(form.graph_backend === "surrealdb") && (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-surface-300 mb-1.5">SurrealDB URL</label>
+                  <input
+                    className="input-base w-full"
+                    type="url"
+                    placeholder="ws://surrealdb:8000/rpc"
+                    value={form.surrealdb_url ?? ""}
+                    onChange={(e) => updateField("surrealdb_url", e.target.value)}
+                  />
+                  <p className="text-xs text-surface-500 mt-1">Required when using SurrealDB backend</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-surface-300 mb-1.5">SurrealDB Username</label>
+                  <input
+                    className="input-base w-full"
+                    type="text"
+                    placeholder="SurrealDB username"
+                    value={form.surrealdb_user ?? ""}
+                    onChange={(e) => updateField("surrealdb_user", e.target.value)}
+                  />
+                </div>
+                <SecretInput
+                  label="SurrealDB Password"
+                  value={form.surrealdb_pass ?? ""}
+                  onChange={(v) => updateField("surrealdb_pass", v)}
+                  placeholder="SurrealDB password"
+                  visible={showSurrealDbPass}
+                  onToggleVisibility={() => setShowSurrealDbPass((prev) => !prev)}
                 />
-                <p className="text-xs text-surface-500 mt-1">Required when using Graphiti backend</p>
+                <div>
+                  <label className="block text-sm font-medium text-surface-300 mb-1.5">SurrealDB Namespace</label>
+                  <input
+                    className="input-base w-full"
+                    type="text"
+                    placeholder="SurrealDB namespace"
+                    value={form.surrealdb_namespace ?? ""}
+                    onChange={(e) => updateField("surrealdb_namespace", e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-surface-300 mb-1.5">SurrealDB Database</label>
+                  <input
+                    className="input-base w-full"
+                    type="text"
+                    placeholder="SurrealDB database"
+                    value={form.surrealdb_database ?? ""}
+                    onChange={(e) => updateField("surrealdb_database", e.target.value)}
+                  />
+                </div>
               </div>
             )}
 

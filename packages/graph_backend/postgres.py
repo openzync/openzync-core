@@ -402,6 +402,7 @@ class PostgresGraphBackend(GraphBackend):
         target_id: UUID,
         relationship_type: str,
         properties: dict | None = None,
+        confidence: float | None = None,
         valid_from: datetime | None = None,
         valid_to: datetime | None = None,
     ) -> dict:
@@ -457,7 +458,7 @@ class PostgresGraphBackend(GraphBackend):
                         "rel_type": relationship_type,
                         "properties": orjson.dumps(properties or {}).decode("utf-8"),
                         "fact": "",
-                        "confidence": 1.0,
+                        "confidence": confidence if confidence is not None else 1.0,
                         "valid_from": valid_from.isoformat() if valid_from else None,
                         "valid_to": valid_to.isoformat() if valid_to else None,
                     },

@@ -11,12 +11,16 @@ Usage::
     # App startup:
     app.state.graph_backend_dispatcher = init_dispatcher()
 
-    # Per-request:
+    # Per-request (Postgres):
     dispatcher = request.app.state.graph_backend_dispatcher
     backend = dispatcher.resolve_and_create(org_config, db)
     entity = await backend.create_entity(org_id=..., name="Acme", ...)
 
-There are **no** defaults.  ``org_config`` must contain ``graph_backend``.
+    # Per-request (SurrealDB):
+    backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
+
+    The default backend is ``"surrealdb"`` (set in
+:class:`~schemas.organization_config.OrgConfigBase`).
 If the graph is intentionally disabled,
 set ``graph_backend`` to ``"none"`` in the per-org config.
 
@@ -48,18 +52,22 @@ class GraphBackendDispatcher:
     """Registry of backend classes + per-org resolution.
 
     This is an app-level singleton.  It does **not** hold backend instances
-    because backends need a request-scoped ``AsyncSession``.  Instead, it
-    holds the **classes** and creates a fresh instance on every call to
+    because backends need a request-scoped ``AsyncSession`` (Postgres) or
+    ``AsyncSurreal`` connection (SurrealDB).  Instead, it holds the
+    **classes** and creates a fresh instance on every call to
     :meth:`resolve_and_create`.
 
     Example::
 
         dispatcher = GraphBackendDispatcher()
         dispatcher.register("postgres", PostgresGraphBackend)
-        # future: dispatcher.register("neo4j", Neo4jGraphBackend)
+        dispatcher.register("surrealdb", SurrealGraphBackend)
 
-        # Per-request:
+        # Per-request (Postgres):
         backend = dispatcher.resolve_and_create(org_config, db)
+
+        # Per-request (SurrealDB):
+        backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
     """
 
     def __init__(self) -> None:
@@ -87,6 +95,7 @@ class GraphBackendDispatcher:
         self,
         org_config: OrgConfigBase | None,
         db: AsyncSession,
+        surreal: Any = None,
     ) -> GraphBackend | None:
         """Resolve the backend name from ``org_config`` and create an instance.
 
@@ -95,19 +104,23 @@ class GraphBackendDispatcher:
         1. If ``org_config`` is ``None`` or ``org_config.graph_backend``
            is not set or equals ``"none"`` → returns ``None`` (graph disabled).
         2. Looks up the backend name in the registry.
-        3. Creates a new instance with the given ``db`` and any
-           backend-specific kwargs extracted from ``org_config``.
+        3. Creates a new instance with backend-specific kwargs.
 
         Currently supported backends:
 
         - **``"postgres"``**: Creates a :class:`PostgresGraphBackend`.
-          Reads ``graph_max_traversal_depth`` from ``org_config``.
+          Receives ``db`` and ``graph_max_traversal_depth``.
+        - **``"surrealdb"``**: Creates a :class:`SurrealGraphBackend`.
+          Receives ``surreal`` and ``graph_max_traversal_depth``.
 
         Args:
             org_config: The resolved per-org configuration.  May be ``None``
                 (treated as graph disabled).
-            db: A request-scoped ``AsyncSession``.  Required for backends
-                that use SQL (all current implementations).
+            db: A request-scoped ``AsyncSession``.  Required for PostgreSQL
+                backends.
+            surreal: An optional ``AsyncSurreal`` instance from the per-org
+                connection pool.  Passed only to the SurrealDB backend.
+                May be ``None`` (backend degrades gracefully).
 
         Returns:
             An initialised ``GraphBackend`` instance, or ``None`` if graph
@@ -131,13 +144,27 @@ class GraphBackendDispatcher:
                 f"via PATCH /admin/org/config."
             )
 
-        # Backend-specific kwargs extracted from org_config
+        # Backend-specific kwargs — each backend receives only the
+        # arguments it needs.  No ``db=db`` is passed unconditionally
+        # because SurrealGraphBackend does not accept it.
         kwargs: dict = {}
         if backend_name == "postgres":
-            if org_config is not None and org_config.graph_max_traversal_depth is not None:
+            kwargs["db"] = db
+            if (
+                org_config is not None
+                and org_config.graph_max_traversal_depth is not None
+            ):
+                kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
+        elif backend_name == "surrealdb":
+            if surreal is not None:
+                kwargs["surreal"] = surreal
+            if (
+                org_config is not None
+                and org_config.graph_max_traversal_depth is not None
+            ):
                 kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
 
-        backend = cls(db=db, **kwargs)
+        backend = cls(**kwargs)
         logger.info(
             "graph_backend.instance_created",
             extra={"backend": backend_name},
@@ -148,23 +175,27 @@ class GraphBackendDispatcher:
         self,
         db: AsyncSession,
         org_config: OrgConfigBase | None = None,
+        surreal: Any = None,
     ) -> list[GraphBackend]:
         """Create one instance of every registered backend.
 
         This is the multi-backend equivalent of ``resolve_and_create``.
         Instead of picking one backend from the org config, it creates
-        **all** registered backends.  Each backend receives the same
-        ``db`` session and any backend-specific kwargs extracted from
-        ``org_config``.
+        **all** registered backends.  Each backend receives backend-
+        specific kwargs (``db`` for Postgres, ``surreal`` for SurrealDB)
+        and any shared kwargs from ``org_config``.
 
         Callers (e.g. ``HybridRetriever``) run these backends in parallel
         and merge results.  An empty list is returned when no backends
         are registered (graceful degradation).
 
         Args:
-            db: A request-scoped ``AsyncSession``.
+            db: A request-scoped ``AsyncSession``.  Only passed to the
+                Postgres backend.
             org_config: Optional per-org config for backend-specific kwargs
                 such as ``graph_max_traversal_depth``.
+            surreal: An optional ``AsyncSurreal`` instance from the per-org
+                connection pool.  Only passed to the SurrealDB backend.
 
         Returns:
             A list of initialised ``GraphBackend`` instances (may be empty).
@@ -172,10 +203,22 @@ class GraphBackendDispatcher:
         instances: list[GraphBackend] = []
         for backend_name, cls in self._registry.items():
             kwargs: dict = {}
-            if backend_name == "postgres" and org_config is not None:
-                if org_config.graph_max_traversal_depth is not None:
+            if backend_name == "postgres":
+                kwargs["db"] = db
+                if (
+                    org_config is not None
+                    and org_config.graph_max_traversal_depth is not None
+                ):
                     kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
-            instances.append(cls(db=db, **kwargs))
+            elif backend_name == "surrealdb":
+                if surreal is not None:
+                    kwargs["surreal"] = surreal
+                if (
+                    org_config is not None
+                    and org_config.graph_max_traversal_depth is not None
+                ):
+                    kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
+            instances.append(cls(**kwargs))
 
         logger.info(
             "graph_backend.all_created",
@@ -231,9 +274,9 @@ def init_dispatcher() -> GraphBackendDispatcher:
     To add a new backend, import its class and register it here.
     """
     from packages.graph_backend.postgres import PostgresGraphBackend
+    from packages.graph_backend.surrealdb import SurrealGraphBackend
 
     dispatcher = GraphBackendDispatcher()
+    dispatcher.register("surrealdb", SurrealGraphBackend)
     dispatcher.register("postgres", PostgresGraphBackend)
-    # Future: dispatcher.register("neo4j", Neo4jGraphBackend)
-    # Future: dispatcher.register("in_memory", InMemoryGraphBackend)
     return dispatcher

@@ -49,9 +49,9 @@ class TestContextService:
         self, service: ContextService,
     ) -> None:
         """Assemble returns context string with metadata."""
-        user_id = uuid4()
+        project_id = uuid4()
         result = await service.assemble(
-            user_id=user_id, query="test query", limit=10, format="text",
+            project_id=project_id, query="test query", limit=10, format="text",
         )
         assert "context" in result
         assert "metadata" in result
@@ -62,9 +62,9 @@ class TestContextService:
         self, service: ContextService,
     ) -> None:
         """Assemble with json format returns JSON-context."""
-        user_id = uuid4()
+        project_id = uuid4()
         result = await service.assemble(
-            user_id=user_id, query="test query", limit=10, format="json",
+            project_id=project_id, query="test query", limit=10, format="json",
         )
         assert "context" in result
         import orjson
@@ -76,9 +76,9 @@ class TestContextService:
         self, service: ContextService,
     ) -> None:
         """Metadata includes source counts after assembly."""
-        user_id = uuid4()
+        project_id = uuid4()
         result = await service.assemble(
-            user_id=user_id, query="test", limit=10,
+            project_id=project_id, query="test", limit=10,
         )
         meta = result["metadata"]
         assert "source_counts" in meta

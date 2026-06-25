@@ -24,6 +24,7 @@ Usage in a router::
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -178,7 +179,13 @@ async def get_graph_service(
     ``FactRepository`` for session-scoped entity queries.
     """
     dispatcher: GraphBackendDispatcher = request.app.state.graph_backend_dispatcher
-    graph_backend = dispatcher.resolve_and_create(org_config, db)
+
+    # Resolve SurrealDB connection from the per-org pool.
+    pool = request.app.state.surreal_connection_pool
+    org_id = UUID(request.state.org_id)
+    surreal = await pool.get_or_create(org_id, org_config)
+
+    graph_backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
 
     return GraphService(
         graph_backend=graph_backend,

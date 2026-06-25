@@ -232,5 +232,5 @@ class TestResolutionEndToEnd:
             assert config.llm_backend == "anthropic"
             assert config.llm_model == "claude-3-5-sonnet"
             assert config.context_cache_ttl == 120
-            # Unset fields should still be None (no env defaults)
-            assert config.graph_backend is None
+            # Unset fields should use schema defaults (graph_backend → surrealdb)
+            assert config.graph_backend == "surrealdb"

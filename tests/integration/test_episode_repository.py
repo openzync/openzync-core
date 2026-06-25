@@ -21,6 +21,7 @@ pytestmark = pytest.mark.integration
 @pytest.mark.asyncio
 class TestEpisodeRepository:
     ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+    PROJECT_ID = UUID("00000000-0000-0000-0000-000000000002")
 
     async def _seed_user_and_session(
         self, db: AsyncSession
@@ -33,7 +34,8 @@ class TestEpisodeRepository:
         )
         session = await session_repo.create(
             organization_id=self.ORG_ID,
-            user_id=user.id,
+            project_id=self.PROJECT_ID,
+            created_by=user.id,
             external_id="episode_test_session",
         )
         return user.id, session.id
@@ -49,6 +51,7 @@ class TestEpisodeRepository:
             ]
             episodes = await repo.batch_create(
                 organization_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
                 session_id=session_id,
                 user_id=user_id,
                 messages=messages,
@@ -66,6 +69,7 @@ class TestEpisodeRepository:
             repo = EpisodeRepository(db)
             result = await repo.batch_create(
                 organization_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
                 session_id=UUID("00000000-0000-0000-0000-000000000001"),
                 user_id=UUID("00000000-0000-0000-0000-000000000001"),
                 messages=[],

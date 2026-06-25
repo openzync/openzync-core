@@ -16,8 +16,8 @@ These tests do **not** require a running LLM or database.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -26,15 +26,33 @@ from workers.tasks.merge_duplicate_entities import (
     _select_canonical,
 )
 
-
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 
 
 @pytest.fixture
 def mock_db() -> AsyncMock:
-    """Create a mock async DB session."""
+    """Create a mock async DB session.
+
+    ``db.execute`` is an ``AsyncMock`` whose ``return_value`` is a
+    ``MagicMock``.  ``await db.execute(query)`` returns the ``MagicMock``
+    (because ``AsyncMock.__call__`` is async and returns
+    ``self.return_value`` directly — it does **not** try to await the
+    return value).  The ``MagicMock`` has ``all`` and ``rowcount`` set up
+    so that tests can override them inline.
+
+    Methods called synchronously (``add``) are plain ``MagicMock`` to
+    avoid ``PytestUnraisableExceptionWarning`` from unawaited coroutines.
+    """
     db = AsyncMock()
-    db.execute = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.all = MagicMock(return_value=[])
+    mock_result.rowcount = 0
+    db.execute = AsyncMock(return_value=mock_result)
+    # Methods called without ``await`` — must be sync MagicMock
+    db.add = MagicMock()
+    db.flush = AsyncMock()
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
     return db
 
 
@@ -47,7 +65,7 @@ def org_id() -> str:
 @pytest.fixture
 def sample_cluster() -> list[dict]:
     """A synthetic duplicate cluster of 3 entities with same name."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return [
         {
             "id": "11111111-1111-4111-a111-111111111111",
@@ -78,7 +96,7 @@ def single_entity_cluster() -> list[dict]:
             "id": "44444444-4444-4444-a444-444444444444",
             "name": "Sole Entity",
             "entity_type": "Person",
-            "updated_at": datetime.now(timezone.utc),
+            "updated_at": datetime.now(UTC),
         },
     ]
 
@@ -127,10 +145,10 @@ class TestSelectCanonical:
 
         # Make third entity most recently updated
         cluster = list(sample_cluster)
-        later = datetime.now(timezone.utc)
+        later = datetime.now(UTC)
         cluster[2]["updated_at"] = later
-        cluster[0]["updated_at"] = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        cluster[1]["updated_at"] = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        cluster[0]["updated_at"] = datetime(2024, 1, 1, tzinfo=UTC)
+        cluster[1]["updated_at"] = datetime(2024, 6, 1, tzinfo=UTC)
 
         canonical = await _select_canonical(
             mock_db, org_id, cluster,
@@ -220,20 +238,22 @@ class TestMergeCluster:
 
         await _merge_cluster(mock_db, org_id, sample_cluster)
 
-        # Find the audit_log INSERT call by inspecting execute call args
-        audit_insert_found = any(
-            "INSERT INTO audit_logs" in str(call)
-            for call in mock_db.execute.call_args_list
-        )
-        assert audit_insert_found, "Expected an audit_log INSERT"
-
-        # Verify the audit log contains the merge action identifier
-        all_calls_text = str(mock_db.execute.call_args_list)
-        assert "entity.merge" in all_calls_text, (
+        # Audit log is created via ``AuditLogService`` which uses
+        # ``db.add(entry)`` — check ``add`` calls, not ``execute`` calls.
+        all_add_text = str(mock_db.add.call_args_list)
+        assert "entity.merge" in all_add_text, (
             "Audit log action should be 'entity.merge'"
         )
-        assert "before" in all_calls_text, (
-            "Audit log should contain 'before' snapshot"
+        # Verify the entry passed to add has details containing 'before'
+        audit_calls = [
+            call for call in mock_db.add.call_args_list
+            if hasattr(call[0][0], "action")
+            and call[0][0].action == "entity.merge"
+        ]
+        assert len(audit_calls) == 1, "Expected exactly one audit log entry"
+        entry = audit_calls[0][0][0]
+        assert "before" in entry.details, (
+            "Audit log details should contain 'before' snapshot"
         )
 
 
@@ -253,11 +273,16 @@ class TestFindDuplicateClusters:
         )
 
         db = AsyncMock()
+        mock_result_1 = MagicMock()
+        mock_result_1.all = MagicMock(return_value=[])
+        mock_result_2 = MagicMock()
+        mock_result_2.all = MagicMock(return_value=[])
 
         # Phase 1: no exact duplicates
-        db.execute.return_value.all.side_effect = [
-            [],  # Phase 1: no exact cluster results
-            [],  # Phase 2: no remaining entities
+        db.execute = AsyncMock()
+        db.execute.side_effect = [
+            mock_result_1,  # First call returns mock_result_1
+            mock_result_2,  # Second call returns mock_result_2
         ]
 
         org_uuid = "550e8400-e29b-41d4-a716-446655440000"
@@ -274,7 +299,7 @@ class TestFindDuplicateClusters:
                 "id": "11111111-1111-4111-a111-111111111111",
                 "name": "Acme Corp",
                 "entity_type": "Organization",
-                "updated_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(UTC),
             },
         ]
         assert isinstance(cluster, list)
