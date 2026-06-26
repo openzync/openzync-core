@@ -1,0 +1,8 @@
+{
+  "name": "openzep",
+  "private": true,
+  "workspaces": [
+    "landing",
+    "packages/design-system"
+  ]
+}

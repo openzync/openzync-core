@@ -1,0 +1,33 @@
+---
+title: "Welcome to OpenZep — Persistent Memory for AI Agents"
+date: "2026-03-15"
+excerpt: "Today we're announcing OpenZep 1.0: production-grade, graph-based memory infrastructure for AI agents with support for 10+ backends and 5+ LLM providers."
+author: "OpenZep Team"
+category: "releases"
+---
+
+Today marks a major milestone for the agent memory ecosystem. **OpenZep 1.0 is here.**
+
+## Why OpenZep?
+
+Agents are transforming how we interact with software, but they are fundamentally limited without durable memory. Every reset loses context, every cold start wastes tokens re-building state, and every failure requires replaying from scratch.
+
+OpenZep solves this by providing a persistent, graph-based memory layer that agents can read from, write to, and reason over.
+
+## What's in 1.0
+
+- **10+ Graph Backends** — Neo4j, FalkorDB, Memgraph, Amazon Neptune, and more
+- **5+ LLM Providers** — OpenAI, Anthropic, Google, local models via Ollama
+- **Human-in-the-Loop** — Approval gates for any action with external side effects
+- **Deterministic Workflows** — Stage-gated DAGs that are crash-safe and resumable
+- **Built-in Observability** — Structured logs, latency tracking, cost estimates
+
+## Getting Started
+
+```bash
+pip install openzep
+```
+
+Or check out our [quickstart guide](https://docs.openzep.com/quickstart) to be up and running in 5 minutes.
+
+We can't wait to see what you build.
