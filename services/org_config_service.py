@@ -18,6 +18,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from typing import Any
+
 from core.org_config import (
     get_org_config,
     update_org_config as core_update_org_config,
@@ -37,9 +39,15 @@ class OrgConfigService:
         redis: An optional async Redis client (for caching).
     """
 
-    def __init__(self, db: AsyncSession, redis: Any | None = None) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        redis: Any | None = None,
+        backend: Any | None = None,
+    ) -> None:
         self._db = db
         self._redis = redis
+        self._backend = backend
 
     async def get_config(self, org_id: UUID) -> OrgConfigBase:
         """Return the stored config for an org.
@@ -51,7 +59,9 @@ class OrgConfigService:
             An ``OrgConfigBase`` with only explicitly stored fields.
             Unset fields are ``None``.
         """
-        return await get_org_config(org_id, self._db, redis=self._redis)
+        return await get_org_config(
+            org_id, self._db, redis=self._redis, backend=self._backend,
+        )
 
     async def get_config_response(self, org_id: UUID) -> OrgConfigResponse:
         """Return the stored config wrapped in an ``OrgConfigResponse``.
@@ -86,4 +96,5 @@ class OrgConfigService:
             update_data=payload,
             db=self._db,
             redis=self._redis,
+            backend=self._backend,
         )

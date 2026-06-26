@@ -20,6 +20,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select, update
+
 from models.organization import Organization
 from models.refresh_token import RefreshToken
 from models.user import User
@@ -152,6 +154,68 @@ class AuthRepository:
         await self._db.flush()
         await self._db.refresh(user)
         return user
+
+    # ── Email verification ─────────────────────────────────────────────────
+
+    async def find_user_by_verification_token(
+        self,
+        token_hash: str,
+    ) -> User | None:
+        """Find a user by their verification token hash.
+
+        Args:
+            token_hash: SHA-256 hex digest of the raw verification token.
+
+        Returns:
+            The User if found with a matching, non-expired token, or ``None``.
+        """
+        now = datetime.utcnow()
+        result = await self._db.execute(
+            select(User).where(
+                User.verification_token_hash == token_hash,
+                User.verification_token_expires_at > now,
+                User.is_deleted.is_(False),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def verify_user_email(self, user_id: uuid.UUID) -> None:
+        """Mark a user's email as verified and clear the verification token.
+
+        Args:
+            user_id: The user's UUID.
+        """
+        now = datetime.utcnow()
+        await self._db.execute(
+            update(User).where(User.id == user_id).values(
+                email_verified=True,
+                email_verified_at=now,
+                verification_token_hash=None,
+                verification_token_expires_at=None,
+            )
+        )
+        await self._db.flush()
+
+    async def set_verification_token(
+        self,
+        user_id: uuid.UUID,
+        token_hash: str,
+        expires_at: datetime,
+    ) -> None:
+        """Set a new verification token for a user.
+
+        Args:
+            user_id: The user's UUID.
+            token_hash: SHA-256 hex digest of the raw token.
+            expires_at: Expiration timestamp (naive UTC).
+        """
+        await self._db.execute(
+            update(User).where(User.id == user_id).values(
+                verification_token_hash=token_hash,
+                verification_token_expires_at=expires_at,
+            )
+        )
+        await self._db.flush()
 
     # ── Refresh tokens ─────────────────────────────────────────────────────
 

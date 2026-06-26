@@ -20,6 +20,7 @@ from core.redis import get_redis
 from dependencies.auth import get_current_user_id, require_org_id
 from dependencies.db import get_db
 from dependencies.project_auth import require_project_owner
+from dependencies.services import get_auth_service
 from repositories.api_key_repository import ApiKeyRepository
 from schemas.api_keys import (
     ApiKeyCreatedResponse,
@@ -28,6 +29,7 @@ from schemas.api_keys import (
     CreateApiKeyRequest,
 )
 from services.api_key_service import ApiKeyService
+from services.auth_service import AuthService
 
 router = APIRouter(
     prefix="/v1/projects/{project_id}/api-keys",
@@ -94,6 +96,7 @@ async def create_api_key(
     project_id: UUID,
     payload: CreateApiKeyRequest,
     service: ApiKeyService = Depends(_get_service),
+    auth_service: AuthService = Depends(get_auth_service),
     _: None = Depends(require_project_owner),
     org_id: str = Depends(require_org_id),
     user_id: UUID = Depends(get_current_user_id),
@@ -104,6 +107,7 @@ async def create_api_key(
         project_id: Injected from the URL path.
         payload: Key name/label.
         service: API key service.
+        auth_service: Auth service for email verification check.
         _: Project owner auth guard.
         org_id: Authenticated organization ID.
         user_id: Authenticated user UUID (stored as ``created_by`` for
@@ -111,7 +115,19 @@ async def create_api_key(
 
     Returns:
         The new key with the raw value (shown once).
+
+    Raises:
+        HTTPException 403: If the user's email is not verified.
     """
+    # ⚠️ SECURITY: require email verification before issuing API keys
+    profile = await auth_service.get_profile(user_id)
+    if not profile.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email verification required to create API keys. "
+            "Please verify your email first.",
+        )
+
     api_key, raw_key = await service.create_project_key(
         organization_id=UUID(org_id),
         project_id=project_id,

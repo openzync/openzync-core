@@ -44,11 +44,13 @@ def _get_config_service(
 ) -> OrgConfigService:
     """Build a request-scoped OrgConfigService.
 
-    Reads the Redis client from ``request.app.state.redis`` (initialised
-    during the application lifespan).
+    Reads the Redis client and secret store backend from
+    ``request.app.state`` (initialised during the application lifespan).
     """
     redis = getattr(request.app.state, "redis", None)
-    return OrgConfigService(db=db, redis=redis)
+    backend = getattr(request.app.state, "secret_store", None)
+    backend_instance = backend.resolve() if backend else None
+    return OrgConfigService(db=db, redis=redis, backend=backend_instance)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -50,4 +50,8 @@ async def get_org_config(
     from schemas.organization_config import OrgConfigBase
 
     redis = getattr(request.app.state, "redis", None)
-    return await _get_org_config(UUID(org_id), db, redis=redis)
+    backend = getattr(request.app.state, "secret_store", None)
+    backend_instance = backend.resolve() if backend else None
+    return await _get_org_config(
+        UUID(org_id), db, redis=redis, backend=backend_instance,
+    )

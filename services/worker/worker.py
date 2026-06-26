@@ -108,6 +108,7 @@ from workers.tasks.summarise_community import summarise_community
 from workers.tasks.link_entities_to_episode import link_entities_to_episode
 from services.worker.tasks.deliver_webhook import deliver_webhook
 from workers.tasks.generate_user_summary import generate_user_summary
+from workers.email_jobs import send_verification_email
 
 HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     classify_dialog,
@@ -126,6 +127,7 @@ LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     write_audit_log,
     deliver_webhook,
     generate_user_summary,
+    send_verification_email,
 ]
 """Tasks assigned to the low-priority queue (scheduled batch)."""
 

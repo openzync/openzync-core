@@ -24,9 +24,9 @@ class SignupRequest(BaseModel):
     )
     password: str = Field(
         ...,
-        min_length=8,
+        min_length=12,
         max_length=128,
-        description="Password (min 8 chars, max 128).",
+        description="Password (min 12 chars, max 128).",
         examples=["secure-p@ssword-123"],
     )
     organization_name: str = Field(
@@ -99,6 +99,10 @@ class DashboardUserResponse(BaseModel):
     name: str | None = Field(default=None, description="Display name.")
     role: str = Field(default="member", description="User role.")
     organization_id: UUID = Field(..., description="Owning organization ID.")
+    email_verified: bool = Field(
+        default=False,
+        description="Whether the user has verified their email address.",
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -128,7 +132,7 @@ class UpdateProfileRequest(BaseModel):
     )
     new_password: str | None = Field(
         default=None,
-        min_length=8,
+        min_length=12,
         max_length=128,
-        description="New password (min 8 chars). Requires ``current_password``.",
+        description="New password (min 12 chars). Requires ``current_password``.",
     )

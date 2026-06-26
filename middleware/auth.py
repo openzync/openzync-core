@@ -405,8 +405,17 @@ def _verify_jwt_and_set_state(
     from core.config import settings
     from utils.crypto import verify_jwt_token
 
+    jwt_public_key = settings.jwt_public_key_pem
+    if jwt_public_key is None:
+        return {
+            "status": 401,
+            "title": "Invalid Token",
+            "detail": "JWT verification key is not configured on the server.",
+            "path": path,
+        }
+
     try:
-        payload = verify_jwt_token(token, settings.SECRET_KEY)
+        payload = verify_jwt_token(token, jwt_public_key)
     except Exception as exc:
         logger.warning("JWT verification failed", exc_info=exc)
         return {

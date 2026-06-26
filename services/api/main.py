@@ -30,6 +30,7 @@ from core.config import Settings
 from core.db import close_db_engine, get_async_session, init_db_engine
 from core.exceptions import register_exception_handlers
 from core.graph_backend import init_dispatcher
+from core.secret_store import init_secret_store_dispatcher
 from core.surreal_pool import SurrealConnectionPool
 from core.logging import setup_logging
 from core.redis import close_redis, init_redis
@@ -105,6 +106,11 @@ def create_app() -> FastAPI:
         # lazily per org on first use (see ``core.surreal_pool``).
         app.state.surreal_connection_pool = SurrealConnectionPool()
         logger.info("surreal_pool.initialised")
+
+        # Init secret store dispatcher — encrypts API keys and passwords
+        # at rest in the org config.  Hard-fails at startup if
+        # MG_MASTER_ENCRYPTION_KEY is not configured.
+        app.state.secret_store = init_secret_store_dispatcher()
 
         # Init FalkorDB client with a single app-level connection pool.
         falkordb_pool = BlockingConnectionPool.from_url(

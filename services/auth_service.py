@@ -8,13 +8,17 @@ Responsibilities:
 - Signup: create org → create admin user → return JWT pair.
 - Login: find user by email → verify password → return JWT pair.
 - Refresh: verify refresh token → rotate → return new JWT pair.
+- Verify: validate email verification token → mark user as verified.
 """
 
 from __future__ import annotations
 
 import hashlib
+import logging
+import re
 import secrets
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from core.config import settings
@@ -30,6 +34,26 @@ from schemas.auth import (
 from utils.crypto import create_jwt_token
 from utils.password import hash_password, verify_password
 
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SignupResult:
+    """Result of a successful signup — tokens plus verification context.
+
+    Attributes:
+        tokens: Access + refresh token pair for immediate login.
+        user_id: The newly created user's UUID.
+        email: The user's email address.
+        verification_token: Raw verification token for email dispatch
+            (the caller should enqueue a background job to send this).
+    """
+
+    tokens: TokenResponse
+    user_id: uuid.UUID
+    email: str
+    verification_token: str
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Constants
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -37,7 +61,6 @@ from utils.password import hash_password, verify_password
 ACCESS_TOKEN_TTL = timedelta(minutes=settings.JWT_ACCESS_TOKEN_TTL_MINUTES)
 REFRESH_TOKEN_TTL = timedelta(days=settings.JWT_REFRESH_TOKEN_TTL_DAYS)
 
-_JWT_ALGORITHM = "HS256"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -57,21 +80,24 @@ class AuthService:
 
     # ── Signup ──────────────────────────────────────────────────────────────
 
-    async def signup(self, payload: SignupRequest) -> TokenResponse:
+    async def signup(self, payload: SignupRequest) -> SignupResult:
         """Create a new organization with an admin dashboard user.
 
         Flow:
         1. Check email uniqueness (no existing user with this email).
         2. Create the organization.
         3. Hash the password and create the dashboard admin user.
-        4. Generate and persist a refresh token.
-        5. Return access + refresh token pair.
+        4. Generate verification token and store its hash.
+        5. Generate and persist refresh token.
+        6. Return tokens + verification context for email dispatch.
 
         Args:
             payload: Signup request with email, password, org name.
 
         Returns:
-            A ``TokenResponse`` with access and refresh tokens.
+            A ``SignupResult`` with access/refresh tokens, the user ID,
+            email, and the raw verification token (for the caller to
+            enqueue an email job).
 
         Raises:
             ConflictError: If the email is already registered.
@@ -106,11 +132,22 @@ class AuthService:
             role="admin",
         )
 
+        # Generate email verification token and return the raw value
+        # for the caller to dispatch via email job.
+        verification_token = await self._generate_verification_token(user.id)
+
         # Generate tokens
-        return await self._issue_tokens(
+        tokens = await self._issue_tokens(
             user_id=user.id,
             organization_id=org.id,
             role=user.role or "admin",
+        )
+
+        return SignupResult(
+            tokens=tokens,
+            user_id=user.id,
+            email=user.email or "",
+            verification_token=verification_token,
         )
 
     # ── Login ───────────────────────────────────────────────────────────────
@@ -219,7 +256,13 @@ class AuthService:
         # is TIMESTAMP WITHOUT TIME ZONE).
         now = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        # Access token
+        # Access token (ES256 — signed with the configured private key)
+        jwt_private_key = settings.jwt_private_key_pem
+        if jwt_private_key is None:
+            raise RuntimeError(
+                "MG_JWT_PRIVATE_KEY_B64 is not configured — "
+                "cannot sign JWT tokens."
+            )
         access_token = create_jwt_token(
             data={
                 "sub": str(user_id),
@@ -227,7 +270,7 @@ class AuthService:
                 "role": role,
                 "type": "access",
             },
-            secret=settings.SECRET_KEY,
+            secret=jwt_private_key,
             expires_delta=ACCESS_TOKEN_TTL,
         )
 
@@ -284,6 +327,7 @@ class AuthService:
             name=user.name,
             role=user.role or "member",
             organization_id=user.organization_id,
+            email_verified=user.email_verified,
         )
 
     async def update_profile(
@@ -356,20 +400,114 @@ class AuthService:
             name=user.name,
             role=user.role or "member",
             organization_id=user.organization_id,
+            email_verified=user.email_verified,
         )
+
+    # ── Email verification ──────────────────────────────────────────────────
+
+    async def verify_email(self, raw_token: str) -> None:
+        """Verify a user's email address using a verification token.
+
+        Args:
+            raw_token: The raw verification token string from the email link.
+
+        Raises:
+            ValidationError: If the token is invalid or expired.
+        """
+        token_hash = self._hash_verification_token(raw_token)
+        user = await self._repo.find_user_by_verification_token(token_hash)
+        if user is None:
+            raise ValidationError(
+                "Verification token is invalid or has expired."
+            )
+        await self._repo.verify_user_email(user.id)
+
+    async def resend_verification(self, user_id: uuid.UUID) -> str:
+        """Generate a fresh verification token and return it for email dispatch.
+
+        Invalidates any previously issued token by overwriting it with a
+        new hash and expiry.  This is intentionally rate-limited at the
+        router layer (once per 60 seconds).
+
+        Args:
+            user_id: The authenticated user's UUID.
+
+        Returns:
+            The raw verification token string to include in the email link.
+
+        Raises:
+            NotFoundError: If the user does not exist.
+        """
+        user = await self._repo.get_user_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+        if user.email_verified:
+            raise ValidationError("Email is already verified.")
+        return await self._generate_verification_token(user_id)
+
+    async def _generate_verification_token(self, user_id: uuid.UUID) -> str:
+        """Generate a verification token, store its hash, and return the raw token.
+
+        Args:
+            user_id: The user's UUID.
+
+        Returns:
+            The raw verification token string (to be emailed to the user).
+        """
+        raw_token = secrets.token_urlsafe(32)  # 48 chars, unguessable
+        token_hash = self._hash_verification_token(raw_token)
+        expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(hours=24)
+        await self._repo.set_verification_token(user_id, token_hash, expires_at)
+        return raw_token
+
+    @staticmethod
+    def _hash_verification_token(raw: str) -> str:
+        """Deterministic SHA-256 hash of a verification token.
+
+        Args:
+            raw: The raw token string.
+
+        Returns:
+            Hex-encoded SHA-256 digest.
+        """
+        return hashlib.sha256(raw.encode()).hexdigest()
 
     @staticmethod
     def _validate_password(password: str) -> None:
-        """Validate password meets minimum strength requirements.
+        """Validate password meets OWASP L2 strength requirements.
+
+        Rules:
+        - Minimum 12 characters.
+        - At least one uppercase letter.
+        - At least one lowercase letter.
+        - At least one digit.
+        - At least one special character.
 
         Args:
             password: The plaintext password.
 
         Raises:
-            ValidationError: If the password is too weak.
+            ValidationError: If the password does not meet requirements.
         """
-        if len(password) < 8:
+        if len(password) < 12:
             raise ValidationError(
-                "Password must be at least 8 characters long."
+                "Password must be at least 12 characters long."
             )
-        # Additional checks (uppercase, digit, etc.) can be added here.
+        if not re.search(r"[A-Z]", password):
+            raise ValidationError(
+                "Password must contain at least one uppercase letter."
+            )
+        if not re.search(r"[a-z]", password):
+            raise ValidationError(
+                "Password must contain at least one lowercase letter."
+            )
+        if not re.search(r"\d", password):
+            raise ValidationError(
+                "Password must contain at least one digit."
+            )
+        if not re.search(r"[!@#$%^&*(),.?\":{}|<>_\-]", password):
+            raise ValidationError(
+                "Password must contain at least one special character "
+                r"(e.g. !@#$%^&*(),.?\":{}|<>_-)."
+            )
+        # TODO(me): add zxcvbn entropy check and common-password list guard.

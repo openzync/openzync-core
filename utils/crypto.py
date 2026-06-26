@@ -140,8 +140,36 @@ def compute_lookup_hash(raw_key: str) -> str:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# JWT helpers
+# JWT helpers (ES256 — ECDSA P-256)
 # ═══════════════════════════════════════════════════════════════════════════════
+
+
+def _load_private_key(pem: str) -> Any:
+    """Load an ES256 private key from PEM string.
+
+    Args:
+        pem: PEM-encoded EC private key.
+
+    Returns:
+        A ``cryptography`` private key object suitable for ``jwt.encode()``.
+    """
+    from cryptography.hazmat.primitives import serialization
+
+    return serialization.load_pem_private_key(pem.encode(), password=None)
+
+
+def _load_public_key(pem: str) -> Any:
+    """Load an ES256 public key from PEM string.
+
+    Args:
+        pem: PEM-encoded EC public key.
+
+    Returns:
+        A ``cryptography`` public key object suitable for ``jwt.decode()``.
+    """
+    from cryptography.hazmat.primitives import serialization
+
+    return serialization.load_pem_public_key(pem.encode())
 
 
 def create_jwt_token(
@@ -149,11 +177,16 @@ def create_jwt_token(
     secret: str,
     expires_delta: timedelta,
 ) -> str:
-    """Create a signed JWT token (HS256).
+    """Create a signed JWT token using ES256 (ECDSA P-256).
+
+    Note:
+        The ``secret`` parameter name is retained for backward compatibility
+        with existing callers.  Pass the **PEM-encoded EC private key**
+        (decoded from base64 — see ``Settings.jwt_private_key_pem``).
 
     Args:
         data: Payload claims to encode (e.g. ``{"sub": user_id, "org_id": ...}``).
-        secret: HMAC secret key (must be at least 32 chars in production).
+        secret: PEM-encoded EC private key string (P-256).
         expires_delta: Relative duration until the token expires.
 
     Returns:
@@ -172,15 +205,21 @@ def create_jwt_token(
             "iat": now,
         }
     )
-    return jwt.encode(to_encode, secret, algorithm="HS256")
+    private_key = _load_private_key(secret)
+    return jwt.encode(to_encode, private_key, algorithm="ES256")
 
 
 def verify_jwt_token(token: str, secret: str) -> dict[str, Any]:
-    """Verify and decode a JWT token.
+    """Verify and decode a JWT token using ES256 (ECDSA P-256).
+
+    Note:
+        The ``secret`` parameter name is retained for backward compatibility.
+        Pass the **PEM-encoded EC public key**
+        (decoded from base64 — see ``Settings.jwt_public_key_pem``).
 
     Args:
         token: Encoded JWT string.
-        secret: HMAC secret key used for signing.
+        secret: PEM-encoded EC public key string (P-256).
 
     Returns:
         Decoded payload as a dictionary.
@@ -191,7 +230,8 @@ def verify_jwt_token(token: str, secret: str) -> dict[str, Any]:
     import jwt
 
     try:
-        return jwt.decode(token, secret, algorithms=["HS256"])
+        public_key = _load_public_key(secret)
+        return jwt.decode(token, public_key, algorithms=["ES256"])
     except jwt.ExpiredSignatureError:
         raise AuthenticationError("Token expired")
     except jwt.InvalidTokenError:

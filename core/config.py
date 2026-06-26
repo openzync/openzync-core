@@ -13,6 +13,7 @@ Usage:
 
 from __future__ import annotations
 
+import base64
 from typing import Literal
 
 from pydantic import Field
@@ -55,11 +56,33 @@ class Settings(BaseSettings):
     # ── Secrets ───────────────────────────────────────────────────────────
     SECRET_KEY: str = Field(
         description=(
-            "Secret key used for signing JWTs and other cryptographic "
-            "operations.  Must be at least 32 characters in production."
+            "Legacy secret key used for various cryptographic operations. "
+            "Must be at least 32 characters in production."
         ),
         validation_alias="MG_SECRET_KEY",
         min_length=32,
+    )
+    # Master encryption key for the secret store (Fernet-compatible, 44-char
+    # base64-encoded 32-byte key).  Used to encrypt API keys and passwords
+    # at rest in the org config.
+    # Generate with: python -c "from cryptography.fernet import Fernet;
+    # print(Fernet.generate_key().decode())"
+    MASTER_ENCRYPTION_KEY: str = Field(
+        default="",
+        description=(
+            "Master encryption key for the secret store — 44-char "
+            "base64-encoded 32-byte Fernet key.  Required for encrypting "
+            "API keys and passwords at rest."
+        ),
+        validation_alias="MG_MASTER_ENCRYPTION_KEY",
+    )
+    SECRET_STORE_BACKEND: str = Field(
+        default="fernet",
+        description=(
+            "Active secret store backend.  Currently supported: 'fernet'. "
+            "Future options: 'vault', 'kms'."
+        ),
+        validation_alias="MG_SECRET_STORE_BACKEND",
     )
 
     # ── Metrics / Observability ───────────────────────────────────────────
@@ -121,6 +144,97 @@ class Settings(BaseSettings):
         le=90,
         description="Refresh token TTL in days (default 7).",
         validation_alias="MG_JWT_REFRESH_TOKEN_TTL_DAYS",
+    )
+    # ES256 private key — base64-encoded PEM (P-256 EC private key).
+    # Generate:
+    #   openssl ecparam -name prime256v1 -genkey -noout -out private.pem
+    #   base64 -w0 private.pem   # → put in MG_JWT_PRIVATE_KEY_B64
+    JWT_PRIVATE_KEY: str = Field(
+        default="",
+        description=(
+            "ES256 private key — base64-encoded PEM (P-256 EC). "
+            "Generate with openssl ecparam and encode with base64 -w0."
+        ),
+        validation_alias="MG_JWT_PRIVATE_KEY_B64",
+    )
+    # ES256 public key — base64-encoded PEM (P-256 EC public key).
+    # Generate:
+    #   openssl ec -in private.pem -pubout -out public.pem
+    #   base64 -w0 public.pem   # → put in MG_JWT_PUBLIC_KEY_B64
+    JWT_PUBLIC_KEY: str = Field(
+        default="",
+        description=(
+            "ES256 public key — base64-encoded PEM (P-256 EC). "
+            "Generate with openssl ec and encode with base64 -w0."
+        ),
+        validation_alias="MG_JWT_PUBLIC_KEY_B64",
+    )
+
+    # ── Computed properties ─────────────────────────────────────────────────
+
+    @property
+    def jwt_private_key_pem(self) -> str | None:
+        """Decoded ES256 private key PEM.
+
+        Base64-decoded from ``JWT_PRIVATE_KEY`` (``MG_JWT_PRIVATE_KEY_B64``).
+        Returns ``None`` if no private key is configured.
+
+        Usage::
+
+            key = settings.jwt_private_key_pem
+            if key is None:
+                raise RuntimeError("MG_JWT_PRIVATE_KEY_B64 not configured")
+        """
+        if not self.JWT_PRIVATE_KEY:
+            return None
+        return base64.b64decode(self.JWT_PRIVATE_KEY).decode("utf-8")
+
+    @property
+    def jwt_public_key_pem(self) -> str | None:
+        """Decoded ES256 public key PEM.
+
+        Base64-decoded from ``JWT_PUBLIC_KEY`` (``MG_JWT_PUBLIC_KEY_B64``).
+        Returns ``None`` if no public key is configured.
+        """
+        if not self.JWT_PUBLIC_KEY:
+            return None
+        return base64.b64decode(self.JWT_PUBLIC_KEY).decode("utf-8")
+
+    # ── Email / SMTP ─────────────────────────────────────────────────────────
+    SMTP_HOST: str = Field(
+        default="",
+        description="SMTP server hostname (e.g. smtp.sendgrid.net).",
+        validation_alias="MG_SMTP_HOST",
+    )
+    SMTP_PORT: int = Field(
+        default=587,
+        ge=1,
+        le=65535,
+        description="SMTP server port (default 587 for STARTTLS).",
+        validation_alias="MG_SMTP_PORT",
+    )
+    SMTP_USERNAME: str = Field(
+        default="",
+        description="SMTP authentication username.",
+        validation_alias="MG_SMTP_USERNAME",
+    )
+    SMTP_PASSWORD: str = Field(
+        default="",
+        description="SMTP authentication password.",
+        validation_alias="MG_SMTP_PASSWORD",
+    )
+    SMTP_FROM_EMAIL: str = Field(
+        default="noreply@openzep.dev",
+        description="From address for outgoing emails.",
+        validation_alias="MG_SMTP_FROM_EMAIL",
+    )
+    APP_BASE_URL: str = Field(
+        default="http://localhost:8000",
+        description=(
+            "Public base URL of the application, used to construct "
+            "verification links in emails.  E.g. 'https://app.openzep.dev'."
+        ),
+        validation_alias="MG_APP_BASE_URL",
     )
 
     # ── Webhooks ───────────────────────────────────────────────────────────

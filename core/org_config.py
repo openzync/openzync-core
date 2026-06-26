@@ -11,6 +11,11 @@ There is **no env-var fallback** — if a field is not set in the DB config
 it is returned as ``None`` and the caller decides what to do.
 
 On config update the cache is invalidated inline.
+
+**Secret encryption:** Sensitive fields (``*_api_key``, ``*_pass``) are
+transparently encrypted before DB storage and decrypted on read.  The
+encryption uses the configured :class:`KeyEncryptionBackend` resolved
+through ``app.state.secret_store`` (initialised during the app lifespan).
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.secret_store.fernet import FERNET_PREFIX, NotEncryptedError
 from repositories.organization_repository import OrganizationRepository
 from schemas.organization_config import (
     OrgConfigBase,
@@ -36,6 +42,86 @@ ORG_CONFIG_CACHE_TTL: int = 300
 CACHE_KEY_PREFIX: str = "org_config"
 """Redis key prefix for cached org config."""
 
+# ── Sensitive field detection ─────────────────────────────────────────────────
+
+SENSITIVE_FIELD_SUFFIXES: tuple[str, ...] = ("_api_key", "_pass")
+"""Fields whose names end with these suffixes are encrypted at rest."""
+
+
+def _is_sensitive_field(field_name: str) -> bool:
+    """Check if a field name indicates a sensitive value.
+
+    Args:
+        field_name: The config field name (e.g. ``"openai_api_key"``).
+
+    Returns:
+        ``True`` if the field should be encrypted at rest.
+    """
+    return any(field_name.endswith(suffix) for suffix in SENSITIVE_FIELD_SUFFIXES)
+
+
+async def _decrypt_sensitive_fields(
+    config_dict: dict[str, Any],
+    backend: Any,
+    context: str,
+) -> dict[str, Any]:
+    """Decrypt sensitive fields in a config dict in-place.
+
+    Fields that look unencrypted (no Fernet prefix) are returned as-is,
+    preserving backward compatibility with config entries stored before
+    encryption was enabled.
+
+    Args:
+        config_dict: The raw config dict (may be mutated in place).
+        backend: A :class:`KeyEncryptionBackend` instance.
+        context: The AEAD binding context (org ID string).
+    """
+    for key, value in config_dict.items():
+        if _is_sensitive_field(key) and isinstance(value, str):
+            try:
+                config_dict[key] = await backend.decrypt(value, context)
+            except NotEncryptedError:
+                pass  # stored before encryption — return as-is
+            except Exception:
+                logger.exception(
+                    "org_config.decrypt_failed",
+                    extra={"field": key, "org_id": context},
+                )
+                # Don't raise — return the raw value so the org is not stuck.
+                # The value will be re-encrypted on the next update.
+    return config_dict
+
+
+async def _encrypt_sensitive_fields(
+    config_dict: dict[str, Any],
+    backend: Any,
+    context: str,
+) -> dict[str, Any]:
+    """Encrypt sensitive fields in a config dict in-place.
+
+    Already-encrypted values (starting with the Fernet prefix) are skipped.
+
+    Args:
+        config_dict: The raw config dict (may be mutated in place).
+        backend: A :class:`KeyEncryptionBackend` instance.
+        context: The AEAD binding context (org ID string).
+    """
+    for key, value in config_dict.items():
+        if (
+            _is_sensitive_field(key)
+            and isinstance(value, str)
+            and not value.startswith(FERNET_PREFIX)
+        ):
+            try:
+                config_dict[key] = await backend.encrypt(value, context)
+            except Exception:
+                logger.exception(
+                    "org_config.encrypt_failed",
+                    extra={"field": key, "org_id": context},
+                )
+                raise
+    return config_dict
+
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
@@ -46,8 +132,13 @@ async def get_org_config(
     redis: Any | None = None,
     *,
     skip_cache: bool = False,
+    backend: Any | None = None,
 ) -> OrgConfigBase:
     """Fetch the raw stored config for an org: cache → DB.
+
+    When a ``backend`` is provided, sensitive fields (``*_api_key``,
+    ``*_pass``) are decrypted transparently.  Fields that were stored
+    before encryption was enabled are returned as-is.
 
     There is no env-var fallback — every field is returned as stored in
     the DB.  Callers that need a default value when a field is ``None``
@@ -59,6 +150,9 @@ async def get_org_config(
         redis: An optional async Redis client.  When ``None``, caching is
             skipped.
         skip_cache: If ``True``, bypass cache and always fetch from DB.
+        backend: An optional :class:`KeyEncryptionBackend` instance for
+            decrypting sensitive fields.  When ``None``, no decryption is
+            performed (for callers that don't have access to the backend).
 
     Returns:
         An :class:`OrgConfigBase` with only the fields that are explicitly
@@ -71,6 +165,10 @@ async def get_org_config(
         try:
             cached = await redis.get(cache_key)
             if cached:
+                if backend is not None:
+                    cached_dict = OrgConfigBase.model_validate_json(cached).model_dump()
+                    await _decrypt_sensitive_fields(cached_dict, backend, str(org_id))
+                    return OrgConfigBase(**cached_dict)
                 return OrgConfigBase.model_validate_json(cached)
         except Exception:
             logger.warning("org_config.cache_read_failed", exc_info=True)
@@ -78,6 +176,11 @@ async def get_org_config(
     # 2. Fetch from DB
     repo = OrganizationRepository(db)
     raw = await repo.get_config(org_id)
+
+    # 2b. Decrypt sensitive fields before constructing the model
+    if backend is not None:
+        await _decrypt_sensitive_fields(raw, backend, str(org_id))
+
     # When no config has been stored yet, raw is {} and **raw would apply
     # Pydantic defaults (e.g. graph_backend → "surrealdb") even though the
     # field was never explicitly set.  We want *every* field to be None
@@ -102,8 +205,13 @@ async def update_org_config(
     update_data: UpdateOrgConfigRequest | dict[str, Any],
     db: AsyncSession,
     redis: Any | None = None,
+    *,
+    backend: Any | None = None,
 ) -> OrgConfigBase:
     """Update stored org config, invalidate cache, and return fresh config.
+
+    When a ``backend`` is provided, sensitive new values are encrypted
+    before being written to the DB.  Already-encrypted values are skipped.
 
     Performs a deep merge: provided keys replace existing DB values.
     Keys set to ``None`` are removed from the stored config (returning
@@ -115,6 +223,9 @@ async def update_org_config(
             or a plain dict.
         db: An async SQLAlchemy session.
         redis: An optional async Redis client (for cache invalidation).
+        backend: An optional :class:`KeyEncryptionBackend` instance for
+            encrypting sensitive fields before storage.  When ``None``,
+            no encryption is performed.
 
     Returns:
         The freshly stored config after the update.
@@ -123,6 +234,10 @@ async def update_org_config(
         update_dict = update_data.model_dump(exclude_unset=True)
     else:
         update_dict = update_data
+
+    # Encrypt sensitive incoming values before merging
+    if backend is not None:
+        await _encrypt_sensitive_fields(update_dict, backend, str(org_id))
 
     repo = OrganizationRepository(db)
     existing = await repo.get_config(org_id)
@@ -144,8 +259,8 @@ async def update_org_config(
         except Exception:
             logger.warning("org_config.cache_invalidation_failed", exc_info=True)
 
-    # Re-read from DB (cache is cold)
-    return await get_org_config(org_id, db, redis=redis, skip_cache=True)
+    # Re-read from DB (cache is cold; no decryption — plain read for cache)
+    return await get_org_config(org_id, db, redis=redis, skip_cache=True, backend=backend)
 
 
 def build_cache_key(org_id: UUID) -> str:

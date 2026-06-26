@@ -80,6 +80,31 @@ class User(TimestampMixin, Base):
     summary_updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, default=None
     )
+    email_verified: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+        comment="Whether the user has verified their email address.",
+    )
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+        comment="Timestamp of email verification.",
+    )
+    verification_token_hash: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        default=None,
+        comment="SHA-256 hash of the email verification token.",
+    )
+    verification_token_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+        comment="Expiration timestamp for the verification token.",
+    )
 
     __table_args__ = (
         UniqueConstraint(
