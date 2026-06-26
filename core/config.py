@@ -162,13 +162,19 @@ class Settings(BaseSettings):
     RATE_LIMIT_IP_MAX: int = Field(
         default=10,
         ge=1,
-        description="Max requests per IP within the rate-limit window.",
+        description=(
+            "Max requests per IP within the rate-limit window. "
+            "Default is 10 requests per 60-second window."
+        ),
         validation_alias="MG_RATE_LIMIT_IP_MAX",
     )
     RATE_LIMIT_WINDOW_SEC: int = Field(
         default=60,
         ge=1,
-        description="Rate-limit window in seconds.",
+        description=(
+            "Rate-limit window in seconds. "
+            "Default is 60 seconds (paired with MG_RATE_LIMIT_IP_MAX)."
+        ),
         validation_alias="MG_RATE_LIMIT_WINDOW_SEC",
     )
 

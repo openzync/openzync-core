@@ -41,6 +41,7 @@ from middleware.logging import LoggingMiddleware
 from middleware.metrics import MetricsMiddleware
 from middleware.rate_limit import RateLimitMiddleware
 from middleware.request_id import RequestIDMiddleware
+from middleware.security_headers import SecurityHeadersMiddleware
 from middleware.tracing import TracingMiddleware
 from routers import (
     admin,
@@ -163,6 +164,10 @@ def create_app() -> FastAPI:
 
     # Runtime 9 (innermost) — Request ID: spans every downstream component.
     app.add_middleware(RequestIDMiddleware)
+
+    # Runtime 9.5 — Security headers: applied to EVERY response including
+    # error responses from downstream middleware.
+    app.add_middleware(SecurityHeadersMiddleware)
 
     # Runtime 8 — Trusted Host: prevent host-header attacks in production.
     allowed_hosts = (

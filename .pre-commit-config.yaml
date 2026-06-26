@@ -74,3 +74,11 @@ repos:
         language: script
         types: [shell, yaml, python]
         stages: [commit, push]
+
+      - id: block-env-files
+        name: Block .env file commits
+        description: Prevent committing .env files from any directory.
+        entry: python -c "import sys; print('ERROR: .env files must not be committed'); sys.exit(1)"
+        language: system
+        files: '(^|/)\.env$'
+        stages: [commit]

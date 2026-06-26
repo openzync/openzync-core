@@ -15,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -108,9 +109,8 @@ def hash_api_key(raw_key: str) -> tuple[str, str]:
 def verify_api_key(raw_key: str, stored_hash: str, salt: str) -> bool:
     """Verify an API key against its stored salted hash.
 
-    Computes ``SHA-256(salt || raw_key)`` and compares it to ``stored_hash``.
-    Constant-time comparison is **not** used here because the hash is not
-    a password — timing attacks on API keys are impractical at network scale.
+    Uses ``SHA-256(salt || raw_key)`` with constant-time comparison
+    (``hmac.compare_digest``) to prevent timing side-channels.
 
     Args:
         raw_key: The full API key string provided by the client.
@@ -121,7 +121,7 @@ def verify_api_key(raw_key: str, stored_hash: str, salt: str) -> bool:
         ``True`` if the key matches, ``False`` otherwise.
     """
     computed = hashlib.sha256(f"{salt}{raw_key}".encode()).hexdigest()
-    return computed == stored_hash
+    return hmac.compare_digest(computed, stored_hash)
 
 
 def compute_lookup_hash(raw_key: str) -> str:
