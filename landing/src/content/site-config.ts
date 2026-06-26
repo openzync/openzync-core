@@ -9,7 +9,7 @@ export const siteConfig = {
     "OpenZep provides persistent, graph-based memory for AI agents. Store, retrieve, and reason over agent interactions at scale with support for 10+ graph backends and 5+ LLM providers.",
   url: "https://openzep.com",
   appUrl: process.env.NEXT_PUBLIC_APP_URL ?? "https://app.openzep.com",
-  ogImage: "/images/og-default.png",
+  ogImage: "/images/og-default.svg",
   links: {
     github: "https://github.com/openzep",
     twitter: "https://twitter.com/openzep",
@@ -94,6 +94,10 @@ export const breadcrumbLabels: Record<string, string> = {
   "/blog": "Blog",
   "/use-cases": "Use Cases",
   "/faq": "FAQ",
+  "/events": "Events",
+  "/press-kit": "Press Kit",
+  "/privacy": "Privacy Policy",
+  "/terms": "Terms of Service",
 };
 
 // ─── Footer links ───────────────────────────────────────────────────────────

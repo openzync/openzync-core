@@ -12,6 +12,13 @@ export interface EventItem {
 
 export const events: EventItem[] = [
   {
+    title: "OpenZep Sprint February 2026",
+    date: "February 10–14, 2026",
+    description:
+      "A week-long community sprint focused on plugin development, documentation improvements, and performance benchmarking across all supported graph backends.",
+    href: "https://github.com/openzep/openzep/discussions",
+  },
+  {
     title: "OpenZep Conference 2026",
     date: "September 21–27, 2026",
     description:

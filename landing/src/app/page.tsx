@@ -7,19 +7,20 @@ import { CaseStudies } from "@/components/landing/case-studies";
 import { NewsSection } from "@/components/landing/news-section";
 import { SponsorsSection } from "@/components/landing/sponsors-section";
 import { CtaSection } from "@/components/landing/cta-section";
+import { FadeIn } from "@/components/landing/fade-in";
 
 export default function HomePage() {
   return (
     <>
       <Hero />
-      <CommunityEvents />
-      <ReleaseSpotlight />
-      <AudienceTabs />
-      <StatsSection />
-      <CaseStudies />
-      <NewsSection />
-      <SponsorsSection />
-      <CtaSection />
+      <FadeIn><CommunityEvents /></FadeIn>
+      <FadeIn delay={100}><ReleaseSpotlight /></FadeIn>
+      <FadeIn delay={200}><AudienceTabs /></FadeIn>
+      <FadeIn delay={100}><StatsSection /></FadeIn>
+      <FadeIn delay={200}><CaseStudies /></FadeIn>
+      <FadeIn delay={100}><NewsSection /></FadeIn>
+      <FadeIn delay={200}><SponsorsSection /></FadeIn>
+      <FadeIn delay={300}><CtaSection /></FadeIn>
     </>
   );
 }

@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { CtaSection } from "@/components/landing/cta-section";
+import { FadeIn } from "@/components/landing/fade-in";
 
 export const metadata: Metadata = {
   title: "Features",

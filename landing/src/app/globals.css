@@ -92,8 +92,10 @@ body {
   transition: all 0.2s ease;
 }
 .card-interactive:hover {
-  border-color: var(--color-surface-700);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  border-color: var(--color-brand-500);
+  border-color: color-mix(in srgb, var(--color-brand-500) 30%, var(--color-surface-700));
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.08);
+  transform: translateY(-1px);
 }
 
 /* ─── Animations ────────────────────────────────────────────────────────── */

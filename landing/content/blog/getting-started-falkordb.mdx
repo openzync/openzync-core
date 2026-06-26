@@ -1,0 +1,56 @@
+---
+title: "Getting Started with FalkorDB and OpenZep"
+date: "2026-05-10"
+excerpt: "Step-by-step guide to using FalkorDB as your OpenZep graph backend — from installation to your first agent memory query."
+author: "OpenZep Team"
+category: "tutorials"
+---
+
+FalkorDB is a high-performance graph database designed for AI workloads. Combined with OpenZep, it gives you a blazing-fast memory layer for your agents.
+
+## Why FalkorDB?
+
+FalkorDB offers:
+
+- **Sub-millisecond query latency** — ideal for real-time agent interactions
+- **Redis-native protocol** — drop-in compatible with your existing Redis infrastructure
+- **Graph operations** — pattern matching, shortest path, and similarity search
+
+## Setup
+
+First, start FalkorDB:
+
+```bash
+docker run -p 6379:6379 falkordb/falkordb
+```
+
+Then configure OpenZep to use it:
+
+```python
+from openzep import OpenZep
+
+client = OpenZep(
+    backend="falkordb",
+    connection_string="redis://localhost:6379",
+)
+```
+
+## Your First Memory
+
+```python
+# Store an agent memory
+session = client.create_session(agent_id="customer-support-bot")
+session.remember("user_preference", {"theme": "dark", "language": "en"})
+
+# Retrieve it later
+prefs = session.recall("user_preference")
+print(prefs)  # {"theme": "dark", "language": "en"}
+```
+
+FalkorDB handles the graph operations behind the scenes, while OpenZep provides the agent-friendly API layer. Together, they make a powerful combination for production agent memory.
+
+## Next Steps
+
+- Check out our [FalkorDB integration guide](https://docs.openzep.com/backends/falkordb)
+- Explore [complex graph queries](https://docs.openzep.com/queries)
+- Try the [sample chatbot app](https://github.com/openzep/examples)

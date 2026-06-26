@@ -48,4 +48,29 @@ export const faqItems: FaqItem[] = [
     answer:
       "OpenZep provides a Python SDK as a first-class citizen, plus a REST API that works with any language. TypeScript/JavaScript SDK is in development. The plugin system is language-agnostic via the REST API.",
   },
+  {
+    question: "Can I self-host OpenZep?",
+    answer:
+      "Yes. OpenZep is designed for self-hosting from day one. You can deploy it on your own infrastructure using Docker, Kubernetes, or directly on bare metal. We provide official Docker images, Helm charts, and deployment guides for AWS, GCP, and Azure.",
+  },
+  {
+    question: "How do I migrate from another memory solution?",
+    answer:
+      "OpenZep provides migration tools and import scripts for common sources. The REST API makes it straightforward to export data from your existing system and import it into OpenZep. Contact our support team for assistance with complex migrations.",
+  },
+  {
+    question: "What are the API rate limits?",
+    answer:
+      "For the managed cloud service, the free tier includes 100,000 memory operations per month with a rate limit of 100 requests per minute. Paid tiers offer higher limits — up to 10,000 requests per minute on the enterprise plan. Self-hosted deployments have no rate limits.",
+  },
+  {
+    question: "Is my data portable?",
+    answer:
+      "Absolutely. OpenZep uses standard graph database formats. You can export your data as JSON, Cypher, or SPARQL at any time. We also provide direct database access for advanced use cases. Your data is never locked in.",
+  },
+  {
+    question: "How does OpenZep handle production scaling?",
+    answer:
+      "OpenZep is built for production from the ground up. It supports horizontal scaling through database clustering, connection pooling, caching layers, and async processing. The cloud service auto-scales based on demand, while self-hosted deployments can be scaled using standard infrastructure patterns.",
+  },
 ];
