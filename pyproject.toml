@@ -69,8 +69,10 @@ llm = [
 ]
 
 doc = [
-    "mkdocs>=1.6.0",
-    "mkdocs-material>=9.5.0",
+    "sphinx>=7.0.0",
+    "furo>=2024.0.0",
+    "myst-parser>=3.0.0",
+    "sphinx-autobuild>=2024.0.0",
 ]
 all = [
     "openzep[dev,llm,doc]",

@@ -62,6 +62,9 @@ Thumbs.db
 .docker/
 docker-compose.override.yml
 
+# ── Documentation ─────────────────────────────────────────────────────────────
+docs/_build/
+
 # ── Generated ─────────────────────────────────────────────────────────────────
 generated/
 *.generated.py

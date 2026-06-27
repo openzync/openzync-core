@@ -28,6 +28,7 @@ stages:
   - test-unit
   - test-integration
   - build
+  - docs
 
 default:
   image: python:3.12-slim
@@ -141,4 +142,23 @@ dependency-scan:
     - pip install pip-audit
     - pip-audit
   only:
+    - schedules
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DOCUMENTATION  (validate that Sphinx builds cleanly)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Builds the Sphinx HTML docs and treats any warning as a build failure.
+# Publishing is handled by ReadTheDocs (configured in .readthedocs.yaml).
+
+docs:
+  stage: docs
+  script:
+    - pip install -e ".[doc]"
+    - sphinx-apidoc -o docs/api/ core/ routers/ models/ schemas/ services/
+        repositories/ middleware/ dependencies/ workers/ utils/ packages/
+        --force --module-first
+    - sphinx-build -b html docs/ docs/_build/html
+  only:
+    - main
+  except:
     - schedules

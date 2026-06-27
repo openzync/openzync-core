@@ -15,7 +15,7 @@
 #   make docker-down      # Stop infrastructure containers
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: dev install lint test test-all migrate migrate-new docker-up docker-down clean
+.PHONY: dev install lint test test-all migrate migrate-new docker-up docker-down docs-install docs-build docs-watch docs-clean docs-apidoc clean
 
 # ── Variables ─────────────────────────────────────────────────────────────────
 
@@ -86,6 +86,26 @@ docker-logs:
 docker-reset:
 	docker compose -f infra/docker-compose.yml down -v
 	docker compose -f infra/docker-compose.yml up -d
+
+# ── Documentation ─────────────────────────────────────────────────────────────
+
+docs-install:
+	$(PIP) install -e ".[doc]"
+
+docs-build:
+	sphinx-build -b html docs/ docs/_build/html
+
+docs-watch:
+	sphinx-autobuild docs/ docs/_build/html --port 8600
+
+docs-clean:
+	rm -rf docs/_build/
+
+docs-apidoc:
+	sphinx-apidoc -o docs/api/ \
+	  core/ routers/ models/ schemas/ services/ repositories/ \
+	  middleware/ dependencies/ workers/ utils/ packages/ \
+	  --force --module-first
 
 # ── Housekeeping ──────────────────────────────────────────────────────────────
 

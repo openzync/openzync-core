@@ -285,6 +285,7 @@ async def rollback_prompt_template(
 @router.delete(
     "/prompts/{name}",
     status_code=204,
+    response_model=None,
 )
 async def delete_prompt_template_override(
     name: str,
