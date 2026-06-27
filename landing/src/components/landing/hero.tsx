@@ -61,14 +61,6 @@ export function Hero() {
 
       {/* Content */}
       <div className="relative z-10 mx-auto max-w-6xl px-6 text-center">
-        {/* Eyebrow */}
-        <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-brand-500/20 bg-brand-500/5 px-4 py-1.5">
-          <span className="h-2 w-2 rounded-full bg-success animate-pulse-dot" />
-          <span className="text-xs font-medium text-accent-300">
-            Now available in public beta
-          </span>
-        </div>
-
         {/* Headline */}
         <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight leading-tight">
           Persistent Memory

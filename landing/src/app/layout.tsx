@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { Navbar } from "@/components/landing/navbar";
+import { AnnouncementBar } from "@/components/landing/announcement-bar";
 import { Footer } from "@/components/landing/footer";
 import { siteConfig } from "@/content/site-config";
 import "./globals.css";
@@ -68,6 +69,7 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <div className="flex min-h-screen flex-col">
+            <AnnouncementBar />
             <Navbar />
             <main className="flex-1">{children}</main>
             <Footer />

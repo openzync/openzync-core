@@ -41,11 +41,12 @@ export function Navbar() {
   return (
     <header
       className={cn(
-        "fixed top-0 left-0 right-0 z-50 transition-all duration-300",
+        "fixed left-0 right-0 z-40 transition-all duration-300",
         scrolled
           ? "bg-surface-950/80 backdrop-blur-md border-b border-surface-800"
           : "bg-transparent",
       )}
+      style={{ top: "var(--announcement-height, 0px)" }}
     >
       <div className="mx-auto max-w-7xl flex h-16 items-center justify-between px-6">
         {/* Logo */}

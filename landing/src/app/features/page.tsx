@@ -46,7 +46,7 @@ export default function FeaturesPage() {
   return (
     <>
       {/* Header */}
-      <section className="pt-28 pb-12 md:pb-16">
+      <section className="pt-36 pb-12 md:pb-16">
         <div className="mx-auto max-w-4xl px-6">
           <Breadcrumbs segments={segments} />
 

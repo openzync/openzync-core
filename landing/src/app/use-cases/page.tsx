@@ -15,7 +15,7 @@ export default function UseCasesPage() {
 
   return (
     <>
-      <section className="pt-28 pb-16">
+      <section className="pt-36 pb-16">
         <div className="mx-auto max-w-4xl px-6">
           <Breadcrumbs segments={segments} />
           <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4">

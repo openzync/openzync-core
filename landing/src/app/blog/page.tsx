@@ -15,7 +15,7 @@ export default function BlogPage() {
   const segments = buildBreadcrumbSegments("/blog");
 
   return (
-    <div className="pt-28 pb-20">
+    <div className="pt-36 pb-20">
       <div className="mx-auto max-w-4xl px-6">
         <Breadcrumbs segments={segments} />
 

@@ -34,7 +34,7 @@ export default async function ChangelogEntryPage({ params }: Props) {
   if (!entry) notFound();
 
   return (
-    <div className="pt-28 pb-20">
+    <div className="pt-36 pb-20">
       <div className="mx-auto max-w-3xl px-6">
         {/* Back link */}
         <Link
