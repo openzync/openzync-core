@@ -68,6 +68,12 @@ llm = [
     "anthropic>=0.30.0",
 ]
 
+reranker = [
+    "sentence-transformers>=3.0.0",
+]
+cohere = [
+    "cohere>=5.0.0",
+]
 doc = [
     "sphinx>=7.0.0",
     "furo>=2024.0.0",
@@ -75,7 +81,7 @@ doc = [
     "sphinx-autobuild>=2024.0.0",
 ]
 all = [
-    "openzep[dev,llm,doc]",
+    "openzep[dev,llm,doc,reranker,cohere]",
 ]
 
 [tool.setuptools.packages.find]

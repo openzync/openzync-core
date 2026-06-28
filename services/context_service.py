@@ -18,10 +18,11 @@ import time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
+import orjson
 import structlog
 
-from core.exceptions import NotFoundError
 from middleware.metrics import context_latency_seconds
+from packages.reranker import RerankerFactory
 from services.cache_service import CacheService
 from services.context_formatter import format_json, format_text
 from services.hybrid_retriever import HybridRetriever
@@ -53,12 +54,11 @@ class ContextService:
         redis: object | None = None,
         graph_backends: list | None = None,
         org_config: OrgConfigBase | None = None,
-
-
-
     ) -> None:
+        reranker = RerankerFactory.create(org_config) if org_config else None
         self._retriever = HybridRetriever(
             db, org_id, redis, graph_backends=graph_backends, org_config=org_config,
+            reranker=reranker,
         )
         self._cache = (
             CacheService(redis, default_ttl=org_config.context_cache_ttl if org_config else None)
@@ -147,8 +147,6 @@ class ContextService:
                 results.get("entities", []),
                 results.get("communities", []),
             )
-            import orjson
-
             context_str: str = orjson.dumps(context_data).decode()
         else:
             context_str = format_text(
