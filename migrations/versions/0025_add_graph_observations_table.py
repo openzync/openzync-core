@@ -126,8 +126,7 @@ def upgrade() -> None:
     # Fast lookups of pair-level observations
     op.create_index("idx_observations_pair", "graph_observations",
                     ["subject_entity_id", "related_entity_id"],
-                    postgresql_where=sa.text("related_entity_id IS NOT NULL"),
-                    comment="Fast lookups of co-occurrence pairs in either direction.")
+                    postgresql_where=sa.text("related_entity_id IS NOT NULL"))
 
     # ── Functional unique index for dedup ─────────────────────────────────────
     # PostgreSQL's unique B-tree index treats NULL != NULL, so a plain unique
@@ -140,7 +139,7 @@ def upgrade() -> None:
     # get the actual UUID.  The sentinel never appears as a real column value
     # because related_entity_id IS NULL for entity-level observations, and the
     # FK to graph_entities.id prevents 0000... from being stored as a real id.
-    op.create_unique_index(
+    op.create_index(
         "idx_observations_dedup",
         "graph_observations",
         [
@@ -150,11 +149,7 @@ def upgrade() -> None:
             sa.text("COALESCE(related_entity_id, "
                     "'00000000-0000-0000-0000-000000000000'::uuid)"),
         ],
-        postgresql_comment=(
-            "Functional unique index: entity-level observations use a nil-UUID "
-            "sentinel for the 4th column (since NULL != NULL in B-tree indexes). "
-            "Pair-level observations use the actual related_entity_id UUID."
-        ),
+        unique=True,
     )
 
     # ════════════════════════════════════════════════════════════════════════════

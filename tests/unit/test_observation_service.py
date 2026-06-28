@@ -82,14 +82,15 @@ def _mock_execute_result(rows: list[dict]) -> MagicMock:
     ``.all()`` returns a list of :class:`Row`-like tuples.
     """
     mock_result = MagicMock()
-    # For .one_or_none()
+    # For .mappings().one_or_none() — returns first dict or None
+    mappings_mock = MagicMock()
+    mappings_mock.one_or_none.return_value = rows[0] if rows else None
+    mappings_mock.all.return_value = rows
+    mock_result.mappings.return_value = mappings_mock
+    # For .one_or_none() (raw tuple access — kept for compatibility)
     mock_result.one_or_none.return_value = rows[0] if rows else None
     # For .one()
     mock_result.one.return_value = rows[0] if rows else None
-    # For .mappings().all()
-    mappings_mock = MagicMock()
-    mappings_mock.all.return_value = rows
-    mock_result.mappings.return_value = mappings_mock
     # For .all() (returns raw tuples)
     mock_result.all.return_value = [tuple(r.values()) for r in rows]
     return mock_result
@@ -140,8 +141,8 @@ class TestDetectCoOccurrences:
         mock_db.execute.side_effect = [
             _mock_execute_result([{"total": 10}]),  # total episodes
             _mock_execute_result([_co_row(co_count=5)]),  # pairs
+            _mock_execute_result([]),  # relationship IDs query
         ]
-        mock_db.execute.return_value = _mock_execute_result([])  # rel IDs
 
         patterns = await service.detect_co_occurrences(PROJECT_ID)
         assert len(patterns) == 1
@@ -168,7 +169,8 @@ class TestDetectCoOccurrences:
         service: ObservationService,
         mock_db: AsyncMock,
     ) -> None:
-        """Multiple pairs returned in descending co_count order."""
+        """Multiple pairs returned in descending co_order."""
+        # 1 total count + 1 pair query + 3 pair rel-ID queries = 5 side_effects
         mock_db.execute.side_effect = [
             _mock_execute_result([{"total": 20}]),
             _mock_execute_result([
@@ -176,9 +178,10 @@ class TestDetectCoOccurrences:
                 _co_row(ENTITY_A_ID, "EntityA", ENTITY_C_ID, "EntityC", co_count=5),
                 _co_row(ENTITY_B_ID, "EntityB", ENTITY_C_ID, "EntityC", co_count=3),
             ]),
+            _mock_execute_result([]),  # rel IDs for pair A↔B
+            _mock_execute_result([]),  # rel IDs for pair A↔C
+            _mock_execute_result([]),  # rel IDs for pair B↔C
         ]
-        # Return empty rel IDs for all three queries
-        mock_db.execute.return_value = _mock_execute_result([])
 
         patterns = await service.detect_co_occurrences(PROJECT_ID)
         assert len(patterns) == 3
@@ -514,8 +517,12 @@ class TestIsMonotonic:
         assert _is_monotonic([8.0, 4.0, 2.0, 1.0], increasing=False)
 
     def test_not_monotonic(self) -> None:
-        assert not _is_monotonic([1.0, 8.0, 2.0, 5.0], increasing=True)
-        assert not _is_monotonic([5.0, 2.0, 8.0, 1.0], increasing=False)
+        # [5, 1, 8, 2, 7, 3]: 5→1 (dec), 1→8 (inc), 8→2 (dec), 2→7 (inc),
+        # 7→3 (dec). Increasing check: F, T, F, T, F → 2/5 = 40% < 60%
+        assert not _is_monotonic([5.0, 1.0, 8.0, 2.0, 7.0, 3.0], increasing=True)
+        # Decreasing check for the same: T, F, T, F, T → 3/5 = 60% = threshold.
+        # Use a clearly non-decreasing series:
+        assert not _is_monotonic([5.0, 3.0, 7.0, 2.0, 9.0, 1.0, 4.0], increasing=False)
 
     def test_short_list_returns_false(self) -> None:
         assert not _is_monotonic([1.0, 2.0], increasing=True)

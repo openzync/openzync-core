@@ -91,7 +91,7 @@ class ObservationRepository:
                     (:org_id, :project_id, :subject_entity_id,
                      :related_entity_id, :obs_type, :content, :confidence,
                      :fact_ids, :rel_ids, :valid_from, :valid_to,
-                     :obs_metadata::jsonb, NOW())
+                      CAST(:obs_metadata AS jsonb), NOW())
                 ON CONFLICT (project_id, subject_entity_id, observation_type,
                              COALESCE(related_entity_id,
                               '00000000-0000-0000-0000-000000000000'::uuid))

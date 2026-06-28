@@ -295,8 +295,8 @@ class ObservationService:
             """),
             {"project_id": project_id},
         )
-        total_row = total_result.one_or_none()
-        total_episodes = total_row.total if total_row else 0
+        total_row = total_result.mappings().one_or_none()
+        total_episodes = total_row["total"] if total_row else 0
         if total_episodes == 0:
             return []
 
