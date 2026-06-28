@@ -21,12 +21,11 @@ from uuid import UUID
 import orjson
 import structlog
 
-from core.exceptions import NotFoundError
 from middleware.metrics import context_latency_seconds
+from packages.reranker import RerankerFactory
 from services.cache_service import CacheService
 from services.context_formatter import format_json, format_text
 from services.hybrid_retriever import HybridRetriever
-from services.reranker import RerankerFactory
 
 if TYPE_CHECKING:
     from schemas.organization_config import OrgConfigBase

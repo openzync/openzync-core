@@ -16,23 +16,16 @@ requiring seeded DB content.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from packages.reranker.sentence_transformers import _MODEL_CACHE, _MODEL_LOCKS
 from schemas.organization_config import OrgConfigBase
-from services.context_formatter import format_text
 from services.context_service import ContextService
 from services.hybrid_retriever import HybridRetriever
-from services.reranker import (
-    RerankerFactory,
-    SentenceTransformersReranker,
-    _MODEL_CACHE,
-    _MODEL_LOCKS,
-)
-
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

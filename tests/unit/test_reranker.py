@@ -1,6 +1,6 @@
-"""Unit tests for the cross-encoder re-ranker module.
+"""Unit tests for the cross-encoder re-ranker package.
 
-Tests cover all classes in ``services/reranker.py``:
+Tests cover all classes in ``packages/reranker/``:
 
 - ``CrossEncoderReranker`` (abstract interface contract)
 - ``SentenceTransformersReranker`` (local model wrapper)
@@ -20,16 +20,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import numpy as np
 import pytest
 
-from schemas.organization_config import OrgConfigBase
-from services.reranker import (
+from packages.reranker import (
     CohereReranker,
     CrossEncoderReranker,
     RerankerFactory,
     SentenceTransformersReranker,
-    _MODEL_CACHE,
-    _MODEL_LOCKS,
 )
-
+from packages.reranker.sentence_transformers import _MODEL_CACHE, _MODEL_LOCKS
+from schemas.organization_config import OrgConfigBase
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Shared test data

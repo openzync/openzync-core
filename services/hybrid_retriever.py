@@ -23,19 +23,18 @@ from uuid import UUID
 from sqlalchemy import Float, Select, cast, func, literal, literal_column, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from middleware.metrics import graph_search_latency_seconds, reranker_latency_seconds
 from models.episode import Episode
 from models.fact import Fact
 
-from middleware.metrics import graph_search_latency_seconds, reranker_latency_seconds
-
 if TYPE_CHECKING:
     from packages.graph_backend.interface import GraphBackend
+    from packages.reranker import CrossEncoderReranker
     from schemas.organization_config import OrgConfigBase
-    from services.reranker import CrossEncoderReranker
 
 logger = logging.getLogger(__name__)
 
-from services.reranker import DEFAULT_RERANK_TOP_K, DEFAULT_RERANK_TOP_N
+from packages.reranker import DEFAULT_RERANK_TOP_K, DEFAULT_RERANK_TOP_N
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -325,7 +324,9 @@ class HybridRetriever:
             else 1536
         )
 
-        from pgvector.sqlalchemy import Vector  # lazy: numpy CPU compat; caught by outer try/except
+        from pgvector.sqlalchemy import (
+            Vector,  # lazy: numpy CPU compat; caught by outer try/except
+        )
 
         vector_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
         embedding_col = cast(Episode.embedding, Vector(dim))
@@ -397,7 +398,9 @@ class HybridRetriever:
             else 1536
         )
 
-        from pgvector.sqlalchemy import Vector  # lazy: numpy CPU compat; caught by outer try/except
+        from pgvector.sqlalchemy import (
+            Vector,  # lazy: numpy CPU compat; caught by outer try/except
+        )
 
         vector_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
         embedding_col = cast(Fact.embedding, Vector(dim))
