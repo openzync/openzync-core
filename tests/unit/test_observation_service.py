@@ -1,8 +1,8 @@
 """Unit tests for graph-topology pattern detection and description generation.
 
 Tests :class:`services.observation_service.ObservationService` in isolation —
-mocks the ``AsyncSession`` (DB) and ``ObservationRepository``.  All pattern
-detection algorithms are tested with deterministic input data.
+mocks the ``ObservationRepository``.  All pattern detection algorithms are
+tested with deterministic input data.
 
 No real database, no network, no LLM calls.
 """
@@ -10,8 +10,8 @@ No real database, no network, no LLM calls.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID, uuid4
+from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 
@@ -33,16 +33,9 @@ PROJECT_ID = UUID("00000000-0000-0000-0000-000000000002")
 ENTITY_A_ID = UUID("00000000-0000-0000-0000-00000000000a")
 ENTITY_B_ID = UUID("00000000-0000-0000-0000-00000000000b")
 ENTITY_C_ID = UUID("00000000-0000-0000-0000-00000000000c")
-ENTITY_D_ID = UUID("00000000-0000-0000-0000-00000000000d")
 
 
 # ── Fixtures ───────────────────────────────────────────────────────────────────
-
-
-@pytest.fixture
-def mock_db() -> AsyncMock:
-    """Create a mocked async SQLAlchemy session."""
-    return AsyncMock()
 
 
 @pytest.fixture
@@ -53,16 +46,14 @@ def mock_repo() -> AsyncMock:
 
 @pytest.fixture
 def service(
-    mock_db: AsyncMock,
     mock_repo: AsyncMock,
 ) -> ObservationService:
-    """Create an ObservationService with mocked DB and repo.
+    """Create an ObservationService with mocked repo.
 
     Uses default thresholds (min_co_count=3,
     min_appearances_for_temporal=3).
     """
     return ObservationService(
-        db=mock_db,
         repo=mock_repo,
         min_co_count=3,
         min_appearances_for_temporal=3,
@@ -72,28 +63,6 @@ def service(
 
 
 # ── Data builders ─────────────────────────────────────────────────────────────
-
-
-def _mock_execute_result(rows: list[dict]) -> MagicMock:
-    """Build a mock result for ``db.execute()``.
-
-    The mock's ``.mappings().all()`` returns the given list of dicts.
-    ``.one_or_none()`` returns the first (or None).
-    ``.all()`` returns a list of :class:`Row`-like tuples.
-    """
-    mock_result = MagicMock()
-    # For .mappings().one_or_none() — returns first dict or None
-    mappings_mock = MagicMock()
-    mappings_mock.one_or_none.return_value = rows[0] if rows else None
-    mappings_mock.all.return_value = rows
-    mock_result.mappings.return_value = mappings_mock
-    # For .one_or_none() (raw tuple access — kept for compatibility)
-    mock_result.one_or_none.return_value = rows[0] if rows else None
-    # For .one()
-    mock_result.one.return_value = rows[0] if rows else None
-    # For .all() (returns raw tuples)
-    mock_result.all.return_value = [tuple(r.values()) for r in rows]
-    return mock_result
 
 
 def _co_row(
@@ -123,26 +92,22 @@ class TestDetectCoOccurrences:
     async def test_empty_project_returns_empty_list(
         self,
         service: ObservationService,
-        mock_db: AsyncMock,
+        mock_repo: AsyncMock,
     ) -> None:
         """No graph_episode_entities → empty list."""
-        mock_db.execute.return_value = _mock_execute_result([
-            {"total": 0},
-        ])
+        mock_repo.get_episode_count.return_value = 0
         result = await service.detect_co_occurrences(PROJECT_ID)
         assert result == []
 
     async def test_single_pair_above_threshold(
         self,
         service: ObservationService,
-        mock_db: AsyncMock,
+        mock_repo: AsyncMock,
     ) -> None:
         """One pair with 5 co-occurrences (threshold=3) → one pattern."""
-        mock_db.execute.side_effect = [
-            _mock_execute_result([{"total": 10}]),  # total episodes
-            _mock_execute_result([_co_row(co_count=5)]),  # pairs
-            _mock_execute_result([]),  # relationship IDs query
-        ]
+        mock_repo.get_episode_count.return_value = 10
+        mock_repo.get_co_occurring_pairs.return_value = [_co_row(co_count=5)]
+        mock_repo.get_relationship_ids_between.return_value = []
 
         patterns = await service.detect_co_occurrences(PROJECT_ID)
         assert len(patterns) == 1
@@ -154,34 +119,28 @@ class TestDetectCoOccurrences:
     async def test_below_threshold_excluded(
         self,
         service: ObservationService,
-        mock_db: AsyncMock,
+        mock_repo: AsyncMock,
     ) -> None:
         """Pair with 2 co-occurrences (threshold=3) → excluded."""
-        mock_db.execute.side_effect = [
-            _mock_execute_result([{"total": 10}]),
-            _mock_execute_result([]),  # no pairs above threshold
-        ]
+        mock_repo.get_episode_count.return_value = 10
+        mock_repo.get_co_occurring_pairs.return_value = []  # no pairs above 3
         patterns = await service.detect_co_occurrences(PROJECT_ID)
         assert patterns == []
 
     async def test_multiple_pairs_sorted_by_count(
         self,
         service: ObservationService,
-        mock_db: AsyncMock,
+        mock_repo: AsyncMock,
     ) -> None:
         """Multiple pairs returned in descending co_order."""
-        # 1 total count + 1 pair query + 3 pair rel-ID queries = 5 side_effects
-        mock_db.execute.side_effect = [
-            _mock_execute_result([{"total": 20}]),
-            _mock_execute_result([
-                _co_row(ENTITY_A_ID, "EntityA", ENTITY_B_ID, "EntityB", co_count=10),
-                _co_row(ENTITY_A_ID, "EntityA", ENTITY_C_ID, "EntityC", co_count=5),
-                _co_row(ENTITY_B_ID, "EntityB", ENTITY_C_ID, "EntityC", co_count=3),
-            ]),
-            _mock_execute_result([]),  # rel IDs for pair A↔B
-            _mock_execute_result([]),  # rel IDs for pair A↔C
-            _mock_execute_result([]),  # rel IDs for pair B↔C
+        mock_repo.get_episode_count.return_value = 20
+        mock_repo.get_co_occurring_pairs.return_value = [
+            _co_row(ENTITY_A_ID, "EntityA", ENTITY_B_ID, "EntityB", co_count=10),
+            _co_row(ENTITY_A_ID, "EntityA", ENTITY_C_ID, "EntityC", co_count=5),
+            _co_row(ENTITY_B_ID, "EntityB", ENTITY_C_ID, "EntityC", co_count=3),
         ]
+        # Each pair calls get_relationship_ids_between — return empty list
+        mock_repo.get_relationship_ids_between.return_value = []
 
         patterns = await service.detect_co_occurrences(PROJECT_ID)
         assert len(patterns) == 3
@@ -205,23 +164,23 @@ class TestDetectTemporalGaps:
     async def test_single_appearance_no_analysis(
         self,
         service: ObservationService,
-        mock_db: AsyncMock,
+        mock_repo: AsyncMock,
     ) -> None:
         """Entity with 1 appearance is below min_appearances=3."""
-        mock_db.execute.return_value = _mock_execute_result([
+        mock_repo.get_entity_timestamps.return_value = [
             {"entity_id": ENTITY_A_ID, "entity_name": "EntityA",
              "episode_created_at": self._ts(1)},
-        ])
+        ]
         patterns = await service.detect_temporal_gaps(PROJECT_ID)
         assert patterns == []
 
     async def test_periodic_pattern_detected(
         self,
         service: ObservationService,
-        mock_db: AsyncMock,
+        mock_repo: AsyncMock,
     ) -> None:
         """Entity with 4 appearances at ~7-day intervals → 'periodic'."""
-        mock_db.execute.return_value = _mock_execute_result([
+        mock_repo.get_entity_timestamps.return_value = [
             {"entity_id": ENTITY_A_ID, "entity_name": "EntityA",
              "episode_created_at": self._ts(21)},
             {"entity_id": ENTITY_A_ID, "entity_name": "EntityA",
@@ -230,7 +189,7 @@ class TestDetectTemporalGaps:
              "episode_created_at": self._ts(7)},
             {"entity_id": ENTITY_A_ID, "entity_name": "EntityA",
              "episode_created_at": self._ts(0)},
-        ])
+        ]
         patterns = await service.detect_temporal_gaps(PROJECT_ID)
         assert len(patterns) == 1
         assert patterns[0].pattern_type == "periodic"
@@ -241,10 +200,10 @@ class TestDetectTemporalGaps:
     async def test_widening_gaps_detected(
         self,
         service: ObservationService,
-        mock_db: AsyncMock,
+        mock_repo: AsyncMock,
     ) -> None:
         """Entity with gaps 1d, 3d, 7d → 'widening'."""
-        mock_db.execute.return_value = _mock_execute_result([
+        mock_repo.get_entity_timestamps.return_value = [
             {"entity_id": ENTITY_A_ID, "entity_name": "EntityA",
              "episode_created_at": self._ts(11)},
             {"entity_id": ENTITY_A_ID, "entity_name": "EntityA",
@@ -253,7 +212,7 @@ class TestDetectTemporalGaps:
              "episode_created_at": self._ts(7)},
             {"entity_id": ENTITY_A_ID, "entity_name": "EntityA",
              "episode_created_at": self._ts(0)},
-        ])
+        ]
         patterns = await service.detect_temporal_gaps(PROJECT_ID)
         assert len(patterns) == 1
         assert patterns[0].pattern_type == "widening"
@@ -261,10 +220,10 @@ class TestDetectTemporalGaps:
     async def test_narrowing_gaps_detected(
         self,
         service: ObservationService,
-        mock_db: AsyncMock,
+        mock_repo: AsyncMock,
     ) -> None:
         """Entity with gaps 7d, 3d, 1d → 'narrowing'."""
-        mock_db.execute.return_value = _mock_execute_result([
+        mock_repo.get_entity_timestamps.return_value = [
             {"entity_id": ENTITY_A_ID, "entity_name": "EntityA",
              "episode_created_at": self._ts(11)},
             {"entity_id": ENTITY_A_ID, "entity_name": "EntityA",
@@ -273,7 +232,7 @@ class TestDetectTemporalGaps:
              "episode_created_at": self._ts(1)},
             {"entity_id": ENTITY_A_ID, "entity_name": "EntityA",
              "episode_created_at": self._ts(0)},
-        ])
+        ]
         patterns = await service.detect_temporal_gaps(PROJECT_ID)
         assert len(patterns) == 1
         assert patterns[0].pattern_type == "narrowing"
@@ -281,10 +240,10 @@ class TestDetectTemporalGaps:
     async def test_irregular_pattern_fallback(
         self,
         service: ObservationService,
-        mock_db: AsyncMock,
+        mock_repo: AsyncMock,
     ) -> None:
         """Random gaps with no clear pattern → 'irregular'."""
-        mock_db.execute.return_value = _mock_execute_result([
+        mock_repo.get_entity_timestamps.return_value = [
             {"entity_id": ENTITY_A_ID, "entity_name": "EntityA",
              "episode_created_at": self._ts(30)},
             {"entity_id": ENTITY_A_ID, "entity_name": "EntityA",
@@ -293,7 +252,7 @@ class TestDetectTemporalGaps:
              "episode_created_at": self._ts(14)},
             {"entity_id": ENTITY_A_ID, "entity_name": "EntityA",
              "episode_created_at": self._ts(1)},
-        ])
+        ]
         patterns = await service.detect_temporal_gaps(PROJECT_ID)
         assert len(patterns) == 1
         # 30-15=15d, 15-14=1d, 14-1=13d — not a clear monotonic/periodic pattern
@@ -302,10 +261,10 @@ class TestDetectTemporalGaps:
     async def test_multiple_entities(
         self,
         service: ObservationService,
-        mock_db: AsyncMock,
+        mock_repo: AsyncMock,
     ) -> None:
         """Two entities with different patterns are both returned."""
-        mock_db.execute.return_value = _mock_execute_result([
+        mock_repo.get_entity_timestamps.return_value = [
             # Entity A: periodic (7-day gaps)
             {"entity_id": ENTITY_A_ID, "entity_name": "EntityA",
              "episode_created_at": self._ts(21)},
@@ -324,7 +283,7 @@ class TestDetectTemporalGaps:
              "episode_created_at": self._ts(5)},
             {"entity_id": ENTITY_B_ID, "entity_name": "EntityB",
              "episode_created_at": self._ts(0)},
-        ])
+        ]
         patterns = await service.detect_temporal_gaps(PROJECT_ID)
         assert len(patterns) == 2
         pattern_types = {p.entity_id: p.pattern_type for p in patterns}
@@ -343,20 +302,20 @@ class TestDetectBehavioralPatterns:
     async def test_no_facts_returns_empty(
         self,
         service: ObservationService,
-        mock_db: AsyncMock,
+        mock_repo: AsyncMock,
     ) -> None:
         """No facts for the project → empty list."""
-        mock_db.execute.return_value = _mock_execute_result([])
+        mock_repo.get_fact_predicate_counts.return_value = []
         patterns = await service.detect_behavioral_patterns(PROJECT_ID)
         assert patterns == []
 
     async def test_single_entity_with_frequent_predicate(
         self,
         service: ObservationService,
-        mock_db: AsyncMock,
+        mock_repo: AsyncMock,
     ) -> None:
         """Entity with 5 'upgrades' predicates → pattern detected."""
-        mock_db.execute.return_value = _mock_execute_result([
+        mock_repo.get_fact_predicate_counts.return_value = [
             {
                 "entity_id": ENTITY_A_ID,
                 "entity_name": "EntityA",
@@ -365,7 +324,7 @@ class TestDetectBehavioralPatterns:
                 "predicate_count": 5,
                 "total_facts": 8,
             },
-        ])
+        ]
         patterns = await service.detect_behavioral_patterns(PROJECT_ID)
         assert len(patterns) == 1
         assert patterns[0].entity_id == ENTITY_A_ID
@@ -375,10 +334,10 @@ class TestDetectBehavioralPatterns:
     async def test_multiple_predicates_sorted(
         self,
         service: ObservationService,
-        mock_db: AsyncMock,
+        mock_repo: AsyncMock,
     ) -> None:
         """Entity with multiple predicates → sorted by count descending."""
-        mock_db.execute.return_value = _mock_execute_result([
+        mock_repo.get_fact_predicate_counts.return_value = [
             {
                 "entity_id": ENTITY_A_ID,
                 "entity_name": "EntityA",
@@ -403,7 +362,7 @@ class TestDetectBehavioralPatterns:
                 "predicate_count": 2,
                 "total_facts": 10,
             },
-        ])
+        ]
         patterns = await service.detect_behavioral_patterns(PROJECT_ID)
         assert len(patterns) == 1
         preds = list(patterns[0].frequent_predicates.items())

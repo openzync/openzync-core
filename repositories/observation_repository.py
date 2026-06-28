@@ -19,8 +19,10 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.graph_observation import GraphObservation
 
 logger = logging.getLogger(__name__)
 
@@ -126,32 +128,29 @@ class ObservationRepository:
     async def get_by_project(
         self,
         project_id: UUID,
-    ) -> list[dict]:
+    ) -> list[GraphObservation]:
         """Retrieve all observations for a project.
 
         Args:
             project_id: The project to scope the query to.
 
         Returns:
-            A list of observation rows as dicts, ordered by
+            A list of :class:`GraphObservation` instances, ordered by
             ``confidence DESC, created_at DESC``.
         """
         result = await self._db.execute(
-            text("""
-                SELECT *
-                FROM graph_observations
-                WHERE project_id = :project_id
-                ORDER BY confidence DESC, created_at DESC
-            """),
-            {"project_id": project_id},
+            select(GraphObservation)
+            .where(GraphObservation.project_id == project_id)
+            .order_by(GraphObservation.confidence.desc(),
+                      GraphObservation.created_at.desc())
         )
-        return result.mappings().all()
+        return result.scalars().all()
 
     async def get_by_subject(
         self,
         project_id: UUID,
         subject_entity_id: UUID,
-    ) -> list[dict]:
+    ) -> list[GraphObservation]:
         """Get all observations about a specific entity in a project.
 
         Args:
@@ -162,23 +161,19 @@ class ObservationRepository:
             Observations about this entity, ordered by confidence desc.
         """
         result = await self._db.execute(
-            text("""
-                SELECT *
-                FROM graph_observations
-                WHERE project_id = :project_id
-                  AND subject_entity_id = :subject_entity_id
-                ORDER BY confidence DESC, created_at DESC
-            """),
-            {"project_id": project_id,
-             "subject_entity_id": subject_entity_id},
+            select(GraphObservation)
+            .where(GraphObservation.project_id == project_id)
+            .where(GraphObservation.subject_entity_id == subject_entity_id)
+            .order_by(GraphObservation.confidence.desc(),
+                      GraphObservation.created_at.desc())
         )
-        return result.mappings().all()
+        return result.scalars().all()
 
     async def get_by_type(
         self,
         project_id: UUID,
         observation_type: str,
-    ) -> list[dict]:
+    ) -> list[GraphObservation]:
         """Get all observations of a specific type in a project.
 
         Args:
@@ -189,23 +184,20 @@ class ObservationRepository:
             Observations matching the type, ordered by confidence desc.
         """
         result = await self._db.execute(
-            text("""
-                SELECT *
-                FROM graph_observations
-                WHERE project_id = :project_id
-                  AND observation_type = :obs_type
-                ORDER BY confidence DESC, created_at DESC
-            """),
-            {"project_id": project_id, "obs_type": observation_type},
+            select(GraphObservation)
+            .where(GraphObservation.project_id == project_id)
+            .where(GraphObservation.observation_type == observation_type)
+            .order_by(GraphObservation.confidence.desc(),
+                      GraphObservation.created_at.desc())
         )
-        return result.mappings().all()
+        return result.scalars().all()
 
     async def get_pair_observations(
         self,
         project_id: UUID,
         entity_id_a: UUID,
         entity_id_b: UUID,
-    ) -> list[dict]:
+    ) -> list[GraphObservation]:
         """Get all observations for a specific entity pair (either direction).
 
         Args:
@@ -217,17 +209,172 @@ class ObservationRepository:
             Observations involving this pair, in either direction.
         """
         result = await self._db.execute(
+            select(GraphObservation)
+            .where(GraphObservation.project_id == project_id)
+            .where(
+                ((GraphObservation.subject_entity_id == entity_id_a)
+                 & (GraphObservation.related_entity_id == entity_id_b))
+                | ((GraphObservation.subject_entity_id == entity_id_b)
+                   & (GraphObservation.related_entity_id == entity_id_a))
+            )
+            .order_by(GraphObservation.confidence.desc())
+        )
+        return result.scalars().all()
+
+    # ── Detection queries ───────────────────────────────────────────────────────
+    # These are extracted from ObservationService to keep SQL out of the service
+    # layer.  Each method maps to one graph-topology analysis query.
+
+    async def get_episode_count(self, project_id: UUID) -> int:
+        """Get total distinct episode count for a project.
+
+        Args:
+            project_id: Project scope.
+
+        Returns:
+            Number of distinct episodes.
+        """
+        result = await self._db.execute(
             text("""
-                SELECT *
-                FROM graph_observations
+                SELECT COUNT(DISTINCT episode_id) AS total
+                FROM graph_episode_entities
                 WHERE project_id = :project_id
-                  AND ((subject_entity_id = :a AND related_entity_id = :b)
-                       OR (subject_entity_id = :b AND related_entity_id = :a))
-                ORDER BY confidence DESC
             """),
-            {"project_id": project_id, "a": entity_id_a, "b": entity_id_b},
+            {"project_id": project_id},
+        )
+        row = result.mappings().one_or_none()
+        return row["total"] if row else 0
+
+    async def get_co_occurring_pairs(
+        self,
+        project_id: UUID,
+        min_count: int,
+    ) -> list[dict]:
+        """Find entity pairs that co-occur above a frequency threshold.
+
+        Args:
+            project_id: Project scope.
+            min_count: Minimum co-occurrence count.
+
+        Returns:
+            List of dicts with keys: entity_a_id, entity_a_name,
+            entity_b_id, entity_b_name, co_count.
+        """
+        result = await self._db.execute(
+            text("""
+                SELECT
+                    a.entity_id AS entity_a_id,
+                    ge_a.name AS entity_a_name,
+                    b.entity_id AS entity_b_id,
+                    ge_b.name AS entity_b_name,
+                    COUNT(DISTINCT a.episode_id) AS co_count
+                FROM graph_episode_entities a
+                JOIN graph_episode_entities b
+                    ON a.episode_id = b.episode_id
+                    AND a.entity_id < b.entity_id
+                JOIN graph_entities ge_a
+                    ON ge_a.id = a.entity_id
+                JOIN graph_entities ge_b
+                    ON ge_b.id = b.entity_id
+                WHERE a.project_id = :project_id
+                GROUP BY entity_a_id, entity_a_name, entity_b_id, entity_b_name
+                HAVING COUNT(DISTINCT a.episode_id) >= :min_count
+                ORDER BY co_count DESC
+            """),
+            {"project_id": project_id, "min_count": min_count},
         )
         return result.mappings().all()
+
+    async def get_entity_timestamps(self, project_id: UUID) -> list[dict]:
+        """Get ordered entity → episode timestamps for temporal analysis.
+
+        Args:
+            project_id: Project scope.
+
+        Returns:
+            List of dicts with keys: entity_id, entity_name,
+            episode_created_at.
+        """
+        result = await self._db.execute(
+            text("""
+                SELECT
+                    gee.entity_id,
+                    ge.name AS entity_name,
+                    e.created_at AS episode_created_at
+                FROM graph_episode_entities gee
+                JOIN episodes e
+                    ON e.id = gee.episode_id
+                    AND e.is_deleted = false
+                JOIN graph_entities ge
+                    ON ge.id = gee.entity_id
+                WHERE gee.project_id = :project_id
+                ORDER BY gee.entity_id, e.created_at
+            """),
+            {"project_id": project_id},
+        )
+        return result.mappings().all()
+
+    async def get_fact_predicate_counts(self, project_id: UUID) -> list[dict]:
+        """Get predicate frequency for each entity (as subject).
+
+        Args:
+            project_id: Project scope.
+
+        Returns:
+            List of dicts with keys: entity_id, entity_name, entity_type,
+            predicate, predicate_count, total_facts.
+        """
+        result = await self._db.execute(
+            text("""
+                SELECT
+                    f.subject_entity_id AS entity_id,
+                    ge.name AS entity_name,
+                    ge.entity_type,
+                    f.predicate,
+                    COUNT(*) AS predicate_count,
+                    COUNT(*) OVER (PARTITION BY f.subject_entity_id) AS total_facts
+                FROM facts f
+                JOIN graph_entities ge
+                    ON ge.id = f.subject_entity_id
+                WHERE f.project_id = :project_id
+                  AND f.subject_entity_id IS NOT NULL
+                  AND f.invalid_at IS NULL
+                GROUP BY f.subject_entity_id, ge.name, ge.entity_type, f.predicate
+                HAVING COUNT(*) >= 2
+                ORDER BY entity_id, predicate_count DESC
+            """),
+            {"project_id": project_id},
+        )
+        return result.mappings().all()
+
+    async def get_relationship_ids_between(
+        self,
+        project_id: UUID,
+        entity_a_id: UUID,
+        entity_b_id: UUID,
+    ) -> list[UUID]:
+        """Fetch graph_relationship IDs connecting two entities (either direction).
+
+        Args:
+            project_id: Project scope.
+            entity_a_id: First entity UUID.
+            entity_b_id: Second entity UUID.
+
+        Returns:
+            List of relationship UUIDs (may be empty).
+        """
+        result = await self._db.execute(
+            text("""
+                SELECT id FROM graph_relationships
+                WHERE project_id = :project_id
+                  AND invalid_at IS NULL
+                  AND ((source_id = :a AND target_id = :b)
+                       OR (source_id = :b AND target_id = :a))
+                ORDER BY created_at DESC
+            """),
+            {"project_id": project_id, "a": entity_a_id, "b": entity_b_id},
+        )
+        return [row[0] for row in result.all()]
 
     # ── Delete ────────────────────────────────────────────────────────────────
 

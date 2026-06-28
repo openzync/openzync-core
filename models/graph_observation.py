@@ -23,10 +23,10 @@ from sqlalchemy import ARRAY, Float, ForeignKey, Text, TIMESTAMP, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID as SA_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from models.base import Base
+from models.base import Base, TimestampMixin
 
 
-class GraphObservation(Base):
+class GraphObservation(TimestampMixin, Base):
     """A single observation about an entity, surfaced from graph-topology analysis.
 
     Attributes:
@@ -104,17 +104,6 @@ class GraphObservation(Base):
         JSONB,
         nullable=True,
         comment="Arbitrary metadata for future extensibility.",
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=func.now(),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
     )
 
     def __repr__(self) -> str:

@@ -16,15 +16,27 @@ rolled back when the session closes.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.graph_observation import ObservationType
+from models.graph_observation import GraphObservation, ObservationType
 from repositories.observation_repository import ObservationRepository
 from services.observation_service import ObservationService
+
+
+def _obs_to_dict(o: GraphObservation) -> dict[str, Any]:
+    """Serialize a GraphObservation to a plain dict before session closes.
+
+    Must be called while the instance is still bound to an active session.
+    """
+    return {
+        col.name: getattr(o, col.name)
+        for col in o.__table__.columns
+    }
 
 pytestmark = pytest.mark.integration
 
@@ -101,8 +113,8 @@ class TestObservationRepository:
             )
             results = await repo.get_by_project(PROJECT_ID)
             assert len(results) == 1
-            assert results[0]["content"] == "Alice appears weekly."
-            assert results[0]["confidence"] == 0.85
+            assert results[0].content == "Alice appears weekly."
+            assert results[0].confidence == 0.85
 
         await self._run(engine, _test)
 
@@ -132,8 +144,8 @@ class TestObservationRepository:
             )
             results = await repo.get_by_project(PROJECT_ID)
             assert len(results) == 1, "Should still be one row"
-            assert results[0]["content"] == "Alice appears daily."
-            assert results[0]["confidence"] == 0.90
+            assert results[0].content == "Alice appears daily."
+            assert results[0].confidence == 0.90
 
         await self._run(engine, _test)
 
@@ -194,11 +206,11 @@ class TestObservationRepository:
 
             alice_obs = await repo.get_by_subject(PROJECT_ID, self._ENTITY_A)
             assert len(alice_obs) == 1
-            assert alice_obs[0]["content"] == "Alice pattern."
+            assert alice_obs[0].content == "Alice pattern."
 
             bob_obs = await repo.get_by_subject(PROJECT_ID, self._ENTITY_B)
             assert len(bob_obs) == 1
-            assert bob_obs[0]["content"] == "Bob pattern."
+            assert bob_obs[0].content == "Bob pattern."
 
         await self._run(engine, _test)
 
@@ -226,13 +238,13 @@ class TestObservationRepository:
                 PROJECT_ID, str(ObservationType.TEMPORAL_PATTERN),
             )
             assert len(temporal) == 1
-            assert temporal[0]["content"] == "Temporal"
+            assert temporal[0].content == "Temporal"
 
             behavioral = await repo.get_by_type(
                 PROJECT_ID, str(ObservationType.BEHAVIORAL_PATTERN),
             )
             assert len(behavioral) == 1
-            assert behavioral[0]["content"] == "Behavioral"
+            assert behavioral[0].content == "Behavioral"
 
         await self._run(engine, _test)
 
@@ -256,8 +268,8 @@ class TestObservationRepository:
                 PROJECT_ID, self._ENTITY_A, self._ENTITY_B,
             )
             assert len(results) == 1
-            assert results[0]["subject_entity_id"] == self._ENTITY_A
-            assert results[0]["related_entity_id"] == self._ENTITY_B
+            assert results[0].subject_entity_id == self._ENTITY_A
+            assert results[0].related_entity_id == self._ENTITY_B
 
             # Query with B/A — should find it too (OR logic)
             results = await repo.get_pair_observations(
@@ -520,11 +532,11 @@ class TestObservationServicePipeline:
         self, engine, *,
         with_facts: bool = True,
         with_relationships: bool = True,
-    ) -> tuple[dict[str, int], list[dict]]:
+    ) -> tuple[dict[str, int], list[dict[str, Any]]]:
         """Seed data, run the pipeline, return counts + persisted obs.
 
         Returns:
-            Tuple of (counts dict, list of observation rows from DB).
+            Tuple of (counts dict, list of observation rows as dicts).
         """
         db = AsyncSession(engine, expire_on_commit=False)
         try:
@@ -534,7 +546,7 @@ class TestObservationServicePipeline:
             )
             repo = ObservationRepository(db)
             service = ObservationService(
-                db=db, repo=repo,
+                repo=repo,
                 min_co_count=2,  # Lower threshold for small test data
                 min_appearances_for_temporal=3,
                 min_gap_hours=1.0,
@@ -546,9 +558,11 @@ class TestObservationServicePipeline:
                 llm_backend=None,  # Use template descriptions
             )
 
-            # Fetch all observations from the DB
+            # Fetch all observations from the DB and serialize before
+            # the session closes (ORM instances expire on session close)
             obs = await repo.get_by_project(PROJECT_ID)
-            return counts, obs
+            obs_dicts = [_obs_to_dict(o) for o in obs]
+            return counts, obs_dicts
         finally:
             await db.rollback()
             await db.close()
@@ -670,7 +684,7 @@ class TestObservationServicePipeline:
             await self._seed_graph(db)
             repo = ObservationRepository(db)
             service = ObservationService(
-                db=db, repo=repo,
+                repo=repo,
                 min_co_count=2,
                 min_appearances_for_temporal=3,
             )
@@ -694,7 +708,7 @@ class TestObservationServicePipeline:
 
             # Content updated on second run
             for i, (o1, o2) in enumerate(zip(obs_1, obs_2)):
-                assert o1["id"] == o2["id"], (
+                assert o1.id == o2.id, (
                     f"Row {i}: IDs differ — possible re-insert"
                 )
 

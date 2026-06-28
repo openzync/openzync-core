@@ -24,7 +24,6 @@ Idempotency:
 from __future__ import annotations
 
 import structlog
-from sqlalchemy import text
 
 from services.worker.prompt_renderer import render_prompt
 from workers.tasks.base import ENRICHMENT_OBSERVATIONS, with_retry
@@ -74,12 +73,11 @@ async def compute_observations(
     # Lazy imports — ARQ workers run in a separate process; keep module-level
     # imports lightweight so the worker process starts quickly.
     # ═══════════════════════════════════════════════════════════════════════════
-    from datetime import datetime, timezone
     from uuid import UUID
 
     from core.config import settings
     from core.db import get_async_session
-    from models.episode import Episode
+    from repositories.episode_repository import EpisodeRepository
     from repositories.observation_repository import ObservationRepository
     from services.observation_service import ObservationService
 
@@ -113,36 +111,27 @@ async def compute_observations(
 
     try:
         async with session_factory() as db:
-            # ── 1. Idempotency check: skip if bit 6 already set ──────────────
-            result = await db.execute(
-                text(
-                    "SELECT enrichment_status FROM episodes "
-                    "WHERE id = :episode_id"
-                ),
-                {"episode_id": UUID(episode_id)},
-            )
-            row = result.one_or_none()
-            if row is None:
+            # ── 1. Instantiate repos + service ───────────────────────────────
+            episode_repo = EpisodeRepository(db)
+            obs_repo = ObservationRepository(db)
+            service = ObservationService(repo=obs_repo)
+
+            # ── 2. Idempotency check: skip if bit 6 already set ──────────────
+            episode = await episode_repo.get_by_id(UUID(episode_id))
+            if episode is None:
                 logger.warning(
                     "compute_observations.episode_not_found",
                     episode_id=episode_id,
                 )
                 return
 
-            if row[0] & ENRICHMENT_OBSERVATIONS:
+            if episode.enrichment_status & ENRICHMENT_OBSERVATIONS:
                 logger.info(
                     "compute_observations.already_done",
                     episode_id=episode_id,
-                    enrichment_status=row[0],
+                    enrichment_status=episode.enrichment_status,
                 )
                 return
-
-            # ── 2. Instantiate service + repo ─────────────────────────────────
-            repo = ObservationRepository(db)
-            service = ObservationService(
-                db=db,
-                repo=repo,
-            )
 
             # ── 3. Run project-wide pattern detection ─────────────────────────
             # The service runs a full project scan, not just per-episode.
@@ -165,13 +154,8 @@ async def compute_observations(
             )
 
             # ── 4. Set enrichment_status bit 6 ──────────────────────────────
-            await db.execute(
-                text(
-                    "UPDATE episodes "
-                    "SET enrichment_status = enrichment_status | :bit "
-                    "WHERE id = :episode_id"
-                ),
-                {"bit": ENRICHMENT_OBSERVATIONS, "episode_id": UUID(episode_id)},
+            await episode_repo.apply_enrichment_bits(
+                UUID(episode_id), ENRICHMENT_OBSERVATIONS
             )
             await db.commit()
 

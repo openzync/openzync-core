@@ -58,11 +58,12 @@ async def link_entities_to_episode(
     from datetime import datetime, timezone
     from uuid import UUID
 
-    from sqlalchemy import select, update
+    from sqlalchemy import select
 
     from core.config import settings
     from core.db import get_async_session
     from models.episode import Episode
+    from repositories.episode_repository import EpisodeRepository
 
     # Use the shared engine from worker context.
     engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
@@ -158,14 +159,9 @@ async def link_entities_to_episode(
                     linked += 1
 
             # ── 3. Update enrichment_status bit 3 ───────────────────────────
-            await db.execute(
-                update(Episode)
-                .where(Episode.id == episode_id)
-                .values(
-                    enrichment_status=Episode.enrichment_status.op("|")(
-                        ENRICHMENT_ENTITY_LINKS
-                    ),
-                )
+            episode_repo = EpisodeRepository(db)
+            await episode_repo.apply_enrichment_bits(
+                UUID(episode_id), ENRICHMENT_ENTITY_LINKS
             )
             await db.commit()
 

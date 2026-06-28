@@ -289,6 +289,26 @@ class EpisodeRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_id_for_update(self, episode_id: UUID) -> Episode | None:
+        """Lock and return an episode by ID, with ``SELECT ... FOR UPDATE``.
+
+        Acquires a row-level lock that is held until the transaction commits.
+        Use this before any read-modify-write cycle on ``enrichment_status``
+        to prevent race conditions between concurrent workers.
+
+        Args:
+            episode_id: The episode's UUID.
+
+        Returns:
+            The Episode if found and not soft-deleted, ``None`` otherwise.
+        """
+        result = await self._db.execute(
+            select(Episode)
+            .where(Episode.id == episode_id, Episode.is_deleted.is_(False))
+            .with_for_update()
+        )
+        return result.scalar_one_or_none()
+
     # ── Update Enrichment Status ─────────────────────────────────────────────
 
     async def update_enrichment_status(
@@ -307,6 +327,30 @@ class EpisodeRepository:
             text(
                 "UPDATE episodes SET enrichment_status = :bitmask, "
                 "updated_at = now() WHERE id = :id AND is_deleted = false"
+            ),
+            {"bitmask": bitmask, "id": episode_id},
+        )
+
+    async def apply_enrichment_bits(
+        self, episode_id: UUID, bitmask: int
+    ) -> None:
+        """Atomically OR a bitmask into the enrichment_status.
+
+        Uses ``SET enrichment_status = enrichment_status | :bitmask`` so
+        that multiple workers can set independent flag bits without a
+        read-modify-write race (e.g., bit 3 for entity linking, bit 6 for
+        observation pass).  Does NOT clear existing bits.
+
+        Args:
+            episode_id: The episode's UUID.
+            bitmask: Bit(s) to set (bitwise OR).
+        """
+        await self._db.execute(
+            text(
+                "UPDATE episodes "
+                "SET enrichment_status = enrichment_status | :bitmask, "
+                "updated_at = now() "
+                "WHERE id = :id AND is_deleted = false"
             ),
             {"bitmask": bitmask, "id": episode_id},
         )

@@ -91,6 +91,7 @@ async def extract_entities(
     from core.llm import resolve_backend
     from core.org_config import get_org_config
     from repositories.entity_repository import EntityRepository
+    from repositories.episode_repository import EpisodeRepository
     from schemas.llm_outputs import EntityExtractionOutput
 
     logger.info(
@@ -463,6 +464,13 @@ async def extract_entities(
                     },
                 )
 
+
+            # ── 9. Set enrichment_status bit 0 inside the same transaction ──
+            episode_repo = EpisodeRepository(_db)
+            await episode_repo.apply_enrichment_bits(
+                uuid.UUID(episode_id), ENRICHMENT_ENTITIES
+            )
+
             # ⚠️ Commit is required — SQLAlchemy AsyncSession does NOT
             # auto-commit when the context manager exits. Without this,
             # all entity/relationship writes are silently rolled back.
@@ -506,16 +514,6 @@ async def extract_entities(
         relationship_skip_count=relationship_skip_count,
     )
 
-    # ── 9. Set enrichment_status bit 0 ───────────────────────────────────────
-    # Only reached if entity persistence succeeded (no ExternalServiceError
-    # raised by the guard at step 8b) — enrichment bit is NOT set when
-    # entities were silently dropped, allowing @with_retry to re-attempt.
-    await _set_enrichment_bit(
-        episode_id,
-        ENRICHMENT_ENTITIES,
-        db_session_factory=session_factory,
-    )
-
     entity_count = len(entities)
     if entity_count:
         logger.info(
@@ -554,55 +552,3 @@ async def extract_entities(
         )
 
 
-# ── Private helpers ───────────────────────────────────────────────────────────
-
-
-async def _set_enrichment_bit(
-    episode_id: str,
-    bit: int,
-    db_session_factory: Any = None,
-) -> None:
-    """Set an enrichment_status bit for an episode.
-
-    Always runs, even if no data was found — marks the task as complete
-    so the pipeline knows it has been attempted.
-
-    Args:
-        episode_id: UUID of the episode to update.
-        bit: Bitmask value to OR into enrichment_status.
-        db_session_factory: Optional shared session factory from the worker
-            ctx.  When provided, avoids creating a short-lived DB engine.
-    """
-    from sqlalchemy import text
-
-    if db_session_factory is None:
-        from core.config import settings as app_settings
-        from core.db import get_async_session, init_db_engine
-
-        engine = init_db_engine(
-            str(app_settings.DATABASE_URL), pool_size=2, max_overflow=1
-        )
-        session_factory = get_async_session(engine)
-        _own_engine = True
-    else:
-        engine = None
-        session_factory = db_session_factory
-        _own_engine = False
-
-    try:
-        async with session_factory() as db:
-            await db.execute(
-                text(
-                    "UPDATE episodes SET enrichment_status = enrichment_status | :bit WHERE id = :id"
-                ),
-                {"bit": bit, "id": uuid.UUID(episode_id)},
-            )
-            await db.commit()
-    except Exception as exc:
-        logger.warning(
-            "enrichment_bit_failed",
-            extra={"episode_id": episode_id, "bit": bit, "error": str(exc)},
-        )
-    finally:
-        if _own_engine:
-            await engine.dispose()

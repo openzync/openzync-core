@@ -49,12 +49,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
-
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.graph_observation import ObservationType
 from repositories.observation_repository import ObservationRepository
@@ -161,8 +158,7 @@ class ObservationService:
     """Graph-topology pattern detection and observation persistence.
 
     Args:
-        db: An async SQLAlchemy session for running detection queries.
-        repo: An ``ObservationRepository`` for persisting results.
+        repo: An ``ObservationRepository`` for queries and persistence.
         min_co_count: Minimum co-occurrence count (default 3).
         min_appearances_for_temporal: Minimum appearances for temporal
             analysis (default 3).
@@ -174,7 +170,6 @@ class ObservationService:
 
     def __init__(
         self,
-        db: AsyncSession,
         repo: ObservationRepository,
         *,
         min_co_count: int = _DEFAULT_MIN_CO_COUNT,
@@ -182,7 +177,6 @@ class ObservationService:
         min_gap_hours: float = _DEFAULT_MIN_GAP_HOURS,
         co_confidence_cap: int = _DEFAULT_CO_CONFIDENCE_CAP,
     ) -> None:
-        self._db = db
         self._repo = repo
         self._min_co_count = min_co_count
         self._min_appearances_for_temporal = min_appearances_for_temporal
@@ -287,48 +281,19 @@ class ObservationService:
             co-occurrence count descending.
         """
         # Get total episode count for the project (denominator for ratio)
-        total_result = await self._db.execute(
-            text("""
-                SELECT COUNT(DISTINCT episode_id) AS total
-                FROM graph_episode_entities
-                WHERE project_id = :project_id
-            """),
-            {"project_id": project_id},
-        )
-        total_row = total_result.mappings().one_or_none()
-        total_episodes = total_row["total"] if total_row else 0
+        total_episodes = await self._repo.get_episode_count(project_id)
         if total_episodes == 0:
             return []
 
-        # Find co-occurring pairs
-        pair_rows = await self._db.execute(
-            text("""
-                SELECT
-                    a.entity_id AS entity_a_id,
-                    ge_a.name AS entity_a_name,
-                    b.entity_id AS entity_b_id,
-                    ge_b.name AS entity_b_name,
-                    COUNT(DISTINCT a.episode_id) AS co_count
-                FROM graph_episode_entities a
-                JOIN graph_episode_entities b
-                    ON a.episode_id = b.episode_id
-                    AND a.entity_id < b.entity_id
-                JOIN graph_entities ge_a
-                    ON ge_a.id = a.entity_id
-                JOIN graph_entities ge_b
-                    ON ge_b.id = b.entity_id
-                WHERE a.project_id = :project_id
-                GROUP BY entity_a_id, entity_a_name, entity_b_id, entity_b_name
-                HAVING COUNT(DISTINCT a.episode_id) >= :min_count
-                ORDER BY co_count DESC
-            """),
-            {"project_id": project_id, "min_count": self._min_co_count},
+        # Find co-occurring pairs via repository
+        pair_rows = await self._repo.get_co_occurring_pairs(
+            project_id, self._min_co_count,
         )
 
         patterns: list[CoOccurrencePattern] = []
-        for row in pair_rows.mappings().all():
+        for row in pair_rows:
             # Fetch supporting relationship IDs between this pair
-            rel_ids = await self._fetch_relationship_ids(
+            rel_ids = await self._repo.get_relationship_ids_between(
                 project_id, row["entity_a_id"], row["entity_b_id"],
             )
             patterns.append(CoOccurrencePattern(
@@ -361,28 +326,12 @@ class ObservationService:
             A list of ``TemporalGapPattern`` instances, one per entity
             that has enough appearances to analyze.
         """
-        # Get entity → episode timestamps ordered
-        rows = await self._db.execute(
-            text("""
-                SELECT
-                    gee.entity_id,
-                    ge.name AS entity_name,
-                    e.created_at AS episode_created_at
-                FROM graph_episode_entities gee
-                JOIN episodes e
-                    ON e.id = gee.episode_id
-                    AND e.is_deleted = false
-                JOIN graph_entities ge
-                    ON ge.id = gee.entity_id
-                WHERE gee.project_id = :project_id
-                ORDER BY gee.entity_id, e.created_at
-            """),
-            {"project_id": project_id},
-        )
+        # Get entity → episode timestamps via repository
+        rows = await self._repo.get_entity_timestamps(project_id)
 
         # Group timestamps by entity in Python
         entity_timestamps: dict[UUID, tuple[str, list[datetime]]] = {}
-        for row in rows.mappings().all():
+        for row in rows:
             eid = row["entity_id"]
             if eid not in entity_timestamps:
                 entity_timestamps[eid] = (row["entity_name"], [])
@@ -466,32 +415,12 @@ class ObservationService:
             A list of ``BehavioralPattern`` instances, one per entity
             with notable fact-predicate patterns.
         """
-        # Get predicate frequency for each entity (as subject)
-        rows = await self._db.execute(
-            text("""
-                SELECT
-                    f.subject_entity_id AS entity_id,
-                    ge.name AS entity_name,
-                    ge.entity_type,
-                    f.predicate,
-                    COUNT(*) AS predicate_count,
-                    COUNT(*) OVER (PARTITION BY f.subject_entity_id) AS total_facts
-                FROM facts f
-                JOIN graph_entities ge
-                    ON ge.id = f.subject_entity_id
-                WHERE f.project_id = :project_id
-                  AND f.subject_entity_id IS NOT NULL
-                  AND f.invalid_at IS NULL
-                GROUP BY f.subject_entity_id, ge.name, ge.entity_type, f.predicate
-                HAVING COUNT(*) >= 2
-                ORDER BY entity_id, predicate_count DESC
-            """),
-            {"project_id": project_id},
-        )
+        # Get predicate frequency for each entity via repository
+        rows = await self._repo.get_fact_predicate_counts(project_id)
 
         # Aggregate by entity
         entity_data: dict[UUID, dict[str, Any]] = {}
-        for row in rows.mappings().all():
+        for row in rows:
             eid = row["entity_id"]
             if eid not in entity_data:
                 entity_data[eid] = {
@@ -800,36 +729,6 @@ class ObservationService:
     # ═══════════════════════════════════════════════════════════════════════════
     # Internal helpers
     # ═══════════════════════════════════════════════════════════════════════════
-
-    async def _fetch_relationship_ids(
-        self,
-        project_id: UUID,
-        entity_a_id: UUID,
-        entity_b_id: UUID,
-    ) -> list[UUID]:
-        """Fetch graph_relationship IDs connecting two entities (either direction).
-
-        Args:
-            project_id: Project scope.
-            entity_a_id: First entity UUID.
-            entity_b_id: Second entity UUID.
-
-        Returns:
-            List of relationship UUIDs (may be empty).
-        """
-        result = await self._db.execute(
-            text("""
-                SELECT id FROM graph_relationships
-                WHERE project_id = :project_id
-                  AND invalid_at IS NULL
-                  AND ((source_id = :a AND target_id = :b)
-                       OR (source_id = :b AND target_id = :a))
-                ORDER BY created_at DESC
-            """),
-            {"project_id": project_id, "a": entity_a_id, "b": entity_b_id},
-        )
-        return [row[0] for row in result.all()]
-
 
 # ── Module-level helpers ─────────────────────────────────────────────────────
 
