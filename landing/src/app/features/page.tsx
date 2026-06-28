@@ -1,6 +1,10 @@
 import type { Metadata } from "next";
+import { ArrowRight, GitFork } from "lucide-react";
 import { Breadcrumbs, buildBreadcrumbSegments } from "@/components/landing/breadcrumbs";
 import { features, categories } from "@/content/features";
+import { FadeIn } from "@/components/landing/fade-in";
+import { Button } from "@openzep/design-system";
+import { siteConfig } from "@/content/site-config";
 import {
   GitBranch,
   Network,
@@ -14,7 +18,6 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { CtaSection } from "@/components/landing/cta-section";
-import { FadeIn } from "@/components/landing/fade-in";
 
 export const metadata: Metadata = {
   title: "Features",
@@ -35,10 +38,10 @@ const iconMap: Record<string, LucideIcon> = {
 };
 
 /**
- * Features page in Plone style:
- * - Quote block + intro
+ * Features page:
+ * - Intro header with breadcrumbs
  * - Sections grouped by category (icon + heading + feature list)
- * - "Download or Try" CTA at bottom
+ * - CTA at bottom
  */
 export default function FeaturesPage() {
   const segments = buildBreadcrumbSegments("/features");
@@ -50,23 +53,13 @@ export default function FeaturesPage() {
         <div className="mx-auto max-w-4xl px-6">
           <Breadcrumbs segments={segments} />
 
-          {/* Quote block (Plone pattern) */}
-          <blockquote className="border-l-3 border-brand-500 pl-5 mb-8">
-            <p className="text-lg text-surface-400 italic leading-relaxed">
-              &ldquo;Plone has only one feature — there is no thing it cannot do&rdquo;
-            </p>
-            <footer className="text-sm text-surface-500 mt-1">
-              — <cite className="not-italic">Mikko Ohtamaa</cite>
-            </footer>
-          </blockquote>
-
           <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-4">
             Features
           </h1>
           <p className="text-surface-400 text-lg max-w-2xl">
-            This site is built with OpenZep and demonstrates the many capabilities
-            of agent memory infrastructure. Everything you need to build
-            production-grade agent systems.
+            OpenZep provides the full stack for production-grade agent memory
+            infrastructure — from graph backends to observability, built for
+            scale, security, and multi-provider flexibility.
           </p>
         </div>
       </section>
@@ -110,31 +103,27 @@ export default function FeaturesPage() {
         );
       })}
 
-      {/* Download/Try CTA (Plone pattern) */}
+      {/* Try / Download CTA */}
       <section className="py-16 border-t border-surface-800">
         <div className="mx-auto max-w-3xl px-6 text-center">
           <h2 className="text-2xl md:text-3xl font-bold tracking-tight mb-4">
             Try OpenZep Yourself
           </h2>
-          <p className="text-surface-400 mb-6">
+          <p className="text-surface-400 mb-8 max-w-xl mx-auto">
             You can try OpenZep using our demo site or download it to run locally.
           </p>
-          <ul className="space-y-2 mb-6">
-            <li className="text-sm text-surface-300">
-              <span className="text-brand-300 mr-2">■</span>
-              OpenZep Demo:{' '}
-              <a href="https://demo.openzep.com" className="text-brand-300 hover:text-brand-200 transition-colors">
-                https://demo.openzep.com
-              </a>
-            </li>
-            <li className="text-sm text-surface-300">
-              <span className="text-brand-300 mr-2">■</span>
-              Download:{' '}
-              <a href="https://github.com/openzep/openzep/releases" className="text-brand-300 hover:text-brand-200 transition-colors">
-                https://github.com/openzep/openzep/releases
-              </a>
-            </li>
-          </ul>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <a href="https://demo.openzep.com" target="_blank" rel="noopener noreferrer">
+              <Button variant="primary" size="lg" icon={<ArrowRight size={18} />}>
+                Try the Demo
+              </Button>
+            </a>
+            <a href="https://github.com/openzep/openzep/releases" target="_blank" rel="noopener noreferrer">
+              <Button variant="secondary" size="lg" icon={<GitFork size={18} />}>
+                Download
+              </Button>
+            </a>
+          </div>
         </div>
       </section>
 

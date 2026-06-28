@@ -67,7 +67,7 @@ export default function AboutPage() {
           <Breadcrumbs segments={segments} />
           <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-6">
             What is{" "}
-            <span className="bg-gradient-to-r from-brand-300 to-accent-300 bg-clip-text text-transparent">
+            <span className="text-brand-300">
               OpenZep
             </span>
             ?

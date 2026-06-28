@@ -42,8 +42,63 @@ export function MegaMenu({ items }: MegaMenuProps) {
     };
   }, []);
 
+  const dropdownRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  /**
+   * Keyboard navigation for mega-menu.
+   * ArrowDown: open next dropdown. ArrowRight/Left: move between top-level items.
+   * Escape: close current dropdown.
+   */
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (activeIndex === null) {
+      // No dropdown open — ArrowDown opens first item if it has children
+      if (e.key === "ArrowDown") {
+        const firstChild = items.findIndex((it) => it.children && it.children.length > 0);
+        if (firstChild >= 0) {
+          e.preventDefault();
+          setActiveIndex(firstChild);
+        }
+      }
+      return;
+    }
+
+    const current = items[activeIndex];
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        // Focus the first child link inside the open dropdown
+        if (current?.children && current.children.length > 0) {
+          const dropdown = dropdownRefs.current[activeIndex];
+          if (dropdown) {
+            const firstLink = dropdown.querySelector<HTMLAnchorElement>("a");
+            firstLink?.focus();
+          }
+        }
+        break;
+
+      case "ArrowRight":
+        e.preventDefault();
+        setActiveIndex((activeIndex + 1) % items.length);
+        break;
+
+      case "ArrowLeft":
+        e.preventDefault();
+        setActiveIndex((activeIndex - 1 + items.length) % items.length);
+        break;
+
+      case "Escape":
+        e.preventDefault();
+        setActiveIndex(null);
+        setHoveredIndex(null);
+        break;
+    }
+  };
+
   return (
-    <nav className="hidden lg:flex items-center gap-0.5">
+    <nav
+      className="hidden lg:flex items-center gap-0.5"
+      onKeyDown={handleKeyDown}
+    >
       {items.map((item, i) => {
         const isOpen = activeIndex === i;
         const hasChildren = item.children && item.children.length > 0;
@@ -58,6 +113,7 @@ export function MegaMenu({ items }: MegaMenuProps) {
             {item.href ? (
               <Link
                 href={item.href}
+                onFocus={() => !hoveredIndex && setActiveIndex(i)}
                 className={cn(
                   "flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                   isOpen
@@ -76,6 +132,7 @@ export function MegaMenu({ items }: MegaMenuProps) {
             ) : (
               <button
                 onClick={() => handleClick(i)}
+                onFocus={() => !hoveredIndex && setActiveIndex(i)}
                 className={cn(
                   "flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                   isOpen
@@ -94,15 +151,20 @@ export function MegaMenu({ items }: MegaMenuProps) {
             {/* Dropdown */}
             {hasChildren && isOpen && (
               <>
-                <div className="absolute top-full left-0 pt-2 z-50">
-                  <div className="w-72 rounded-xl border border-surface-700 bg-surface-900 shadow-2xl shadow-black/40 overflow-hidden">
+                <div
+                  ref={(el) => { dropdownRefs.current[i] = el; }}
+                  className="absolute top-full left-0 pt-2 z-50"
+                >
+                  <div className="w-72 rounded-xl border border-surface-700 bg-surface-900 shadow-xl overflow-hidden">
                     {/* Children links */}
                     <div className="p-2 space-y-0.5">
-                      {item.children!.map((child) => (
+                      {item.children!.map((child, ci) => (
                         <Link
                           key={child.label}
                           href={child.href}
                           className="flex flex-col rounded-lg px-3 py-2.5 hover:bg-surface-800 transition-colors group"
+                          // Allow Tab within the dropdown, focus first child on ArrowDown
+                          tabIndex={0}
                         >
                           <span className="text-sm font-medium text-text-primary group-hover:text-brand-300 transition-colors">
                             {child.label}

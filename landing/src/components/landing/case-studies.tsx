@@ -25,9 +25,21 @@ export function CaseStudies() {
               href={`/use-cases#${cs.slug}`}
               className="card-interactive overflow-hidden flex flex-col"
             >
-              {/* Image placeholder */}
-              <div className="h-40 bg-gradient-to-br from-brand-500/10 to-accent-500/5 flex items-center justify-center">
-                <span className="text-3xl font-bold text-brand-500/30">{cs.category[0]}</span>
+              {/* Card header — terminal-style code snippet */}
+              <div className="h-40 bg-surface-900 flex items-center justify-center overflow-hidden border-b border-surface-800">
+                <div className="relative w-full h-full opacity-50">
+                  <div className="absolute inset-0 p-4 font-mono text-[10px] leading-relaxed text-brand-300/40 select-none">
+                    <div className="text-brand-500/60"># graph_memory.py</div>
+                    <div className="mt-1"><span className="text-accent-300/40">from</span> openzep <span className="text-accent-300/40">import</span> Agent</div>
+                    <div className="mt-1"><span className="text-accent-300/40">async</span> <span className="text-accent-300/40">def</span> build_agent():</div>
+                    <div className="ml-3">agent = <span className="text-brand-300/40">Agent</span>(</div>
+                    <div className="ml-6">memory=<span className="text-brand-300/40">GraphMemory</span>(</div>
+                    <div className="ml-9">backend=<span className="text-accent-300/40">"neo4j"</span>,</div>
+                    <div className="ml-9">llm=<span className="text-accent-300/40">"claude"</span></div>
+                    <div className="ml-6">)</div>
+                    <div className="ml-3">return agent</div>
+                  </div>
+                </div>
               </div>
               <div className="p-5 flex-1 flex flex-col">
                 <span className="inline-block text-[10px] uppercase tracking-widest font-semibold text-brand-300 mb-2">

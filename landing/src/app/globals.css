@@ -121,8 +121,25 @@ body {
 }
 
 @keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(20px); }
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes countUp {
+  from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes bounceDown {
+  0%, 20%, 50%, 80%, 100% { transform: translateY(0); }
+  40% { transform: translateY(6px); }
+  60% { transform: translateY(3px); }
 }
 
 .animate-fade-in {
@@ -138,11 +155,36 @@ body {
 }
 
 .animate-fade-in-up {
-  animation: fadeInUp 0.4s ease-out both;
+  animation: fadeInUp 0.5s ease-out both;
 }
 
 .animate-pulse-dot {
   animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.animate-count-up {
+  animation: countUp 0.4s ease-out both;
+}
+
+.animate-bounce-down {
+  animation: bounceDown 2s ease-in-out infinite;
+}
+
+/* ─── Interactive element scale feedback ───────────────────────────────── */
+
+.active-scale:active {
+  transform: scale(0.97);
+  transition: transform 0.1s ease;
+}
+
+/* ─── Card CTA arrow slide ─────────────────────────────────────────────── */
+
+.card-cta-arrow {
+  transition: transform 0.2s ease;
+}
+
+.card-interactive:hover .card-cta-arrow {
+  transform: translateX(3px);
 }
 
 /* ─── Reduced motion ────────────────────────────────────────────────────── */

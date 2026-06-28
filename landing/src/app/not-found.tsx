@@ -16,7 +16,7 @@ export default function NotFound() {
       <div className="text-center max-w-lg">
         {/* Large 404 indicator */}
         <div className="text-8xl md:text-9xl font-extrabold tracking-tighter mb-4">
-          <span className="bg-gradient-to-r from-brand-300 to-accent-300 bg-clip-text text-transparent">
+          <span className="text-brand-300">
             404
           </span>
         </div>

@@ -17,7 +17,7 @@ export function Footer() {
   return (
     <footer className="border-t border-surface-800 bg-surface-900">
       {/* Plone-style "Powering the Future" sponsor highlight bar */}
-      <div className="border-b border-surface-800 bg-gradient-to-r from-brand-950/50 to-surface-950/50">
+      <div className="border-b border-surface-800 bg-surface-950">
         <div className="mx-auto max-w-7xl px-6 py-8 text-center">
           <h3 className="text-lg font-semibold text-text-primary mb-2">
             Powering the Future of Agent Memory
