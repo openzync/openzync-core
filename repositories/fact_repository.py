@@ -21,6 +21,7 @@ from typing import Any, Literal
 
 from core.cursor import decode_cursor, encode_cursor
 from sqlalchemy import text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.fact import Fact
@@ -255,7 +256,20 @@ class FactRepository:
 
             stmt = insert(Fact).returning(Fact)
 
-        result = await self._db.execute(stmt, rows)
+        try:
+            result = await self._db.execute(stmt, rows)
+        except IntegrityError:
+            logger.warning(
+                "fact_repository.exclusion_conflict",
+                extra={
+                    "input_count": len(facts),
+                    "user_id": str(user_id),
+                    "project_id": str(project_id),
+                    "organization_id": str(organization_id),
+                },
+            )
+            raise
+
         await self._db.flush()
 
         created = list(result.scalars().all())
@@ -264,10 +278,13 @@ class FactRepository:
         for fact in created:
             await self._db.refresh(fact)
 
+        skipped = len(facts) - len(created)
+
         logger.info(
             "fact_repository.batch_created",
             extra={
                 "count": len(created),
+                "skipped_count": skipped,
                 "user_id": str(user_id),
                 "project_id": str(project_id),
                 "organization_id": str(organization_id),
@@ -355,6 +372,160 @@ class FactRepository:
         )
 
         return created
+
+    # ── Temporal Queries ───────────────────────────────────────────────────────
+
+    async def get_all_active_for_project(
+        self,
+        project_id: UUID,
+        *,
+        organization_id: UUID | None = None,
+    ) -> list[Fact]:
+        """Return all non-invalidated facts for a project.
+
+        Used by the temporal validation service to scan for cross-episode
+        overlaps and invalid ranges.
+
+        Args:
+            project_id: The project to fetch facts for.
+            organization_id: Optional tenant filter for defense-in-depth.
+
+        Returns:
+            List of active ``Fact`` ORM instances (``invalid_at IS NULL``).
+        """
+        from sqlalchemy import select
+
+        stmt = (
+            select(Fact)
+            .where(Fact.project_id == project_id)
+            .where(Fact.invalid_at.is_(None))
+            .order_by(Fact.valid_from.asc().nullsfirst())
+        )
+        if organization_id is not None:
+            stmt = stmt.where(Fact.organization_id == organization_id)
+
+        result = await self._db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_facts_at_time(
+        self,
+        project_id: UUID,
+        timestamp: datetime,
+        *,
+        organization_id: UUID | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Fact]:
+        """Return non-invalidated facts valid at a specific point in time.
+
+        Uses the btree index ``ix_fact_user_valid_range`` on
+        ``(user_id, valid_from, valid_to)`` — **not** the GiST exclusion
+        constraint index.
+
+        Query pattern::
+
+            WHERE project_id = :project_id
+              AND invalid_at IS NULL
+              AND (valid_from IS NULL OR valid_from <= :timestamp)
+              AND (valid_to IS NULL OR valid_to > :timestamp)
+            ORDER BY valid_from DESC NULLS LAST
+            LIMIT :limit OFFSET :offset
+
+        Args:
+            project_id: Project scope.
+            timestamp: Point in time to query.  Facts whose valid range
+                contains this timestamp are returned.
+            organization_id: Optional tenant filter for defense-in-depth.
+            limit: Maximum number of results to return (capped at 200).
+            offset: Number of results to skip (for pagination).
+
+        Returns:
+            A list of ``Fact`` ORM instances valid at ``timestamp``.
+        """
+        from sqlalchemy import select
+
+        effective_limit = min(limit, 200)
+
+        stmt = (
+            select(Fact)
+            .where(Fact.project_id == project_id)
+            .where(Fact.invalid_at.is_(None))
+            .where(
+                (Fact.valid_from.is_(None)) | (Fact.valid_from <= timestamp),
+            )
+            .where(
+                (Fact.valid_to.is_(None)) | (Fact.valid_to > timestamp),
+            )
+            .order_by(Fact.valid_from.desc().nullslast())
+            .limit(effective_limit)
+            .offset(offset)
+        )
+        if organization_id is not None:
+            stmt = stmt.where(Fact.organization_id == organization_id)
+
+        result = await self._db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_facts_in_range(
+        self,
+        project_id: UUID,
+        start: datetime,
+        end: datetime,
+        *,
+        organization_id: UUID | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Fact]:
+        """Return non-invalidated facts whose valid range overlaps ``[start, end)``.
+
+        Btree-backed query (NOT GiST ``&&``)::
+
+            WHERE project_id = :project_id
+              AND invalid_at IS NULL
+              AND (valid_from IS NULL OR valid_from < :end)
+              AND (valid_to IS NULL OR valid_to > :start)
+            ORDER BY valid_from ASC
+            LIMIT :limit OFFSET :offset
+
+        The GiST range-overlap index is intentionally deferred — add it
+        only if profiling proves the btree plan is too slow at scale.
+
+        Args:
+            project_id: Project scope.
+            start: Start of the query range (inclusive per ``'[)'``
+                semantics).
+            end: End of the query range (exclusive per ``'[)'`` semantics).
+            organization_id: Optional tenant filter for defense-in-depth.
+            limit: Maximum number of results to return (capped at 200).
+            offset: Number of results to skip (for pagination).
+
+        Returns:
+            A list of ``Fact`` ORM instances whose valid range overlaps
+            the query range.
+        """
+        from sqlalchemy import select
+
+        effective_limit = min(limit, 200)
+
+        stmt = (
+            select(Fact)
+            .where(Fact.project_id == project_id)
+            .where(Fact.invalid_at.is_(None))
+            .where(
+                (Fact.valid_from.is_(None)) | (Fact.valid_from < end),
+            )
+            .where(
+                (Fact.valid_to.is_(None)) | (Fact.valid_to > start),
+            )
+            .order_by(Fact.valid_from.asc().nullsfirst())
+            .limit(effective_limit)
+            .offset(offset)
+        )
+        if organization_id is not None:
+            stmt = stmt.where(Fact.organization_id == organization_id)
+
+        result = await self._db.execute(stmt)
+        return list(result.scalars().all())
 
     # ── Soft Delete by User ──────────────────────────────────────────────────
 

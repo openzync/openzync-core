@@ -50,13 +50,28 @@ ENRICHMENT_FACTS: int = 1 << 2
 ENRICHMENT_ENTITY_LINKS: int = 1 << 3
 """Bit 3 — entity-episode linking task completed."""
 
+ENRICHMENT_CLASSIFICATION: int = 1 << 4
+"""Bit 4 — dialog classification task completed."""
+
+ENRICHMENT_STRUCTURED_EXTRACTION: int = 1 << 5
+"""Bit 5 — structured extraction task completed."""
+
 ENRICHMENT_ALL: int = (
     ENRICHMENT_ENTITIES
     | ENRICHMENT_EMBEDDING
     | ENRICHMENT_FACTS
     | ENRICHMENT_ENTITY_LINKS
+    | ENRICHMENT_CLASSIFICATION
+    | ENRICHMENT_STRUCTURED_EXTRACTION
 )
-"""Mask with all enrichment bits set — use to check if an episode is fully enriched."""
+"""Mask with all active enrichment bits set — use to check if an episode is fully enriched.
+
+.. note::
+    Bit 6 (``ENRICHMENT_OBSERVATIONS``) is reserved for a deferred
+    non-blocking observations pass and is intentionally excluded from
+    this mask so that ``ENRICHMENT_ALL`` continues to represent "all
+    currently-implemented enrichment complete."
+"""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

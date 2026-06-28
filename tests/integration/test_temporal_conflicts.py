@@ -470,5 +470,235 @@ class TestFactTemporalExclusion:
                         "valid_to": datetime(2024, 12, 31, tzinfo=timezone.utc),
                     }],
                 )
-
+ 
         await self._run_with_session(engine, _test)
+ 
+ 
+@pytest.mark.asyncio
+class TestTemporalQueries:
+    """Integration tests for temporal query methods on facts.
+
+    Tests ``get_facts_at_time()`` and ``get_facts_in_range()`` from
+    ``FactRepository`` against a real PostgreSQL database.
+
+    Every test seeds a user + session + episode + facts, runs the query,
+    then rolls back — no cross-test pollution.
+    """
+
+    _USER_ID = UUID("00000000-0000-0000-0000-000000000010")
+    _SESSION_ID = UUID("00000000-0000-0000-0000-000000000030")
+    _EPISODE_ID = UUID("00000000-0000-0000-0000-000000000020")
+
+    async def _seed_data(self, engine) -> AsyncSession:
+        """Seed user + session + episode.  Returns the session."""
+        db = AsyncSession(engine, expire_on_commit=False)
+
+        await db.execute(
+            sa_text(
+                "INSERT INTO users (id, organization_id, external_id, name, role, is_active) "
+                "VALUES (:uid, :org_id, :eid, :name, 'member', true) "
+                "ON CONFLICT (id) DO NOTHING"
+            ),
+            {
+                "uid": self._USER_ID,
+                "org_id": ORG_ID,
+                "eid": f"test-user-{self._USER_ID}",
+                "name": "Temporal Query Test User",
+            },
+        )
+        await db.execute(
+            sa_text(
+                "INSERT INTO sessions (id, organization_id, project_id, user_id, external_id, is_active) "
+                "VALUES (:sid, :org_id, :proj_id, :uid, 'test-session', true) "
+                "ON CONFLICT (id) DO NOTHING"
+            ),
+            {
+                "sid": self._SESSION_ID,
+                "org_id": ORG_ID,
+                "proj_id": PROJECT_ID,
+                "uid": self._USER_ID,
+            },
+        )
+        await db.execute(
+            sa_text(
+                "INSERT INTO episodes (id, organization_id, project_id, session_id, "
+                "user_id, role, content, token_count, sequence_number, enrichment_status) "
+                "VALUES (:eid, :org_id, :proj_id, :sid, :uid, 'user', 'test', 0, 1, 0) "
+                "ON CONFLICT (id) DO NOTHING"
+            ),
+            {
+                "eid": self._EPISODE_ID,
+                "org_id": ORG_ID,
+                "proj_id": PROJECT_ID,
+                "sid": self._SESSION_ID,
+                "uid": self._USER_ID,
+            },
+        )
+        await db.flush()
+        return db
+
+    async def _seed_facts(
+        self, db: AsyncSession, repo: FactRepository,
+    ) -> None:
+        """Insert a known set of facts for query tests.
+
+        Fact A: valid 2024-01-01 to 2024-06-30
+        Fact B: valid 2024-03-01 to 2024-09-30
+        Fact C: open-ended (valid_from=2024-01-01, valid_to=NULL)
+        Fact D: invalidated (valid 2024-01-01 to 2024-06-30, invalid_at set)
+        """
+        created = await repo.batch_create(
+            organization_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=self._USER_ID,
+            facts=[
+                {"subject": "QA", "predicate": "test_time", "object": "A",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
+                 "valid_to": datetime(2024, 6, 30, tzinfo=timezone.utc)},
+                {"subject": "QB", "predicate": "test_time", "object": "B",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 3, 1, tzinfo=timezone.utc),
+                 "valid_to": datetime(2024, 9, 30, tzinfo=timezone.utc)},
+                {"subject": "QC", "predicate": "test_time", "object": "C",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
+                 "valid_to": None},
+                {"subject": "QD", "predicate": "test_time", "object": "D",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
+                 "valid_to": datetime(2024, 6, 30, tzinfo=timezone.utc)},
+            ],
+        )
+
+        # Invalidate fact D
+        await db.execute(
+            sa_text("UPDATE facts SET invalid_at = now(), updated_at = now() WHERE id = :fid"),
+            {"fid": created[3].id},
+        )
+        await db.flush()
+
+    # ── get_facts_at_time ────────────────────────────────────────────────────
+
+    async def test_at_time_mid_range(self, engine) -> None:
+        """Timestamp falls inside a fact's valid range → returned."""
+        async def _test(db, repo):
+            await self._seed_facts(db, repo)
+            ts = datetime(2024, 5, 1, tzinfo=timezone.utc)
+            results = await repo.get_facts_at_time(PROJECT_ID, ts)
+            subjects = {f.subject for f in results}
+            assert "QA" in subjects  # [2024-01, 2024-06]
+            assert "QB" in subjects  # [2024-03, 2024-09]
+            assert "QC" in subjects  # [2024-01, ∞)
+            assert "QD" not in subjects  # invalidated
+
+        db = await self._seed_data(engine)
+        try:
+            repo = FactRepository(db)
+            await _test(db, repo)
+        finally:
+            await db.rollback()
+            await db.close()
+
+    async def test_at_time_before_range(self, engine) -> None:
+        """Timestamp before a fact's valid_from → not returned."""
+        async def _test(db, repo):
+            await self._seed_facts(db, repo)
+            ts = datetime(2023, 12, 1, tzinfo=timezone.utc)
+            results = await repo.get_facts_at_time(PROJECT_ID, ts)
+            assert len(results) == 0
+
+        db = await self._seed_data(engine)
+        try:
+            repo = FactRepository(db)
+            await _test(db, repo)
+        finally:
+            await db.rollback()
+            await db.close()
+
+    async def test_at_time_after_range_closed(self, engine) -> None:
+        """Timestamp after a closed fact's valid_to → not returned,
+        but open-ended facts are still included."""
+        async def _test(db, repo):
+            await self._seed_facts(db, repo)
+            ts = datetime(2024, 12, 1, tzinfo=timezone.utc)
+            results = await repo.get_facts_at_time(PROJECT_ID, ts)
+            subjects = {f.subject for f in results}
+            assert "QA" not in subjects  # ends 2024-06
+            assert "QB" not in subjects  # ends 2024-09
+            assert "QC" in subjects  # open-ended — still active
+
+        db = await self._seed_data(engine)
+        try:
+            repo = FactRepository(db)
+            await _test(db, repo)
+        finally:
+            await db.rollback()
+            await db.close()
+
+    # ── get_facts_in_range ──────────────────────────────────────────────────
+
+    async def test_in_range_partial_overlap(self, engine) -> None:
+        """Query range partially overlaps a fact's range → returned."""
+        async def _test(db, repo):
+            await self._seed_facts(db, repo)
+            start = datetime(2024, 2, 1, tzinfo=timezone.utc)
+            end = datetime(2024, 4, 1, tzinfo=timezone.utc)
+            results = await repo.get_facts_in_range(PROJECT_ID, start, end)
+            subjects = {f.subject for f in results}
+            assert "QA" in subjects  # overlaps [Feb, Apr)
+            assert "QB" in subjects  # starts Mar, overlaps [Feb, Apr)
+            assert "QC" in subjects  # open-ended
+            assert "QD" not in subjects  # invalidated
+
+        db = await self._seed_data(engine)
+        try:
+            repo = FactRepository(db)
+            await _test(db, repo)
+        finally:
+            await db.rollback()
+            await db.close()
+
+    async def test_in_range_no_overlap(self, engine) -> None:
+        """Query range does not overlap any closed fact → only open-ended
+        facts are returned."""
+        async def _test(db, repo):
+            await self._seed_facts(db, repo)
+            start = datetime(2025, 1, 1, tzinfo=timezone.utc)
+            end = datetime(2025, 6, 1, tzinfo=timezone.utc)
+            results = await repo.get_facts_in_range(PROJECT_ID, start, end)
+            subjects = {f.subject for f in results}
+            assert "QA" not in subjects  # ended 2024-06
+            assert "QB" not in subjects  # ended 2024-09
+            assert "QC" in subjects  # open-ended — always active
+            assert "QD" not in subjects  # invalidated
+
+        db = await self._seed_data(engine)
+        try:
+            repo = FactRepository(db)
+            await _test(db, repo)
+        finally:
+            await db.rollback()
+            await db.close()
+
+    async def test_in_range_adjacent_no_overlap(self, engine) -> None:
+        """Adjacent range (end=start) does not overlap ('[)' semantics)."""
+        async def _test(db, repo):
+            await self._seed_facts(db, repo)
+            # Fact QA ends at 2024-06-30.  Query [2024-06-30, 2024-12-31)
+            # should NOT include QA because '[)' excludes the end.
+            start = datetime(2024, 6, 30, tzinfo=timezone.utc)
+            end = datetime(2024, 12, 31, tzinfo=timezone.utc)
+            results = await repo.get_facts_in_range(PROJECT_ID, start, end)
+            subjects = {f.subject for f in results}
+            assert "QA" not in subjects  # QA ends exactly at start of query
+            assert "QC" in subjects  # open-ended, still active
+            assert "QD" not in subjects  # invalidated
+
+        db = await self._seed_data(engine)
+        try:
+            repo = FactRepository(db)
+            await _test(db, repo)
+        finally:
+            await db.rollback()
+            await db.close()
