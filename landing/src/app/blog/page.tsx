@@ -20,7 +20,7 @@ export default function BlogPage() {
         <Breadcrumbs segments={segments} />
 
         {/* Hero banner (Plone news page pattern) */}
-        <div className="card-base p-8 mb-12 bg-gradient-to-br from-brand-500/5 to-surface-900">
+        <div className="card-base p-8 mb-12 bg-surface-900">
           <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight mb-3">
             Blog
           </h1>

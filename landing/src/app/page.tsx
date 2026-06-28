@@ -14,13 +14,13 @@ export default function HomePage() {
     <>
       <Hero />
       <FadeIn><CommunityEvents /></FadeIn>
-      <FadeIn delay={100}><ReleaseSpotlight /></FadeIn>
-      <FadeIn delay={200}><AudienceTabs /></FadeIn>
-      <FadeIn delay={100}><StatsSection /></FadeIn>
-      <FadeIn delay={200}><CaseStudies /></FadeIn>
-      <FadeIn delay={100}><NewsSection /></FadeIn>
-      <FadeIn delay={200}><SponsorsSection /></FadeIn>
-      <FadeIn delay={300}><CtaSection /></FadeIn>
+      <FadeIn delay={80}><ReleaseSpotlight /></FadeIn>
+      <FadeIn delay={160}><AudienceTabs /></FadeIn>
+      <FadeIn delay={240}><StatsSection /></FadeIn>
+      <FadeIn delay={320}><CaseStudies /></FadeIn>
+      <FadeIn delay={400}><NewsSection /></FadeIn>
+      <FadeIn delay={480}><SponsorsSection /></FadeIn>
+      <FadeIn delay={560}><CtaSection /></FadeIn>
     </>
   );
 }

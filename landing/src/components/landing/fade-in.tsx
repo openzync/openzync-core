@@ -48,7 +48,7 @@ export function FadeIn({
   return (
     <div
       ref={ref}
-      className={`${animationClass} ${className}`}
+      className={`${className} ${animationClass}`}
       style={{
         transitionDelay: delay > 0 ? `${delay}ms` : undefined,
         animationDelay: delay > 0 ? `${delay}ms` : undefined,

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { statsData } from "@/content/stats";
+import { AnimatedCounter } from "./animated-counter";
 
 /**
  * Stats section — "OpenZep by Numbers" (Plone's "Plone by Numbers" pattern).
@@ -17,7 +18,7 @@ export function StatsSection() {
           {statsData.map((stat) => (
             <div key={stat.label} className="text-center">
               <div className="text-3xl md:text-4xl font-bold text-brand-300">
-                {stat.value}
+                <AnimatedCounter value={stat.value} />
               </div>
               <div className="text-sm font-medium text-text-primary mt-1">
                 {stat.label}

@@ -70,7 +70,7 @@ export function ReleaseSpotlight() {
             target="_blank"
             rel="noopener noreferrer"
           >
-            <Button variant="primary" size="lg" icon={<ArrowDown size={18} />}>
+            <Button variant="primary" size="lg" icon={<ArrowDown size={18} />} className="active:scale-[0.97] transition-transform duration-100">
               Download the latest version
             </Button>
           </a>

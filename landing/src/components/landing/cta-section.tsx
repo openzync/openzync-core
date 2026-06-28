@@ -10,14 +10,13 @@ export function CtaSection() {
   return (
     <section className="relative overflow-hidden py-20 md:py-28">
       {/* Background */}
-      <div className="absolute inset-0 bg-gradient-to-b from-surface-900 via-surface-950 to-surface-950" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_50%,rgba(20,72,140,0.06)_0%,transparent_50%)]" />
+      <div className="absolute inset-0 bg-surface-900/50 border-t border-surface-800" />
 
       <div className="relative z-10 mx-auto max-w-3xl px-6 text-center">
         <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">
           Ready to give your agents
           <br />
-          <span className="bg-gradient-to-r from-brand-300 to-accent-300 bg-clip-text text-transparent">
+          <span className="text-brand-300">
             persistent memory
           </span>
           ?

@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { ArrowRight, Calendar } from "lucide-react";
+import { ArrowRight, Calendar, Newspaper, GitCommit } from "lucide-react";
 import { Badge } from "@openzep/design-system";
 import { getAllChangelogEntries } from "@/lib/changelog";
 import { getAllBlogPosts } from "@/lib/blog";
+import { FormattedDate } from "./formatted-date";
 
 /**
  * News section — Plone's "Latest News" pattern.
@@ -48,11 +49,13 @@ export function NewsSection() {
               href={item.href}
               className="card-interactive overflow-hidden flex flex-col"
             >
-              {/* Image placeholder */}
-              <div className="h-40 bg-gradient-to-br from-surface-800 to-surface-900 flex items-center justify-center">
-                <span className="text-4xl font-bold text-surface-700">
-                  {item.type === "blog" ? "B" : "C"}
-                </span>
+              {/* Image placeholder — themed icon */}
+              <div className="h-40 bg-surface-800 flex items-center justify-center">
+                {item.type === "blog" ? (
+                  <Newspaper size={40} className="text-brand-500/30" />
+                ) : (
+                  <GitCommit size={40} className="text-brand-500/30" />
+                )}
               </div>
               <div className="p-5 flex-1 flex flex-col">
                 <div className="flex items-center gap-2 mb-3">
@@ -65,11 +68,7 @@ export function NewsSection() {
                   {item.date && (
                     <span className="flex items-center gap-1 text-[10px] text-surface-500">
                       <Calendar size={10} />
-                      {new Date(item.date).toLocaleDateString("en-US", {
-                        year: "numeric",
-                        month: "long",
-                        day: "numeric",
-                      })}
+                      <FormattedDate date={item.date} />
                     </span>
                   )}
                 </div>

@@ -41,7 +41,7 @@ export function AnnouncementBar() {
   if (!mounted || dismissed) return null;
 
   return (
-    <div className="fixed top-0 left-0 right-0 z-50 h-9 bg-brand-500/10 border-b border-brand-500/20 backdrop-blur-sm flex items-center justify-center gap-2 text-xs">
+    <div className="fixed top-0 left-0 right-0 z-50 h-9 bg-surface-900 border-b border-brand-500/20 flex items-center justify-center gap-2 text-xs">
       <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse-dot shrink-0" />
       <span className="text-accent-300 font-medium">
         Now available in public beta

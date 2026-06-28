@@ -90,7 +90,7 @@ export function FeaturesSection() {
         <div className="text-center mb-16">
           <h2 className="text-3xl md:text-4xl font-bold tracking-tight mb-4">
             Everything you need for{" "}
-            <span className="bg-gradient-to-r from-brand-300 to-accent-300 bg-clip-text text-transparent">
+            <span className="text-brand-300">
               Agent Memory
             </span>
           </h2>

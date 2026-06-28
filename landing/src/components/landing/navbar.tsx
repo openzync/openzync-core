@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Menu, X, ChevronDown } from "lucide-react";
@@ -33,9 +33,27 @@ export function Navbar() {
   }, [pathname]);
 
   // Prevent body scroll when mobile menu is open
+  // Uses ref-based save/restore to avoid clobbering other scroll locks
+  const prevOverflowRef = useRef<string | null>(null);
+
   useEffect(() => {
-    document.body.style.overflow = mobileOpen ? "hidden" : "";
-    return () => { document.body.style.overflow = ""; };
+    if (mobileOpen) {
+      prevOverflowRef.current = document.body.style.overflow;
+      document.body.style.overflow = "hidden";
+    } else {
+      document.body.style.overflow = prevOverflowRef.current ?? "";
+      prevOverflowRef.current = null;
+    }
+
+    const handleBeforeUnload = () => {
+      document.body.style.overflow = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+
+    return () => {
+      document.body.style.overflow = prevOverflowRef.current ?? "";
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
   }, [mobileOpen]);
 
   return (
@@ -43,7 +61,7 @@ export function Navbar() {
       className={cn(
         "fixed left-0 right-0 z-40 transition-all duration-300",
         scrolled
-          ? "bg-surface-950/80 backdrop-blur-md border-b border-surface-800"
+          ? "bg-surface-950/95 border-b border-surface-800"
           : "bg-transparent",
       )}
       style={{ top: "var(--announcement-height, 0px)" }}

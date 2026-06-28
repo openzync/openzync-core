@@ -34,7 +34,7 @@ export function AudienceTabs() {
                 className={cn(
                   "rounded-lg px-5 py-2.5 text-sm font-medium transition-all",
                   activeTab === tab.key
-                    ? "bg-brand-500 text-white shadow-lg shadow-brand-500/20"
+                    ? "bg-brand-500 text-white"
                     : "text-surface-400 hover:text-text-primary hover:bg-surface-800",
                 )}
               >

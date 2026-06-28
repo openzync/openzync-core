@@ -44,7 +44,7 @@ export function Accordion({ items }: AccordionProps) {
           >
             <button
               onClick={() => setOpenIndex(isOpen ? null : i)}
-              className="flex w-full items-center justify-between px-6 py-4 text-left"
+              className="flex w-full items-center justify-between px-6 py-4 text-left active:scale-[0.99] transition-transform duration-100"
             >
               <span className="text-sm font-medium text-text-primary pr-4">
                 {item.question}
