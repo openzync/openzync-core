@@ -26,11 +26,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.episode import Episode
 from models.fact import Fact
 
+from middleware.metrics import graph_search_latency_seconds, reranker_latency_seconds
+
 if TYPE_CHECKING:
     from packages.graph_backend.interface import GraphBackend
     from schemas.organization_config import OrgConfigBase
+    from services.reranker import CrossEncoderReranker
 
 logger = logging.getLogger(__name__)
+
+from services.reranker import DEFAULT_RERANK_TOP_K, DEFAULT_RERANK_TOP_N
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -57,12 +62,20 @@ class HybridRetriever:
         redis: object | None = None,
         graph_backends: list[GraphBackend] | None = None,
         org_config: OrgConfigBase | None = None,
+        reranker: CrossEncoderReranker | None = None,
     ) -> None:
         self._db = db
         self._org_id = org_id
         self._redis = redis
         self._graph_backends = graph_backends or []
         self._org_config = org_config
+        self._reranker = reranker
+        self._rerank_top_k: int = (
+            org_config.reranker_top_k if org_config and org_config.reranker_top_k else DEFAULT_RERANK_TOP_K
+        )
+        self._rerank_top_n: int = (
+            org_config.reranker_top_n if org_config and org_config.reranker_top_n else DEFAULT_RERANK_TOP_N
+        )
 
     # ── Public API ──────────────────────────────────────────────────────────────
 
@@ -107,10 +120,12 @@ class HybridRetriever:
         fact_bm25_results: list[dict[str, Any]] = []
         entity_results: list[dict[str, Any]] = []
 
+        retrieval_limit = max(limit, self._rerank_top_k) if self._reranker is not None else limit
+
         # Vector search for episodes and facts
         try:
             episode_vector_results = await self._vector_search_episodes(
-                query, project_id, limit
+                query, project_id, retrieval_limit
             )
         except Exception:
             logger.warning(
@@ -122,7 +137,7 @@ class HybridRetriever:
 
         try:
             fact_vector_results = await self._vector_search_facts(
-                query, project_id, limit
+                query, project_id, retrieval_limit
             )
         except Exception:
             logger.warning(
@@ -135,7 +150,7 @@ class HybridRetriever:
         # BM25 search for episodes and facts
         try:
             episode_bm25_results = await self._bm25_search_episodes(
-                query, project_id, limit
+                query, project_id, retrieval_limit
             )
         except Exception:
             logger.warning(
@@ -146,7 +161,7 @@ class HybridRetriever:
             await self._db.rollback()
 
         try:
-            fact_bm25_results = await self._bm25_search_facts(query, project_id, limit)
+            fact_bm25_results = await self._bm25_search_facts(query, project_id, retrieval_limit)
         except Exception:
             logger.warning(
                 "hybrid_retriever.fact_bm25_failed",
@@ -167,22 +182,48 @@ class HybridRetriever:
             await self._db.rollback()
 
         # ── RRF merge per type ────────────────────────────────────────────
-        # Episodes: merge vector + BM25
+        # Use rerank_top_k as the RRF candidate pool size when re-ranking is active
+        rrf_top_n = self._rerank_top_k if self._reranker is not None else limit
+
         merged_episodes = self._rrf_merge(
             [episode_vector_results, episode_bm25_results],
-            top_n=limit,
+            top_n=rrf_top_n,
         )
 
-        # Facts: merge vector + BM25
         merged_facts = self._rrf_merge(
             [fact_vector_results, fact_bm25_results],
-            top_n=limit,
+            top_n=rrf_top_n,
         )
 
         # Entities: BFS results directly (single source, no merge needed)
         entities = entity_results[:limit]
 
-        from middleware.metrics import graph_search_latency_seconds
+        # ── Re-ranking step ───────────────────────────────────────────────
+        if self._reranker is not None:
+            _rerank_start = time.monotonic()
+            try:
+                merged_episodes = await self._reranker.rerank(
+                    query, merged_episodes, top_n=self._rerank_top_n,
+                )
+                merged_facts = await self._reranker.rerank(
+                    query, merged_facts, top_n=self._rerank_top_n,
+                )
+                _rerank_elapsed = time.monotonic() - _rerank_start
+                reranker_latency_seconds.labels(
+                    backend=self._reranker.backend_name,
+                ).observe(_rerank_elapsed)
+            except Exception:
+                logger.warning(
+                    "hybrid_retriever.rerank_failed",
+                    extra={
+                        "query": query[:100],
+                        "duration_ms": round((time.monotonic() - _rerank_start) * 1000),
+                    },
+                    exc_info=True,
+                )
+                # Fallback: truncate RRF output to caller-requested limit
+                merged_episodes = merged_episodes[:limit]
+                merged_facts = merged_facts[:limit]
 
         graph_search_latency_seconds.observe(time.monotonic() - _search_start)
 

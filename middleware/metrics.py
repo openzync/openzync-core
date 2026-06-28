@@ -81,6 +81,14 @@ graph_search_latency_seconds = Histogram(
     registry=METRICS_REGISTRY,
 )
 
+reranker_latency_seconds = Histogram(
+    "openzep_reranker_latency_seconds",
+    "Cross-encoder re-ranker inference latency in seconds.",
+    labelnames=["backend"],  # "sentence_transformers" | "cohere"
+    buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
+    registry=METRICS_REGISTRY,
+)
+
 # ── ASGI middleware ──────────────────────────────────────────────────────────
 
 

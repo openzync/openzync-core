@@ -64,7 +64,7 @@ def format_text(
         for i, ep in enumerate(episodes, start=1):
             role = ep.get("role", "unknown")
             content = ep.get("content", "")
-            score = ep.get("rrf_score") or ep.get("score")
+            score = ep.get("reranker_score") or ep.get("rrf_score") or ep.get("score")
             score_str = f" [score={score:.4f}]" if score is not None else ""
 
             # Truncate very long content
@@ -87,7 +87,7 @@ def format_text(
         for i, fact in enumerate(facts, start=1):
             content = fact.get("content", "")
             confidence = fact.get("confidence")
-            score = fact.get("rrf_score") or fact.get("score")
+            score = fact.get("reranker_score") or fact.get("rrf_score") or fact.get("score")
             confidence_str = (
                 f" (confidence={confidence:.2f})"
                 if confidence is not None
@@ -173,7 +173,7 @@ def _clean_episodes(
     """Remove internal ranking fields from episode dicts.
 
     Keeps: ``id``, ``role``, ``content``, ``created_at``.
-    Removes: ``score``, ``rrf_score``.
+    Removes: ``score``, ``rrf_score``, ``reranker_score``.
 
     Args:
         episodes: Raw episode results from the RRF merge.
@@ -195,7 +195,7 @@ def _clean_facts(
 
     Keeps: ``id``, ``content``, ``subject``, ``predicate``, ``object``,
     ``confidence``, ``created_at``.
-    Removes: ``score``, ``rrf_score``.
+    Removes: ``score``, ``rrf_score``, ``reranker_score``.
 
     Args:
         facts: Raw fact results from the RRF merge.

@@ -28,3 +28,11 @@ graph_max_traversal_depth: 2
 
 context_cache_ttl: 300
 audit_log_response_body: false
+
+# Re-ranker (RET-05) — both backends disabled by default
+# Set reranker_backend to "sentence_transformers" or "cohere" to enable
+reranker_backend: null
+reranker_model: ""
+reranker_top_k: 50
+reranker_top_n: 10
+cohere_api_key: ""

@@ -135,6 +135,32 @@ class OrgConfigBase(BaseModel):
         description="Capture response body in audit_logs.details (may contain PII).",
     )
 
+    # ── Re-ranker (RET-05) ────────────────────────────────────────────────
+    reranker_backend: str | None = Field(
+        default=None,
+        description="Re-ranker backend (sentence_transformers, cohere, or null to disable).",
+    )
+    reranker_model: str | None = Field(
+        default=None,
+        description="Model name for the re-ranker (e.g. cross-encoder/ms-marco-MiniLM-L-6-v2 or rerank-english-v3.0).",
+    )
+    reranker_top_k: int | None = Field(
+        default=None,
+        ge=10,
+        le=200,
+        description="Number of RRF candidates to pass to the re-ranker (default 50).",
+    )
+    reranker_top_n: int | None = Field(
+        default=None,
+        ge=1,
+        le=100,
+        description="Number of results to return after re-ranking (default 10).",
+    )
+    cohere_api_key: str | None = Field(
+        default=None,
+        description="Cohere API key for the Cohere Rerank backend.",
+    )
+
     # ── Helpers for downstream callers ───────────────────────────────────────
 
     def to_llm_config_dict(self) -> dict[str, str | float | int]:
@@ -222,6 +248,11 @@ class UpdateOrgConfigRequest(BaseModel):
     surrealdb_database: str | None = None
     context_cache_ttl: int | None = Field(default=None, ge=1)
     audit_log_response_body: bool | None = None
+    reranker_backend: str | None = None
+    reranker_model: str | None = None
+    reranker_top_k: int | None = Field(default=None, ge=10, le=200)
+    reranker_top_n: int | None = Field(default=None, ge=1, le=100)
+    cohere_api_key: str | None = None
 
 
 class OrgConfigResponse(BaseModel):
