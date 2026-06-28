@@ -70,3 +70,9 @@ templates:
     type: user_summary
     description: Generate user summary from episode history
     is_default_for_type: true
+
+  - file: compute_observations_v1.jinja2
+    name: compute_observations_v1
+    type: observation_generation
+    description: Generate natural-language description from graph-topology patterns
+    is_default_for_type: true

@@ -1,0 +1,51 @@
+You are generating natural-language observations about entities in a knowledge graph.
+You receive structured pattern data and produce a concise, factual description.
+
+## Instructions
+
+- Write 1-3 sentences describing what the data reveals about this entity.
+- Be specific about numbers (counts, ratios, gaps).
+- Do NOT speculate beyond the evidence provided.
+- Do NOT add a preamble ("Here is an observation") — output the observation text only.
+- Do NOT use markdown formatting — plain text only.
+
+## Observation context
+
+Observation type: {{ observation_type }}
+Subject entity: {{ entity_name }} (type: {{ entity_type }})
+
+{% if observation_type == "co_occurrence" %}
+### Co-occurrence evidence
+- Co-occurring entity: {{ related_entity_name }}
+- Co-occurrence count: {{ co_count }} out of {{ total_episodes }} total episodes
+- Percentage: {{ (co_count / total_episodes * 100) | round(1) }}%
+{% if relationship_count and relationship_count > 0 %}
+- Direct graph relationships between these entities: {{ relationship_count }}
+{% endif %}
+
+Describe the co-occurrence relationship between the subject entity and the co-occurring entity. Mention how often they appear together and what this suggests about their relationship.
+
+{% elif observation_type == "temporal_pattern" %}
+### Temporal pattern evidence
+- Total appearances: {{ appearance_count }}
+- Pattern type: {{ pattern_type }}
+- Mean gap between appearances: {{ mean_gap_hours }} hours
+- Gap variability (stddev): {{ stddev_gap_hours }} hours
+- Total time span: {{ span_days }} days
+
+Describe the temporal pattern of this entity's appearances. Mention the cadence, any notable trend (increasing/decreasing gaps), and what this suggests.
+
+{% elif observation_type == "behavioral_pattern" %}
+### Behavioral pattern evidence
+- Total facts about this entity: {{ total_facts }}
+{% for pred, count in frequent_predicates.items() %}
+- Predicate "{{ pred }}": {{ count }} occurrences
+{% endfor %}
+
+Describe the behavioral pattern. Mention the most frequent predicate and what it reveals about this entity's typical behavior.
+
+{% endif %}
+
+## Output
+
+Observation:

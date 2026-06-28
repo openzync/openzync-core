@@ -14,9 +14,11 @@ from workers.tasks.ingest_business_data import ingest_business_data
 from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
 from workers.tasks.summarise_community import summarise_community
 from workers.tasks.link_entities_to_episode import link_entities_to_episode
+from workers.tasks.compute_observations import compute_observations
 
 __all__ = [
     "classify_dialog",
+    "compute_observations",
     "embed_episode",
     "embed_fact",
     "extract_entities",

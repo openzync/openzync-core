@@ -53,6 +53,7 @@ async def embed_episode(
     from core.config import settings
     from core.db import get_async_session
     from core.llm import resolve_backend
+    from repositories.episode_repository import EpisodeRepository
     from sqlalchemy import text
 
     logger.info(
@@ -147,13 +148,9 @@ async def embed_episode(
                 {"embedding": embedding, "id": episode_id},
             )
             # Set bit 1 on enrichment_status to mark completion.
-            await db.execute(
-                text(
-                    "UPDATE episodes "
-                    "SET enrichment_status = enrichment_status | :bit "
-                    "WHERE id = :id"
-                ),
-                {"bit": ENRICHMENT_EMBEDDING, "id": episode_id},
+            episode_repo = EpisodeRepository(db)
+            await episode_repo.apply_enrichment_bits(
+                uuid.UUID(episode_id), ENRICHMENT_EMBEDDING
             )
             await db.commit()
 

@@ -444,6 +444,11 @@ class PostgresGraphBackend(GraphBackend):
                             fact = :fact,
                             confidence = GREATEST(graph_relationships.confidence, :confidence),
                             valid_from = LEAST(graph_relationships.valid_from, COALESCE(:valid_from, now())),
+                            valid_to = CASE
+                                WHEN :valid_to IS NULL THEN NULL
+                                WHEN graph_relationships.valid_to IS NULL THEN NULL
+                                ELSE GREATEST(graph_relationships.valid_to, :valid_to)
+                            END,
                             updated_at = now()
                         RETURNING id, source_id, target_id, relationship_type,
                                   properties, fact, confidence,
@@ -459,8 +464,8 @@ class PostgresGraphBackend(GraphBackend):
                         "properties": orjson.dumps(properties or {}).decode("utf-8"),
                         "fact": "",
                         "confidence": confidence if confidence is not None else 1.0,
-                        "valid_from": valid_from.isoformat() if valid_from else None,
-                        "valid_to": valid_to.isoformat() if valid_to else None,
+                        "valid_from": valid_from,
+                        "valid_to": valid_to,
                     },
                 )
                 row = result.one()

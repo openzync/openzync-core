@@ -83,6 +83,7 @@ async def classify_dialog(
     from core.db import get_async_session
     from core.llm import resolve_backend
     from core.org_config import get_org_config
+    from repositories.episode_repository import EpisodeRepository
     from schemas.llm_outputs import ClassificationOutput
 
     logger.info(
@@ -121,22 +122,15 @@ async def classify_dialog(
             )
 
             # ── 3. Idempotency check — skip if already classified ──────────
-            result = await db.execute(
-                text(
-                    "SELECT enrichment_status FROM episodes "
-                    "WHERE id = :episode_id FOR UPDATE"
-                ),
-                {"episode_id": uuid.UUID(episode_id)},
-            )
-            row = result.one_or_none()
-            if row is None:
+            episode_repo = EpisodeRepository(db)
+            episode = await episode_repo.get_by_id_for_update(uuid.UUID(episode_id))
+            if episode is None:
                 logger.warning(
                     "classification.episode_not_found",
                     episode_id=episode_id,
                 )
                 return
-            current_status: int = row[0]
-            if current_status & ENRICHMENT_CLASSIFICATION:
+            if episode.enrichment_status & ENRICHMENT_CLASSIFICATION:
                 logger.info(
                     "classification.skipped_already_done",
                     episode_id=episode_id,
@@ -248,16 +242,8 @@ async def classify_dialog(
             )
 
             # ── 12. Set enrichment bit ─────────────────────────────────────
-            await db.execute(
-                text("""
-                    UPDATE episodes
-                    SET enrichment_status = enrichment_status | :bit
-                    WHERE id = :episode_id
-                """),
-                {
-                    "bit": ENRICHMENT_CLASSIFICATION,
-                    "episode_id": uuid.UUID(episode_id),
-                },
+            await episode_repo.apply_enrichment_bits(
+                uuid.UUID(episode_id), ENRICHMENT_CLASSIFICATION
             )
 
             await db.commit()

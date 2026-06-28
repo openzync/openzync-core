@@ -22,7 +22,6 @@ import uuid
 from datetime import datetime, timezone
 
 import structlog
-from sqlalchemy import text
 
 from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
 from workers.tasks.base import ENRICHMENT_FACTS, with_retry
@@ -90,6 +89,7 @@ async def extract_facts(
     from core.db import get_async_session
     from core.llm import resolve_backend
     from core.org_config import get_org_config
+    from repositories.episode_repository import EpisodeRepository
     from repositories.fact_repository import FactRepository
     from schemas.llm_outputs import FactExtractionOutput
 
@@ -334,11 +334,9 @@ async def extract_facts(
 
             # Set enrichment bit after fact persistence, inside the same
             # transaction — rollback-safe.
-            await db.execute(
-                text(
-                    "UPDATE episodes SET enrichment_status = enrichment_status | :bit WHERE id = :id"
-                ),
-                {"bit": ENRICHMENT_FACTS, "id": episode_id},
+            episode_repo = EpisodeRepository(db)
+            await episode_repo.apply_enrichment_bits(
+                uuid.UUID(episode_id), ENRICHMENT_FACTS
             )
             await db.commit()
     finally:
@@ -358,56 +356,6 @@ async def extract_facts(
             episode_id=episode_id,
             project_id=project_id,
         )
-
-
-async def _set_enrichment_bit(
-    episode_id: str,
-    bit: int,
-    db_session_factory: Any = None,
-) -> None:
-    """Set an enrichment_status bit for an episode.
-
-    Always runs, even if no data was found — marks the task as complete
-    so the pipeline knows it has been attempted.
-
-    Args:
-        episode_id: UUID of the episode to update.
-        bit: Bitmask value to OR into enrichment_status.
-        db_session_factory: Optional shared session factory from the worker
-            ctx.  When provided, avoids creating a short-lived DB engine.
-    """
-    from sqlalchemy import text
-
-    if db_session_factory is None:
-        from core.config import settings as app_settings
-        from core.db import get_async_session, init_db_engine
-
-        engine = init_db_engine(
-            str(app_settings.DATABASE_URL), pool_size=2, max_overflow=1
-        )
-        session_factory = get_async_session(engine)
-        _own_engine = True
-    else:
-        session_factory = db_session_factory
-        engine = None  # not owned
-        _own_engine = False
-
-    try:
-        async with session_factory() as db:
-            await db.execute(
-                text(
-                    "UPDATE episodes SET enrichment_status = enrichment_status | :bit WHERE id = :id"
-                ),
-                {"bit": bit, "id": episode_id},
-            )
-            await db.commit()
-    except Exception as exc:
-        logger.warning(
-            "enrichment_bit_failed", episode_id=episode_id, bit=bit, error=str(exc)
-        )
-    finally:
-        if _own_engine and engine is not None:
-            await engine.dispose()
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────

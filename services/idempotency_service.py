@@ -49,10 +49,10 @@ from typing import Any
 from uuid import UUID  # noqa: TCH003 — used in type hints for callers
 
 from redis import asyncio as aioredis
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
+from repositories.episode_repository import EpisodeRepository
 
 logger = logging.getLogger(__name__)
 
@@ -439,21 +439,13 @@ class IdempotencyService:
             ValueError: If the episode ID does not exist.
         """
         # ── Lock the row and read current enrichment_status ──────────────
-        result = await db.execute(
-            text("""
-                SELECT id, enrichment_status
-                FROM episodes
-                WHERE id = :episode_id
-                FOR UPDATE
-            """),
-            {"episode_id": episode_id},
-        )
-        row = result.one_or_none()
+        episode_repo = EpisodeRepository(db)
+        episode = await episode_repo.get_by_id_for_update(UUID(episode_id))
 
-        if row is None:
+        if episode is None:
             raise ValueError(f"Episode {episode_id} not found")
 
-        current_status: int = row.enrichment_status
+        current_status: int = episode.enrichment_status
 
         # ── Check if this task bit is already set ────────────────────────
         if current_status & task_bit:
@@ -467,19 +459,8 @@ class IdempotencyService:
             )
             return False
 
-        # ── Atomically set the bit ───────────────────────────────────────
-        new_status = current_status | task_bit
-        await db.execute(
-            text("""
-                UPDATE episodes
-                SET enrichment_status = :new_status
-                WHERE id = :episode_id
-            """),
-            {
-                "episode_id": episode_id,
-                "new_status": new_status,
-            },
-        )
+        # ── Atomically set the bit (row is locked, SQL-level OR is atomic) ──
+        await episode_repo.apply_enrichment_bits(UUID(episode_id), task_bit)
         # NOTE: Caller is responsible for ``await db.flush()`` or
         # ``await db.commit()`` depending on transaction management.
 
@@ -489,7 +470,7 @@ class IdempotencyService:
                 "episode_id": episode_id,
                 "task_bit": task_bit,
                 "previous_status": current_status,
-                "new_status": new_status,
+                "new_status": current_status | task_bit,
             },
         )
         return True
