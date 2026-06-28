@@ -169,7 +169,37 @@ async def link_entities_to_episode(
             )
             await db.commit()
 
-            # ── 4. Optionally trigger community detection (event-driven mode) ──
+            # ── 4. Enqueue deferred observations pass (bit 6) ────────────────
+            try:
+                arq_redis: object | None = None
+                if isinstance(ctx, dict):
+                    arq_redis = ctx.get("redis")
+                if arq_redis is not None:
+                    from services.worker.worker_settings import settings as w_settings
+
+                    dedup_key = f"observations:pending:{project_id}"
+                    if not await arq_redis.get(dedup_key):
+                        await arq_redis.enqueue_job(
+                            "compute_observations",
+                            episode_id=episode_id,
+                            org_id=org_id,
+                            project_id=project_id,
+                            trace_id=trace_id,
+                            _queue_name=w_settings.low_queue_full,
+                        )
+                        await arq_redis.set(dedup_key, "1", ex=30)
+                        logger.info(
+                            "link_entities_to_episode.scheduled_observations",
+                            episode_id=episode_id,
+                            project_id=project_id,
+                        )
+            except Exception as exc:
+                logger.warning(
+                    "link_entities_to_episode.observations_enqueue_failed",
+                    extra={"project_id": project_id, "error": str(exc)},
+                )
+
+            # ── 5. Optionally trigger community detection (event-driven mode) ──
             from services.worker.worker_settings import settings as worker_settings
             if worker_settings.AUTO_RUN_COMMUNITY_DETECTION:
                 try:

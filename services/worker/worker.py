@@ -106,6 +106,7 @@ from services.worker.tasks.audit_log import write_audit_log
 from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
 from workers.tasks.summarise_community import summarise_community
 from workers.tasks.link_entities_to_episode import link_entities_to_episode
+from workers.tasks.compute_observations import compute_observations
 from services.worker.tasks.deliver_webhook import deliver_webhook
 from workers.tasks.generate_user_summary import generate_user_summary
 
@@ -121,6 +122,7 @@ HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
 
 LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     link_entities_to_episode,
+    compute_observations,
     summarise_community,
     merge_duplicate_entities,
     write_audit_log,
