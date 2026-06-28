@@ -17,7 +17,7 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
-from typing import Any
+from typing import Any, Literal
 
 from core.cursor import decode_cursor, encode_cursor
 from sqlalchemy import text, update
@@ -124,7 +124,7 @@ class FactRepository:
         object_type: str = "literal",
     ) -> Fact | None:
         """Insert a fact, skipping silently if the triple already exists
-        for this episode (unique constraint ``uq_facts_episode_triple``).
+        for this episode (exclusion constraint ``uq_facts_temporal_excl``).
 
         Uses PostgreSQL ``INSERT ... ON CONFLICT DO NOTHING`` with
         ``RETURNING`` — returns ``None`` when the conflict fires so the
@@ -162,7 +162,7 @@ class FactRepository:
                 embedding=[],
             )
             .on_conflict_do_nothing(
-                constraint="uq_facts_episode_triple",
+                constraint="uq_facts_temporal_excl",
             )
             .returning(Fact)
         )
@@ -178,12 +178,13 @@ class FactRepository:
         project_id: UUID,
         user_id: UUID,
         facts: list[dict],
+        on_conflict: Literal["error", "skip"] = "error",
     ) -> list[Fact]:
         """Bulk-insert facts using a single INSERT statement.
 
         More efficient than per-row ``create()`` for batch ingestion.
-        Uses SQLAlchemy's ``insert()`` with ``returning()`` to fetch
-        the generated IDs.
+        Uses SQLAlchemy's ``insert()`` or PostgreSQL's
+        ``INSERT…ON CONFLICT`` with ``returning()`` to fetch generated IDs.
 
         Args:
             organization_id: Denormalized org ID for RLS.
@@ -191,11 +192,18 @@ class FactRepository:
             user_id: FK to the user who created the facts.
             facts: List of dicts, each with optional keys: ``subject``,
                 ``predicate``, ``object``, ``content``, ``confidence``,
-                ``source_episode_id``, ``valid_from``.
+                ``source_episode_id``, ``valid_from``, ``valid_to``.
+            on_conflict: What to do when a row violates the temporal
+                exclusion constraint ``uq_facts_temporal_excl``.
+                ``"error"`` (default) — let the exclusion constraint raise
+                ``IntegrityError``, propagating to the global 409 handler.
+                ``"skip"`` — use ``ON CONFLICT DO NOTHING``; conflicting
+                rows are silently omitted from the result.
 
         Returns:
             A list of created ``Fact`` ORM instances with server-generated
-            fields populated.
+            fields populated.  When ``on_conflict="skip"``, only
+            non-conflicting rows are returned.
         """
         if not facts:
             return []
@@ -233,10 +241,20 @@ class FactRepository:
                 }
             )
 
-        # Bulk insert with RETURNING
-        from sqlalchemy import insert
+        # ── Conflict strategy ────────────────────────────────────────────
+        if on_conflict == "skip":
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-        stmt = insert(Fact).returning(Fact)
+            stmt = (
+                pg_insert(Fact)
+                .on_conflict_do_nothing(constraint="uq_facts_temporal_excl")
+                .returning(Fact)
+            )
+        else:
+            from sqlalchemy import insert
+
+            stmt = insert(Fact).returning(Fact)
+
         result = await self._db.execute(stmt, rows)
         await self._db.flush()
 
@@ -253,6 +271,7 @@ class FactRepository:
                 "user_id": str(user_id),
                 "project_id": str(project_id),
                 "organization_id": str(organization_id),
+                "on_conflict": on_conflict,
             },
         )
 
@@ -290,7 +309,7 @@ class FactRepository:
         """
         # ⚠️ Uses constraint name rather than index_elements to stay
         # consistent with the existing create_or_skip method. Both must
-        # reference the same unique constraint for correct deduplication.
+        # reference the same exclusion constraint for correct dedup.
         from datetime import datetime, timezone
 
         from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -319,7 +338,7 @@ class FactRepository:
 
         stmt = (
             pg_insert(Fact)
-            .on_conflict_do_nothing(constraint="uq_facts_episode_triple")
+            .on_conflict_do_nothing(constraint="uq_facts_temporal_excl")
             .returning(Fact)
         )
         result = await self._db.execute(stmt, rows)
