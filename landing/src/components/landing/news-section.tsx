@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Calendar, Newspaper, GitCommit } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { Badge } from "@openzep/design-system";
 import { getAllChangelogEntries } from "@/lib/changelog";
 import { getAllBlogPosts } from "@/lib/blog";
@@ -49,13 +49,26 @@ export function NewsSection() {
               href={item.href}
               className="card-interactive overflow-hidden flex flex-col"
             >
-              {/* Image placeholder — themed icon */}
-              <div className="h-40 bg-surface-800 flex items-center justify-center">
-                {item.type === "blog" ? (
-                  <Newspaper size={40} className="text-brand-500/30" />
-                ) : (
-                  <GitCommit size={40} className="text-brand-500/30" />
-                )}
+              {/* Card header — git-log style */}
+              <div className="h-32 bg-surface-900 border-b border-surface-800 flex items-center px-5">
+                <div className="font-mono text-[11px] leading-relaxed w-full">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-brand-500/60 font-semibold">
+                      {item.type === "blog" ? "feat" : "chore"}
+                    </span>
+                    <span className="text-surface-600">(</span>
+                    <span className="text-accent-400">{item.type === "blog" ? "blog" : "release"}</span>
+                    <span className="text-surface-600">):</span>
+                  </div>
+                  <div className="text-surface-300 truncate w-full pl-4 border-l-2 border-surface-700 mt-0.5">
+                    {item.type === "blog" ? item.title : item.category}
+                  </div>
+                  {item.date && (
+                    <div className="text-surface-600 text-[10px] pl-4 mt-0.5">
+                      Date: <FormattedDate date={item.date} />
+                    </div>
+                  )}
+                </div>
               </div>
               <div className="p-5 flex-1 flex flex-col">
                 <div className="flex items-center gap-2 mb-3">
@@ -63,14 +76,8 @@ export function NewsSection() {
                     variant={item.type === "blog" ? "info" : "brand"}
                     size="sm"
                   >
-                    {item.type === "blog" ? item.category : item.category}
+                    {item.category}
                   </Badge>
-                  {item.date && (
-                    <span className="flex items-center gap-1 text-[10px] text-surface-500">
-                      <Calendar size={10} />
-                      <FormattedDate date={item.date} />
-                    </span>
-                  )}
                 </div>
                 <h3 className="text-sm font-semibold text-text-primary mb-2 leading-snug">
                   {item.title}

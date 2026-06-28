@@ -1,13 +1,10 @@
-import { ArrowDown, Share2, GitFork, Globe, Link as LinkIcon } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import { Button } from "@openzep/design-system";
 import { latestRelease } from "@/content/releases";
 
-const shareUrl = "https://openzep.com";
-const shareText = "Check out OpenZep — Persistent Agent Memory Infrastructure";
-
 /**
- * Release spotlight section — Plone's pattern:
- * version heading + social share icons + description + download CTA.
+ * Release spotlight section — latest version highlight
+ * with version badge + heading + install terminal + description + CTA.
  */
 export function ReleaseSpotlight() {
   return (
@@ -24,39 +21,11 @@ export function ReleaseSpotlight() {
             {latestRelease.title}
           </h2>
 
-          {/* Social share icons (Plone pattern) */}
-          <div className="flex items-center justify-center gap-2 mb-6 text-surface-500">
-            <span className="text-xs flex items-center gap-1">
-              <Share2 size={12} />
-              Share:
-            </span>
-            <a
-              href={`https://twitter.com/intent/tweet?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-1.5 rounded-md hover:bg-surface-800 hover:text-text-primary transition-colors"
-              aria-label="Share on Twitter"
-            >
-              <Globe size={16} />
-            </a>
-            <a
-              href={`https://www.linkedin.com/shareArticle?mini=true&url=${encodeURIComponent(shareUrl)}&title=${encodeURIComponent(shareText)}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-1.5 rounded-md hover:bg-surface-800 hover:text-text-primary transition-colors"
-              aria-label="Share on LinkedIn"
-            >
-              <LinkIcon size={16} />
-            </a>
-            <a
-              href={`https://github.com/openzep/openzep`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-1.5 rounded-md hover:bg-surface-800 hover:text-text-primary transition-colors"
-              aria-label="Share on GitHub"
-            >
-              <GitFork size={16} />
-            </a>
+          {/* Inline install terminal */}
+          <div className="inline-flex items-center gap-2 rounded-lg border border-surface-700/50 bg-surface-900 px-4 py-2 font-mono text-sm text-surface-300 mb-6">
+            <span className="text-surface-600">$</span>
+            <span className="text-accent-400">pip install</span>
+            <span className="text-brand-300">openzep=={latestRelease.version}</span>
           </div>
 
           {/* Description */}

@@ -25,9 +25,9 @@ export function CaseStudies() {
               href={`/use-cases#${cs.slug}`}
               className="card-interactive overflow-hidden flex flex-col"
             >
-              {/* Image placeholder — code-snippet visual pattern */}
-              <div className="h-40 bg-surface-800 flex items-center justify-center overflow-hidden">
-                <div className="relative w-full h-full opacity-20">
+              {/* Card header — terminal-style code snippet */}
+              <div className="h-40 bg-surface-900 flex items-center justify-center overflow-hidden border-b border-surface-800">
+                <div className="relative w-full h-full opacity-50">
                   <div className="absolute inset-0 p-4 font-mono text-[10px] leading-relaxed text-brand-300/40 select-none">
                     <div className="text-brand-500/60"># graph_memory.py</div>
                     <div className="mt-1"><span className="text-accent-300/40">from</span> openzep <span className="text-accent-300/40">import</span> Agent</div>
