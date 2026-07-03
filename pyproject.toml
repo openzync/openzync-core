@@ -153,6 +153,10 @@ filterwarnings = [
     "ignore::DeprecationWarning:alembic.*",
     "ignore::DeprecationWarning:sqlalchemy.*",
     "ignore::DeprecationWarning:testcontainers.*",
+    # Session-scoped async fixtures (e.g. OpenRouter backend's internal
+    # httpx.AsyncClient) may leave transports unclosed after the event
+    # loop shuts down.  This is cosmetic — no data loss or leak.
+    "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 markers = [
     "unit: Unit tests — no I/O, no DB, no network. Mock at the service boundary.",

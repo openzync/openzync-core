@@ -71,3 +71,9 @@ generated/
 *.generated.py
 graphify-out/
 .plan/
+
+# ── Benchmarks ─────────────────────────────────────────────────────────────────
+# LongMemEval / LoCoMo datasets are downloaded, not committed
+tests/benchmarks/data/
+# Benchmark result JSON files are generated per-run
+benchmarks/results/*.json

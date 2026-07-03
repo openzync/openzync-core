@@ -18,6 +18,7 @@ from typing import Any
 import structlog
 from sqlalchemy import text
 
+from core.exceptions import EpisodeNotFoundError
 from workers.tasks.base import ENRICHMENT_STRUCTURED_EXTRACTION, with_retry
 
 from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
@@ -119,7 +120,10 @@ async def extract_structured(
                     "structured_extraction.episode_not_found",
                     episode_id=episode_id,
                 )
-                return
+                raise EpisodeNotFoundError(
+                    message=f"Episode {episode_id} not found for structured extraction.",
+                    detail={"episode_id": episode_id},
+                )
             user_id: str = str(episode.user_id)
             if episode.enrichment_status & ENRICHMENT_STRUCTURED_EXTRACTION:
                 logger.info(

@@ -58,6 +58,12 @@ test-coverage:
 test-integration:
 	pytest tests/integration/ -v --timeout=60 $(ARGS)
 
+# ── Benchmarks ─────────────────────────────────────────────────────────────────
+# Run the LongMemEval benchmark (requires live OpenZep instance + OpenRouter key).
+# Options:  make benchmark ARGS="--benchmark-limit=10 --baseline --reranker"
+benchmark:
+	.venv/bin/python -m pytest tests/benchmarks/ --run-benchmark -v $(ARGS)
+
 # ── Database ──────────────────────────────────────────────────────────────────
 
 migrate:

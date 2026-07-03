@@ -280,6 +280,9 @@ class MemoryService:
             },
         )
 
+        # ── Commit so workers can see episodes before tasks hit Redis ────
+        await self._db.commit()
+
         # ── Step 8: Generate job_id and enqueue ARQ tasks ────────────────
         job_id = str(uuid4())
         episode_dicts = [

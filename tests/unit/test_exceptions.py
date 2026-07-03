@@ -19,6 +19,7 @@ from core.exceptions import (
     ConflictError,
     EdgeNotFoundError,
     EntityNotFoundError,
+    EpisodeNotFoundError,
     ExternalServiceError,
     GraphTimeoutError,
     InsufficientCreditsError,
@@ -47,6 +48,7 @@ class TestExceptionHierarchy:
             (PayloadTooLargeError, 413, "payload_too_large"),
             (EntityNotFoundError, 404, "entity_not_found"),
             (EdgeNotFoundError, 404, "edge_not_found"),
+            (EpisodeNotFoundError, 404, "episode_not_found"),
             (GraphTimeoutError, 504, "graph_timeout"),
         ],
     )
@@ -71,6 +73,7 @@ class TestExceptionHierarchy:
             ConflictError,
             EntityNotFoundError,
             EdgeNotFoundError,
+            EpisodeNotFoundError,
             GraphTimeoutError,
             RateLimitError,
             InsufficientCreditsError,
@@ -117,6 +120,11 @@ class TestExceptionHandlers:
         async def raise_rate_limit() -> None:
             raise RateLimitError("Slow down")
 
+        @app.get("/tests/episode-not-found")
+        async def raise_episode_not_found() -> None:
+            raise EpisodeNotFoundError("Episode missing",
+                                       detail={"episode_id": "abc-123"})
+
         register_exception_handlers(app)
         return app
 
@@ -158,6 +166,22 @@ class TestExceptionHandlers:
         body = resp.json()
         assert body["type"] == "https://errors.openzep.dev/rate_limit_exceeded"
         assert body["status"] == 429
+
+    @pytest.mark.asyncio
+    async def test_episode_not_found_returns_404_with_problem_json(
+        self, client: AsyncClient
+    ) -> None:
+        """EpisodeNotFoundError returns RFC 7807 with episode_not_found code."""
+        resp = await client.get("/tests/episode-not-found")
+        assert resp.status_code == 404
+
+        body = resp.json()
+        assert body["type"] == "https://errors.openzep.dev/episode_not_found"
+        assert body["title"] == "Episode Not Found"
+        assert body["status"] == 404
+        assert body["detail"] == "Episode missing"
+        assert body["instance"] == "/tests/episode-not-found"
+        assert body["episode_id"] == "abc-123"
 
     @pytest.mark.asyncio
     async def test_unhandled_app_error_falls_back(self) -> None:

@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 import structlog
 
 from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
+from core.exceptions import EpisodeNotFoundError
 from workers.tasks.base import ENRICHMENT_FACTS, with_retry
 
 logger = structlog.get_logger()
@@ -133,7 +134,10 @@ async def extract_facts(
             "fact_extraction.episode_not_found",
             episode_id=episode_id,
         )
-        return
+        raise EpisodeNotFoundError(
+            message=f"Episode {episode_id} not found for fact extraction.",
+            detail={"episode_id": episode_id},
+        )
     user_id: str = str(user_id_row)
 
     # ── 1. Render prompt (system instructions) with auto-injected context ──

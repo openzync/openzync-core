@@ -18,6 +18,7 @@ from typing import Any
 import structlog
 from sqlalchemy import text
 
+from core.exceptions import EpisodeNotFoundError
 from workers.tasks.base import ENRICHMENT_CLASSIFICATION, with_retry
 
 from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
@@ -129,7 +130,10 @@ async def classify_dialog(
                     "classification.episode_not_found",
                     episode_id=episode_id,
                 )
-                return
+                raise EpisodeNotFoundError(
+                    message=f"Episode {episode_id} not found for classification.",
+                    detail={"episode_id": episode_id},
+                )
             if episode.enrichment_status & ENRICHMENT_CLASSIFICATION:
                 logger.info(
                     "classification.skipped_already_done",

@@ -217,6 +217,25 @@ class EdgeNotFoundError(AppError):
         super().__init__(message=message, detail=detail)
 
 
+class EpisodeNotFoundError(AppError):
+    """Requested episode does not exist.
+
+    Raised by ARQ workers when an episode is not yet visible due to
+    transaction visibility races.  The ``@with_retry`` decorator re-raises
+    this so the worker can retry after the transaction commits.
+    """
+
+    status_code: int = 404
+    code: str = "episode_not_found"
+
+    def __init__(
+        self,
+        message: str = "The requested episode was not found.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
 class GraphTimeoutError(AppError):
     """Graph database operation exceeded the configured timeout."""
 
@@ -310,6 +329,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         PayloadTooLargeError: 413,
         EntityNotFoundError: 404,
         EdgeNotFoundError: 404,
+        EpisodeNotFoundError: 404,
         GraphTimeoutError: 504,
     }
 

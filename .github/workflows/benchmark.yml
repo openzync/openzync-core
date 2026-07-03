@@ -1,0 +1,164 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# LongMemEval Benchmark Workflow
+# ──────────────────────────────────────────────────────────────────────────────
+# Triggered manually via workflow_dispatch or by including ``[benchmark]`` in a
+# commit message on the default branch.
+#
+# This workflow runs the full LongMemEval benchmark suite against a live
+# OpenZep instance.  It is NOT part of normal CI — benchmarks require:
+#   - A running OpenZep API + PostgreSQL + Redis + worker
+#   - Real LLM API access (OpenRouter for the judge, local Ollama for extraction)
+#   - 10-30 minutes of wall-clock time
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: 'LongMemEval dataset variant (s, oracle)'
+        required: true
+        default: 's'
+        type: choice
+        options:
+          - s
+          - oracle
+      benchmark_limit:
+        description: 'Question limit (omit for full run)'
+        required: false
+        default: ''
+        type: string
+      baseline:
+        description: 'Include pure-vector baseline comparison'
+        required: false
+        default: true
+        type: boolean
+      reranker:
+        description: 'Enable cross-encoder reranker'
+        required: false
+        default: false
+        type: boolean
+
+  push:
+    branches: [main, master]
+    # Only trigger when commit message contains [benchmark]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+
+env:
+  PYTHON_VERSION: '3.12'
+  OPENZEP_BASE_URL: ${{ vars.OPENZEP_BASE_URL || 'http://localhost:8000' }}
+  BENCH_EMAIL: ${{ secrets.BENCH_EMAIL }}
+  BENCH_PASSWORD: ${{ secrets.BENCH_PASSWORD }}
+  MG_OPENROUTER_API_KEY: ${{ secrets.MG_OPENROUTER_API_KEY }}
+
+jobs:
+  longmemeval:
+    name: LongMemEval benchmark
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: openzep
+          POSTGRES_PASSWORD: openzep
+          POSTGRES_DB: openzep
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U openzep"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev,reranker]"
+
+      - name: Run Alembic migrations
+        env:
+          MG_DATABASE_URL: postgresql+asyncpg://openzep:openzep@localhost:5432/openzep
+          MG_REDIS_URL: redis://localhost:6379/0
+          MG_ENVIRONMENT: test
+        run: |
+          alembic upgrade head
+
+      - name: Verify commit message for [benchmark] tag
+        id: check_commit
+        if: github.event_name == 'push'
+        run: |
+          COMMIT_MSG=$(git log --format=%s -1)
+          if echo "$COMMIT_MSG" | grep -q "\[benchmark\]"; then
+            echo "triggered=true" >> $GITHUB_OUTPUT
+          else
+            echo "triggered=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run LongMemEval benchmark
+        if: >
+          github.event_name == 'workflow_dispatch' ||
+          (github.event_name == 'push' && steps.check_commit.outputs.triggered == 'true')
+        env:
+          MG_DATABASE_URL: postgresql+asyncpg://openzep:openzep@localhost:5432/openzep
+          MG_REDIS_URL: redis://localhost:6379/0
+          MG_LLM_BACKEND: ollama
+          OLLAMA_BASE_URL: http://localhost:11434
+          MG_ENVIRONMENT: test
+          MG_SECRET_KEY: benchmark-secret-key-for-ci-only-min-32-chars!!
+        run: |
+          ARGS="--run-benchmark -v"
+          if [ -n "${{ github.event.inputs.variant }}" ]; then
+            ARGS="$ARGS --variant=${{ github.event.inputs.variant }}"
+          fi
+          if [ -n "${{ github.event.inputs.benchmark_limit }}" ]; then
+            ARGS="$ARGS --benchmark-limit=${{ github.event.inputs.benchmark_limit }}"
+          fi
+          if [ "${{ github.event.inputs.baseline }}" = "true" ]; then
+            ARGS="$ARGS --baseline"
+          fi
+          if [ "${{ github.event.inputs.reranker }}" = "true" ]; then
+            ARGS="$ARGS --reranker"
+          fi
+
+          # The worker must be running for enrichment.  Start it in background.
+          python -m services.worker.worker &
+          WORKER_PID=$!
+          echo "Worker PID: $WORKER_PID"
+
+          # Give worker time to connect to Redis
+          sleep 3
+
+          pytest tests/benchmarks/ $ARGS
+
+      - name: Upload benchmark results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: benchmarks/results/*.json
+          retention-days: 90
+          if-no-files-found: warn

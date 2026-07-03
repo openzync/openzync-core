@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import structlog
 
+from core.exceptions import EpisodeNotFoundError
 from services.worker.prompt_renderer import render_prompt
 from workers.tasks.base import ENRICHMENT_OBSERVATIONS, with_retry
 
@@ -123,7 +124,10 @@ async def compute_observations(
                     "compute_observations.episode_not_found",
                     episode_id=episode_id,
                 )
-                return
+                raise EpisodeNotFoundError(
+                    message=f"Episode {episode_id} not found for observations.",
+                    detail={"episode_id": episode_id},
+                )
 
             if episode.enrichment_status & ENRICHMENT_OBSERVATIONS:
                 logger.info(

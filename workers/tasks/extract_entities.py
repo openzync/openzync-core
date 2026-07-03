@@ -19,7 +19,7 @@ import uuid
 import structlog
 from sqlalchemy import text
 
-from core.exceptions import ExternalServiceError
+from core.exceptions import EpisodeNotFoundError, ExternalServiceError
 
 # note: Import prompt_renderer at module level — it is a local
 # Jinja2 utility with no heavy dependencies, so eager import is safe
@@ -136,7 +136,10 @@ async def extract_entities(
             "entity_extraction.episode_not_found",
             episode_id=episode_id,
         )
-        return
+        raise EpisodeNotFoundError(
+            message=f"Episode {episode_id} not found for entity extraction.",
+            detail={"episode_id": episode_id},
+        )
     user_id: str = str(user_id_row)
 
     # ── 1-2. Render prompt (system instructions) with auto-injected context ──

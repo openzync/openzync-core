@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -120,3 +120,58 @@ class TestMemoryService:
             str(self.PROJECT_ID), "session_1", self._sample_messages(),
         )
         assert h1 == h2
+
+    @pytest.mark.asyncio
+    async def test_commit_before_enqueue(self, service: MemoryService) -> None:
+        """ingest() calls db.commit() before _enqueue_arq_tasks().
+
+        This ordering is critical for the transaction-visibility fix:
+        episodes must be visible to PostgreSQL *before* ARQ enrichment
+        tasks are enqueued to Redis, otherwise workers may race ahead
+        and fail with EpisodeNotFoundError.
+        """
+        service._session_repo.get_or_create_default.return_value = MagicMock(
+            id=uuid4(), external_id="__default__",
+        )
+
+        # Make batch_create return a real-looking episode list
+        mock_episode = MagicMock()
+        mock_episode.id = uuid4()
+        mock_episode.content = "test content"
+        mock_episode.role = "user"
+        mock_episode.metadata_ = {}
+        service._episode_repo.batch_create.return_value = [mock_episode]
+
+        # Track call order across two different mocks (db vs service method).
+        # NOTE: We use a list as a side_effect and *do not* call the original
+        # mock — doing so would re-trigger the side_effect (infinite recursion).
+        call_order: list[str] = []
+
+        async def _tracked_commit() -> None:  # type: ignore[misc]
+            call_order.append("commit")
+
+        service._db.commit.side_effect = _tracked_commit
+
+        with patch.object(service, "_enqueue_arq_tasks") as mock_enqueue:
+            def _tracked_enqueue(*args: object, **kwargs: object) -> None:
+                call_order.append("enqueue")
+            mock_enqueue.side_effect = _tracked_enqueue
+
+            with patch.object(service, "_invalidate_context_cache"):
+                with patch.object(service, "_get_org_pii_config", return_value={}):
+                    with patch.object(service, "_cache_content_hash"):
+                        with patch.object(service, "_cache_idempotency"):
+                            result = await service.ingest(
+                                org_id=self.ORG_ID,
+                                project_id=self.PROJECT_ID,
+                                created_by=self.USER_ID,
+                                session_external_id=None,
+                                messages=self._sample_messages(),
+                            )
+
+        assert result.status == "accepted"
+        assert call_order == ["commit", "enqueue"], (
+            f"Expected commit before enqueue, got {call_order}"
+        )
+        service._db.commit.assert_awaited_once()
+        mock_enqueue.assert_awaited_once()

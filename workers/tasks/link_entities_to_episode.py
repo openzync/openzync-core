@@ -14,6 +14,7 @@ from __future__ import annotations
 import structlog
 from sqlalchemy import text
 
+from core.exceptions import EpisodeNotFoundError
 from workers.tasks.base import ENRICHMENT_ENTITY_LINKS, with_retry
 
 logger = structlog.get_logger()
@@ -95,7 +96,10 @@ async def link_entities_to_episode(
                     org_id=org_id,
                     project_id=project_id,
                 )
-                return
+                raise EpisodeNotFoundError(
+                    message=f"Episode {episode_id} not found for entity linking.",
+                    detail={"episode_id": episode_id},
+                )
 
             # ── 2. Search for matching entities ─────────────────────────────
             # Extract potential entity names from content (simple keyword split)
