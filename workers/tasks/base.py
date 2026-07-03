@@ -2,6 +2,9 @@
 
 All workers in ``workers/tasks/`` import from this module rather than
 duplicating retry logic or bitmask constants.
+
+This module also serves as the single source of truth imported by
+:mod:`services.worker.tasks.base` (a compatibility shim).
 """
 
 from __future__ import annotations
@@ -40,6 +43,21 @@ ENRICHMENT_CLASSIFICATION: int = 1 << 4  # bit 4
 ENRICHMENT_STRUCTURED_EXTRACTION: int = 1 << 5  # bit 5
 ENRICHMENT_OBSERVATIONS: int = 1 << 6  # bit 6 — reserved, not in ALL
 
+ENRICHMENT_ALL: int = (
+    ENRICHMENT_ENTITIES
+    | ENRICHMENT_EMBEDDING
+    | ENRICHMENT_FACTS
+    | ENRICHMENT_ENTITY_LINKS
+    | ENRICHMENT_CLASSIFICATION
+    | ENRICHMENT_STRUCTURED_EXTRACTION
+)
+"""Bitmask with all active enrichment bits set.
+Use this to check if an episode is fully enriched.
+
+Bit 6 (``ENRICHMENT_OBSERVATIONS``) is intentionally excluded — the
+observations pass is non-blocking and deferred.
+"""
+
 # ── Default retry configuration ──────────────────────────────────────────────
 DEFAULT_MAX_RETRIES: int = 3
 DEFAULT_BASE_DELAY_S: float = 1.0
@@ -56,8 +74,16 @@ def with_retry(
     max_delay_s: float = DEFAULT_MAX_DELAY_S,
     *,
     on_exhaustion: str = "raise",
+    is_retryable: Callable[[Exception], bool] | None = None,
 ) -> Callable[[Callable[F, T]], Callable[F, T]]:
     """Decorator that retries an async function with exponential backoff.
+
+    By default (when ``is_retryable`` is ``None``) **all** exceptions are
+    retried.  Pass a predicate to limit retries to transient errors only::
+
+        @with_retry(is_retryable=_is_retryable)
+        async def call_external_api(...):
+            ...
 
     Args:
         max_retries: Maximum number of retry attempts (default 3).
@@ -66,12 +92,17 @@ def with_retry(
         on_exhaustion: What to do when retries are exhausted.
             ``"raise"`` (default) re-raises the last exception.
             ``"log"`` logs the failure and returns ``None``.
+        is_retryable: Optional predicate that receives the caught exception
+            and returns ``True`` if a retry should be attempted.  When
+            ``None`` (default) all exceptions are retried.
 
     Returns:
         The decorated function with retry behaviour.
 
     Raises:
         The last exception if ``on_exhaustion="raise"`` (default).
+        A non-retryable exception immediately if ``is_retryable`` is set
+        and returns ``False``.
 
     Example:
         .. code-block:: python
@@ -81,7 +112,9 @@ def with_retry(
                 return await client.complete(prompt)
     """
     if on_exhaustion not in ("raise", "log"):
-        raise ValueError(f"on_exhaustion must be 'raise' or 'log', got {on_exhaustion!r}")
+        raise ValueError(
+            f"on_exhaustion must be 'raise' or 'log', got {on_exhaustion!r}"
+        )
 
     def decorator(func: Callable[F, T]) -> Callable[F, T]:
         @functools.wraps(func)
@@ -93,6 +126,20 @@ def with_retry(
                 try:
                     return await func(*args, **kwargs)
                 except Exception as exc:
+                    # When a predicate is provided, check if the error is
+                    # worth retrying.  Non-retryable errors propagate
+                    # immediately so the caller can handle them.
+                    if is_retryable is not None and not is_retryable(exc):
+                        logger.warning(
+                            "worker.non_retryable",
+                            extra={
+                                "function": func.__name__,
+                                "error": str(exc),
+                                "error_type": type(exc).__name__,
+                            },
+                        )
+                        raise
+
                     last_exc = exc
                     logger.warning(
                         "worker.retry",
@@ -101,6 +148,7 @@ def with_retry(
                             "attempt": attempt,
                             "max_retries": max_retries,
                             "error": str(exc),
+                            "error_type": type(exc).__name__,
                             "delay_s": round(delay, 2),
                         },
                     )
@@ -125,3 +173,18 @@ def with_retry(
         return wrapper  # type: ignore[return-value]
 
     return decorator
+
+
+# ── Public API ───────────────────────────────────────────────────────────────
+
+__all__ = [
+    "ENRICHMENT_ALL",
+    "ENRICHMENT_CLASSIFICATION",
+    "ENRICHMENT_EMBEDDING",
+    "ENRICHMENT_ENTITIES",
+    "ENRICHMENT_ENTITY_LINKS",
+    "ENRICHMENT_FACTS",
+    "ENRICHMENT_OBSERVATIONS",
+    "ENRICHMENT_STRUCTURED_EXTRACTION",
+    "with_retry",
+]

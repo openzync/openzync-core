@@ -14,7 +14,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { API_BASE } from "@/lib/api-client";
+import { API_BASE, safeJsonParse } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -116,11 +116,7 @@ export default function SettingsPage() {
       // try a generic profile endpoint.
       const res = await fetch(`${API_BASE}/v1/admin/me`, { headers: authHeaders() });
       if (!res.ok) {
-        // Fallback: some endpoints might not exist; try settings/profile
-        const fallbackRes = await fetch(`${API_BASE}/v1/admin/profile`, { headers: authHeaders() });
-        if (!fallbackRes.ok) throw new Error("Failed to load profile");
-        const data = await fallbackRes.json();
-        processProfile(data);
+        throw new Error("Failed to load profile");
       } else {
         const data = await res.json();
         processProfile(data);
@@ -164,7 +160,7 @@ export default function SettingsPage() {
       });
 
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
+        const body = await safeJsonParse(res);
         throw new Error(body.detail ?? "Failed to update profile");
       }
 
@@ -206,7 +202,7 @@ export default function SettingsPage() {
       });
 
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
+        const body = await safeJsonParse(res);
         throw new Error(body.detail ?? "Failed to update password");
       }
 

@@ -19,7 +19,7 @@ import uuid
 import structlog
 from sqlalchemy import text
 
-from core.exceptions import EpisodeNotFoundError, ExternalServiceError
+from core.exceptions import EpisodeNotFoundError, GraphBackendUnavailableError
 
 # note: Import prompt_renderer at module level — it is a local
 # Jinja2 utility with no heavy dependencies, so eager import is safe
@@ -332,7 +332,9 @@ async def extract_entities(
     name_to_node: dict[str, dict] = {}
 
     # ── Failure counters for enrichment-bit gating ──────────────────────
-    entity_failure_count: int = 0
+    # Note: entity failures now raise GraphBackendUnavailableError and trigger
+    # retry via @with_retry. Only relationship failures (entity-not-found in
+    # graph) are counted here since they are non-fatal edge cases.
     relationship_failure_count: int = 0
     relationship_skip_count: int = 0
 
@@ -374,21 +376,12 @@ async def extract_entities(
                     entity_type=entity_type,
                     summary=summary,
                 )
-                if node is not None:
-                    # Key by normalized name so relationship lookups work
-                    name_to_node[normalized_name] = node
-                    # Also key by original name as fallback for callers
-                    # that might use the raw LLM output
-                    if normalized_name != entity_name:
-                        name_to_node[entity_name] = node
-                else:
-                    entity_failure_count += 1
-                    logger.warning(
-                        "entity_extraction.entity_upsert_skipped",
-                        episode_id=episode_id,
-                        entity_name=normalized_name,
-                        entity_type=entity_type,
-                    )
+                # Key by normalized name so relationship lookups work
+                name_to_node[normalized_name] = node
+                # Also key by original name as fallback for callers
+                # that might use the raw LLM output
+                if normalized_name != entity_name:
+                    name_to_node[entity_name] = node
 
             # ── 7. Persist relationships to graph ─────────────────────────
             for rel in relationships:
@@ -415,14 +408,13 @@ async def extract_entities(
                                 f"{subject} {predicate} {obj}"
                             ),
                         )
-                        if fallback_node is not None:
-                            name_to_node[name] = fallback_node
-                            logger.info(
-                                "entity_extraction.relationship_entity_recovered",
-                                episode_id=episode_id,
-                                entity_name=name,
-                                relationship=f"{subject} {predicate} {obj}",
-                            )
+                        name_to_node[name] = fallback_node
+                        logger.info(
+                            "entity_extraction.relationship_entity_recovered",
+                            episode_id=episode_id,
+                            entity_name=name,
+                            relationship=f"{subject} {predicate} {obj}",
+                        )
 
                 if subject in name_to_node and obj in name_to_node:
                     result = await entity_repo.upsert_relationship(
@@ -482,37 +474,12 @@ async def extract_entities(
         if _own_engine:
             await engine.dispose()
 
-    # ── 8b. Guard enrichment bit against persistence failures ────────────
-    # If entities failed to persist, raise so @with_retry can retry.
-    # Enrichment bit will NOT be set on this attempt (line 524 won't run).
-    if entity_failure_count > 0:
-        logger.error(
-            "entity_extraction.entity_persistence_failures",
-            episode_id=episode_id,
-            entity_failure_count=entity_failure_count,
-            entity_success_count=len(name_to_node),
-            relationship_failure_count=relationship_failure_count,
-            relationship_skip_count=relationship_skip_count,
-        )
-        raise ExternalServiceError(
-            message=f"Failed to persist {entity_failure_count} entities to graph "
-            f"(backend returned None). {len(name_to_node)} entities succeeded.",
-            detail={
-                "episode_id": episode_id,
-                "entity_failure_count": entity_failure_count,
-                "entity_success_count": len(name_to_node),
-                "relationship_failure_count": relationship_failure_count,
-                "relationship_skip_count": relationship_skip_count,
-            },
-        )
-
     logger.info(
         "entity_extraction.persisted",
         episode_id=episode_id,
         org_id=org_id,
         project_id=project_id,
         entity_count=len(name_to_node),
-        entity_failure_count=entity_failure_count,
         relationship_failure_count=relationship_failure_count,
         relationship_skip_count=relationship_skip_count,
     )

@@ -112,7 +112,7 @@ class LoggingMiddleware:
 
         try:
             await self.app(scope, receive, send_wrapper)
-        except BaseException:
+        except Exception:  # Never catch KeyboardInterrupt/SystemExit — let them propagate
             status_code = 500
             raise
         finally:

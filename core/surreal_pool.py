@@ -28,6 +28,8 @@ from uuid import UUID
 
 from surrealdb import AsyncSurreal
 
+from core.exceptions import GraphBackendUnavailableError
+
 if TYPE_CHECKING:
     from schemas.organization_config import OrgConfigBase
 
@@ -62,8 +64,8 @@ class SurrealConnectionPool:
     prevents duplicate connections when two requests for the same org
     arrive simultaneously.
 
-    When an org has no ``surrealdb_url`` configured, :meth:`get_or_create`
-    returns ``None`` (the caller must handle graceful degradation).
+    When an org has no ``surrealdb_url`` configured, or the connection
+    fails, :meth:`get_or_create` raises ``GraphBackendUnavailableError``.
     """
 
     def __init__(self) -> None:
@@ -75,7 +77,7 @@ class SurrealConnectionPool:
         self,
         org_id: UUID,
         org_config: OrgConfigBase,
-    ) -> AsyncSurreal | None:
+    ) -> AsyncSurreal:
         """Return a cached ``AsyncSurreal`` for this org, or create one.
 
         Args:
@@ -86,10 +88,11 @@ class SurrealConnectionPool:
                 ``surrealdb_database``).
 
         Returns:
-            An ``AsyncSurreal`` instance if the org has a SurrealDB URL
-            configured and the connection succeeds; ``None`` if the org
-            has no SurrealDB URL or the connection failed (graceful
-            degradation — the caller handles ``None``).
+            An ``AsyncSurreal`` instance.
+
+        Raises:
+            GraphBackendUnavailableError: If no SurrealDB URL is configured
+                for the org, or if the connection attempt fails.
         """
         # ── Fast path: already connected ──────────────────────────────────
         if org_id in self._pool:
@@ -100,7 +103,9 @@ class SurrealConnectionPool:
         # ── No URL configured = SurrealDB not available for this org ──────
         url = org_config.surrealdb_url
         if not url:
-            return None
+            raise GraphBackendUnavailableError(
+                f"Failed to connect to SurrealDB for organization {org_id}."
+            )
 
         # ── Per-org lock to prevent duplicate connections ─────────────────
         if org_id not in self._locks:
@@ -142,8 +147,11 @@ class SurrealConnectionPool:
                 logger.error(
                     "surreal_pool.connect_failed",
                     extra={"org_id": str(org_id), "error": str(exc)},
+                    exc_info=True,
                 )
-                return None
+                raise GraphBackendUnavailableError(
+                    f"SurrealDB connection failed for organization {org_id}."
+                ) from exc
 
     async def close_all(self) -> None:
         """Close all cached connections (call during application shutdown).

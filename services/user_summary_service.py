@@ -7,16 +7,19 @@ scope).  All tenant isolation is enforced at the repository layer.
 
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import ARQPool
-from core.exceptions import RateLimitError
+from core.exceptions import CacheUnavailableError, RateLimitError
 from repositories.custom_instruction_repository import CustomInstructionRepository
 from repositories.user_repository import UserRepository
 from schemas.user_summary import UserSummaryResponse, UserSummaryTriggerResponse
+
+logger = logging.getLogger(__name__)
 
 
 class UserSummaryService:
@@ -38,8 +41,9 @@ class UserSummaryService:
             db: Async SQLAlchemy session scoped to the current request.
             arq: ARQ pool for enqueueing background ``generate_user_summary``
                 jobs.
-            redis: Optional Redis client for rate limiting.  When ``None``
-                rate limiting is disabled (graceful degradation).
+            redis: Optional Redis client for rate limiting.  When ``None``,
+                rate limiting is unavailable and raises
+                ``CacheUnavailableError``.
         """
         self._db = db
         self._user_repo = UserRepository(db)
@@ -62,9 +66,15 @@ class UserSummaryService:
 
         Returns:
             ``True`` if the operation may proceed, ``False`` if rate limited.
+
+        Raises:
+            CacheUnavailableError: If Redis is not configured.
         """
         if self._redis is None:
-            return True  # No Redis = no rate limiting (graceful degradation)
+            logger.error("user_summary.redis_not_configured")
+            raise CacheUnavailableError(
+                "Redis is required for user summary rate limiting."
+            )
         key = f"ratelimit:summary:{org_id}:{user_id}"
         ok = await self._redis.set(key, "1", nx=True, ex=300)
         return bool(ok)

@@ -17,6 +17,8 @@ from uuid import UUID
 
 import orjson
 
+from core.exceptions import CacheUnavailableError
+
 logger = logging.getLogger(__name__)
 
 # ── Type variable for the generic ``get_or_compute`` method ───────────────────
@@ -34,22 +36,32 @@ lock crashes, the lock auto-releases after this period.
 
 
 class CacheService:
-    """Cache-aside service with optional stampede protection.
+    """Cache-aside service with stampede protection.
 
-    Wraps an async Redis client.  When ``redis`` is ``None``, all
-    operations are no-ops — the service degrades gracefully without
-    caching infrastructure.
+    Wraps an async Redis client.  All operations require a live Redis
+    connection — there is no silent no-op mode.  Every cache failure
+    raises :class:`CacheUnavailableError`.  Never silently degrades.
 
     Args:
-        redis: An optional async Redis client.
+        redis: An async Redis client.  **Required** — ``None`` is not
+            accepted.
         default_ttl: Default cache TTL in seconds.  **Required** — there
             is no fallback.  Callers can override this per-call via the
             ``ttl`` parameter.
+
+    Raises:
+        ValueError: If ``redis`` is ``None`` or ``default_ttl`` is
+            ``None``.
     """
 
     def __init__(
-        self, redis: object | None = None, default_ttl: int | None = None
+        self, redis: object, default_ttl: int | None = None
     ) -> None:
+        if redis is None:
+            raise ValueError(
+                "redis client is required. CacheService does not support "
+                "silent no-op mode. Ensure Redis is configured and available."
+            )
         if default_ttl is None:
             raise ValueError(
                 "default_ttl is required. "
@@ -68,23 +80,27 @@ class CacheService:
             key: The full Redis key (already namespaced).
 
         Returns:
-            The cached string value, or ``None`` if missing or Redis is
-            unavailable.
+            The cached string value, or ``None`` if the key does not
+            exist.
+
+        Raises:
+            CacheUnavailableError: If Redis is unreachable or the read
+                fails.
         """
-        if self._redis is None:
-            return None
         try:
             from redis.asyncio import Redis as AsyncRedis
 
             r: AsyncRedis = self._redis  # type: ignore[assignment]
             return await r.get(key)
-        except Exception:
-            logger.warning(
-                "cache_service.get_failed",
+        except Exception as exc:
+            logger.error(
+                "cache.get_failed",
                 extra={"key": key},
                 exc_info=True,
             )
-            return None
+            raise CacheUnavailableError(
+                f"Cache read failed for key '{key}'."
+            ) from exc
 
     async def set(self, key: str, value: str, ttl: int | None = None) -> bool:
         """Set a cached value with an optional TTL.
@@ -96,24 +112,27 @@ class CacheService:
                 (which defaults to ``30``) when ``None``.
 
         Returns:
-            ``True`` if the value was set, ``False`` if Redis is
-            unavailable.
+            ``True`` if the value was set.
+
+        Raises:
+            CacheUnavailableError: If Redis is unreachable or the write
+                fails.
         """
-        if self._redis is None:
-            return False
         try:
             from redis.asyncio import Redis as AsyncRedis
 
             r: AsyncRedis = self._redis  # type: ignore[assignment]
             effective_ttl = ttl if ttl is not None else self._default_ttl
             return await r.setex(key, effective_ttl, value)  # type: ignore[return-value]
-        except Exception:
-            logger.warning(
-                "cache_service.set_failed",
+        except Exception as exc:
+            logger.error(
+                "cache.set_failed",
                 extra={"key": key, "ttl": ttl},
                 exc_info=True,
             )
-            return False
+            raise CacheUnavailableError(
+                f"Cache write failed for key '{key}'."
+            ) from exc
 
     async def delete(self, key: str) -> bool:
         """Delete a single cache key.
@@ -123,22 +142,26 @@ class CacheService:
 
         Returns:
             ``True`` if at least one key was deleted, ``False`` otherwise.
+
+        Raises:
+            CacheUnavailableError: If Redis is unreachable or the delete
+                fails.
         """
-        if self._redis is None:
-            return False
         try:
             from redis.asyncio import Redis as AsyncRedis
 
             r: AsyncRedis = self._redis  # type: ignore[assignment]
             deleted = await r.delete(key)
             return deleted > 0
-        except Exception:
-            logger.warning(
-                "cache_service.delete_failed",
+        except Exception as exc:
+            logger.error(
+                "cache.delete_failed",
                 extra={"key": key},
                 exc_info=True,
             )
-            return False
+            raise CacheUnavailableError(
+                f"Cache delete failed for key '{key}'."
+            ) from exc
 
     async def get_or_compute(
         self,
@@ -168,6 +191,9 @@ class CacheService:
 
         Returns:
             The cached or freshly computed value.
+
+        Raises:
+            CacheUnavailableError: If any Redis operation fails.
         """
         # ── Check cache ──────────────────────────────────────────────────
         cached = await self.get(key)
@@ -198,12 +224,15 @@ class CacheService:
                     if retried is not None:
                         return retried  # type: ignore[return-value]
                     # Lock holder may have crashed — proceed to compute.
-            except Exception:
-                logger.warning(
-                    "cache_service.stampede_lock_failed",
+            except Exception as exc:
+                logger.error(
+                    "cache.stampede_lock_failed",
                     extra={"key": key},
                     exc_info=True,
                 )
+                raise CacheUnavailableError(
+                    f"Stampede lock acquisition failed for key '{key}'."
+                ) from exc
 
         # ── Compute and cache ────────────────────────────────────────────
         value = compute_fn()
@@ -222,8 +251,15 @@ class CacheService:
 
                 r: AsyncRedis = self._redis  # type: ignore[assignment]
                 await r.delete(lock_key)
-            except Exception:
-                pass  # Lock will expire via TTL
+            except Exception as exc:
+                logger.error(
+                    "cache.stampede_unlock_failed",
+                    extra={"key": key},
+                    exc_info=True,
+                )
+                raise CacheUnavailableError(
+                    f"Stampede lock release failed for key '{key}'."
+                ) from exc
 
         return value
 
@@ -308,10 +344,11 @@ class CacheService:
 
         Returns:
             Number of cache keys deleted.
-        """
-        if self._redis is None:
-            return 0
 
+        Raises:
+            CacheUnavailableError: If Redis is unreachable or the
+                invalidation fails.
+        """
         pattern = self.build_user_cache_pattern(org_id, user_id)
         cursor: int = 0
         deleted = 0
@@ -331,19 +368,22 @@ class CacheService:
 
             if deleted > 0:
                 logger.info(
-                    "cache_service.context_cache_invalidated",
+                    "cache.context_cache_invalidated",
                     extra={
                         "org_id": org_id,
                         "user_id": user_id,
                         "keys_deleted": deleted,
                     },
                 )
-        except Exception:
-            logger.warning(
-                "cache_service.invalidation_failed",
+        except Exception as exc:
+            logger.error(
+                "cache.invalidation_failed",
                 extra={"org_id": org_id, "user_id": user_id},
                 exc_info=True,
             )
+            raise CacheUnavailableError(
+                f"Cache invalidation failed for org '{org_id}', user '{user_id}'."
+            ) from exc
 
         return deleted
 
@@ -364,10 +404,11 @@ class CacheService:
 
         Returns:
             Number of cache keys deleted.
-        """
-        if self._redis is None:
-            return 0
 
+        Raises:
+            CacheUnavailableError: If Redis is unreachable or the
+                invalidation fails.
+        """
         pattern = self.build_project_cache_pattern(org_id, project_id)
         cursor: int = 0
         deleted = 0
@@ -387,18 +428,21 @@ class CacheService:
 
             if deleted > 0:
                 logger.info(
-                    "cache_service.project_context_cache_invalidated",
+                    "cache.project_context_cache_invalidated",
                     extra={
                         "org_id": org_id,
                         "project_id": project_id,
                         "keys_deleted": deleted,
                     },
                 )
-        except Exception:
-            logger.warning(
-                "cache_service.project_invalidation_failed",
+        except Exception as exc:
+            logger.error(
+                "cache.project_invalidation_failed",
                 extra={"org_id": org_id, "project_id": project_id},
                 exc_info=True,
             )
+            raise CacheUnavailableError(
+                f"Cache invalidation failed for org '{org_id}', project '{project_id}'."
+            ) from exc
 
         return deleted

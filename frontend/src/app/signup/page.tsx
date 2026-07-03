@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
-import { API_BASE } from "@/lib/api-client";
+import { API_BASE, safeJsonParse } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 
 function getPasswordStrength(pw: string): {
@@ -52,7 +52,7 @@ export default function SignupPage() {
         }),
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
+        const data = await safeJsonParse(res);
         throw new Error(data.detail ?? "Signup failed. Please try again.");
       }
       const data = await res.json();

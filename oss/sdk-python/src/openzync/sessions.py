@@ -37,7 +37,7 @@ class AsyncSessionsClient:
         Returns:
             ``SessionResponse`` with the created session.
         """
-        body = SessionCreateRequest(external_id=external_id, metadata=metadata or {})
+        body = SessionCreateRequest(external_id=external_id, metadata=metadata if metadata is not None else {})
         data = await self._http.request(
             "POST",
             f"/v1/projects/{project_id}/sessions",

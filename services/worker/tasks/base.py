@@ -1,186 +1,58 @@
-"""Base worker utilities — retry decorator, bitmask constants, shared helpers.
+"""Compatibility shim — imports from the single source of truth.
 
-All ARQ worker task modules import from this module for common patterns:
+All shared utilities (``with_retry``, ``ENRICHMENT_*`` constant) have been
+consolidated into :mod:`workers.tasks.base`.
 
-* Bitmask constants for ``episodes.enrichment_status``.
-* ``with_retry`` decorator for exponential-backoff retry logic.
-* ``_is_retryable`` predicate used by the retry decorator.
+This module re-exports those names for backward compatibility and keeps
+:func:`_is_retryable` (HTTP-specific predicate used by service workers).
 
 Usage::
 
-    from services.worker.tasks.base import (
-        ENRICHMENT_ENTITIES,
-        ENRICHMENT_FACTS,
-        with_retry,
-    )
+    from services.worker.tasks.base import with_retry, ENRICHMENT_ENTITIES
+    # is equivalent to
+    from workers.tasks.base import with_retry, ENRICHMENT_ENTITIES
 
-    @with_retry(max_retries=3, base_delay=2.0)
-    async def extract_entities(ctx, episode_id: str):
-        ...
+New code should import directly from ``workers.tasks.base``.
 """
 
 from __future__ import annotations
 
-import asyncio
-import logging
-from functools import wraps
 from typing import Any, Callable
 
 import httpx
 import structlog
 
+# Imported from workers.tasks.base — this module is a compatibility shim.
+from workers.tasks.base import (  # noqa: F401  — re-export
+    ENRICHMENT_ALL,
+    ENRICHMENT_CLASSIFICATION,
+    ENRICHMENT_EMBEDDING,
+    ENRICHMENT_ENTITIES,
+    ENRICHMENT_ENTITY_LINKS,
+    ENRICHMENT_FACTS,
+    ENRICHMENT_OBSERVATIONS,
+    ENRICHMENT_STRUCTURED_EXTRACTION,
+    with_retry,
+)
+
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Bitmask constants for episodes.enrichment_status
-# ═══════════════════════════════════════════════════════════════════════════════
-# These map one-to-one to enrichment worker tasks.  Each task claims its bit
-# atomically via SELECT ... FOR UPDATE + bitwise OR.
-
-ENRICHMENT_ENTITIES: int = 1 << 0
-"""Bit 0 — entity extraction task completed."""
-
-ENRICHMENT_EMBEDDING: int = 1 << 1
-"""Bit 1 — episode embedding task completed."""
-
-ENRICHMENT_FACTS: int = 1 << 2
-"""Bit 2 — fact extraction task completed."""
-
-ENRICHMENT_ENTITY_LINKS: int = 1 << 3
-"""Bit 3 — entity-episode linking task completed."""
-
-ENRICHMENT_CLASSIFICATION: int = 1 << 4
-"""Bit 4 — dialog classification task completed."""
-
-ENRICHMENT_STRUCTURED_EXTRACTION: int = 1 << 5
-"""Bit 5 — structured extraction task completed."""
-
-ENRICHMENT_ALL: int = (
-    ENRICHMENT_ENTITIES
-    | ENRICHMENT_EMBEDDING
-    | ENRICHMENT_FACTS
-    | ENRICHMENT_ENTITY_LINKS
-    | ENRICHMENT_CLASSIFICATION
-    | ENRICHMENT_STRUCTURED_EXTRACTION
-)
-"""Mask with all active enrichment bits set — use to check if an episode is fully enriched.
-
-.. note::
-    Bit 6 (``ENRICHMENT_OBSERVATIONS``) is reserved for a deferred
-    non-blocking observations pass and is intentionally excluded from
-    this mask so that ``ENRICHMENT_ALL`` continues to represent "all
-    currently-implemented enrichment complete."
-"""
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Retry decorator
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-def with_retry(
-    max_retries: int = 3,
-    base_delay: float = 2.0,
-) -> Callable[..., Callable[..., Any]]:
-    """Decorator that adds exponential backoff retry to worker tasks.
-
-    Retries only on **retryable** errors:
-    - HTTP timeouts (``httpx.TimeoutException``).
-    - HTTP 408, 429, 502, 503, 504 status codes.
-    - Connection errors and network-level timeouts.
-
-    Does **not** retry on:
-    - Validation errors, bad requests (4xx except 408/429).
-    - Other non-transient errors.
-
-    Each retry waits ``base_delay * 2^attempt`` seconds (exponential backoff).
-    After exhausting ``max_retries`` the last exception is re-raised and
-    propagates to the ARQ worker's ``on_job_failed`` callback.
-
-    Args:
-        max_retries: Maximum number of retry attempts (default 3).
-            The first attempt is **not** counted as a retry.
-        base_delay: Initial delay in seconds before the first retry
-            (doubles each subsequent attempt).
-
-    Returns:
-        A decorator that wraps an async worker function.
-
-    Example::
-
-        @with_retry(max_retries=3, base_delay=2.0)
-        async def extract_entities(ctx, episode_id: str) -> None:
-            ...
-
-    Raises:
-        The last exception encountered if all retries are exhausted.
-    """
-    if max_retries < 0:
-        raise ValueError("max_retries must be >= 0")
-    if base_delay <= 0:
-        raise ValueError("base_delay must be > 0")
-
-    def decorator(
-        func: Callable[..., Any],
-    ) -> Callable[..., Any]:
-        @wraps(func)
-        async def wrapper(ctx: dict[str, Any], *args: Any, **kwargs: Any) -> Any:
-            last_error: Exception | None = None
-
-            for attempt in range(max_retries + 1):  # +1 for the initial try
-                try:
-                    return await func(ctx, *args, **kwargs)
-                except Exception as exc:
-                    last_error = exc
-
-                    if _is_retryable(exc):
-                        if attempt < max_retries:
-                            delay = base_delay * (2**attempt)
-                            logger.warning(
-                                "task.retry",
-                                task=func.__name__,
-                                attempt=attempt + 1,
-                                max_retries=max_retries,
-                                delay_seconds=delay,
-                                error=str(exc),
-                                error_type=type(exc).__name__,
-                            )
-                            await asyncio.sleep(delay)
-                        else:
-                            # Final attempt also failed — will re-raise.
-                            logger.error(
-                                "task.retries_exhausted",
-                                task=func.__name__,
-                                max_retries=max_retries,
-                                error=str(exc),
-                                error_type=type(exc).__name__,
-                            )
-                    else:
-                        # Non-retryable error — re-raise immediately.
-                        logger.warning(
-                            "task.non_retryable_error",
-                            task=func.__name__,
-                            error=str(exc),
-                            error_type=type(exc).__name__,
-                        )
-                        raise
-
-            # All retries exhausted — re-raise the last error.
-            raise last_error  # type: ignore[misc]  — last_error is set if we get here
-
-        return wrapper
-
-    return decorator
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Retryability predicate
+# Retryability predicate — HTTP-specific, belongs here
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 def _is_retryable(exc: Exception) -> bool:
     """Determine whether an exception is transient and worth retrying.
+
+    This is an HTTP-specific predicate for use with
+    :func:`workers.tasks.base.with_retry` via the ``is_retryable``
+    parameter::
+
+        @with_retry(max_retries=3, is_retryable=_is_retryable)
+        async def call_api(...):
+            ...
 
     Transient (retryable) exceptions include:
     - HTTP timeouts (``httpx.TimeoutException``).
@@ -214,3 +86,19 @@ def _is_retryable(exc: Exception) -> bool:
         return True
 
     return False
+
+
+# ── Re-export for convenience ────────────────────────────────────────────────
+
+__all__ = [
+    "ENRICHMENT_ALL",
+    "ENRICHMENT_CLASSIFICATION",
+    "ENRICHMENT_EMBEDDING",
+    "ENRICHMENT_ENTITIES",
+    "ENRICHMENT_ENTITY_LINKS",
+    "ENRICHMENT_FACTS",
+    "ENRICHMENT_OBSERVATIONS",
+    "ENRICHMENT_STRUCTURED_EXTRACTION",
+    "_is_retryable",
+    "with_retry",
+]

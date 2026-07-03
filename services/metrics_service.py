@@ -3,9 +3,9 @@
 Thin wrapper around the Prometheus HTTP API that runs multiple PromQL
 queries concurrently and returns a frontend-friendly JSON shape.
 
-Graceful degradation: if Prometheus is unreachable or times out,
-returns ``status="degraded"`` with zeroed-out metrics so the admin
-panel never hangs.
+If Prometheus is unreachable or any query fails, ``MetricsUnavailableError``
+is raised — the admin dashboard will display an error state rather than
+silently showing zeroed-out metrics.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ import logging
 
 import httpx
 
+from core.exceptions import MetricsUnavailableError
 from schemas.admin_metrics import (
     LatencyPercentiles,
     MetricsSummaryResponse,
@@ -99,40 +100,45 @@ class MetricsService:
         """Run all PromQL queries and assemble the response.
 
         Returns:
-            A fully populated ``MetricsSummaryResponse``.  If Prometheus is
-            unreachable, all numeric fields are zeroed and ``status`` is
-            set to ``"degraded"``.
+            A fully populated ``MetricsSummaryResponse``.
+
+        Raises:
+            MetricsUnavailableError: If Prometheus is unreachable or any
+                query fails.
         """
         results: dict[str, float] = {}
-        degraded = False
 
         async def _query(name: str, promql: str) -> tuple[str, float]:
-            try:
-                val = await self._fetch_value(promql)
-                return name, val
-            except Exception:
-                return name, 0.0
+            val = await self._fetch_value(promql)
+            return name, val
 
         tasks = [_query(name, promql) for name, promql in ALL_QUERIES]
         completed = await asyncio.gather(*tasks, return_exceptions=True)
 
         for item in completed:
             if isinstance(item, Exception):
-                degraded = True
-                continue
+                logger.error("metrics.prometheus_query_failed", exc_info=True)
+                raise MetricsUnavailableError(
+                    "Prometheus query failed."
+                ) from item
             name, val = item
             results[name] = val
 
-        # Check if Prometheus is reachable at all
+        # Verify Prometheus is reachable
         try:
             async with httpx.AsyncClient(timeout=2) as client:
                 resp = await client.get(f"{self._base_url}/-/ready")
                 if resp.status_code != 200:
-                    degraded = True
-        except Exception:
-            degraded = True
+                    raise MetricsUnavailableError(
+                        f"Prometheus readiness check returned {resp.status_code}."
+                    )
+        except httpx.RequestError as exc:
+            logger.error("metrics.prometheus_unreachable", exc_info=True)
+            raise MetricsUnavailableError(
+                "Prometheus is unreachable."
+            ) from exc
 
-        return self._build_response(results, degraded)
+        return self._build_response(results)
 
     async def _fetch_value(self, promql: str) -> float:
         """Execute a PromQL instant query and return the scalar value."""
@@ -145,8 +151,13 @@ class MetricsService:
             data = resp.json()
 
         if data["status"] != "success":
-            logger.warning("Prometheus query failed: %s", data.get("error", ""))
-            return 0.0
+            logger.error(
+                "metrics.prometheus_api_error",
+                extra={"error": data.get("error", "")},
+            )
+            raise MetricsUnavailableError(
+                f"Prometheus API error: {data.get('error', '')}"
+            )
 
         results = data["data"]["result"]
         if not results:
@@ -155,16 +166,16 @@ class MetricsService:
         # Scalar or vector result
         try:
             return float(results[0]["value"][1])
-        except (KeyError, IndexError, ValueError):
-            return 0.0
+        except (KeyError, IndexError, ValueError) as exc:
+            logger.error("metrics.unexpected_response_format", exc_info=True)
+            raise MetricsUnavailableError(
+                "Unexpected Prometheus response format."
+            ) from exc
 
     def _build_response(
-        self, results: dict[str, float], degraded: bool
+        self, results: dict[str, float]
     ) -> MetricsSummaryResponse:
         """Map raw PromQL results into the response model."""
-        msg = None
-        if degraded:
-            msg = "Metrics backend unreachable or returning errors"
 
         # Queue depth — may not exist (worker not running)
         qd = None
@@ -199,6 +210,5 @@ class MetricsService:
             total_requests=int(results.get("total_requests", 0)),
             active_requests=int(results.get("active_requests", 0)),
             queue_depth=qd,
-            status="degraded" if degraded else "ok",
-            message=msg,
+            status="ok",
         )

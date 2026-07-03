@@ -280,6 +280,121 @@ class LLMStructuredOutputError(ExternalServiceError):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Infrastructure failures — zero-fallback domain
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class ServiceUnavailableError(AppError):
+    """A shared infrastructure component is unavailable.
+
+    Raised when a core internal service (cache, database, rate-limiter,
+    metrics backend, graph store, etc.) cannot be reached.  These errors
+    are never silently swallowed — they propagate as HTTP 503 so that
+    load-balancers and orchestrators can react appropriately.
+    """
+
+    status_code: int = 503
+    code: str = "service_unavailable"
+
+    def __init__(
+        self,
+        message: str = "A service dependency is unavailable.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class CacheUnavailableError(ServiceUnavailableError):
+    """Cache service (Redis/Memcached) cannot be reached."""
+
+    code: str = "cache_unavailable"
+
+    def __init__(
+        self,
+        message: str = "Cache service is unavailable.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class GraphBackendUnavailableError(ServiceUnavailableError):
+    """Graph database backend cannot be reached."""
+
+    code: str = "graph_backend_unavailable"
+
+    def __init__(
+        self,
+        message: str = "Graph database backend is unavailable.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class RateLimitUnavailableError(ServiceUnavailableError):
+    """Rate-limiting infrastructure (Redis/backend) cannot be reached."""
+
+    code: str = "rate_limit_unavailable"
+
+    def __init__(
+        self,
+        message: str = "Rate limiting infrastructure is unavailable.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class MetricsUnavailableError(ServiceUnavailableError):
+    """Metrics collection backend cannot be reached."""
+
+    code: str = "metrics_unavailable"
+
+    def __init__(
+        self,
+        message: str = "Metrics service is unavailable.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class DatabaseUnavailableError(ServiceUnavailableError):
+    """Primary or replica database cannot be reached."""
+
+    code: str = "database_unavailable"
+
+    def __init__(
+        self,
+        message: str = "Database is unavailable.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class SearchLegFailedError(ServiceUnavailableError):
+    """A single search retrieval leg (vector, keyword, graph, etc.) failed.
+
+    Carries the leg name and the original error detail so callers can
+    decide whether to fail the entire multi-leg search or proceed with
+    degraded results (the default is to fail — zero fallback).
+    """
+
+    code: str = "search_leg_failed"
+
+    def __init__(
+        self,
+        leg_name: str,
+        message: str | None = None,
+        original_error: str = "",
+    ) -> None:
+        detail: dict[str, Any] = {"leg": leg_name}
+        if original_error:
+            detail["original_error"] = original_error
+        super().__init__(
+            message=message or f"Search leg '{leg_name}' failed.",
+            detail=detail,
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # RFC 7807 Problem Details
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -331,6 +446,14 @@ def register_exception_handlers(app: FastAPI) -> None:
         EdgeNotFoundError: 404,
         EpisodeNotFoundError: 404,
         GraphTimeoutError: 504,
+        # ── Infrastructure failures (503) ────────────────────────────────
+        ServiceUnavailableError: 503,
+        CacheUnavailableError: 503,
+        GraphBackendUnavailableError: 503,
+        RateLimitUnavailableError: 503,
+        MetricsUnavailableError: 503,
+        DatabaseUnavailableError: 503,
+        SearchLegFailedError: 503,
     }
 
     for exc_type, _status in handlers.items():

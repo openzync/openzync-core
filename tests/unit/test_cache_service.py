@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.exceptions import CacheUnavailableError
 from services.cache_service import CacheService
 
 
@@ -17,13 +18,10 @@ class TestCacheService:
     """CacheService unit tests."""
 
     @pytest.mark.asyncio
-    async def test_no_redis_degrades_gracefully(self) -> None:
-        """With redis=None, all operations return None/False."""
-        cache = CacheService(redis=None, default_ttl=60)
-        assert await cache.get("key") is None
-        assert await cache.set("key", "val") is False
-        assert await cache.delete("key") is False
-        assert await cache.invalidate_user_context("org1", "user1") == 0
+    async def test_no_redis_raises_value_error(self) -> None:
+        """With redis=None, constructor raises ValueError."""
+        with pytest.raises(ValueError, match="redis client is required"):
+            CacheService(redis=None, default_ttl=60)
 
     @pytest.mark.asyncio
     async def test_get_returns_cached_value(self) -> None:
@@ -47,14 +45,14 @@ class TestCacheService:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_returns_none_on_redis_error(self) -> None:
-        """get() returns None when Redis raises."""
+    async def test_get_raises_on_redis_error(self) -> None:
+        """get() raises CacheUnavailableError when Redis raises."""
         mock_redis = AsyncMock()
         mock_redis.get.side_effect = ConnectionError("Redis down")
         cache = CacheService(redis=mock_redis, default_ttl=60)
 
-        result = await cache.get("test_key")
-        assert result is None
+        with pytest.raises(CacheUnavailableError, match="Cache read failed"):
+            await cache.get("test_key")
 
     @pytest.mark.asyncio
     async def test_set_stores_with_ttl(self) -> None:

@@ -2,8 +2,7 @@
 
 This repository delegates to a ``GraphBackend`` instance (typically
 ``PostgresGraphBackend``) for all entity and relationship operations.
-Gracefully degrades when no backend is available — all public methods
-return ``None``.
+Raises ``GraphBackendUnavailableError`` when no backend is available.
 """
 
 from __future__ import annotations
@@ -13,6 +12,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import GraphBackendUnavailableError
 from packages.graph_backend.postgres import PostgresGraphBackend
 from packages.graph_backend.interface import GraphBackend
 
@@ -27,7 +27,7 @@ class EntityRepository:
     Args:
         db: An async SQLAlchemy session (request-scoped).
         graph_backend: An initialised ``GraphBackend`` instance.  If
-            ``None``, all operations gracefully return ``None``.
+            ``None``, all operations raise ``GraphBackendUnavailableError``.
     """
 
     def __init__(
@@ -52,17 +52,21 @@ class EntityRepository:
         name: str,
         entity_type: str,
         summary: str | None = None,
-    ) -> dict | None:
+    ) -> dict:
         """Create or update an entity (upsert by org_id + name).
 
         Delegates to the graph backend which uses ``ON CONFLICT DO UPDATE``
         on ``(organization_id, name)`` — the unique constraint added in
         migration 0012 ensures no duplicates.
 
-        Returns ``None`` if the backend is unavailable.
+        Raises:
+            GraphBackendUnavailableError: If the graph backend is not
+                configured or the operation fails.
         """
         if self._backend is None:
-            return None
+            raise GraphBackendUnavailableError(
+                "Graph backend is not configured for this organization."
+            )
 
         # Check if entity with this name already exists (for logging only)
         existing = await self.get_entity_by_name(org_id, project_id, name)
@@ -106,18 +110,19 @@ class EntityRepository:
             return entity
         except Exception as exc:
             logger.error(
-                "entity_repository.upsert_failed",
+                "entity_repository.upsert_entity_failed",
                 extra={
                     "org_id": str(org_id),
                     "project_id": str(project_id),
                     "entity_name": name,
                     "entity_type": entity_type,
                     "action": action,
-                    "error": str(exc),
                 },
                 exc_info=True,
             )
-            return None
+            raise GraphBackendUnavailableError(
+                f"Entity repository operation failed: upsert_entity."
+            ) from exc
 
     async def get_entity_by_name(
         self,
@@ -130,9 +135,18 @@ class EntityRepository:
         The LLM often extracts full names ("Alice Johnson") for entities
         but uses shorter variants ("Alice") in relationship references.
         This method uses substring matching to handle these cases.
+
+        Returns:
+            The entity dict if found, ``None`` if no match exists.
+
+        Raises:
+            GraphBackendUnavailableError: If the graph backend is not
+                configured or the search operation fails.
         """
         if self._backend is None:
-            return None
+            raise GraphBackendUnavailableError(
+                "Graph backend is not configured for this organization."
+            )
 
         try:
             results = await self._backend.search_entities(
@@ -156,17 +170,18 @@ class EntityRepository:
                     return r
             return None
         except Exception as exc:
-            logger.warning(
-                "entity_repository.search_failed",
+            logger.error(
+                "entity_repository.get_entity_by_name_failed",
                 extra={
                     "org_id": str(org_id),
                     "project_id": str(project_id),
                     "entity_name": name,
-                    "error": str(exc),
                 },
                 exc_info=True,
             )
-            return None
+            raise GraphBackendUnavailableError(
+                f"Entity repository operation failed: get_entity_by_name."
+            ) from exc
 
     async def get_entity_by_id(
         self,
@@ -174,9 +189,19 @@ class EntityRepository:
         project_id: UUID,
         entity_id: UUID,
     ) -> dict | None:
-        """Retrieve an entity by its UUID."""
+        """Retrieve an entity by its UUID.
+
+        Returns:
+            The entity dict if found, ``None`` if no match exists.
+
+        Raises:
+            GraphBackendUnavailableError: If the graph backend is not
+                configured or the operation fails.
+        """
         if self._backend is None:
-            return None
+            raise GraphBackendUnavailableError(
+                "Graph backend is not configured for this organization."
+            )
 
         try:
             return await self._backend.get_entity(
@@ -184,16 +209,17 @@ class EntityRepository:
             )
         except Exception as exc:
             logger.error(
-                "entity_repository.get_by_id_failed",
+                "entity_repository.get_entity_by_id_failed",
                 extra={
                     "org_id": str(org_id),
                     "project_id": str(project_id),
                     "entity_id": str(entity_id),
-                    "error": str(exc),
                 },
                 exc_info=True,
             )
-            return None
+            raise GraphBackendUnavailableError(
+                f"Entity repository operation failed: get_entity_by_id."
+            ) from exc
 
     # ── Relationship CRUD ──────────────────────────────────────────────────────
 
@@ -209,11 +235,18 @@ class EntityRepository:
 
         Looks up both entities by name, then creates a directed edge.
 
-        Returns ``None`` if the backend is unavailable or either entity
-        is not found.
+        Returns:
+            The relationship dict if created, ``None`` if either endpoint
+            entity is not found in the graph.
+
+        Raises:
+            GraphBackendUnavailableError: If the graph backend is not
+                configured or the operation fails.
         """
         if self._backend is None:
-            return None
+            raise GraphBackendUnavailableError(
+                "Graph backend is not configured for this organization."
+            )
 
         # Look up both endpoints by name
         subject_node = await self.get_entity_by_name(org_id, project_id, subject)
@@ -262,16 +295,17 @@ class EntityRepository:
             )
             return relationship
         except Exception as exc:
-            logger.warning(
-                "entity_repository.relationship_create_failed",
+            logger.error(
+                "entity_repository.upsert_relationship_failed",
                 extra={
                     "org_id": str(org_id),
                     "project_id": str(project_id),
                     "subject": subject,
                     "predicate": predicate,
                     "object": obj,
-                    "error": str(exc),
                 },
                 exc_info=True,
             )
-            return None
+            raise GraphBackendUnavailableError(
+                f"Entity repository operation failed: upsert_relationship."
+            ) from exc

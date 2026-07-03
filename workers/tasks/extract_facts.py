@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 import structlog
 
 from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
-from core.exceptions import EpisodeNotFoundError
+from core.exceptions import EpisodeNotFoundError, GraphBackendUnavailableError
 from workers.tasks.base import ENRICHMENT_FACTS, with_retry
 
 logger = structlog.get_logger()
@@ -283,12 +283,26 @@ async def extract_facts(
                             # extract_entities always completes before this
                             # worker runs (it chains after via enqueue), so
                             # entities are guaranteed to be in the DB.
+                            # If the graph backend is unavailable, log the
+                            # error and continue — fact persistence to
+                            # PostgreSQL is the primary concern.
                             if subj_id is None:
-                                subj_node = await entity_repo.get_entity_by_name(
-                                    org_id=uuid.UUID(org_id),
-                                    project_id=uuid.UUID(project_id),
-                                    name=input_fact["subject"],
-                                )
+                                try:
+                                    subj_node = await entity_repo.get_entity_by_name(
+                                        org_id=uuid.UUID(org_id),
+                                        project_id=uuid.UUID(project_id),
+                                        name=input_fact["subject"],
+                                    )
+                                except GraphBackendUnavailableError:
+                                    subj_node = None
+                                    logger.error(
+                                        "fact_extraction.graph_backend_unavailable",
+                                        episode_id=episode_id,
+                                        operation="get_entity_by_name",
+                                        role="subject",
+                                        entity_name=input_fact["subject"],
+                                        exc_info=True,
+                                    )
                                 if subj_node is not None:
                                     subj_id = uuid.UUID(subj_node["id"])
                                     input_fact["subject_entity_id"] = subj_id
@@ -300,11 +314,22 @@ async def extract_facts(
                                     )
 
                             if obj_id is None:
-                                obj_node = await entity_repo.get_entity_by_name(
-                                    org_id=uuid.UUID(org_id),
-                                    project_id=uuid.UUID(project_id),
-                                    name=input_fact["object"],
-                                )
+                                try:
+                                    obj_node = await entity_repo.get_entity_by_name(
+                                        org_id=uuid.UUID(org_id),
+                                        project_id=uuid.UUID(project_id),
+                                        name=input_fact["object"],
+                                    )
+                                except GraphBackendUnavailableError:
+                                    obj_node = None
+                                    logger.error(
+                                        "fact_extraction.graph_backend_unavailable",
+                                        episode_id=episode_id,
+                                        operation="get_entity_by_name",
+                                        role="object",
+                                        entity_name=input_fact["object"],
+                                        exc_info=True,
+                                    )
                                 if obj_node is not None:
                                     obj_id = uuid.UUID(obj_node["id"])
                                     input_fact["object_entity_id"] = obj_id
@@ -324,12 +349,13 @@ async def extract_facts(
                                         org_id=uuid.UUID(org_id),
                                         project_id=uuid.UUID(project_id),
                                     )
-                                except Exception:
-                                    # Non-fatal: fact is already persisted,
-                                    # graph relationship is secondary
-                                    logger.warning(
-                                        "fact_extraction.graph_rel_failed",
+                                except GraphBackendUnavailableError:
+                                    # Non-fatal: fact is already persisted in
+                                    # PostgreSQL, graph relationship is secondary.
+                                    logger.error(
+                                        "fact_extraction.graph_backend_unavailable",
                                         episode_id=episode_id,
+                                        operation="upsert_relationship",
                                         subject=input_fact["subject"],
                                         predicate=input_fact["predicate"],
                                         object=input_fact["object"],

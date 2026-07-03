@@ -612,16 +612,13 @@ class AuthMiddleware:
                     scope["state"]["auth_type"] = "api_key"
                     scope["state"]["org_id"] = cached["org_id"]
                     scope["state"]["user_id"] = cached.get("created_by")
-                    scope["state"]["api_key_scopes"] = cached.get("scopes", [])
+                    scope["state"]["api_key_scopes"] = cached["scopes"]
                     scope["state"]["api_key_project_id"] = cached.get("project_id")
                     await self.app(scope, receive, send)
                     return
             except Exception:
-                # Graceful degradation — if Redis is down, fall through to DB.
-                logger.warning(
-                    "Redis auth cache lookup failed, falling back to DB",
-                    exc_info=True,
-                )
+                logger.error("auth.cache_lookup_failed", exc_info=True)
+                raise  # Let the exception propagate — auth layer depends on Redis
 
         # ── Negative cache check ──────────────────────────────────────────
         # If this lookup_hash was recently looked up and not found in DB,
@@ -638,7 +635,8 @@ class AuthMiddleware:
                     )
                     return
             except Exception:
-                logger.warning("Negative cache check failed", exc_info=True)
+                logger.warning("auth.negative_cache_check_failed", exc_info=True)
+                # Non-critical — proceed without negative cache
 
         # ── Per-IP auth miss-rate limit ───────────────────────────────────
         # Prevent a single IP from hammering the DB with many unique
@@ -650,6 +648,7 @@ class AuthMiddleware:
                 await _check_auth_miss_rate_limit(redis, client_ip)
             except Exception as exc:
                 if "Too many authentication attempts" in str(exc):
+                    # This is a legitimate rate-limit response, handle it
                     await _send_rfc7807(
                         send,
                         status=429,
@@ -658,7 +657,8 @@ class AuthMiddleware:
                         path=path,
                     )
                     return
-                logger.warning("Auth miss-rate check failed", exc_info=True)
+                logger.warning("auth.auth_miss_rate_check_failed", exc_info=True)
+                # Non-critical — proceed without miss-rate limiting
 
         # ── Check DB ─────────────────────────────────────────────────────
         if db_factory is None:
@@ -760,7 +760,7 @@ class AuthMiddleware:
                 await ApiKeyRepository(session).update_last_used(UUID(key_data["id"]))
                 await session.commit()
         except Exception:
-            logger.warning("Failed to update API key last_used", exc_info=True)
+            logger.error("auth.last_used_update_failed", exc_info=True)
 
         # ── Cache in Redis (fire-and-forget) ─────────────────────────────
         if redis is not None:
@@ -776,7 +776,7 @@ class AuthMiddleware:
                     },
                 )
             except Exception:
-                logger.warning("Failed to cache auth data in Redis", exc_info=True)
+                logger.error("auth.cache_write_failed", exc_info=True)
 
         # ── RLS context is set in dependencies/db.py on the actual request
         # session.  Do NOT set it here — _set_rls_context opens its own

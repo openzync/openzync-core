@@ -29,7 +29,7 @@ import {
   BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { API_BASE } from "@/lib/api-client";
+import { API_BASE, safeJsonParse } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
@@ -637,7 +637,7 @@ export default function UserDetailPage() {
       } else if (res.status === 429) {
         showToast("Please wait 5 minutes between summary generations.", "error");
       } else {
-        const body = await res.json().catch(() => ({}));
+        const body = await safeJsonParse(res);
         throw new Error(body.detail ?? `Failed to generate summary (${res.status})`);
       }
     } catch (err) {
@@ -656,7 +656,7 @@ export default function UserDetailPage() {
       body: JSON.stringify({ instructions: updatedInstructions }),
     });
     if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
+      const body = await safeJsonParse(res);
       throw new Error(body.detail ?? "Failed to update instructions");
     }
     const result: InstructionsResponse = await res.json();

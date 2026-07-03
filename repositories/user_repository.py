@@ -73,7 +73,7 @@ class UserRepository:
             external_id=external_id,
             name=name,
             email=email,
-            metadata_=metadata or {},
+            metadata_=metadata if metadata is not None else {},
         )
         self._db.add(user)
         await self._db.flush()
@@ -209,8 +209,8 @@ class UserRepository:
             user.email = update_fields["email"]
         if "metadata" in update_fields:
             # Deep merge: new keys override, None values remove
-            existing = dict(user.metadata_ or {})
-            new_meta = update_fields["metadata"] or {}
+            existing = dict(user.metadata_ if user.metadata_ is not None else {})
+            new_meta = update_fields["metadata"] if update_fields["metadata"] is not None else {}
             for k, v in new_meta.items():
                 if v is None:
                     existing.pop(k, None)

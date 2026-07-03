@@ -25,6 +25,7 @@ import {
   getAccessToken,
   API_BASE,
   ApiError,
+  safeJsonParse,
 } from "@/lib/api-client";
 import { timeAgo, formatDate } from "@/lib/utils";
 import { toast } from "sonner";
@@ -134,7 +135,7 @@ function EditDialog({
         headers: authHeaders(),
         body: JSON.stringify({ template_text: templateText, description: description.trim() || null }),
       });
-      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b.detail ?? "Failed to save template"); }
+      if (!res.ok) { const b = await safeJsonParse(res); throw new Error(b.detail ?? "Failed to save template"); }
       toast.success(`Template "${templateDisplayName(template.name)}" saved as new version`);
       await onSaved();
     } catch (err) { setError(err instanceof Error ? err.message : "Failed to save template"); }
@@ -145,7 +146,7 @@ function EditDialog({
     setResetting(true);
     try {
       const res = await fetch(`${API_BASE}/admin/org/prompts/${template.name}`, { method: "DELETE", headers: authHeaders() });
-      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b.detail ?? "Failed to reset template"); }
+      if (!res.ok) { const b = await safeJsonParse(res); throw new Error(b.detail ?? "Failed to reset template"); }
       setShowResetConfirm(false);
       toast.success(`Template "${templateDisplayName(template.name)}" reset to default`);
       await onReset();
@@ -158,7 +159,7 @@ function EditDialog({
     setSettingDefault(true); setError(null);
     try {
       const res = await fetch(`${API_BASE}/admin/org/prompts/${template.name}/set-default`, { method: "POST", headers: authHeaders() });
-      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b.detail ?? "Failed to set as default"); }
+      if (!res.ok) { const b = await safeJsonParse(res); throw new Error(b.detail ?? "Failed to set as default"); }
       toast.success(`"${templateDisplayName(template.name)}" is now the default for its type`);
       await onSaved();
     } catch (err) { setError(err instanceof Error ? err.message : "Failed to set as default"); }
@@ -269,7 +270,7 @@ function VersionHistoryDialog({
     setRollingBack(true);
     try {
       const res = await fetch(`${API_BASE}/admin/org/prompts/${templateName}/rollback/${version}`, { method: "POST", headers: authHeaders() });
-      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b.detail ?? "Failed to rollback template"); }
+      if (!res.ok) { const b = await safeJsonParse(res); throw new Error(b.detail ?? "Failed to rollback template"); }
       toast.success(`Template "${templateDisplayName(templateName)}" rolled back to version ${version}`);
       await fetchVersions();
       onRollback(version);
@@ -281,7 +282,7 @@ function VersionHistoryDialog({
     setPromoting(true); setPromoteConfirm(null);
     try {
       const res = await fetch(`${API_BASE}/admin/org/prompts/${templateName}/promote/${version}`, { method: "POST", headers: authHeaders() });
-      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b.detail ?? "Failed to promote template"); }
+      if (!res.ok) { const b = await safeJsonParse(res); throw new Error(b.detail ?? "Failed to promote template"); }
       toast.success(`Version ${version} of "${templateDisplayName(templateName)}" is now the system default`);
       await fetchVersions();
     } catch (err) { setError(err instanceof Error ? err.message : "Failed to promote template"); }
@@ -403,7 +404,7 @@ function BrowserDialog({ onClose, onImported }: { onClose: () => void; onImporte
     setImporting(templateName);
     try {
       const res = await fetch(`${API_BASE}/admin/org/prompts/import`, { method: "POST", headers: authHeaders(), body: JSON.stringify({ template_name: templateName }) });
-      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b.detail ?? "Failed to import template"); }
+      if (!res.ok) { const b = await safeJsonParse(res); throw new Error(b.detail ?? "Failed to import template"); }
       toast.success(`"${templateDisplayName(templateName)}" imported successfully`);
       await fetchSystemPrompts();
       onImported();
@@ -487,7 +488,7 @@ function CreateDialog({ onClose, onCreate }: { onClose: () => void; onCreate: ()
         method: "PUT", headers: authHeaders(),
         body: JSON.stringify({ template_text: trimmedText, description: description.trim() || null, type }),
       });
-      if (!res.ok) { const b = await res.json().catch(() => ({})); throw new Error(b.detail ?? "Failed to create template"); }
+      if (!res.ok) { const b = await safeJsonParse(res); throw new Error(b.detail ?? "Failed to create template"); }
       toast.success(`Template "${templateDisplayName(trimmedName)}" created`);
       await onCreate();
     } catch (err) { setError(err instanceof Error ? err.message : "Failed to create template"); }

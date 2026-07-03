@@ -20,9 +20,10 @@ import time
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import Float, Select, cast, func, literal, literal_column, select, text
+from sqlalchemy import Float, Select, cast, func, literal_column, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import SearchLegFailedError
 from middleware.metrics import graph_search_latency_seconds, reranker_latency_seconds
 from models.episode import Episode
 from models.fact import Fact
@@ -86,11 +87,15 @@ class HybridRetriever:
     ) -> dict[str, Any]:
         """Run hybrid search across all sources and return RRF-merged results.
 
-        Orchestrates three retrieval legs concurrently:
+        Orchestrates five retrieval legs concurrently:
 
         - Episodes (vector + BM25)
         - Facts (vector + BM25)
         - Graph entities (BFS from entities matching the query)
+
+        All legs run concurrently.  If any single leg fails, the entire
+        search fails with a ``SearchLegFailedError`` — no silent partial
+        results are returned.
 
         Results are grouped by type in the return dict with source counts.
 
@@ -107,6 +112,10 @@ class HybridRetriever:
             - ``communities``: Community summaries (empty if unavailable).
             - ``source_counts``: Item count per source type.
             - ``total_items``: Sum of all items across sources.
+
+        Raises:
+            SearchLegFailedError: If any retrieval leg (vector, BM25,
+                graph BFS, or reranker) fails.
         """
         _search_start = time.monotonic()
 
@@ -126,59 +135,66 @@ class HybridRetriever:
             episode_vector_results = await self._vector_search_episodes(
                 query, project_id, retrieval_limit
             )
-        except Exception:
-            logger.warning(
+        except Exception as exc:
+            logger.error(
                 "hybrid_retriever.episode_vector_failed",
-                extra={"project_id": str(project_id), "query": query},
+                extra={"project_id": str(project_id), "query": query, "leg": "episode_vector"},
                 exc_info=True,
             )
             await self._db.rollback()
+            raise SearchLegFailedError(leg_name="episode_vector", original_error=str(exc)) from exc
 
         try:
             fact_vector_results = await self._vector_search_facts(
                 query, project_id, retrieval_limit
             )
-        except Exception:
-            logger.warning(
+        except Exception as exc:
+            logger.error(
                 "hybrid_retriever.fact_vector_failed",
-                extra={"project_id": str(project_id), "query": query},
+                extra={"project_id": str(project_id), "query": query, "leg": "fact_vector"},
                 exc_info=True,
             )
             await self._db.rollback()
+            raise SearchLegFailedError(leg_name="fact_vector", original_error=str(exc)) from exc
 
         # BM25 search for episodes and facts
         try:
             episode_bm25_results = await self._bm25_search_episodes(
                 query, project_id, retrieval_limit
             )
-        except Exception:
-            logger.warning(
+        except Exception as exc:
+            logger.error(
                 "hybrid_retriever.episode_bm25_failed",
-                extra={"project_id": str(project_id), "query": query},
+                extra={"project_id": str(project_id), "query": query, "leg": "episode_bm25"},
                 exc_info=True,
             )
             await self._db.rollback()
+            raise SearchLegFailedError(leg_name="episode_bm25", original_error=str(exc)) from exc
 
         try:
             fact_bm25_results = await self._bm25_search_facts(query, project_id, retrieval_limit)
-        except Exception:
-            logger.warning(
+        except Exception as exc:
+            logger.error(
                 "hybrid_retriever.fact_bm25_failed",
-                extra={"project_id": str(project_id), "query": query},
+                extra={"project_id": str(project_id), "query": query, "leg": "fact_bm25"},
                 exc_info=True,
             )
             await self._db.rollback()
+            raise SearchLegFailedError(leg_name="fact_bm25", original_error=str(exc)) from exc
 
         # Graph BFS via entity name search
         try:
             entity_results = await self._graph_bfs_search(query, project_id)
-        except Exception:
-            logger.warning(
+        except SearchLegFailedError:
+            raise
+        except Exception as exc:
+            logger.error(
                 "hybrid_retriever.graph_bfs_failed",
-                extra={"project_id": str(project_id), "query": query},
+                extra={"project_id": str(project_id), "query": query, "leg": "graph_bfs"},
                 exc_info=True,
             )
             await self._db.rollback()
+            raise SearchLegFailedError(leg_name="graph_bfs", original_error=str(exc)) from exc
 
         # ── RRF merge per type ────────────────────────────────────────────
         # Use rerank_top_k as the RRF candidate pool size when re-ranking is active
@@ -211,18 +227,17 @@ class HybridRetriever:
                 reranker_latency_seconds.labels(
                     backend=self._reranker.backend_name,
                 ).observe(_rerank_elapsed)
-            except Exception:
-                logger.warning(
+            except Exception as exc:
+                logger.error(
                     "hybrid_retriever.rerank_failed",
                     extra={
                         "query": query[:100],
                         "duration_ms": round((time.monotonic() - _rerank_start) * 1000),
+                        "leg": "reranker",
                     },
                     exc_info=True,
                 )
-                # Fallback: truncate RRF output to caller-requested limit
-                merged_episodes = merged_episodes[:limit]
-                merged_facts = merged_facts[:limit]
+                raise SearchLegFailedError(leg_name="reranker", original_error=str(exc)) from exc
 
         graph_search_latency_seconds.observe(time.monotonic() - _search_start)
 
@@ -251,19 +266,20 @@ class HybridRetriever:
 
     # ── Vector Search ──────────────────────────────────────────────────────────
 
-    async def _embed_query(self, query: str) -> list[float] | None:
+    async def _embed_query(self, query: str) -> list[float]:
         """Generate an embedding vector for a search query.
 
-        Uses the configured LLM backend's embedding model.  Returns
-        ``None`` if embedding generation fails (backends unavailable,
-        network error, etc.), which triggers the BM25 fallback.
+        Uses the configured LLM backend's embedding model.
 
         Args:
             query: Natural-language query text.
 
         Returns:
-            A list of floats representing the query embedding, or
-            ``None`` if embedding generation was not possible.
+            A list of floats representing the query embedding.
+
+        Raises:
+            SearchLegFailedError: If embedding generation fails or returns
+                no embeddings.
         """
         try:
             from core.llm import resolve_backend
@@ -280,13 +296,19 @@ class HybridRetriever:
             response = await backend.embed([query])
             if response.embeddings and len(response.embeddings) > 0:
                 return response.embeddings[0]
-        except Exception:
-            logger.warning(
+            raise SearchLegFailedError(
+                leg_name="embedding",
+                original_error="Embedding response contained no embeddings.",
+            )
+        except SearchLegFailedError:
+            raise
+        except Exception as exc:
+            logger.error(
                 "hybrid_retriever.embed_query_failed",
-                extra={"query": query[:100]},
+                extra={"query": query[:100], "leg": "embedding"},
                 exc_info=True,
             )
-        return None
+            raise SearchLegFailedError(leg_name="embedding", original_error=str(exc)) from exc
 
     async def _vector_search_episodes(
         self,
@@ -298,8 +320,7 @@ class HybridRetriever:
 
         Generates an embedding for the query, then finds the nearest
         neighbours in ``episodes.embedding`` using the ``<=>`` (cosine
-        distance) operator.  Falls back to BM25 when no embeddings are
-        available or the query cannot be embedded.
+        distance) operator.
 
         The ``embedding`` column is ``vector(768)`` — cast via
         :class:`pgvector.sqlalchemy.Vector` at query time.
@@ -312,11 +333,11 @@ class HybridRetriever:
         Returns:
             A list of result dicts with ``id``, ``content``, ``role``,
             ``score``, and ``created_at`` keys.
+
+        Raises:
+            SearchLegFailedError: If embedding generation fails.
         """
         query_embedding = await self._embed_query(query)
-        if query_embedding is None:
-            logger.debug("hybrid_retriever.episode_vector_fallback_bm25")
-            return await self._bm25_search_episodes(query, project_id, limit)
 
         dim: int = (
             self._org_config.embedding_dim
@@ -372,8 +393,7 @@ class HybridRetriever:
         """Semantic search over facts using pgvector cosine similarity.
 
         Same pattern as ``_vector_search_episodes`` but operates on the
-        ``facts.embedding`` column.  Falls back to BM25 when embeddings
-        are unavailable.
+        ``facts.embedding`` column.
 
         Args:
             query: Natural-language query text.
@@ -383,11 +403,11 @@ class HybridRetriever:
         Returns:
             A list of result dicts with ``id``, ``content``, ``subject``,
             ``predicate``, ``object``, ``score``, and ``confidence`` keys.
+
+        Raises:
+            SearchLegFailedError: If embedding generation fails.
         """
         query_embedding = await self._embed_query(query)
-        if query_embedding is None:
-            logger.debug("hybrid_retriever.fact_vector_fallback_bm25")
-            return await self._bm25_search_facts(query, project_id, limit)
 
         # Resolve embedding dimension from org config so the runtime
         # ``::vector(N)`` cast matches the model that produced the data.
@@ -536,8 +556,7 @@ class HybridRetriever:
         """BFS traversal from entities across all configured graph backends.
 
         Runs ``retrieve_graph`` on every registered backend in parallel,
-        then merges results deduplicating by entity ``id``.  Gracefully
-        degrades to an empty list when no backends are available.
+        then merges results deduplicating by entity ``id``.
 
         Each backend independently searches for entities matching the
         query text, BFS-traverses from those entities, and returns shaped
@@ -551,6 +570,9 @@ class HybridRetriever:
             A list of entity dicts with ``id``, ``name``, ``type``,
             ``summary``, and ``distance`` keys, deduplicated and sorted
             by distance ascending.
+
+        Raises:
+            SearchLegFailedError: If any graph backend call fails.
         """
         if not self._graph_backends:
             logger.debug(
@@ -562,48 +584,32 @@ class HybridRetriever:
             )
             return []
 
-        try:
-            # Run each backend's retrieve_graph in parallel
-            results = await asyncio.gather(
-                *[
-                    backend.retrieve_graph(
-                        org_id=self._org_id,
-                        project_id=project_id,
-                        query=query,
-                    )
-                    for backend in self._graph_backends
-                ],
-                return_exceptions=True,
-            )
+        # Run each backend's retrieve_graph in parallel — failure in any
+        # backend propagates immediately (no silent degradation).
+        results = await asyncio.gather(
+            *[
+                backend.retrieve_graph(
+                    org_id=self._org_id,
+                    project_id=project_id,
+                    query=query,
+                )
+                for backend in self._graph_backends
+            ],
+        )
 
-            # Merge: deduplicate by id, keep first occurrence (lower distance wins)
-            seen: set[str] = set()
-            merged: list[dict[str, Any]] = []
-            for r in results:
-                if isinstance(r, Exception):
-                    logger.warning(
-                        "hybrid_retriever.backend_failed",
-                        exc_info=r,
-                        extra={"query": query},
-                    )
-                    continue
-                for item in r:
-                    item_id = item.get("id", "")
-                    if item_id and item_id not in seen:
-                        seen.add(item_id)
-                        merged.append(item)
+        # Merge: deduplicate by id, keep first occurrence (lower distance wins)
+        seen: set[str] = set()
+        merged: list[dict[str, Any]] = []
+        for r in results:
+            for item in r:
+                item_id = item["id"]
+                if item_id and item_id not in seen:
+                    seen.add(item_id)
+                    merged.append(item)
 
-            # Sort by distance (closest first), limit to MAX_BFS_RESULTS
-            merged.sort(key=lambda x: x.get("distance", 99))
-            return merged[:MAX_BFS_RESULTS]
-
-        except Exception:
-            logger.warning(
-                "hybrid_retriever.graph_bfs_failed",
-                extra={"query": query},
-                exc_info=True,
-            )
-            return []
+        # Sort by distance (closest first), limit to MAX_BFS_RESULTS
+        merged.sort(key=lambda x: x["distance"])
+        return merged[:MAX_BFS_RESULTS]
 
     # ── RRF Merge ──────────────────────────────────────────────────────────────
 
@@ -639,7 +645,7 @@ class HybridRetriever:
 
         for ranked_list in ranked_lists:
             for rank, item in enumerate(ranked_list, start=1):
-                item_id = str(item.get("id", ""))
+                item_id = str(item["id"])
                 if not item_id:
                     continue
 

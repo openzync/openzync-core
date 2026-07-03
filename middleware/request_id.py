@@ -58,7 +58,7 @@ class RequestIDMiddleware:
 
         try:
             await self.app(scope, receive, send_wrapper)
-        except BaseException:
+        except Exception:  # Never catch KeyboardInterrupt/SystemExit — let them propagate
             raise
         finally:
             structlog.contextvars.clear_contextvars()

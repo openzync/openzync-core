@@ -5,7 +5,7 @@ full retrieval-and-format pipeline:
 
 1. Re-ranker disabled → RRF-only results (no ``reranker_score``).
 2. Re-ranker enabled → results include ``reranker_score``.
-3. Re-ranker failure → graceful fallback to RRF scores.
+3. Re-ranker failure → propagates as ``SearchLegFailedError``.
 4. Context assembly formatting includes ``reranker_score``.
 
 Uses the testcontainers PostgreSQL + Redis stack from ``conftest.py``,
@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from packages.reranker.sentence_transformers import _MODEL_CACHE, _MODEL_LOCKS
 from schemas.organization_config import OrgConfigBase
 from services.context_service import ContextService
+from core.exceptions import SearchLegFailedError
 from services.hybrid_retriever import HybridRetriever
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
@@ -381,17 +382,13 @@ class TestRerankerFailure:
         reranker.rerank.side_effect = RuntimeError("Model inference failed")
         return reranker
 
-    async def test_reranker_failure_falls_back_gracefully(
+    async def test_reranker_failure_propagates(
         self,
         mock_db_session: AsyncMock,
         sample_search_results: dict[str, Any],
         failing_reranker: AsyncMock,
     ) -> None:
-        """When the re-ranker fails, the pipeline still returns 200 with
-        RRF-scored results (no ``reranker_score``).
-
-        The fallback truncates RRF output to the caller-requested limit.
-        """
+        """When the re-ranker fails, SearchLegFailedError propagates."""
         retriever = _build_mocked_retriever(
             mock_db_session,
             ORG_ID,
@@ -400,31 +397,20 @@ class TestRerankerFailure:
             reranker=failing_reranker,
         )
 
-        result = await retriever.hybrid_search("python", PROJECT_ID, limit=20)
+        with pytest.raises(SearchLegFailedError, match="reranker"):
+            await retriever.hybrid_search("python", PROJECT_ID, limit=20)
 
-        episodes = result["episodes"]
-
-        # Results should still be present
-        assert len(episodes) > 0, "Results should be returned despite reranker failure"
-
-        # Results should have ``rrf_score`` (from RRF) but NOT ``reranker_score``
-        for ep in episodes:
-            assert "rrf_score" in ep, "rrf_score should be present (from RRF)"
-            assert "reranker_score" not in ep, (
-                "reranker_score should not appear on failed re-rank"
-            )
-
-    async def test_reranker_failure_logs_and_continues(
+    async def test_reranker_failure_logs_and_raises(
         self,
         mock_db_session: AsyncMock,
         sample_search_results: dict[str, Any],
         failing_reranker: AsyncMock,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """A failed re-rank logs a warning and continues."""
+        """A failed re-rank logs an error and raises SearchLegFailedError."""
         import logging
 
-        caplog.set_level(logging.WARNING)
+        caplog.set_level(logging.ERROR)
 
         retriever = _build_mocked_retriever(
             mock_db_session,
@@ -434,11 +420,12 @@ class TestRerankerFailure:
             reranker=failing_reranker,
         )
 
-        await retriever.hybrid_search("python", PROJECT_ID, limit=20)
+        with pytest.raises(SearchLegFailedError, match="reranker"):
+            await retriever.hybrid_search("python", PROJECT_ID, limit=20)
 
         # Should have logged the failure
         assert any("rerank_failed" in message for message in caplog.messages), (
-            "A warning should be logged when the re-ranker fails"
+            "An error should be logged when the re-ranker fails"
         )
 
 
@@ -606,13 +593,11 @@ class TestContextAssemblyWithReranker:
             "re-ranking is disabled"
         )
 
-    async def test_context_assembly_reranker_failure_in_format(
+    async def test_context_assembly_reranker_failure_propagates(
         self,
         mock_db_session: AsyncMock,
     ) -> None:
-        """When the re-ranker fails, the formatted output falls back to
-        ``rrf_score``.
-        """
+        """When the re-ranker fails, the error propagates."""
         failing_reranker = AsyncMock()
         failing_reranker.rerank.side_effect = RuntimeError("API timeout")
 
@@ -644,23 +629,13 @@ class TestContextAssemblyWithReranker:
         )
         service._retriever = retriever
 
-        result = await service.assemble(
-            project_id=PROJECT_ID,
-            query="python",
-            limit=20,
-            format="text",
-        )
-
-        context_str: str = result["context"]
-
-        # Should still return content
-        assert "Python great" in context_str
-
-        # Should NOT contain "reranker_score"
-        assert "reranker_score" not in context_str, (
-            "Formatted output should not reference reranker_score after "
-            "a re-ranker failure"
-        )
+        with pytest.raises(SearchLegFailedError, match="reranker"):
+            await service.assemble(
+                project_id=PROJECT_ID,
+                query="python",
+                limit=20,
+                format="text",
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -110,7 +110,7 @@ class AuthService:
         return await self._issue_tokens(
             user_id=user.id,
             organization_id=org.id,
-            role=user.role or "admin",
+            role=user.role if user.role is not None else "admin",
         )
 
     # ── Login ───────────────────────────────────────────────────────────────
@@ -145,7 +145,7 @@ class AuthService:
         return await self._issue_tokens(
             user_id=user.id,
             organization_id=user.organization_id,
-            role=user.role or "member",
+            role=user.role if user.role is not None else "member",
         )
 
     # ── Refresh ─────────────────────────────────────────────────────────────
@@ -175,7 +175,7 @@ class AuthService:
         user = await self._repo.get_user_by_id(user_id)
         if user is None:
             raise AuthenticationError("User no longer exists.")
-        role = user.role or "member"
+        role = user.role if user.role is not None else "member"
 
         # Issue new tokens first, then revoke + chain the old one
         new_tokens = await self._issue_tokens(
@@ -282,7 +282,7 @@ class AuthService:
             id=user.id,
             email=user.email or "",
             name=user.name,
-            role=user.role or "member",
+            role=user.role if user.role is not None else "member",
             organization_id=user.organization_id,
         )
 
@@ -354,7 +354,7 @@ class AuthService:
             id=user.id,
             email=user.email or "",
             name=user.name,
-            role=user.role or "member",
+            role=user.role if user.role is not None else "member",
             organization_id=user.organization_id,
         )
 

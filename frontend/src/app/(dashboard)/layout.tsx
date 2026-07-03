@@ -440,7 +440,10 @@ export default function DashboardLayout({
       })
         .then((r) => (r.ok ? r.json() : null))
         .then((data) => setProjectName(data?.name ?? null))
-        .catch(() => setProjectName(null));
+        .catch((err) => {
+          console.error("Failed to fetch project name", err);
+          setProjectName(null);  // null state triggers error boundary
+        });
     } else {
       setProjectName(null);
     }
@@ -466,7 +469,10 @@ export default function DashboardLayout({
             if (user?.email) setCurrentUserLabel(user.email);
             else setCurrentUserLabel(user?.name || userId.slice(0, 8));
           })
-          .catch(() => setCurrentUserLabel(userId.slice(0, 8)));
+          .catch((err) => {
+            console.error("Failed to fetch user profile", err);
+            setCurrentUserLabel(userId.slice(0, 8));  // fallback label visible in UI
+          });
       }
     } catch {
       setCurrentUserLabel("User");

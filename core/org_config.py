@@ -1,16 +1,20 @@
-"""Per-organization configuration resolution — cache-first, DB-fallback.
+"""Per-organization configuration resolution — cache-first, DB-authoritative.
 
 Every request path and background worker that needs org-level settings (LLM,
 embeddings, graph, behaviour) should resolve them through this module.
 
 Resolution order:
-1. Redis cache (key ``org_config:{org_id}``, TTL 5 min)
-2. Database (``organizations.config`` JSONB column)
+1. Redis cache (key ``org_config:{org_id}``, TTL 5 min) — performance
+   optimisation only.  Cache failures are logged at ERROR but the request
+   continues to the DB.
+2. Database (``organizations.config`` JSONB column) — the authoritative
+   source.  DB failures propagate as hard errors.
 
 There is **no env-var fallback** — if a field is not set in the DB config
 it is returned as ``None`` and the caller decides what to do.
 
-On config update the cache is invalidated inline.
+On config update the cache is invalidated inline; invalidation failures are
+logged at ERROR but do not fail the operation (stale cache expires via TTL).
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import CacheUnavailableError
 from repositories.organization_repository import OrganizationRepository
 from schemas.organization_config import (
     OrgConfigBase,
@@ -73,7 +78,11 @@ async def get_org_config(
             if cached:
                 return OrgConfigBase.model_validate_json(cached)
         except Exception:
-            logger.warning("org_config.cache_read_failed", exc_info=True)
+            logger.error(
+                "org_config.cache_read_failed",
+                extra={"org_id": str(org_id)},
+                exc_info=True,
+            )
 
     # 2. Fetch from DB
     repo = OrganizationRepository(db)
@@ -92,7 +101,11 @@ async def get_org_config(
         try:
             await redis.setex(cache_key, ORG_CONFIG_CACHE_TTL, org_config.model_dump_json())
         except Exception:
-            logger.warning("org_config.cache_write_failed", exc_info=True)
+            logger.error(
+                "org_config.cache_write_failed",
+                extra={"org_id": str(org_id)},
+                exc_info=True,
+            )
 
     return org_config
 
@@ -142,7 +155,11 @@ async def update_org_config(
         try:
             await redis.delete(cache_key)
         except Exception:
-            logger.warning("org_config.cache_invalidation_failed", exc_info=True)
+            logger.error(
+                "org_config.cache_invalidation_failed",
+                extra={"org_id": str(org_id)},
+                exc_info=True,
+            )
 
     # Re-read from DB (cache is cold)
     return await get_org_config(org_id, db, redis=redis, skip_cache=True)

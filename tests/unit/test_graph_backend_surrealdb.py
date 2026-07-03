@@ -26,7 +26,7 @@ from uuid import UUID, uuid4
 import pytest
 from surrealdb import RecordID
 
-from core.exceptions import ExternalServiceError
+from core.exceptions import ExternalServiceError, GraphBackendUnavailableError
 from packages.graph_backend.surrealdb import (
     SurrealGraphBackend,
     _decode_offset_cursor,
@@ -881,10 +881,10 @@ class TestSurrealGraphBackendRetrieveGraph:
         assert result == []
 
     @staticmethod
-    async def test_retrieve_graph_traverse_failure_graceful(
+    async def test_retrieve_graph_traverse_failure_raises(
         backend: SurrealGraphBackend,
     ) -> None:
-        """Traverse failure is caught and logged; matched entity still returned."""
+        """Traverse failure propagates as GraphBackendUnavailableError."""
         match_entity = {
             "id": str(ENTITY_ID),
             "name": "Match",
@@ -894,16 +894,12 @@ class TestSurrealGraphBackendRetrieveGraph:
         backend.search_entities = AsyncMock(return_value=[match_entity])
         backend.traverse = AsyncMock(side_effect=ValueError("traverse failed"))
 
-        result = await backend.retrieve_graph(
-            org_id=ORG_ID,
-            project_id=PROJ_ID,
-            query="find",
-        )
-
-        # Only the matched entity should be returned (traverse failed gracefully)
-        assert len(result) == 1
-        assert result[0]["id"] == str(ENTITY_ID)
-        assert result[0]["distance"] == 0
+        with pytest.raises(GraphBackendUnavailableError, match="traverse failed"):
+            await backend.retrieve_graph(
+                org_id=ORG_ID,
+                project_id=PROJ_ID,
+                query="find",
+            )
 
 
 @pytest.mark.unit

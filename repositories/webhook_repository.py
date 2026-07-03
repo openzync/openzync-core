@@ -48,7 +48,7 @@ class WebhookRepository:
             organization_id=organization_id,
             name=name,
             url=url,
-            events=orjson.dumps(events or []),
+            events=orjson.dumps(events if events is not None else []),
         )
         self._db.add(endpoint)
         await self._db.flush()

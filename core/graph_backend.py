@@ -128,10 +128,12 @@ class GraphBackendDispatcher:
                 backends.
             surreal: An optional ``AsyncSurreal`` instance from the per-org
                 connection pool.  Passed only to the SurrealDB backend.
-                May be ``None`` (backend degrades gracefully).
+                May be ``None``. Raises ``GraphBackendUnavailableError``
+                when backend is unavailable.
             falkordb_client: An optional ``FalkorDB`` async client instance
                 from the app-level connection pool.  Passed only to the
-                FalkorDB backend.  May be ``None`` (backend degrades gracefully).
+                FalkorDB backend.  May be ``None``. Raises
+                ``GraphBackendUnavailableError`` when backend is unavailable.
 
         Returns:
             An initialised ``GraphBackend`` instance, or ``None`` if graph
@@ -206,8 +208,8 @@ class GraphBackendDispatcher:
         ``client`` for FalkorDB) and any shared kwargs from ``org_config``.
 
         Callers (e.g. ``HybridRetriever``) run these backends in parallel
-        and merge results.  An empty list is returned when no backends
-        are registered (graceful degradation).
+        and merge results. Raises ``GraphBackendUnavailableError`` when no
+        backends are registered.
 
         Args:
             db: A request-scoped ``AsyncSession``.  Only passed to the

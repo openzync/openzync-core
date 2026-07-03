@@ -128,7 +128,7 @@ class EpisodeRepository:
                 user_id=mapping["user_id"],
                 role=mapping["role"],
                 content=mapping["content"],
-                metadata_=mapping["metadata"] or {},
+                metadata_=mapping["metadata"] if mapping["metadata"] is not None else {},
                 embedding=mapping["embedding"],
                 token_count=mapping["token_count"],
                 sequence_number=mapping["sequence_number"],

@@ -179,7 +179,7 @@ class ContextService:
             "metadata": {
                 "cache_hit": False,
                 "assembly_time_ms": round(elapsed, 1),
-                "source_counts": results.get("source_counts", {}),
+                "source_counts": results["source_counts"],
                 "total_items": results.get("total_items", 0),
             },
         }

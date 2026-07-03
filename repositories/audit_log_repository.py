@@ -53,7 +53,7 @@ class AuditLogRepository:
             action=action,
             resource_type=resource_type,
             resource_id=resource_id,
-            details=details or {},
+            details=details if details is not None else {},
             ip_address=ip_address,
         )
         self._db.add(entry)

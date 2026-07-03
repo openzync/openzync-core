@@ -237,7 +237,7 @@ class TestDetectTemporalGaps:
         assert len(patterns) == 1
         assert patterns[0].pattern_type == "narrowing"
 
-    async def test_irregular_pattern_fallback(
+    async def test_irregular_pattern_classification(
         self,
         service: ObservationService,
         mock_repo: AsyncMock,
@@ -377,7 +377,7 @@ class TestDetectBehavioralPatterns:
 
 
 class TestDescriptionGeneration:
-    """Tests for template-based description fallback."""
+    """Tests for template-based description generation."""
 
     def test_co_occurrence_description(self, service: ObservationService) -> None:
         """Template description includes both entity names and count."""

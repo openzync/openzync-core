@@ -63,7 +63,7 @@ class SessionRepository:
             project_id=project_id,
             user_id=created_by,
             external_id=external_id,
-            metadata_=metadata or {},
+            metadata_=metadata if metadata is not None else {},
         )
         self._db.add(session)
         await self._db.flush()
@@ -383,7 +383,7 @@ class SessionRepository:
         if session is None:
             return None
 
-        existing = dict(session.metadata_ or {})
+        existing = dict(session.metadata_ if session.metadata_ is not None else {})
         for k, v in metadata.items():
             if v is None:
                 existing.pop(k, None)

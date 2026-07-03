@@ -1,14 +1,12 @@
-"""PII detection and redaction service — three-layer architecture.
+"""PII detection and redaction service — two-layer architecture.
 
 Layers (applied in order, cumulative):
   1. **Regex** — compiled patterns for emails, phones, SSNs, credit cards,
      IP addresses, API keys, and crypto wallet addresses.  Always runs.
   2. **spaCy NER** — named-entity recognition for person names, locations,
-     organizations, and dates.  Lazy-loaded with graceful fallback to
-     regex-only if the model is unavailable.
-  3. **LLM fallback** — optional layer that sends the text to an LLM for
-     residual PII detection.  Disabled by default; enabled via ``sensitivity``
-     or explicit constructor flag.
+     organizations, and dates.  Lazy-loaded on first use.  Raises
+     ``ExternalServiceError`` if spaCy or the model is unavailable — there
+     is no silent fallback to regex-only when NER is enabled.
 
 Separation: this file contains NO database queries.  All config is passed in
 as plain dicts from the caller (typically the memory service).
@@ -21,10 +19,9 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-import orjson
 import structlog
 
-from core.exceptions import ValidationError
+from core.exceptions import ExternalServiceError, ValidationError
 
 logger = structlog.get_logger(__name__)
 
@@ -98,8 +95,7 @@ class PIIDetection:
         start: Character offset where the detection begins in the source text.
         end: Character offset where the detection ends.
         confidence: Detection confidence score (0.0 to 1.0).
-        method: Detection method — ``"regex"``, ``"spacy_ner"``,
-            or ``"llm_fallback"``.
+        method: Detection method — ``"regex"`` or ``"spacy_ner"``.
     """
 
     type: str
@@ -111,30 +107,27 @@ class PIIDetection:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# PIIDetector — three-layer detection
+# PIIDetector — two-layer detection
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 class PIIDetector:
-    """Multi-layer PII detector with regex, optional NER, and optional LLM.
+    """Multi-layer PII detector with regex and optional NER.
 
-    Typical usage — synchronous regex-only detection::
+    Typical usage::
 
         detector = PIIDetector()
         results = detector.detect("Contact me at john@example.com")
 
-    With all layers enabled::
+    With NER enabled::
 
-        detector = PIIDetector(use_ner=True, use_llm_fallback=True)
-        results = await detector.detect_with_llm("Call 555-1234")
+        detector = PIIDetector(use_ner=True)
+        results = detector.detect("John lives in Paris.")
 
     Args:
         enabled_types: Subset of PII types to scan for.  ``None`` means all.
         min_confidence: Minimum confidence threshold (0.0 to 1.0).
         use_ner: Enable spaCy NER layer (lazy-loaded).
-        use_llm_fallback: Enable LLM fallback layer.
-        llm_backend: Optional LLM backend instance for fallback.
-            Required when ``use_llm_fallback=True``.
     """
 
     def __init__(
@@ -142,26 +135,20 @@ class PIIDetector:
         enabled_types: list[str] | None = None,
         min_confidence: float = 0.7,
         use_ner: bool = True,
-        use_llm_fallback: bool = False,
-        llm_backend: Any | None = None,
     ) -> None:
         self._enabled_types = set(enabled_types or DEFAULT_PII_TYPES)
         self._min_confidence = min_confidence
         self._use_ner = use_ner
-        self._use_llm_fallback = use_llm_fallback
-        self._llm_backend = llm_backend
         self._nlp = None  # Lazy-loaded spaCy pipeline
 
     # ── Public API ─────────────────────────────────────────────────────────
 
     def detect(self, text: str) -> list[PIIDetection]:
-        """Run PII detection against *text* using all enabled layers.
+        """Run PII detection against *text* using regex and optional NER.
 
         Detection order:
         1. Regex scan (always runs, synchronous).
         2. spaCy NER scan (if enabled, synchronous).
-        3. LLM fallback is NOT run from this method — use
-           :meth:`detect_with_llm` for that.
 
         Results are merged (overlapping detections resolved in favour of the
         longer span), filtered by minimum confidence, and returned sorted by
@@ -172,6 +159,10 @@ class PIIDetector:
 
         Returns:
             List of :class:`PIIDetection` results, sorted by start offset.
+
+        Raises:
+            ExternalServiceError: If NER is enabled but spaCy or the model
+                cannot be loaded.
         """
         results: list[PIIDetection] = []
 
@@ -200,29 +191,6 @@ class PIIDetector:
                     "methods": sorted(set(d.method for d in results)),
                 },
             )
-
-        return sorted(results, key=lambda d: d.start)
-
-    async def detect_with_llm(self, text: str) -> list[PIIDetection]:
-        """Run detection INCLUDING the LLM fallback layer.
-
-        This is an async method because it calls an external LLM.  Regex and
-        NER layers still run first; the LLM layer is an additional sweep for
-        patterns the regex/NER may have missed.
-
-        Args:
-            text: The text to scan for PII.
-
-        Returns:
-            Combined results from all three layers.
-        """
-        results = self.detect(text)  # sync layers first
-
-        if self._use_llm_fallback and self._llm_backend is not None:
-            llm_results = await self._scan_llm(text)
-            results.extend(llm_results)
-            results = self._merge_overlapping(results)
-            results = self._confidence_filter(results)
 
         return sorted(results, key=lambda d: d.start)
 
@@ -267,20 +235,20 @@ class PIIDetector:
     def _scan_ner(self, text: str) -> list[PIIDetection]:
         """Run spaCy NER against *text*.
 
-        The spaCy model is loaded lazily on first call.  If the model is not
-        installed or fails to load, a warning is logged and an empty list is
-        returned (graceful degradation to regex-only).
+        The spaCy model is loaded lazily on first call.  Raises
+        ``ExternalServiceError`` if spaCy is not installed or the model
+        cannot be loaded.
 
         Args:
             text: The text to scan.
 
         Returns:
             List of NER-based detections.
+
+        Raises:
+            ExternalServiceError: If spaCy or the NER model is unavailable.
         """
         nlp = self._get_nlp()
-        if nlp is None:
-            return []
-
         doc = nlp(text)
         results: list[PIIDetection] = []
         for ent in doc.ents:
@@ -302,149 +270,38 @@ class PIIDetector:
             )
         return results
 
-    def _get_nlp(self) -> Any | None:
+    def _get_nlp(self) -> Any:
         """Lazy-load the spaCy language model.
 
         Returns:
-            The spaCy ``Language`` pipeline, or ``None`` if unavailable.
+            The spaCy ``Language`` pipeline.
+
+        Raises:
+            ExternalServiceError: If spaCy is not installed or the model
+                cannot be loaded.
         """
         if self._nlp is not None:
             return self._nlp
 
         try:
             import spacy
+        except ImportError as exc:
+            logger.error("pii.spacy_not_installed", exc_info=True)
+            raise ExternalServiceError(
+                "PII NER model (spaCy) is not installed. "
+                "PII detection requires NER to be available."
+            ) from exc
 
-            # Try the smaller model first for faster loading in dev
-            try:
-                self._nlp = spacy.load("en_core_web_sm")
-            except OSError:
-                logger.warning(
-                    "pii.spacy_model_not_found",
-                    extra={
-                        "model": "en_core_web_sm",
-                        "fallback": "regex_only",
-                    },
-                )
-                self._nlp = None
-        except ImportError:
-            logger.warning(
-                "pii.spacy_not_installed",
-                extra={"fallback": "regex_only"},
-            )
-            self._nlp = None
+        try:
+            self._nlp = spacy.load("en_core_web_sm")
+        except OSError as exc:
+            logger.error("pii.ner_model_load_failed", exc_info=True)
+            raise ExternalServiceError(
+                "PII NER model (en_core_web_sm) failed to load. "
+                "PII detection requires NER to be available."
+            ) from exc
 
         return self._nlp
-
-    # ── Layer 3: LLM Fallback ─────────────────────────────────────────────
-
-    _LLM_PROMPT: str = (
-        'Analyze the following text for personally identifiable information '
-        '(PII). Return a JSON list of objects with fields "type", "value", '
-        '"start", and "end". Supported types: email, phone, ssn, credit_card, '
-        'ip_address, api_key, crypto_wallet, name, address, organization, date. '
-        'If no PII is found, return an empty list.\n\nText: """\n{text}\n"""'
-    )
-
-    async def _scan_llm(self, text: str) -> list[PIIDetection]:
-        """Run LLM-based PII detection as a fallback layer.
-
-        The LLM is asked to identify any PII the regex/NER layers may have
-        missed.  Responses are parsed and converted to :class:`PIIDetection`
-        objects with ``method="llm_fallback"``.
-
-        Args:
-            text: The text to scan.
-
-        Returns:
-            List of LLM-found detections.
-        """
-        if self._llm_backend is None:
-            logger.warning("pii.llm_fallback_disabled_no_backend")
-            return []
-
-        try:
-            prompt = self._LLM_PROMPT.format(text=text[:4000])
-
-            response = await self._llm_backend.chat(
-                [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a PII detection system. "
-                            "Output ONLY valid JSON."
-                        ),
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                temperature=0.0,
-                max_tokens=1000,
-            )
-
-            results: list[PIIDetection] = []
-            raw = response.content
-            parsed = self._parse_llm_json_response(raw)
-
-            if parsed is None:
-                logger.warning("pii.llm_response_parse_failed")
-                return []
-
-            for item in parsed:
-                if not isinstance(item, dict):
-                    continue
-                pii_type = item.get("type", "")
-                if pii_type not in self._enabled_types:
-                    continue
-                results.append(
-                    PIIDetection(
-                        type=pii_type,
-                        value=item.get("value", ""),
-                        start=item.get("start", 0),
-                        end=item.get("end", 0),
-                        confidence=0.75,  # LLM fallback is least confident
-                        method="llm_fallback",
-                    )
-                )
-
-            return results
-
-        except Exception as exc:
-            logger.warning(
-                "pii.llm_fallback_error",
-                extra={"error": str(exc)},
-            )
-            return []
-
-    @staticmethod
-    def _parse_llm_json_response(raw: str) -> list[dict] | None:
-        """Parse JSON from an LLM response, handling formatting quirks.
-
-        Strips markdown code fences and attempts to find the first JSON
-        array in the response.
-
-        Args:
-            raw: The raw LLM response string.
-
-        Returns:
-            Parsed list of dicts, or ``None`` if parsing failed.
-        """
-        if "```json" in raw:
-            raw = raw.split("```json", 1)[1].split("```", 1)[0].strip()
-        elif "```" in raw:
-            raw = raw.split("```", 1)[1].split("```", 1)[0].strip()
-
-        raw = raw.strip()
-        json_start = raw.find("[")
-        if json_start < 0:
-            return None
-        raw = raw[json_start:]
-
-        try:
-            data = orjson.loads(raw.encode())
-            if isinstance(data, list):
-                return data
-            return None
-        except orjson.JSONDecodeError:
-            return None
 
     # ── Post-processing ───────────────────────────────────────────────────
 
@@ -598,13 +455,11 @@ class PIIService:
         config: Raw PII configuration dict (from
             ``organizations.quotas["pii"]``).  Keys: ``mode``, ``enabled_types``,
             ``min_confidence``, ``sensitivity``.
-        llm_backend: Optional LLM backend for the LLM fallback layer.
     """
 
     def __init__(
         self,
         config: dict[str, Any] | None = None,
-        llm_backend: Any | None = None,
     ) -> None:
         config = config or {}
 
@@ -613,16 +468,13 @@ class PIIService:
         min_confidence: float = config.get("min_confidence", 0.7)
         sensitivity: str = config.get("sensitivity", "medium")
 
-        # Sensitivity → use_ner / use_llm_fallback mapping
+        # Sensitivity → use_ner mapping
         use_ner = sensitivity in ("medium", "high")
-        use_llm_fallback = sensitivity == "high"
 
         self._detector = PIIDetector(
             enabled_types=enabled_types,
             min_confidence=min_confidence,
             use_ner=use_ner,
-            use_llm_fallback=use_llm_fallback,
-            llm_backend=llm_backend,
         )
         # Redactor is only created when mode is not "off" — in "off" mode
         # process_message returns early before reaching the redactor.

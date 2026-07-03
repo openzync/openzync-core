@@ -51,9 +51,9 @@ class ProjectRepository:
         project = Project(
             organization_id=organization_id,
             name=name,
-            description=description or "",
+            description=description if description is not None else "",
             created_by=created_by,
-            metadata_=metadata_ or {},
+            metadata_=metadata_ if metadata_ is not None else {},
         )
         self._db.add(project)
         await self._db.flush()

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Eye, EyeOff, Loader2, LogIn } from "lucide-react";
-import { API_BASE } from "@/lib/api-client";
+import { API_BASE, safeJsonParse } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 
 function LoginNotice() {
@@ -50,7 +50,7 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
       if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
+        const data = await safeJsonParse(res);
         throw new Error(data.detail ?? "Invalid email or password.");
       }
       const data = await res.json();

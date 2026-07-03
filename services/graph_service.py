@@ -4,8 +4,8 @@ This service wraps a ``GraphBackend`` implementation (typically
 ``PostgresGraphBackend``) to provide a clean service-layer interface
 for the graph query endpoints.
 
-Every method enforces org_id isolation. All methods gracefully degrade when
-no graph backend is available — returning empty results rather than erroring.
+Every method enforces org_id isolation. All methods raise
+``GraphBackendUnavailableError`` when no graph backend is available.
 """
 
 from __future__ import annotations
@@ -15,7 +15,11 @@ from typing import Any
 from uuid import UUID
 
 from core.events import EventType
-from core.exceptions import EntityNotFoundError, NotFoundError
+from core.exceptions import (
+    EntityNotFoundError,
+    GraphBackendUnavailableError,
+    NotFoundError,
+)
 from packages.graph_backend.interface import GraphBackend
 from repositories.fact_repository import FactRepository
 from repositories.user_repository import UserRepository
@@ -30,8 +34,8 @@ class GraphService:
     Args:
         graph_backend: An initialised ``GraphBackend`` implementation
             (e.g. ``PostgresGraphBackend``).  May be ``None`` if the
-            graph backend is not available — all methods gracefully
-            return empty results.
+            graph backend is not available — all methods raise
+            ``GraphBackendUnavailableError``.
         user_repo: Optional ``UserRepository`` for user existence checks.
             When provided, ``ensure_user_exists`` can be called by
             routers before graph queries.
@@ -106,13 +110,16 @@ class GraphService:
 
         Returns:
             A dict with ``items``, ``next_cursor``, and ``has_more`` keys.
-            Returns empty page when graph backend is unavailable.
+
+        Raises:
+            GraphBackendUnavailableError: If the graph backend is not
+                available for this organization.
         """
         if self._backend is None:
-            logger.debug(
-                "graph_service.backend_unavailable", extra={"operation": "get_entities"}
+            raise GraphBackendUnavailableError(
+                "Graph backend is not available for this organization.",
+                detail={"operation": "get_entities"},
             )
-            return {"items": [], "next_cursor": None, "has_more": False}
 
         # Session-scoped query — use FactRepository to find entities linked
         # to this session's episodes, then return in GraphNode-compatible format.
@@ -178,16 +185,15 @@ class GraphService:
             A dict with ``node`` and ``edges`` keys.
 
         Raises:
-            EntityNotFoundError: If the entity does not exist.
+            GraphBackendUnavailableError: If the graph backend is not
+                available for this organization.
+            EntityNotFoundError: If the entity does not exist in the
+                knowledge graph.
         """
         if self._backend is None:
-            logger.debug(
-                "graph_service.backend_unavailable",
-                extra={"operation": "get_entity", "entity_id": str(entity_id)},
-            )
-            raise EntityNotFoundError(
-                message=f"Entity {entity_id} not found — graph backend is not available.",
-                detail={"entity_id": str(entity_id)},
+            raise GraphBackendUnavailableError(
+                "Graph backend is not available for this organization.",
+                detail={"operation": "get_entity", "entity_id": str(entity_id)},
             )
 
         result = await self._backend.get_entity_with_edges(
@@ -218,14 +224,15 @@ class GraphService:
             ``True`` if deleted, ``False`` if not found.
 
         Raises:
+            GraphBackendUnavailableError: If the graph backend is not
+                available for this organization.
             ExternalServiceError: If the graph operation fails.
         """
         if self._backend is None:
-            logger.debug(
-                "graph_service.backend_unavailable",
-                extra={"operation": "delete_entity", "entity_id": str(entity_id)},
+            raise GraphBackendUnavailableError(
+                "Graph backend is not available for this organization.",
+                detail={"operation": "delete_entity", "entity_id": str(entity_id)},
             )
-            return False
 
         return await self._backend.delete_entity(
             org_id=org_id, project_id=project_id, entity_id=entity_id
@@ -258,12 +265,16 @@ class GraphService:
 
         Returns:
             A dict with ``items``, ``next_cursor``, and ``has_more`` keys.
+
+        Raises:
+            GraphBackendUnavailableError: If the graph backend is not
+                available for this organization.
         """
         if self._backend is None:
-            logger.debug(
-                "graph_service.backend_unavailable", extra={"operation": "get_edges"}
+            raise GraphBackendUnavailableError(
+                "Graph backend is not available for this organization.",
+                detail={"operation": "get_edges"},
             )
-            return {"items": [], "next_cursor": None, "has_more": False}
 
         if subject_id is not None:
             return await self._backend.list_entity_edges(
@@ -276,7 +287,7 @@ class GraphService:
             )
 
         # Global edge listing is not supported without a subject_id.
-        # The router should validate this, but we handle gracefully here.
+        # The router must validate this before calling the service.
         logger.warning(
             "graph_service.get_edges_without_subject",
             extra={"org_id": str(org_id)},
@@ -300,15 +311,17 @@ class GraphService:
 
         Returns:
             A list of community dicts with ``id``, ``name``, ``summary``,
-            ``member_count``, and ``created_at`` keys.  Returns an empty list
-            when the graph backend is unavailable or no communities exist yet.
+            ``member_count``, and ``created_at`` keys.
+
+        Raises:
+            GraphBackendUnavailableError: If the graph backend is not
+                available for this organization.
         """
         if self._backend is None:
-            logger.debug(
-                "graph_service.backend_unavailable",
-                extra={"operation": "get_communities"},
+            raise GraphBackendUnavailableError(
+                "Graph backend is not available for this organization.",
+                detail={"operation": "get_communities"},
             )
-            return []
 
         result = await self._backend.list_entities(
             org_id=org_id,
@@ -319,6 +332,6 @@ class GraphService:
         items: list[dict[str, Any]] = result.get("items", [])
         # member_count is stored in attributes at creation time
         for item in items:
-            attrs = item.get("attributes") or {}
+            attrs = item["attributes"] if item.get("attributes") is not None else {}
             item["member_count"] = attrs.get("member_count", 0)
         return items

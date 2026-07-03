@@ -22,7 +22,7 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.exceptions import ExternalServiceError
+from core.exceptions import ExternalServiceError, GraphBackendUnavailableError
 from packages.graph_backend.interface import GraphBackend
 
 logger = structlog.get_logger(__name__)
@@ -192,7 +192,7 @@ class PostgresGraphBackend(GraphBackend):
                     "project_id": str(project_id),
                     "name": name,
                     "type": entity_type,
-                    "summary": summary or "",
+                    "summary": summary if summary is not None else "",
                 },
             )
             row = result.one()
@@ -461,7 +461,7 @@ class PostgresGraphBackend(GraphBackend):
                         "source_id": str(source_id),
                         "target_id": str(target_id),
                         "rel_type": relationship_type,
-                        "properties": orjson.dumps(properties or {}).decode("utf-8"),
+                        "properties": orjson.dumps(properties if properties is not None else {}).decode("utf-8"),
                         "fact": "",
                         "confidence": confidence if confidence is not None else 1.0,
                         "valid_from": valid_from,
@@ -778,7 +778,7 @@ class PostgresGraphBackend(GraphBackend):
                         "org_id": str(org_id),
                         "project_id": str(project_id),
                         "types_null": not type_filter,
-                        "edge_types": edge_types or [],
+                        "edge_types": edge_types if edge_types is not None else [],
                     },
                 )
                 for row in result.all():
@@ -786,15 +786,18 @@ class PostgresGraphBackend(GraphBackend):
                     if neighbour_id not in visited:
                         queue.append((neighbour_id, depth + 1))
             except Exception as exc:
-                logger.warning(
+                logger.error(
                     "pg_graph.traverse_iterative.neighbour_fetch_failed",
                     extra={
                         "org_id": str(org_id),
                         "project_id": str(project_id),
                         "entity_id": current_id,
-                        "error": str(exc),
                     },
+                    exc_info=True,
                 )
+                raise GraphBackendUnavailableError(
+                    f"PostgreSQL graph traversal neighbour fetch failed for entity {current_id}."
+                ) from exc
 
         return nodes
 
@@ -934,15 +937,18 @@ class PostgresGraphBackend(GraphBackend):
                         start_node_id=entity_id,
                         max_depth=max_depth,
                     )
-                except Exception:
-                    logger.warning(
+                except Exception as exc:
+                    logger.error(
                         "pg_graph.retrieve_graph.traverse_failed",
                         extra={
                             "entity_id": entity_id_str,
                             "query": query,
                         },
+                        exc_info=True,
                     )
-                    continue
+                    raise GraphBackendUnavailableError(
+                        f"PostgreSQL graph traversal failed for entity {entity_id_str} during retrieve_graph."
+                    ) from exc
 
                 for node in related:
                     node_id = node.get("id", "")
@@ -961,13 +967,15 @@ class PostgresGraphBackend(GraphBackend):
             results.sort(key=lambda x: x.get("distance", 99))
             return results[:max_results]
 
-        except Exception:
-            logger.warning(
+        except Exception as exc:
+            logger.error(
                 "pg_graph.retrieve_graph_failed",
                 extra={"query": query},
                 exc_info=True,
             )
-            return []
+            raise GraphBackendUnavailableError(
+                f"PostgreSQL retrieve_graph failed for query '{query}'."
+            ) from exc
 
     # ── Entity Listing ────────────────────────────────────────────────────────
 
@@ -1147,7 +1155,7 @@ class PostgresGraphBackend(GraphBackend):
             "id": str(row.id),
             "name": row.name,
             "type": row.entity_type,
-            "summary": row.summary or "",
+            "summary": row.summary if row.summary is not None else "",
             "attributes": (
                 dict(row.attributes)
                 if hasattr(row, "attributes") and row.attributes
@@ -1164,8 +1172,8 @@ class PostgresGraphBackend(GraphBackend):
             "source_id": str(row.source_id),
             "target_id": str(row.target_id),
             "type": row.relationship_type,
-            "properties": row.properties or {},
-            "fact": row.fact or "",
+            "properties": row.properties if row.properties is not None else {},
+            "fact": row.fact if row.fact is not None else "",
             "confidence": float(row.confidence) if row.confidence is not None else 1.0,
             "valid_from": row.valid_from.isoformat() if row.valid_from else None,
             "valid_to": row.valid_to.isoformat() if row.valid_to else None,

@@ -27,6 +27,7 @@ from uuid import UUID
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core.config import settings
+from core.exceptions import DatabaseUnavailableError
 from services.pii_service import PIIDetector, PIIRedactor
 from services.worker.worker_settings import get_queue_name
 
@@ -81,7 +82,8 @@ async def _resolve_audit_body_capture(
                 if org_val is not None:
                     return bool(org_val)
         except Exception:
-            logger.debug("audit.org_config_cache_read_failed", exc_info=True)
+            logger.warning("audit.org_config_cache_read_failed", exc_info=True)
+            # Fall through to DB — cache miss is acceptable, DB is authoritative
 
     # Cache miss — resolve from DB (post-response so user doesn't wait).
     try:
@@ -101,9 +103,11 @@ async def _resolve_audit_body_capture(
         async with factory() as db:
             config = await get_org_config(UUID(org_id), db, redis=redis, skip_cache=True)
             return bool(config.audit_log_response_body) if config.audit_log_response_body is not None else False
-    except Exception:
-        logger.warning("audit.org_config_db_resolve_failed", exc_info=True)
-        return False
+    except Exception as exc:
+        logger.error("audit.org_config_db_resolve_failed", exc_info=True)
+        raise DatabaseUnavailableError(
+            "Cannot resolve org config for audit decision."
+        ) from exc
 
 
 # ── Exempt paths (no audit for internal noise) ────────────────────────────────
@@ -230,10 +234,7 @@ class AuditMiddleware:
                     body_chunks.append(chunk)
             await send(message)
 
-        try:
-            await self.app(scope, receive, send_wrapper)
-        except BaseException:
-            raise
+        await self.app(scope, receive, send_wrapper)
 
         # ── Post-response: enqueue audit (fire-and-forget) ──────────────
         if method in ("OPTIONS", "GET") or path in EXEMPT_PATHS:
@@ -242,10 +243,12 @@ class AuditMiddleware:
         try:
             await self._enqueue_audit(scope, method, path, status_code, body_chunks)
         except Exception:
-            logger.exception(
+            logger.error(
                 "audit.enqueue_failed",
                 extra={"method": method, "path": path},
+                exc_info=True,
             )
+            # Fire-and-forget — don't fail the request for an audit log
 
     async def _enqueue_audit(
         self,

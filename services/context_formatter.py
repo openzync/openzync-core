@@ -64,7 +64,15 @@ def format_text(
         for i, ep in enumerate(episodes, start=1):
             role = ep.get("role", "unknown")
             content = ep.get("content", "")
-            score = ep.get("reranker_score") or ep.get("rrf_score") or ep.get("score")
+            reranker = ep.get("reranker_score")
+            rrf = ep.get("rrf_score")
+            score_val = ep.get("score")
+            if reranker is not None:
+                score = reranker
+            elif rrf is not None:
+                score = rrf
+            else:
+                score = score_val
             score_str = f" [score={score:.4f}]" if score is not None else ""
 
             # Truncate very long content
@@ -87,7 +95,15 @@ def format_text(
         for i, fact in enumerate(facts, start=1):
             content = fact.get("content", "")
             confidence = fact.get("confidence")
-            score = fact.get("reranker_score") or fact.get("rrf_score") or fact.get("score")
+            reranker = fact.get("reranker_score")
+            rrf = fact.get("rrf_score")
+            score_val = fact.get("score")
+            if reranker is not None:
+                score = reranker
+            elif rrf is not None:
+                score = rrf
+            else:
+                score = score_val
             confidence_str = (
                 f" (confidence={confidence:.2f})"
                 if confidence is not None

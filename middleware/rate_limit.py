@@ -13,8 +13,8 @@ Two tiers of rate limiting are enforced:
 
 All responses include RFC 7807 body on 429.
 
-Graceful degradation: if Redis is unreachable the request is allowed through
-with a warning logged.
+Fail-closed: if Redis is unreachable the request is rejected with HTTP 503
+via :class:`RateLimitUnavailableError`.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ import redis.asyncio as aioredis
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core.config import settings
+from core.exceptions import RateLimitUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -100,10 +101,11 @@ async def _get_org_rate_limit(
             max_req = int(quota_data.get("rate_limit_max", FALLBACK_ORG_RATE_LIMIT))
             window = int(quota_data.get("rate_limit_window", FALLBACK_ORG_WINDOW))
             return max_req, window
-    except Exception:
-        logger.warning("Failed to read org rate-limit config", exc_info=True)
-
-    return FALLBACK_ORG_RATE_LIMIT, FALLBACK_ORG_WINDOW
+    except Exception as exc:
+        logger.error("rate_limit.config_read_failed", exc_info=True)
+        raise RateLimitUnavailableError(
+            "Failed to read org rate-limit config from Redis."
+        ) from exc
 
 
 async def _check_rate_limit(
@@ -186,7 +188,7 @@ class RateLimitMiddleware:
             await self.app(scope, receive, send)
             return
 
-        # ── Get Redis client (graceful degradation if unavailable) ──────
+        # ── Get Redis client (fail-closed if unavailable) ───────────────
         app_state = scope.get("app", {}).state if hasattr(scope.get("app"), "state") else {}
         redis: aioredis.Redis | None = getattr(app_state, "redis", None) if not isinstance(app_state, dict) else None
 
@@ -196,16 +198,18 @@ class RateLimitMiddleware:
             redis = getattr(_app.state, "redis", None) if _app is not None else None
 
         if redis is None:
-            logger.warning("Redis not available — rate limiting disabled")
-            await self.app(scope, receive, send)
-            return
+            logger.error("rate_limit.redis_not_configured")
+            raise RateLimitUnavailableError(
+                "Redis is not configured — rate limiting cannot operate."
+            )
 
         try:
             await redis.ping()
-        except Exception:
-            logger.warning("Redis unreachable — rate limiting disabled", exc_info=True)
-            await self.app(scope, receive, send)
-            return
+        except Exception as exc:
+            logger.error("rate_limit.redis_unreachable", exc_info=True)
+            raise RateLimitUnavailableError(
+                "Redis is unreachable — rate limiting cannot operate."
+            ) from exc
 
         # ── Determine rate-limit key and parameters ─────────────────────
         state = scope.get("state") or {}
@@ -228,10 +232,11 @@ class RateLimitMiddleware:
                 max_requests=max_req,
                 window_seconds=window,
             )
-        except Exception:
-            logger.exception("Rate-limit check failed — allowing request")
-            await self.app(scope, receive, send)
-            return
+        except Exception as exc:
+            logger.error("rate_limit.check_failed", exc_info=True)
+            raise RateLimitUnavailableError(
+                "Rate limit check failed due to infrastructure error."
+            ) from exc
 
         retry_after = max(1, reset_time - int(time.time()))
 

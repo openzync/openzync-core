@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2, Eye, Brain, AudioWaveform, GitBranch, Settings2, Save, CheckCircle, AlertCircle, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { API_BASE } from "@/lib/api-client";
+import { API_BASE, safeJsonParse } from "@/lib/api-client";
 import { SecretInput } from "@/components/ui/secret-input";
 import { Button } from "@/components/ui/button";
 
@@ -240,7 +240,7 @@ export default function OnboardingPage() {
       });
 
       if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
+        const body = await safeJsonParse(res);
         throw new Error(body.detail ?? "Failed to save configuration");
       }
 

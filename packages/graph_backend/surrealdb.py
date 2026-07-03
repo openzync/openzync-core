@@ -37,7 +37,7 @@ import structlog
 from surrealdb import AsyncSurreal, RecordID
 from surrealdb.errors import InternalError, SurrealError, parse_query_error
 
-from core.exceptions import ExternalServiceError
+from core.exceptions import ExternalServiceError, GraphBackendUnavailableError
 from packages.graph_backend.interface import GraphBackend
 
 logger = structlog.get_logger(__name__)
@@ -229,7 +229,7 @@ class SurrealGraphBackend(GraphBackend):
             "id": cls._record_id_to_str(row.get("id")),
             "name": row.get("name", ""),
             "type": row.get("entity_type", ""),
-            "summary": row.get("summary") or "",
+            "summary": row.get("summary") if row.get("summary") is not None else "",
             "attributes": (
                 dict(row["attributes"])
                 if isinstance(row.get("attributes"), dict)
@@ -263,8 +263,8 @@ class SurrealGraphBackend(GraphBackend):
             "source_id": cls._record_id_to_str(row.get("in")),
             "target_id": cls._record_id_to_str(row.get("out")),
             "type": edge_type,
-            "properties": row.get("properties") or {},
-            "fact": row.get("fact") or "",
+            "properties": row.get("properties") if row.get("properties") is not None else {},
+            "fact": row.get("fact") if row.get("fact") is not None else "",
             "confidence": float(row["confidence"]) if row.get("confidence") is not None else 1.0,
             "valid_from": cls._to_iso(row.get("valid_from")),
             "valid_to": cls._to_iso(row.get("valid_to")),
@@ -354,7 +354,7 @@ class SurrealGraphBackend(GraphBackend):
         self._require_connection()
 
         name_lower = name.lower().strip()
-        summary_val = summary or ""
+        summary_val = summary if summary is not None else ""
 
         query = """
         LET $existing = (SELECT id, entity_type, summary FROM entity
@@ -652,7 +652,7 @@ class SurrealGraphBackend(GraphBackend):
             "project_id": str(project_id),
             "source_id": source_rid,
             "target_id": target_rid,
-            "properties": properties or {},
+            "properties": properties if properties is not None else {},
             "confidence": confidence if confidence is not None else 1.0,
             "valid_from": valid_from.isoformat() if valid_from else None,
             "valid_to": valid_to.isoformat() if valid_to else None,
@@ -794,7 +794,7 @@ class SurrealGraphBackend(GraphBackend):
                             f"SELECT VALUE ->{safe_et}->entity.id FROM $current_id;",
                             {"current_id": RecordID("entity", current_id)},
                         )
-                        for row in (et_result or []):
+                        for row in (et_result if et_result is not None else []):
                             neighbour_ids.add(self._record_id_to_str(row))
                 else:
                     et_result = await self._surreal.query(
@@ -802,21 +802,24 @@ class SurrealGraphBackend(GraphBackend):
                         {"current_id": RecordID("entity", current_id)},
                     )
                     neighbour_ids = set()
-                    for row in (et_result or []):
+                    for row in (et_result if et_result is not None else []):
                         neighbour_ids.add(self._record_id_to_str(row))
 
                 for nid in neighbour_ids:
                     if nid and nid not in visited:
                         queue.append((nid, depth + 1))
             except Exception as exc:
-                logger.warning(
+                logger.error(
                     "surreal_graph.traverse.neighbour_fetch_failed",
                     extra={
                         "entity_id": current_id,
                         "depth": depth,
-                        "error": str(exc),
                     },
+                    exc_info=True,
                 )
+                raise GraphBackendUnavailableError(
+                    f"SurrealDB graph traversal neighbour fetch failed for entity {current_id}."
+                ) from exc
 
         return nodes
 
@@ -847,7 +850,7 @@ class SurrealGraphBackend(GraphBackend):
             "org_id": str(org_id),
             "project_id": str(project_id),
             "query": query,
-            "entity_types": types or [],
+            "entity_types": types if types is not None else [],
             "entity_types_null": types is None,
         }
 
@@ -865,11 +868,11 @@ class SurrealGraphBackend(GraphBackend):
                 """,
                 params,
             )
-            rows = result or []
+            rows = result if result is not None else []
             entities = []
             for row in rows:
                 entity = self._row_to_entity(row)
-                entity["score"] = float(row.get("score") or 0.0)
+                entity["score"] = float(row.get("score") if row.get("score") is not None else 0.0)
                 entities.append(entity)
             return entities
         except Exception as exc:
@@ -936,7 +939,7 @@ class SurrealGraphBackend(GraphBackend):
                 """,
                 params,
             )
-            rows = result or []
+            rows = result if result is not None else []
             has_more = len(rows) > limit
             items = self._rows_to_entities(rows[:limit])
 
@@ -1014,7 +1017,7 @@ class SurrealGraphBackend(GraphBackend):
                     params,
                 )
 
-            rows = result or []
+            rows = result if result is not None else []
             has_more = len(rows) > limit
             items = [self._row_to_relationship(r) for r in rows[:limit]]
 
@@ -1129,12 +1132,15 @@ class SurrealGraphBackend(GraphBackend):
                         start_node_id=eid,
                         max_depth=max_depth,
                     )
-                except Exception:
-                    logger.warning(
+                except Exception as exc:
+                    logger.error(
                         "surreal_graph.retrieve_graph.traverse_failed",
                         extra={"entity_id": entity_id_str, "query": query},
+                        exc_info=True,
                     )
-                    continue
+                    raise GraphBackendUnavailableError(
+                        f"SurrealDB graph traversal failed for entity {entity_id_str} during retrieve_graph."
+                    ) from exc
 
                 for node in related:
                     node_id = node.get("id", "")
@@ -1153,13 +1159,15 @@ class SurrealGraphBackend(GraphBackend):
             results.sort(key=lambda x: x.get("distance", 99))
             return results[:max_results]
 
-        except Exception:
-            logger.warning(
+        except Exception as exc:
+            logger.error(
                 "surreal_graph.retrieve_graph_failed",
                 extra={"query": query},
                 exc_info=True,
             )
-            return []
+            raise GraphBackendUnavailableError(
+                f"SurrealDB retrieve_graph failed for query '{query}'."
+            ) from exc
 
     # ── Health ──────────────────────────────────────────────────────────────
 

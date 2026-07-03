@@ -15,7 +15,11 @@ To expose the metrics, mount ``routers/metrics.py`` at ``GET /metrics``.
 
 from __future__ import annotations
 
+import logging
+
 from prometheus_client import Counter, Gauge, Histogram, CollectorRegistry
+
+logger = logging.getLogger(__name__)
 
 # ── Isolated registry — does not include default process/GC metrics ──────────
 METRICS_REGISTRY = CollectorRegistry(auto_describe=False)
@@ -127,7 +131,8 @@ class MetricsMiddleware:
         start = time.monotonic()
         try:
             await self.app(scope, receive, _send_wrapper)
-        except Exception:
+        except Exception as exc:
+            logger.error("metrics.record_failed", exc_info=True)
             status_code = 500
             raise
         finally:

@@ -44,7 +44,7 @@ class AsyncProjectsClient:
         body = CreateProjectRequest(
             name=name,
             description=description,
-            metadata=metadata or {},
+            metadata=metadata if metadata is not None else {},
         )
         data = await self._http.request(
             "POST",

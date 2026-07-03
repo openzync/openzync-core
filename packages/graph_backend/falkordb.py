@@ -39,7 +39,7 @@ import orjson
 import structlog
 from falkordb.asyncio import FalkorDB
 
-from core.exceptions import ExternalServiceError
+from core.exceptions import ExternalServiceError, GraphBackendUnavailableError
 from packages.graph_backend.interface import GraphBackend
 
 logger = structlog.get_logger(__name__)
@@ -120,7 +120,7 @@ class FalkorGraphBackend(GraphBackend):
 
     Args:
         client: An optional connected ``FalkorDB`` async instance.  When
-            ``None``, all methods degrade gracefully (empty results).
+            ``None``, all methods raise ``GraphBackendUnavailableError``.
         max_traversal_depth: Maximum BFS depth (default 2, max 5).
     """
 
@@ -317,7 +317,7 @@ class FalkorGraphBackend(GraphBackend):
             self._schema_ensured[key] = True
 
         name_lower = name.lower().strip()
-        summary_val = summary or ""
+        summary_val = summary if summary is not None else ""
         entity_id = str(uuid4())
         now_str = datetime.now(timezone.utc).isoformat()
 
@@ -605,7 +605,7 @@ class FalkorGraphBackend(GraphBackend):
             "rel_id": rel_id,
             "org_id": str(org_id),
             "project_id": str(project_id),
-            "properties": orjson.dumps(properties or {}).decode("utf-8"),
+            "properties": orjson.dumps(properties if properties is not None else {}).decode("utf-8"),
             "confidence": confidence if confidence is not None else 1.0,
             "valid_from": valid_from.isoformat() if valid_from else None,
             "valid_to": valid_to.isoformat() if valid_to else None,
@@ -910,14 +910,17 @@ class FalkorGraphBackend(GraphBackend):
             except ValueError:
                 raise
             except Exception as exc:
-                logger.warning(
+                logger.error(
                     "falkordb_graph.traverse.neighbour_fetch_failed",
                     extra={
                         "entity_id": current_id,
                         "depth": depth,
-                        "error": str(exc),
                     },
+                    exc_info=True,
                 )
+                raise GraphBackendUnavailableError(
+                    f"FalkorDB graph traversal neighbour fetch failed for entity {current_id}."
+                ) from exc
 
         return nodes
 
@@ -965,14 +968,14 @@ class FalkorGraphBackend(GraphBackend):
                 """,
                 {
                     "query": query,
-                    "entity_types": types or [],
+                    "entity_types": types if types is not None else [],
                     "entity_types_null": types is None,
                 },
             )
 
             # Slice in Python since FalkorDB SKIP/LIMIT with params can be
             # unreliable in some versions.
-            rows = result.result_set or []
+            rows = result.result_set if result.result_set is not None else []
             sliced = rows[offset : offset + limit]
             entities = []
             for row in sliced:
@@ -1218,12 +1221,15 @@ class FalkorGraphBackend(GraphBackend):
                         start_node_id=eid,
                         max_depth=max_depth,
                     )
-                except Exception:
-                    logger.warning(
+                except Exception as exc:
+                    logger.error(
                         "falkordb_graph.retrieve_graph.traverse_failed",
                         extra={"entity_id": entity_id_str, "query": query},
+                        exc_info=True,
                     )
-                    continue
+                    raise GraphBackendUnavailableError(
+                        f"FalkorDB graph traversal failed for entity {entity_id_str} during retrieve_graph."
+                    ) from exc
 
                 for node in related:
                     node_id = node.get("id", "")
@@ -1242,13 +1248,15 @@ class FalkorGraphBackend(GraphBackend):
             results.sort(key=lambda x: x.get("distance", 99))
             return results[:max_results]
 
-        except Exception:
-            logger.warning(
+        except Exception as exc:
+            logger.error(
                 "falkordb_graph.retrieve_graph_failed",
                 extra={"query": query},
                 exc_info=True,
             )
-            return []
+            raise GraphBackendUnavailableError(
+                f"FalkorDB retrieve_graph failed for query '{query}'."
+            ) from exc
 
     # ── Health ─────────────────────────────────────────────────────────────
 

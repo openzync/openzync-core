@@ -43,7 +43,7 @@ class AsyncUsersClient:
             external_id=external_id,
             name=name,
             email=email,
-            metadata=metadata or {},
+            metadata=metadata if metadata is not None else {},
         )
         data = await self._http.request(
             "POST",

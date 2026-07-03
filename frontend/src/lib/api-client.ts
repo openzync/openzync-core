@@ -14,6 +14,18 @@
 const API_BASE: string =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+/** Parse response JSON or throw a structured error with status and preview. */
+export async function safeJsonParse<T>(response: Response): Promise<T> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(
+      `Failed to parse response (${response.status}): ${text.slice(0, 200)}`,
+    );
+  }
+}
+
 /** Track if we are already refreshing to avoid infinite loops. */
 let _refreshing = false;
 

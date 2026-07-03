@@ -267,7 +267,7 @@ def create_arq_worker(
         Configured :class:`ArqWorker` instance (not yet started).
     """
     return ArqWorker(
-        ctx=ctx or {},
+        ctx=ctx if ctx is not None else {},
         redis_settings=redis_settings,
         functions=functions,
         queue_name=get_queue_name(settings.ENV, queue_name),
@@ -278,7 +278,7 @@ def create_arq_worker(
         poll_delay=settings.POLL_DELAY,
         on_job_end=on_job_end,
         on_shutdown=on_shutdown,
-        cron_jobs=cron_jobs or [],
+        cron_jobs=cron_jobs if cron_jobs is not None else [],
     )
 
 
