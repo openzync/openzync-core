@@ -68,3 +68,6 @@ generated/
 *.generated.py
 graphify-out/
 .plan/
+
+# ── Benchmarking ──────────────────────────────────────────────────────────────
+tests/benchmarks/
