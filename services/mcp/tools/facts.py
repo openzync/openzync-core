@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from openzep.client import AsyncOpenZep
+from openzync.client import AsyncOpenZync
 
 
-async def handle_add_fact(client: AsyncOpenZep, args: dict) -> dict:
+async def handle_add_fact(client: AsyncOpenZync, args: dict) -> dict:
     """Add business fact triples to a user's knowledge graph."""
     user_id = args["user_id"]
     facts = args["facts"]
@@ -33,7 +33,7 @@ async def handle_add_fact(client: AsyncOpenZep, args: dict) -> dict:
     }
 
 
-async def handle_list_facts(client: AsyncOpenZep, args: dict) -> dict:
+async def handle_list_facts(client: AsyncOpenZync, args: dict) -> dict:
     """Search facts by keyword query."""
     user_id = args["user_id"]
     query = args["query"]

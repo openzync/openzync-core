@@ -1,4 +1,4 @@
-"""OpenZep ORM models — all models imported here for Alembic detection."""
+"""OpenZync ORM models — all models imported here for Alembic detection."""
 
 from models.api_key import ApiKey
 from models.audit_log import AuditLog

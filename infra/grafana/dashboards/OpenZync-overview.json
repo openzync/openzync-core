@@ -1,15 +1,15 @@
 {
   "__inputs": [],
   "__requires": [],
-  "title": "OpenZep \u2014 Platform Overview",
-  "uid": "openzep-overview",
+  "title": "OpenZync \u2014 Platform Overview",
+  "uid": "openzync-overview",
   "version": 1,
   "schemaVersion": 39,
   "timezone": "utc",
   "editable": true,
   "graphTooltip": 1,
   "tags": [
-    "openzep",
+    "openzync",
     "production"
   ],
   "time": {
@@ -89,12 +89,12 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(openzep_http_requests_total[5m])) by (status)",
+          "expr": "sum(rate(openzync_http_requests_total[5m])) by (status)",
           "legendFormat": "{{ status }}",
           "refId": "A"
         },
         {
-          "expr": "(sum(rate(openzep_http_requests_total{status=\"5xx\"}[5m])) / sum(rate(openzep_http_requests_total[5m]))) * 100",
+          "expr": "(sum(rate(openzync_http_requests_total{status=\"5xx\"}[5m])) / sum(rate(openzync_http_requests_total[5m]))) * 100",
           "legendFormat": "Error Rate",
           "refId": "B"
         }
@@ -150,22 +150,22 @@
       },
       "targets": [
         {
-          "expr": "histogram_quantile(0.50, sum(rate(openzep_context_latency_seconds_bucket{type=\"warm\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.50, sum(rate(openzync_context_latency_seconds_bucket{type=\"warm\"}[5m])) by (le))",
           "legendFormat": "p50 (warm)",
           "refId": "A"
         },
         {
-          "expr": "histogram_quantile(0.95, sum(rate(openzep_context_latency_seconds_bucket{type=\"warm\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.95, sum(rate(openzync_context_latency_seconds_bucket{type=\"warm\"}[5m])) by (le))",
           "legendFormat": "p95 (warm)",
           "refId": "B"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(openzep_context_latency_seconds_bucket{type=\"warm\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds_bucket{type=\"warm\"}[5m])) by (le))",
           "legendFormat": "p99 (warm)",
           "refId": "C"
         },
         {
-          "expr": "histogram_quantile(0.99, sum(rate(openzep_context_latency_seconds_bucket{type=\"cold\"}[5m])) by (le))",
+          "expr": "histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds_bucket{type=\"cold\"}[5m])) by (le))",
           "legendFormat": "p99 (cold)",
           "refId": "D"
         }
@@ -205,12 +205,12 @@
       },
       "targets": [
         {
-          "expr": "openzep_worker_queue_depth{queue_name=\"high\"}",
+          "expr": "openzync_worker_queue_depth{queue_name=\"high\"}",
           "legendFormat": "High Priority",
           "refId": "A"
         },
         {
-          "expr": "openzep_worker_queue_depth{queue_name=\"low\"}",
+          "expr": "openzync_worker_queue_depth{queue_name=\"low\"}",
           "legendFormat": "Low Priority",
           "refId": "B"
         }
@@ -251,7 +251,7 @@
       },
       "targets": [
         {
-          "expr": "sum(increase(openzep_llm_tokens_total[1d])) by (model)",
+          "expr": "sum(increase(openzync_llm_tokens_total[1d])) by (model)",
           "legendFormat": "{{ model }}",
           "refId": "A"
         }
@@ -278,7 +278,7 @@
       },
       "targets": [
         {
-          "expr": "sum(openzep_graph_nodes_total)",
+          "expr": "sum(openzync_graph_nodes_total)",
           "legendFormat": "all",
           "refId": "A"
         }
@@ -329,7 +329,7 @@
       },
       "targets": [
         {
-          "expr": "up{job=\"openzep-api\"}",
+          "expr": "up{job=\"openzync-api\"}",
           "legendFormat": "API",
           "refId": "A"
         }
@@ -368,7 +368,7 @@
       },
       "targets": [
         {
-          "expr": "up{job=\"openzep-worker\"}",
+          "expr": "up{job=\"openzync-worker\"}",
           "legendFormat": "Worker",
           "refId": "A"
         }
@@ -407,7 +407,7 @@
       },
       "targets": [
         {
-          "expr": "up{job=\"openzep-mcp\"}",
+          "expr": "up{job=\"openzync-mcp\"}",
           "legendFormat": "MCP",
           "refId": "A"
         }
@@ -446,7 +446,7 @@
       },
       "targets": [
         {
-          "expr": "pg_up{service=\"OpenZep\"}",
+          "expr": "pg_up{service=\"OpenZync\"}",
           "legendFormat": "PG",
           "refId": "A"
         }
@@ -485,7 +485,7 @@
       },
       "targets": [
         {
-          "expr": "redis_up{service=\"OpenZep\"}",
+          "expr": "redis_up{service=\"OpenZync\"}",
           "legendFormat": "Redis",
           "refId": "A"
         }
@@ -524,7 +524,7 @@
       },
       "targets": [
         {
-          "expr": "falkordb_up{service=\"OpenZep\"}",
+          "expr": "falkordb_up{service=\"OpenZync\"}",
           "legendFormat": "FalkorDB",
           "refId": "A"
         }

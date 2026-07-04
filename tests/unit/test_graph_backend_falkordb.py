@@ -137,7 +137,7 @@ def mock_graph(mock_client: MagicMock) -> AsyncMock:
 def backend(mock_client: MagicMock) -> FalkorGraphBackend:
     """A ``FalkorGraphBackend`` with schema bootstrap pre-completed."""
     bk = FalkorGraphBackend(client=mock_client, max_traversal_depth=2)
-    bk._schema_ensured = {"openzep_00000000-0000-0000-0000-000000000001_00000000-0000-0000-0000-000000000002": True}
+    bk._schema_ensured = {"openzynk_00000000-0000-0000-0000-000000000001_00000000-0000-0000-0000-000000000002": True}
     return bk
 
 
@@ -285,8 +285,8 @@ class TestFalkorGraphBackendHelpers:
         g1 = bk._get_graph(UUID("11111111-1111-1111-1111-111111111111"), UUID("22222222-2222-2222-2222-222222222222"))
         g2 = bk._get_graph(UUID("33333333-3333-3333-3333-333333333333"), UUID("44444444-4444-4444-4444-444444444444"))
 
-        assert client.select_graph.call_args_list[0][0][0] == "openzep_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222"
-        assert client.select_graph.call_args_list[1][0][0] == "openzep_33333333-3333-3333-3333-333333333333_44444444-4444-4444-4444-444444444444"
+        assert client.select_graph.call_args_list[0][0][0] == "openzynk_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222"
+        assert client.select_graph.call_args_list[1][0][0] == "openzynk_33333333-3333-3333-3333-333333333333_44444444-4444-4444-4444-444444444444"
         assert g1 is not g2
 
 

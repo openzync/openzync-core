@@ -1,11 +1,11 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# OpenZep Worker — Production Docker image
+# OpenZync Worker — Production Docker image
 # ──────────────────────────────────────────────────────────────────────────────
 # Multi-stage build for the ARQ background worker.
 #
 # Usage:
-#   docker build -t openzep-worker:latest -f services/worker/Dockerfile .
-#   docker run --env-file .env openzep-worker:latest
+#   docker build -t openzync-worker:latest -f services/worker/Dockerfile .
+#   docker run --env-file .env openzync-worker:latest
 # ──────────────────────────────────────────────────────────────────────────────
 
 FROM python:3.12-slim AS builder

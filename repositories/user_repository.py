@@ -154,7 +154,7 @@ class UserRepository:
 
         Args:
             organization_id: Tenant scope (always applied).
-            user_id: The internal OpenZep user UUID.
+            user_id: The internal OpenZync user UUID.
 
         Returns:
             The User if found, or ``None``.
@@ -186,7 +186,7 @@ class UserRepository:
 
         Args:
             organization_id: Tenant scope (always applied).
-            user_id: The internal OpenZep user UUID.
+            user_id: The internal OpenZync user UUID.
             update_fields: Dict of fields to update. Valid keys: ``name``,
                 ``email``, ``metadata``.
 
@@ -237,7 +237,7 @@ class UserRepository:
 
         Args:
             organization_id: Tenant scope (always applied).
-            user_id: The internal OpenZep user UUID.
+            user_id: The internal OpenZync user UUID.
 
         Returns:
             The soft-deleted User, or ``None`` if not found.
@@ -269,7 +269,7 @@ class UserRepository:
 
         Args:
             organization_id: Tenant scope (always applied).
-            user_id: The internal OpenZep user UUID.
+            user_id: The internal OpenZync user UUID.
 
         Returns:
             ``True`` if a row was deleted, ``False`` if not found.
@@ -384,7 +384,7 @@ class UserRepository:
         Uses a single round-trip query with subqueries — **not** N+1.
 
         Args:
-            user_id: The internal OpenZep user UUID.
+            user_id: The internal OpenZync user UUID.
 
         Returns:
             Dictionary with ``message_count``, ``fact_count``, and
@@ -425,7 +425,7 @@ class UserRepository:
         If the user does not exist this is a no-op (0 rows affected).
 
         Args:
-            user_id: The internal OpenZep user UUID.
+            user_id: The internal OpenZync user UUID.
             summary: The generated summary text.
         """
         stmt = (
@@ -445,7 +445,7 @@ class UserRepository:
         """Return ``(summary, summary_updated_at)`` for a user.
 
         Args:
-            user_id: The internal OpenZep user UUID.
+            user_id: The internal OpenZync user UUID.
 
         Returns:
             A ``(summary, summary_updated_at)`` tuple, or

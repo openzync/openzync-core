@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "openzep.fullname" . }}-api
+  name: {{ include "openzync.fullname" . }}-api
   labels:
-    {{- include "openzep.labels" . | nindent 4 }}
+    {{- include "openzync.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
 spec:
   replicas: {{ .Values.api.replicaCount }}
   selector:
     matchLabels:
-      {{- include "openzep.selectorLabels" . | nindent 6 }}
+      {{- include "openzync.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: api
   template:
     metadata:
       labels:
-        {{- include "openzep.labels" . | nindent 8 }}
+        {{- include "openzync.labels" . | nindent 8 }}
         app.kubernetes.io/component: api
     spec:
       containers:
@@ -26,9 +26,9 @@ spec:
               name: http
           envFrom:
             - configMapRef:
-                name: {{ include "openzep.fullname" . }}-config
+                name: {{ include "openzync.fullname" . }}-config
             - secretRef:
-                name: {{ include "openzep.fullname" . }}-secrets
+                name: {{ include "openzync.fullname" . }}-secrets
                 optional: true
           livenessProbe:
             httpGet:

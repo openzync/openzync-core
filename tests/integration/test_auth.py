@@ -31,7 +31,7 @@ class TestAuthIntegration:
 
     async def test_invalid_key_returns_401(self, anon_client: AsyncClient) -> None:
         """A request with a bogus API key should be rejected with 401."""
-        anon_client.headers["Authorization"] = "Bearer mg_live_invalidkey_xxxxxxxxxx"
+        anon_client.headers["Authorization"] = "Bearer oz_live_invalidkey_xxxxxxxxxx"
         resp = await anon_client.get(self.PROTECTED_ENDPOINT)
         assert resp.status_code == 401
 

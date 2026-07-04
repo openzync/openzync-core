@@ -23,7 +23,7 @@ from core.arq import get_arq
 from core.config import settings
 from repositories.webhook_repository import WebhookRepository
 
-logger = logging.getLogger("openzep.webhooks")
+logger = logging.getLogger("openzync.webhooks")
 
 ARQ_WEBHOOK_QUEUE = "low"
 """Webhook delivery runs on the low-priority queue so it never blocks
@@ -248,4 +248,4 @@ def _arq_queue_name(queue_type: str) -> str:
         Fully qualified queue name for the current environment.
     """
     env = settings.ENVIRONMENT if hasattr(settings, "ENVIRONMENT") else "development"
-    return f"OpenZep:{env}:queue:{queue_type}"
+    return f"OpenZync:{env}:queue:{queue_type}"

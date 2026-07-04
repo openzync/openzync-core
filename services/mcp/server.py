@@ -1,6 +1,6 @@
 """MCP protocol server — JSON-RPC 2.0 dispatch, tool registry, protocol handlers.
 
-Exposes OpenZep as LLM-accessible tools via the Model Context Protocol.
+Exposes OpenZync as LLM-accessible tools via the Model Context Protocol.
 Works over any transport (stdio, SSE).
 """
 
@@ -10,9 +10,9 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
 
-from openzep.client import AsyncOpenZep
+from openzync.client import AsyncOpenZync
 
-logger = logging.getLogger("openzep.mcp")
+logger = logging.getLogger("openzync.mcp")
 
 # ── JSON-RPC error codes ────────────────────────────────────────────────
 
@@ -40,13 +40,13 @@ class ToolDef:
 
 
 class MemGraphMCPServer:
-    """MCP protocol server exposing OpenZep as LLM-accessible tools.
+    """MCP protocol server exposing OpenZync as LLM-accessible tools.
 
     Args:
-        client: An initialised ``AsyncOpenZep`` client instance.
+        client: An initialised ``AsyncOpenZync`` client instance.
     """
 
-    def __init__(self, client: AsyncOpenZep) -> None:
+    def __init__(self, client: AsyncOpenZync) -> None:
         self._client = client
         self._tools: dict[str, ToolDef] = {}
         self._register_default_tools()
@@ -298,7 +298,7 @@ class MemGraphMCPServer:
                 "resources": {},
             },
             "serverInfo": {
-                "name": "OpenZep-mcp",
+                "name": "OpenZync-mcp",
                 "version": "0.1.0",
             },
         })

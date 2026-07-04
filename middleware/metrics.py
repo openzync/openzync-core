@@ -28,7 +28,7 @@ METRICS_REGISTRY = CollectorRegistry(auto_describe=False)
 # Rate: requests per second, broken down by method + path + status
 
 http_requests_total = Counter(
-    "openzep_http_requests_total",
+    "openzync_http_requests_total",
     "Total HTTP requests processed.",
     labelnames=["method", "path", "status"],
     registry=METRICS_REGISTRY,
@@ -36,7 +36,7 @@ http_requests_total = Counter(
 
 # Errors: 5xx responses
 http_errors_total = Counter(
-    "openzep_http_errors_total",
+    "openzync_http_errors_total",
     "Total HTTP 5xx errors.",
     labelnames=["method", "path"],
     registry=METRICS_REGISTRY,
@@ -44,7 +44,7 @@ http_errors_total = Counter(
 
 # Duration: request latency histogram (p50/p95/p99 buckets)
 http_request_duration_seconds = Histogram(
-    "openzep_http_request_duration_seconds",
+    "openzync_http_request_duration_seconds",
     "HTTP request latency in seconds.",
     labelnames=["method", "path"],
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
@@ -53,7 +53,7 @@ http_request_duration_seconds = Histogram(
 
 # In-flight requests (useful for saturation detection)
 http_requests_in_progress = Gauge(
-    "openzep_http_requests_in_progress",
+    "openzync_http_requests_in_progress",
     "HTTP requests currently being handled.",
     labelnames=["method"],
     registry=METRICS_REGISTRY,
@@ -61,7 +61,7 @@ http_requests_in_progress = Gauge(
 
 # Request body size
 http_request_size_bytes = Histogram(
-    "openzep_http_request_size_bytes",
+    "openzync_http_request_size_bytes",
     "HTTP request body size in bytes.",
     labelnames=["method"],
     buckets=(64, 256, 1024, 4096, 16384, 65536, 262144, 1048576),
@@ -71,7 +71,7 @@ http_request_size_bytes = Histogram(
 # ── Application-level metrics (set by service layer) ─────────────────────────
 
 context_latency_seconds = Histogram(
-    "openzep_context_latency_seconds",
+    "openzync_context_latency_seconds",
     "Context assembly latency. ``type`` distinguishes cold (miss) vs warm (hit).",
     labelnames=["type"],  # "cold" | "warm"
     buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0),
@@ -79,14 +79,14 @@ context_latency_seconds = Histogram(
 )
 
 graph_search_latency_seconds = Histogram(
-    "openzep_graph_search_latency_seconds",
+    "openzync_graph_search_latency_seconds",
     "Hybrid graph+vector+BM25 search latency in seconds.",
     buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),
     registry=METRICS_REGISTRY,
 )
 
 reranker_latency_seconds = Histogram(
-    "openzep_reranker_latency_seconds",
+    "openzync_reranker_latency_seconds",
     "Cross-encoder re-ranker inference latency in seconds.",
     labelnames=["backend"],  # "sentence_transformers" | "cohere"
     buckets=(0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0),

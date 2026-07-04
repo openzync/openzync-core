@@ -24,11 +24,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 def get_queue_name(env: str, queue_type: str) -> str:
     """Generate a namespaced queue name.
 
-    Pattern: ``OpenZep:{env}:queue:{queue_type}``
+    Pattern: ``OpenZync:{env}:queue:{queue_type}``
 
     Examples:
-        ``OpenZep:dev:queue:high``
-        ``OpenZep:prod:queue:low``
+        ``OpenZync:dev:queue:high``
+        ``OpenZync:prod:queue:low``
 
     Args:
         env: Environment name (e.g. ``dev``, ``staging``, ``prod``).
@@ -43,7 +43,7 @@ def get_queue_name(env: str, queue_type: str) -> str:
     """
     if queue_type not in ("high", "low"):
         raise ValueError(f"queue_type must be 'high' or 'low', got {queue_type!r}")
-    return f"OpenZep:{env}:queue:{queue_type}"
+    return f"OpenZync:{env}:queue:{queue_type}"
 
 
 class WorkerSettings(BaseSettings):
@@ -51,13 +51,13 @@ class WorkerSettings(BaseSettings):
 
     All durations are in **seconds** unless otherwise noted.
 
-    Settings are read from environment variables (no ``MG_`` prefix — the worker
-    process has its own env-file contract).  Create the module-level ``settings``
-    singleton — do not instantiate this class directly.
+Settings are read from environment variables (no ``OZ_`` prefix — the worker
+process has its own env-file contract).  Create the module-level ``settings``
+singleton — do not instantiate this class directly.
     """
 
     model_config = SettingsConfigDict(
-        env_prefix="MG_",
+        env_prefix="OZ_",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
@@ -66,12 +66,12 @@ class WorkerSettings(BaseSettings):
 
     # ── Database ──────────────────────────────────────────────────────────────
     DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://postgres:postgres@localhost:5432/openzep",
+        default="postgresql+asyncpg://postgres:postgres@localhost:5432/openzync",
         description=(
             "PostgreSQL connection string used by SQLAlchemy async engine. "
             "Must use the ``postgresql+asyncpg://`` scheme."
         ),
-        validation_alias="MG_DATABASE_URL",
+        validation_alias="OZ_DATABASE_URL",
     )
 
     # ── Redis ────────────────────────────────────────────────────────────────
@@ -85,7 +85,7 @@ class WorkerSettings(BaseSettings):
         default="development",
         description=(
             "Environment name used in queue name prefix: "
-            "``OpenZep:{env}:queue:{queue_name}``."
+            "``OpenZync:{env}:queue:{queue_name}``."
         ),
     )
 
@@ -191,12 +191,12 @@ class WorkerSettings(BaseSettings):
 
     @property
     def high_queue_full(self) -> str:
-        """Fully qualified high-priority queue name (e.g. ``OpenZep:prod:queue:high``)."""
+        """Fully qualified high-priority queue name (e.g. ``OpenZync:prod:queue:high``)."""
         return get_queue_name(self.ENV, self.HIGH_QUEUE_NAME)
 
     @property
     def low_queue_full(self) -> str:
-        """Fully qualified low-priority queue name (e.g. ``OpenZep:prod:queue:low``)."""
+        """Fully qualified low-priority queue name (e.g. ``OpenZync:prod:queue:low``)."""
         return get_queue_name(self.ENV, self.LOW_QUEUE_NAME)
 
 

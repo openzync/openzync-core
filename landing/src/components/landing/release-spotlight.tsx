@@ -1,5 +1,5 @@
 import { ArrowDown } from "lucide-react";
-import { Button } from "@openzep/design-system";
+import { Button } from "@openzync/design-system";
 import { latestRelease } from "@/content/releases";
 
 /**
@@ -25,7 +25,7 @@ export function ReleaseSpotlight() {
           <div className="inline-flex items-center gap-2 rounded-lg border border-surface-700/50 bg-surface-900 px-4 py-2 font-mono text-sm text-surface-300 mb-6">
             <span className="text-surface-600">$</span>
             <span className="text-accent-400">pip install</span>
-            <span className="text-brand-300">openzep=={latestRelease.version}</span>
+            <span className="text-brand-300">openzync=={latestRelease.version}</span>
           </div>
 
           {/* Description */}

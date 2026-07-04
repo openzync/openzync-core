@@ -1,4 +1,4 @@
-"""ARQ worker package for OpenZep background tasks.
+"""ARQ worker package for OpenZync background tasks.
 
 The worker process is started via:
 

@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Badge } from "@openzep/design-system";
+import { Badge } from "@openzync/design-system";
 import { getAllChangelogEntries } from "@/lib/changelog";
 import { Calendar } from "lucide-react";
 
 export const metadata: Metadata = {
   title: "Changelog",
-  description: "Latest updates, features, and improvements to OpenZep.",
+  description: "Latest updates, features, and improvements to OpenZync.",
 };
 
 export default function ChangelogPage() {
@@ -21,7 +21,7 @@ export default function ChangelogPage() {
             Changelog
           </h1>
           <p className="text-surface-400 text-lg">
-            Latest updates, features, and improvements to OpenZep.
+            Latest updates, features, and improvements to OpenZync.
           </p>
         </div>
 

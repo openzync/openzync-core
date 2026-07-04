@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// OpenZep Landing — Blog utilities
+// OpenZync Landing — Blog utilities
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import fs from "fs";
@@ -59,7 +59,7 @@ export function getAllBlogPosts(): BlogPost[] {
       title: metadata.title ?? slug,
       date: metadata.date ?? "",
       excerpt: metadata.excerpt ?? content.slice(0, 200).replace(/[#*`]/g, "").trim(),
-      author: metadata.author ?? "OpenZep Team",
+      author: metadata.author ?? "OpenZync Team",
       category: metadata.category ?? "community",
       content,
     });
@@ -82,7 +82,7 @@ export function getBlogPost(slug: string): BlogPost | null {
     title: metadata.title ?? slug,
     date: metadata.date ?? "",
     excerpt: metadata.excerpt ?? "",
-    author: metadata.author ?? "OpenZep Team",
+    author: metadata.author ?? "OpenZync Team",
     category: metadata.category ?? "community",
     content,
   };

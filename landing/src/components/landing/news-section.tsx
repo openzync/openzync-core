@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import { Badge } from "@openzep/design-system";
+import { Badge } from "@openzync/design-system";
 import { getAllChangelogEntries } from "@/lib/changelog";
 import { getAllBlogPosts } from "@/lib/blog";
 import { FormattedDate } from "./formatted-date";

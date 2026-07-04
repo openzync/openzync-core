@@ -6,7 +6,7 @@ import { CtaSection } from "@/components/landing/cta-section";
 
 export const metadata: Metadata = {
   title: "FAQ",
-  description: "Frequently asked questions about OpenZep's persistent agent memory infrastructure.",
+  description: "Frequently asked questions about OpenZync's persistent agent memory infrastructure.",
 };
 
 export default function FaqPage() {
@@ -21,7 +21,7 @@ export default function FaqPage() {
             Frequently Asked Questions
           </h1>
           <p className="text-surface-400 text-lg">
-            Everything you need to know about OpenZep.
+            Everything you need to know about OpenZync.
           </p>
         </div>
       </section>

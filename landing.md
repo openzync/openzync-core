@@ -1,4 +1,4 @@
-## Full Plan — OpenZep Landing Page
+## Full Plan — OpenZync Landing Page
 
 ---
 
@@ -7,7 +7,7 @@
 **Files to create:**
 ```
 /package.json                          ← npm workspaces root
-/packages/design-system/package.json   ← @openzep/design-system
+/packages/design-system/package.json   ← @openzync/design-system
 /packages/design-system/tsconfig.json
 /packages/design-system/src/globals.css
 /packages/design-system/src/cn.ts
@@ -25,7 +25,7 @@
 }
 ```
 
-**`@openzep/design-system` scope:**
+**`@openzync/design-system` scope:**
 - `globals.css` — exact theme tokens from the dashboard (brand 50-900, surface 50-950, semantic colors, fonts, animation keyframes, `.card-base`, `.input-base`, reduced-motion), re-exported as-is
 - `cn.ts` — `clsx` + `tailwind-merge` (identical to dashboard's version)
 - `button.tsx` — same 4-variant/3-size/loading/icon system
@@ -51,7 +51,7 @@
 ```json
 {
   "dependencies": {
-    "@openzep/design-system": "*",
+    "@openzync/design-system": "*",
     "next": "16.2.9",
     "react": "19.2.4",
     "react-dom": "19.2.4",
@@ -90,15 +90,15 @@
 
 | File | Purpose |
 |---|---|
-| `globals.css` | `@import "@openzep/design-system/globals.css"` + landing-specific utilities |
-| `layout.tsx` | **Server component.** Loads Inter + JetBrains Mono via `next/font/google`. Wraps children in `ThemeProvider` (dark default). Renders `<Navbar />` + `{children}` + `<Footer />`. Metadata: title "OpenZep — Agent Memory Infrastructure", description, OG tags |
+| `globals.css` | `@import "@openzync/design-system/globals.css"` + landing-specific utilities |
+| `layout.tsx` | **Server component.** Loads Inter + JetBrains Mono via `next/font/google`. Wraps children in `ThemeProvider` (dark default). Renders `<Navbar />` + `{children}` + `<Footer />`. Metadata: title "OpenZync — Agent Memory Infrastructure", description, OG tags |
 | `page.tsx` | Imports and composes `<Hero />` + `<FeaturesPreview />` + `<StatsBar />` + `<CtaSection />` |
 
 #### 3b — Landing Components (`landing/src/components/landing/`)
 
 **`navbar.tsx`**
 - Fixed top, transparent → glass effect on scroll (`backdrop-blur-md`)
-- Left: Logo mark (brand blue "O" + "OpenZep")
+- Left: Logo mark (brand blue "O" + "OpenZync")
 - Center: Nav links — Features, Changelog, About
 - Right: "Sign In" (ghost) + "Get Started" (primary CTA)
 - Mobile: hamburger → slide-down overlay menu with same links
@@ -132,7 +132,7 @@
 **`footer.tsx`**
 - Multi-column layout: Logo + description | Product | Company | Legal | Social
 - `border-t border-surface-800` at top
-- Copyright line at bottom: "© 2026 OpenZep. All rights reserved."
+- Copyright line at bottom: "© 2026 OpenZync. All rights reserved."
 - Link styling: `text-surface-400 hover:text-text-primary transition-colors`
 
 #### 3c — Page: Features (`landing/src/app/features/page.tsx`)
@@ -165,7 +165,7 @@
 **`landing/content/changelog/`** — MDX files:
 ```mdx
 ---
-title: "OpenZep v1.0.0 — Launch"
+title: "OpenZync v1.0.0 — Launch"
 date: "2026-06-01"
 version: "1.0.0"
 ---
@@ -235,11 +235,11 @@ export const features: Feature[] = [
 ### Phase 6: Route Structure
 
 ```
-openzep.com/                    → Hero page (landing/src/app/page.tsx)
-openzep.com/features            → Features page
-openzep.com/about               → About page
-openzep.com/changelog           → Changelog list
-openzep.com/changelog/[slug]    → Changelog entry (MDX)
+openzync.tech/                    → Hero page (landing/src/app/page.tsx)
+openzync.tech/features            → Features page
+openzync.tech/about               → About page
+openzync.tech/changelog           → Changelog list
+openzync.tech/changelog/[slug]    → Changelog entry (MDX)
 ```
 
 All pages are **server components** (no "use client") except where interactivity requires it (Navbar hamburger toggle, theme toggle, mobile menu). This ensures SSR for SEO.
@@ -251,7 +251,7 @@ All pages are **server components** (no "use client") except where interactivity
 All pages include:
 ```typescript
 export const metadata: Metadata = {
-  title: "Page Title | OpenZep",
+  title: "Page Title | OpenZync",
   description: "Page-specific description",
   openGraph: {
     title: "...",
@@ -261,7 +261,7 @@ export const metadata: Metadata = {
 };
 ```
 
-Global layout metadata includes canonical URL (`openzep.com`), Twitter card tags, and structured JSON-LD for the organization.
+Global layout metadata includes canonical URL (`openzync.tech`), Twitter card tags, and structured JSON-LD for the organization.
 
 ---
 
@@ -285,9 +285,9 @@ EXPOSE 3000
 CMD ["node", "server.js"]
 ```
 
-- Deployed to `openzep.com` (subdomain)
+- Deployed to `openzync.tech` (subdomain)
 - CDN caching: ISR with `revalidate` on changelog pages, static generation for landing pages
-- Environment variables:  `NEXT_PUBLIC_APP_URL=https://app.openzep.com` (for "Sign In" links back to dashboard)
+- Environment variables:  `NEXT_PUBLIC_APP_URL=https://app.openzync.tech` (for "Sign In" links back to dashboard)
 - Health check: `GET /health` → 200
 
 ---

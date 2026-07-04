@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# Grafana dashboard provisioning — OpenZep
+# Grafana dashboard provisioning — OpenZync
 # ──────────────────────────────────────────────────────────────────────────────
 # Auto-loads all JSON dashboard files from the dashboards directory.
 # Reference: https://grafana.com/docs/grafana/latest/administration/provisioning/
@@ -8,9 +8,9 @@
 apiVersion: 1
 
 providers:
-  - name: "OpenZep"
+  - name: "OpenZync"
     orgId: 1
-    folder: "OpenZep"
+    folder: "OpenZync"
     type: file
     disableDeletion: false
     editable: true

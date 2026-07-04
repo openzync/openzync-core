@@ -1,6 +1,6 @@
 """LongMemEval benchmark — measures retrieval quality and QA accuracy.
 
-This test ingests LongMemEval conversations into a live OpenZep instance,
+This test ingests LongMemEval conversations into a live OpenZync instance,
 waits for asynchronous enrichment, queries the search and context endpoints,
 and evaluates both R@k (recall at k) and end-to-end QA accuracy.
 
@@ -475,7 +475,7 @@ def _build_comparison_table(
 ) -> str:
     """Build a markdown comparison table of benchmark results.
 
-    Compare OpenZep scores against published Graphiti and Mem0 numbers.
+    Compare OpenZync scores against published Graphiti and Mem0 numbers.
 
     Reference numbers (published):
         - Graphiti LongMemEval-S: 83%
@@ -499,19 +499,19 @@ def _build_comparison_table(
         "|--------|----------|-----|-----|------|------------|",
     ]
 
-    # OpenZep full pipeline
+    # OpenZync full pipeline
     lines.append(
-        f"| OpenZep (full) | {accuracy_full:.1%} | "
+        f"| OpenZync (full) | {accuracy_full:.1%} | "
         f"{metrics_full.get('r1', 0):.1%} | "
         f"{metrics_full.get('r5', 0):.1%} | "
         f"{metrics_full.get('r10', 0):.1%} | "
         f"LongMemEval-S, RRF + reranker |"
     )
 
-    # OpenZep baseline (if available)
+    # OpenZync baseline (if available)
     if accuracy_baseline is not None:
         lines.append(
-            f"| OpenZep (baseline) | {accuracy_baseline:.1%} | "
+            f"| OpenZync (baseline) | {accuracy_baseline:.1%} | "
             f"{metrics_baseline.get('r1', 0):.1%} | "
             f"{metrics_baseline.get('r5', 0):.1%} | "
             f"{metrics_baseline.get('r10', 0):.1%} | "
@@ -547,7 +547,7 @@ async def _answer_from_context(
     Args:
         backend: LLM backend for answer generation (same as judge backend).
         question: The user's question.
-        context: Retrieved context text from OpenZep.
+        context: Retrieved context text from OpenZync.
         is_abstention: Whether the question expects abstention (i.e., the
             model should say it doesn't know if the info isn't in context).
 
@@ -594,7 +594,7 @@ def _save_results(
         results: List of per-question result dicts.
         config: Benchmark configuration from CLI args.
         git_commit: Current git commit hash.
-        version: OpenZep version string.
+        version: OpenZync version string.
 
     Returns:
         Path to the saved results file.

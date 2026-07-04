@@ -14,7 +14,7 @@ from typing import Any
 
 import httpx
 
-from openzync._errors import OpenZepError, raise_on_error
+from openzync._errors import OpenZyncError, raise_on_error
 from openzync._version import __version__ as _sdk_version
 
 logger = logging.getLogger(__name__)
@@ -38,8 +38,8 @@ class AsyncHTTPTransport:
     """Low-level async HTTP transport with retry, auth, and error mapping.
 
     Args:
-        api_key: The OpenZep API key (sent as ``Authorization: Bearer <key>``).
-        base_url: Base URL of the OpenZep API server.
+        api_key: The OpenZync API key (sent as ``Authorization: Bearer <key>``).
+        base_url: Base URL of the OpenZync API server.
         timeout: Per-request timeout in seconds.
         max_retries: Maximum retry count for retryable statuses.
     """
@@ -88,7 +88,7 @@ class AsyncHTTPTransport:
             Parsed JSON response body.
 
         Raises:
-            OpenZepError: Mapped from the API's RFC 7807 error response.
+            OpenZyncError: Mapped from the API's RFC 7807 error response.
         """
         url = self._build_url(path)
 
@@ -105,7 +105,7 @@ class AsyncHTTPTransport:
                 if attempt < self._max_retries:
                     await self._wait(attempt)
                     continue
-                raise OpenZepError(
+                raise OpenZyncError(
                     message=f"Request timed out after {self._max_retries} retries: {exc}",
                     status_code=504,
                 ) from exc
@@ -139,7 +139,7 @@ class AsyncHTTPTransport:
                 return {"_raw": response.text}
 
         # Should not reach here, but safety net:
-        raise OpenZepError(
+        raise OpenZyncError(
             message=f"Request failed after {self._max_retries} retries",
             status_code=500,
         )

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from openzync.client import AsyncOpenZep
+from openzync.client import AsyncOpenZync
 from openzync.integrations.langchain.tools.facts import AddFactsInput, AddFactsTool
 from openzync.integrations.langchain.tools.graph import (
     GraphNodeDetailInput,
@@ -20,8 +20,8 @@ from openzync.integrations.langchain.tools.graph import (
 
 @pytest.fixture
 def mock_client():
-    """Create a real AsyncOpenZep with mocked sub-clients."""
-    client = AsyncOpenZep(api_key="test", base_url="http://test")
+    """Create a real AsyncOpenZync with mocked sub-clients."""
+    client = AsyncOpenZync(api_key="test", base_url="http://test")
     client.graph = AsyncMock()
     client.facts = AsyncMock()
     return client

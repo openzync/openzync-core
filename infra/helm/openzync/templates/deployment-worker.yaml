@@ -1,20 +1,20 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "openzep.fullname" . }}-worker
+  name: {{ include "openzync.fullname" . }}-worker
   labels:
-    {{- include "openzep.labels" . | nindent 4 }}
+    {{- include "openzync.labels" . | nindent 4 }}
     app.kubernetes.io/component: worker
 spec:
   replicas: {{ .Values.worker.replicaCount }}
   selector:
     matchLabels:
-      {{- include "openzep.selectorLabels" . | nindent 6 }}
+      {{- include "openzync.selectorLabels" . | nindent 6 }}
       app.kubernetes.io/component: worker
   template:
     metadata:
       labels:
-        {{- include "openzep.labels" . | nindent 8 }}
+        {{- include "openzync.labels" . | nindent 8 }}
         app.kubernetes.io/component: worker
     spec:
       containers:
@@ -23,9 +23,9 @@ spec:
           imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
           envFrom:
             - configMapRef:
-                name: {{ include "openzep.fullname" . }}-config
+                name: {{ include "openzync.fullname" . }}-config
             - secretRef:
-                name: {{ include "openzep.fullname" . }}-secrets
+                name: {{ include "openzync.fullname" . }}-secrets
                 optional: true
           livenessProbe:
             exec:

@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# OpenZep — GitLab CI pipeline
+# OpenZync — GitLab CI pipeline
 # ──────────────────────────────────────────────────────────────────────────────
 # Stages:
 #   lint            → ruff, mypy
@@ -94,12 +94,12 @@ test-integration:
     POSTGRES_PASSWORD: "$CI_DB_PASSWORD"
     POSTGRES_USER: postgres
     POSTGRES_DB: test
-    MG_DATABASE_URL: "postgresql+asyncpg://postgres:${CI_DB_PASSWORD}@postgres:5432/test"
-    MG_REDIS_URL: "redis://redis:6379/0"
-    MG_FALKORDB_URL: "redis://redis:6379/0"
-    MG_SECRET_KEY: "$CI_SECRET_KEY"
-    MG_ENVIRONMENT: "testing"
-    MG_LOG_LEVEL: "WARNING"
+    OZ_DATABASE_URL: "postgresql+asyncpg://postgres:${CI_DB_PASSWORD}@postgres:5432/test"
+    OZ_REDIS_URL: "redis://redis:6379/0"
+    OZ_FALKORDB_URL: "redis://redis:6379/0"
+    OZ_SECRET_KEY: "$CI_SECRET_KEY"
+    OZ_ENVIRONMENT: "testing"
+    OZ_LOG_LEVEL: "WARNING"
   before_script:
     - apt-get update -qq && apt-get install -y -qq postgresql-client >/dev/null 2>&1
     - PGPASSWORD="$CI_DB_PASSWORD" psql -h postgres -U postgres -c "CREATE DATABASE test;" 2>/dev/null || true
@@ -123,8 +123,8 @@ build-api:
     DOCKER_DRIVER: overlay2
     DOCKER_TLS_CERTDIR: ""
   script:
-    - docker build -t openzep-api:${CI_COMMIT_SHORT_SHA:-latest} -f services/api/Dockerfile .
-    - docker tag openzep-api:${CI_COMMIT_SHORT_SHA} openzep-api:latest
+    - docker build -t openzync-api:${CI_COMMIT_SHORT_SHA:-latest} -f services/api/Dockerfile .
+    - docker tag openzync-api:${CI_COMMIT_SHORT_SHA} openzync-api:latest
   needs: ["test-integration"]
   only:
     - main

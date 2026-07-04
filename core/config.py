@@ -21,9 +21,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Single source of truth for all OpenZep configuration.
+    """Single source of truth for all OpenZync configuration.
 
-    Values are read from environment variables (prefixed with ``MG_``) or a
+    Values are read from environment variables (prefixed with ``OZ_``) or a
     ``.env`` file.  An instance is created once at import time and reused
     throughout the application — import ``settings`` from this module, do not
     instantiate ``Settings`` yourself.
@@ -43,13 +43,13 @@ class Settings(BaseSettings):
     # ── Database ──────────────────────────────────────────────────────────
     DATABASE_URL: PostgresDsn = Field(
         description="PostgreSQL connection string used by SQLAlchemy async engine.",
-        validation_alias="MG_DATABASE_URL",
+        validation_alias="OZ_DATABASE_URL",
     )
 
     # ── Redis / Caching ───────────────────────────────────────────────────
     REDIS_URL: RedisDsn = Field(
         description="Redis connection string for caching, pub/sub, and RQ/ARQ.",
-        validation_alias="MG_REDIS_URL",
+        validation_alias="OZ_REDIS_URL",
     )
 
     # ── Secrets ───────────────────────────────────────────────────────────
@@ -58,7 +58,7 @@ class Settings(BaseSettings):
             "Secret key used for signing JWTs and other cryptographic "
             "operations.  Must be at least 32 characters in production."
         ),
-        validation_alias="MG_SECRET_KEY",
+        validation_alias="OZ_SECRET_KEY",
         min_length=32,
     )
 
@@ -66,36 +66,36 @@ class Settings(BaseSettings):
     PROMETHEUS_URL: str = Field(
         default="http://localhost:9090",
         description="Prometheus server URL.  Used by the admin /metrics/summary endpoint.",
-        validation_alias="MG_PROMETHEUS_URL",
+        validation_alias="OZ_PROMETHEUS_URL",
     )
 
     # ── HTTP / Server ─────────────────────────────────────────────────────
     CORS_ORIGINS: str = Field(
         default="http://localhost:3000",
         description="Comma-separated list of allowed CORS origins.",
-        validation_alias="MG_CORS_ORIGINS",
+        validation_alias="OZ_CORS_ORIGINS",
     )
     HOSTS_ALLOWED: str = Field(
         default="localhost:8000",
         description=(
             "Comma-separated list of allowed Host header values for "
             "TrustedHostMiddleware in production "
-            "(e.g. 'api.openzep.dev,localhost:3000'). "
+            "(e.g. 'api.openzync.tech,localhost:3000'). "
             "Accepts '*' in development."
         ),
-        validation_alias="MG_HOSTS_ALLOWED",
+        validation_alias="OZ_HOSTS_ALLOWED",
     )
 
     # ── Environment & Observability ───────────────────────────────────────
     ENVIRONMENT: Literal["development", "staging", "production"] = Field(
         default="development",
         description="Deployment environment.  Controls logging format, etc.",
-        validation_alias="MG_ENVIRONMENT",
+        validation_alias="OZ_ENVIRONMENT",
     )
     LOG_LEVEL: str = Field(
         default="INFO",
         description="Minimum log level (DEBUG, INFO, WARNING, ERROR, CRITICAL).",
-        validation_alias="MG_LOG_LEVEL",
+        validation_alias="OZ_LOG_LEVEL",
     )
 
     # ── Concurrency ───────────────────────────────────────────────────────
@@ -104,7 +104,7 @@ class Settings(BaseSettings):
         ge=1,
         le=64,
         description="Maximum number of worker threads/processes.",
-        validation_alias="MG_MAX_WORKERS",
+        validation_alias="OZ_MAX_WORKERS",
     )
 
     # ── JWT ────────────────────────────────────────────────────────────────
@@ -113,14 +113,14 @@ class Settings(BaseSettings):
         ge=1,
         le=1440,
         description="Access token TTL in minutes (default 30).",
-        validation_alias="MG_JWT_ACCESS_TOKEN_TTL_MINUTES",
+        validation_alias="OZ_JWT_ACCESS_TOKEN_TTL_MINUTES",
     )
     JWT_REFRESH_TOKEN_TTL_DAYS: int = Field(
         default=7,
         ge=1,
         le=90,
         description="Refresh token TTL in days (default 7).",
-        validation_alias="MG_JWT_REFRESH_TOKEN_TTL_DAYS",
+        validation_alias="OZ_JWT_REFRESH_TOKEN_TTL_DAYS",
     )
 
     # ── Webhooks ───────────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ class Settings(BaseSettings):
             "Must be at least 32 characters. "
             "Consumers use this to verify webhook authenticity."
         ),
-        validation_alias="MG_WEBHOOK_SIGNING_SECRET",
+        validation_alias="OZ_WEBHOOK_SIGNING_SECRET",
         min_length=32,
     )
 
@@ -142,20 +142,20 @@ class Settings(BaseSettings):
             "FalkorDB connection URL (Redis RESP protocol).  "
             "Defaults to localhost:6379."
         ),
-        validation_alias="MG_FALKORDB_URL",
+        validation_alias="OZ_FALKORDB_URL",
     )
     FALKORDB_MAX_CONNECTIONS: int = Field(
         default=20,
         ge=1,
         le=100,
         description="Max connections in the FalkorDB connection pool.",
-        validation_alias="MG_FALKORDB_MAX_CONNECTIONS",
+        validation_alias="OZ_FALKORDB_MAX_CONNECTIONS",
     )
     FALKORDB_SOCKET_TIMEOUT: int = Field(
         default=30,
         ge=1,
         description="Socket timeout in seconds for FalkorDB connections.",
-        validation_alias="MG_FALKORDB_SOCKET_TIMEOUT",
+        validation_alias="OZ_FALKORDB_SOCKET_TIMEOUT",
     )
 
     # ── Rate Limiting ─────────────────────────────────────────────────────
@@ -163,13 +163,13 @@ class Settings(BaseSettings):
         default=10,
         ge=1,
         description="Max requests per IP within the rate-limit window.",
-        validation_alias="MG_RATE_LIMIT_IP_MAX",
+        validation_alias="OZ_RATE_LIMIT_IP_MAX",
     )
     RATE_LIMIT_WINDOW_SEC: int = Field(
         default=60,
         ge=1,
         description="Rate-limit window in seconds.",
-        validation_alias="MG_RATE_LIMIT_WINDOW_SEC",
+        validation_alias="OZ_RATE_LIMIT_WINDOW_SEC",
     )
 
     model_config = SettingsConfigDict(

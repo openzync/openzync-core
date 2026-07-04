@@ -23,7 +23,7 @@ export function Footer() {
             Powering the Future of Agent Memory
           </h3>
           <p className="text-sm text-surface-400 max-w-2xl mx-auto mb-4">
-            OpenZep thrives because of organizations that believe in open, secure, and
+            OpenZync thrives because of organizations that believe in open, secure, and
             sovereign AI infrastructure. We are deeply grateful to our community for
             making this possible.
           </p>
@@ -37,7 +37,7 @@ export function Footer() {
             </Link>
             <span className="text-surface-700 text-sm">·</span>
             <Link
-              href="https://github.com/sponsors/openzep"
+              href="https://github.com/sponsors/openzync"
               className="inline-flex items-center gap-1.5 text-sm font-medium text-brand-300 hover:text-brand-200 transition-colors"
             >
               Become a sponsor
@@ -192,7 +192,7 @@ export function Footer() {
               ))}
               <li className="pt-2">
                 <a
-                  href="mailto:hello@openzep.com"
+                  href="mailto:hello@openzync.tech"
                   className="text-sm text-surface-400 hover:text-text-primary transition-colors inline-flex items-center gap-1"
                 >
                   <Mail size={14} />

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "openzync"
 dynamic = ["version"]
-description = "Python SDK for OpenZep — open-source agent memory platform with persistent, queryable, graph-based memory for AI agents"
+description = "Python SDK for OpenZync — open-source agent memory platform with persistent, queryable, graph-based memory for AI agents"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"

@@ -1,4 +1,4 @@
-"""OpenZep MCP Server — exposes memory capabilities as LLM-accessible tools.
+"""OpenZync MCP Server — exposes memory capabilities as LLM-accessible tools.
 
 Usage:
     python -m services.mcp --transport stdio

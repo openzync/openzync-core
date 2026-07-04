@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Badge } from "@openzep/design-system";
+import { Badge } from "@openzync/design-system";
 import { ChevronLeft, Calendar } from "lucide-react";
 import { getChangelogEntry, getAllChangelogEntries } from "@/lib/changelog";
 import { MarkdownContent } from "@/components/landing/markdown-content";

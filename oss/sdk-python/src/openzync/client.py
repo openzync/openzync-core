@@ -1,10 +1,10 @@
-"""OpenZep client — sync and async entry points.
+"""OpenZync client — sync and async entry points.
 
 Usage::
 
-    from openzync import AsyncOpenZep
+    from openzync import AsyncOpenZync
 
-    async with AsyncOpenZep(api_key="mg_live_...") as client:
+    async with AsyncOpenZync(api_key="oz_live_...") as client:
         resp = await client.memory.ingest("project-id", messages=[{"role":"user","content":"Hello"}])
 """
 
@@ -22,19 +22,19 @@ from openzync.sessions import AsyncSessionsClient
 from openzync.users import AsyncUsersClient
 
 
-class AsyncOpenZep:
-    """Async OpenZep client — primary implementation.
+class AsyncOpenZync:
+    """Async OpenZync client — primary implementation.
 
     All methods are async. Use within ``async def`` contexts.
 
     Args:
-        api_key: The OpenZep API key.
+        api_key: The OpenZync API key.
         base_url: Base URL of the API server.
         timeout: Per-request timeout in seconds.
 
     Usage::
 
-        async with AsyncOpenZep(api_key="...") as client:
+        async with AsyncOpenZync(api_key="...") as client:
             resp = await client.memory.ingest("project-id", messages=[...])
     """
 
@@ -60,27 +60,27 @@ class AsyncOpenZep:
         """Close the underlying HTTP connection pool."""
         await self._http.close()
 
-    async def __aenter__(self) -> AsyncOpenZep:
+    async def __aenter__(self) -> AsyncOpenZync:
         return self
 
     async def __aexit__(self, *args: Any) -> None:
         await self.close()
 
 
-class OpenZep:
-    """Sync OpenZep client — wraps ``AsyncOpenZep`` via ``asyncio.run()``.
+class OpenZync:
+    """Sync OpenZync client — wraps ``AsyncOpenZync`` via ``asyncio.run()``.
 
     ⚠️  Not safe to use inside an existing event loop (Jupyter, async apps).
-       For async environments, use ``AsyncOpenZep`` directly.
+       For async environments, use ``AsyncOpenZync`` directly.
 
     Args:
-        api_key: The OpenZep API key.
+        api_key: The OpenZync API key.
         base_url: Base URL of the API server.
         timeout: Per-request timeout in seconds.
 
     Usage::
 
-        client = OpenZep(api_key="...")
+        client = OpenZync(api_key="...")
         resp = client.memory.ingest("project-id", messages=[...])
     """
 
@@ -90,7 +90,7 @@ class OpenZep:
         base_url: str = "http://localhost:8000",
         timeout: float = 30.0,
     ) -> None:
-        self._async = AsyncOpenZep(api_key=api_key, base_url=base_url, timeout=timeout)
+        self._async = AsyncOpenZync(api_key=api_key, base_url=base_url, timeout=timeout)
         self.memory = _SyncDomainWrapper(self._async.memory)
         self.facts = _SyncDomainWrapper(self._async.facts)
         self.graph = _SyncDomainWrapper(self._async.graph)

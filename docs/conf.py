@@ -1,4 +1,4 @@
-"""Sphinx configuration for OpenZep documentation.
+"""Sphinx configuration for OpenZync documentation.
 
 This file is exec()'d by Sphinx. It adds the project root to ``sys.path``
 so that autodoc can import the flat-layout packages (``core/``, ``routers/``,
@@ -18,7 +18,7 @@ sys.path.insert(0, _src_dir)
 
 # ── Project information ───────────────────────────────────────────────────────
 
-project = "openzep"
+project = "openzync"
 copyright = "2024, Rohan Shaw"  # noqa: A001
 author = "Rohan Shaw"
 
@@ -30,7 +30,7 @@ version = "0.1.0"
 # Mock imports that are unavailable at doc-build time (e.g., SDK package
 # dependencies that aren't installed in the docs environment).
 autodoc_mock_imports = [
-    "openzep",  # MCP server depends on the SDK — not guaranteed at doc-build
+    "openzync",  # MCP server depends on the SDK — not guaranteed at doc-build
 ]
 
 extensions = [
@@ -88,13 +88,13 @@ intersphinx_mapping = {
 
 html_theme = "furo"
 html_static_path = ["_static"]
-html_title = "OpenZep Documentation"
+html_title = "OpenZync Documentation"
 html_logo = None  # set to a path relative to docs/ if you have a logo
 
 # Furo theme options
 # https://pradyunsg.me/furo/customisation/
 html_theme_options = {
-    "source_repository": "https://gitlab.com/rohnsha0/openzep/",
+    "source_repository": "https://github.com/rohnsha0/openzync/",
     "source_branch": "main",
     "source_directory": "docs/",
 }

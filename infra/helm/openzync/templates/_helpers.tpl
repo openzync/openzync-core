@@ -1,8 +1,8 @@
-{{- define "openzep.name" -}}
+{{- define "openzync.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
-{{- define "openzep.fullname" -}}
+{{- define "openzync.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -15,15 +15,15 @@
 {{- end }}
 {{- end }}
 
-{{- define "openzep.labels" -}}
+{{- define "openzync.labels" -}}
 helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
-app.kubernetes.io/name: {{ include "openzep.name" . }}
+app.kubernetes.io/name: {{ include "openzync.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
-{{- define "openzep.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "openzep.name" . }}
+{{- define "openzync.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "openzync.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}

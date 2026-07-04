@@ -16,7 +16,7 @@ Usage::
     surreal = AsyncSurreal("ws://localhost:8000/rpc")
     await surreal.connect()
     await surreal.signin({"username": "root", "password": "root"})
-    await surreal.use("openzep", "openzep")
+    await surreal.use("openzync", "openzync")
 
     backend = SurrealGraphBackend(surreal=surreal)
     entity = await backend.create_entity(UUID(...), UUID(...), name="Acme", entity_type="company")
@@ -52,7 +52,7 @@ MAX_TRAVERSAL_DEPTH: int = 5
 
 _DEFINE_SURQL: str = """
 -- 1. Analyzer for entity full-text search (BM25 via @@ operator)
-DEFINE ANALYZER openzep_entity
+DEFINE ANALYZER openzync_entity
     TOKENIZERS blank, class
     FILTERS lowercase
     FILTERS ascii
@@ -71,9 +71,9 @@ DEFINE FIELD updated_at ON entity TYPE datetime VALUE time::now();
 
 -- 3. Full-text BM25 indexes (required for @@ operator)
 DEFINE INDEX entity_name_fts ON entity FIELDS name
-    FULLTEXT ANALYZER openzep_entity BM25;
+    FULLTEXT ANALYZER openzync_entity BM25;
 DEFINE INDEX entity_summary_fts ON entity FIELDS summary
-    FULLTEXT ANALYZER openzep_entity BM25;
+    FULLTEXT ANALYZER openzync_entity BM25;
 
 -- 4. Unique index for entity upsert by (org_id, project_id, name)
 DEFINE INDEX entity_org_project_name ON entity
@@ -836,7 +836,7 @@ class SurrealGraphBackend(GraphBackend):
     ) -> list[dict]:
         """Search entity nodes by name or summary using BM25 full-text search.
 
-        Uses the ``@@`` operator with the ``openzep_entity`` analyzer and
+        Uses the ``@@`` operator with the ``openzync_entity`` analyzer and
         ``search::score(0)`` for BM25 ranking.  Results are ordered by
         relevance descending.
 

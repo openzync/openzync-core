@@ -94,7 +94,7 @@ class ApiKeyRepository:
             lookup_hash: Unsalted SHA-256 of the raw key (for fast lookup).
             key_hash: Salted SHA-256 hash of the raw key (for verification).
             salt: Hex-encoded 16-byte salt.
-            prefix: Key prefix (``mg_live_`` or ``mg_test_``).
+            prefix: Key prefix (``oz_live_`` or ``oz_test_``).
             name: Human-readable label.
             scopes: Permission scopes (defaults to ``["read", "write"]``).
             project_id: Optional project scope. ``None`` means org-wide key.

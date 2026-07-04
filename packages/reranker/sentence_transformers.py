@@ -10,7 +10,7 @@ Usage::
     reranker = SentenceTransformersReranker()
     reranked = await reranker.rerank("query", candidates, top_n=10)
 
-Optional dependency: ``pip install openzep[reranker]``.
+Optional dependency: ``pip install openzync[reranker]``.
 """
 
 from __future__ import annotations
@@ -140,7 +140,7 @@ class SentenceTransformersReranker(CrossEncoderReranker):
             except ImportError as err:
                 raise ImportError(
                     "sentence-transformers is not installed. "
-                    "Install with: pip install openzep[reranker]"
+                    "Install with: pip install openzync[reranker]"
                 ) from err
 
             # Load the model off the event loop

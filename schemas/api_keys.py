@@ -34,7 +34,7 @@ class ApiKeyResponse(BaseModel):
 
     id: UUID = Field(..., description="API key UUID.")
     name: str = Field(..., description="Human-readable label.")
-    prefix: str = Field(..., description="Key prefix (e.g. ``mg_live_``).")
+    prefix: str = Field(..., description="Key prefix (e.g. ``oz_live_``).")
     project_id: UUID = Field(
         ..., description="Project UUID this key is scoped to."
     )

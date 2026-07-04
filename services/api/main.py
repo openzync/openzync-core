@@ -1,4 +1,4 @@
-"""OpenZep API — FastAPI application factory.
+"""OpenZync API — FastAPI application factory.
 
 Creates a configured FastAPI instance with:
 - Lifespan-managed DB engine, Redis, ARQ pool, and Graphiti client
@@ -126,7 +126,7 @@ def create_app() -> FastAPI:
         await close_db_engine(db_engine)
 
     app = FastAPI(
-        title="OpenZep API",
+        title="OpenZync API",
         version="1.0.0",
         lifespan=lifespan,
         docs_url="/docs",

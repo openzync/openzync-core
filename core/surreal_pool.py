@@ -43,10 +43,10 @@ DEFAULT_SURREALDB_USER: str = "root"
 DEFAULT_SURREALDB_PASS: str = "root"
 """Fallback password when ``org_config.surrealdb_pass`` is ``None``."""
 
-DEFAULT_SURREALDB_NAMESPACE: str = "openzep"
+DEFAULT_SURREALDB_NAMESPACE: str = "openzync"
 """Fallback namespace when ``org_config.surrealdb_namespace`` is ``None``."""
 
-DEFAULT_SURREALDB_DATABASE: str = "openzep"
+DEFAULT_SURREALDB_DATABASE: str = "openzync"
 """Fallback database when ``org_config.surrealdb_database`` is ``None``."""
 
 

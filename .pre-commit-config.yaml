@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# OpenZep — pre-commit hooks
+# OpenZync — pre-commit hooks
 # ──────────────────────────────────────────────────────────────────────────────
 # Install:  pre-commit install
 # Update:   pre-commit autoupdate

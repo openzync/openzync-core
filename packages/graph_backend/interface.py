@@ -5,7 +5,7 @@ satisfy.  The shipped implementation is:
 
 - :class:`PostgresGraphBackend` — PostgreSQL-native
 
-Every method requires ``org_id`` and ``project_id`` — OpenZep enforces
+Every method requires ``org_id`` and ``project_id`` — OpenZync enforces
 strict organisational and project-level isolation.  No cross-project
 graph traversal is possible.
 """

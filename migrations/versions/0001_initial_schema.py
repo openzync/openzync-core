@@ -53,7 +53,7 @@ def upgrade() -> None:
         sa.Column("is_revoked", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.CheckConstraint("prefix IN ('mg_live_', 'mg_test_')", name="ck_api_keys_prefix"),
+        sa.CheckConstraint("prefix IN ('oz_live_', 'oz_test_')", name="ck_api_keys_prefix"),
         sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("lookup_hash", name="uq_api_keys_lookup_hash"),

@@ -1,8 +1,8 @@
 ---
 title: "Building with Graph Memory: A Technical Deep Dive"
 date: "2026-03-22"
-excerpt: "How OpenZep uses knowledge graphs to give agents durable, queryable memory across sessions — and why graph databases are the right abstraction for agent memory."
-author: "OpenZep Team"
+excerpt: "How OpenZync uses knowledge graphs to give agents durable, queryable memory across sessions — and why graph databases are the right abstraction for agent memory."
+author: "OpenZync Team"
 category: "engineering"
 ---
 
@@ -16,9 +16,9 @@ Traditional vector databases store isolated embeddings — they're great for sim
 2. **Relationship traversal** — "Which documents did this agent reference last week?"
 3. **Temporal reasoning** — "What was the state of this conversation before the error?"
 
-## OpenZep's Graph Abstraction
+## OpenZync's Graph Abstraction
 
-OpenZep abstracts over 10+ graph backends with a unified query interface:
+OpenZync abstracts over 10+ graph backends with a unified query interface:
 
 ```
 session.add_entity("user_123", {"name": "Alice", "role": "admin"})

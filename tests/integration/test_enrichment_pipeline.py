@@ -46,10 +46,10 @@ def _set_test_env_vars(
         redis_host: Redis host IP from testcontainers.
         redis_port: Redis exposed port from testcontainers.
     """
-    os.environ["MG_DATABASE_URL"] = pg_url
-    os.environ["MG_REDIS_URL"] = f"redis://{redis_host}:{redis_port}/0"
-    os.environ["MG_ENVIRONMENT"] = "development"
-    os.environ["MG_SECRET_KEY"] = "a" * 32
+    os.environ["OZ_DATABASE_URL"] = pg_url
+    os.environ["OZ_REDIS_URL"] = f"redis://{redis_host}:{redis_port}/0"
+    os.environ["OZ_ENVIRONMENT"] = "development"
+    os.environ["OZ_SECRET_KEY"] = "a" * 32
 
 
 @pytest_asyncio.fixture(scope="module")

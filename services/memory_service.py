@@ -79,7 +79,7 @@ def _arq_queue_name(queue_type: str) -> str:
     """Build the full ARQ queue name matching the worker's config.
 
     Worker uses: ``get_queue_name(settings.ENVIRONMENT, queue_type)``
-    which produces: ``OpenZep:{env}:queue:{queue_type}``
+    which produces: ``OpenZync:{env}:queue:{queue_type}``
 
     Args:
         queue_type: Queue type suffix (e.g. ``"high"``, ``"low"``).
@@ -88,7 +88,7 @@ def _arq_queue_name(queue_type: str) -> str:
         Fully qualified queue name for the current environment.
     """
     env = settings.ENVIRONMENT if hasattr(settings, "ENVIRONMENT") else "development"
-    return f"OpenZep:{env}:queue:{queue_type}"
+    return f"OpenZync:{env}:queue:{queue_type}"
 
 
 class MemoryService:

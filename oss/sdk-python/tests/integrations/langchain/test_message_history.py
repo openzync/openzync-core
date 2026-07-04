@@ -8,7 +8,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from openzync._errors import NotFoundError
-from openzync.client import AsyncOpenZep
+from openzync.client import AsyncOpenZync
 from openzync.integrations.langchain.message_history import OZChatMessageHistory
 from openzync.models.session import SessionMessagesResponse
 
@@ -37,8 +37,8 @@ SAMPLE_MESSAGES = [
 
 @pytest.fixture
 def mock_client():
-    """Create a real AsyncOpenZep with mocked sub-clients."""
-    client = AsyncOpenZep(api_key="test", base_url="http://test")
+    """Create a real AsyncOpenZync with mocked sub-clients."""
+    client = AsyncOpenZync(api_key="test", base_url="http://test")
     client.memory = AsyncMock()
     client.sessions = AsyncMock()
     return client

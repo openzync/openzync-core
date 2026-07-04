@@ -1,7 +1,7 @@
 """API key model — bearer-token authentication for programmatic access.
 
 Keys are stored as salted hashes; only the ``prefix`` is stored in plaintext
-for identification (e.g., ``mg_live_abc...``). The raw key is never persisted.
+for identification (e.g., ``oz_live_abc...``). The raw key is never persisted.
 """
 
 import uuid
@@ -38,7 +38,7 @@ class ApiKey(TimestampMixin, Base):
             creation. ``None`` for keys created prior to this migration.
         key_hash: SHA-256 (or bcrypt) hash of the full API key. Unique.
         prefix: First few characters for identification — one of
-            ``mg_live_`` or ``mg_test_``.
+            ``oz_live_`` or ``oz_test_``.
         name: Optional human-readable label for this key.
         scopes: Array of permission scopes (defaults to ``['read', 'write']``).
         last_used_at: Timestamp of most recent usage (updated on each request).
@@ -106,7 +106,7 @@ class ApiKey(TimestampMixin, Base):
 
     __table_args__ = (
         CheckConstraint(
-            "prefix IN ('mg_live_', 'mg_test_')",
+            "prefix IN ('oz_live_', 'oz_test_')",
             name="ck_api_key_prefix",
         ),
         Index("ix_api_key_organization_id", "organization_id"),

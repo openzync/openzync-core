@@ -1,6 +1,6 @@
-"""LangChain tools for OpenZep knowledge graph operations.
+"""LangChain tools for OpenZync knowledge graph operations.
 
-Provides tools that give LLM agents read access to the OpenZep knowledge
+Provides tools that give LLM agents read access to the OpenZync knowledge
 graph — searching, listing nodes, and retrieving node details.
 """
 
@@ -12,7 +12,7 @@ from typing import Any, Type
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from openzync.client import AsyncOpenZep
+from openzync.client import AsyncOpenZync
 
 # ── Input schemas ───────────────────────────────────────────────────────────
 
@@ -21,7 +21,7 @@ class GraphSearchInput(BaseModel):
     """Input schema for graph search."""
 
     query: str = Field(..., description="Natural-language search query.")
-    project_id: str = Field(..., description="OpenZep project UUID to search within.")
+    project_id: str = Field(..., description="OpenZync project UUID to search within.")
     types: str | None = Field(
         default=None,
         description="Comma-separated result types: episodes, facts, entities.",
@@ -32,14 +32,14 @@ class GraphSearchInput(BaseModel):
 class GraphNodeDetailInput(BaseModel):
     """Input schema for node detail lookup."""
 
-    project_id: str = Field(..., description="OpenZep project UUID.")
+    project_id: str = Field(..., description="OpenZync project UUID.")
     node_id: str = Field(..., description="UUID of the node to retrieve.")
 
 
 class ListGraphNodesInput(BaseModel):
     """Input schema for listing graph nodes."""
 
-    project_id: str = Field(..., description="OpenZep project UUID.")
+    project_id: str = Field(..., description="OpenZync project UUID.")
     entity_type: str | None = Field(
         default=None,
         description="Optional entity type filter.",
@@ -51,7 +51,7 @@ class ListGraphNodesInput(BaseModel):
 
 
 class GraphSearchTool(BaseTool):
-    """Tool that searches the OpenZep knowledge graph.
+    """Tool that searches the OpenZync knowledge graph.
 
     Agents can use this to retrieve contextually relevant episodes, facts,
     or entities from a project's persistent memory.
@@ -64,7 +64,7 @@ class GraphSearchTool(BaseTool):
         "conversations, user preferences, or business data."
     )
     args_schema: Type[BaseModel] = GraphSearchInput
-    client: AsyncOpenZep
+    client: AsyncOpenZync
 
     def _run(
         self,
@@ -77,7 +77,7 @@ class GraphSearchTool(BaseTool):
 
         Args:
             query: Search query.
-            project_id: OpenZep project UUID.
+            project_id: OpenZync project UUID.
             types: Result type filter.
             limit: Max results.
 
@@ -124,7 +124,7 @@ class GraphNodeDetailTool(BaseTool):
         "knowledge graph, including its summary and all incident relationships."
     )
     args_schema: Type[BaseModel] = GraphNodeDetailInput
-    client: AsyncOpenZep
+    client: AsyncOpenZync
 
     def _run(self, project_id: str, node_id: str) -> str:
         """Retrieve node details (sync)."""
@@ -155,7 +155,7 @@ class ListGraphNodesTool(BaseTool):
         "filtered by entity type."
     )
     args_schema: Type[BaseModel] = ListGraphNodesInput
-    client: AsyncOpenZep
+    client: AsyncOpenZync
 
     def _run(
         self,

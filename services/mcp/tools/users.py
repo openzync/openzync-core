@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from openzep.client import AsyncOpenZep
+from openzync.client import AsyncOpenZync
 
 
-async def handle_create_user(client: AsyncOpenZep, args: dict) -> dict:
+async def handle_create_user(client: AsyncOpenZync, args: dict) -> dict:
     """Create a new user."""
     external_id = args["external_id"]
     name = args.get("name")

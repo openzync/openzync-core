@@ -1,7 +1,7 @@
-"""LangChain chat message history backed by OpenZep memory.
+"""LangChain chat message history backed by OpenZync memory.
 
 Provides ``OZChatMessageHistory``, a ``BaseChatMessageHistory`` implementation
-that persists conversation history to OpenZep, making it durable and
+that persists conversation history to OpenZync, making it durable and
 searchable across sessions.
 """
 
@@ -19,7 +19,7 @@ from langchain_core.messages import (
 )
 
 from openzync._errors import NotFoundError
-from openzync.client import AsyncOpenZep
+from openzync.client import AsyncOpenZync
 
 # ── Message conversion helpers ──────────────────────────────────────────────
 
@@ -37,7 +37,7 @@ _REVERSE_ROLE_MAP: dict[str, type[BaseMessage]] = {
 
 
 def _oz_message_from_base(message: BaseMessage) -> dict[str, Any]:
-    """Convert a LangChain ``BaseMessage`` to an OpenZep message dict."""
+    """Convert a LangChain ``BaseMessage`` to an OpenZync message dict."""
     return {
         "role": _ROLE_MAP.get(message.type, "user"),
         "content": message.content,
@@ -45,7 +45,7 @@ def _oz_message_from_base(message: BaseMessage) -> dict[str, Any]:
 
 
 def _base_message_from_oz(msg_dict: dict[str, Any]) -> BaseMessage:
-    """Convert an OpenZep message dict to a LangChain ``BaseMessage``."""
+    """Convert an OpenZync message dict to a LangChain ``BaseMessage``."""
     role: str = msg_dict.get("role", "user")
     content: str = msg_dict.get("content", "")
     cls = _REVERSE_ROLE_MAP.get(role, HumanMessage)
@@ -66,17 +66,17 @@ def _run_async(coro: Any) -> Any:
 
 
 class OZChatMessageHistory(BaseChatMessageHistory):
-    """Chat message history backed by OpenZep.
+    """Chat message history backed by OpenZync.
 
-    Stores conversation history in OpenZep's memory store, making it
+    Stores conversation history in OpenZync's memory store, making it
     persistent and searchable across sessions.
 
     .. code-block:: python
 
-        from openzync import AsyncOpenZep
+        from openzync import AsyncOpenZync
         from openzync.integrations.langchain import OZChatMessageHistory
 
-        client = AsyncOpenZep(api_key="...")
+        client = AsyncOpenZync(api_key="...")
         history = OZChatMessageHistory(
             session_id="session-123",
             project_id="project-abc",
@@ -87,8 +87,8 @@ class OZChatMessageHistory(BaseChatMessageHistory):
 
     Args:
         session_id: LangChain conversation identifier.
-        project_id: OpenZep project UUID.
-        client: An ``AsyncOpenZep`` client instance.
+        project_id: OpenZync project UUID.
+        client: An ``AsyncOpenZync`` client instance.
         max_messages: Maximum number of messages to fetch from the server.
 
     .. note::
@@ -102,7 +102,7 @@ class OZChatMessageHistory(BaseChatMessageHistory):
         self,
         session_id: str,
         project_id: str,
-        client: AsyncOpenZep,
+        client: AsyncOpenZync,
         *,
         max_messages: int = 1000,
     ) -> None:
@@ -121,7 +121,7 @@ class OZChatMessageHistory(BaseChatMessageHistory):
             self._messages = _run_async(self._fetch_messages())
 
     async def _fetch_messages(self) -> list[BaseMessage]:
-        """Fetch messages from the OpenZep server for the given session."""
+        """Fetch messages from the OpenZync server for the given session."""
         try:
             resp = await self._client.sessions.messages(
                 self.project_id,

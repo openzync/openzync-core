@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// OpenZep — Centralized API Client
+// OpenZync — Centralized API Client
 // ═══════════════════════════════════════════════════════════════════════════════
 //
 // Every API call in the frontend goes through this module.

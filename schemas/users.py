@@ -111,7 +111,7 @@ class UserResponse(BaseModel):
     """Response body for single-user endpoints.
 
     Attributes:
-        id: Internal OpenZep user UUID.
+        id: Internal OpenZync user UUID.
         external_id: Caller-defined user identifier.
         name: Display name.
         email: Email address.
@@ -122,7 +122,7 @@ class UserResponse(BaseModel):
         is_deleted: Soft-delete flag. ``True`` during the 30-day GDPR grace period.
     """
 
-    id: UUID = Field(..., description="Internal OpenZep user UUID.")
+    id: UUID = Field(..., description="Internal OpenZync user UUID.")
     external_id: str = Field(..., description="Caller-defined user identifier.")
     name: str | None = Field(default=None, description="Display name.")
     email: str | None = Field(default=None, description="Email address.")

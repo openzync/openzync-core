@@ -67,7 +67,7 @@ class ApiKeyService:
         Returns:
             A tuple of ``(ApiKey record, raw_key_string)``.
         """
-        raw_key = generate_api_key(prefix="mg_live_")
+        raw_key = generate_api_key(prefix="oz_live_")
         key_hash, salt = hash_api_key(raw_key)
         lookup_hash = compute_lookup_hash(raw_key)
 
@@ -77,7 +77,7 @@ class ApiKeyService:
             lookup_hash=lookup_hash,
             key_hash=key_hash,
             salt=salt,
-            prefix="mg_live_",
+            prefix="oz_live_",
             name=payload.name,
             scopes=["read", "write"],
             created_by=created_by,

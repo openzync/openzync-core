@@ -26,12 +26,12 @@ from locust import FastHttpUser, between, events, task
 # ═══════════════════════════════════════════════════════════════════════════════
 
 API_KEY: str = os.environ.get(
-    "MG_LOAD_TEST_API_KEY", "mg_test_" + "a" * 64
+    "OZ_LOAD_TEST_API_KEY", "oz_test_" + "a" * 64
 )
 """Pre-provisioned API key for load testing."""
 
 TEST_USER_ID: str = os.environ.get(
-    "MG_LOAD_TEST_USER_ID", "00000000-0000-0000-0000-000000000001"
+    "OZ_LOAD_TEST_USER_ID", "00000000-0000-0000-0000-000000000001"
 )
 """Pre-seeded user ID with 500+ facts and 100+ episodes."""
 

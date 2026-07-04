@@ -82,11 +82,11 @@ class TestApiKeyRepository:
             key = await repo.create(
                 organization_id=ORG_ID,
                 project_id=PROJECT_ID,
-                key_hash="hash123", salt="salty", prefix="mg_test_",
+                key_hash="hash123", salt="salty", prefix="oz_test_",
                 lookup_hash="lookup123", name="Test Key",
             )
             assert key.id is not None
-            assert key.prefix == "mg_test_"
+            assert key.prefix == "oz_test_"
             assert key.project_id == PROJECT_ID
 
             # List by org without project_id returns all for the org
@@ -111,7 +111,7 @@ class TestApiKeyRepository:
                 organization_id=ORG_ID,
                 project_id=PROJECT_ID,
                 key_hash="h2", salt="s2",
-                prefix="mg_test_", lookup_hash="l2", name="Key 2",
+                prefix="oz_test_", lookup_hash="l2", name="Key 2",
             )
             found = await repo.get_by_id(ORG_ID, key.id)
             assert found is not None
@@ -141,7 +141,7 @@ class TestApiKeyRepository:
                 organization_id=ORG_ID,
                 project_id=PROJECT_ID,
                 key_hash="h3", salt="s3",
-                prefix="mg_test_", lookup_hash="l3", name="Key 3",
+                prefix="oz_test_", lookup_hash="l3", name="Key 3",
             )
             revoked = await repo.revoke(ORG_ID, key.id)
             assert revoked is not None
@@ -152,7 +152,7 @@ class TestApiKeyRepository:
                 organization_id=ORG_ID,
                 project_id=PROJECT_ID,
                 key_hash="h4", salt="s4",
-                prefix="mg_test_", lookup_hash="l4", name="Key 4",
+                prefix="oz_test_", lookup_hash="l4", name="Key 4",
             )
             not_revoked = await repo.revoke(
                 ORG_ID, key2.id,
@@ -172,7 +172,7 @@ class TestApiKeyRepository:
                 organization_id=ORG_ID,
                 project_id=PROJECT_ID,
                 key_hash="h5", salt="s5",
-                prefix="mg_test_", lookup_hash="l5", name="Key 5",
+                prefix="oz_test_", lookup_hash="l5", name="Key 5",
             )
             revoked = await repo.revoke(
                 ORG_ID, key.id, project_id=PROJECT_ID,
@@ -192,22 +192,22 @@ class TestAuthRepository:
         async with AsyncSession(engine) as db:
             repo = AuthRepository(db)
             user = await repo.create_dashboard_user(
-                email="test@openzep.dev", password_hash="hash",
+                email="test@openzync.tech", password_hash="hash",
                 organization_id=ORG_ID,
             )
             assert user.id is not None
-            assert user.email == "test@openzep.dev"
+            assert user.email == "test@openzync.tech"
 
     async def test_find_user_by_email_found(self, engine) -> None:
         async with AsyncSession(engine) as db:
             repo = AuthRepository(db)
             await repo.create_dashboard_user(
-                email="findme@openzep.dev", password_hash="hash",
+                email="findme@openzync.tech", password_hash="hash",
                 organization_id=ORG_ID,
             )
-            user = await repo.find_user_by_email("findme@openzep.dev")
+            user = await repo.find_user_by_email("findme@openzync.tech")
             assert user is not None
-            assert user.email == "findme@openzep.dev"
+            assert user.email == "findme@openzync.tech"
 
     async def test_create_refresh_token(self, engine) -> None:
         async with AsyncSession(engine) as db:

@@ -35,7 +35,7 @@ async def create_organization(
     atomic transaction that:
 
     1. Creates a new ``Organization`` record.
-    2. Generates a ``mg_live_`` API key with ``read``, ``write``, and
+    2. Generates a ``oz_live_`` API key with ``read``, ``write``, and
        ``admin`` scopes.
     3. Returns the raw API key — this is the **only** time it is visible.
 

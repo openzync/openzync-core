@@ -3,7 +3,7 @@
 Dual-mode authentication flow:
 
 **API key mode** (for SDK clients):
-1. Bearer token starts with ``mg_live_`` or ``mg_test_`` prefix.
+1. Bearer token starts with ``oz_live_`` or ``oz_test_`` prefix.
 2. Compute unsalted lookup hash via ``compute_lookup_hash``.
 3. Check Redis cache at ``auth:key:{lookup_hash}`` (TTL: 300 s).
 4. On miss, query ``api_keys`` table, verify salted hash.
@@ -12,7 +12,7 @@ Dual-mode authentication flow:
 
 **JWT mode** (for dashboard users):
 1. Bearer token is a three-segment JWT (starts with ``eyJ``).
-2. Verify signature with ``MG_SECRET_KEY`` (HS256).
+2. Verify signature with ``OZ_SECRET_KEY`` (HS256).
 3. Extract ``sub`` (user_id), ``org_id``, ``role`` claims.
 4. Set ``request.state.org_id``, ``request.state.user_id``,
    ``request.state.role``, ``request.state.auth_type = "jwt"``.
@@ -102,7 +102,7 @@ versioned routes (e.g. ``/v1/health``) are also recognised.
 # JWT constants
 # ═══════════════════════════════════════════════════════════════════════════════
 
-API_KEY_PREFIXES: tuple[str, ...] = ("mg_live_", "mg_test_")
+API_KEY_PREFIXES: tuple[str, ...] = ("oz_live_", "oz_test_")
 """Recognised API key prefixes.  Tokens not starting with one of these
 are attempted as JWT first."""
 
@@ -152,7 +152,7 @@ def _rfc7807_response(
     return JSONResponse(
         status_code=status,
         content={
-            "type": f"https://errors.openzep.dev/{title.lower().replace(' ', '_')}",
+            "type": f"https://errors.openzync.tech/{title.lower().replace(' ', '_')}",
             "title": title,
             "status": status,
             "detail": detail,
@@ -188,7 +188,7 @@ async def _send_rfc7807(
     """
     body = orjson.dumps(
         {
-            "type": f"https://errors.openzep.dev/{title.lower().replace(' ', '_')}",
+            "type": f"https://errors.openzync.tech/{title.lower().replace(' ', '_')}",
             "title": title,
             "status": status,
             "detail": detail,
@@ -461,10 +461,10 @@ class AuthMiddleware:
 
     Supports two authentication methods:
 
-    - **API key** (SDK clients): Identified by ``mg_live_`` / ``mg_test_``
+    - **API key** (SDK clients): Identified by ``oz_live_`` / ``oz_test_``
       prefix.  Validated against the ``api_keys`` table with Redis caching.
     - **JWT** (dashboard users):  Identified by a three-segment JWT string.
-      Validated with ``MG_SECRET_KEY`` via HS256.
+      Validated with ``OZ_SECRET_KEY`` via HS256.
 
     This middleware reads:
     - ``scope["app"].state.redis`` — an ``aioredis.Redis`` client.

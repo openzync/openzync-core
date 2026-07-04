@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// OpenZep Landing — Use Cases / Case Studies Data
+// OpenZync Landing — Use Cases / Case Studies Data
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface CaseStudy {
@@ -22,7 +22,7 @@ export const caseStudies: CaseStudy[] = [
     title: "Research Assistant That Remembers Your Workflow",
     slug: "research-assistant",
     excerpt:
-      "A pharmaceutical research team deployed OpenZep-powered agents that maintain context across weeks-long literature review sessions with citation graphs.",
+      "A pharmaceutical research team deployed OpenZync-powered agents that maintain context across weeks-long literature review sessions with citation graphs.",
     category: "Research",
   },
   {

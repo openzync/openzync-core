@@ -8,7 +8,7 @@ import { CtaSection } from "@/components/landing/cta-section";
 export const metadata: Metadata = {
   title: "Events",
   description:
-    "Join the OpenZep community at events around the world — conferences, sprints, online meetups, and more.",
+    "Join the OpenZync community at events around the world — conferences, sprints, online meetups, and more.",
 };
 
 /** Parse event start date, handling range format "Month Day–Day, Year" and single date. */
@@ -108,7 +108,7 @@ export default function EventsPage() {
             Community Events
           </h1>
           <p className="text-surface-400 text-lg max-w-2xl">
-            Meet the OpenZep community at events around the world. From conferences
+            Meet the OpenZync community at events around the world. From conferences
             to online sprints — there&rsquo;s a place for everyone.
           </p>
         </div>
@@ -129,7 +129,7 @@ export default function EventsPage() {
               <p className="text-surface-400 text-lg mb-2">No upcoming events right now.</p>
               <p className="text-surface-500 text-sm">
                 Check back soon or{" "}
-                <a href="mailto:hello@openzep.com" className="text-brand-300 hover:text-brand-200 transition-colors">
+                <a href="mailto:hello@openzync.tech" className="text-brand-300 hover:text-brand-200 transition-colors">
                   get in touch
                 </a>{" "}
                 to host your own.
@@ -175,7 +175,7 @@ export default function EventsPage() {
             to support your community event. Reach out and we&rsquo;ll help promote it.
           </p>
           <a
-            href="mailto:hello@openzep.com"
+            href="mailto:hello@openzync.tech"
             className="inline-flex items-center gap-2 rounded-lg bg-brand-500 px-6 py-3 text-sm font-semibold text-white hover:bg-brand-400 transition-colors"
           >
             Get in Touch <ArrowRight size={16} />

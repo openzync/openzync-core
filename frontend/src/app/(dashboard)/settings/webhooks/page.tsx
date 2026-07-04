@@ -256,7 +256,7 @@ function CreateDialog({
             <input
               className="input-base font-mono text-sm"
               type="url"
-              placeholder="https://hooks.example.com/webhooks/openzep"
+              placeholder="https://hooks.example.com/webhooks/openzync"
               value={url}
               onChange={(e) => { setUrl(e.target.value); if (error) setError(null); }}
               disabled={creating}
@@ -413,7 +413,7 @@ export default function WebhooksPage() {
     <div className="space-y-6">
       <PageHeader
         title="Webhooks"
-        description="Configure HTTP endpoints to receive real-time events from your OpenZep instance"
+        description="Configure HTTP endpoints to receive real-time events from your OpenZync instance"
         actions={
           <Button variant="primary" size="sm" icon={<Plus size={14} />} onClick={() => setShowCreate(true)} disabled={eventsLoading}>
             Create Endpoint

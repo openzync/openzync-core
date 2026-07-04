@@ -1,9 +1,9 @@
 """Alembic environment configuration for async SQLAlchemy.
 
-This configures Alembic to work with asyncpg and the OpenZep models.
+This configures Alembic to work with asyncpg and the OpenZync models.
 
 The database URL is resolved in this priority order:
-  1. ``MG_DATABASE_URL`` environment variable
+  1. ``OZ_DATABASE_URL`` environment variable
   2. ``sqlalchemy.url`` in ``alembic.ini``
 """
 
@@ -28,7 +28,7 @@ target_metadata = Base.metadata
 
 def _db_url() -> str:
     """Resolve the database URL from env var or alembic.ini."""
-    return os.environ.get("MG_DATABASE_URL") or config.get_main_option("sqlalchemy.url")
+    return os.environ.get("OZ_DATABASE_URL") or config.get_main_option("sqlalchemy.url")
 
 
 def run_migrations_offline() -> None:

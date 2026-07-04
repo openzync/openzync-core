@@ -39,7 +39,7 @@ class OrganizationService:
         Performs a single atomic transaction:
         1. Creates an ``Organization`` record.
         2. Creates a default project scoped to the organization.
-        3. Generates a ``mg_live_`` API key scoped to the default project.
+        3. Generates a ``oz_live_`` API key scoped to the default project.
         4. Seeds default prompt templates.
         5. Returns the raw API key — this is the **only** time it is visible.
 
@@ -65,7 +65,7 @@ class OrganizationService:
         await self._db.refresh(project)
 
         # ── 3. Generate API key scoped to the default project ────────────
-        raw_key = generate_api_key(prefix="mg_live_")
+        raw_key = generate_api_key(prefix="oz_live_")
         key_hash, salt = hash_api_key(raw_key)
         lookup_hash = compute_lookup_hash(raw_key)
 
@@ -75,7 +75,7 @@ class OrganizationService:
             key_hash=key_hash,
             lookup_hash=lookup_hash,
             salt=salt,
-            prefix="mg_live_",
+            prefix="oz_live_",
             name="default",
             scopes=["read", "write", "admin"],
             is_revoked=False,

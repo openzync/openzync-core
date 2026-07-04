@@ -11,10 +11,10 @@ export function CaseStudies() {
     <section className="py-20 md:py-28 border-t border-surface-800">
       <div className="mx-auto max-w-7xl px-6">
         <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-center mb-4">
-          Where OpenZep Shines
+          Where OpenZync Shines
         </h2>
         <p className="text-surface-400 text-center max-w-xl mx-auto mb-12">
-          From customer support to research to engineering — teams use OpenZep
+          From customer support to research to engineering — teams use OpenZync
           to give their agents persistent memory.
         </p>
 
@@ -30,7 +30,7 @@ export function CaseStudies() {
                 <div className="relative w-full h-full opacity-50">
                   <div className="absolute inset-0 p-4 font-mono text-[10px] leading-relaxed text-brand-300/40 select-none">
                     <div className="text-brand-500/60"># graph_memory.py</div>
-                    <div className="mt-1"><span className="text-accent-300/40">from</span> openzep <span className="text-accent-300/40">import</span> Agent</div>
+                    <div className="mt-1"><span className="text-accent-300/40">from</span> openzync <span className="text-accent-300/40">import</span> Agent</div>
                     <div className="mt-1"><span className="text-accent-300/40">async</span> <span className="text-accent-300/40">def</span> build_agent():</div>
                     <div className="ml-3">agent = <span className="text-brand-300/40">Agent</span>(</div>
                     <div className="ml-6">memory=<span className="text-brand-300/40">GraphMemory</span>(</div>

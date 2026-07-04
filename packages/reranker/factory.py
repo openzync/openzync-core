@@ -74,7 +74,7 @@ class RerankerFactory:
         except ImportError:
             logger.warning(
                 "reranker.sentence_transformers_not_installed",
-                extra={"hint": "pip install openzep[reranker]"},
+                extra={"hint": "pip install openzync[reranker]"},
             )
             return None
 
@@ -98,7 +98,7 @@ class RerankerFactory:
         except ImportError:
             logger.warning(
                 "reranker.cohere_not_installed",
-                extra={"hint": "pip install openzep[cohere]"},
+                extra={"hint": "pip install openzync[cohere]"},
             )
             return None
 

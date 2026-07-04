@@ -17,7 +17,7 @@ class UserSummaryResponse(BaseModel):
     """Response model for fetching a user's summary.
 
     Attributes:
-        user_id: The internal OpenZep user UUID.
+        user_id: The internal OpenZync user UUID.
         summary: The generated summary text, or ``None`` if not yet generated.
         updated_at: When the summary was last regenerated, or ``None``.
     """
@@ -35,7 +35,7 @@ class UserSummaryTriggerResponse(BaseModel):
         message: Human-readable confirmation message.
         status: Job status indicator — always ``"processing"`` on initial
             acceptance.
-        user_id: The internal OpenZep user UUID.
+        user_id: The internal OpenZync user UUID.
     """
 
     message: str

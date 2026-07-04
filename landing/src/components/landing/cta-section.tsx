@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import { Button } from "@openzep/design-system";
+import { Button } from "@openzync/design-system";
 import { siteConfig } from "@/content/site-config";
 
 /**

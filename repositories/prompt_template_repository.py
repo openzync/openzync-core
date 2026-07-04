@@ -1,6 +1,6 @@
 """Repository for prompt template CRUD and versioning.
 
-After Option A (https://github.com/TheLinkAI/openzep/issues/XXX):
+After Option A (https://github.com/rohnsha0/openzync/issues/XXX):
 
 - System-level rows (``organization_id IS NULL``) no longer exist.
 - The source of truth for defaults is ``services/worker/prompts/manifest.yaml``

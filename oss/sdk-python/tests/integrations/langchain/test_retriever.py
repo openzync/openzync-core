@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 from langchain_core.documents import Document
 
-from openzync.client import AsyncOpenZep
+from openzync.client import AsyncOpenZync
 from openzync.integrations.langchain.retriever import OZGraphRetriever
 
 SAMPLE_SEARCH_RESULTS = [
@@ -37,8 +37,8 @@ SAMPLE_SEARCH_RESULTS = [
 
 @pytest.fixture
 def mock_client():
-    """Create a real AsyncOpenZep with mocked graph sub-client."""
-    client = AsyncOpenZep(api_key="test", base_url="http://test")
+    """Create a real AsyncOpenZync with mocked graph sub-client."""
+    client = AsyncOpenZync(api_key="test", base_url="http://test")
     client.graph = AsyncMock()
     return client
 

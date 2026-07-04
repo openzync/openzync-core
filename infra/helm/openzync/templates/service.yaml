@@ -1,9 +1,9 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "openzep.fullname" . }}-api
+  name: {{ include "openzync.fullname" . }}-api
   labels:
-    {{- include "openzep.labels" . | nindent 4 }}
+    {{- include "openzync.labels" . | nindent 4 }}
     app.kubernetes.io/component: api
 spec:
   type: ClusterIP
@@ -13,5 +13,5 @@ spec:
       protocol: TCP
       name: http
   selector:
-    {{- include "openzep.selectorLabels" . | nindent 4 }}
+    {{- include "openzync.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: api

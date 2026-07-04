@@ -1,6 +1,6 @@
 """Paginated iteration over list endpoints.
 
-OpenZep uses cursor-based pagination for all list endpoints.
+OpenZync uses cursor-based pagination for all list endpoints.
 This module provides async and sync iterators that auto-fetch
 subsequent pages as items are consumed.
 """

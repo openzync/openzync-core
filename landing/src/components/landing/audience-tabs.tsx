@@ -15,8 +15,8 @@ import Link from "next/link";
 const panelSnippets: Record<string, { lines: { text: string; highlight?: string }[] }> = {
   developers: {
     lines: [
-      { text: "$ pip install openzep" },
-      { text: ">>> from openzep import AgentMemory" },
+      { text: "$ pip install openzync" },
+      { text: ">>> from openzync import AgentMemory" },
       { text: '>>> memory = AgentMemory(backend="neo4j")', highlight: "AgentMemory" },
     ],
   },
@@ -51,7 +51,7 @@ export function AudienceTabs() {
       <div className="mx-auto max-w-7xl px-6">
         <div className="max-w-4xl mx-auto">
           <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-center mb-2">
-            OpenZep for
+            OpenZync for
           </h2>
 
           {/* Tab buttons */}

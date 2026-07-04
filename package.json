@@ -1,5 +1,5 @@
 {
-  "name": "openzep",
+  "name": "openzync",
   "private": true,
   "workspaces": [
     "landing",

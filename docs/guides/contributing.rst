@@ -7,8 +7,8 @@ Setup
 .. code-block:: bash
 
    # Clone the repository
-   git clone https://gitlab.com/rohnsha0/openzep.git
-   cd openzep
+   git clone https://github.com/rohnsha0/openzync.git
+   cd openzync
 
    # Create a virtual environment
    python3 -m venv .venv
@@ -103,5 +103,5 @@ Commit messages follow ``type(scope): short description``:
 License
 -------
 
-OpenZep is licensed under AGPLv3 with a commercial option.
+OpenZync is licensed under AGPLv3 with a commercial option.
 See ``COMMERCIAL-LICENSE.md`` for details.

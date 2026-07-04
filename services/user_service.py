@@ -208,7 +208,7 @@ class UserService:
 
         Args:
             organization_id: Tenant scope (must match the user's org).
-            user_id: The internal OpenZep user UUID.
+            user_id: The internal OpenZync user UUID.
 
         Returns:
             A :class:`UserResponseWithStats` with profile + counts.
@@ -246,7 +246,7 @@ class UserService:
 
         Args:
             organization_id: Tenant scope (must match the user's org).
-            user_id: The internal OpenZep user UUID.
+            user_id: The internal OpenZync user UUID.
             update_fields: Only the fields the client explicitly set.
                 Valid keys: ``name``, ``email``, ``metadata``.
 
@@ -280,7 +280,7 @@ class UserService:
 
         Args:
             organization_id: Tenant scope (must match the user's org).
-            user_id: The internal OpenZep user UUID.
+            user_id: The internal OpenZync user UUID.
 
         Raises:
             NotFoundError: No user with this UUID in this organization.

@@ -7,7 +7,7 @@ import { ArrowRight } from "lucide-react";
 
 export const metadata: Metadata = {
   title: "About",
-  description: "Learn about OpenZep, the team behind persistent agent memory infrastructure.",
+  description: "Learn about OpenZync, the team behind persistent agent memory infrastructure.",
 };
 
 const values = [
@@ -34,21 +34,21 @@ const values = [
 const coreValues = [
   {
     icon: Heart,
-    title: "OpenZep is human",
+    title: "OpenZync is human",
     description:
-      "OpenZep is the core of a bright and passionate open source community that loves agent infrastructure and works to make sure others love it too. Built by humans, for humans.",
+      "OpenZync is the core of a bright and passionate open source community that loves agent infrastructure and works to make sure others love it too. Built by humans, for humans.",
   },
   {
     icon: Globe,
-    title: "OpenZep is power",
+    title: "OpenZync is power",
     description:
-      "Powerful organizations need powerful agent infrastructure. Whether a small team or a global enterprise, the full power of OpenZep is available to everyone.",
+      "Powerful organizations need powerful agent infrastructure. Whether a small team or a global enterprise, the full power of OpenZync is available to everyone.",
   },
   {
     icon: Users,
-    title: "OpenZep is community",
+    title: "OpenZync is community",
     description:
-      "Backed by the OpenZep Foundation and a global community of contributors, OpenZep is free, open, and sovereign — forever.",
+      "Backed by the OpenZync Foundation and a global community of contributors, OpenZync is free, open, and sovereign — forever.",
   },
 ];
 
@@ -68,7 +68,7 @@ export default function AboutPage() {
           <h1 className="text-4xl md:text-5xl font-extrabold tracking-tight mb-6">
             What is{" "}
             <span className="text-brand-300">
-              OpenZep
+              OpenZync
             </span>
             ?
           </h1>
@@ -76,7 +76,7 @@ export default function AboutPage() {
           <div className="flex flex-col md:flex-row gap-8 items-start mb-10">
             <div className="flex-1">
               <p className="text-surface-400 text-lg leading-relaxed mb-4">
-                OpenZep is an open source persistent memory infrastructure for AI agents.
+                OpenZync is an open source persistent memory infrastructure for AI agents.
                 It is used to create, store, and manage agent memory — like knowledge
                 graphs, session context, and entity relationships — that agents can read
                 from, write to, and reason over across conversations.
@@ -120,7 +120,7 @@ export default function AboutPage() {
             failure requires replaying from scratch.
           </p>
           <p className="text-surface-400 leading-relaxed">
-            OpenZep solves this by providing a persistent, graph-based memory
+            OpenZync solves this by providing a persistent, graph-based memory
             layer that agents can read from, write to, and reason over. We
             support 10+ graph backends, 5+ LLM providers, and are designed for
             production from day one — with observability, billing, and
@@ -167,7 +167,7 @@ export default function AboutPage() {
               </div>
               <div>
                 <h3 className="text-base font-semibold text-text-primary mb-1">Features</h3>
-                <p className="text-sm text-surface-400">Everything OpenZep offers</p>
+                <p className="text-sm text-surface-400">Everything OpenZync offers</p>
                 <span className="inline-flex items-center gap-1 text-sm text-brand-300 mt-2">Read more <ArrowRight size={14} /></span>
               </div>
             </Link>

@@ -58,7 +58,7 @@ async def deliver_webhook(
         "X-Webhook-Signature": signature,
         "X-Webhook-Attempt": str(attempt),
         "X-Webhook-Event": event_type,
-        "User-Agent": "OpenZep-Webhook/1.0",
+        "User-Agent": "OpenZync-Webhook/1.0",
     }
 
     status_code: int | None = None

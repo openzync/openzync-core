@@ -17,7 +17,7 @@ from aiohttp import web
 
 from services.mcp.server import MemGraphMCPServer
 
-logger = logging.getLogger("openzep.mcp.sse")
+logger = logging.getLogger("openzync.mcp.sse")
 
 
 class SSETransport:

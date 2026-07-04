@@ -64,7 +64,7 @@ class WebhookSecretResponse(BaseModel):
     message: str = (
         "This is the global webhook signing secret. "
         "Use it to verify HMAC-SHA256 signatures on all received webhooks. "
-        "Rotate via the MG_WEBHOOK_SIGNING_SECRET environment variable."
+        "Rotate via the OZ_WEBHOOK_SIGNING_SECRET environment variable."
     )
 
 

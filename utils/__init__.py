@@ -1,1 +1,1 @@
-"""OpenZep cryptographic and security utilities."""
+"""OpenZync cryptographic and security utilities."""

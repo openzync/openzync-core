@@ -8,8 +8,8 @@ Usage:
     python scripts/seed_load_test.py --api-url http://localhost:8000
 
 Environment variables:
-    MG_LOAD_TEST_ORG: Organization name (default: "Load Test Org")
-    MG_LOAD_TEST_USER: User external ID (default: "load_test_user")
+    OZ_LOAD_TEST_ORG: Organization name (default: "Load Test Org")
+    OZ_LOAD_TEST_USER: User external ID (default: "load_test_user")
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ async def bootstrap_org(client: httpx.AsyncClient) -> dict:
     """Create a test org and return its API key."""
     resp = await client.post(
         "/admin/organizations",
-        json={"name": os.environ.get("MG_LOAD_TEST_ORG", "Load Test Org")},
+        json={"name": os.environ.get("OZ_LOAD_TEST_ORG", "Load Test Org")},
     )
     resp.raise_for_status()
     data = resp.json()
@@ -168,11 +168,11 @@ async def main() -> None:
     parser.add_argument(
         "--api-url",
         default="http://localhost:8000",
-        help="Base URL of the OpenZep API",
+        help="Base URL of the OpenZync API",
     )
     args = parser.parse_args()
 
-    user_ext_id = os.environ.get("MG_LOAD_TEST_USER", "load_test_user")
+    user_ext_id = os.environ.get("OZ_LOAD_TEST_USER", "load_test_user")
 
     # Step 1: Bootstrap org
     anon_client = _make_client(args.api_url)
@@ -188,8 +188,8 @@ async def main() -> None:
 
         # Export for Locust
         print(f"\nExport these for Locust:")
-        print(f"  export MG_LOAD_TEST_API_KEY={api_key}")
-        print(f"  export MG_LOAD_TEST_USER_ID={user_id}")
+        print(f"  export OZ_LOAD_TEST_API_KEY={api_key}")
+        print(f"  export OZ_LOAD_TEST_USER_ID={user_id}")
         print()
 
         # Step 3: Seed episodes
@@ -203,8 +203,8 @@ async def main() -> None:
         logger.info("\n✅ Load test data seeded successfully!")
         logger.info("Run Locust with:")
         logger.info(
-            f"  MG_LOAD_TEST_API_KEY={api_key[:16]}... "
-            f"MG_LOAD_TEST_USER_ID={user_id} "
+            f"  OZ_LOAD_TEST_API_KEY={api_key[:16]}... "
+            f"OZ_LOAD_TEST_USER_ID={user_id} "
             f"locust -f tests/performance/locustfile.py --headless "
             f"-u 10 -r 2 --run-time 5m --host {args.api_url}"
         )

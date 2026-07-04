@@ -1,7 +1,7 @@
-"""LangChain memory backed by OpenZep.
+"""LangChain memory backed by OpenZync.
 
 Provides ``OZMemory``, a ``BaseChatMemory`` implementation that persists
-conversation context to OpenZep. Designed to be a drop-in replacement for
+conversation context to OpenZync. Designed to be a drop-in replacement for
 ``ConversationBufferMemory`` in LangChain chains.
 """
 
@@ -19,7 +19,7 @@ from openzync.models.memory import ContextResponse
 
 
 class OZMemory(BaseMemory):
-    """LangChain memory backed by OpenZep.
+    """LangChain memory backed by OpenZync.
 
     Wraps ``OZChatMessageHistory`` to integrate with LangChain's memory
     system, enabling persistent conversation history in chains.
@@ -27,10 +27,10 @@ class OZMemory(BaseMemory):
     .. code-block:: python
 
         from langchain.chains import ConversationChain
-        from openzync import AsyncOpenZep
+        from openzync import AsyncOpenZync
         from openzync.integrations.langchain import OZMemory
 
-        client = AsyncOpenZep(api_key="...")
+        client = AsyncOpenZync(api_key="...")
         memory = OZMemory(
             session_id="session-123",
             project_id="project-abc",
@@ -42,8 +42,8 @@ class OZMemory(BaseMemory):
 
     Args:
         session_id: LangChain conversation / session identifier.
-        project_id: OpenZep project UUID.
-        client: An ``AsyncOpenZep`` client instance.
+        project_id: OpenZync project UUID.
+        client: An ``AsyncOpenZync`` client instance.
         memory_key: Key under which memory variables are stored (default
             ``"chat_history"``).
         return_messages: If ``True``, returns a list of ``BaseMessage``;
@@ -57,7 +57,7 @@ class OZMemory(BaseMemory):
 
     session_id: str
     project_id: str
-    client: Any  # typed as Any to avoid import issues — must be AsyncOpenZep
+    client: Any  # typed as Any to avoid import issues — must be AsyncOpenZync
     memory_key: str = "chat_history"
     return_messages: bool = True
     input_key: str | None = None
@@ -114,7 +114,7 @@ class OZMemory(BaseMemory):
         inputs: dict[str, Any],
         outputs: dict[str, Any],
     ) -> None:
-        """Save the context of a conversation turn to OpenZep.
+        """Save the context of a conversation turn to OpenZync.
 
         Extracts the input and output messages and persists them.
 
@@ -135,7 +135,7 @@ class OZMemory(BaseMemory):
     async def get_context(self, query: str, limit: int = 10) -> ContextResponse:
         """Retrieve relevant context from memory for LLM injection.
 
-        Calls the OpenZep server-side context endpoint, which assembles
+        Calls the OpenZync server-side context endpoint, which assembles
         a formatted context block from recent conversation history and
         semantic search results.
 

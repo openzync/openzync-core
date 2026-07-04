@@ -281,7 +281,7 @@ export default function OnboardingPage() {
         <div className="text-center mb-10">
           <div className="flex items-center justify-center gap-2 mb-4">
             <span className="text-brand-500 font-bold text-3xl">O</span>
-            <span className="text-2xl font-bold text-text-primary">OpenZep</span>
+            <span className="text-2xl font-bold text-text-primary">OpenZync</span>
           </div>
           <h1 className="text-2xl font-bold text-text-primary">Complete Your Setup</h1>
           <p className="text-sm text-surface-400 mt-1 max-w-md mx-auto">

@@ -24,7 +24,7 @@ async def health() -> dict[str, str]:
     Does **not** check downstream dependencies — that is the job of
     ``/ready``.
     """
-    return {"status": "ok", "service": "openzep-api"}
+    return {"status": "ok", "service": "openzync-api"}
 
 
 # ── Readiness (check all dependencies) ──────────────────────────────────────

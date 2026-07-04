@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Breadcrumbs, buildBreadcrumbSegments } from "@/components/landing/breadcrumbs";
-import { Badge } from "@openzep/design-system";
+import { Badge } from "@openzync/design-system";
 import { Calendar, ArrowRight } from "lucide-react";
 import { getAllBlogPosts } from "@/lib/blog";
 
 export const metadata: Metadata = {
   title: "Blog",
-  description: "Latest news, engineering deep-dives, tutorials, and community updates from OpenZep.",
+  description: "Latest news, engineering deep-dives, tutorials, and community updates from OpenZync.",
 };
 
 export default function BlogPage() {
@@ -26,7 +26,7 @@ export default function BlogPage() {
           </h1>
           <p className="text-surface-400 max-w-xl">
             Engineering deep-dives, community updates, release announcements, and tutorials
-            from the OpenZep team.
+            from the OpenZync team.
           </p>
         </div>
 

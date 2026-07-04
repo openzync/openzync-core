@@ -95,7 +95,7 @@ export function FeaturesSection() {
             </span>
           </h2>
           <p className="text-surface-400 max-w-2xl mx-auto">
-            From graph backends to observability — OpenZep provides the full
+            From graph backends to observability — OpenZync provides the full
             stack for production-grade agent memory infrastructure.
           </p>
         </div>

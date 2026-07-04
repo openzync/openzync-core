@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """Generate a development API key with salted SHA-256 hash.
 
-Outputs a raw API key (``mg_test_`` prefix) and the corresponding salted
+Outputs a raw API key (``oz_test_`` prefix) and the corresponding salted
 SHA-256 hash.  Store the **hash** in your database; give the **raw key** to
 the developer / client.
 
 Usage:
 
     python scripts/create_dev_key.py
-    python scripts/create_dev_key.py --prefix mg_dev_
+    python scripts/create_dev_key.py --prefix oz_dev_
 
 Example output::
 
-    Raw key:   mg_test_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
+    Raw key:   oz_test_a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
     Hash:      $6$abc123def456...$a1b2c3d4...
 """
 
@@ -60,16 +60,16 @@ def hash_api_key(raw_key: str, salt: bytes) -> str:
     return f"$6${salt.hex()}${d.hex()}"
 
 
-def generate_api_key(prefix: str = "mg_test_", byte_length: int = 32) -> str:
+def generate_api_key(prefix: str = "oz_test_", byte_length: int = 32) -> str:
     """Generate a cryptographically random API key string.
 
     Args:
-        prefix: String prepended to the random part (e.g. ``mg_test_``).
+        prefix: String prepended to the random part (e.g. ``oz_test_``).
         byte_length: Number of random bytes (output will be ``2 * byte_length``
             hex characters long).
 
     Returns:
-        A key like ``mg_test_a1b2c3d4...``.
+        A key like ``oz_test_a1b2c3d4...``.
     """
     return prefix + secrets.token_hex(byte_length)
 
@@ -81,8 +81,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--prefix",
-        default="mg_test_",
-        help="Prefix for the generated key (default: mg_test_).",
+        default="oz_test_",
+        help="Prefix for the generated key (default: oz_test_).",
     )
     parser.add_argument(
         "--byte-length",

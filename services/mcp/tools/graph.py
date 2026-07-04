@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from openzep.client import AsyncOpenZep
+from openzync.client import AsyncOpenZync
 
 
-async def handle_get_user_graph(client: AsyncOpenZep, args: dict) -> dict:
+async def handle_get_user_graph(client: AsyncOpenZync, args: dict) -> dict:
     """Get the entity graph for a user."""
     user_id = args["user_id"]
     entity_type = args.get("entity_type")

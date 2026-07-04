@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from openzep.client import AsyncOpenZep
+from openzync.client import AsyncOpenZync
 
 
-async def handle_add_memory(client: AsyncOpenZep, args: dict) -> dict:
+async def handle_add_memory(client: AsyncOpenZync, args: dict) -> dict:
     """Add messages to a user's memory."""
     user_id = args["user_id"]
     messages = args["messages"]
@@ -33,7 +33,7 @@ async def handle_add_memory(client: AsyncOpenZep, args: dict) -> dict:
     }
 
 
-async def handle_get_context(client: AsyncOpenZep, args: dict) -> dict:
+async def handle_get_context(client: AsyncOpenZync, args: dict) -> dict:
     """Assemble a context block for LLM injection."""
     user_id = args["user_id"]
     query = args["query"]
@@ -56,7 +56,7 @@ async def handle_get_context(client: AsyncOpenZep, args: dict) -> dict:
     }
 
 
-async def handle_search_memory(client: AsyncOpenZep, args: dict) -> dict:
+async def handle_search_memory(client: AsyncOpenZync, args: dict) -> dict:
     """Search across a user's memory."""
     user_id = args["user_id"]
     query = args["query"]
@@ -88,7 +88,7 @@ async def handle_search_memory(client: AsyncOpenZep, args: dict) -> dict:
     }
 
 
-async def handle_delete_memory(client: AsyncOpenZep, args: dict) -> dict:
+async def handle_delete_memory(client: AsyncOpenZync, args: dict) -> dict:
     """Delete all memory for a user."""
     user_id = args["user_id"]
 

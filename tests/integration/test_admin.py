@@ -46,7 +46,7 @@ class TestAdminBootstrap:
 
         The response should include:
         - ``organization_id`` — a valid UUID.
-        - ``api_key`` — a string starting with ``mg_live_``.
+        - ``api_key`` — a string starting with ``oz_live_``.
         """
         response = await anon_client.post(
             "/admin/organizations",
@@ -67,8 +67,8 @@ class TestAdminBootstrap:
         UUID(body["organization_id"])
 
         # api_key must start with the live prefix
-        assert body["api_key"].startswith("mg_live_"), (
-            f"api_key should start with 'mg_live_', got: {body['api_key'][:10]}..."
+        assert body["api_key"].startswith("oz_live_"), (
+            f"api_key should start with 'oz_live_', got: {body['api_key'][:10]}..."
         )
 
     # ═════════════════════════════════════════════════════════════════════

@@ -619,8 +619,8 @@ class OpenRouterBackend(LLMBackend):
             base_url=self.BASE_URL,
             api_key=api_key,
             default_headers={
-                "HTTP-Referer": "https://github.com/thelinkai/openzep",
-                "X-OpenRouter-Title": "OpenZep - Agent Memory Platform",
+                "HTTP-Referer": "https://github.com/rohnsha0/openzync",
+                "X-OpenRouter-Title": "OpenZync - Agent Memory Platform",
             },
         )
         self._chat_model = model or self.DEFAULT_CHAT_MODEL

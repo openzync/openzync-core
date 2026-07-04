@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { Menu, X, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { siteConfig, navItems } from "@/content/site-config";
-import { Button } from "@openzep/design-system";
+import { Button } from "@openzync/design-system";
 import { MegaMenu } from "./mega-menu";
 
 /**

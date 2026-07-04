@@ -3,7 +3,7 @@ import { statsData } from "@/content/stats";
 import { AnimatedCounter } from "./animated-counter";
 
 /**
- * Stats section — "OpenZep by Numbers" (Plone's "Plone by Numbers" pattern).
+ * Stats section — "OpenZync by Numbers" (Plone's "Plone by Numbers" pattern).
  * Displays large stat items with label, value, and sub-description.
  */
 export function StatsSection() {
@@ -11,10 +11,10 @@ export function StatsSection() {
     <section className="py-20 md:py-28 border-t border-surface-800">
       <div className="mx-auto max-w-7xl px-6">
         <div className="text-center mb-2">
-          <span className="font-mono text-[11px] text-surface-600">/* OpenZep by the numbers */</span>
+          <span className="font-mono text-[11px] text-surface-600">/* OpenZync by the numbers */</span>
         </div>
         <h2 className="text-3xl md:text-4xl font-bold tracking-tight text-center mb-14">
-          OpenZep by Numbers
+          OpenZync by Numbers
         </h2>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8 max-w-4xl mx-auto">

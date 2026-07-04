@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// @openzep/design-system — Shared UI primitives and utilities
+// @openzync/design-system — Shared UI primitives and utilities
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export { cn } from "./cn";

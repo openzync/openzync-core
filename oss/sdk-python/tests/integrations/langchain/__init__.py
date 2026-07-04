@@ -1,1 +1,1 @@
-"""Tests for the OpenZep LangChain integration layer."""
+"""Tests for the OpenZync LangChain integration layer."""

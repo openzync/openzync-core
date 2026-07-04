@@ -142,9 +142,9 @@ class IdempotencyService:
         self._redis = redis
 
         # ── Key prefixes ─────────────────────────────────────────────────
-        self._idem_prefix: str = f"OpenZep:{settings.ENVIRONMENT}:idempotency:"
-        self._content_prefix: str = f"OpenZep:{settings.ENVIRONMENT}:contenthash:"
-        self._cache_prefix: str = f"OpenZep:{settings.ENVIRONMENT}:cache:"
+        self._idem_prefix: str = f"OpenZync:{settings.ENVIRONMENT}:idempotency:"
+        self._content_prefix: str = f"OpenZync:{settings.ENVIRONMENT}:contenthash:"
+        self._cache_prefix: str = f"OpenZync:{settings.ENVIRONMENT}:cache:"
 
         # ── TTL ──────────────────────────────────────────────────────────
         self._idem_ttl: int = getattr(
@@ -483,7 +483,7 @@ class IdempotencyService:
         """Invalidate all cached data for a given user.
 
         Deletes cache keys matching the pattern
-        ``OpenZep:{env}:cache:{org_id}:{user_id}:*``.
+        ``OpenZync:{env}:cache:{org_id}:{user_id}:*``.
 
         Args:
             org_id: Organisation UUID string.

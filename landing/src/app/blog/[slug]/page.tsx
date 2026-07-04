@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Badge } from "@openzep/design-system";
+import { Badge } from "@openzync/design-system";
 import { ChevronLeft, Calendar, User, Share2, Globe, Link as LinkIcon } from "lucide-react";
 import { getBlogPost, getAllBlogPosts } from "@/lib/blog";
 import { MarkdownContent } from "@/components/landing/markdown-content";
 import { Breadcrumbs, buildBreadcrumbSegments } from "@/components/landing/breadcrumbs";
 
-const shareUrl = "https://openzep.com";
+const shareUrl = "https://openzync.tech";
 
 interface Props {
   params: Promise<{ slug: string }>;
