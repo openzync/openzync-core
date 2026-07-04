@@ -33,7 +33,7 @@ dnspython==2.8.0
 docker==7.1.0
 email-validator==2.3.0
 execnet==2.1.2
-FalkorDB==1.6.1
+FalkorDB==1.2.0
 fastapi==0.137.0
 filelock==3.29.1
 frozenlist==1.8.0
