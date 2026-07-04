@@ -1,7 +1,7 @@
-"""LangChain retriever backed by OpenZep's knowledge graph search.
+"""LangChain retriever backed by OpenZync's knowledge graph search.
 
 Provides ``OZGraphRetriever``, a ``BaseRetriever`` implementation that
-uses OpenZep's hybrid graph search to surface relevant context from
+uses OpenZync's hybrid graph search to surface relevant context from
 past episodes, facts, and entities.
 """
 
@@ -13,21 +13,21 @@ from typing import Any, List
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 
-from openzync.client import AsyncOpenZep
+from openzync.client import AsyncOpenZync
 
 
 class OZGraphRetriever(BaseRetriever):
-    """Retriever that searches OpenZep's knowledge graph.
+    """Retriever that searches OpenZync's knowledge graph.
 
-    Uses OpenZep's hybrid search (semantic + keyword + graph traversal)
+    Uses OpenZync's hybrid search (semantic + keyword + graph traversal)
     to retrieve contextually relevant documents from a project's memory.
 
     .. code-block:: python
 
-        from openzync import AsyncOpenZep
+        from openzync import AsyncOpenZync
         from openzync.integrations.langchain.retriever import OZGraphRetriever
 
-        client = AsyncOpenZep(api_key="...")
+        client = AsyncOpenZync(api_key="...")
         retriever = OZGraphRetriever(
             client=client,
             project_id="project-abc",
@@ -37,8 +37,8 @@ class OZGraphRetriever(BaseRetriever):
         docs = retriever.invoke("What does Alice know about Acme Corp?")
 
     Args:
-        client: An ``AsyncOpenZep`` client instance.
-        project_id: OpenZep project UUID to search within.
+        client: An ``AsyncOpenZync`` client instance.
+        project_id: OpenZync project UUID to search within.
         types: Comma-separated result types to include
             (``"episodes"``, ``"facts"``, ``"entities"``).
             Defaults to ``"episodes,facts"``.
@@ -47,7 +47,7 @@ class OZGraphRetriever(BaseRetriever):
             ``None`` means no threshold.
     """
 
-    client: AsyncOpenZep
+    client: AsyncOpenZync
     project_id: str
     types: str = "episodes,facts"
     k: int = 5

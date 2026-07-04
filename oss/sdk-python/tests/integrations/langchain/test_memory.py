@@ -12,7 +12,7 @@ from openzync.integrations.langchain.memory import OZMemory, _messages_to_string
 
 @pytest.fixture
 def mock_client():
-    """Mock AsyncOpenZep client."""
+    """Mock AsyncOpenZync client."""
     client = AsyncMock()
     client.sessions = AsyncMock()
     client.memory = AsyncMock()

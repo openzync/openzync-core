@@ -1,4 +1,4 @@
-# OpenZep — Open-Source Agent Memory Platform
+# OpenZync — Open-Source Agent Memory Platform
 
 Persistent, queryable, graph-based memory for AI agents.
 
@@ -12,7 +12,7 @@ Persistent, queryable, graph-based memory for AI agents.
 
 ## Table of Contents
 
-- [What is OpenZep?](#what-is-openzep)
+- [What is OpenZync?](#what-is-openzync)
 - [Key Features](#key-features)
 - [Architecture](#architecture)
 - [Quick Start](#quick-start)
@@ -25,9 +25,9 @@ Persistent, queryable, graph-based memory for AI agents.
 
 ---
 
-## What is OpenZep?
+## What is OpenZync?
 
-OpenZep is an open-source memory platform for AI agents. It ingests conversational data, enriches it asynchronously into a knowledge graph with entities, facts, and embeddings, and exposes a hybrid search API for LLM context retrieval.
+OpenZync is an open-source memory platform for AI agents. It ingests conversational data, enriches it asynchronously into a knowledge graph with entities, facts, and embeddings, and exposes a hybrid search API for LLM context retrieval.
 
 Built for developers who need persistent, queryable agent memory without vendor lock-in. Bring your own LLM (OpenAI, Anthropic, Ollama, Azure, OpenRouter) and your own infrastructure.
 
@@ -43,7 +43,7 @@ Built for developers who need persistent, queryable agent memory without vendor 
 - **Multi-tenant** — org-scoped data isolation with JWT + API key authentication
 - **MCP server** — expose memory tools to any MCP-compatible LLM (Claude Desktop, etc.)
 - **Admin dashboard** — Next.js frontend for graph exploration and tenant management
-- **Python SDK** — `pip install openzep-py` (Apache 2.0)
+- **Python SDK** — `pip install openzync` (Apache 2.0)
 
 ---
 
@@ -70,8 +70,8 @@ The API receives messages and persists them immediately. ARQ background workers 
 
 ```bash
 # 1. Clone and install
-git clone https://github.com/thelinkai/openzep.git
-cd openzep
+git clone https://github.com/rohnsha0/openzync.git
+cd openzync
 pip install -e ".[dev]"
 
 # 2. Start infrastructure (PostgreSQL + Redis + Ollama)
@@ -126,34 +126,34 @@ For detailed API docs, see [docs/implementation/08-api-gateway.md](docs/implemen
 2. **Enrich** — ARQ workers consume episodes asynchronously: extract entities, facts, and classifications; generate embeddings.
 3. **Graph sync** — entities and relationships are synced to the graph backend (PostgreSQL-native by default), with temporal edges linking episodes to entities.
 4. **Retrieve** — hybrid search combines cosine similarity (pgvector), BM25 full-text, and graph BFS traversal. Results are fused via RRF and assembled into a structured prompt context.
-5. **Community detection** — Label Propagation groups related entities into communities. Runs via nightly cron or event-driven after graph sync (controlled by `MG_AUTO_RUN_COMMUNITY_DETECTION`).
+5. **Community detection** — Label Propagation groups related entities into communities. Runs via nightly cron or event-driven after graph sync (controlled by `OZ_AUTO_RUN_COMMUNITY_DETECTION`).
 
 ---
 
 ## Configuration
 
-Configuration is via environment variables (all prefixed with `MG_`). Copy `.env.example` to `.env` and edit.
+Configuration is via environment variables (all prefixed with `OZ_`). Copy `.env.example` to `.env` and edit.
 
 | Variable | Default | Description |
 |---|---|---|
-| `MG_DATABASE_URL` | — | PostgreSQL connection string (`postgresql+asyncpg://...`) |
-| `MG_REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
-| `MG_GRAPH_BACKEND` | `postgres` | Graph backend (`postgres` or `none`) |
-| `MG_LLM_BACKEND` | `ollama` | LLM provider (`ollama`, `openai`, `azure`, `anthropic`, `openrouter`) |
-| `MG_LLM_MODEL` | `llama3.2:3b` | Model name for the LLM provider |
-| `MG_AUTO_RUN_COMMUNITY_DETECTION` | `false` | When `true`, runs community detection after each graph sync (deduped to once/hour/org); when `false`, runs nightly at 02:00 UTC |
-| `MG_LOG_LEVEL` | `INFO` | Minimum log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
-| `MG_SECRET_KEY` | — | Server secret key (min 32 chars) |
-| `MG_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed CORS origins |
+| `OZ_DATABASE_URL` | — | PostgreSQL connection string (`postgresql+asyncpg://...`) |
+| `OZ_REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
+| `OZ_GRAPH_BACKEND` | `postgres` | Graph backend (`postgres` or `none`) |
+| `OZ_LLM_BACKEND` | `ollama` | LLM provider (`ollama`, `openai`, `azure`, `anthropic`, `openrouter`) |
+| `OZ_LLM_MODEL` | `llama3.2:3b` | Model name for the LLM provider |
+| `OZ_AUTO_RUN_COMMUNITY_DETECTION` | `false` | When `true`, runs community detection after each graph sync (deduped to once/hour/org); when `false`, runs nightly at 02:00 UTC |
+| `OZ_LOG_LEVEL` | `INFO` | Minimum log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `OZ_SECRET_KEY` | — | Server secret key (min 32 chars) |
+| `OZ_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed CORS origins |
 
-Provider-specific keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) are read directly without the `MG_` prefix.
+Provider-specific keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) are read directly without the `OZ_` prefix.
 
 ---
 
 ## Deployment
 
 - **Docker Compose** — `infra/docker-compose.yml` for development; `infra/docker-compose.prod.yml` for production (2 API replicas, resource limits, TLS-ready).
-- **Kubernetes** — Helm chart at `infra/helm/openzep/`.
+- **Kubernetes** — Helm chart at `infra/helm/openzync/`.
 - **Requirements** — PostgreSQL 15+ (with pgvector extension), Redis 7+, and an LLM provider (Ollama local or cloud BYOK).
 - **Worker** — The ARQ worker runs as a separate process. In Docker Compose, it is the `worker` service.
 - **Migrations** — Apply with `make migrate` or `alembic upgrade head`.

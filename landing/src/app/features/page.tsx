@@ -3,7 +3,7 @@ import { ArrowRight, GitFork } from "lucide-react";
 import { Breadcrumbs, buildBreadcrumbSegments } from "@/components/landing/breadcrumbs";
 import { features, categories } from "@/content/features";
 import { FadeIn } from "@/components/landing/fade-in";
-import { Button } from "@openzep/design-system";
+import { Button } from "@openzync/design-system";
 import { siteConfig } from "@/content/site-config";
 import {
   GitBranch,
@@ -22,7 +22,7 @@ import { CtaSection } from "@/components/landing/cta-section";
 export const metadata: Metadata = {
   title: "Features",
   description:
-    "Explore OpenZep's feature set: multi-graph backends, agent memory, multi-LLM support, tool plugins, observability, and more.",
+    "Explore OpenZync's feature set: multi-graph backends, agent memory, multi-LLM support, tool plugins, observability, and more.",
 };
 
 const iconMap: Record<string, LucideIcon> = {
@@ -57,7 +57,7 @@ export default function FeaturesPage() {
             Features
           </h1>
           <p className="text-surface-400 text-lg max-w-2xl">
-            OpenZep provides the full stack for production-grade agent memory
+            OpenZync provides the full stack for production-grade agent memory
             infrastructure — from graph backends to observability, built for
             scale, security, and multi-provider flexibility.
           </p>
@@ -71,7 +71,7 @@ export default function FeaturesPage() {
           <section key={cat.key} className="py-16 border-t border-surface-800">
             <div className="mx-auto max-w-4xl px-6">
               <h2 className="text-2xl md:text-3xl font-bold tracking-tight mb-2">
-                OpenZep is {cat.label}
+                OpenZync is {cat.label}
               </h2>
               <p className="text-surface-400 mb-10">{cat.description}</p>
 
@@ -107,18 +107,18 @@ export default function FeaturesPage() {
       <section className="py-16 border-t border-surface-800">
         <div className="mx-auto max-w-3xl px-6 text-center">
           <h2 className="text-2xl md:text-3xl font-bold tracking-tight mb-4">
-            Try OpenZep Yourself
+            Try OpenZync Yourself
           </h2>
           <p className="text-surface-400 mb-8 max-w-xl mx-auto">
-            You can try OpenZep using our demo site or download it to run locally.
+            You can try OpenZync using our demo site or download it to run locally.
           </p>
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <a href="https://demo.openzep.com" target="_blank" rel="noopener noreferrer">
+            <a href="https://demo.openzync.tech" target="_blank" rel="noopener noreferrer">
               <Button variant="primary" size="lg" icon={<ArrowRight size={18} />}>
                 Try the Demo
               </Button>
             </a>
-            <a href="https://github.com/openzep/openzep/releases" target="_blank" rel="noopener noreferrer">
+            <a href="https://github.com/rohnsha0/openzync/releases" target="_blank" rel="noopener noreferrer">
               <Button variant="secondary" size="lg" icon={<GitFork size={18} />}>
                 Download
               </Button>

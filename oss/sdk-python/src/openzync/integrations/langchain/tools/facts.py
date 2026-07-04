@@ -1,6 +1,6 @@
-"""LangChain tools for OpenZep fact operations.
+"""LangChain tools for OpenZync fact operations.
 
-Provides tools that give LLM agents write access to the OpenZep facts
+Provides tools that give LLM agents write access to the OpenZync facts
 system — adding structured fact triples to a project's knowledge graph.
 """
 
@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Type
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field
 
-from openzync.client import AsyncOpenZep
+from openzync.client import AsyncOpenZync
 
 
 class FactTripleInput(BaseModel):
@@ -36,14 +36,14 @@ class FactTripleInput(BaseModel):
 class AddFactsInput(BaseModel):
     """Input schema for adding facts."""
 
-    project_id: str = Field(..., description="OpenZep project UUID.")
+    project_id: str = Field(..., description="OpenZync project UUID.")
     facts: List[FactTripleInput] = Field(
         ..., min_length=1, max_length=500, description="Fact triples to add."
     )
 
 
 class AddFactsTool(BaseTool):
-    """Tool that adds structured fact triples to the OpenZep knowledge graph.
+    """Tool that adds structured fact triples to the OpenZync knowledge graph.
 
     Agents can use this to persist business data, user preferences,
     or relationship information extracted from conversations.
@@ -57,7 +57,7 @@ class AddFactsTool(BaseTool):
         "from conversations."
     )
     args_schema: Type[BaseModel] = AddFactsInput
-    client: AsyncOpenZep
+    client: AsyncOpenZync
 
     def _run(self, project_id: str, facts: list[dict[str, Any]]) -> str:
         """Add facts (sync)."""

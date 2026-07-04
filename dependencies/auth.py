@@ -18,7 +18,7 @@ Provides five levels of auth dependency:
    Works with both JWT and API-key auth.  Raises 401 if not authenticated.
 
 All dependencies rely on ``request.state`` attributes set by
-:class:`AuthMiddleware <openzep.middleware.auth.AuthMiddleware>`.
+:class:`AuthMiddleware <openzync.middleware.auth.AuthMiddleware>`.
 """
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ async def require_org_id(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
-                "type": "https://errors.openzep.dev/authentication_error",
+                "type": "https://errors.openzync.tech/authentication_error",
                 "title": "Authentication Required",
                 "status": 401,
                 "detail": (
@@ -157,7 +157,7 @@ def require_scope(required_scope: str):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
-                    "type": "https://errors.openzep.dev/authorization_error",
+                    "type": "https://errors.openzync.tech/authorization_error",
                     "title": "Insufficient Permissions",
                     "status": 403,
                     "detail": (
@@ -200,7 +200,7 @@ async def get_dashboard_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
-                "type": "https://errors.openzep.dev/authentication_error",
+                "type": "https://errors.openzync.tech/authentication_error",
                 "title": "Dashboard Authentication Required",
                 "status": 401,
                 "detail": (
@@ -215,7 +215,7 @@ async def get_dashboard_user(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
-                "type": "https://errors.openzep.dev/authentication_error",
+                "type": "https://errors.openzync.tech/authentication_error",
                 "title": "Invalid Session",
                 "status": 401,
                 "detail": "The JWT token does not contain a valid user identifier.",
@@ -251,7 +251,7 @@ async def get_current_user_id(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={
-                "type": "https://errors.openzep.dev/authentication_error",
+                "type": "https://errors.openzync.tech/authentication_error",
                 "title": "Authentication Required",
                 "status": 401,
                 "detail": (

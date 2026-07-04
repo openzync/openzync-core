@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { X } from "lucide-react";
 
-const STORAGE_KEY = "openzep-announcement-dismissed";
+const STORAGE_KEY = "openzync-announcement-dismissed";
 const BAR_HEIGHT = 36;
 
 /**

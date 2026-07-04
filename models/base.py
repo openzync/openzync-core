@@ -1,4 +1,4 @@
-"""Declarative base and timestamp mixins for all OpenZep ORM models.
+"""Declarative base and timestamp mixins for all OpenZync ORM models.
 
 All domain models inherit from ``Base``. Mutable entities use ``TimestampMixin``
 (created_at + updated_at). Append-only entities (audit_log, llm_usage) use
@@ -12,7 +12,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
 
 
 class Base(DeclarativeBase):
-    """Shared declarative base for all OpenZep ORM models."""
+    """Shared declarative base for all OpenZync ORM models."""
 
     pass
 

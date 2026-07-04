@@ -358,4 +358,4 @@ class FactService:
             Fully qualified queue name for the current environment.
         """
         env = settings.ENVIRONMENT if hasattr(settings, "ENVIRONMENT") else "development"
-        return f"OpenZep:{env}:queue:{queue_type}"
+        return f"OpenZync:{env}:queue:{queue_type}"

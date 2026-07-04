@@ -1,10 +1,10 @@
-"""OpenZep Python SDK — open-source agent memory platform.
+"""OpenZync Python SDK — open-source agent memory platform.
 
 Usage::
 
-    from openzync import OpenZep
+    from openzync import OpenZync
 
-    client = OpenZep(api_key="mg_live_...")
+    client = OpenZync(api_key="oz_live_...")
     result = client.memory.ingest("project-id", messages=[
         {"role": "user", "content": "Hello world"},
     ])
@@ -14,11 +14,11 @@ Usage::
 from __future__ import annotations
 
 from openzync._version import __version__
-from openzync.client import AsyncOpenZep, OpenZep
+from openzync.client import AsyncOpenZync, OpenZync
 
 __all__ = [
-    "AsyncOpenZep",
-    "OpenZep",
+    "AsyncOpenZync",
+    "OpenZync",
 ]
 
 # LangChain integration classes live under openzync.integrations.langchain.

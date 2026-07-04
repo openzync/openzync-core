@@ -1,6 +1,6 @@
 /**
  * Supported Backends & Providers section.
- * Logo grid showing OpenZep's integration partners (graph backends and LLM providers).
+ * Logo grid showing OpenZync's integration partners (graph backends and LLM providers).
  */
 export function SponsorsSection() {
   return (
@@ -10,7 +10,7 @@ export function SponsorsSection() {
           Supported Backends &amp; Providers
         </h2>
         <p className="text-surface-400 max-w-xl mx-auto mb-12">
-          OpenZep integrates with leading graph databases and LLM providers out of the box.
+          OpenZync integrates with leading graph databases and LLM providers out of the box.
         </p>
 
         {/* Logo grid */}

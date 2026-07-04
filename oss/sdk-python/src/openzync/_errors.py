@@ -1,4 +1,4 @@
-"""Exception hierarchy matching the OpenZep API's RFC 7807 error responses.
+"""Exception hierarchy matching the OpenZync API's RFC 7807 error responses.
 
 Every API error is mapped to a typed exception so callers can handle
 specific error conditions without inspecting raw response bodies.
@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Any
 
 
-class OpenZepError(Exception):
-    """Base exception for all OpenZep SDK errors."""
+class OpenZyncError(Exception):
+    """Base exception for all OpenZync SDK errors."""
 
     status_code: int = 500
     code: str = "internal_error"
@@ -32,7 +32,7 @@ class OpenZepError(Exception):
         super().__init__(self.message)
 
 
-class AuthenticationError(OpenZepError):
+class AuthenticationError(OpenZyncError):
     """Missing or invalid API key."""
 
     status_code: int = 401
@@ -40,7 +40,7 @@ class AuthenticationError(OpenZepError):
     message: str = "Authentication is required."
 
 
-class AuthorizationError(OpenZepError):
+class AuthorizationError(OpenZyncError):
     """Authenticated but insufficient permissions."""
 
     status_code: int = 403
@@ -48,7 +48,7 @@ class AuthorizationError(OpenZepError):
     message: str = "You do not have permission to perform this action."
 
 
-class NotFoundError(OpenZepError):
+class NotFoundError(OpenZyncError):
     """Requested resource does not exist."""
 
     status_code: int = 404
@@ -56,7 +56,7 @@ class NotFoundError(OpenZepError):
     message: str = "The requested resource was not found."
 
 
-class ConflictError(OpenZepError):
+class ConflictError(OpenZyncError):
     """Resource already exists or is in a conflicting state."""
 
     status_code: int = 409
@@ -64,7 +64,7 @@ class ConflictError(OpenZepError):
     message: str = "The request conflicts with the current state of the resource."
 
 
-class PayloadTooLargeError(OpenZepError):
+class PayloadTooLargeError(OpenZyncError):
     """Request body exceeds the maximum allowed size."""
 
     status_code: int = 413
@@ -72,7 +72,7 @@ class PayloadTooLargeError(OpenZepError):
     message: str = "The request body is too large."
 
 
-class ValidationError(OpenZepError):
+class ValidationError(OpenZyncError):
     """Request payload failed validation."""
 
     status_code: int = 422
@@ -80,7 +80,7 @@ class ValidationError(OpenZepError):
     message: str = "The request payload is invalid."
 
 
-class RateLimitError(OpenZepError):
+class RateLimitError(OpenZyncError):
     """Client exceeded rate-limit allowance."""
 
     status_code: int = 429
@@ -88,7 +88,7 @@ class RateLimitError(OpenZepError):
     message: str = "Too many requests. Please slow down."
 
 
-class ExternalServiceError(OpenZepError):
+class ExternalServiceError(OpenZyncError):
     """External dependency (LLM, DB, etc.) returned an error or timed out."""
 
     status_code: int = 502
@@ -96,7 +96,7 @@ class ExternalServiceError(OpenZepError):
     message: str = "An external service error occurred."
 
 
-class EntityNotFoundError(OpenZepError):
+class EntityNotFoundError(OpenZyncError):
     """Requested graph entity node does not exist."""
 
     status_code: int = 404
@@ -104,7 +104,7 @@ class EntityNotFoundError(OpenZepError):
     message: str = "The requested entity was not found in the knowledge graph."
 
 
-class GraphTimeoutError(OpenZepError):
+class GraphTimeoutError(OpenZyncError):
     """Graph database operation exceeded the configured timeout."""
 
     status_code: int = 504
@@ -114,7 +114,7 @@ class GraphTimeoutError(OpenZepError):
 
 # ── Error mapping ──────────────────────────────────────────────────────────
 
-STATUS_TO_EXCEPTION: dict[int, type[OpenZepError]] = {
+STATUS_TO_EXCEPTION: dict[int, type[OpenZyncError]] = {
     401: AuthenticationError,
     403: AuthorizationError,
     404: NotFoundError,
@@ -135,9 +135,9 @@ def raise_on_error(status_code: int, body: dict) -> None:
         body: Parsed JSON response body (should contain ``detail``).
 
     Raises:
-        The mapped ``OpenZepError`` subclass, or ``OpenZepError`` as fallback.
+        The mapped ``OpenZyncError`` subclass, or ``OpenZyncError`` as fallback.
     """
-    exc_cls = STATUS_TO_EXCEPTION.get(status_code, OpenZepError)
+    exc_cls = STATUS_TO_EXCEPTION.get(status_code, OpenZyncError)
     raise exc_cls(
         message=body.get("detail", exc_cls.message),
         detail={k: v for k, v in body.items() if k not in ("detail", "status")},

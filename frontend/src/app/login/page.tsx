@@ -72,7 +72,7 @@ export default function LoginPage() {
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_50%,rgba(143,175,217,0.08)_0%,transparent_50%),radial-gradient(circle_at_75%_30%,rgba(20,72,140,0.12)_0%,transparent_50%)]" />
         <div className="relative z-10 text-center px-8">
           <h1 className="text-5xl font-extrabold text-text-primary tracking-tight mb-2">
-            OpenZep
+            OpenZync
           </h1>
           <p className="text-lg text-surface-300 max-w-sm mx-auto">
             Persistent Agent Memory Infrastructure
@@ -97,7 +97,7 @@ export default function LoginPage() {
         <div className="w-full max-w-sm">
           {/* Mobile brand */}
           <div className="md:hidden text-center mb-8">
-            <h1 className="text-2xl font-extrabold text-brand-500">OpenZep</h1>
+            <h1 className="text-2xl font-extrabold text-brand-500">OpenZync</h1>
             <p className="text-xs text-surface-400">Agent Memory Infrastructure</p>
           </div>
 

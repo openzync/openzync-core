@@ -7,7 +7,7 @@ import { CtaSection } from "@/components/landing/cta-section";
 
 export const metadata: Metadata = {
   title: "Use Cases",
-  description: "Real-world applications of OpenZep's persistent agent memory infrastructure.",
+  description: "Real-world applications of OpenZync's persistent agent memory infrastructure.",
 };
 
 export default function UseCasesPage() {
@@ -22,7 +22,7 @@ export default function UseCasesPage() {
             Use Cases
           </h1>
           <p className="text-surface-400 text-lg max-w-2xl">
-            See how teams are using OpenZep to give their agents persistent, graph-based memory
+            See how teams are using OpenZync to give their agents persistent, graph-based memory
             in production.
           </p>
         </div>
@@ -62,7 +62,7 @@ export default function UseCasesPage() {
                   )}
                   {cs.category === "Research" && (
                     <p className="text-sm text-surface-400 leading-relaxed mb-6">
-                      Research sessions span weeks or months. OpenZep maintains the citation
+                      Research sessions span weeks or months. OpenZync maintains the citation
                       graph, entity relationships, and reasoning chains across every session.
                       The agent can answer questions like &ldquo;What did we conclude about
                       compound X in last month&rsquo;s review?&rdquo; without replaying
@@ -78,7 +78,7 @@ export default function UseCasesPage() {
                     </p>
                   )}
                   <Link
-                    href="https://docs.openzep.com/use-cases"
+                    href="https://docs.openzync.tech/use-cases"
                     className="inline-flex items-center gap-1 text-sm font-medium text-brand-300 hover:text-brand-200 transition-colors"
                   >
                     Read full case study

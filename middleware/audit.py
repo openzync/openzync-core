@@ -206,7 +206,7 @@ class AuditMiddleware:
     """Raw ASGI middleware that enqueues an audit job for every non-exempt request.
 
     Operates in the **post-response** phase so that ``scope["state"]``
-    is fully populated by :class:`AuthMiddleware <openzep.middleware.auth.AuthMiddleware>`.
+    is fully populated by :class:`AuthMiddleware <openzync.middleware.auth.AuthMiddleware>`.
     """
 
     def __init__(self, app: ASGIApp) -> None:

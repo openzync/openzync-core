@@ -1,7 +1,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# OpenZep Helm chart — values.yaml
+# OpenZync Helm chart — values.yaml
 # ──────────────────────────────────────────────────────────────────────────────
-# All configurable parameters for the OpenZep deployment.
+# All configurable parameters for the OpenZync deployment.
 # Override via `--set key=value` or a custom values file.
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -9,14 +9,14 @@
 global:
   environment: production
   logLevel: INFO
-  imageRegistry: ghcr.io/thelinkai
+  imageRegistry: ghcr.io/rohnsha0
 
 # ── API service ───────────────────────────────────────────────────────────────
 api:
-  name: openzep-api
+  name: openzync-api
   replicaCount: 2
   image:
-    repository: openzep-api
+    repository: openzync-api
     tag: latest
     pullPolicy: IfNotPresent
   containerPort: 8000
@@ -40,17 +40,17 @@ api:
     targetMemoryUtilizationPercentage: 80
   ingress:
     enabled: false
-    host: api.openzep.dev
+    host: api.openzync.tech
     tls:
       enabled: true
-      secretName: openzep-tls
+      secretName: openzync-tls
 
 # ── Worker service ────────────────────────────────────────────────────────────
 worker:
-  name: openzep-worker
+  name: openzync-worker
   replicaCount: 1
   image:
-    repository: openzep-worker
+    repository: openzync-worker
     tag: latest
     pullPolicy: IfNotPresent
   health:
@@ -75,8 +75,8 @@ postgresql:
   enabled: true
   image: pgvector/pgvector:pg15
   port: 5432
-  database: openzep
-  user: openzep
+  database: openzync
+  user: openzync
   existingSecret: ""
   persistence:
     enabled: true

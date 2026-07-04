@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────────────────
-# OpenZep — Production deploy script
+# OpenZync — Production deploy script
 # ──────────────────────────────────────────────────────────────────────────────
 # Idempotent: safe to run multiple times.
 #

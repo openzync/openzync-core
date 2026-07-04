@@ -16,8 +16,8 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "OpenZep Dashboard",
-  description: "OpenZep — Agent Memory Infrastructure",
+  title: "OpenZync Dashboard",
+  description: "OpenZync — Agent Memory Infrastructure",
 };
 
 export default function RootLayout({

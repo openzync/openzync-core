@@ -60,7 +60,7 @@ def base62_encode(num: int) -> str:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def generate_api_key(prefix: str = "mg_live_") -> str:
+def generate_api_key(prefix: str = "oz_live_") -> str:
     """Generate a cryptographically random API key.
 
     The key consists of 48 CSPRNG bytes encoded as base62 (≈ 67 chars) with
@@ -68,17 +68,17 @@ def generate_api_key(prefix: str = "mg_live_") -> str:
 
     Args:
         prefix: Optional key prefix for identifying the environment or owner.
-            Defaults to ``"mg_live_"`` (production OpenZep).  Use
-            ``"mg_test_"`` for test/development keys.
+            Defaults to ``"oz_live_"`` (production OpenZync).  Use
+            ``"oz_test_"`` for test/development keys.
 
     Returns:
-        Full API key string, e.g. ``"mg_live_3Ab9...kQ7"``.
+        Full API key string, e.g. ``"oz_live_3Ab9...kQ7"``.
 
     Example:
-        >>> key = generate_api_key("mg_test_")
+        >>> key = generate_api_key("oz_test_")
         >>> len(key) > 70
         True
-        >>> key.startswith("mg_test_")
+        >>> key.startswith("oz_test_")
         True
     """
     raw = secrets.token_bytes(48)

@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// OpenZep Landing — Features Configuration
+// OpenZync Landing — Features Configuration
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface Feature {

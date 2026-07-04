@@ -1,10 +1,10 @@
 Overview
 ========
 
-What is OpenZep?
-----------------
+What is OpenZync?
+-----------------
 
-OpenZep is an open-source agent memory platform designed to give AI agents
+OpenZync is an open-source agent memory platform designed to give AI agents
 **persistent, queryable, graph-based memory**. It sits between your LLM
 application and your data, providing:
 

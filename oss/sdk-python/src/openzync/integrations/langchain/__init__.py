@@ -1,10 +1,10 @@
-"""LangChain integration for OpenZep.
+"""LangChain integration for OpenZync.
 
 Requires ``langchain-core``. Install with::
 
     pip install openzync[langchain]
 
-Provides LangChain-native wrappers around OpenZep's memory, graph,
+Provides LangChain-native wrappers around OpenZync's memory, graph,
 and fact APIs so they can be plugged into LangChain chains, agents,
 and retrievers.
 """

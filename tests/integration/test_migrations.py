@@ -1,11 +1,11 @@
 """Integration tests for Alembic migrations against a real PostgreSQL instance.
 
 These tests use ``subprocess`` to invoke ``alembic`` CLI commands against the
-database configured via ``DATABASE_URL`` (or ``MG_DATABASE_URL``).
+database configured via ``DATABASE_URL`` (or ``OZ_DATABASE_URL``).
 
 All tests are skipped by default because they require:
 - A running PostgreSQL instance (use testcontainers or a local PG)
-- The ``DATABASE_URL`` / ``MG_DATABASE_URL`` environment variable to be set
+- The ``DATABASE_URL`` / ``OZ_DATABASE_URL`` environment variable to be set
 """
 
 from __future__ import annotations

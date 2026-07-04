@@ -1,4 +1,4 @@
-"""Tests for the OpenZep Python SDK — facts domain."""
+"""Tests for the OpenZync Python SDK — facts domain."""
 
 from __future__ import annotations
 

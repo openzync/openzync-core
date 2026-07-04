@@ -54,7 +54,7 @@ def setup_logging() -> None:
     Every log entry is automatically enriched with:
     * ``timestamp`` (ISO-8601)
     * ``level``
-    * ``logger`` (``OpenZep.worker``)
+    * ``logger`` (``OpenZync.worker``)
     * ``trace_id``, ``org_id``, ``task_type``, ``job_id`` — bound per-task
       via :func:`structlog.contextvars.bind_contextvars`.
     """
@@ -89,7 +89,7 @@ def setup_logging() -> None:
     )
 
 
-logger: structlog.stdlib.BoundLogger = structlog.get_logger("OpenZep.worker")
+logger: structlog.stdlib.BoundLogger = structlog.get_logger("OpenZync.worker")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -175,26 +175,26 @@ def handle_signal(signum: int, _frame: object | None = None) -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 
 worker_tasks_total = Counter(
-    "openzep_worker_tasks_total",
+    "openzync_worker_tasks_total",
     "Tasks completed by type and status",
     labelnames=["task_type", "status"],
 )
 
 worker_task_duration_seconds = Histogram(
-    "openzep_worker_task_duration_seconds",
+    "openzync_worker_task_duration_seconds",
     "Task execution duration in seconds",
     labelnames=["task_type"],
     buckets=(1, 2.5, 5, 10, 15, 30, 60, 120, 300, 600),
 )
 
 worker_queue_depth = Gauge(
-    "openzep_worker_queue_depth",
+    "openzync_worker_queue_depth",
     "Current queue depth by queue name",
     labelnames=["queue_name"],
 )
 
 worker_tasks_per_org = Counter(
-    "openzep_worker_tasks_per_org_total",
+    "openzync_worker_tasks_per_org_total",
     "Tasks by org, type, and status for cost tracking",
     labelnames=["org_id", "task_type", "status"],
 )

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from openzep.client import AsyncOpenZep
+from openzync.client import AsyncOpenZync
 
 
-async def handle_list_sessions(client: AsyncOpenZep, args: dict) -> dict:
+async def handle_list_sessions(client: AsyncOpenZync, args: dict) -> dict:
     """List sessions for a user."""
     user_id = args["user_id"]
     limit = args.get("limit", 50)

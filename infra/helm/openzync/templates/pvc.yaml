@@ -2,9 +2,9 @@
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "openzep.fullname" . }}-postgresql
+  name: {{ include "openzync.fullname" . }}-postgresql
   labels:
-    {{- include "openzep.labels" . | nindent 4 }}
+    {{- include "openzync.labels" . | nindent 4 }}
 spec:
   accessModes:
     - ReadWriteOnce
@@ -20,9 +20,9 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ include "openzep.fullname" . }}-redis
+  name: {{ include "openzync.fullname" . }}-redis
   labels:
-    {{- include "openzep.labels" . | nindent 4 }}
+    {{- include "openzync.labels" . | nindent 4 }}
 spec:
   accessModes:
     - ReadWriteOnce

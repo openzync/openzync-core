@@ -38,7 +38,7 @@ class TestApiKeyService:
         key.organization_id = kwargs.get("org_id", self.ORG_ID)
         key.project_id = kwargs.get("project_id", self.PROJECT_ID)
         key.name = kwargs.get("name", "Test Key")
-        key.prefix = kwargs.get("prefix", "mg_test_")
+        key.prefix = kwargs.get("prefix", "oz_test_")
         key.scopes = kwargs.get("scopes", ["read", "write"])
         key.is_revoked = kwargs.get("is_revoked", False)
         key.lookup_hash = kwargs.get("lookup_hash", "abc123")
@@ -67,7 +67,7 @@ class TestApiKeyService:
         assert api_key.name == "Test Key"
         assert api_key.project_id == self.PROJECT_ID
         assert len(raw_key) > 20  # generated key is ~73 chars
-        assert raw_key.startswith("mg_live_")
+        assert raw_key.startswith("oz_live_")
 
         # Verify repo was called with the right args
         mock_repo.create.assert_awaited_once()
@@ -92,7 +92,7 @@ class TestApiKeyService:
         )
 
         assert api_key.project_id == self.PROJECT_ID
-        assert raw_key.startswith("mg_live_")
+        assert raw_key.startswith("oz_live_")
 
     async def test_create_project_key_hash_properties(self) -> None:
         """The generated key hash and lookup hash should be set correctly."""

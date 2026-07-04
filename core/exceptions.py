@@ -23,7 +23,7 @@ from fastapi.responses import JSONResponse
 
 
 class AppError(Exception):
-    """Base exception for all OpenZep application errors.
+    """Base exception for all OpenZync application errors.
 
     Subclass this to create domain-specific errors.  Every subclass **must**
     set :attr:`status_code` and :attr:`code`.
@@ -407,7 +407,7 @@ def _to_problem_json(request: Request, exc: AppError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code,
         content={
-            "type": f"https://errors.openzep.dev/{exc.code}",
+            "type": f"https://errors.openzync.tech/{exc.code}",
             "title": exc.code.replace("_", " ").title(),
             "status": exc.status_code,
             "detail": exc.message,

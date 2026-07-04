@@ -5,8 +5,8 @@
 # commit message on the default branch.
 #
 # This workflow runs the full LongMemEval benchmark suite against a live
-# OpenZep instance.  It is NOT part of normal CI — benchmarks require:
-#   - A running OpenZep API + PostgreSQL + Redis + worker
+# OpenZync instance.  It is NOT part of normal CI — benchmarks require:
+#   - A running OpenZync API + PostgreSQL + Redis + worker
 #   - Real LLM API access (OpenRouter for the judge, local Ollama for extraction)
 #   - 10-30 minutes of wall-clock time
 # ──────────────────────────────────────────────────────────────────────────────
@@ -49,10 +49,10 @@ on:
 
 env:
   PYTHON_VERSION: '3.12'
-  OPENZEP_BASE_URL: ${{ vars.OPENZEP_BASE_URL || 'http://localhost:8000' }}
+  OPENZYNC_BASE_URL: ${{ vars.OPENZYNC_BASE_URL || 'http://localhost:8000' }}
   BENCH_EMAIL: ${{ secrets.BENCH_EMAIL }}
   BENCH_PASSWORD: ${{ secrets.BENCH_PASSWORD }}
-  MG_OPENROUTER_API_KEY: ${{ secrets.MG_OPENROUTER_API_KEY }}
+  OZ_OPENROUTER_API_KEY: ${{ secrets.OZ_OPENROUTER_API_KEY }}
 
 jobs:
   longmemeval:
@@ -63,13 +63,13 @@ jobs:
       postgres:
         image: pgvector/pgvector:pg16
         env:
-          POSTGRES_USER: openzep
-          POSTGRES_PASSWORD: openzep
-          POSTGRES_DB: openzep
+          POSTGRES_USER: openzync
+          POSTGRES_PASSWORD: openzync
+          POSTGRES_DB: openzync
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U openzep"
+          --health-cmd "pg_isready -U openzync"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -101,9 +101,9 @@ jobs:
 
       - name: Run Alembic migrations
         env:
-          MG_DATABASE_URL: postgresql+asyncpg://openzep:openzep@localhost:5432/openzep
-          MG_REDIS_URL: redis://localhost:6379/0
-          MG_ENVIRONMENT: test
+          OZ_DATABASE_URL: postgresql+asyncpg://openzync:openzync@localhost:5432/openzync
+          OZ_REDIS_URL: redis://localhost:6379/0
+          OZ_ENVIRONMENT: test
         run: |
           alembic upgrade head
 
@@ -123,12 +123,12 @@ jobs:
           github.event_name == 'workflow_dispatch' ||
           (github.event_name == 'push' && steps.check_commit.outputs.triggered == 'true')
         env:
-          MG_DATABASE_URL: postgresql+asyncpg://openzep:openzep@localhost:5432/openzep
-          MG_REDIS_URL: redis://localhost:6379/0
-          MG_LLM_BACKEND: ollama
+          OZ_DATABASE_URL: postgresql+asyncpg://openzync:openzync@localhost:5432/openzync
+          OZ_REDIS_URL: redis://localhost:6379/0
+          OZ_LLM_BACKEND: ollama
           OLLAMA_BASE_URL: http://localhost:11434
-          MG_ENVIRONMENT: test
-          MG_SECRET_KEY: benchmark-secret-key-for-ci-only-min-32-chars!!
+          OZ_ENVIRONMENT: test
+          OZ_SECRET_KEY: benchmark-secret-key-for-ci-only-min-32-chars!!
         run: |
           ARGS="--run-benchmark -v"
           if [ -n "${{ github.event.inputs.variant }}" ]; then

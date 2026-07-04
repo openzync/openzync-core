@@ -1,4 +1,4 @@
-"""OpenZep HTTP middleware — request ID, logging, audit, auth, rate limiting, tracing.
+"""OpenZync HTTP middleware — request ID, logging, audit, auth, rate limiting, tracing.
 
 All middleware classes in this package are Starlette ``BaseHTTPMiddleware``
 subclasses.  They are registered in ``main.py`` via ``app.add_middleware(...)``.

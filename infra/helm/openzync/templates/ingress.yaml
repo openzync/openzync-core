@@ -2,9 +2,9 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ include "openzep.fullname" . }}-api
+  name: {{ include "openzync.fullname" . }}-api
   labels:
-    {{- include "openzep.labels" . | nindent 4 }}
+    {{- include "openzync.labels" . | nindent 4 }}
   annotations:
     {{- if .Values.api.ingress.tls.enabled }}
     cert-manager.io/cluster-issuer: letsencrypt-prod
@@ -24,7 +24,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ include "openzep.fullname" . }}-api
+                name: {{ include "openzync.fullname" . }}-api
                 port:
                   number: 80
 {{- end }}

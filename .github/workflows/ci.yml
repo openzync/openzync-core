@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# OpenZep — GitHub Actions CI/CD pipeline
+# OpenZync — GitHub Actions CI/CD pipeline
 # ──────────────────────────────────────────────────────────────────────────────
 # Stages:
 #   lint            → ruff, mypy
@@ -34,12 +34,12 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.12"
-  MG_DATABASE_URL: "postgresql+asyncpg://postgres:postgres@localhost:5432/test"
-  MG_REDIS_URL: "redis://localhost:6379/0"
-  MG_FALKORDB_URL: "redis://localhost:6380"
-  MG_SECRET_KEY: "ci-secret-key-that-is-at-least-32-chars!!"
-  MG_ENVIRONMENT: "testing"
-  MG_LOG_LEVEL: "WARNING"
+  OZ_DATABASE_URL: "postgresql+asyncpg://postgres:postgres@localhost:5432/test"
+  OZ_REDIS_URL: "redis://localhost:6379/0"
+  OZ_FALKORDB_URL: "redis://localhost:6380"
+  OZ_SECRET_KEY: "ci-secret-key-that-is-at-least-32-chars!!"
+  OZ_ENVIRONMENT: "testing"
+  OZ_LOG_LEVEL: "WARNING"
 
 jobs:
   # ═════════════════════════════════════════════════════════════════════════════
@@ -194,7 +194,7 @@ jobs:
           envs: GHCR_PAT
           script: |
             echo "$GHCR_PAT" | docker login ghcr.io -u rohnsha0 --password-stdin
-            cd /home/deploy/openzep
+            cd /home/deploy/openzync
             docker compose \
               -f infra/docker-compose.yml \
               -f infra/docker-compose.prod.yml \
@@ -226,7 +226,7 @@ jobs:
 
           HOST="${{ secrets.VPS_HOST }}"
           USER="${{ secrets.VPS_USER }}"
-          TARGET="/home/deploy/openzep"
+          TARGET="/home/deploy/openzync"
 
           # Ensure target directory exists on VPS
           ssh -i ~/.ssh/id_ed25519 \
@@ -253,40 +253,40 @@ jobs:
         uses: appleboy/ssh-action@v1.0.3
         env:
           GHCR_PAT: ${{ secrets.GHCR_PAT }}
-          MG_DATABASE_URL: ${{ secrets.MG_DATABASE_URL }}
-          MG_SECRET_KEY: ${{ secrets.MG_SECRET_KEY }}
+          OZ_DATABASE_URL: ${{ secrets.OZ_DATABASE_URL }}
+          OZ_SECRET_KEY: ${{ secrets.OZ_SECRET_KEY }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: GHCR_PAT, MG_DATABASE_URL, MG_SECRET_KEY, VPS_HOST
+          envs: GHCR_PAT, OZ_DATABASE_URL, OZ_SECRET_KEY, VPS_HOST
           script: |
             # Log in to ghcr.io so Docker can pull our private images
             echo "$GHCR_PAT" | docker login ghcr.io -u rohnsha0 --password-stdin
-            cd /home/deploy/openzep
+            cd /home/deploy/openzync
             tar xzf deploy-files.tar.gz
             rm deploy-files.tar.gz
             chmod +x scripts/deploy.sh
 
             # ── Create infra/.env from template + secrets ──────────────────
             cat > infra/.env << ENVEOF
-            MG_DATABASE_URL=$MG_DATABASE_URL
-            MG_REDIS_URL=redis://redis:6379/0
-            MG_SECRET_KEY=$MG_SECRET_KEY
-            MG_ENVIRONMENT=production
-            MG_LOG_LEVEL=INFO
-            MG_CORS_ORIGINS=http://$VPS_HOST,http://localhost:3100,https://app.openzync.tech
-            MG_HOSTS_ALLOWED=$VPS_HOST,localhost,app.openzync.tech
-            MG_GRAPH_BACKEND=postgres
-            MG_CONTEXT_CACHE_TTL=30
-            MG_RATE_LIMIT_IP_MAX=60
-            MG_RATE_LIMIT_WINDOW_SEC=60
-            MG_JWT_ACCESS_TOKEN_TTL_MINUTES=30
-            MG_JWT_REFRESH_TOKEN_TTL_DAYS=7
-            MG_EMBEDDING_BACKEND=ollama
-            MG_EMBEDDING_MODEL=nomic-embed-text
-            MG_EMBEDDING_DIM=768
+            OZ_DATABASE_URL=$OZ_DATABASE_URL
+            OZ_REDIS_URL=redis://redis:6379/0
+            OZ_SECRET_KEY=$OZ_SECRET_KEY
+            OZ_ENVIRONMENT=production
+            OZ_LOG_LEVEL=INFO
+            OZ_CORS_ORIGINS=http://$VPS_HOST,http://localhost:3100,https://app.openzync.tech
+            OZ_HOSTS_ALLOWED=$VPS_HOST,localhost,app.openzync.tech
+            OZ_GRAPH_BACKEND=postgres
+            OZ_CONTEXT_CACHE_TTL=30
+            OZ_RATE_LIMIT_IP_MAX=60
+            OZ_RATE_LIMIT_WINDOW_SEC=60
+            OZ_JWT_ACCESS_TOKEN_TTL_MINUTES=30
+            OZ_JWT_REFRESH_TOKEN_TTL_DAYS=7
+            OZ_EMBEDDING_BACKEND=ollama
+            OZ_EMBEDDING_MODEL=nomic-embed-text
+            OZ_EMBEDDING_DIM=768
             NEXT_PUBLIC_API_URL=https://app.openzync.tech
             ENVEOF
 

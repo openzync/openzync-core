@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# OpenZep — VPS Production Overrides
+# OpenZync — VPS Production Overrides
 # ──────────────────────────────────────────────────────────────────────────────
 # Deploy alongside the base compose file:
 #
@@ -46,7 +46,7 @@ services:
   api:
     # Pull pre-built image from ghcr.io instead of building locally.
     # Pushed by the CI build job on every push to main.
-    image: ghcr.io/rohnsha0/openzep/api:latest
+    image: ghcr.io/rohnsha0/openzync/api:latest
     # Single worker: 1-CPU VPS can't handle multiprocessing
     command: ["uvicorn", "services.api.asgi:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
     deploy:
@@ -56,15 +56,15 @@ services:
           cpus: "1"
           memory: "2G"
     environment:
-      MG_ENVIRONMENT: production
-      MG_LOG_LEVEL: INFO
-      # ⚠️ Update MG_CORS_ORIGINS and MG_HOSTS_ALLOWED in your .env file
+      OZ_ENVIRONMENT: production
+      OZ_LOG_LEVEL: INFO
+      # ⚠️ Update OZ_CORS_ORIGINS and OZ_HOSTS_ALLOWED in your .env file
       #    to match your frontend domain.
     # No host port — API is reached through nginx reverse proxy.
 
   # ── Frontend ─────────────────────────────────────────────────────────────
   frontend:
-    image: ghcr.io/rohnsha0/openzep/frontend:latest
+    image: ghcr.io/rohnsha0/openzync/frontend:latest
     # No host port — served through nginx reverse proxy.
     env_file:
       - .env
@@ -79,7 +79,7 @@ services:
 
   # ── Worker overrides ─────────────────────────────────────────────────────
   worker:
-    image: ghcr.io/rohnsha0/openzep/worker:latest
+    image: ghcr.io/rohnsha0/openzync/worker:latest
     deploy:
       resources:
         limits:

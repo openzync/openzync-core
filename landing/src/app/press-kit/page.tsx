@@ -6,7 +6,7 @@ import { CtaSection } from "@/components/landing/cta-section";
 export const metadata: Metadata = {
   title: "Press Kit",
   description:
-    "Download OpenZep brand assets, logos, color palette, and usage guidelines for media and press.",
+    "Download OpenZync brand assets, logos, color palette, and usage guidelines for media and press.",
 };
 
 const brandColors = [
@@ -22,7 +22,7 @@ const guidelines = [
   {
     title: "Logo Usage",
     items: [
-      "Always use the OpenZep logo in its original form without modification.",
+      "Always use the OpenZync logo in its original form without modification.",
       "Maintain clear space around the logo equal to the height of the 'O' character.",
       "Do not rotate, stretch, or change the logo colors.",
       "On dark backgrounds, use the white version of the logo.",
@@ -32,16 +32,16 @@ const guidelines = [
   {
     title: "Brand Name",
     items: [
-      'Always capitalize "OpenZep" — never "openzep", "Openzep", or "OPENZEP".',
-      'Refer to the project as "OpenZep" on first mention, then "OpenZep" or "the project" subsequently.',
-      'The CLI tool and package name is "openzep" (lowercase).',
+      'Always capitalize "OpenZync" — never "openzync", "Openzync", or "OPENZYNC".',
+      'Refer to the project as "OpenZync" on first mention, then "OpenZync" or "the project" subsequently.',
+      'The CLI tool and package name is "openzync" (lowercase).',
     ],
   },
   {
     title: "Attribution",
     items: [
-      'When using OpenZep in your project, include: "Built with OpenZep" with a link to openzep.com.',
-      "For academic papers, cite OpenZep using the provided citation format in our documentation.",
+      'When using OpenZync in your project, include: "Built with OpenZync" with a link to openzync.tech.',
+      "For academic papers, cite OpenZync using the provided citation format in our documentation.",
     ],
   },
 ];
@@ -63,7 +63,7 @@ export default function PressKitPage() {
             Press Kit
           </h1>
           <p className="text-surface-400 text-lg max-w-2xl">
-            Brand assets, logos, color palette, and usage guidelines for OpenZep.
+            Brand assets, logos, color palette, and usage guidelines for OpenZync.
             All assets are free to use under the Apache 2.0 license.
           </p>
         </div>
@@ -118,7 +118,7 @@ export default function PressKitPage() {
             Color Palette
           </h2>
           <p className="text-surface-500 text-sm mb-8">
-            The OpenZep brand colors. Use these consistently across all media.
+            The OpenZync brand colors. Use these consistently across all media.
           </p>
 
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -143,7 +143,7 @@ export default function PressKitPage() {
             Typography
           </h2>
           <p className="text-surface-500 text-sm mb-8">
-            OpenZep uses two typefaces across all surfaces.
+            OpenZync uses two typefaces across all surfaces.
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -207,7 +207,7 @@ export default function PressKitPage() {
           <div className="mt-10 card-base p-6">
             <p className="text-sm text-surface-400">
               Need help with branding or have questions?{" "}
-              <a href="mailto:hello@openzep.com" className="text-brand-300 hover:text-brand-200 transition-colors">
+              <a href="mailto:hello@openzync.tech" className="text-brand-300 hover:text-brand-200 transition-colors">
                 Contact us
               </a>
               .

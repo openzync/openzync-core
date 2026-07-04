@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// OpenZep Landing — Shared Utilities
+// OpenZync Landing — Shared Utilities
 // ═══════════════════════════════════════════════════════════════════════════════
 
 import { type ClassValue, clsx } from "clsx";

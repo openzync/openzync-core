@@ -19,7 +19,7 @@ Usage::
     surreal = AsyncSurreal("ws://localhost:8000/rpc")
     await surreal.connect()
     await surreal.signin({"username": "root", "password": "root"})
-    await surreal.use("openzep", "openzep")
+    await surreal.use("openzync", "openzync")
 
     backend = SurrealGraphBackend(surreal=surreal)
     entity = await backend.create_entity(org_id=..., name="Acme", entity_type="company")

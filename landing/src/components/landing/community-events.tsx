@@ -215,7 +215,7 @@ export function CommunityEvents() {
                           <div>
                             Author:{" "}
                             <span className="text-surface-400">
-                              OpenZep Team
+                              OpenZync Team
                             </span>
                           </div>
                           <div>

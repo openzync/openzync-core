@@ -8,12 +8,12 @@ I now have a thorough picture of every file involved. Here is the **complete rem
 
 #### P0.1 — Rotate all exposed credentials + purge from git history
 
-**Rationale:** The `.env` contains live `OPENROUTER_API_KEY`, `MG_SECRET_KEY`, `MG_WEBHOOK_SIGNING_SECRET`, and a commented Supabase URL with password. These are extractable from git history despite `.gitignore` now excluding `.env`.
+**Rationale:** The `.env` contains live `OPENROUTER_API_KEY`, `OZ_SECRET_KEY`, `OZ_WEBHOOK_SIGNING_SECRET`, and a commented Supabase URL with password. These are extractable from git history despite `.gitignore` now excluding `.env`.
 
 **Actions:**
 1. Rotate `OPENROUTER_API_KEY` at openrouter.ai
-2. Generate new `MG_SECRET_KEY`: `python -c "import secrets; print(secrets.token_urlsafe(48))"`
-3. Generate new `MG_WEBHOOK_SIGNING_SECRET`
+2. Generate new `OZ_SECRET_KEY`: `python -c "import secrets; print(secrets.token_urlsafe(48))"`
+3. Generate new `OZ_WEBHOOK_SIGNING_SECRET`
 4. Run `git filter-repo --path .env --path streamlit_chat/.env --invert-paths` to purge from all history
 5. Force-push to all branches
 6. Add `streamlit_chat/.env` to `.gitignore` (append line)
@@ -83,8 +83,8 @@ class SecurityHeadersMiddleware:
 
 **Current in `.env`:**
 ```
-MG_RATE_LIMIT_IP_MAX=10000
-MG_RATE_LIMIT_WINDOW_SEC=1
+OZ_RATE_LIMIT_IP_MAX=10000
+OZ_RATE_LIMIT_WINDOW_SEC=1
 ```
 This allows 10K req/sec — effectively no rate limiting.
 
@@ -134,7 +134,7 @@ class SecretStoreDispatcher:
 
 **Modified files:**
 
-- **`core/config.py`** — Add `MG_MASTER_ENCRYPTION_KEY` (Fernet key, 44-char base64-encoded 32 bytes)
+- **`core/config.py`** — Add `OZ_MASTER_ENCRYPTION_KEY` (Fernet key, 44-char base64-encoded 32 bytes)
 - **`core/org_config.py`** — Hook into write path: before `update_config` stores in DB, encrypt `*_api_key` and `*_pass` fields. Hook into read path: after `get_org_config` loads from DB, decrypt them.
 - **`schemas/organization_config.py`** — API keys remain `str | None` in the schema (transparent to API users). Encryption is at the persistence layer only.
 
@@ -230,8 +230,8 @@ openssl ec -in private.pem -pubout -out public.pem
 
 **Config additions** (`core/config.py`):
 ```python
-JWT_PRIVATE_KEY: str = Field(..., validation_alias="MG_JWT_PRIVATE_KEY")
-JWT_PUBLIC_KEY: str = Field(..., validation_alias="MG_JWT_PUBLIC_KEY")
+JWT_PRIVATE_KEY: str = Field(..., validation_alias="OZ_JWT_PRIVATE_KEY")
+JWT_PUBLIC_KEY: str = Field(..., validation_alias="OZ_JWT_PUBLIC_KEY")
 ```
 
 **Updated `create_jwt_token`**:
@@ -271,7 +271,7 @@ def verify_jwt_token(token: str, public_key: str) -> dict:
 
 | # | Task | Scope |
 |---|------|-------|
-| **P3.1** | HashiCorp Vault integration | Implement `VaultSecretStore(KeyEncryptionBackend)`. Register as `"vault"` in the dispatcher. Migrate from Fernet to Vault by toggling `MG_SECRET_STORE_BACKEND=vault`. |
+| **P3.1** | HashiCorp Vault integration | Implement `VaultSecretStore(KeyEncryptionBackend)`. Register as `"vault"` in the dispatcher. Migrate from Fernet to Vault by toggling `OZ_SECRET_STORE_BACKEND=vault`. |
 | **P3.2** | Session management UI | Dashboard page to view active sessions (derived from refresh token table) and revoke sessions remotely. |
 | **P3.3** | Per-endpoint rate limiting | Replace the single `rate:api:{org_id}` key with per-route keys (`rate:api:{org_id}:{path}`). Define rate tiers in org config. |
 | **P3.4** | 2FA (WebAuthn/TOTP) | Add `POST /v1/auth/2fa/setup`, `POST /v1/auth/2fa/verify` endpoints. Store TOTP secret encrypted via the `KeyEncryptionBackend`. Require 2FA for admin roles. |

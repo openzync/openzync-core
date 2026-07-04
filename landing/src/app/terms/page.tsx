@@ -4,7 +4,7 @@ import { CtaSection } from "@/components/landing/cta-section";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
-  description: "OpenZep terms of service — the terms governing use of our platform and services.",
+  description: "OpenZync terms of service — the terms governing use of our platform and services.",
 };
 
 /**
@@ -29,7 +29,7 @@ export default function TermsPage() {
         <div className="mx-auto max-w-3xl px-6">
           <Section title="Acceptance of Terms">
             <p>
-              By accessing or using OpenZep (&ldquo;the Service&rdquo;), you agree to be bound by
+              By accessing or using OpenZync (&ldquo;the Service&rdquo;), you agree to be bound by
               these Terms of Service. If you do not agree to all the terms, you may not access
               or use the Service.
             </p>
@@ -37,7 +37,7 @@ export default function TermsPage() {
 
           <Section title="Description of Service">
             <p>
-              OpenZep provides persistent, graph-based memory infrastructure for AI agents.
+              OpenZync provides persistent, graph-based memory infrastructure for AI agents.
               The Service includes a cloud-hosted platform, open-source software, SDKs, APIs,
               and related documentation (&ldquo;the Software&rdquo;).
             </p>
@@ -45,7 +45,7 @@ export default function TermsPage() {
 
           <Section title="Open Source License">
             <p>
-              The OpenZep open-source software is licensed under the Apache License, Version 2.0.
+              The OpenZync open-source software is licensed under the Apache License, Version 2.0.
               You may use, modify, and distribute the Software in accordance with that license.
               The Apache 2.0 license does not cover the cloud-hosted Service, which is governed
               by these Terms.
@@ -73,7 +73,7 @@ export default function TermsPage() {
 
           <Section title="Data Ownership">
             <p>
-              You retain all rights and ownership of the agent memory data you store using OpenZep.
+              You retain all rights and ownership of the agent memory data you store using OpenZync.
               We do not claim any intellectual property rights over your data. We will not access,
               use, or share your data except as necessary to provide the Service or as required by law.
             </p>
@@ -89,7 +89,7 @@ export default function TermsPage() {
 
           <Section title="Limitation of Liability">
             <p>
-              To the maximum extent permitted by law, OpenZep and its contributors shall not be
+              To the maximum extent permitted by law, OpenZync and its contributors shall not be
               liable for any indirect, incidental, special, consequential, or punitive damages
               arising out of or relating to your use of the Service or Software.
             </p>
@@ -114,8 +114,8 @@ export default function TermsPage() {
           <Section title="Contact">
             <p>
               For questions about these Terms, please contact us at{" "}
-              <a href="mailto:legal@openzep.com" className="text-brand-300 hover:text-brand-200 transition-colors">
-                legal@openzep.com
+              <a href="mailto:legal@openzync.tech" className="text-brand-300 hover:text-brand-200 transition-colors">
+                legal@openzync.tech
               </a>
               .
             </p>

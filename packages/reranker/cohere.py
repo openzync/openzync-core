@@ -8,7 +8,7 @@ Usage::
     reranker = CohereReranker(api_key="...")
     reranked = await reranker.rerank("query", candidates, top_n=10)
 
-Optional dependency: ``pip install openzep[cohere]``.
+Optional dependency: ``pip install openzync[cohere]``.
 """
 
 from __future__ import annotations
@@ -118,7 +118,7 @@ class CohereReranker(CrossEncoderReranker):
             import cohere  # noqa: PLC0415
         except ImportError as err:
             raise ImportError(
-                "cohere is not installed. Install with: pip install openzep[cohere]"
+                "cohere is not installed. Install with: pip install openzync[cohere]"
             ) from err
 
         self._client = cohere.Client(

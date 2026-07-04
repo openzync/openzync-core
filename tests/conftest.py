@@ -41,9 +41,9 @@ def _start_postgres_container() -> object:
 
     container = PostgresContainer(
         image="pgvector/pgvector:pg15",
-        username="memgraph",
-        password="memgraph",
-        dbname="memgraph_test",
+        username="openzync",
+        password="openzync",
+        dbname="openzync_test",
         driver="asyncpg",
     )
     container.start()
@@ -97,4 +97,4 @@ def _run_alembic_upgrade(driver_url: str) -> None:
 @pytest.fixture
 def test_api_key() -> str:
     """Return a synthetic API key for use in auth tests."""
-    return "mg_test_" + "a" * 64
+    return "oz_test_" + "a" * 64

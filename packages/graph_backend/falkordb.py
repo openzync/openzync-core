@@ -2,7 +2,7 @@
 
 Implements the ``GraphBackend`` ABC using FalkorDB (a Redis-graph module):
 
-- **Per-tenant graph keys** (``openzep_{org_id}_{project_id}``) guarantee
+- **Per-tenant graph keys** (``openzync_{org_id}_{project_id}``) guarantee
   tenant isolation at the database level — no ``WHERE org_id`` filters needed.
 - **``MERGE``** for atomic entity and relationship upserts.
 - **``CALL algo.bfs()``** for single-type/all-types BFS at GraphBLAS speed.
@@ -114,7 +114,7 @@ class FalkorGraphBackend(GraphBackend):
     """FalkorDB-native graph backend.
 
     Each org+project pair gets its own isolated FalkorDB graph key
-    (``openzep_{org_id}_{project_id}``).  This guarantees tenant isolation
+    (``openzync_{org_id}_{project_id}``).  This guarantees tenant isolation
     at the database level — ``algo.bfs()`` and ``queryNodes()`` never
     traverse into another tenant's data.
 
@@ -144,7 +144,7 @@ class FalkorGraphBackend(GraphBackend):
         """
         if self._client is None:
             return None
-        key = f"openzep_{org_id}_{project_id}"
+        key = f"openzync_{org_id}_{project_id}"
         return self._client.select_graph(key)
 
     async def _ensure_schema(self, graph) -> None:
@@ -311,7 +311,7 @@ class FalkorGraphBackend(GraphBackend):
                 detail={"reason": "client is None"},
             )
 
-        key = f"openzep_{org_id}_{project_id}"
+        key = f"openzync_{org_id}_{project_id}"
         if not self._schema_ensured.get(key):
             await self._ensure_schema(graph)
             self._schema_ensured[key] = True

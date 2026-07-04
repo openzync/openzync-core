@@ -6,13 +6,13 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 
 from services.mcp.server import MemGraphMCPServer, ToolDef, PARSE_ERROR, INVALID_REQUEST
-from openzep.client import AsyncOpenZep
+from openzync.client import AsyncOpenZync
 
 
 @pytest.fixture
-def mock_client() -> AsyncOpenZep:
-    """Create a mock AsyncOpenZep client."""
-    client = MagicMock(spec=AsyncOpenZep)
+def mock_client() -> AsyncOpenZync:
+    """Create a mock AsyncOpenZync client."""
+    client = MagicMock(spec=AsyncOpenZync)
     client.memory = AsyncMock()
     client.facts = AsyncMock()
     client.graph = AsyncMock()
@@ -22,7 +22,7 @@ def mock_client() -> AsyncOpenZep:
 
 
 @pytest.fixture
-def server(mock_client: AsyncOpenZep) -> MemGraphMCPServer:
+def server(mock_client: AsyncOpenZync) -> MemGraphMCPServer:
     return MemGraphMCPServer(mock_client)
 
 
@@ -85,7 +85,7 @@ class TestToolHandlers:
     """Tests for individual tool handlers."""
 
     @pytest.mark.asyncio
-    async def test_add_memory(self, server: MemGraphMCPServer, mock_client: AsyncOpenZep):
+    async def test_add_memory(self, server: MemGraphMCPServer, mock_client: AsyncOpenZync):
         mock_client.memory.ingest.return_value = MagicMock(
             episode_count=2, job_id="j1"
         )
@@ -104,7 +104,7 @@ class TestToolHandlers:
         assert "Memory recorded" in resp["result"]["content"][0]["text"]
 
     @pytest.mark.asyncio
-    async def test_create_user(self, server: MemGraphMCPServer, mock_client: AsyncOpenZep):
+    async def test_create_user(self, server: MemGraphMCPServer, mock_client: AsyncOpenZync):
         mock_client.users.create.return_value = MagicMock(
             id="u1", external_id="alice", name="Alice"
         )

@@ -53,7 +53,7 @@ class CreateOrgResponse(BaseModel):
         ..., description="Full API key string (shown once — not persisted)."
     )
     api_key_prefix: str = Field(
-        default="mg_live_",
+        default="oz_live_",
         description="Prefix identifying the key type.",
     )
     api_key_name: str = Field(

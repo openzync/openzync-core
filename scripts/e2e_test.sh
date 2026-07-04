@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# OpenZep E2E Test Suite
+# OpenZync E2E Test Suite
 # Tests all endpoint groups in a single run with DB verification.
 #
 # Usage:
@@ -15,7 +15,7 @@ set -uo pipefail
 
 # ── Config ──────────────────────────────────────────────────────────────────
 BASE_URL="${BASE_URL:-http://localhost:8000}"
-DSN="${DSN:-postgresql://openzep:openzep@localhost:5432/openzep}"
+DSN="${DSN:-postgresql://openzync:openzync@localhost:5432/openzync}"
 SKIP_DB="${SKIP_DB:-false}"  # set to "true" to skip psql verification
 RATE_LIMIT_SLEEP="${RATE_LIMIT_SLEEP:-4}"  # seconds to sleep on 429 before retry
 STEP_DELAY="${STEP_DELAY:-5}"              # seconds between steps (rate limit: 10 req/60s)
@@ -134,7 +134,7 @@ extract_var() {
 # ── Pre-flight ──────────────────────────────────────────────────────────────
 
 echo "╔══════════════════════════════════════════════════════════╗"
-echo "║        OpenZep E2E Test Suite                           ║"
+echo "║        OpenZync E2E Test Suite                           ║"
 echo "╠══════════════════════════════════════════════════════════╣"
 echo "║  Server:  $BASE_URL"
 echo "║  DB:      ${DSN:0:50}..."
@@ -798,7 +798,7 @@ step "7.6c — Trigger entity merge worker"
 ORG_ID="$ORG_ID" python3 << 'PYEOF' 2>/tmp/e2e_merge_stderr.log > /tmp/e2e_merge_stdout.json
 import asyncio, os, sys
 sys.path.insert(0, os.getcwd())
-os.environ.setdefault("MG_DATABASE_URL", "postgresql+asyncpg://openzep:openzep@localhost:5432/openzep")
+os.environ.setdefault("OZ_DATABASE_URL", "postgresql+asyncpg://openzync:openzync@localhost:5432/openzync")
 import core.config  # noqa: F401 — trigger settings load
 from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
 org_id = os.environ["ORG_ID"]

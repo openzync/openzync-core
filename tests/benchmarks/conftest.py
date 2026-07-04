@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
 
 # ── Load local .env file (if available) ───────────────────────────────────────
-# This allows benchmark credentials (BENCH_EMAIL, MG_OPENROUTER_API_KEY, etc.)
+# This allows benchmark credentials (BENCH_EMAIL, OZ_OPENROUTER_API_KEY, etc.)
 # to be set in tests/benchmarks/.env without polluting the root .env.
 try:
     from dotenv import load_dotenv
@@ -104,7 +104,7 @@ def pytest_collection_modifyitems(
 def openrouter_backend() -> Generator[OpenRouterBackend, None, None]:
     """Create an OpenRouter LLM backend for benchmark evaluation.
 
-    Reads ``MG_OPENROUTER_API_KEY`` from the environment.  Skips all
+    Reads ``OZ_OPENROUTER_API_KEY`` from the environment.  Skips all
     dependent tests if the key is not set.
 
     Yields:
@@ -112,12 +112,12 @@ def openrouter_backend() -> Generator[OpenRouterBackend, None, None]:
         non-free ``openai/gpt-oss-120b`` model for reliable throughput.
 
     Raises:
-        pytest.skip: If ``MG_OPENROUTER_API_KEY`` is not set.
+        pytest.skip: If ``OZ_OPENROUTER_API_KEY`` is not set.
     """
-    api_key = os.environ.get("MG_OPENROUTER_API_KEY")
+    api_key = os.environ.get("OZ_OPENROUTER_API_KEY")
     if not api_key:
-        logger.warning("MG_OPENROUTER_API_KEY not set — skipping benchmark tests")
-        pytest.skip("MG_OPENROUTER_API_KEY not set — cannot run benchmark")
+        logger.warning("OZ_OPENROUTER_API_KEY not set — skipping benchmark tests")
+        pytest.skip("OZ_OPENROUTER_API_KEY not set — cannot run benchmark")
         # The yield below is unreachable but satisfies the type checker.
         # Generator return type allows the early skip via exception.
         yield None  # type: ignore[func-returns-value]
@@ -155,9 +155,9 @@ def benchmark_config(request: pytest.FixtureRequest) -> SimpleNamespace:
 
 @pytest.fixture(scope="function")
 async def api_client() -> AsyncGenerator[httpx.AsyncClient, None]:
-    """Create an ``httpx.AsyncClient`` pointed at the OpenZep API.
+    """Create an ``httpx.AsyncClient`` pointed at the OpenZync API.
 
-    Base URL is read from ``OPENZEP_BASE_URL``
+    Base URL is read from ``OPENZYNC_BASE_URL``
     (default: ``http://localhost:8000``).
 
     Yields:
@@ -166,7 +166,7 @@ async def api_client() -> AsyncGenerator[httpx.AsyncClient, None]:
     # OPENZYNC_BASE_URL is the legacy name — checked as fallback for
     # backward compatibility with existing .env files.
     base_url = os.environ.get(
-        "OPENZEP_BASE_URL",
+        "OPENZYNC_BASE_URL",
         os.environ.get("OPENZYNC_BASE_URL", "http://localhost:8000"),
     )
     async with httpx.AsyncClient(base_url=base_url, timeout=60.0) as client:

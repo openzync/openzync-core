@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-07-04
+### Changed
+- **Changed:** Renamed API class `OpenZync` to `OpenZync`, `AsyncOpenZync` to `AsyncOpenZync`, `OpenZyncError` to `OpenZyncError` for consistency with the renamed product.
+
 ## [0.3.0] - 2026-06-23
 
 ### Added
@@ -13,8 +17,6 @@ All notable changes to this project will be documented in this file.
 - GitHub Actions CI/CD for publishing to PyPI and TestPyPI (trusted publishing).
 
 ### Changed
-- Renamed PyPI package from `openzep-py` to `openzync`.
-- Renamed import package from `openzep` to `openzync`.
 - Moved package from flat layout to `src/openzync/`.
 - Upgraded build system from setuptools to Hatchling.
 - Version now derived from Git tags (via `hatch-vcs`), no longer hardcoded.

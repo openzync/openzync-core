@@ -1,12 +1,12 @@
 ---
-title: "Getting Started with FalkorDB and OpenZep"
+title: "Getting Started with FalkorDB and OpenZync"
 date: "2026-05-10"
-excerpt: "Step-by-step guide to using FalkorDB as your OpenZep graph backend — from installation to your first agent memory query."
-author: "OpenZep Team"
+excerpt: "Step-by-step guide to using FalkorDB as your OpenZync graph backend — from installation to your first agent memory query."
+author: "OpenZync Team"
 category: "tutorials"
 ---
 
-FalkorDB is a high-performance graph database designed for AI workloads. Combined with OpenZep, it gives you a blazing-fast memory layer for your agents.
+FalkorDB is a high-performance graph database designed for AI workloads. Combined with OpenZync, it gives you a blazing-fast memory layer for your agents.
 
 ## Why FalkorDB?
 
@@ -24,12 +24,12 @@ First, start FalkorDB:
 docker run -p 6379:6379 falkordb/falkordb
 ```
 
-Then configure OpenZep to use it:
+Then configure OpenZync to use it:
 
 ```python
-from openzep import OpenZep
+from openzync import OpenZync
 
-client = OpenZep(
+client = OpenZync(
     backend="falkordb",
     connection_string="redis://localhost:6379",
 )
@@ -47,10 +47,10 @@ prefs = session.recall("user_preference")
 print(prefs)  # {"theme": "dark", "language": "en"}
 ```
 
-FalkorDB handles the graph operations behind the scenes, while OpenZep provides the agent-friendly API layer. Together, they make a powerful combination for production agent memory.
+FalkorDB handles the graph operations behind the scenes, while OpenZync provides the agent-friendly API layer. Together, they make a powerful combination for production agent memory.
 
 ## Next Steps
 
-- Check out our [FalkorDB integration guide](https://docs.openzep.com/backends/falkordb)
-- Explore [complex graph queries](https://docs.openzep.com/queries)
-- Try the [sample chatbot app](https://github.com/openzep/examples)
+- Check out our [FalkorDB integration guide](https://docs.openzync.tech/backends/falkordb)
+- Explore [complex graph queries](https://docs.openzync.tech/queries)
+- Try the [sample chatbot app](https://github.com/rohnsha0/openzync-examples)

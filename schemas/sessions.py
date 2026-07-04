@@ -44,7 +44,7 @@ class SessionResponse(BaseModel):
     Contains full session details including aggregate statistics.
     """
 
-    id: UUID = Field(..., description="Internal OpenZep session UUID.")
+    id: UUID = Field(..., description="Internal OpenZync session UUID.")
     project_id: UUID = Field(
         ..., description="Project UUID this session belongs to."
     )
@@ -88,7 +88,7 @@ class SessionListResponse(BaseModel):
     Use the individual GET endpoint for full details.
     """
 
-    id: UUID = Field(..., description="Internal OpenZep session UUID.")
+    id: UUID = Field(..., description="Internal OpenZync session UUID.")
     project_id: UUID = Field(
         ..., description="Project UUID this session belongs to."
     )

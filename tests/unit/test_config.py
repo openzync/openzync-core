@@ -1,7 +1,7 @@
 """Unit tests for ``core.config.Settings``.
 
 These tests validate that the pydantic-settings model loads correctly,
-respects environment variable overrides (with the ``MG_`` prefix used by
+respects environment variable overrides (with the ``OZ_`` prefix used by
 the actual model), and enforces constraints like ``SECRET_KEY min_length``.
 
 .. note::
@@ -21,9 +21,9 @@ import pytest
 # The ``settings = Settings()`` singleton in core/config.py is evaluated at
 # import time, and DATABASE_URL / REDIS_URL / SECRET_KEY have no defaults.
 _REQUIRED_ENV: dict[str, str] = {
-    "MG_DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/openzep_test",
-    "MG_REDIS_URL": "redis://localhost:6379/1",
-    "MG_SECRET_KEY": "a" * 32,
+    "OZ_DATABASE_URL": "postgresql+asyncpg://u:p@localhost:5432/openzync_test",
+    "OZ_REDIS_URL": "redis://localhost:6379/1",
+    "OZ_SECRET_KEY": "a" * 32,
 }
 for _key, _val in _REQUIRED_ENV.items():
     os.environ.setdefault(_key, _val)
@@ -68,10 +68,10 @@ class TestSettings:
         assert s.LOG_LEVEL == "INFO"
 
     def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Settings should pick up ``MG_``-prefixed env vars."""
+        """Settings should pick up ``OZ_``-prefixed env vars."""
         _set_required_env(monkeypatch)
-        monkeypatch.setenv("MG_ENVIRONMENT", "staging")
-        monkeypatch.setenv("MG_LOG_LEVEL", "DEBUG")
+        monkeypatch.setenv("OZ_ENVIRONMENT", "staging")
+        monkeypatch.setenv("OZ_LOG_LEVEL", "DEBUG")
         s = _settings()
         assert s.ENVIRONMENT == "staging"
         assert s.LOG_LEVEL == "DEBUG"
@@ -87,10 +87,10 @@ class TestSettings:
     def test_secret_key_min_length_enforced(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A SECRET_KEY shorter than 32 characters should raise a validation error."""
         _set_required_env(monkeypatch)
-        monkeypatch.delenv("MG_SECRET_KEY", raising=False)
+        monkeypatch.delenv("OZ_SECRET_KEY", raising=False)
 
         with pytest.raises(Exception, match="at least 32 characters"):
-            _settings(MG_SECRET_KEY="too-short")
+            _settings(OZ_SECRET_KEY="too-short")
 
     def test_rate_limit_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Rate-limit configuration should have sensible defaults."""

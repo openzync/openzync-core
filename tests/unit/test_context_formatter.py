@@ -71,10 +71,10 @@ class TestContextFormatter:
         """Entities appear with name and type."""
         result = format_text(
             [], [],
-            [self._sample_entity(name="OpenZep", type="Project")],
+            [self._sample_entity(name="OpenZync", type="Project")],
             [],
         )
-        assert "OpenZep" in result
+        assert "OpenZync" in result
 
     def test_format_json_empty(self) -> None:
         """Empty inputs produce a structured JSON dict."""

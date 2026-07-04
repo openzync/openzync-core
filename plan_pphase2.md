@@ -46,16 +46,16 @@ MODIFIED:
   repositories/episode_repository.py  ← Verify search methods
   repositories/fact_repository.py      ← Verify search methods
 Subphase 2b — Python SDK (Week 8)
-Theme: "pip install openzep-py works end-to-end."
+Theme: "pip install openzync works end-to-end."
 Team: Senior A (Track A — SDK lead) + DevOps (Track C — PyPI CI)
 Day	Senior A
-D1	📦 SDK scaffold: oss/sdk-python/openzep/ package, pyproject.toml, MemGraph client class with constructor + auth
+D1	📦 SDK scaffold: oss/sdk-python/openzync/ package, pyproject.toml, MemGraph client class with constructor + auth
 D2	📦 SDK: client.memory.ingest() + client.memory.get_context() — async methods, httpx.AsyncClient, typed responses
 D3	📦 SDK: client.facts.add() + client.facts.list() + client.graph.nodes() + client.graph.search() — all 5 domains
 D4	📦 SDK: retry with exponential backoff (429/5xx), typed error hierarchy (MemGraphError, NotFoundError, RateLimitError), PaginatedAsyncIterator
 D5	📦 SDK: sync wrapper (asyncio.run()), integration tests against running API, publish to TestPyPI
 Exit criteria:
-- ✅ pip install openzep-py from TestPyPI → client.memory.ingest() returns typed response (G2.1)
+- ✅ pip install openzync from TestPyPI → client.memory.ingest() returns typed response (G2.1)
 - ✅ Sync + async interfaces both work
 - ✅ SDK integration tests pass against running API in CI
 - ✅ Prometheus /metrics endpoint returns worker metrics
@@ -63,15 +63,15 @@ Exit criteria:
 Key files to create:
 NEW:
   oss/sdk-python/pyproject.toml           ← SDK package config
-  oss/sdk-python/openzep/__init__.py      ← Client class
-  oss/sdk-python/openzep/client.py        ← HTTP client
-  oss/sdk-python/openzep/memory.py        ← memory domain
-  oss/sdk-python/openzep/facts.py         ← facts domain
-  oss/sdk-python/openzep/graph.py         ← graph domain
-  oss/sdk-python/openzep/users.py         ← users domain
-  oss/sdk-python/openzep/sessions.py      ← sessions domain
-  oss/sdk-python/openzep/exceptions.py    ← error types
-  oss/sdk-python/openzep/pagination.py    ← PaginatedAsyncIterator
+  oss/sdk-python/openzync/__init__.py      ← Client class
+  oss/sdk-python/openzync/client.py        ← HTTP client
+  oss/sdk-python/openzync/memory.py        ← memory domain
+  oss/sdk-python/openzync/facts.py         ← facts domain
+  oss/sdk-python/openzync/graph.py         ← graph domain
+  oss/sdk-python/openzync/users.py         ← users domain
+  oss/sdk-python/openzync/sessions.py      ← sessions domain
+  oss/sdk-python/openzync/exceptions.py    ← error types
+  oss/sdk-python/openzync/pagination.py    ← PaginatedAsyncIterator
 
 MODIFIED:
   infra/docker-compose.prod.yml           ← pgBouncer, Sentinel
@@ -99,9 +99,9 @@ NEW:
   workers/tasks/summarise_community.py   ← Community detection worker
 
 MODIFIED:
-  infra/helm/openzep/Chart.yaml         ← Helm chart
-  infra/helm/openzep/values.yaml        ← Values
-  infra/helm/openzep/templates/         ← Templates
+  infra/helm/openzync/Chart.yaml         ← Helm chart
+  infra/helm/openzync/values.yaml        ← Values
+  infra/helm/openzync/templates/         ← Templates
   docs/implementation/10-mcp-server/03-claude-desktop-config.md  ← Config guide
 Team Allocation Summary
 Subphase	Duration	Senior A (Track A)
@@ -117,7 +117,7 @@ Helm chart install fails on different K8s versions	Medium
 Community detection OOM on large graphs	Low
 Exit Criteria (Phase 2 gates)
 Gate	Criterion
-G2.1	pip install openzep-py → client.memory.add() returns typed response
+G2.1	pip install openzync → client.memory.add() returns typed response
 G2.2	MCP server starts with stdio + SSE. All 8 tools respond correctly
 G2.3	Graph query: GET /graph/nodes with 15k entity nodes ≤500ms p99
 G2.4	Community summary generated for 5-entity cluster

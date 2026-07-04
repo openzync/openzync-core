@@ -4,20 +4,20 @@ Provides an ``TracingMiddleware`` that creates OpenTelemetry spans for every
 HTTP request and attaches relevant attributes (method, URL, status code).
 
 The middleware initialises OpenTelemetry on first use if the environment
-variable ``MG_OTLP_ENDPOINT`` is set.  If OpenTelemetry is not configured,
+variable ``OZ_OTLP_ENDPOINT`` is set.  If OpenTelemetry is not configured,
 the middleware is a no-op pass-through — no spans are created, no data is
 exported.
 
 Configuration environment variables (via ``pydantic-settings`` / ``.env``):
 
-- ``MG_OTLP_ENDPOINT`` — OTLP gRPC endpoint (e.g. ``http://localhost:4317``).
+- ``OZ_OTLP_ENDPOINT`` — OTLP gRPC endpoint (e.g. ``http://localhost:4317``).
   If unset or empty, tracing is disabled.
-- ``MG_OTLP_HEADERS`` — Optional comma-separated ``key=value`` headers for
+- ``OZ_OTLP_HEADERS`` — Optional comma-separated ``key=value`` headers for
   the OTLP exporter (e.g. ``Authorization=Bearer token123``).
-- ``MG_TRACE_SAMPLE_RATE`` — Sampling rate as a float between 0.0 and 1.0.
+- ``OZ_TRACE_SAMPLE_RATE`` — Sampling rate as a float between 0.0 and 1.0.
   Default: ``0.05`` (5 %).  Set to ``1.0`` for full tracing in dev/staging.
-- ``MG_SERVICE_NAME`` — OpenTelemetry service name.  Default: ``openzep``.
-- ``MG_ENVIRONMENT`` — Deployment environment, added as a span attribute.
+- ``OZ_SERVICE_NAME`` — OpenTelemetry service name.  Default: ``openzync``.
+- ``OZ_ENVIRONMENT`` — Deployment environment, added as a span attribute.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def _init_tracer() -> Any | None:
     """Initialise the OpenTelemetry tracer provider and exporter.
 
     Reads configuration from environment variables / pydantic-settings.
-    Returns ``None`` if ``MG_OTLP_ENDPOINT`` is not set (graceful skip).
+    Returns ``None`` if ``OZ_OTLP_ENDPOINT`` is not set (graceful skip).
 
     Returns:
         An OpenTelemetry tracer instance, or ``None``.
@@ -59,10 +59,10 @@ def _init_tracer() -> Any | None:
 
     _tracer_initialised = True
 
-    otlp_endpoint: str = os.getenv("MG_OTLP_ENDPOINT", "")
+    otlp_endpoint: str = os.getenv("OZ_OTLP_ENDPOINT", "")
     if not otlp_endpoint:
         logger.info(
-            "MG_OTLP_ENDPOINT not set — OpenTelemetry tracing is disabled."
+            "OZ_OTLP_ENDPOINT not set — OpenTelemetry tracing is disabled."
         )
         _tracer = None
         return None
@@ -77,14 +77,14 @@ def _init_tracer() -> Any | None:
         from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
-        service_name: str = os.getenv("MG_SERVICE_NAME", "openzep")
-        sample_rate_str: str = os.getenv("MG_TRACE_SAMPLE_RATE", "0.05")
+        service_name: str = os.getenv("OZ_SERVICE_NAME", "openzync")
+        sample_rate_str: str = os.getenv("OZ_TRACE_SAMPLE_RATE", "0.05")
 
         try:
             sample_rate = float(sample_rate_str)
         except ValueError:
             logger.warning(
-                "Invalid MG_TRACE_SAMPLE_RATE=%r, falling back to 0.05",
+                "Invalid OZ_TRACE_SAMPLE_RATE=%r, falling back to 0.05",
                 sample_rate_str,
             )
             sample_rate = 0.05
@@ -106,7 +106,7 @@ def _init_tracer() -> Any | None:
 
         # Build OTLP exporter.
         exporter_headers: dict[str, str] = {}
-        headers_str = os.getenv("MG_OTLP_HEADERS", "")
+        headers_str = os.getenv("OZ_OTLP_HEADERS", "")
         if headers_str:
             for pair in headers_str.split(","):
                 pair = pair.strip()
@@ -156,7 +156,7 @@ class TracingMiddleware:
     """OpenTelemetry tracing middleware — raw ASGI, no BaseHTTPMiddleware.
 
     Creates a span for each request with HTTP semantic convention attributes.
-    If OpenTelemetry is not configured (``MG_OTLP_ENDPOINT`` not set), this
+    If OpenTelemetry is not configured (``OZ_OTLP_ENDPOINT`` not set), this
     middleware is a zero-overhead pass-through.
     """
 

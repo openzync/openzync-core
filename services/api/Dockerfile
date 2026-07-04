@@ -1,13 +1,13 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# OpenZep API — Production Docker image
+# OpenZync API — Production Docker image
 # ──────────────────────────────────────────────────────────────────────────────
 # Multi-stage build:
 #   1. builder — installs runtime dependencies into ~/.local
 #   2. runtime — minimal image that copies only the built artifacts + source
 #
 # Usage:
-#   docker build -t openzep-api:latest -f services/api/Dockerfile .
-#   docker run -p 8000:8000 --env-file .env openzep-api:latest
+#   docker build -t openzync-api:latest -f services/api/Dockerfile .
+#   docker run -p 8000:8000 --env-file .env openzync-api:latest
 # ──────────────────────────────────────────────────────────────────────────────
 
 FROM python:3.12-slim AS builder

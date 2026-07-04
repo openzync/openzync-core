@@ -1,4 +1,4 @@
-"""Streamlit chat UI for OpenZep — powered by the OpenZep SDK + OpenRouter."""
+"""Streamlit chat UI for OpenZync — powered by the OpenZync SDK + OpenRouter."""
 
 from __future__ import annotations
 
@@ -12,8 +12,8 @@ import streamlit as st
 from dotenv import load_dotenv
 from openai import OpenAI
 from langchain_core.messages import AIMessage, HumanMessage
-from openzep import AsyncOpenZep
-from openzep.integrations.langchain import OZMemory
+from openzync import AsyncOpenZync
+from openzync.integrations.langchain import OZMemory
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -26,7 +26,7 @@ logger = logging.getLogger("streamlit_chat")
 # ── Page Config ───────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="OpenZep Chat",
+    page_title="OpenZync Chat",
     page_icon="🧠",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -36,8 +36,8 @@ st.set_page_config(
 
 load_dotenv()
 
-OPENZEP_API_KEY: str = os.environ.get("OPENZEP_API_KEY", "")
-OPENZEP_BASE_URL: str = os.environ.get("OPENZEP_BASE_URL", "http://localhost:8000")
+OPENZYNC_API_KEY: str = os.environ.get("OPENZYNC_API_KEY", "")
+OPENZYNC_BASE_URL: str = os.environ.get("OPENZYNC_BASE_URL", "http://localhost:8000")
 OPENROUTER_API_KEY: str = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL: str = os.environ.get(
     "OPENROUTER_MODEL", "openai/gpt-oss-20b:free"
@@ -54,8 +54,8 @@ PROJECT_ID: str | None = os.environ.get("PROJECT_ID", None)
 
 # Validate critical env vars.
 missing: list[str] = []
-if not OPENZEP_API_KEY:
-    missing.append("OPENZEP_API_KEY")
+if not OPENZYNC_API_KEY:
+    missing.append("OPENZYNC_API_KEY")
 if not OPENROUTER_API_KEY:
     missing.append("OPENROUTER_API_KEY")
 if missing:
@@ -69,17 +69,17 @@ if missing:
 
 
 @st.cache_resource
-def _get_openzep_client() -> tuple[asyncio.AbstractEventLoop, AsyncOpenZep]:
-    """Create and cache the OpenZep client with a persistent event loop.
+def _get_openzync_client() -> tuple[asyncio.AbstractEventLoop, AsyncOpenZync]:
+    """Create and cache the OpenZync client with a persistent event loop.
 
-    The sync ``OpenZep`` wrapper uses ``asyncio.run()`` per call, which
+    The sync ``OpenZync`` wrapper uses ``asyncio.run()`` per call, which
     closes the loop after each invocation. Python 3.14+ is stricter about
     closed-loop callbacks from httpx, so we manage our own persistent loop.
     """
-    logger.info("Initializing OpenZep client: base_url=%s", OPENZEP_BASE_URL)
+    logger.info("Initializing OpenZync client: base_url=%s", OPENZYNC_BASE_URL)
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    client = AsyncOpenZep(api_key=OPENZEP_API_KEY, base_url=OPENZEP_BASE_URL)
+    client = AsyncOpenZync(api_key=OPENZYNC_API_KEY, base_url=OPENZYNC_BASE_URL)
     return loop, client
 
 
@@ -94,12 +94,12 @@ def _get_llm_client() -> OpenAI:
     return OpenAI(base_url=OPENROUTER_BASE_URL, api_key=OPENROUTER_API_KEY)
 
 
-_openzep_loop, _async_oz = _get_openzep_client()
+_openzync_loop, _async_oz = _get_openzync_client()
 
 
 def _await(coro: Any) -> Any:
     """Run an async SDK call on the persistent event loop."""
-    return _openzep_loop.run_until_complete(coro)
+    return _openzync_loop.run_until_complete(coro)
 
 
 llm: OpenAI = _get_llm_client()
@@ -107,7 +107,7 @@ llm: OpenAI = _get_llm_client()
 # ── User Management ───────────────────────────────────────────────────────────
 
 
-def _find_user_by_external_id(client: AsyncOpenZep, external_id: str) -> str | None:
+def _find_user_by_external_id(client: AsyncOpenZync, external_id: str) -> str | None:
     """Look up a user by external_id. Returns the UUID or ``None``."""
     try:
         result = _await(client.users.list(limit=20))
@@ -124,7 +124,7 @@ def _find_user_by_external_id(client: AsyncOpenZep, external_id: str) -> str | N
     return None
 
 
-def _create_user(client: AsyncOpenZep, external_id: str) -> str:
+def _create_user(client: AsyncOpenZync, external_id: str) -> str:
     """Create a new user. Returns the UUID."""
     user = _await(client.users.create(external_id=external_id))
     uid: str = user.id if hasattr(user, "id") else user["id"]
@@ -132,7 +132,7 @@ def _create_user(client: AsyncOpenZep, external_id: str) -> str:
     return uid
 
 
-def _ensure_user(client: AsyncOpenZep, external_id: str) -> str:
+def _ensure_user(client: AsyncOpenZync, external_id: str) -> str:
     """Find or create a user. Returns the UUID."""
     uid = _find_user_by_external_id(client, external_id)
     if uid is not None:
@@ -143,7 +143,7 @@ def _ensure_user(client: AsyncOpenZep, external_id: str) -> str:
 # ── Project Management ─────────────────────────────────────────────────
 
 
-def _ensure_project(client: AsyncOpenZep, name: str) -> str:
+def _ensure_project(client: AsyncOpenZync, name: str) -> str:
     """Find or create a project. Returns the project UUID.
 
     Uses the ``PROJECT_ID`` env var if set, otherwise discovers the first
@@ -172,7 +172,7 @@ def _ensure_project(client: AsyncOpenZep, name: str) -> str:
 # ── Session Management ────────────────────────────────────────────────────────
 
 
-def _list_sessions(client: AsyncOpenZep, project_id: str) -> list[dict[str, Any]]:
+def _list_sessions(client: AsyncOpenZync, project_id: str) -> list[dict[str, Any]]:
     """List all sessions for a project (newest first)."""
     try:
         result = _await(client.sessions.list(project_id, limit=100))
@@ -187,7 +187,7 @@ def _list_sessions(client: AsyncOpenZep, project_id: str) -> list[dict[str, Any]
         return []
 
 
-def _create_session(client: AsyncOpenZep, project_id: str) -> tuple[str, str]:
+def _create_session(client: AsyncOpenZync, project_id: str) -> tuple[str, str]:
     """Create a new session. Returns ``(internal_id, external_id)``.
 
     Raises:
@@ -255,7 +255,7 @@ if "session_id" not in st.session_state:
                 "To use this app you need a project-scoped API key. "
                 "Either:\n"
                 "1. Set `PROJECT_ID` in `.env` with an existing project UUID, or\n"
-                "2. Create a project-scoped API key in the OpenZep dashboard "
+                "2. Create a project-scoped API key in the OpenZync dashboard "
                 "and use it in `.env`."
             )
             st.stop()
@@ -280,13 +280,13 @@ if "session_id" not in st.session_state:
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.title("🧠 OpenZep Chat")
+    st.title("🧠 OpenZync Chat")
     st.caption(f"User: `{st.session_state.user_external_id}`")
 
     # Connection status
     st.divider()
     st.subheader("Status")
-    st.success("✅ OpenZep", icon="✅")
+    st.success("✅ OpenZync", icon="✅")
     st.success("✅ OpenRouter", icon="✅")
 
     # Session list
@@ -345,7 +345,7 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    st.caption("Powered by OpenZep + OpenRouter")
+    st.caption("Powered by OpenZync + OpenRouter")
 
 # ── Main Chat Area ────────────────────────────────────────────────────────────
 
@@ -375,7 +375,7 @@ if prompt := st.chat_input("Type a message..."):
         logger.error("Failed to store user message: %s", exc)
         st.error(f"Failed to store message: {exc}")
 
-    # ── Retrieve LLM context from OpenZep ──
+    # ── Retrieve LLM context from OpenZync ──
     context_text = ""
     try:
         context_resp = _await(
@@ -412,8 +412,8 @@ if prompt := st.chat_input("Type a message..."):
                     max_tokens=1024,
                     temperature=0.7,
                     extra_headers={
-                        "HTTP-Referer": "https://openzep-chat.streamlit.app",
-                        "X-Title": "OpenZep Chat",
+                        "HTTP-Referer": "https://openzync-chat.streamlit.app",
+                        "X-Title": "OpenZync Chat",
                     },
                 )
                 reply = response.choices[0].message.content or ""

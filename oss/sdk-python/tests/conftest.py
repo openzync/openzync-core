@@ -1,4 +1,4 @@
-"""Test fixtures for the OpenZep Python SDK."""
+"""Test fixtures for the OpenZync Python SDK."""
 
 from __future__ import annotations
 
@@ -9,11 +9,11 @@ import pytest_asyncio
 import respx
 from httpx import AsyncClient, Response
 
-from openzync.client import AsyncOpenZep, OpenZep
+from openzync.client import AsyncOpenZync, OpenZync
 
 
-TEST_API_KEY = "mg_test_" + "a" * 64
-TEST_BASE_URL = "https://api.openzep.test"
+TEST_API_KEY = "oz_test_" + "a" * 64
+TEST_BASE_URL = "https://api.openzync.test"
 
 
 @pytest.fixture
@@ -27,15 +27,15 @@ def base_url() -> str:
 
 
 @pytest_asyncio.fixture
-async def async_client(api_key: str, base_url: str) -> AsyncOpenZep:
-    client = AsyncOpenZep(api_key=api_key, base_url=base_url)
+async def async_client(api_key: str, base_url: str) -> AsyncOpenZync:
+    client = AsyncOpenZync(api_key=api_key, base_url=base_url)
     yield client
     await client.close()
 
 
 @pytest.fixture
-def sync_client(api_key: str, base_url: str) -> OpenZep:
-    return OpenZep(api_key=api_key, base_url=base_url)
+def sync_client(api_key: str, base_url: str) -> OpenZync:
+    return OpenZync(api_key=api_key, base_url=base_url)
 
 
 @pytest.fixture
@@ -53,7 +53,7 @@ def mock_response(data: dict, status: int = 200) -> Response:
 def mock_error_response(status: int, detail: str, **extra: str) -> Response:
     """Create a mock RFC 7807 error response."""
     body = {
-        "type": f"https://errors.openzep.dev/error",
+        "type": f"https://errors.openzync.tech/error",
         "title": "Error",
         "status": status,
         "detail": detail,

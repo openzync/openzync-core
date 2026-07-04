@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { ArrowRight, GitFork, GitBranch, Shield, Puzzle, ChevronDown } from "lucide-react";
-import { Button } from "@openzep/design-system";
+import { Button } from "@openzync/design-system";
 import { siteConfig } from "@/content/site-config";
 
 interface ValueBadge {
@@ -17,7 +17,7 @@ const valueBadges: ValueBadge[] = [
 /**
  * Hero section — two-column split:
  * Left: headline + subtext + CTAs + compact value badges
- * Right: terminal mockup showing OpenZep API code
+ * Right: terminal mockup showing OpenZync API code
  */
 export function Hero() {
   return (
@@ -46,7 +46,7 @@ export function Hero() {
 
             {/* Subtext */}
             <p className="mt-6 text-base sm:text-lg md:text-xl text-surface-400 max-w-2xl lg:mx-0 mx-auto leading-relaxed">
-              OpenZep gives your agents durable, graph-based memory across 10+ backends
+              OpenZync gives your agents durable, graph-based memory across 10+ backends
               and 5+ LLM providers. Build agents that remember, reason, and scale.
             </p>
 
@@ -113,7 +113,7 @@ export function Hero() {
 }
 
 /**
- * Terminal window mockup showing OpenZep API code.
+ * Terminal window mockup showing OpenZync API code.
  * Pure CSS — no gradients, no glass, no glow.
  */
 function TerminalMockup() {
@@ -132,7 +132,7 @@ function TerminalMockup() {
       {/* Code content */}
       <div className="p-5 font-mono text-[13px] leading-relaxed text-surface-300">
         <div>
-          <span className="text-accent-400">from</span> openzep{" "}
+          <span className="text-accent-400">from</span> openzync{" "}
           <span className="text-accent-400">import</span>{" "}
           <span className="text-brand-300">AgentMemory</span>
         </div>
@@ -151,7 +151,7 @@ function TerminalMockup() {
         </div>
         <div className="ml-4">
           api_key=<span className="text-surface-600">os.getenv</span>(
-          <span className="text-accent-400">"OPENZEP_KEY"</span>)
+          <span className="text-accent-400">"OPENZYNC_KEY"</span>)
         </div>
         <div>)</div>
 

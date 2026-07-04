@@ -28,7 +28,7 @@ async def create_entity(self, org_id, project_id, name, ...):
 
 def _get_graph(self, org_id: UUID, project_id: UUID):
     """Lazily select the per-tenant graph and ensure indexes."""
-    key = f"openzep_{org_id}_{project_id}"
+    key = f"openzync_{org_id}_{project_id}"
     if self._client is None:
         return None
     graph = self._client.select_graph(key)
@@ -89,7 +89,7 @@ The `org_id` and `project_id` parameters are consumed **only** to build the grap
 
 The architecture is fully locked:
 
-1. **Tenant isolation**: Per-tenant graph keys `openzep_{org_id}_{project_id}` — database-level, zero overhead
+1. **Tenant isolation**: Per-tenant graph keys `openzync_{org_id}_{project_id}` — database-level, zero overhead
 2. **Connection pool**: Single app-level `BlockingConnectionPool` — efficient socket management
 3. **Traversal**: `algo.bfs()` for single-type/all, Cypher variable-length paths for multi-type — single round-trip either way
 4. **Schema bootstrap**: Lazy per-graph-key, idempotent, catches "already exists"

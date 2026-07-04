@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# OpenZep Landing — Production Dockerfile
+# OpenZync Landing — Production Dockerfile
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ── Builder stage ──────────────────────────────────────────────────────────────
@@ -24,7 +24,7 @@ COPY landing/ landing/
 COPY packages/design-system/ packages/design-system/
 
 # Build the design system first
-RUN npm run -w @openzep/design-system build
+RUN npm run -w @openzync/design-system build
 
 # Build the landing app
 RUN npm run -w landing build

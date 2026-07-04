@@ -31,60 +31,60 @@ logger = logging.getLogger(__name__)
 LATENCY_QUERIES: list[tuple[str, str]] = [
     (
         "overall_p50",
-        'histogram_quantile(0.50, sum(rate(openzep_http_request_duration_seconds_bucket[5m])) by (le)) * 1000',
+        'histogram_quantile(0.50, sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)) * 1000',
     ),
     (
         "overall_p95",
-        'histogram_quantile(0.95, sum(rate(openzep_http_request_duration_seconds_bucket[5m])) by (le)) * 1000',
+        'histogram_quantile(0.95, sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)) * 1000',
     ),
     (
         "overall_p99",
-        'histogram_quantile(0.99, sum(rate(openzep_http_request_duration_seconds_bucket[5m])) by (le)) * 1000',
+        'histogram_quantile(0.99, sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)) * 1000',
     ),
     (
         "context_p50",
-        'histogram_quantile(0.50, sum(rate(openzep_context_latency_seconds_bucket[5m])) by (le)) * 1000',
+        'histogram_quantile(0.50, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000',
     ),
     (
         "context_p95",
-        'histogram_quantile(0.95, sum(rate(openzep_context_latency_seconds_bucket[5m])) by (le)) * 1000',
+        'histogram_quantile(0.95, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000',
     ),
     (
         "context_p99",
-        'histogram_quantile(0.99, sum(rate(openzep_context_latency_seconds_bucket[5m])) by (le)) * 1000',
+        'histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000',
     ),
     (
         "graph_search_p50",
-        'histogram_quantile(0.50, sum(rate(openzep_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
+        'histogram_quantile(0.50, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
     ),
     (
         "graph_search_p95",
-        'histogram_quantile(0.95, sum(rate(openzep_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
+        'histogram_quantile(0.95, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
     ),
     (
         "graph_search_p99",
-        'histogram_quantile(0.99, sum(rate(openzep_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
+        'histogram_quantile(0.99, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
     ),
 ]
 
 RATE_QUERIES: list[tuple[str, str]] = [
-    ("rate_2xx", 'sum(rate(openzep_http_requests_total{status="2xx"}[5m]))'),
-    ("rate_4xx", 'sum(rate(openzep_http_requests_total{status="4xx"}[5m]))'),
-    ("rate_5xx", 'sum(rate(openzep_http_requests_total{status="5xx"}[5m]))'),
+    ("rate_2xx", 'sum(rate(openzync_http_requests_total{status="2xx"}[5m]))'),
+    ("rate_4xx", 'sum(rate(openzync_http_requests_total{status="4xx"}[5m]))'),
+    ("rate_5xx", 'sum(rate(openzync_http_requests_total{status="5xx"}[5m]))'),
     (
         "error_rate_pct",
-        '(sum(rate(openzep_http_requests_total{status="5xx"}[5m])) / max(sum(rate(openzep_http_requests_total[5m])), 1)) * 100',
+        '(sum(rate(openzync_http_requests_total{status="5xx"}[5m])) / max(sum(rate(openzync_http_requests_total[5m])), 1)) * 100',
     ),
 ]
 
 COUNTER_QUERIES: list[tuple[str, str]] = [
-    ("total_requests", "sum(openzep_http_requests_total)"),
-    ("active_requests", "sum(openzep_http_requests_in_progress)"),
+    ("total_requests", "sum(openzync_http_requests_total)"),
+    ("active_requests", "sum(openzync_http_requests_in_progress)"),
 ]
 
 QUEUE_QUERIES: list[tuple[str, str]] = [
-    ("queue_high", 'openzep_worker_queue_depth{queue_name="high"}'),
-    ("queue_low", 'openzep_worker_queue_depth{queue_name="low"}'),
+    ("queue_high", 'openzync_worker_queue_depth{queue_name="high"}'),
+    ("queue_low", 'openzync_worker_queue_depth{queue_name="low"}'),
 ]
 
 ALL_QUERIES = LATENCY_QUERIES + RATE_QUERIES + COUNTER_QUERIES + QUEUE_QUERIES

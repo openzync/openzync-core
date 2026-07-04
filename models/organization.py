@@ -16,7 +16,7 @@ from models.base import Base, TimestampMixin
 
 
 class Organization(TimestampMixin, Base):
-    """A tenant organization in the OpenZep platform.
+    """A tenant organization in the OpenZync platform.
 
     Attributes:
         id: UUID primary key, generated server-side via gen_random_uuid().

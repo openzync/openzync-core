@@ -1,12 +1,12 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# OpenZep Frontend — Production Docker image
+# OpenZync Frontend — Production Docker image
 # ──────────────────────────────────────────────────────────────────────────────
 # Multi-stage build:
 #   1. builder — installs dependencies + builds the Next.js app
 #   2. runner  — minimal image with standalone server + assets only
 #
 # Usage:
-#   docker build -t openzep-frontend:latest -f frontend/Dockerfile frontend/
+#   docker build -t openzync-frontend:latest -f frontend/Dockerfile frontend/
 #
 # The frontend expects a reverse proxy (nginx) to route /v1/* requests
 # to the API.  NEXT_PUBLIC_API_URL defaults to "" (relative URLs), so

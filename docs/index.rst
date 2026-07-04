@@ -1,7 +1,7 @@
-Welcome to OpenZep's documentation!
-====================================
+Welcome to OpenZync's documentation!
+=====================================
 
-**OpenZep** is an open-source agent memory platform — persistent, queryable,
+**OpenZync** is an open-source agent memory platform — persistent, queryable,
 graph-based memory for AI agents. It provides hybrid retrieval (semantic +
 graph), knowledge graphs with temporal queries, and multi-tenant isolation for
 production LLM applications.

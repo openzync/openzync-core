@@ -1,4 +1,4 @@
-"""Tests for the OpenZep Python SDK — sessions domain."""
+"""Tests for the OpenZync Python SDK — sessions domain."""
 
 from __future__ import annotations
 

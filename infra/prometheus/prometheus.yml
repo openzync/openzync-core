@@ -1,5 +1,5 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# Prometheus configuration — OpenZep dev mode
+# Prometheus configuration — OpenZync dev mode
 # ──────────────────────────────────────────────────────────────────────────────
 # Scrapes the host API's /metrics endpoint via host.docker.internal.
 # In production, replace with the Kubernetes service discovery.
@@ -10,10 +10,10 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: "openzep-api"
+  - job_name: "openzync-api"
     scrape_interval: 15s
     metrics_path: /metrics
     static_configs:
       - targets: ["host.docker.internal:8000"]
         labels:
-          job: "openzep-api"
+          job: "openzync-api"

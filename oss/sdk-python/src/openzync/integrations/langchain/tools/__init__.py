@@ -1,4 +1,4 @@
-"""LangChain tools wrapping OpenZep graph and fact APIs."""
+"""LangChain tools wrapping OpenZync graph and fact APIs."""
 
 from __future__ import annotations
 

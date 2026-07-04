@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────────────────
-# OpenZep — Pre-commit credential leak checker
+# OpenZync — Pre-commit credential leak checker
 # ──────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 

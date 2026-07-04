@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════════════════════════
-// OpenZep Landing — Statistics Data
+// OpenZync Landing — Statistics Data
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface StatItem {
@@ -24,12 +24,12 @@ export const statsData: StatItem[] = [
     value: "1024",
     label: "Contributors",
     description: "On GitHub",
-    link: { label: "In GitHub", href: "https://github.com/openzep/openzep/graphs/contributors" },
+    link: { label: "In GitHub", href: "https://github.com/rohnsha0/openzync/graphs/contributors" },
   },
   {
     value: "1.0",
     label: "Latest Version",
     description: "Install",
-    link: { label: "Install", href: "https://github.com/openzep/openzep/releases" },
+    link: { label: "Install", href: "https://github.com/rohnsha0/openzync/releases" },
   },
 ];

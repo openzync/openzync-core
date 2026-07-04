@@ -16,7 +16,7 @@ import sys
 
 from services.mcp.server import MemGraphMCPServer, PARSE_ERROR, INVALID_REQUEST
 
-logger = logging.getLogger("openzep.mcp.stdio")
+logger = logging.getLogger("openzync.mcp.stdio")
 
 
 def _write_response(response: dict | None) -> None:

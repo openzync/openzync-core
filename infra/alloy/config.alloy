@@ -1,5 +1,5 @@
 // ──────────────────────────────────────────────────────────────────────────────
-// Grafana Alloy configuration — OpenZep observability pipeline
+// Grafana Alloy configuration — OpenZync observability pipeline
 // ──────────────────────────────────────────────────────────────────────────────
 //
 // Dev mode: Scrapes the host API's /metrics and exports via remote_write.
@@ -12,9 +12,9 @@
 // 1. Prometheus scrape — pull /metrics from API and Worker
 // ═══════════════════════════════════════════════════════════════════════════════
 
-prometheus.scrape "openzep_api" {
+prometheus.scrape "openzync_api" {
   targets = [
-    { __address__ = "host.docker.internal:8000", job = "openzep-api" },
+    { __address__ = "host.docker.internal:8000", job = "openzync-api" },
   ]
   scrape_interval = "15s"
   metrics_path    = "/metrics"

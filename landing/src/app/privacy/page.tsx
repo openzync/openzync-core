@@ -4,7 +4,7 @@ import { CtaSection } from "@/components/landing/cta-section";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
-  description: "OpenZep privacy policy — how we collect, use, and protect your data.",
+  description: "OpenZync privacy policy — how we collect, use, and protect your data.",
 };
 
 /**
@@ -29,7 +29,7 @@ export default function PrivacyPage() {
         <div className="mx-auto max-w-3xl px-6 prose-custom">
           <Section title="Introduction">
             <p>
-              OpenZep (&ldquo;we,&rdquo; &ldquo;our,&rdquo; or &ldquo;us&rdquo;) is committed to protecting
+              OpenZync (&ldquo;we,&rdquo; &ldquo;our,&rdquo; or &ldquo;us&rdquo;) is committed to protecting
               your privacy. This Privacy Policy explains how we collect, use, disclose, and
               safeguard your information when you visit our website and use our services.
             </p>
@@ -47,7 +47,7 @@ export default function PrivacyPage() {
                 interact with our services, including API calls, memory operations, and feature usage.
               </li>
               <li>
-                <strong>Agent Data:</strong> The agent memory data you store through OpenZep is
+                <strong>Agent Data:</strong> The agent memory data you store through OpenZync is
                 encrypted at rest and in transit. You retain full ownership of this data.
               </li>
               <li>
@@ -90,10 +90,10 @@ export default function PrivacyPage() {
 
           <Section title="Third-Party Services">
             <p>
-              OpenZep integrates with third-party services including graph databases and LLM
+              OpenZync integrates with third-party services including graph databases and LLM
               providers. Data processed through these integrations is subject to their respective
               privacy policies. We recommend reviewing the privacy policies of any third-party
-              services you connect to OpenZep.
+              services you connect to OpenZync.
             </p>
           </Section>
 
@@ -113,8 +113,8 @@ export default function PrivacyPage() {
             <p>
               If you have questions about this Privacy Policy or our data practices, please
               contact us at{" "}
-              <a href="mailto:privacy@openzep.com" className="text-brand-300 hover:text-brand-200 transition-colors">
-                privacy@openzep.com
+              <a href="mailto:privacy@openzync.tech" className="text-brand-300 hover:text-brand-200 transition-colors">
+                privacy@openzync.tech
               </a>
               .
             </p>
