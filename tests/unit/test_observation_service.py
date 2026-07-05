@@ -1,8 +1,8 @@
 """Unit tests for graph-topology pattern detection and description generation.
 
 Tests :class:`services.observation_service.ObservationService` in isolation —
-mocks the ``ObservationRepository``.  All pattern detection algorithms are
-tested with deterministic input data.
+mocks the ``GraphBackend``.  All pattern detection algorithms are tested with
+deterministic input data.
 
 No real database, no network, no LLM calls.
 """
@@ -40,7 +40,7 @@ ENTITY_C_ID = UUID("00000000-0000-0000-0000-00000000000c")
 
 @pytest.fixture
 def mock_repo() -> AsyncMock:
-    """Create a mocked ObservationRepository."""
+    """Create a mocked GraphBackend (observation operations)."""
     return AsyncMock()
 
 

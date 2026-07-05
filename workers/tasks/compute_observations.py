@@ -114,7 +114,7 @@ async def compute_observations(
         async with session_factory() as db:
             # ── 1. Resolve graph backend + instantiate service ──────────────
             episode_repo = EpisodeRepository(db)
-            backend = await resolve_graph_backend(ctx, UUID(org_id), db)
+            backend = await resolve_graph_backend(ctx, UUID(org_id), db)  # type: ignore[arg-type]
             service = ObservationService(
                 graph_backend=backend,
                 db=db,
