@@ -27,7 +27,7 @@ services:
       context: ..
       dockerfile: services/api/Dockerfile
     image: ghcr.io/rohnsha0/openzync/api:latest
-    env_file: .env
+    env_file: ../.env
     environment:
       REDIS_URL: redis://redis:6379/0
       OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
@@ -52,7 +52,7 @@ services:
       context: ..
       dockerfile: services/worker/Dockerfile
     image: ghcr.io/rohnsha0/openzync/worker:latest
-    env_file: .env
+    env_file: ../.env
     environment:
       REDIS_URL: redis://redis:6379/0
       LOG_LEVEL: INFO

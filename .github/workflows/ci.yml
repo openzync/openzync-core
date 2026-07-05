@@ -244,8 +244,9 @@ jobs:
             tar xzf deploy-files.tar.gz
             rm deploy-files.tar.gz
 
-            # ── Create infra/.env from template + secrets ──────────────────
-            cat > infra/.env << ENVEOF
+            # ── Create .env from template + secrets (at project root, both ──
+            #    compose files reference it via env_file: ../.env)
+            cat > .env << ENVEOF
             OZ_DATABASE_URL=$OZ_DATABASE_URL
             OZ_REDIS_URL=redis://redis:6379/0
             OZ_SECRET_KEY=$OZ_SECRET_KEY
