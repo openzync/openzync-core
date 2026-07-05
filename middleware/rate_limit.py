@@ -183,6 +183,13 @@ class RateLimitMiddleware:
 
         path = scope.get("path", "")
 
+        # ── Bypass for non-production environments ──────────────────────
+        # Rate limiting is only enforced in staging and production to avoid
+        # hitting per-IP limits during development and CI testing.
+        if settings.ENVIRONMENT not in ("staging", "production"):
+            await self.app(scope, receive, send)
+            return
+
         # ── Bypass for critical infrastructure paths ────────────────────
         if path in self._bypass_paths:
             await self.app(scope, receive, send)

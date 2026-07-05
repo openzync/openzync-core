@@ -138,7 +138,16 @@ class FactService:
                 )
             session_id = session.id
 
-        # ── Step 3: Bulk-insert facts ─────────────────────────────────────
+        # ── Step 3: Early return for empty fact lists ─────────────────────
+        if not facts:
+            return FactBatchResponse(
+                job_id="",
+                accepted_count=0,
+                status="accepted",
+                message="No facts to ingest",
+            )
+
+        # ── Step 4: Bulk-insert facts ─────────────────────────────────────
         fact_dicts: list[dict[str, Any]] = []
         for f in facts:
             fact_dicts.append({
@@ -158,17 +167,18 @@ class FactService:
             facts=fact_dicts,
         )
 
-        # ── Step 4: Generate job_id and enqueue embedding tasks ───────────
+        # ── Step 5: Generate job_id and enqueue embedding tasks ───────────
         job_id = str(uuid4())
+        fact_ids = [str(fact.id) for fact in created]
 
         await self._enqueue_embedding_tasks(
             job_id=job_id,
             org_id=str(org_id),
             project_id=str(project_id),
-            fact_ids=[str(fact.id) for fact in created],
+            fact_ids=fact_ids,
         )
 
-        # ── Step 5: Cache content hash for future dedup ───────────────────
+        # ── Step 6: Cache content hash for future dedup ───────────────────
         await self._cache_dedup(content_hash, job_id)
 
         # ── Emit webhook event ────────────────────────────────────────
@@ -286,7 +296,7 @@ class FactService:
         )
         try:
             arq_pool = get_arq()
-            qname = _arq_queue_name(ARQ_QUEUE)
+            qname = self._arq_queue_name(ARQ_QUEUE)
 
             for fact_id in fact_ids:
                 await arq_pool.enqueue(
