@@ -205,7 +205,7 @@ async def link_entities_to_episode(
             if worker_settings.AUTO_RUN_COMMUNITY_DETECTION:
                 try:
                     # ctx is the ARQ worker context dict with a 'redis' key
-                    arq_redis: object | None = None
+                    # arq_redis is already declared and populated at line 174
                     if isinstance(ctx, dict):
                         arq_redis = ctx.get("redis")
                     if arq_redis is not None:
