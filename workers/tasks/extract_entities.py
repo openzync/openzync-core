@@ -109,9 +109,7 @@ async def extract_entities(
     if engine is None:
         from core.db import init_db_engine
 
-        engine = init_db_engine(
-            str(settings.DATABASE_URL), pool_size=2, max_overflow=1
-        )
+        engine = init_db_engine(str(settings.DATABASE_URL), pool_size=2, max_overflow=1)
         _own_engine = True
     else:
         _own_engine = False
@@ -124,35 +122,36 @@ async def extract_entities(
     # created_by via the auth middleware).  The worker resolves it from the
     # episode rather than receiving it as an ARQ parameter.
     from sqlalchemy import select
+
     from models.episode import Episode
 
+    backend: Any = None
     async with session_factory() as resolve_db:
         result = await resolve_db.execute(
             select(Episode.user_id).where(Episode.id == episode_id)
         )
         user_id_row = result.scalar_one_or_none()
-    if user_id_row is None:
-        logger.warning(
-            "entity_extraction.episode_not_found",
-            episode_id=episode_id,
-        )
-        raise EpisodeNotFoundError(
-            message=f"Episode {episode_id} not found for entity extraction.",
-            detail={"episode_id": episode_id},
-        )
-    user_id: str = str(user_id_row)
+        if user_id_row is None:
+            logger.warning(
+                "entity_extraction.episode_not_found",
+                episode_id=episode_id,
+            )
+            raise EpisodeNotFoundError(
+                message=f"Episode {episode_id} not found for entity extraction.",
+                detail={"episode_id": episode_id},
+            )
+        user_id: str = str(user_id_row)
 
-    # ── Resolve graph backend for session entity fetching ─────────────
-    backend: Any = None
-    try:
-        async with session_factory() as _be_db:
+        # ── Resolve graph backend (same session, avoids extra connection) ──
+        try:
             backend = await resolve_graph_backend(
                 ctx if isinstance(ctx, dict) else {},
-                uuid.UUID(org_id), _be_db,
+                uuid.UUID(org_id),
+                resolve_db,
                 fallback_to_postgres=True,
             )
-    except Exception:
-        logger.warning("entity_extraction.backend_resolve_failed", exc_info=True)
+        except Exception:
+            logger.warning("entity_extraction.backend_resolve_failed", exc_info=True)
 
     # ── 1-2. Render prompt (system instructions) with auto-injected context ──
     system_prompt, prompt_context = await render_prompt(
@@ -176,9 +175,7 @@ async def extract_entities(
     llm_config_dict: dict | None = None
     try:
         async with session_factory() as db:
-            org_cfg = await get_org_config(
-                uuid.UUID(org_id), db, redis=None
-            )
+            org_cfg = await get_org_config(uuid.UUID(org_id), db, redis=None)
             llm_config_dict = org_cfg.to_llm_config_dict()
     except Exception:
         logger.warning(
@@ -194,9 +191,7 @@ async def extract_entities(
             [
                 {
                     "role": "system",
-                    "content": (
-                        "You are an entity extraction system."
-                    ),
+                    "content": ("You are an entity extraction system."),
                 },
                 {"role": "user", "content": prompt},
             ],
@@ -314,10 +309,7 @@ async def extract_entities(
                 object=obj,
             )
             continue
-        if (
-            subj.lower() in _PRONOUN_SKIP_NAMES
-            or obj.lower() in _PRONOUN_SKIP_NAMES
-        ):
+        if subj.lower() in _PRONOUN_SKIP_NAMES or obj.lower() in _PRONOUN_SKIP_NAMES:
             logger.info(
                 "entity_extraction.relationship_pronoun_skipped",
                 episode_id=episode_id,
@@ -524,7 +516,8 @@ async def extract_entities(
     # IDs can be resolved for graph_relationship edges.  Chaining via
     # enqueue eliminates the race condition.
     try:
-        from services.worker.worker_settings import get_queue_name, settings as w_settings
+        from services.worker.worker_settings import get_queue_name
+        from services.worker.worker_settings import settings as w_settings
 
         arq_redis = ctx.get("redis") if isinstance(ctx, dict) else None
         if arq_redis is not None:
@@ -546,5 +539,3 @@ async def extract_entities(
             exc_info=True,
         )
         raise  # Propagate so ARQ retry mechanism handles it
-
-

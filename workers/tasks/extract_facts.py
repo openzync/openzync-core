@@ -23,8 +23,8 @@ from datetime import datetime, timezone
 
 import structlog
 
-from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
 from core.exceptions import EpisodeNotFoundError, GraphBackendUnavailableError
+from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
 from workers.tasks.base import ENRICHMENT_FACTS, with_retry
 
 logger = structlog.get_logger()
@@ -123,35 +123,36 @@ async def extract_facts(
     # created_by via the auth middleware).  The worker resolves it from the
     # episode rather than receiving it as an ARQ parameter.
     from sqlalchemy import select
+
     from models.episode import Episode
 
+    backend: Any = None
     async with session_factory() as resolve_db:
         result = await resolve_db.execute(
             select(Episode.user_id).where(Episode.id == episode_id)
         )
         user_id_row = result.scalar_one_or_none()
-    if user_id_row is None:
-        logger.warning(
-            "fact_extraction.episode_not_found",
-            episode_id=episode_id,
-        )
-        raise EpisodeNotFoundError(
-            message=f"Episode {episode_id} not found for fact extraction.",
-            detail={"episode_id": episode_id},
-        )
-    user_id: str = str(user_id_row)
+        if user_id_row is None:
+            logger.warning(
+                "fact_extraction.episode_not_found",
+                episode_id=episode_id,
+            )
+            raise EpisodeNotFoundError(
+                message=f"Episode {episode_id} not found for fact extraction.",
+                detail={"episode_id": episode_id},
+            )
+        user_id: str = str(user_id_row)
 
-    # ── Resolve graph backend for session entity fetching ─────────────
-    backend: Any = None
-    try:
-        async with session_factory() as _be_db:
+        # ── Resolve graph backend (same session, avoids extra connection) ──
+        try:
             backend = await resolve_graph_backend(
                 ctx if isinstance(ctx, dict) else {},
-                uuid.UUID(org_id), _be_db,
+                uuid.UUID(org_id),
+                resolve_db,
                 fallback_to_postgres=True,
             )
-    except Exception:
-        logger.warning("fact_extraction.backend_resolve_failed", exc_info=True)
+        except Exception:
+            logger.warning("fact_extraction.backend_resolve_failed", exc_info=True)
 
     # ── 1. Render prompt (system instructions) with auto-injected context ──
     system_prompt, prompt_context = await render_prompt(
@@ -193,9 +194,7 @@ async def extract_facts(
             [
                 {
                     "role": "system",
-                    "content": (
-                        "You are a fact extraction system."
-                    ),
+                    "content": ("You are a fact extraction system."),
                 },
                 {"role": "user", "content": prompt},
             ],
@@ -247,7 +246,9 @@ async def extract_facts(
                         # if available; fact persistence to PostgreSQL always
                         # succeeds regardless of graph backend state.
                         backend = await resolve_graph_backend(
-                            ctx, uuid.UUID(org_id), db,
+                            ctx,
+                            uuid.UUID(org_id),
+                            db,
                         )
 
                         repo = FactRepository(db)
