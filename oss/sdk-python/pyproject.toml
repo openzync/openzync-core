@@ -50,7 +50,7 @@ Changelog = "https://github.com/rohnsha0/openzync/blob/master/oss/sdk-python/CHA
 [tool.hatch.version]
 source = "vcs"
 fallback-version = "0.3.0"
-raw-options = { search_parent_directories = true, local_scheme = "node-and-date" }
+raw-options = { search_parent_directories = true, local_scheme = "no-local-version" }
 
 [tool.hatch.build.targets.sdist]
 include = ["/src"]
