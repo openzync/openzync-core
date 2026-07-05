@@ -19,6 +19,11 @@ import time
 from typing import Any, ClassVar
 
 import httpx
+from openai import (
+    APIConnectionError,
+    APITimeoutError,
+    APIError,
+)
 
 from core.exceptions import LLMConfigurationError
 from core.llm import (
@@ -243,11 +248,29 @@ class OpenAIBackend(LLMBackend):
                 )
                 elapsed = time.monotonic() - start
 
-                content = response.choices[0].message.content
+                choice = response.choices[0]
+                content = choice.message.content
                 if content is None:
-                    raise ValueError(
-                        "OpenAI response content is None — model may have returned a tool call instead of text"
-                    )
+                    if (
+                        choice.message.tool_calls
+                        and choice.message.tool_calls[0].function
+                        and choice.message.tool_calls[0].function.arguments
+                    ):
+                        tool_call = choice.message.tool_calls[0]
+                        content = tool_call.function.arguments
+                        logger.info(
+                            "llm.tool_call_extracted",
+                            extra={
+                                "function": tool_call.function.name,
+                                "model": model,
+                                "tool_calls_count": len(choice.message.tool_calls),
+                                "args_length": len(tool_call.function.arguments),
+                            },
+                        )
+                    else:
+                        raise ValueError(
+                            "OpenAI response content is None and no tool calls present"
+                        )
                 usage_data = response.usage
                 usage = TokenUsage(
                     prompt_tokens=usage_data.prompt_tokens if usage_data else 0,
@@ -405,11 +428,29 @@ class AzureBackend(LLMBackend):
                 )
                 elapsed = time.monotonic() - start
 
-                content = response.choices[0].message.content
+                choice = response.choices[0]
+                content = choice.message.content
                 if content is None:
-                    raise ValueError(
-                        "Azure OpenAI response content is None — model may have returned a tool call instead of text"
-                    )
+                    if (
+                        choice.message.tool_calls
+                        and choice.message.tool_calls[0].function
+                        and choice.message.tool_calls[0].function.arguments
+                    ):
+                        tool_call = choice.message.tool_calls[0]
+                        content = tool_call.function.arguments
+                        logger.info(
+                            "llm.tool_call_extracted",
+                            extra={
+                                "function": tool_call.function.name,
+                                "model": deployment,
+                                "tool_calls_count": len(choice.message.tool_calls),
+                                "args_length": len(tool_call.function.arguments),
+                            },
+                        )
+                    else:
+                        raise ValueError(
+                            "Azure OpenAI response content is None and no tool calls present"
+                        )
                 usage_data = response.usage
                 usage = TokenUsage(
                     prompt_tokens=usage_data.prompt_tokens if usage_data else 0,
@@ -602,17 +643,15 @@ class OpenRouterBackend(LLMBackend):
     """LLM backend powered by OpenRouter's unified API.
 
     Uses the OpenAI-compatible client pointed at ``https://openrouter.ai/api/v1``.
-    The API key must be provided via the constructor (from per-org config).
-    There is no env-var fallback.
-
-    Default model: ``openai/gpt-oss-120b:free`` (no-cost tier).
+    The API key and model must be provided via the constructor (from per-org config).
+    There is no env-var fallback and no hardcoded default.
 
     Does **not** support embeddings — use a different backend (Ollama, OpenAI,
     or Azure) for pgvector embedding generation.
     """
 
-    DEFAULT_CHAT_MODEL: ClassVar[str] = "openai/gpt-oss-120b:free"
     BASE_URL: ClassVar[str] = "https://openrouter.ai/api/v1"
+    MAX_RETRIES: ClassVar[int] = 3
 
     def __init__(self, api_key: str, model: str | None = None) -> None:
         from openai import AsyncOpenAI
@@ -621,6 +660,11 @@ class OpenRouterBackend(LLMBackend):
             raise LLMConfigurationError(
                 "OpenRouter API key is required. "
                 "Set it via PATCH /admin/org/config."
+            )
+        if not model:
+            raise LLMConfigurationError(
+                "OpenRouter model name is required. "
+                "Set llm_model via PATCH /admin/org/config."
             )
 
         self._client = AsyncOpenAI(
@@ -631,7 +675,7 @@ class OpenRouterBackend(LLMBackend):
                 "X-OpenRouter-Title": "OpenZync - Agent Memory Platform",
             },
         )
-        self._chat_model = model or self.DEFAULT_CHAT_MODEL
+        self._chat_model = model
 
     @property
     def model_name(self) -> str:
@@ -642,49 +686,139 @@ class OpenRouterBackend(LLMBackend):
         raise NotImplementedError("OpenRouter does not support embeddings")
 
     async def _chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
-        """Send a chat completion via OpenRouter."""
-        import time
+        """Send a chat completion via OpenRouter.
 
+        Retries on 429/5xx (exponential backoff) and on empty responses
+        where content is ``None`` with no tool calls present.
+        """
         model = kwargs.pop("model", self._chat_model)
         temperature = kwargs.pop("temperature", 0.1)
-        max_tokens = kwargs.pop("max_tokens", 1024)
+        max_tokens = kwargs.pop("max_tokens", 4096)
 
-        start = time.monotonic()
-        response = await self._client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            **kwargs,
-        )
+        last_exception: Exception | None = None
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                start = time.monotonic()
+                response = await self._client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    **kwargs,
+                )
+                elapsed = time.monotonic() - start
+                choice = response.choices[0]
+                content = choice.message.content
+                if content is None:
+                    if (
+                        choice.message.tool_calls
+                        and choice.message.tool_calls[0].function
+                        and choice.message.tool_calls[0].function.arguments
+                    ):
+                        tool_call = choice.message.tool_calls[0]
+                        content = tool_call.function.arguments
+                        logger.info(
+                            "llm.tool_call_extracted",
+                            extra={
+                                "function": tool_call.function.name,
+                                "model": response.model,
+                                "tool_calls_count": len(choice.message.tool_calls),
+                                "args_length": len(tool_call.function.arguments),
+                            },
+                        )
+                    else:
+                        # Fail fast on deterministic refusal or truncation.
+                        if choice.finish_reason in ("content_filter", "length"):
+                            raise ValueError(
+                                "OpenRouter response blocked or incomplete "
+                                f"(finish_reason={choice.finish_reason})"
+                            )
 
-        elapsed = time.monotonic() - start
-        choice = response.choices[0]
-        content = choice.message.content
-        if content is None:
-            raise ValueError(
-                "OpenRouter response content is None — model may have returned a tool call instead of text"
-            )
-        usage = TokenUsage(
-            prompt_tokens=response.usage.prompt_tokens if response.usage else 0,
-            completion_tokens=response.usage.completion_tokens if response.usage else 0,
-        )
+                        # Empty response — retry with backoff instead of immediate failure.
+                        logger.warning(
+                            "openrouter.empty_response",
+                            extra={
+                                "attempt": attempt,
+                                "model": response.model,
+                                "finish_reason": choice.finish_reason,
+                            },
+                        )
+                        if attempt < self.MAX_RETRIES:
+                            wait = 2**attempt
+                            await asyncio.sleep(wait)
+                            continue
 
-        logger.info(
-            "openrouter.chat_completed",
-            extra={
-                "model": response.model,
-                "duration_ms": round(elapsed * 1000),
-                "prompt_tokens": usage.prompt_tokens,
-                "completion_tokens": usage.completion_tokens,
-            },
-        )
+                        # Last attempt exhausted — break instead of raise to avoid
+                        # double-catching (ValueError → except Exception → logged again).
+                        last_exception = ValueError(
+                            "OpenRouter response content is None and no tool calls present "
+                            f"(finish_reason={choice.finish_reason})"
+                        )
+                        break
 
-        return ChatResponse(
-            content=content,
-            model=response.model,
-            usage=usage,
-        )
+                usage = TokenUsage(
+                    prompt_tokens=response.usage.prompt_tokens if response.usage else 0,
+                    completion_tokens=response.usage.completion_tokens if response.usage else 0,
+                )
+                logger.info(
+                    "openrouter.chat_completed",
+                    extra={
+                        "model": response.model,
+                        "duration_ms": round(elapsed * 1000),
+                        "prompt_tokens": usage.prompt_tokens,
+                        "completion_tokens": usage.completion_tokens,
+                    },
+                )
+                return ChatResponse(content=content, model=response.model, usage=usage)
+
+            except Exception as exc:
+                last_exception = exc
+                # Retry on 429 (rate limit) or 5xx server errors.
+                if hasattr(exc, "status_code") and exc.status_code in (429, 500, 502, 503):
+                    wait = 2**attempt
+                    logger.warning(
+                        "openrouter.retrying",
+                        extra={
+                            "attempt": attempt,
+                            "wait_seconds": wait,
+                            "status_code": exc.status_code,
+                        },
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                # Also retry on API errors that carry a code attribute (OpenAI error type).
+                if hasattr(exc, "code") and hasattr(exc, "status_code"):
+                    wait = 2**attempt
+                    logger.warning(
+                        "openrouter.retrying",
+                        extra={
+                            "attempt": attempt,
+                            "wait_seconds": wait,
+                            "error_code": exc.code,
+                        },
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                # Retry on transient network-level errors (no status_code on these).
+                if isinstance(exc, (APITimeoutError, APIConnectionError)):
+                    wait = 2**attempt
+                    logger.warning(
+                        "openrouter.retrying",
+                        extra={
+                            "attempt": attempt,
+                            "wait_seconds": wait,
+                            "error_type": type(exc).__name__,
+                        },
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                # Non-retryable error — raise immediately.
+                logger.error("openrouter.chat_error", extra={"error": str(exc)})
+                raise
+
+        raise RuntimeError(
+            f"OpenRouter chat failed after {self.MAX_RETRIES} retries: {last_exception}"
+        ) from last_exception
 
     async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:
         """Embeddings are not supported by OpenRouter."""
