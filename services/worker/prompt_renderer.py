@@ -194,7 +194,7 @@ async def _fetch_session_entities(
     db: AsyncSession,
     org_id: UUID,
     session_id: UUID | None,
-    graph_backend: GraphBackend,
+    graph_backend: GraphBackend | None,
     project_id: UUID | None,
     **_: Any,
 ) -> dict[str, Any]:
@@ -203,7 +203,7 @@ async def _fetch_session_entities(
     Returns ``{"known_entities": [...]}`` or an empty list if no session_id
     or missing parameters.
     """
-    if session_id is None or project_id is None:
+    if session_id is None or project_id is None or graph_backend is None:
         return {"known_entities": []}
 
     entities = await graph_backend.get_entities_for_session(

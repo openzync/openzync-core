@@ -146,6 +146,7 @@ async def classify_dialog(
                 "classification",
                 org_id=org_id,
                 episode_id=episode_id,
+                project_id=project_id,
                 user_id=user_id,
                 session_id=session_id,
                 db_session_factory=session_factory,

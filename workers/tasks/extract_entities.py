@@ -142,6 +142,18 @@ async def extract_entities(
         )
     user_id: str = str(user_id_row)
 
+    # ── Resolve graph backend for session entity fetching ─────────────
+    backend: Any = None
+    try:
+        async with session_factory() as _be_db:
+            backend = await resolve_graph_backend(
+                ctx if isinstance(ctx, dict) else {},
+                uuid.UUID(org_id), _be_db,
+                fallback_to_postgres=True,
+            )
+    except Exception:
+        logger.warning("entity_extraction.backend_resolve_failed", exc_info=True)
+
     # ── 1-2. Render prompt (system instructions) with auto-injected context ──
     system_prompt, prompt_context = await render_prompt(
         "entity_extraction",
@@ -150,6 +162,7 @@ async def extract_entities(
         session_id=session_id,
         user_id=user_id,
         project_id=project_id,
+        graph_backend=backend,
         db_session_factory=session_factory,
         return_context=True,
         metadata=metadata or {},
