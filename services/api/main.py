@@ -104,23 +104,28 @@ def create_app() -> FastAPI:
         app.state.surreal_connection_pool = SurrealConnectionPool()
         logger.info("surreal_pool.initialised")
 
-        # Init FalkorDB client with a single app-level connection pool (optional — requires falkordb).
-        from falkordb.asyncio import FalkorDB
+        # Init FalkorDB client (optional — requires falkordb server running).
+        try:
+            from falkordb.asyncio import FalkorDB
 
-        falkordb_pool = BlockingConnectionPool.from_url(
-            settings.FALKORDB_URL,
-            max_connections=settings.FALKORDB_MAX_CONNECTIONS,
-            socket_timeout=settings.FALKORDB_SOCKET_TIMEOUT,
-            socket_keepalive=True,
-            decode_responses=True,
-        )
-        app.state.falkordb_client = FalkorDB(connection_pool=falkordb_pool)
-        logger.info("falkordb_pool.initialised")
+            falkordb_pool = BlockingConnectionPool.from_url(
+                settings.FALKORDB_URL,
+                max_connections=settings.FALKORDB_MAX_CONNECTIONS,
+                socket_timeout=settings.FALKORDB_SOCKET_TIMEOUT,
+                socket_keepalive=True,
+                decode_responses=True,
+            )
+            app.state.falkordb_client = FalkorDB(connection_pool=falkordb_pool)
+            logger.info("falkordb_pool.initialised")
+        except Exception:
+            logger.warning("falkordb_pool.initialisation_failed — FalkorDB is optional")
+            app.state.falkordb_client = None
 
         yield
 
         # ── Shutdown (reverse order of initialisation) ────────────────────
-        await app.state.falkordb_client.aclose()
+        if getattr(app.state, "falkordb_client", None) is not None:
+            await app.state.falkordb_client.aclose()
         await app.state.surreal_connection_pool.close_all()
         await close_arq()
         await close_redis(redis_client)
