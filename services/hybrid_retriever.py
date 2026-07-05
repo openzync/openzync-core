@@ -20,7 +20,7 @@ import time
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import Float, Select, cast, func, literal_column, select, text
+from sqlalchemy import Float, Select, cast, func, literal, literal_column, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import SearchLegFailedError

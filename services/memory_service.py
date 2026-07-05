@@ -645,6 +645,7 @@ class MemoryService:
                     queue_name=_arq_queue_name("low"),
                     **common,
                     role=role,
+                    session_id=session_id,
                 )
                 await arq_pool.enqueue(
                     "extract_structured",

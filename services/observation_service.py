@@ -47,7 +47,7 @@ data leakage is possible.
 
 from __future__ import annotations
 
-import logging
+import structlog
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -56,7 +56,7 @@ from uuid import UUID
 from models.graph_observation import ObservationType
 from repositories.observation_repository import ObservationRepository
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # ── Configuration defaults ─────────────────────────────────────────────────────
 # These can be overridden via constructor kwargs for testing or tuning.

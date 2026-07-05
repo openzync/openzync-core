@@ -144,7 +144,7 @@ async def compute_observations(
             oid = UUID(org_id)
 
             # Try to get LLM backend for content generation (optional).
-            llm_backend = _maybe_get_llm_backend(ctx)
+            llm_backend = await _maybe_get_llm_backend(ctx)
             if llm_backend is not None:
                 logger.info(
                     "compute_observations.using_llm",
@@ -181,7 +181,7 @@ async def compute_observations(
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _maybe_get_llm_backend(ctx: object) -> object | None:
+async def _maybe_get_llm_backend(ctx: object) -> object | None:
     """Resolve the LLM backend for content generation, if available.
 
     The LLM call is **optional** — if the backend cannot be resolved
@@ -197,7 +197,7 @@ def _maybe_get_llm_backend(ctx: object) -> object | None:
     try:
         from core.llm import resolve_backend
 
-        return resolve_backend()
+        return await resolve_backend()
     except Exception:
         logger.debug(
             "compute_observations.llm_unavailable",
