@@ -93,6 +93,7 @@ async def extract_facts(
     from repositories.episode_repository import EpisodeRepository
     from repositories.fact_repository import FactRepository
     from schemas.llm_outputs import FactExtractionOutput
+    from workers.backend import resolve_graph_backend
 
     logger.info(
         "fact_extraction.started",
@@ -147,6 +148,7 @@ async def extract_facts(
         episode_id=episode_id,
         session_id=session_id,
         user_id=user_id,
+        project_id=project_id,
         db_session_factory=session_factory,
         return_context=True,
         metadata=metadata or {},
@@ -227,13 +229,21 @@ async def extract_facts(
                     )
 
                     if resolved_facts:
+                        # ── Resolve graph backend for this org ──────────────
+                        # Entity relationships are materialized in the graph
+                        # if available; fact persistence to PostgreSQL always
+                        # succeeds regardless of graph backend state.
+                        backend = await resolve_graph_backend(
+                            ctx, uuid.UUID(org_id), db,
+                        )
+
                         repo = FactRepository(db)
                         # Also init entity repo for graph relationship upserts
                         from repositories.entity_repository import (
                             EntityRepository as _EntityRepo,
                         )
 
-                        entity_repo = _EntityRepo(db=db)
+                        entity_repo = _EntityRepo(db=db, graph_backend=backend)
 
                         # ══════════════════════════════════════════════════════
                         # Batch-create all unique facts in a single query

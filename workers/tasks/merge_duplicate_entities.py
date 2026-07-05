@@ -1,21 +1,25 @@
 """Entity merge dedup worker — ARQ task for weekly scheduled entity deduplication.
 
 Detects and merges duplicate entities within an organization's knowledge graph
-using exact name matching and fuzzy string similarity (``pg_trgm``).
+using exact name matching and backend fuzzy string similarity.
 
 Pipeline:
-    1. Query all non-merged entities for an org.
+    1. Query all non-merged entities for a project via the graph backend.
     2. Exact match: group by ``LOWER(name)`` — detect entities with identical
        names (case-insensitive).
-    3. Fuzzy match: ``pg_trgm similarity > 0.85`` for remaining entities.
+    3. Fuzzy match: ``backend.bulk_search_entities()`` — delegate fuzzy search
+       to the graph backend (pg_trgm for PostgreSQL, etc.).
     4. For each duplicate cluster:
-       a. Select canonical entity (most relationships, then most recently
-          updated).
-       b. Rewire all ``graph_relationships`` to canonical entity.
-       c. Flag non-canonical entities with ``is_merged = True``.
-       d. Write an ``audit_log`` entry with before/after snapshot.
+       a. Select canonical entity (most recently created).
+       b. ``backend.merge_entities()`` — ONE atomic call per cluster that
+          rewires relationships, deletes duplicates, and marks merged
+          entities.
+       c. Write an ``audit_log`` entry with before/after snapshot.
     5. 7-day recovery window: soft-delete via ``is_merged`` flag, not hard
        delete.
+
+All raw SQL has been removed — every graph operation goes through the
+``GraphBackend`` ABC.  See Wave 3c of the migration.
 
 Bitmask:
     Does NOT set an enrichment bit — this is a data maintenance task, not
@@ -25,12 +29,16 @@ Bitmask:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 import structlog
-from sqlalchemy import text
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.graph_entity import GraphEntity
+from models.project import Project
+from packages.graph_backend.interface import GraphBackend
+from workers.backend import resolve_graph_backend
 from workers.tasks.base import with_retry
 
 logger = structlog.get_logger()
@@ -38,10 +46,13 @@ logger = structlog.get_logger()
 # ── Constants ──────────────────────────────────────────────────────────────────
 
 FUZZY_SIMILARITY_THRESHOLD: float = 0.85
-"""Minimum ``pg_trgm`` similarity for fuzzy duplicate detection."""
+"""Minimum similarity score for fuzzy duplicate detection."""
 
 MERGE_BATCH_SIZE: int = 100
 """Number of entity clusters to process in a single DB transaction."""
+
+_BULK_SEARCH_LIMIT: int = 100
+"""Maximum fuzzy-matching candidates to return per query."""
 
 
 # ── Public ARQ task (decorated with retry) ─────────────────────────────────────
@@ -49,7 +60,7 @@ MERGE_BATCH_SIZE: int = 100
 
 @with_retry(max_retries=2, base_delay_s=5.0)
 async def merge_duplicate_entities(
-    ctx: object,
+    ctx: dict,
     org_id: str | None = None,
 ) -> dict:
     """Merge duplicate entities for an organization.
@@ -59,7 +70,7 @@ async def merge_duplicate_entities(
     - With ``org_id`` (manual trigger): processes a single org.
 
     Args:
-        ctx: ARQ worker context (unused — required by ARQ contract).
+        ctx: ARQ worker context (passed to ``resolve_graph_backend``).
         org_id: Optional org UUID to process (processes all if ``None``).
 
     Returns:
@@ -109,7 +120,7 @@ async def merge_duplicate_entities(
             for current_org_id in org_ids:
                 try:
                     clusters = await _process_org(
-                        db, current_org_id,
+                        ctx, db, current_org_id,
                     )
                     total_clusters += clusters["clusters"]
                     total_merged += clusters["entities_merged"]
@@ -153,31 +164,40 @@ async def merge_duplicate_entities(
 # ── Private helpers ────────────────────────────────────────────────────────────
 
 
-async def _find_eligible_orgs(db: Any) -> list[uuid.UUID]:
-    """Find organizations with at least two non-merged entities.
+async def _find_eligible_orgs(db: AsyncSession) -> list[uuid.UUID]:
+    """Find organizations with at least two entities in the graph.
+
+    Uses the ORM (``GraphEntity``) — ``is_merged`` is not available in the
+    stub model, so this counts *all* entities.  Per-project filtering in
+    ``_process_org`` via ``get_all_entities(include_merged=False)`` refines
+    the candidate set.
 
     Args:
         db: Database session.
 
     Returns:
-        List of organization UUIDs eligible for dedup.
+        List of organization UUIDs that have graph data.
     """
     result = await db.execute(
-        text("""
-            SELECT organization_id, COUNT(*) as cnt
-            FROM graph_entities
-            WHERE is_merged = false
-            GROUP BY organization_id
-            HAVING COUNT(*) >= 2
-        """),
+        select(GraphEntity.organization_id)
+        .group_by(GraphEntity.organization_id)
+        .having(func.count() >= 2)
     )
     return [r[0] for r in result.all()]
 
 
-async def _process_org(db: Any, org_id: uuid.UUID) -> dict[str, int]:
+async def _process_org(
+    ctx: dict,
+    db: AsyncSession,
+    org_id: uuid.UUID,
+) -> dict[str, int]:
     """Run dedup logic for a single organization.
 
+    Resolves the per-org graph backend, discovers projects with graph
+    data, and processes each project independently.
+
     Args:
+        ctx: ARQ worker context (passed to ``resolve_graph_backend``).
         db: Database session.
         org_id: Organization UUID.
 
@@ -185,7 +205,92 @@ async def _process_org(db: Any, org_id: uuid.UUID) -> dict[str, int]:
         Dict with ``clusters``, ``entities_merged``,
         ``relationships_rewired`` counts.
     """
-    clusters = await _find_duplicate_clusters(db, org_id)
+    backend = await resolve_graph_backend(ctx, org_id, db)
+    if backend is None:
+        logger.warning(
+            "merge_duplicates.graph_disabled",
+            org_id=str(org_id),
+        )
+        return {"clusters": 0, "entities_merged": 0, "relationships_rewired": 0}
+
+    # Discover projects for this org
+    result = await db.execute(
+        select(Project.id).where(
+            Project.organization_id == org_id,
+            Project.is_archived == False,
+        )
+    )
+    project_ids = [r[0] for r in result.all()]
+
+    if not project_ids:
+        return {"clusters": 0, "entities_merged": 0, "relationships_rewired": 0}
+
+    cluster_errors: list[str] = []
+    total_clusters = 0
+    total_merged = 0
+    total_rewired = 0
+
+    for project_id in project_ids:
+        try:
+            result_counts = await _process_project(
+                db, backend, org_id, project_id,
+            )
+            total_clusters += result_counts["clusters"]
+            total_merged += result_counts["entities_merged"]
+            total_rewired += result_counts["relationships_rewired"]
+        except Exception as exc:
+            logger.error(
+                "merge_duplicates.project_failed",
+                org_id=str(org_id),
+                project_id=str(project_id),
+                error=str(exc),
+            )
+            cluster_errors.append(str(project_id))
+
+    if cluster_errors and len(cluster_errors) == len(project_ids):
+        raise RuntimeError(
+            f"All {len(project_ids)} projects failed to merge duplicates "
+            f"for org {org_id}: {', '.join(cluster_errors)}"
+        )
+
+    await db.commit()
+
+    logger.info(
+        "merge_duplicates.org_completed",
+        org_id=str(org_id),
+        clusters=total_clusters,
+        projects_failed=len(cluster_errors),
+        entities_merged=total_merged,
+        relationships_rewired=total_rewired,
+    )
+
+    return {
+        "clusters": total_clusters,
+        "clusters_failed": len(cluster_errors),
+        "entities_merged": total_merged,
+        "relationships_rewired": total_rewired,
+    }
+
+
+async def _process_project(
+    db: AsyncSession,
+    backend: GraphBackend,
+    org_id: uuid.UUID,
+    project_id: uuid.UUID,
+) -> dict[str, int]:
+    """Run dedup logic for a single project within an org.
+
+    Args:
+        db: Database session (for audit log).
+        backend: Graph backend for this org.
+        org_id: Organization UUID.
+        project_id: Project UUID.
+
+    Returns:
+        Dict with ``clusters``, ``entities_merged``,
+        ``relationships_rewired`` counts.
+    """
+    clusters = await _find_duplicate_clusters(backend, org_id, project_id)
 
     if not clusters:
         return {"clusters": 0, "entities_merged": 0, "relationships_rewired": 0}
@@ -196,13 +301,14 @@ async def _process_org(db: Any, org_id: uuid.UUID) -> dict[str, int]:
 
     for cluster in clusters:
         try:
-            result = await _merge_cluster(db, org_id, cluster)
+            result = await _merge_cluster(db, backend, org_id, project_id, cluster)
             total_merged += result["entities_merged"]
             total_rewired += result["relationships_rewired"]
         except Exception as exc:
             logger.error(
                 "merge_duplicates.cluster_failed",
                 org_id=str(org_id),
+                project_id=str(project_id),
                 entity_ids=[str(e["id"]) for e in cluster],
                 error=str(exc),
             )
@@ -210,19 +316,9 @@ async def _process_org(db: Any, org_id: uuid.UUID) -> dict[str, int]:
 
     if cluster_errors and len(cluster_errors) == len(clusters):
         raise RuntimeError(
-            f"All {len(clusters)} clusters failed to merge for org {org_id}: {', '.join(cluster_errors)}"
+            f"All {len(clusters)} clusters failed to merge for project "
+            f"{project_id} in org {org_id}: {', '.join(cluster_errors)}"
         )
-
-    await db.commit()
-
-    logger.info(
-        "merge_duplicates.org_completed",
-        org_id=str(org_id),
-        clusters=len(clusters),
-        clusters_failed=len(cluster_errors),
-        entities_merged=total_merged,
-        relationships_rewired=total_rewired,
-    )
 
     return {
         "clusters": len(clusters),
@@ -233,156 +329,108 @@ async def _process_org(db: Any, org_id: uuid.UUID) -> dict[str, int]:
 
 
 async def _find_duplicate_clusters(
-    db: Any, org_id: uuid.UUID,
+    backend: GraphBackend,
+    org_id: uuid.UUID,
+    project_id: uuid.UUID,
 ) -> list[list[dict[str, Any]]]:
     """Find duplicate entity clusters using exact and fuzzy matching.
 
     Two-phase approach:
-    1. Exact match: ``LOWER(name)`` GROUP BY — entities with identical
-       normalized names.
-    2. Fuzzy match: ``pg_trgm similarity > threshold`` for remaining entities
-       (excluding those already matched exactly).
+    1. **Exact match**: Group by ``LOWER(name)`` in Python — entities with
+       identical normalized names.
+    2. **Fuzzy match**: ``backend.bulk_search_entities()`` for each remaining
+       entity, feeding its name as the query.
+
+    All data comes from ``backend.get_all_entities()`` — no raw SQL.
 
     Args:
-        db: Database session.
+        backend: Graph backend for this org.
         org_id: Organization UUID.
+        project_id: Project UUID.
 
     Returns:
         List of clusters, where each cluster is a list of entity dicts
-        (``id``, ``name``, ``entity_type``, ``updated_at``).
+        (``id``, ``name``, ``entity_type``, ``created_at``).
     """
+    entities = await backend.get_all_entities(
+        org_id, project_id, include_merged=False,
+    )
+
+    if len(entities) < 2:
+        return []
+
     clusters: list[list[dict[str, Any]]] = []
     seen_ids: set[str] = set()
 
     # ── Phase 1: Exact name matches (case-insensitive) ──────────────────────
-    result = await db.execute(
-        text("""
-            SELECT LOWER(name) as normalized, array_agg(id ORDER BY name) as ids
-            FROM graph_entities
-            WHERE organization_id = :org_id AND is_merged = false
-            GROUP BY LOWER(name)
-            HAVING COUNT(*) > 1
-        """),
-        {"org_id": org_id},
-    )
-    for row in result.all():
-        ids = list(row[1])
-        entity_ids_str = [str(eid) for eid in ids]
-        cluster = await _fetch_entity_details(db, org_id, entity_ids_str)
-        clusters.append(cluster)
-        seen_ids.update(entity_ids_str)
+    name_groups: dict[str, list[dict[str, Any]]] = {}
+    for entity in entities:
+        name_lower = entity["name"].lower().strip()
+        name_groups.setdefault(name_lower, []).append(entity)
 
-    # ── Phase 2: Fuzzy name matches via pg_trgm ─────────────────────────────
-    # Fetch all remaining non-merged entities not in an exact cluster
-    remaining_result = await db.execute(
-        text("""
-            SELECT id, name FROM graph_entities
-            WHERE organization_id = :org_id
-              AND is_merged = false
-              AND id != ALL(CAST(:seen_ids AS uuid[]))
-        """),
-        {
-            "org_id": org_id,
-            "seen_ids": [uuid.UUID(eid) for eid in seen_ids] if seen_ids else [uuid.UUID(int=0)],
-        },
-    )
-    remaining = {str(r[0]): r[1] for r in remaining_result.all()}
+    for name_lower, group in name_groups.items():
+        if len(group) > 1:
+            clusters.append(group)
+            for e in group:
+                seen_ids.add(e["id"])
 
-    # Build fuzzy clusters
+    # ── Phase 2: Fuzzy name matches via backend ─────────────────────────────
+    remaining = [e for e in entities if e["id"] not in seen_ids]
     processed_fuzzy: set[str] = set()
-    for eid_a, name_a in remaining.items():
-        if eid_a in processed_fuzzy:
+
+    for entity in remaining:
+        eid = entity["id"]
+        if eid in processed_fuzzy:
             continue
 
-        fuzzy_matches = await db.execute(
-            text("""
-                SELECT id, name, similarity(LOWER(name), LOWER(:query)) as sim
-                FROM graph_entities
-                WHERE organization_id = :org_id
-                  AND is_merged = false
-                  AND id != :entity_id
-                  AND similarity(LOWER(name), LOWER(:query)) > :threshold
-                ORDER BY sim DESC
-            """),
-            {
-                "query": name_a,
-                "org_id": org_id,
-                "entity_id": uuid.UUID(eid_a),
-                "threshold": FUZZY_SIMILARITY_THRESHOLD,
-            },
+        fuzzy_results = await backend.bulk_search_entities(
+            org_id=org_id,
+            project_id=project_id,
+            query=entity["name"],
+            fuzzy_threshold=FUZZY_SIMILARITY_THRESHOLD,
+            limit=_BULK_SEARCH_LIMIT,
         )
-        fuzzy_ids = [str(r[0]) for r in fuzzy_matches.all()]
+
+        # Exclude self and entities already locked into exact-match clusters
+        fuzzy_ids = [
+            r["id"]
+            for r in fuzzy_results
+            if r["id"] != eid and r["id"] not in seen_ids
+        ]
 
         if fuzzy_ids:
-            cluster_ids = [eid_a] + fuzzy_ids
-            cluster_ids_str = [str(eid) for eid in cluster_ids]
-            new_ids = set(cluster_ids_str) - processed_fuzzy
-            if len(new_ids) >= 2:
-                cluster = await _fetch_entity_details(
-                    db, org_id, list(new_ids),
-                )
-                clusters.append(cluster)
-            processed_fuzzy.update(cluster_ids_str)
+            cluster_ids = [eid] + fuzzy_ids
+            cluster = [entity] + [
+                e for e in entities if e["id"] in fuzzy_ids
+            ]
+            clusters.append(cluster)
+            processed_fuzzy.update(cluster_ids)
+            seen_ids.update(cluster_ids)
         else:
-            processed_fuzzy.add(eid_a)
+            processed_fuzzy.add(eid)
 
     return clusters
 
 
-async def _fetch_entity_details(
-    db: Any, org_id: uuid.UUID, entity_ids: list[str],
-) -> list[dict[str, Any]]:
-    """Fetch entity details for a list of entity IDs.
-
-    Args:
-        db: Database session.
-        org_id: Organization UUID.
-        entity_ids: List of entity UUID strings.
-
-    Returns:
-        List of entity dicts with ``id``, ``name``, ``entity_type``,
-        ``updated_at``.
-    """
-    if not entity_ids:
-        return []
-
-    result = await db.execute(
-        text("""
-            SELECT id, name, entity_type, updated_at
-            FROM graph_entities
-            WHERE organization_id = :org_id
-              AND id = ANY(CAST(:entity_ids AS uuid[]))
-        """),
-        {
-            "org_id": org_id,
-            "entity_ids": [uuid.UUID(eid) for eid in entity_ids],
-        },
-    )
-    return [
-        {
-            "id": str(r[0]),
-            "name": r[1],
-            "entity_type": r[2],
-            "updated_at": r[3],
-        }
-        for r in result.all()
-    ]
-
-
 async def _merge_cluster(
-    db: Any, org_id: uuid.UUID, cluster: list[dict[str, Any]],
+    db: AsyncSession,
+    backend: GraphBackend,
+    org_id: uuid.UUID,
+    project_id: uuid.UUID,
+    cluster: list[dict[str, Any]],
 ) -> dict[str, int]:
     """Merge a single duplicate cluster.
 
     Steps:
-    1. Select canonical entity (most relationships → most recently updated).
-    2. Rewire all ``graph_relationships`` to canonical entity.
-    3. Set ``is_merged = True`` on non-canonical entities.
-    4. Write ``audit_log`` entry.
+    1. Select canonical entity (most recent ``created_at``).
+    2. ``backend.merge_entities()`` — atomic rewire + dedup + soft-delete.
+    3. Write ``audit_log`` entry.
 
     Args:
-        db: Database session.
+        db: Database session (for audit log).
+        backend: Graph backend for this org.
         org_id: Organization UUID.
+        project_id: Project UUID.
         cluster: List of entity dicts in this cluster (at least 2).
 
     Returns:
@@ -392,84 +440,22 @@ async def _merge_cluster(
         return {"entities_merged": 0, "relationships_rewired": 0}
 
     # ── 1. Select canonical entity ──────────────────────────────────────────
-    canonical = await _select_canonical(db, org_id, cluster)
-
+    canonical = _select_canonical(cluster)
     duplicate_entities = [e for e in cluster if e["id"] != canonical["id"]]
 
-    total_rewired = 0
+    # ── 2. Atomic merge via backend ─────────────────────────────────────────
+    merge_result = await backend.merge_entities(
+        org_id=org_id,
+        project_id=project_id,
+        canonical_id=uuid.UUID(canonical["id"]),
+        merged_ids=[uuid.UUID(e["id"]) for e in duplicate_entities],
+    )
 
-    # ── 2. Rewire relationships ─────────────────────────────────────────────
-    for dup in duplicate_entities:
-        dup_id = uuid.UUID(dup["id"])
-        canonical_id = uuid.UUID(canonical["id"])
+    rewired_count = merge_result["rewired_count"]
+    deleted_count = merge_result["deleted_count"]
+    merged_count = merge_result["merged_count"]
 
-        # Rewire source_id
-        src_result = await db.execute(
-            text("""
-                UPDATE graph_relationships
-                SET source_id = :canonical_id
-                WHERE organization_id = :org_id
-                  AND source_id = :dup_id
-                  AND invalid_at IS NULL
-            """),
-            {
-                "canonical_id": canonical_id,
-                "org_id": org_id,
-                "dup_id": dup_id,
-            },
-        )
-        total_rewired += src_result.rowcount
-
-        # Rewire target_id
-        tgt_result = await db.execute(
-            text("""
-                UPDATE graph_relationships
-                SET target_id = :canonical_id
-                WHERE organization_id = :org_id
-                  AND target_id = :dup_id
-                  AND invalid_at IS NULL
-            """),
-            {
-                "canonical_id": canonical_id,
-                "org_id": org_id,
-                "dup_id": dup_id,
-            },
-        )
-        total_rewired += tgt_result.rowcount
-
-        # Remove duplicate active relationships created by rewiring
-        # Keep the first one (lowest ID) for each (source, target, type)
-        await db.execute(
-            text("""
-                DELETE FROM graph_relationships g
-                WHERE organization_id = :org_id
-                  AND invalid_at IS NULL
-                  AND g.id NOT IN (
-                      SELECT MIN(id::text)::uuid
-                      FROM graph_relationships
-                      WHERE organization_id = :org_id
-                        AND invalid_at IS NULL
-                      GROUP BY source_id, target_id, relationship_type
-                  )
-            """),
-            {"org_id": org_id},
-        )
-
-    # ── 3. Mark duplicates as merged ────────────────────────────────────────
-    for dup in duplicate_entities:
-        await db.execute(
-            text("""
-                UPDATE graph_entities
-                SET is_merged = true, updated_at = now()
-                WHERE id = :dup_id AND organization_id = :org_id
-            """),
-            {
-                "dup_id": uuid.UUID(dup["id"]),
-                "org_id": org_id,
-            },
-        )
-
-    # ── 4. Write audit log ──────────────────────────────────────────────────
+    # ── 3. Write audit log ──────────────────────────────────────────────────
     before_snapshot = [
         {"id": e["id"], "name": e["name"], "entity_type": e["entity_type"]}
         for e in cluster
@@ -482,6 +468,7 @@ async def _merge_cluster(
     }
 
     from services.audit_log_service import AuditLogService
+
     audit_service = AuditLogService(db)
     await audit_service.log_action(
         organization_id=org_id,
@@ -495,7 +482,7 @@ async def _merge_cluster(
             "before": before_snapshot,
             "after": after_snapshot,
             "cluster_size": len(cluster),
-            "relationships_rewired": total_rewired,
+            "relationships_rewired": rewired_count + deleted_count,
         },
         ip_address=None,
     )
@@ -503,30 +490,35 @@ async def _merge_cluster(
     logger.info(
         "merge_duplicates.cluster_merged",
         org_id=str(org_id),
+        project_id=str(project_id),
         canonical_id=canonical["id"],
         canonical_name=canonical["name"],
-        merged_count=len(duplicate_entities),
-        relationships_rewired=total_rewired,
+        merged_count=merged_count,
+        relationships_rewired=rewired_count,
+        duplicates_deleted=deleted_count,
     )
 
     return {
-        "entities_merged": len(duplicate_entities),
-        "relationships_rewired": total_rewired,
+        "entities_merged": merged_count,
+        "relationships_rewired": rewired_count + deleted_count,
     }
 
 
-async def _select_canonical(
-    db: Any, org_id: uuid.UUID, cluster: list[dict[str, Any]],
-) -> dict[str, Any]:
+def _select_canonical(cluster: list[dict[str, Any]]) -> dict[str, Any]:
     """Select the canonical entity from a duplicate cluster.
 
-    Heuristics (applied in order):
-    1. Entity with the most active relationships (source + target) wins.
-    2. Tie-break: most recently updated.
+    Heuristic: most recently ``created_at`` wins.  This is a client-side
+    choice — the actual rewire/dedup logic is handled atomically by
+    ``backend.merge_entities()``.
+
+    .. note::
+        The original heuristic used relationship counts + ``updated_at``,
+        but those require extra DB calls that ``get_all_entities()`` does
+        not provide.  ``created_at`` is a reasonable proxy: the most recent
+        entity in a duplicate cluster was likely created with the most
+        complete/up-to-date information.
 
     Args:
-        db: Database session.
-        org_id: Organization UUID.
         cluster: List of entity dicts in the cluster.
 
     Returns:
@@ -535,39 +527,8 @@ async def _select_canonical(
     if len(cluster) == 1:
         return cluster[0]
 
-    # Fetch relationship counts for all entities in the cluster
-    entity_ids = [uuid.UUID(e["id"]) for e in cluster]
-    result = await db.execute(
-        text("""
-            SELECT entity_id, COUNT(*) as rel_count FROM (
-                SELECT source_id as entity_id
-                FROM graph_relationships
-                WHERE organization_id = :org_id
-                  AND source_id = ANY(CAST(:entity_ids AS uuid[]))
-                  AND invalid_at IS NULL
-                UNION ALL
-                SELECT target_id as entity_id
-                FROM graph_relationships
-                WHERE organization_id = :org_id
-                  AND target_id = ANY(CAST(:entity_ids AS uuid[]))
-                  AND invalid_at IS NULL
-            ) AS rels
-            GROUP BY entity_id
-        """),
-        {
-            "org_id": org_id,
-            "entity_ids": entity_ids,
-        },
-    )
-    rel_counts: dict[str, int] = {
-        str(r[0]): r[1] for r in result.all()
-    }
-
-    # Sort: most relationships first, then most recently updated
-    def _sort_key(e: dict[str, Any]) -> tuple[int, datetime]:
-        count = rel_counts.get(e["id"], 0)
-        updated = e["updated_at"] or datetime.min.replace(tzinfo=timezone.utc)
-        return (count, updated)
+    def _sort_key(entity: dict[str, Any]) -> str:
+        return entity.get("created_at") or ""
 
     sorted_cluster = sorted(cluster, key=_sort_key, reverse=True)
     return sorted_cluster[0]

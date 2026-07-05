@@ -6,22 +6,28 @@ launch" or "Entity X and Entity Y always appear together in support tickets."
 
 Architecture
 ------------
-Pattern detection is **SQL-first and LLM-optional**.  All detection algorithms
-query PostgreSQL directly and produce structured results.  The LLM is used
-only to generate the ``content`` (natural-language description) field; when
-the LLM is unavailable, a template-based description is used instead.
+Uses ``GraphBackend`` ABC for all graph operations.  Pattern detection is
+**SQL-first and LLM-optional**.  Graph queries (co-occurrence, temporal
+analysis, relationship evidence) go through the backend.  Non-graph data
+(episode counts, fact predicate counts) uses direct ORM/raw-SQL queries
+via the injected ``AsyncSession``.
+
+The LLM is used only to generate the ``content`` (natural-language
+description) field; when the LLM is unavailable, a template-based
+description is used instead.
 
 Detection methods
 -----------------
 1. **Co-occurrence frequency**  (``detect_co_occurrences``)
-   - Queries ``graph_episode_entities`` for entity pairs that appear in the
-     same episodes above a configurable threshold.
+   - Delegates to ``backend.get_co_occurring_entity_pairs()`` for pairs
+     that appear in the same episodes above a configurable threshold.
    - Produces one ``CoOccurrencePattern`` per pair, with supporting
-     ``graph_relationships`` evidence.
+     ``graph_relationships`` evidence from ``backend.get_relationship_ids_between()``.
 
 2. **Temporal gap analysis**  (``detect_temporal_gaps``)
-   - For each entity, orders its episode appearances by time and calculates
-     gaps between consecutive appearances.
+   - For each entity, fetches episode timestamps via
+     ``backend.get_entity_appearance_timestamps()`` per entity and
+     calculates gaps between consecutive appearances.
    - Classifies the gap pattern as periodic, widening, narrowing, burst,
      or irregular.
    - Produces one ``TemporalGapPattern`` per entity.
@@ -29,7 +35,7 @@ Detection methods
 3. **Behavioral pattern detection**  (``detect_behavioral_patterns``)
    - Scans facts for each entity to find consistently repeated predicates
      or notable temporal sequences (e.g., ``asked_about_pricing`` followed
-     by ``churned``).
+     by ``churned``).  Queries the ``facts`` table directly via raw SQL.
    - Produces one ``BehavioralPattern`` per entity.
 
 Warn-only design
@@ -47,14 +53,19 @@ data leakage is possible.
 
 from __future__ import annotations
 
+import asyncio
 import structlog
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.exceptions import GraphBackendUnavailableError
 from models.graph_observation import ObservationType
-from repositories.observation_repository import ObservationRepository
+from packages.graph_backend.interface import GraphBackend
 
 logger = structlog.get_logger(__name__)
 
@@ -157,8 +168,20 @@ class BehavioralPattern:
 class ObservationService:
     """Graph-topology pattern detection and observation persistence.
 
+    Uses ``GraphBackend`` ABC for all graph operations (co-occurrence
+    queries, temporal timestamps, relationship evidence, observation
+    persistence).  Non-graph queries (episode counts, fact predicate
+    counts) are executed directly via the injected ``AsyncSession``.
+
+    Raises ``GraphBackendUnavailableError`` if the ``graph_backend`` is
+    ``None`` when a graph operation is attempted.
+
     Args:
-        repo: An ``ObservationRepository`` for queries and persistence.
+        graph_backend: A ``GraphBackend`` instance for graph operations.
+            If ``None``, methods raise ``GraphBackendUnavailableError``.
+        db: An async SQLAlchemy session for non-graph queries (episode
+            counts, fact predicate counts).  May be ``None`` only when
+            those code paths are never exercised.
         min_co_count: Minimum co-occurrence count (default 3).
         min_appearances_for_temporal: Minimum appearances for temporal
             analysis (default 3).
@@ -170,14 +193,16 @@ class ObservationService:
 
     def __init__(
         self,
-        repo: ObservationRepository,
+        graph_backend: GraphBackend | None = None,
+        db: AsyncSession | None = None,
         *,
         min_co_count: int = _DEFAULT_MIN_CO_COUNT,
         min_appearances_for_temporal: int = _DEFAULT_MIN_APPEARANCES_FOR_TEMPORAL,
         min_gap_hours: float = _DEFAULT_MIN_GAP_HOURS,
         co_confidence_cap: int = _DEFAULT_CO_CONFIDENCE_CAP,
     ) -> None:
-        self._repo = repo
+        self._backend = graph_backend
+        self._db = db
         self._min_co_count = min_co_count
         self._min_appearances_for_temporal = min_appearances_for_temporal
         self._min_gap_hours = min_gap_hours
@@ -195,12 +220,13 @@ class ObservationService:
     ) -> dict[str, int]:
         """Run all detection algorithms and persist observations.
 
-        Orchestrates the full pipeline:
-        1. Detect co-occurrences
-        2. Detect temporal gaps
-        3. Detect behavioral patterns
-        4. Generate descriptions (LLM or template)
-        5. Persist via ObservationRepository.upsert()
+        Orchestrates the full pipeline:
+        1. Validate backend availability.
+        2. Detect co-occurrences
+        3. Detect temporal gaps
+        4. Detect behavioral patterns
+        5. Generate descriptions (LLM or template)
+        6. Persist via backend.upsert_observation()
 
         Args:
             project_id: Project scope.
@@ -211,7 +237,12 @@ class ObservationService:
         Returns:
             A dict with counts per observation type:
             ``{"co_occurrence": N, "temporal_pattern": M, ...}``
+
+        Raises:
+            GraphBackendUnavailableError: If the graph backend is not
+                configured.
         """
+        self._assert_backend()
         counts: dict[str, int] = {}
 
         # ── 1. Co-occurrence ──────────────────────────────────────────────────
@@ -267,39 +298,53 @@ class ObservationService:
     ) -> list[CoOccurrencePattern]:
         """Find entity pairs that co-occur above the frequency threshold.
 
-        Queries ``graph_episode_entities`` for pairs of entities that
-        appear together in the same episode.  Returns all pairs whose
-        co-occurrence count meets or exceeds ``min_co_count``.
+        Delegates to ``backend.get_co_occurring_entity_pairs()`` for the
+        graph-topology query.  Returns all pairs whose co-occurrence count
+        meets or exceeds ``min_co_count``.
 
         Args:
             project_id: Project scope.
-            organization_id: Optional — reserved for future RLS enforcement
-                at the query level (currently handled by SQLAlchemy session).
+            organization_id: Organization scope — required for backend
+                calls (RLS enforcement).
 
         Returns:
             A list of ``CoOccurrencePattern`` instances, ordered by
             co-occurrence count descending.
+
+        Raises:
+            GraphBackendUnavailableError: If the graph backend is not
+                configured.
         """
+        self._assert_backend()
+        assert self._backend is not None  # mypy type narrowing
+        if organization_id is None:
+            raise ValueError("organization_id is required when using GraphBackend")
+
         # Get total episode count for the project (denominator for ratio)
-        total_episodes = await self._repo.get_episode_count(project_id)
+        total_episodes = await self._get_episode_count(project_id)
         if total_episodes == 0:
             return []
 
-        # Find co-occurring pairs via repository
-        pair_rows = await self._repo.get_co_occurring_pairs(
-            project_id, self._min_co_count,
+        # Find co-occurring pairs via graph backend
+        pair_rows = await self._backend.get_co_occurring_entity_pairs(
+            org_id=organization_id,
+            project_id=project_id,
+            min_co_count=self._min_co_count,
         )
 
         patterns: list[CoOccurrencePattern] = []
         for row in pair_rows:
             # Fetch supporting relationship IDs between this pair
-            rel_ids = await self._repo.get_relationship_ids_between(
-                project_id, row["entity_a_id"], row["entity_b_id"],
+            rel_ids = await self._backend.get_relationship_ids_between(
+                org_id=organization_id,
+                project_id=project_id,
+                entity_a_id=row["entity_a_id"],
+                entity_b_id=row["entity_b_id"],
             )
             patterns.append(CoOccurrencePattern(
-                entity_a_id=row["entity_a_id"],
+                entity_a_id=UUID(row["entity_a_id"]) if isinstance(row["entity_a_id"], str) else row["entity_a_id"],
                 entity_a_name=row["entity_a_name"],
-                entity_b_id=row["entity_b_id"],
+                entity_b_id=UUID(row["entity_b_id"]) if isinstance(row["entity_b_id"], str) else row["entity_b_id"],
                 entity_b_name=row["entity_b_name"],
                 co_count=row["co_count"],
                 total_episodes=total_episodes,
@@ -315,27 +360,60 @@ class ObservationService:
     ) -> list[TemporalGapPattern]:
         """Analyze temporal gaps between entity appearances.
 
-        For each entity with sufficient episode appearances, calculates
-        gaps between consecutive appearances and classifies the pattern.
+        For each entity with sufficient episode appearances, fetches
+        timestamps via ``backend.get_entity_appearance_timestamps()``,
+        calculates gaps between consecutive appearances, and classifies
+        the pattern.
 
         Args:
             project_id: Project scope.
-            organization_id: Reserved for future use.
+            organization_id: Organization scope — required for backend
+                calls (RLS enforcement).
 
         Returns:
             A list of ``TemporalGapPattern`` instances, one per entity
             that has enough appearances to analyze.
-        """
-        # Get entity → episode timestamps via repository
-        rows = await self._repo.get_entity_timestamps(project_id)
 
-        # Group timestamps by entity in Python
+        Raises:
+            GraphBackendUnavailableError: If the graph backend is not
+                configured.
+        """
+        self._assert_backend()
+        assert self._backend is not None  # mypy type narrowing
+        backend: GraphBackend = self._backend  # local var for closure type narrowing
+        if organization_id is None:
+            raise ValueError("organization_id is required when using GraphBackend")
+
+        # Get all entities for the project
+        entities = await backend.get_all_entities(
+            org_id=organization_id,
+            project_id=project_id,
+        )
+
+        # Fetch timestamps per entity in parallel
+        async def _fetch_timestamps(
+            entity: dict[str, Any],
+        ) -> tuple[UUID, str, list[datetime]] | None:
+            eid = UUID(entity["id"]) if isinstance(entity["id"], str) else entity["id"]
+            timestamps = await backend.get_entity_appearance_timestamps(
+                org_id=organization_id,
+                project_id=project_id,
+                entity_id=eid,
+            )
+            if timestamps:
+                return (eid, entity["name"], list(timestamps))
+            return None
+
+        results = await asyncio.gather(
+            *[_fetch_timestamps(e) for e in entities],
+        )
+
+        # Build entity → timestamps map
         entity_timestamps: dict[UUID, tuple[str, list[datetime]]] = {}
-        for row in rows:
-            eid = row["entity_id"]
-            if eid not in entity_timestamps:
-                entity_timestamps[eid] = (row["entity_name"], [])
-            entity_timestamps[eid][1].append(row["episode_created_at"])
+        for result in results:
+            if result is not None:
+                eid, name, timestamps = result
+                entity_timestamps[eid] = (name, timestamps)
 
         patterns: list[TemporalGapPattern] = []
         for entity_id, (entity_name, timestamps) in entity_timestamps.items():
@@ -405,7 +483,8 @@ class ObservationService:
 
         Finds entities that have facts with notable predicate distributions
         (e.g., the same predicate appears with high frequency, suggesting
-        a consistent behavior).
+        a consistent behavior).  Queries the ``facts`` table directly via
+        raw SQL — this is not a graph operation.
 
         Args:
             project_id: Project scope.
@@ -415,8 +494,8 @@ class ObservationService:
             A list of ``BehavioralPattern`` instances, one per entity
             with notable fact-predicate patterns.
         """
-        # Get predicate frequency for each entity via repository
-        rows = await self._repo.get_fact_predicate_counts(project_id)
+        # Get predicate frequency for each entity via direct DB query
+        rows = await self._get_fact_predicate_counts(project_id)
 
         # Aggregate by entity
         entity_data: dict[UUID, dict[str, Any]] = {}
@@ -586,14 +665,15 @@ class ObservationService:
         Returns:
             Number of observations persisted (2 × number of pairs).
         """
+        assert self._backend is not None  # called from run_full_project_scan which guards
         now = datetime.now(timezone.utc)
         persisted = 0
 
         for pair in patterns:
             # Direction A → B
             desc_a = self.build_co_occurrence_description(pair)
-            await self._repo.upsert(
-                organization_id=organization_id,
+            await self._backend.upsert_observation(
+                org_id=organization_id,
                 project_id=project_id,
                 subject_entity_id=pair.entity_a_id,
                 related_entity_id=pair.entity_b_id,
@@ -617,8 +697,8 @@ class ObservationService:
                 relationship_ids=pair.relationship_ids,
             )
             desc_b = self.build_co_occurrence_description(swapped_pair)
-            await self._repo.upsert(
-                organization_id=organization_id,
+            await self._backend.upsert_observation(
+                org_id=organization_id,
                 project_id=project_id,
                 subject_entity_id=pair.entity_b_id,
                 related_entity_id=pair.entity_a_id,
@@ -653,6 +733,7 @@ class ObservationService:
         Returns:
             Number of observations persisted.
         """
+        assert self._backend is not None  # called from run_full_project_scan which guards
         now = datetime.now(timezone.utc)
         persisted = 0
 
@@ -665,8 +746,8 @@ class ObservationService:
             }
             confidence = confidence_map.get(pattern.pattern_type, 0.5)
 
-            await self._repo.upsert(
-                organization_id=organization_id,
+            await self._backend.upsert_observation(
+                org_id=organization_id,
                 project_id=project_id,
                 subject_entity_id=pattern.entity_id,
                 related_entity_id=None,  # entity-level observation
@@ -700,6 +781,7 @@ class ObservationService:
         Returns:
             Number of observations persisted.
         """
+        assert self._backend is not None  # called from run_full_project_scan which guards
         now = datetime.now(timezone.utc)
         persisted = 0
 
@@ -712,8 +794,8 @@ class ObservationService:
             else:
                 confidence = 0.2
 
-            await self._repo.upsert(
-                organization_id=organization_id,
+            await self._backend.upsert_observation(
+                org_id=organization_id,
                 project_id=project_id,
                 subject_entity_id=pattern.entity_id,
                 related_entity_id=None,  # entity-level observation
@@ -727,8 +809,91 @@ class ObservationService:
         return persisted
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # Internal helpers
+    # Internal helpers — non-graph direct DB queries
     # ═══════════════════════════════════════════════════════════════════════════
+
+    def _assert_backend(self) -> None:
+        """Raise if the graph backend is not available.
+
+        Raises:
+            GraphBackendUnavailableError: If ``self._backend`` is ``None``.
+        """
+        if self._backend is None:
+            raise GraphBackendUnavailableError(
+                "Graph backend is not available. "
+                "ObservationService requires a graph_backend instance."
+            )
+
+    async def _get_episode_count(self, project_id: UUID) -> int:
+        """Get total distinct episode count for a project.
+
+        Queries ``graph_episode_entities`` directly — this is not a
+        graph-backend operation (aggregate count not exposed on ABC).
+
+        Args:
+            project_id: Project scope.
+
+        Returns:
+            Number of distinct episodes.
+        """
+        if self._db is None:
+            raise GraphBackendUnavailableError(
+                "An AsyncSession is required for episode count queries."
+            )
+        result = await self._db.execute(
+            text("""
+                SELECT COUNT(DISTINCT episode_id) AS total
+                FROM graph_episode_entities
+                WHERE project_id = :project_id
+            """),
+            {"project_id": project_id},
+        )
+        row = result.mappings().one_or_none()
+        return row["total"] if row else 0
+
+    async def _get_fact_predicate_counts(
+        self,
+        project_id: UUID,
+    ) -> list[dict[str, Any]]:
+        """Get predicate frequency for each entity (as subject).
+
+        Queries the ``facts`` table directly — this is not a graph-backend
+        operation.
+
+        Args:
+            project_id: Project scope.
+
+        Returns:
+            List of dicts with keys: entity_id, entity_name, entity_type,
+            predicate, predicate_count, total_facts.
+        """
+        if self._db is None:
+            raise GraphBackendUnavailableError(
+                "An AsyncSession is required for fact predicate queries."
+            )
+        result = await self._db.execute(
+            text("""
+                SELECT
+                    f.subject_entity_id AS entity_id,
+                    ge.name AS entity_name,
+                    ge.entity_type,
+                    f.predicate,
+                    COUNT(*) AS predicate_count,
+                    COUNT(*) OVER (PARTITION BY f.subject_entity_id) AS total_facts
+                FROM facts f
+                JOIN graph_entities ge
+                    ON ge.id = f.subject_entity_id
+                WHERE f.project_id = :project_id
+                  AND f.subject_entity_id IS NOT NULL
+                  AND f.invalid_at IS NULL
+                GROUP BY f.subject_entity_id, ge.name, ge.entity_type, f.predicate
+                HAVING COUNT(*) >= 2
+                ORDER BY entity_id, predicate_count DESC
+            """),
+            {"project_id": project_id},
+        )
+        rows = result.mappings().all()
+        return [dict(row) for row in rows]
 
 # ── Module-level helpers ─────────────────────────────────────────────────────
 
@@ -745,8 +910,8 @@ def _stddev(values: list[float], mean: float) -> float:
     """
     if len(values) < 2:
         return 0.0
-    variance = sum((v - mean) ** 2 for v in values) / len(values)
-    return variance ** 0.5
+    variance: float = sum((v - mean) ** 2 for v in values) / len(values)
+    return variance ** 0.5  # type: ignore[no-any-return]
 
 
 def _is_monotonic(gaps: list[float], *, increasing: bool) -> bool:

@@ -34,6 +34,7 @@ from uuid import UUID
 import orjson
 
 if TYPE_CHECKING:
+    from packages.graph_backend.interface import GraphBackend
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 # ── Module layout ──────────────────────────────────────────────────────────────
@@ -193,15 +194,29 @@ async def _fetch_session_entities(
     db: AsyncSession,
     org_id: UUID,
     session_id: UUID | None,
+    graph_backend: GraphBackend | None = None,
+    project_id: UUID | None = None,
     **_: Any,
 ) -> dict[str, Any]:
     """Fetch known entities for a session.
+
+    Uses the graph backend when available; falls back to
+    ``FactRepository.get_entities_for_session`` for backward compat.
 
     Returns ``{"known_entities": [...]}`` or an empty list if no session_id.
     """
     if session_id is None:
         return {"known_entities": []}
 
+    if graph_backend is not None and project_id is not None:
+        entities = await graph_backend.get_entities_for_session(
+            org_id=org_id,
+            project_id=project_id,
+            session_id=session_id,
+        )
+        return {"known_entities": entities}
+
+    # Fallback: old path via FactRepository (raw SQL)
     from repositories.fact_repository import (
         FactRepository,  # noqa: PLC0415 — lazy import
     )
@@ -780,6 +795,8 @@ async def render_prompt(
     episode_id: UUID | str | None = None,
     session_id: UUID | str | None = None,
     user_id: UUID | str | None = None,
+    project_id: UUID | str | None = None,
+    graph_backend: GraphBackend | None = None,
     db_session_factory: async_sessionmaker[AsyncSession] | None = None,
     return_context: bool = False,
     **extra_context: Any,
@@ -875,6 +892,9 @@ async def render_prompt(
             UUID(session_id) if isinstance(session_id, str) else session_id
         )
         resolved_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
+        resolved_project_id = (
+            UUID(project_id) if isinstance(project_id, str) else project_id
+        )
 
         async with db_session_factory() as db:
             for source in sources:
@@ -888,6 +908,8 @@ async def render_prompt(
                     episode_id=resolved_episode_id,
                     session_id=resolved_session_id,
                     user_id=resolved_user_id,
+                    project_id=resolved_project_id,
+                    graph_backend=graph_backend,
                 )
 
                 # Provider returns dict[str, Any] — merge into context,
