@@ -160,7 +160,7 @@ class FactRepository:
                 valid_from=valid_from or datetime.now(),
                 subject_entity_id=subject_entity_id,
                 object_entity_id=object_entity_id,
-                embedding=[],
+            embedding=None,
             )
             .on_conflict_do_nothing(
                 constraint="uq_facts_temporal_excl",

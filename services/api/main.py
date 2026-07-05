@@ -30,10 +30,8 @@ from core.config import Settings
 from core.db import close_db_engine, get_async_session, init_db_engine
 from core.exceptions import register_exception_handlers
 from core.graph_backend import init_dispatcher
-from core.surreal_pool import SurrealConnectionPool
 from core.logging import setup_logging
 from core.redis import close_redis, init_redis
-from falkordb.asyncio import FalkorDB
 from redis.asyncio import BlockingConnectionPool
 from middleware.audit import AuditMiddleware
 from middleware.auth import AuthMiddleware
@@ -100,12 +98,15 @@ def create_app() -> FastAPI:
         # dependencies using ``resolve_and_create(org_config, db)``.
         app.state.graph_backend_dispatcher = init_dispatcher()
 
-        # Init SurrealDB per-org connection pool.  Connections are created
-        # lazily per org on first use (see ``core.surreal_pool``).
+        # Init SurrealDB per-org connection pool (optional — requires surrealdb).
+        from core.surreal_pool import SurrealConnectionPool
+
         app.state.surreal_connection_pool = SurrealConnectionPool()
         logger.info("surreal_pool.initialised")
 
-        # Init FalkorDB client with a single app-level connection pool.
+        # Init FalkorDB client with a single app-level connection pool (optional — requires falkordb).
+        from falkordb.asyncio import FalkorDB
+
         falkordb_pool = BlockingConnectionPool.from_url(
             settings.FALKORDB_URL,
             max_connections=settings.FALKORDB_MAX_CONNECTIONS,
