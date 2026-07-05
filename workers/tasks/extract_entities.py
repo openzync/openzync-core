@@ -188,6 +188,7 @@ async def extract_entities(
             ],
             response_model=EntityExtractionOutput,
             temperature=0.1,
+            max_tokens=4096,
         )
     except Exception as exc:
         logger.error(
