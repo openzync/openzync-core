@@ -1,315 +1,97 @@
-"""MCP protocol server — JSON-RPC 2.0 dispatch, tool registry, protocol handlers.
+"""FastMCP server exposing OpenZync as LLM-accessible tools.
 
-Exposes OpenZync as LLM-accessible tools via the Model Context Protocol.
-Works over any transport (stdio, SSE).
+This replaces the previous custom JSON-RPC 2.0 implementation with the
+FastMCP framework (https://gofastmcp.com).  FastMCP handles protocol
+compliance, transport negotiation (stdio/SSE/HTTP), schema generation,
+and input validation automatically.
+
+Usage:
+    python -m services.mcp --transport stdio
+
+The OpenZync SDK client lifecycle is managed via a FastMCP lifespan.
+Tools access the client through the ``ctx.lifespan_context["client"]``
+parameter injected by FastMCP.
 """
 
 from __future__ import annotations
 
-import logging
-from collections.abc import Callable, Coroutine
-from typing import TYPE_CHECKING, Any
+import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from typing import Any
 
-if TYPE_CHECKING:
-    from openzync.client import AsyncOpenZync
+from fastmcp import FastMCP
 
-logger = logging.getLogger("openzync.mcp")
-
-# ── JSON-RPC error codes ────────────────────────────────────────────────
-
-PARSE_ERROR = -32700
-INVALID_REQUEST = -32600
-METHOD_NOT_FOUND = -32601
-INVALID_PARAMS = -32602
-INTERNAL_ERROR = -32603
-
-
-class ToolDef:
-    """Definition of a single MCP tool."""
-
-    def __init__(
-        self,
-        name: str,
-        description: str,
-        input_schema: dict,
-        handler: Callable[..., Coroutine[Any, Any, dict]],
-    ) -> None:
-        self.name = name
-        self.description = description
-        self.input_schema = input_schema
-        self.handler = handler
+# ═══════════════════════════════════════════════════════════════════════════
+# Lifespan — create the SDK client on server startup, close on shutdown
+# ═══════════════════════════════════════════════════════════════════════════
+#
+# The lifespan function is called by FastMCP when the server starts
+# (``mcp.run()`` or ``Client(mcp)``).  It reads the API key and base URL
+# from environment variables set by ``__main__.py``.
+#
+# The created client is yielded as part of the lifespan context dict,
+# accessible via ``ctx.lifespan_context["client"]`` in tool handlers.
+#
+# For test injection, pre-set ``server._oz_client`` before creating
+# ``Client(mcp)`` — the lifespan will pick it up without creating a
+# new one and will NOT close it on shutdown.
 
 
-class MemGraphMCPServer:
-    """MCP protocol server exposing OpenZync as LLM-accessible tools.
+@asynccontextmanager
+async def openzync_lifespan(server: FastMCP) -> AsyncIterator[dict[str, Any]]:
+    """Set up the OpenZync SDK client on server startup and tear it down on stop.
 
-    Args:
-        client: An initialised ``AsyncOpenZync`` client instance.
+    Reads ``OPENZYN_API_KEY`` and ``OPENZYN_BASE_URL`` from the environment
+    (set by ``__main__.py`` before ``mcp.run()``).
+
+    For test injection, pre-set ``server._oz_client`` with a mock client
+    before creating ``Client(mcp)``.  The lifespan will use it as-is and
+    will NOT close it on shutdown (test fixtures own the lifecycle).
     """
+    api_key = os.environ.get("OPENZYN_API_KEY", "")
+    base_url = os.environ.get("OPENZYN_BASE_URL", "http://localhost:8000")
 
-    def __init__(self, client: AsyncOpenZync) -> None:
-        self._client = client
-        self._tools: dict[str, ToolDef] = {}
-        self._register_default_tools()
+    # Allow pre-set client for test injection
+    client: Any = getattr(server, "_oz_client", None)
+    created = False
 
-    # ── Registration ────────────────────────────────────────────────────────
+    if client is None and api_key:
+        from openzync.client import AsyncOpenZync
 
-    def _register_default_tools(self) -> None:
-        """Register all built-in tool handlers."""
-        from services.mcp.tools.memory import (
-            handle_add_memory,
-            handle_get_context,
-            handle_search_memory,
-            handle_delete_memory,
-        )
-        from services.mcp.tools.facts import handle_add_fact, handle_list_facts
-        from services.mcp.tools.graph import handle_get_user_graph
-        from services.mcp.tools.users import handle_create_user
-        from services.mcp.tools.sessions import handle_list_sessions
+        client = AsyncOpenZync(api_key=api_key, base_url=base_url)
+        server._oz_client = client
+        created = True
 
-        self.register_tool(ToolDef(
-            name="add_memory",
-            description="Add messages to a user's memory. Messages are persisted immediately and queued "
-                        "for async entity extraction, fact extraction, and embedding.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "user_id": {"type": "string", "description": "Unique identifier for the user."},
-                    "messages": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "role": {"type": "string", "enum": ["user", "assistant", "system", "tool"]},
-                                "content": {"type": "string", "description": "Message body text."},
-                            },
-                            "required": ["role", "content"],
-                        },
-                        "minItems": 1,
-                    },
-                    "session_id": {"type": "string", "description": "Optional session external ID."},
-                },
-                "required": ["user_id", "messages"],
-            },
-            handler=handle_add_memory,
-        ))
-        self.register_tool(ToolDef(
-            name="get_context",
-            description="Assemble a context block for LLM injection from a natural-language query. "
-                        "Returns recent episodes, extracted facts, and graph entities.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "user_id": {"type": "string"},
-                    "query": {"type": "string", "description": "Natural-language query describing needed context."},
-                    "limit": {"type": "integer", "default": 20, "maximum": 100},
-                },
-                "required": ["user_id", "query"],
-            },
-            handler=handle_get_context,
-        ))
-        self.register_tool(ToolDef(
-            name="search_memory",
-            description="Search across a user's memory using hybrid retrieval (BM25 + vector). "
-                        "Returns episodes, facts, and optionally entities matching the query.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "user_id": {"type": "string"},
-                    "query": {"type": "string", "description": "Search query string."},
-                    "types": {"type": "string", "default": "episodes,facts",
-                              "description": "Comma-separated: episodes, facts, entities"},
-                    "limit": {"type": "integer", "default": 20, "maximum": 100},
-                },
-                "required": ["user_id", "query"],
-            },
-            handler=handle_search_memory,
-        ))
-        self.register_tool(ToolDef(
-            name="delete_memory",
-            description="Delete all memory (episodes + facts) for a user. This is the GDPR memory-wipe operation.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "user_id": {"type": "string"},
-                },
-                "required": ["user_id"],
-            },
-            handler=handle_delete_memory,
-        ))
-        self.register_tool(ToolDef(
-            name="add_fact",
-            description="Add business fact triples (subject-predicate-object) to a user's knowledge graph. "
-                        "Maximum 500 triples per call.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "user_id": {"type": "string"},
-                    "facts": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "subject": {"type": "string"},
-                                "predicate": {"type": "string"},
-                                "object": {"type": "string"},
-                                "confidence": {"type": "number", "default": 1.0},
-                            },
-                            "required": ["subject", "predicate", "object"],
-                        },
-                        "minItems": 1,
-                        "maxItems": 500,
-                    },
-                    "session_id": {"type": "string", "description": "Optional session external ID."},
-                },
-                "required": ["user_id", "facts"],
-            },
-            handler=handle_add_fact,
-        ))
-        self.register_tool(ToolDef(
-            name="list_facts",
-            description="Search facts (knowledge triples) by keyword query.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "user_id": {"type": "string"},
-                    "query": {"type": "string", "description": "Keyword search query."},
-                    "limit": {"type": "integer", "default": 20, "maximum": 100},
-                },
-                "required": ["user_id", "query"],
-            },
-            handler=handle_list_facts,
-        ))
-        self.register_tool(ToolDef(
-            name="get_user_graph",
-            description="Get the entity graph for a user. Returns nodes (entities) and edges (relationships). "
-                        "Optionally filter by entity type.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "user_id": {"type": "string"},
-                    "entity_type": {"type": "string", "description": "Optional filter: Person, Organization, etc."},
-                    "limit": {"type": "integer", "default": 50, "maximum": 200},
-                },
-                "required": ["user_id"],
-            },
-            handler=handle_get_user_graph,
-        ))
-        self.register_tool(ToolDef(
-            name="create_user",
-            description="Create a new user in the system.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "external_id": {"type": "string", "description": "Caller-defined user identifier."},
-                    "name": {"type": "string", "description": "Optional display name."},
-                },
-                "required": ["external_id"],
-            },
-            handler=handle_create_user,
-        ))
-        self.register_tool(ToolDef(
-            name="list_sessions",
-            description="List sessions for a user.",
-            input_schema={
-                "type": "object",
-                "properties": {
-                    "user_id": {"type": "string"},
-                    "limit": {"type": "integer", "default": 50, "maximum": 200},
-                },
-                "required": ["user_id"],
-            },
-            handler=handle_list_sessions,
-        ))
+    try:
+        yield {"client": client} if client is not None else {}
+    finally:
+        if created:
+            await client.close()
+        server._oz_client = None
 
-    def register_tool(self, tool: ToolDef) -> None:
-        """Register a tool definition."""
-        self._tools[tool.name] = tool
 
-    # ── Protocol handlers ───────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════
+# FastMCP server singleton
+# ═══════════════════════════════════════════════════════════════════════════
+# Imported by tools/ modules to register themselves via @mcp.tool, and by
+# __main__.py to run the server.
 
-    def get_tool_list(self) -> list[dict]:
-        """Return the ``tools/list`` response."""
-        return [
-            {
-                "name": t.name,
-                "description": t.description,
-                "inputSchema": t.input_schema,
-            }
-            for t in self._tools.values()
-        ]
+mcp = FastMCP(
+    "OpenZync-mcp",
+    instructions=(
+        "OpenZync agent memory platform — persist, query, and manage "
+        "agent memory.  Provides tools to ingest conversation messages, "
+        "retrieve context for LLM prompts, search across episodes and "
+        "facts, manage facts, explore the knowledge graph, and manage "
+        "users and sessions."
+    ),
+    version="0.1.0",
+    lifespan=openzync_lifespan,
+)
 
-    async def dispatch(self, request: dict) -> dict | None:
-        """Dispatch a JSON-RPC 2.0 request to the appropriate handler.
+# ── Register tool modules (import triggers @mcp.tool decoration) ──────────
 
-        Args:
-            request: Parsed JSON-RPC 2.0 request dict.
+from services.mcp.tools import facts, graph, memory, sessions, users  # noqa: F401, E402
 
-        Returns:
-            JSON-RPC 2.0 response dict, or ``None`` for notifications.
-        """
-        method = request.get("method")
-        req_id = request.get("id")
-        params = request.get("params", {})
-
-        try:
-            if method == "initialize":
-                return self._handle_initialize(req_id, params)
-            elif method == "notifications/initialized":
-                return None
-            elif method == "tools/list":
-                return self._make_result(req_id, {"tools": self.get_tool_list()})
-            elif method == "tools/call":
-                return await self._handle_tool_call(req_id, params)
-            elif method == "resources/list":
-                return self._make_result(req_id, {"resources": []})
-            else:
-                return self._make_error(req_id, METHOD_NOT_FOUND, f"Method not found: {method}")
-        except Exception as e:
-            logger.exception("Unhandled error dispatching request %s", method)
-            return self._make_error(req_id, INTERNAL_ERROR, str(e))
-
-    async def _handle_tool_call(self, req_id: int | str | None, params: dict) -> dict:
-        """Handle a ``tools/call`` request."""
-        tool_name = params.get("name")
-        arguments = params.get("arguments", {})
-
-        if not tool_name:
-            return self._make_error(req_id, INVALID_PARAMS, "Missing tool name")
-
-        tool = self._tools.get(tool_name)
-        if not tool:
-            return self._make_error(req_id, METHOD_NOT_FOUND, f"Unknown tool: {tool_name}")
-
-        try:
-            result = await tool.handler(self._client, arguments)
-            return self._make_result(req_id, result)
-        except ValueError as e:
-            return self._make_error(req_id, INVALID_PARAMS, str(e))
-        except Exception as e:
-            logger.error("Tool %s failed: %s", tool_name, e)
-            return self._make_error(req_id, INTERNAL_ERROR, f"Tool {tool_name} failed: {e}")
-
-    def _handle_initialize(self, req_id: int | str | None, params: dict) -> dict:  # noqa: ARG002
-        """Handle protocol initialization handshake."""
-        return self._make_result(req_id, {
-            "protocolVersion": "2024-11-05",
-            "capabilities": {
-                "tools": {},
-                "resources": {},
-            },
-            "serverInfo": {
-                "name": "OpenZync-mcp",
-                "version": "0.1.0",
-            },
-        })
-
-    # ── Response builders ──────────────────────────────────────────────────
-
-    def _make_result(self, req_id: int | str | None, result: dict) -> dict:
-        if req_id is None:
-            return {}
-        return {"jsonrpc": "2.0", "id": req_id, "result": result}
-
-    def _make_error(self, req_id: int | str | None, code: int, message: str) -> dict:
-        return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
+__all__ = ["mcp"]
