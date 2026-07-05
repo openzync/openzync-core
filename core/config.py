@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     )
 
     # ── Environment & Observability ───────────────────────────────────────
-    ENVIRONMENT: Literal["development", "staging", "production"] = Field(
+    ENVIRONMENT: Literal["development", "staging", "production", "testing"] = Field(
         default="development",
         description="Deployment environment.  Controls logging format, etc.",
         validation_alias="OZ_ENVIRONMENT",
