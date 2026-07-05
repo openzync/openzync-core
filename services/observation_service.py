@@ -600,7 +600,7 @@ class ObservationService:
                 observation_type=str(ObservationType.CO_OCCURRENCE),
                 content=desc_a,
                 confidence=min(pair.co_count / self._co_confidence_cap, 1.0),
-                supporting_relationship_ids=pair.relationship_ids or None,
+                supporting_relationship_ids=pair.relationship_ids if pair.relationship_ids else None,
                 valid_from=now,
             )
             persisted += 1
@@ -625,7 +625,7 @@ class ObservationService:
                 observation_type=str(ObservationType.CO_OCCURRENCE),
                 content=desc_b,
                 confidence=min(pair.co_count / self._co_confidence_cap, 1.0),
-                supporting_relationship_ids=pair.relationship_ids or None,
+                supporting_relationship_ids=pair.relationship_ids if pair.relationship_ids else None,
                 valid_from=now,
             )
             persisted += 1

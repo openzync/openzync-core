@@ -198,6 +198,7 @@ async def link_entities_to_episode(
                     "link_entities_to_episode.observations_enqueue_failed",
                     extra={"project_id": project_id, "error": str(exc)},
                 )
+                raise  # Propagate so ARQ retry mechanism handles it
 
             # ── 5. Optionally trigger community detection (event-driven mode) ──
             from services.worker.worker_settings import settings as worker_settings
@@ -226,6 +227,7 @@ async def link_entities_to_episode(
                         "link_entities_to_episode.community_enqueue_failed",
                         extra={"org_id": org_id, "error": str(exc)},
                     )
+                    raise  # Propagate so ARQ retry mechanism handles it
 
             logger.info(
                 "link_entities_to_episode.completed",

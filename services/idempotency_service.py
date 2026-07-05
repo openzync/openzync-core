@@ -199,7 +199,7 @@ class IdempotencyService:
             entry: dict[str, Any] = orjson.loads(cached)
         except (orjson.JSONDecodeError, TypeError):
             # Corrupted cache entry — treat as new (cache will be overwritten).
-            logger.warning(
+            logger.error(
                 "idempotency.corrupted_cache_entry",
                 extra={"key": key[:16] + "..."},
             )

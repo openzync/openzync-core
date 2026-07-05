@@ -84,13 +84,6 @@ async def write_audit_log(
             "audit_task.write_failed",
             extra={"action": action, "job_id": ctx.get("job_id")},
         )
-        # Write to a known debug file so we can see the traceback
-        try:
-            with open("/tmp/audit_task_error.log", "a") as f:
-                f.write(f"=== {action} job={ctx.get('job_id')} ===\n")
-                traceback.print_exc(file=f)
-                f.write("\n")
-        except Exception:
-            pass
+        raise
     finally:
         await _engine.dispose()

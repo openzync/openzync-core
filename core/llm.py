@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from core.exceptions import LLMStructuredOutputError
 
@@ -197,7 +197,7 @@ class LLMBackend(ABC):
                     response.content
                 )
                 return response
-            except Exception:
+            except ValidationError:
                 pass
 
             # ── Fallback: strip fences, hunt for JSON, try again ──────────────
@@ -211,7 +211,7 @@ class LLMBackend(ABC):
                     # ``model_validate_json()`` without pre-processing.
                     response.content = orjson.dumps(extracted).decode()
                     return response
-                except Exception:
+                except ValidationError:
                     pass  # fall through to retry
 
             # ── Retry or exhaust ──────────────────────────────────────────────

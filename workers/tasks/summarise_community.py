@@ -38,7 +38,8 @@ async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
         org_id: Optional org UUID to process (processes all if ``None``).
 
     Returns:
-        Dict with ``status``, ``orgs_processed``, ``communities_created``.
+        Dict with ``status``, ``orgs_processed``, ``orgs_failed``,
+        ``communities_created``.
     """
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -87,6 +88,7 @@ async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
             if not org_ids:
                 return {"status": "skipped", "reason": "No eligible orgs found"}
 
+            org_errors: list[str] = []
             total_communities = 0
             for current_org_id in org_ids:
                 try:
@@ -97,10 +99,17 @@ async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
                         "community.process_org_failed",
                         extra={"org_id": str(current_org_id), "error": str(exc)},
                     )
+                    org_errors.append(str(current_org_id))
+
+            if org_errors and len(org_errors) == len(org_ids):
+                raise RuntimeError(
+                    f"All {len(org_ids)} orgs failed to process communities: {', '.join(org_errors)}"
+                )
 
             return {
-                "status": "completed",
+                "status": "completed" if not org_errors else "partial",
                 "orgs_processed": len(org_ids),
+                "orgs_failed": len(org_errors),
                 "communities_created": total_communities,
             }
 

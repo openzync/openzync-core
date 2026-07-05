@@ -270,6 +270,10 @@ async def extract_entities(
     for entity in entities:
         name = (entity.get("name") or "").strip()
         if not name:
+            logger.warning(
+                "entity_extraction.entity_without_name_skipped",
+                episode_id=episode_id,
+            )
             continue
         if name.lower() in _PRONOUN_SKIP_NAMES:
             logger.info(
@@ -286,6 +290,15 @@ async def extract_entities(
     for rel in relationships:
         subj = (rel.get("subject") or "").strip()
         obj = (rel.get("object") or "").strip()
+        if not subj or not obj:
+            logger.warning(
+                "entity_extraction.relationship_without_subject_or_object_skipped",
+                episode_id=episode_id,
+                subject=subj,
+                predicate=rel.get("predicate"),
+                object=obj,
+            )
+            continue
         if (
             subj.lower() in _PRONOUN_SKIP_NAMES
             or obj.lower() in _PRONOUN_SKIP_NAMES
@@ -520,5 +533,6 @@ async def extract_entities(
             episode_id=episode_id,
             exc_info=True,
         )
+        raise  # Propagate so ARQ retry mechanism handles it
 
 

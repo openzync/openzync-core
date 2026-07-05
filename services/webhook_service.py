@@ -171,7 +171,7 @@ class WebhookService:
         if not endpoints:
             return
 
-        payload = payload or {}
+        payload = payload if payload is not None else {}
         body_bytes = orjson.dumps({"type": event_type, "payload": payload})
         body = body_bytes.decode()
         signing_secret = settings.WEBHOOK_SIGNING_SECRET
@@ -180,7 +180,7 @@ class WebhookService:
             arq_pool = get_arq()
         except RuntimeError as exc:
             logger.error("Webhook emit failed — ARQ not available: %s", exc)
-            return
+            raise
 
         queue_name = _arq_queue_name("low")
         async def _enqueue_one(ep: object) -> None:
@@ -215,10 +215,14 @@ class WebhookService:
         from models.webhook import WebhookEndpoint as WE
 
         if not isinstance(endpoint, WE):
-            return {}
+            raise TypeError(f"Expected WebhookEndpoint, got {type(endpoint).__name__}")
         try:
             events_list = orjson.loads(endpoint.events.encode()) if endpoint.events else []
         except (orjson.JSONDecodeError, TypeError):
+            logger.error(
+                "webhook.events_deserialization_failed",
+                extra={"endpoint_id": str(endpoint.id)},
+            )
             events_list = []
 
         return {

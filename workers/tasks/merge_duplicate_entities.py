@@ -63,8 +63,9 @@ async def merge_duplicate_entities(
         org_id: Optional org UUID to process (processes all if ``None``).
 
     Returns:
-        Dict with ``status``, ``orgs_processed``, ``clusters_merged``,
-        ``entities_merged``, ``relationships_rewired``.
+        Dict with ``status``, ``orgs_processed``, ``orgs_failed``,
+        ``clusters_merged``, ``entities_merged``,
+        ``relationships_rewired``.
     """
     from core.config import settings
     from core.db import get_async_session
@@ -100,6 +101,7 @@ async def merge_duplicate_entities(
                     "reason": "No eligible orgs found",
                 }
 
+            org_errors: list[str] = []
             total_clusters = 0
             total_merged = 0
             total_rewired = 0
@@ -118,18 +120,26 @@ async def merge_duplicate_entities(
                         org_id=str(current_org_id),
                         error=str(exc),
                     )
+                    org_errors.append(str(current_org_id))
+
+            if org_errors and len(org_errors) == len(org_ids):
+                raise RuntimeError(
+                    f"All {len(org_ids)} orgs failed to merge duplicates: {', '.join(org_errors)}"
+                )
 
             logger.info(
                 "merge_duplicates.completed",
                 orgs_processed=len(org_ids),
+                orgs_failed=len(org_errors),
                 clusters_merged=total_clusters,
                 entities_merged=total_merged,
                 relationships_rewired=total_rewired,
             )
 
             return {
-                "status": "completed",
+                "status": "completed" if not org_errors else "partial",
                 "orgs_processed": len(org_ids),
+                "orgs_failed": len(org_errors),
                 "clusters_merged": total_clusters,
                 "entities_merged": total_merged,
                 "relationships_rewired": total_rewired,
@@ -180,6 +190,7 @@ async def _process_org(db: Any, org_id: uuid.UUID) -> dict[str, int]:
     if not clusters:
         return {"clusters": 0, "entities_merged": 0, "relationships_rewired": 0}
 
+    cluster_errors: list[str] = []
     total_merged = 0
     total_rewired = 0
 
@@ -195,6 +206,12 @@ async def _process_org(db: Any, org_id: uuid.UUID) -> dict[str, int]:
                 entity_ids=[str(e["id"]) for e in cluster],
                 error=str(exc),
             )
+            cluster_errors.append(str(cluster[0].get("id", "unknown")))
+
+    if cluster_errors and len(cluster_errors) == len(clusters):
+        raise RuntimeError(
+            f"All {len(clusters)} clusters failed to merge for org {org_id}: {', '.join(cluster_errors)}"
+        )
 
     await db.commit()
 
@@ -202,12 +219,14 @@ async def _process_org(db: Any, org_id: uuid.UUID) -> dict[str, int]:
         "merge_duplicates.org_completed",
         org_id=str(org_id),
         clusters=len(clusters),
+        clusters_failed=len(cluster_errors),
         entities_merged=total_merged,
         relationships_rewired=total_rewired,
     )
 
     return {
         "clusters": len(clusters),
+        "clusters_failed": len(cluster_errors),
         "entities_merged": total_merged,
         "relationships_rewired": total_rewired,
     }

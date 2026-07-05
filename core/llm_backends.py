@@ -108,8 +108,8 @@ class OllamaBackend(LLMBackend):
 
         usage_data = data.get("metrics", {})
         usage = TokenUsage(
-            prompt_tokens=usage_data.get("prompt_eval_count", 0) or 0,
-            completion_tokens=usage_data.get("eval_count", 0) or 0,
+            prompt_tokens=usage_data.get("prompt_eval_count", 0),
+            completion_tokens=usage_data.get("eval_count", 0),
         )
 
         logger.info(
@@ -243,7 +243,11 @@ class OpenAIBackend(LLMBackend):
                 )
                 elapsed = time.monotonic() - start
 
-                content = response.choices[0].message.content or ""
+                content = response.choices[0].message.content
+                if content is None:
+                    raise ValueError(
+                        "OpenAI response content is None — model may have returned a tool call instead of text"
+                    )
                 usage_data = response.usage
                 usage = TokenUsage(
                     prompt_tokens=usage_data.prompt_tokens if usage_data else 0,
@@ -401,7 +405,11 @@ class AzureBackend(LLMBackend):
                 )
                 elapsed = time.monotonic() - start
 
-                content = response.choices[0].message.content or ""
+                content = response.choices[0].message.content
+                if content is None:
+                    raise ValueError(
+                        "Azure OpenAI response content is None — model may have returned a tool call instead of text"
+                    )
                 usage_data = response.usage
                 usage = TokenUsage(
                     prompt_tokens=usage_data.prompt_tokens if usage_data else 0,
@@ -538,8 +546,8 @@ class AnthropicBackend(LLMBackend):
                 content = "\n".join(content_parts)
 
                 usage = TokenUsage(
-                    prompt_tokens=response.usage.input_tokens or 0,
-                    completion_tokens=response.usage.output_tokens or 0,
+                    prompt_tokens=response.usage.input_tokens,
+                    completion_tokens=response.usage.output_tokens,
                 )
 
                 logger.info(
@@ -642,19 +650,21 @@ class OpenRouterBackend(LLMBackend):
         max_tokens = kwargs.pop("max_tokens", 1024)
 
         start = time.monotonic()
-        try:
-            response = await self._client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                **kwargs,
-            )
-        except Exception as exc:
-            raise
+        response = await self._client.chat.completions.create(
+            model=model,
+            messages=messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
 
         elapsed = time.monotonic() - start
         choice = response.choices[0]
+        content = choice.message.content
+        if content is None:
+            raise ValueError(
+                "OpenRouter response content is None — model may have returned a tool call instead of text"
+            )
         usage = TokenUsage(
             prompt_tokens=response.usage.prompt_tokens if response.usage else 0,
             completion_tokens=response.usage.completion_tokens if response.usage else 0,
@@ -671,7 +681,7 @@ class OpenRouterBackend(LLMBackend):
         )
 
         return ChatResponse(
-            content=choice.message.content or "",
+            content=content,
             model=response.model,
             usage=usage,
         )

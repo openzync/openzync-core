@@ -227,9 +227,10 @@ async def monitor_queue_depth(redis: ArqRedis, interval: int = 15) -> None:
                 # ARQ stores pending jobs in a Redis sorted set: {queue_name}:jobs
                 depth = await redis.zcard(f"{queue_name}:jobs")  # type: ignore[arg-type]
             except Exception:
-                depth = -1
+                depth = None
 
-            worker_queue_depth.labels(queue_name=queue_name).set(depth)
+            if depth is not None:
+                worker_queue_depth.labels(queue_name=queue_name).set(depth)
 
         await asyncio.sleep(interval)
 

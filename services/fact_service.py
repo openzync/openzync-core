@@ -318,6 +318,7 @@ class FactService:
                     "Facts are safe in PostgreSQL; reconciliation needed.",
                 },
             )
+            raise  # Propagate so ARQ retry mechanism handles it
 
 
     # ── List by session ──────────────────────────────────────────────────────

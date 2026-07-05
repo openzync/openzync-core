@@ -651,7 +651,10 @@ class FactRepository:
                     cursor_created = datetime.fromisoformat(parts[0])
                     cursor_id = UUID(parts[1])
             except (ValueError, TypeError):
-                pass
+                logger.warning(
+                    "fact_repository.invalid_cursor",
+                    extra={"cursor": cursor},
+                )
 
         base_query = """
             SELECT f.id, f.content, f.subject, f.predicate,

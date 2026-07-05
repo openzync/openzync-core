@@ -282,8 +282,9 @@ async def _fetch_validation_sets(
 ) -> dict[str, set[str]]:
     """Fetch intent and emotion label sets from the org's schemas.
 
-    Falls back to defaults when no schemas are configured.
-    Returns ``{"intent_set": ..., "emotion_set": ...}``.
+    Returns ``{"intent_set": ..., "emotion_set": ...}`` with possibly
+    empty sets.  The caller is responsible for handling empty sets
+    (e.g. by raising or falling back at a higher level).
     """
     result = await db.execute(
         text("""
@@ -297,15 +298,13 @@ async def _fetch_validation_sets(
     schemas = result.all()
 
     if not schemas:
+        logger.warning(
+            "classify_dialog.no_classification_schemas",
+            org_id=org_id,
+        )
         return {
-            "intent_set": {
-                "greeting", "question", "command", "complaint",
-                "chit-chat", "farewell", "request", "confirmation",
-            },
-            "emotion_set": {
-                "joy", "frustration", "sadness", "anger",
-                "neutral", "surprise", "fear", "disgust",
-            },
+            "intent_set": set(),
+            "emotion_set": set(),
         }
 
     all_intents: set[str] = set()
@@ -318,17 +317,22 @@ async def _fetch_validation_sets(
             if "emotion" in schema and isinstance(schema["emotion"], list):
                 all_emotions.update(schema["emotion"])
 
+    if not all_intents:
+        logger.warning(
+            "classify_dialog.no_intents_found",
+            org_id=org_id,
+            schema_count=len(schemas),
+        )
+    if not all_emotions:
+        logger.warning(
+            "classify_dialog.no_emotions_found",
+            org_id=org_id,
+            schema_count=len(schemas),
+        )
+
     return {
-        "intent_set": all_intents
-        or {
-            "greeting", "question", "command", "complaint",
-            "chit-chat", "farewell", "request", "confirmation",
-        },
-        "emotion_set": all_emotions
-        or {
-            "joy", "frustration", "sadness", "anger",
-            "neutral", "surprise", "fear", "disgust",
-        },
+        "intent_set": all_intents,
+        "emotion_set": all_emotions,
     }
 
 

@@ -232,6 +232,7 @@ async def _enqueue_embedding_tasks(
                 "fact_ids": fact_ids,
             },
         )
+        raise  # Propagate so ARQ retry mechanism handles it
 
 
 def _arq_queue_name(queue_type: str) -> str:

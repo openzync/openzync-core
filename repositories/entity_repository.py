@@ -36,7 +36,14 @@ class EntityRepository:
         graph_backend: GraphBackend | None = None,
     ) -> None:
         self._db = db
-        self._backend = graph_backend or PostgresGraphBackend(db)
+        if graph_backend is None:
+            logger.info(
+                "entity_repository.using_postgres_backend",
+                extra={"reason": "no graph_backend provided"},
+            )
+            self._backend = PostgresGraphBackend(db)
+        else:
+            self._backend = graph_backend
 
     @property
     def is_available(self) -> bool:

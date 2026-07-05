@@ -419,6 +419,10 @@ def _filter_facts(facts: list[dict]) -> list[dict]:
 
         # Reject incomplete triples
         if not subject or not predicate or not obj:
+            logger.warning(
+                "fact_extraction.incomplete_triple_skipped",
+                extra={"subject": subject, "predicate": predicate, "object": obj},
+            )
             continue
 
         valid.append(

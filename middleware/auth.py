@@ -635,7 +635,7 @@ class AuthMiddleware:
                     )
                     return
             except Exception:
-                logger.warning("auth.negative_cache_check_failed", exc_info=True)
+                logger.error("auth.negative_cache_check_failed", exc_info=True)
                 # Non-critical — proceed without negative cache
 
         # ── Per-IP auth miss-rate limit ───────────────────────────────────
@@ -657,7 +657,7 @@ class AuthMiddleware:
                         path=path,
                     )
                     return
-                logger.warning("auth.auth_miss_rate_check_failed", exc_info=True)
+                logger.error("auth.auth_miss_rate_check_failed", exc_info=True)
                 # Non-critical — proceed without miss-rate limiting
 
         # ── Check DB ─────────────────────────────────────────────────────
@@ -695,7 +695,7 @@ class AuthMiddleware:
                 try:
                     await _mark_negative_cache(redis, lookup_hash)
                 except Exception:
-                    logger.warning("Failed to mark negative cache", exc_info=True)
+                    logger.error("auth.negative_cache_mark_failed", exc_info=True)
             await _send_rfc7807(
                 send,
                 status=401,
