@@ -15,6 +15,8 @@ from uuid import UUID
 
 import pytest
 
+surrealdb = pytest.importorskip("surrealdb")
+
 from core.graph_backend import GraphBackendDispatcher
 from packages.graph_backend.surrealdb import SurrealGraphBackend
 

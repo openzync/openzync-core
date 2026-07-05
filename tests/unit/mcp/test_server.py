@@ -5,6 +5,8 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
+pytest.importorskip("openzync")
+
 from services.mcp.server import MemGraphMCPServer, ToolDef, PARSE_ERROR, INVALID_REQUEST
 from openzync.client import AsyncOpenZync
 

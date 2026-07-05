@@ -25,6 +25,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
+pytest.importorskip("falkordb")
+
 from core.exceptions import ExternalServiceError
 from packages.graph_backend.falkordb import (
     FalkorGraphBackend,

@@ -24,6 +24,9 @@ from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
+
+pytest.importorskip("surrealdb")
+
 from surrealdb import RecordID
 
 from core.exceptions import ExternalServiceError, GraphBackendUnavailableError

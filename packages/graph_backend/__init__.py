@@ -27,14 +27,14 @@ Usage::
 
 from __future__ import annotations
 
-from packages.graph_backend.falkordb import FalkorGraphBackend
 from packages.graph_backend.interface import GraphBackend
 from packages.graph_backend.postgres import PostgresGraphBackend
-from packages.graph_backend.surrealdb import SurrealGraphBackend
+
+# FalkorDB and SurrealDB are optional backends — import them lazily
+# from packages.graph_backend.falkordb import FalkorGraphBackend   # requires falkordb
+# from packages.graph_backend.surrealdb import SurrealGraphBackend  # requires surrealdb
 
 __all__ = [
-    "FalkorGraphBackend",
     "GraphBackend",
     "PostgresGraphBackend",
-    "SurrealGraphBackend",
 ]

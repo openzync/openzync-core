@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from openzync.client import AsyncOpenZync
+if TYPE_CHECKING:
+    from openzync.client import AsyncOpenZync
 
 logger = logging.getLogger("openzync.mcp")
 
