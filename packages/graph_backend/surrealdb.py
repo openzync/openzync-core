@@ -1234,7 +1234,7 @@ class SurrealGraphBackend(GraphBackend):
                         exc_info=True,
                     )
                     raise GraphBackendUnavailableError(
-                        f"SurrealDB graph traversal failed for entity {entity_id_str} during retrieve_graph."
+                        f"SurrealDB traverse failed for entity {entity_id_str} during retrieve_graph."
                     ) from exc
 
                 for node in related:
@@ -1254,6 +1254,8 @@ class SurrealGraphBackend(GraphBackend):
             results.sort(key=lambda x: x.get("distance", 99))
             return results[:max_results]
 
+        except GraphBackendUnavailableError:
+            raise  # Already translated — propagate as-is
         except Exception as exc:
             logger.error(
                 "surreal_graph.retrieve_graph_failed",

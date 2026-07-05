@@ -29,7 +29,7 @@ pytest.importorskip("surrealdb")
 
 from surrealdb import RecordID
 
-from core.exceptions import ExternalServiceError, GraphBackendUnavailableError
+from core.exceptions import ExternalServiceError, GraphBackendUnavailableError, NotFoundError
 from packages.graph_backend.surrealdb import (
     SurrealGraphBackend,
     _decode_offset_cursor,
@@ -384,16 +384,16 @@ class TestSurrealGraphBackendEntityCrud:
         backend: SurrealGraphBackend,
         mock_surreal: AsyncMock,
     ) -> None:
-        """Returns None when entity does not exist."""
+        """Raises NotFoundError when entity does not exist."""
         mock_surreal.query.return_value = []
 
-        result = await backend.update_entity(
-            org_id=ORG_ID,
-            project_id=PROJ_ID,
-            entity_id=ENTITY_ID,
-            name="Anything",
-        )
-        assert result is None
+        with pytest.raises(NotFoundError, match="not found"):
+            await backend.update_entity(
+                org_id=ORG_ID,
+                project_id=PROJ_ID,
+                entity_id=ENTITY_ID,
+                name="Anything",
+            )
 
     @staticmethod
     async def test_update_entity_no_fields(
