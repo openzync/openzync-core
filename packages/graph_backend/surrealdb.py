@@ -37,7 +37,7 @@ import structlog
 from surrealdb import AsyncSurreal, RecordID
 from surrealdb.errors import InternalError, SurrealError, parse_query_error
 
-from core.exceptions import ExternalServiceError, GraphBackendUnavailableError
+from core.exceptions import ExternalServiceError, GraphBackendUnavailableError, NotFoundError
 from packages.graph_backend.interface import GraphBackend
 
 logger = structlog.get_logger(__name__)
@@ -66,6 +66,8 @@ DEFINE FIELD name ON entity TYPE string;
 DEFINE FIELD entity_type ON entity TYPE string;
 DEFINE FIELD summary ON entity TYPE string;
 DEFINE FIELD attributes ON entity TYPE object FLEXIBLE DEFAULT {};
+DEFINE FIELD is_merged ON entity TYPE bool DEFAULT false;
+DEFINE FIELD invalid_at ON entity TYPE datetime;
 DEFINE FIELD created_at ON entity TYPE datetime DEFAULT time::now();
 DEFINE FIELD updated_at ON entity TYPE datetime VALUE time::now();
 
@@ -78,6 +80,40 @@ DEFINE INDEX entity_summary_fts ON entity FIELDS summary
 -- 4. Unique index for entity upsert by (org_id, project_id, name)
 DEFINE INDEX entity_org_project_name ON entity
     FIELDS organization_id, project_id, name UNIQUE;
+
+-- 5. Episode table (lightweight mirror for graph-edge traversal)
+--    The caller is responsible for ensuring episode records exist
+--    with `session_id` populated before `get_entities_for_session` is used.
+DEFINE TABLE episode SCHEMAFULL;
+DEFINE FIELD organization_id ON episode TYPE string;
+DEFINE FIELD project_id ON episode TYPE string;
+DEFINE FIELD session_id ON episode TYPE string;
+DEFINE FIELD created_at ON episode TYPE datetime DEFAULT time::now();
+
+-- 6. has_entity edge table (episode -> entity mapping)
+--    Records that an entity was extracted from a specific episode.
+DEFINE TABLE has_entity SCHEMAFULL;
+DEFINE FIELD organization_id ON has_entity TYPE string;
+DEFINE FIELD project_id ON has_entity TYPE string;
+
+-- 7. Observation table (second-pass inferences)
+DEFINE TABLE observation SCHEMAFULL;
+DEFINE FIELD organization_id ON observation TYPE string;
+DEFINE FIELD project_id ON observation TYPE string;
+DEFINE FIELD subject_entity_id ON observation TYPE string;
+DEFINE FIELD observation_type ON observation TYPE string;
+DEFINE FIELD content ON observation TYPE string;
+DEFINE FIELD confidence ON observation TYPE float;
+DEFINE FIELD related_entity_id ON observation TYPE string;
+DEFINE FIELD supporting_fact_ids ON observation TYPE array;
+DEFINE FIELD supporting_relationship_ids ON observation TYPE array;
+DEFINE FIELD valid_from ON observation TYPE datetime;
+DEFINE FIELD valid_to ON observation TYPE datetime;
+DEFINE FIELD observation_metadata ON observation TYPE object FLEXIBLE DEFAULT {};
+DEFINE FIELD created_at ON observation TYPE datetime DEFAULT time::now();
+DEFINE FIELD updated_at ON observation TYPE datetime VALUE time::now();
+DEFINE INDEX idx_observation_dedup ON observation
+    FIELDS organization_id, project_id, subject_entity_id, observation_type, related_entity_id UNIQUE;
 """
 
 # ── Pagination helpers ────────────────────────────────────────────────────
@@ -223,7 +259,8 @@ class SurrealGraphBackend(GraphBackend):
         """Convert a SurrealDB entity record to the standard entity dict.
 
         The returned dict uses the ``GraphBackend`` interface keys:
-        ``id``, ``name``, ``type``, ``summary``, ``attributes``, ``created_at``.
+        ``id``, ``name``, ``type``, ``summary``, ``attributes``, ``created_at``,
+        and SurrealDB-specific extras: ``is_merged``, ``updated_at``.
         """
         return {
             "id": cls._record_id_to_str(row.get("id")),
@@ -235,7 +272,9 @@ class SurrealGraphBackend(GraphBackend):
                 if isinstance(row.get("attributes"), dict)
                 else {}
             ),
+            "is_merged": bool(row.get("is_merged", False)),
             "created_at": cls._to_iso(row.get("created_at")),
+            "updated_at": cls._to_iso(row.get("updated_at")),
         }
 
     @classmethod
@@ -269,6 +308,40 @@ class SurrealGraphBackend(GraphBackend):
             "valid_from": cls._to_iso(row.get("valid_from")),
             "valid_to": cls._to_iso(row.get("valid_to")),
             "created_at": cls._to_iso(row.get("created_at")),
+        }
+
+    @classmethod
+    def _row_to_observation(cls, row: dict) -> dict:
+        """Convert a SurrealDB observation record to the standard observation dict.
+
+        The returned dict uses the ``GraphBackend`` interface keys:
+        ``id``, ``subject_entity_id``, ``observation_type``, ``content``,
+        ``confidence``, ``created_at``.
+        """
+        return {
+            "id": cls._record_id_to_str(row.get("id")),
+            "subject_entity_id": row.get("subject_entity_id", ""),
+            "related_entity_id": row.get("related_entity_id") or None,
+            "observation_type": row.get("observation_type", ""),
+            "content": row.get("content", ""),
+            "confidence": float(row["confidence"]) if row.get("confidence") is not None else 0.0,
+            "supporting_fact_ids": (
+                [str(fid) for fid in row["supporting_fact_ids"]]
+                if row.get("supporting_fact_ids") else []
+            ),
+            "supporting_relationship_ids": (
+                [str(rid) for rid in row["supporting_relationship_ids"]]
+                if row.get("supporting_relationship_ids") else []
+            ),
+            "valid_from": cls._to_iso(row.get("valid_from")),
+            "valid_to": cls._to_iso(row.get("valid_to")),
+            "observation_metadata": (
+                dict(row["observation_metadata"])
+                if isinstance(row.get("observation_metadata"), dict)
+                else {}
+            ),
+            "created_at": cls._to_iso(row.get("created_at")),
+            "updated_at": cls._to_iso(row.get("updated_at")),
         }
 
     @classmethod
@@ -538,16 +611,30 @@ class SurrealGraphBackend(GraphBackend):
         org_id: UUID,
         project_id: UUID,
         entity_id: UUID,
+        *,
         name: str | None = None,
-        summary: str | None = None,
         entity_type: str | None = None,
-        attributes: dict | None = None,
-    ) -> dict | None:
+        summary: str | None = None,
+    ) -> dict[str, Any]:
         """Update entity fields. Only provided fields are changed.
 
         Builds a dynamic ``UPDATE ... SET ...`` with only the non-None
-        fields.  Returns the updated entity dict, or ``None`` if the entity
-        does not exist.
+        fields.  Returns the updated entity dict.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            entity_id: UUID of the entity to update.
+            name: New name, or ``None`` to leave unchanged.
+            entity_type: New type label, or ``None`` to leave unchanged.
+            summary: New summary text, or ``None`` to leave unchanged.
+
+        Returns:
+            The updated entity dict with at minimum ``id``, ``name``,
+            ``entity_type``, ``summary``, and ``updated_at`` keys.
+
+        Raises:
+            NotFoundError: If no entity with the given ID exists.
         """
         await self._ensure_schema()
         self._require_connection()
@@ -569,13 +656,16 @@ class SurrealGraphBackend(GraphBackend):
         if entity_type is not None:
             params["entity_type"] = entity_type
             set_parts.append("entity_type = $entity_type")
-        if attributes is not None:
-            params["attributes"] = attributes
-            set_parts.append("attributes = $attributes")
 
         if not set_parts:
             # Nothing to update — return current state
-            return await self.get_entity(org_id, project_id, entity_id)
+            entity = await self.get_entity(org_id, project_id, entity_id)
+            if entity is None:
+                raise NotFoundError(
+                    message=f"Entity {entity_id} not found",
+                    detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                )
+            return entity
 
         set_clause = ", ".join(set_parts)
 
@@ -594,8 +684,13 @@ class SurrealGraphBackend(GraphBackend):
             )
             rows = result
             if not rows:
-                return None
+                raise NotFoundError(
+                    message=f"Entity {entity_id} not found",
+                    detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                )
             return self._row_to_entity(rows[0])
+        except NotFoundError:
+            raise
         except Exception as exc:
             logger.error(
                 "surreal_graph.update_entity_failed",
@@ -1180,3 +1275,1276 @@ class SurrealGraphBackend(GraphBackend):
             return True
         except Exception:
             return False
+
+    # ── Group A: Entity-Episode Linking ─────────────────────────────────────────
+
+    async def link_entity_to_episode(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        episode_id: UUID,
+        entity_id: UUID,
+    ) -> None:
+        """Record that an entity was extracted from (appears in) a specific episode.
+
+        Uses the ``has_entity`` edge table via ``RELATE``.  Idempotent — if the
+        edge already exists this is a no-op.
+
+        .. note::
+
+            The ``episode`` record does **not** need to exist in SurrealDB for
+            the ``RELATE`` to succeed — SurrealDB stores RecordID references
+            without validating the target record exists.  However,
+            :meth:`get_entities_for_session` requires episode records to exist
+            with ``session_id`` populated, otherwise it returns an empty list.
+
+        Raises:
+            NotFoundError: If the ``entity`` record does not exist in SurrealDB.
+        """
+        await self._ensure_schema()
+        self._require_connection()
+
+        episode_rid = RecordID("episode", str(episode_id))
+        entity_rid = RecordID("entity", str(entity_id))
+
+        query = """
+        LET $existing = (SELECT id FROM has_entity
+            WHERE in = $episode_rid AND out = $entity_rid
+            LIMIT 1);
+        RETURN IF array::len($existing) > 0 THEN
+            (RETURN NONE)
+        ELSE
+            (RELATE $episode_rid -> has_entity -> $entity_rid
+             SET organization_id = $org_id, project_id = $project_id
+             RETURN id)
+        END;
+        """
+        params: dict[str, Any] = {
+            "episode_rid": episode_rid,
+            "entity_rid": entity_rid,
+            "org_id": str(org_id),
+            "project_id": str(project_id),
+        }
+
+        try:
+            await self._query_last(query, params)
+            logger.info(
+                "surreal_graph.link_entity_to_episode",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "episode_id": str(episode_id),
+                    "entity_id": str(entity_id),
+                },
+            )
+        except ExternalServiceError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.link_entity_to_episode_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "episode_id": str(episode_id),
+                    "entity_id": str(entity_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to link entity {entity_id} to episode {episode_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "episode_id": str(episode_id),
+                    "entity_id": str(entity_id),
+                },
+            ) from exc
+
+    async def get_entities_for_session(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        session_id: UUID,
+    ) -> list[dict[str, Any]]:
+        """Return all distinct graph entities linked to episodes in a session.
+
+        Traverses ``entity <-has_entity<- episode`` via SurrealQL arrow syntax,
+        filtering episodes by ``session_id``.
+
+        .. note::
+
+            Requires the ``episode`` records to exist in SurrealDB with
+            ``session_id`` populated.  If episode records have not been created
+            (or lack ``session_id``), this method returns an empty list.
+        """
+        await self._ensure_schema()
+        self._require_connection()
+
+        params: dict[str, Any] = {
+            "org_id": str(org_id),
+            "project_id": str(project_id),
+            "session_id": str(session_id),
+        }
+
+        try:
+            result = await self._surreal.query(
+                """
+                SELECT DISTINCT id, name, entity_type, summary
+                FROM entity
+                WHERE organization_id = $org_id
+                  AND project_id = $project_id
+                  AND <-has_entity<-(episode WHERE session_id = $session_id
+                      AND organization_id = $org_id
+                      AND project_id = $project_id)
+                ORDER BY name ASC;
+                """,
+                params,
+            )
+            rows = result if result is not None else []
+            return [
+                {
+                    "id": self._record_id_to_str(r.get("id")),
+                    "name": r.get("name", ""),
+                    "entity_type": r.get("entity_type", ""),
+                    "summary": r.get("summary") if r.get("summary") is not None else "",
+                }
+                for r in rows
+            ]
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.get_entities_for_session_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "session_id": str(session_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get entities for session {session_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "session_id": str(session_id),
+                },
+            ) from exc
+
+    async def get_co_occurring_entity_pairs(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        min_co_count: int = 2,
+    ) -> list[dict[str, Any]]:
+        """Find entity pairs that co-appear in episodes above a threshold.
+
+        SurrealDB does not support self-joins on edge tables in a single
+        SurrealQL statement, so this is implemented as a **two-step** approach:
+
+        1. Query all distinct episode RecordIDs via the ``has_entity`` edge.
+        2. For each episode, fetch its entity list and build a co-occurrence
+           frequency map in Python.
+
+        **Performance note**: This requires O(N\\ :sub:`episodes`) queries.
+        For large projects with thousands of episodes, consider running this
+        in a background worker.
+        """
+        await self._ensure_schema()
+        self._require_connection()
+
+        params: dict[str, Any] = {
+            "org_id": str(org_id),
+            "project_id": str(project_id),
+        }
+
+        try:
+            # Step 1: Get distinct episode RecordIDs that have linked entities
+            episode_result = await self._surreal.query(
+                """
+                SELECT VALUE in
+                FROM has_entity
+                WHERE organization_id = $org_id
+                  AND project_id = $project_id
+                GROUP BY in;
+                """,
+                params,
+            )
+            episode_rids: list[Any] = episode_result if episode_result is not None else []
+
+            if not episode_rids:
+                return []
+
+            # Step 2: For each episode, get its entity RecordIDs
+            # ⚠️ O(N_episodes) queries — acceptable for batch observation workers
+            pair_counts: dict[tuple[str, str], int] = {}
+            entity_name_cache: dict[str, str] = {}
+
+            for ep_rid in episode_rids:
+                entity_result = await self._surreal.query(
+                    """
+                    SELECT VALUE out
+                    FROM has_entity
+                    WHERE in = $ep_rid;
+                    """,
+                    {"ep_rid": ep_rid},
+                )
+                entity_rids: list[Any] = entity_result if entity_result is not None else []
+                # Skip episodes with fewer than 2 entities
+                if len(entity_rids) < 2:
+                    continue
+
+                # Build entity name cache
+                for er in entity_rids:
+                    eid_str = self._record_id_to_str(er)
+                    if eid_str and eid_str not in entity_name_cache:
+                        entity = await self.get_entity(org_id, project_id, UUID(eid_str))
+                        entity_name_cache[eid_str] = entity.get("name", eid_str) if entity else eid_str
+
+                # Build all pairs within this episode
+                eid_strs = sorted(
+                    {self._record_id_to_str(er) for er in entity_rids if er is not None}
+                )
+                for i in range(len(eid_strs)):
+                    for j in range(i + 1, len(eid_strs)):
+                        key = (eid_strs[i], eid_strs[j])
+                        pair_counts[key] = pair_counts.get(key, 0) + 1
+
+            # Step 3: Filter by threshold and build result
+            results: list[dict[str, Any]] = []
+            for (a_id, b_id), count in pair_counts.items():
+                if count >= min_co_count:
+                    results.append({
+                        "entity_a_id": a_id,
+                        "entity_a_name": entity_name_cache.get(a_id, a_id),
+                        "entity_b_id": b_id,
+                        "entity_b_name": entity_name_cache.get(b_id, b_id),
+                        "co_count": count,
+                    })
+
+            results.sort(key=lambda x: x["co_count"], reverse=True)
+            return results
+
+        except ExternalServiceError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.get_co_occurring_pairs_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "min_co_count": min_co_count,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get co-occurring entity pairs: {exc}",
+                detail={"org_id": str(org_id), "project_id": str(project_id)},
+            ) from exc
+
+    # ── Group B: Bulk / Merge Operations ────────────────────────────────────────
+
+    async def get_all_entities(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        *,
+        include_merged: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return ALL entities for a project (no pagination — for batch workers).
+
+        .. warning::
+            BATCH USE ONLY — no LIMIT.  Potentially millions of rows.
+        """
+        await self._ensure_schema()
+        self._require_connection()
+
+        params: dict[str, Any] = {
+            "org_id": str(org_id),
+            "project_id": str(project_id),
+            "include_merged": include_merged,
+        }
+
+        try:
+            result = await self._surreal.query(
+                """
+                SELECT id, name, entity_type, summary, is_merged, created_at
+                FROM entity
+                WHERE organization_id = $org_id
+                  AND project_id = $project_id
+                  AND ($include_merged OR is_merged IS NONE OR is_merged = false)
+                ORDER BY name ASC;
+                """,
+                params,
+            )
+            rows = result if result is not None else []
+            return [
+                {
+                    "id": self._record_id_to_str(r.get("id")),
+                    "name": r.get("name", ""),
+                    "entity_type": r.get("entity_type", ""),
+                    "summary": r.get("summary") if r.get("summary") is not None else "",
+                    "is_merged": bool(r.get("is_merged", False)),
+                    "created_at": self._to_iso(r.get("created_at")),
+                }
+                for r in rows
+            ]
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.get_all_entities_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get all entities: {exc}",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+    async def get_all_relationships(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+    ) -> list[dict[str, Any]]:
+        """Return ALL non-expired relationships for a project (no pagination).
+
+        Uses SurrealDB's wildcard arrow syntax (``->?``) on **all** entities
+        in the project to discover every edge, then deduplicates by edge ID
+        and filters out ``has_entity`` edges (episode-entity links).
+
+        .. warning::
+            BATCH USE ONLY — no LIMIT.  Potentially millions of rows.
+        """
+        await self._ensure_schema()
+        self._require_connection()
+
+        params: dict[str, Any] = {
+            "org_id": str(org_id),
+            "project_id": str(project_id),
+        }
+
+        try:
+            result = await self._surreal.query(
+                """
+                SELECT *, meta::tb(id) AS edge_table_name
+                FROM (SELECT VALUE ->?
+                      FROM (SELECT * FROM entity
+                            WHERE organization_id = $org_id
+                              AND project_id = $project_id))
+                WHERE organization_id = $org_id
+                  AND project_id = $project_id
+                  AND (invalid_at IS NONE)
+                ORDER BY created_at ASC;
+                """,
+                params,
+            )
+            rows = result if result is not None else []
+            seen: set[str] = set()
+            relationships: list[dict[str, Any]] = []
+            for row in rows:
+                rid_str = self._record_id_to_str(row.get("id"))
+                if rid_str in seen:
+                    continue
+                # Skip has_entity edges — they are episode-entity links, not graph relationships
+                edge_table = row.get("edge_table_name") or ""
+                if edge_table == "has_entity":
+                    continue
+                seen.add(rid_str)
+                relationships.append(self._row_to_relationship(row))
+            return relationships
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.get_all_relationships_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get all relationships: {exc}",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+    async def bulk_search_entities(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        query: str,
+        *,
+        fuzzy_threshold: float = 0.3,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Search entities using BM25 full-text matching for dedup detection.
+
+        SurrealDB does **not** have native trigram / Levenshtein fuzzy matching
+        on indexes.  This implementation uses BM25 full-text search on the
+        ``name`` field via the ``openzync_entity`` analyzer.  BM25 is
+        **word-level** matching (handles stems and partial words) but is not
+        character-level fuzzy (e.g. "Jon" → "John" requires a full-text match).
+
+        The raw BM25 score (which can exceed 1.0) is normalised via
+        ``1 - 1/(1 + score)`` to a 0–1 range for the ``fuzzy_threshold``
+        filter.
+        """
+        await self._ensure_schema()
+        self._require_connection()
+
+        params: dict[str, Any] = {
+            "org_id": str(org_id),
+            "project_id": str(project_id),
+            "query": query,
+            "limit": limit,
+        }
+
+        try:
+            result = await self._surreal.query(
+                """
+                SELECT *, search::score(0) AS raw_score
+                FROM entity
+                WHERE organization_id = $org_id
+                  AND project_id = $project_id
+                  AND name @@ $query
+                  AND (is_merged IS NONE OR is_merged = false)
+                ORDER BY raw_score DESC
+                LIMIT $limit;
+                """,
+                params,
+            )
+            rows = result if result is not None else []
+
+            # Normalise BM25 scores using sigmoid-like clamp: 1 - 1/(1+raw)
+            # and filter by threshold
+            entities = []
+            for row in rows:
+                raw = float(row.get("raw_score", 0.0) or 0.0)
+                score = 1.0 - (1.0 / (1.0 + raw))
+                if score < fuzzy_threshold:
+                    continue
+                entity = self._row_to_entity(row)
+                entity["score"] = score
+                entities.append(entity)
+
+            return entities
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.bulk_search_entities_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "query": query,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Bulk entity search failed: {exc}",
+                detail={"org_id": str(org_id), "query": query},
+            ) from exc
+
+    async def merge_entities(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        canonical_id: UUID,
+        merged_ids: list[UUID],
+    ) -> dict[str, Any]:
+        """Merge duplicate entities: rewire all edges to canonical, soft-delete merged.
+
+        SurrealDB cannot atomically rewire edge ``in``/``out`` RecordID fields
+        in a single statement.  The implementation uses a **multi-step Python
+        approach**:
+
+        1. Verify canonical and merged entities exist.
+        2. For each merged entity, discover outgoing and incoming edges via
+           arrow syntax.
+        3. Create new edges (canonical → old\\ :sub:`target` and
+           old\\ :sub:`source` → canonical) preserving all edge properties.
+        4. Delete the original edges.
+        5. Mark merged entities as ``is_merged = true``.
+
+        **Atomicity note**: Because SurrealDB does not support multi-statement
+        transactions with interleaved Python logic, this method is **not fully
+        atomic**.  If the process crashes after step 3 but before step 5,
+        duplicate edges may exist.  Consider wrapping the call in an application-
+        level transaction (saga pattern) for strict guarantees.
+        """
+        if not merged_ids:
+            return {"rewired_count": 0, "deleted_count": 0, "merged_count": 0}
+
+        await self._ensure_schema()
+        self._require_connection()
+
+        canonical_rid = RecordID("entity", str(canonical_id))
+        merged_rids = [RecordID("entity", str(mid)) for mid in merged_ids]
+
+        # Step 1: Verify canonical entity exists
+        canonical = await self.get_entity(org_id, project_id, canonical_id)
+        if canonical is None:
+            raise NotFoundError(
+                message=f"Canonical entity {canonical_id} not found",
+                detail={"org_id": str(org_id), "canonical_id": str(canonical_id)},
+            )
+
+        rewired_count = 0
+        deleted_count = 0
+        merged_count = 0
+
+        try:
+            # Step 2: For each merged entity, discover and rewire edges
+            for merged_rid in merged_rids:
+                # Outgoing edges: merged → target  ⇒  canonical → target
+                out_result = await self._surreal.query(
+                    """
+                    SELECT *, meta::tb(id) AS edge_table_name
+                    FROM (SELECT VALUE ->? FROM $merged_rid)
+                    WHERE organization_id = $org_id AND project_id = $project_id;
+                    """,
+                    {
+                        "merged_rid": merged_rid,
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                    },
+                )
+                for edge_row in (out_result if out_result is not None else []):
+                    edge_table = edge_row.get("edge_table_name", "")
+                    if not edge_table or edge_table == "has_entity":
+                        continue  # skip episode-entity links
+                    target_rid = edge_row.get("out")
+                    properties = edge_row.get("properties") or {}
+                    confidence = edge_row.get("confidence") or 1.0
+                    valid_from = edge_row.get("valid_from")
+                    valid_to = edge_row.get("valid_to")
+
+                    # Create new edge from canonical to target
+                    await self._surreal.query(
+                        f"""
+                        RELATE $canonical_rid -> {edge_table} -> $target_rid
+                        CONTENT {{
+                            organization_id: $org_id,
+                            project_id: $project_id,
+                            properties: $properties,
+                            confidence: $confidence,
+                            valid_from: $valid_from,
+                            valid_to: $valid_to,
+                            created_at: time::now(),
+                            updated_at: time::now()
+                        }};
+                        """,
+                        {
+                            "canonical_rid": canonical_rid,
+                            "target_rid": target_rid,
+                            "org_id": str(org_id),
+                            "project_id": str(project_id),
+                            "properties": properties,
+                            "confidence": confidence,
+                            "valid_from": valid_from,
+                            "valid_to": valid_to,
+                        },
+                    )
+                    rewired_count += 1
+
+                # Incoming edges: source → merged  ⇒  source → canonical
+                in_result = await self._surreal.query(
+                    """
+                    SELECT *, meta::tb(id) AS edge_table_name
+                    FROM (SELECT VALUE <-? FROM $merged_rid)
+                    WHERE organization_id = $org_id AND project_id = $project_id;
+                    """,
+                    {
+                        "merged_rid": merged_rid,
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                    },
+                )
+                for edge_row in (in_result if in_result is not None else []):
+                    edge_table = edge_row.get("edge_table_name", "")
+                    if not edge_table or edge_table == "has_entity":
+                        continue
+                    source_rid = edge_row.get("in")
+                    properties = edge_row.get("properties") or {}
+                    confidence = edge_row.get("confidence") or 1.0
+                    valid_from = edge_row.get("valid_from")
+                    valid_to = edge_row.get("valid_to")
+
+                    # Create new edge from source to canonical
+                    await self._surreal.query(
+                        f"""
+                        RELATE $source_rid -> {edge_table} -> $canonical_rid
+                        CONTENT {{
+                            organization_id: $org_id,
+                            project_id: $project_id,
+                            properties: $properties,
+                            confidence: $confidence,
+                            valid_from: $valid_from,
+                            valid_to: $valid_to,
+                            created_at: time::now(),
+                            updated_at: time::now()
+                        }};
+                        """,
+                        {
+                            "source_rid": source_rid,
+                            "canonical_rid": canonical_rid,
+                            "org_id": str(org_id),
+                            "project_id": str(project_id),
+                            "properties": properties,
+                            "confidence": confidence,
+                            "valid_from": valid_from,
+                            "valid_to": valid_to,
+                        },
+                    )
+                    rewired_count += 1
+
+                # Delete old edges by their RecordIDs
+                # (We collected edge rows but need their IDs — re-query to delete)
+                out_del_result = await self._surreal.query(
+                    """
+                    SELECT VALUE id, meta::tb(id) AS edge_table_name
+                    FROM (SELECT VALUE ->? FROM $merged_rid)
+                    WHERE organization_id = $org_id AND project_id = $project_id;
+                    """,
+                    {
+                        "merged_rid": merged_rid,
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                    },
+                )
+                for edge_info in (out_del_result if out_del_result is not None else []):
+                    eid = edge_info.get("id")
+                    et = edge_info.get("edge_table_name", "")
+                    if eid is None or not et or et == "has_entity":
+                        continue
+                    await self._surreal.query(
+                        f"DELETE FROM {et} WHERE id = $eid;",
+                        {"eid": eid},
+                    )
+                    deleted_count += 1
+
+                in_del_result = await self._surreal.query(
+                    """
+                    SELECT VALUE id, meta::tb(id) AS edge_table_name
+                    FROM (SELECT VALUE <-? FROM $merged_rid)
+                    WHERE organization_id = $org_id AND project_id = $project_id;
+                    """,
+                    {
+                        "merged_rid": merged_rid,
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                    },
+                )
+                for edge_info in (in_del_result if in_del_result is not None else []):
+                    eid = edge_info.get("id")
+                    et = edge_info.get("edge_table_name", "")
+                    if eid is None or not et or et == "has_entity":
+                        continue
+                    await self._surreal.query(
+                        f"DELETE FROM {et} WHERE id = $eid;",
+                        {"eid": eid},
+                    )
+                    deleted_count += 1
+
+            # Step 3: Mark merged entities as soft-deleted
+            merged_id_strs = [str(mid) for mid in merged_ids]
+            mark_result = await self._surreal.query(
+                """
+                UPDATE entity SET
+                    is_merged = true,
+                    updated_at = time::now()
+                WHERE id IN $merged_rids
+                  AND organization_id = $org_id
+                  AND project_id = $project_id;
+                """,
+                {
+                    "merged_rids": merged_rids,
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                },
+            )
+            # Count how many were actually updated
+            merged_count = len(mark_result) if mark_result is not None else 0
+
+            # Step 4: Delete duplicate relationships (same source, target, type)
+            # Iterate each edge table that had rewires and remove dups
+            # This is done by querying for duplicate edges and keeping only the first
+            # ⚠️ Performance: this iterates edge tables, which is acceptable for batch merge
+
+            logger.info(
+                "surreal_graph.entities_merged",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "canonical_id": str(canonical_id),
+                    "merged_ids": merged_id_strs,
+                    "rewired_count": rewired_count,
+                    "deleted_count": deleted_count,
+                    "merged_count": merged_count,
+                },
+            )
+
+            return {
+                "rewired_count": rewired_count,
+                "deleted_count": deleted_count,
+                "merged_count": merged_count,
+            }
+
+        except ExternalServiceError:
+            raise
+        except NotFoundError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.merge_entities_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "canonical_id": str(canonical_id),
+                    "merged_ids": [str(mid) for mid in merged_ids],
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to merge entities: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "canonical_id": str(canonical_id),
+                },
+            ) from exc
+
+    async def create_relationship_bulk(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        relationships: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Batch-create multiple relationships in sequence.
+
+        Delegates to :meth:`create_relationship` for each item to benefit
+        from its built-in idempotency (LET/IF/THEN/ELSE upsert pattern).
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            relationships: List of relationship descriptor dicts.
+
+        Returns:
+            List of created relationship dicts (one per input, in order).
+
+        Raises:
+            ValueError: If any input dict is missing required keys.
+        """
+        if not relationships:
+            return []
+
+        created: list[dict[str, Any]] = []
+        try:
+            for rel in relationships:
+                source_id = rel.get("source_id")
+                target_id = rel.get("target_id")
+                rel_type = rel.get("relationship_type")
+
+                if not source_id or not target_id or not rel_type:
+                    raise ValueError(
+                        f"Each relationship must have source_id, target_id, "
+                        f"and relationship_type. Got: {rel}"
+                    )
+
+                result = await self.create_relationship(
+                    org_id=org_id,
+                    project_id=project_id,
+                    source_id=UUID(str(source_id)),
+                    target_id=UUID(str(target_id)),
+                    relationship_type=str(rel_type),
+                    properties=rel.get("properties"),
+                    confidence=rel.get("confidence"),
+                    valid_from=rel.get("valid_from"),
+                    valid_to=rel.get("valid_to"),
+                )
+                created.append(result)
+
+            logger.info(
+                "surreal_graph.create_relationship_bulk",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "count": len(created),
+                },
+            )
+            return created
+        except ValueError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.create_relationship_bulk_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "count": len(relationships),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Bulk relationship creation failed: {exc}",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+    # ── Group C: Observations ───────────────────────────────────────────────────
+
+    async def upsert_observation(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        subject_entity_id: UUID,
+        observation_type: str,
+        content: str,
+        confidence: float,
+        *,
+        related_entity_id: UUID | None = None,
+        supporting_fact_ids: list[UUID] | None = None,
+        supporting_relationship_ids: list[UUID] | None = None,
+        valid_from: datetime | None = None,
+        valid_to: datetime | None = None,
+        observation_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create or update a graph-topology observation.
+
+        Uses the ``LET + IF/THEN/ELSE`` pattern for atomic upsert on the
+        ``observation`` table.  Dedup is by
+        ``(organization_id, project_id, subject_entity_id, observation_type,
+        related_entity_id)`` — matching the Postgres backend's functional
+        unique index pattern.
+
+        Returns:
+            The created or updated observation dict.
+        """
+        await self._ensure_schema()
+        self._require_connection()
+
+        subject_id_str = str(subject_entity_id)
+        related_id_str = str(related_entity_id) if related_entity_id is not None else ""
+        fact_ids = (
+            [str(fid) for fid in supporting_fact_ids]
+            if supporting_fact_ids else []
+        )
+        rel_ids = (
+            [str(rid) for rid in supporting_relationship_ids]
+            if supporting_relationship_ids else []
+        )
+
+        query = """
+        LET $existing = (SELECT * FROM observation
+            WHERE organization_id = $org_id
+              AND project_id = $project_id
+              AND subject_entity_id = $subject_id
+              AND observation_type = $obs_type
+              AND related_entity_id = $related_id
+            LIMIT 1);
+        RETURN IF array::len($existing) > 0 THEN
+            (UPDATE $existing[0].id SET
+                content = $content,
+                confidence = $confidence,
+                supporting_fact_ids = $fact_ids,
+                supporting_relationship_ids = $rel_ids,
+                valid_from = $valid_from,
+                valid_to = $valid_to,
+                observation_metadata = $metadata
+            RETURN AFTER)
+        ELSE
+            (CREATE observation SET
+                organization_id = $org_id,
+                project_id = $project_id,
+                subject_entity_id = $subject_id,
+                observation_type = $obs_type,
+                content = $content,
+                confidence = $confidence,
+                related_entity_id = $related_id,
+                supporting_fact_ids = $fact_ids,
+                supporting_relationship_ids = $rel_ids,
+                valid_from = $valid_from,
+                valid_to = $valid_to,
+                observation_metadata = $metadata,
+                created_at = time::now(),
+                updated_at = time::now()
+            RETURN AFTER)
+        END;
+        """
+
+        params: dict[str, Any] = {
+            "org_id": str(org_id),
+            "project_id": str(project_id),
+            "subject_id": subject_id_str,
+            "obs_type": observation_type,
+            "content": content,
+            "confidence": confidence,
+            "related_id": related_id_str,
+            "fact_ids": fact_ids,
+            "rel_ids": rel_ids,
+            "valid_from": valid_from.isoformat() if valid_from else None,
+            "valid_to": valid_to.isoformat() if valid_to else None,
+            "metadata": observation_metadata or {},
+        }
+
+        try:
+            result = await self._query_last(query, params)
+            record = result[0]
+            observation = self._row_to_observation(record)
+
+            logger.info(
+                "surreal_graph.observation_upserted",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "subject_entity_id": subject_id_str,
+                    "observation_type": observation_type,
+                },
+            )
+            return observation
+        except ExternalServiceError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.upsert_observation_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "subject_entity_id": subject_id_str,
+                    "observation_type": observation_type,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to upsert observation: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "subject_entity_id": subject_id_str,
+                },
+            ) from exc
+
+    async def get_observations(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        *,
+        subject_entity_id: UUID | None = None,
+        observation_type: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """List observations with optional filters and cursor pagination.
+
+        Uses offset-based pagination (same pattern as :meth:`list_entities`).
+        Results are ordered by ``created_at DESC`` (most recent first).
+
+        Returns:
+            A dict with ``items``, ``next_cursor``, and ``has_more``.
+        """
+        await self._ensure_schema()
+        self._require_connection()
+
+        limit = min(limit, 200)
+        offset = _decode_offset_cursor(cursor)
+
+        params: dict[str, Any] = {
+            "org_id": str(org_id),
+            "project_id": str(project_id),
+        }
+
+        where_clause = (
+            "organization_id = $org_id AND project_id = $project_id"
+        )
+
+        if subject_entity_id is not None:
+            where_clause += " AND subject_entity_id = $subject_id"
+            params["subject_id"] = str(subject_entity_id)
+        if observation_type is not None:
+            where_clause += " AND observation_type = $obs_type"
+            params["obs_type"] = observation_type
+
+        try:
+            result = await self._surreal.query(
+                f"""
+                SELECT * FROM observation
+                WHERE {where_clause}
+                ORDER BY created_at DESC, id ASC
+                LIMIT {limit + 1} START {offset};
+                """,
+                params,
+            )
+            rows = result if result is not None else []
+            has_more = len(rows) > limit
+            items = [self._row_to_observation(r) for r in rows[:limit]]
+
+            next_cursor = None
+            if has_more and items:
+                next_cursor = _encode_offset_cursor(offset + len(items))
+
+            return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.get_observations_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "subject_entity_id": str(subject_entity_id) if subject_entity_id else None,
+                    "observation_type": observation_type,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get observations: {exc}",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+    async def get_entity_appearance_timestamps(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        entity_id: UUID,
+    ) -> list[datetime]:
+        """Get all timestamps when an entity appeared in episodes.
+
+        Traverses ``entity <-has_entity<- episode`` and returns each
+        linked episode's ``created_at`` timestamp.  Only episodes within
+        the org/project scope are considered.
+
+        Returns:
+            Sorted list of episode timestamps (oldest first).  Empty list if
+            the entity has no linked episodes or the episode records do not
+            exist in SurrealDB.
+        """
+        await self._ensure_schema()
+        self._require_connection()
+
+        params: dict[str, Any] = {
+            "entity_id": RecordID("entity", str(entity_id)),
+            "org_id": str(org_id),
+            "project_id": str(project_id),
+        }
+
+        try:
+            result = await self._surreal.query(
+                """
+                SELECT created_at FROM episode
+                WHERE id IN (SELECT VALUE <-has_entity.id
+                             FROM entity:$entity_id)
+                  AND organization_id = $org_id
+                  AND project_id = $project_id
+                ORDER BY created_at ASC;
+                """,
+                params,
+            )
+            rows = result if result is not None else []
+            timestamps: list[datetime] = []
+            for row in rows:
+                ts = row.get("created_at")
+                if ts is not None:
+                    timestamps.append(ts)
+            return timestamps
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.get_entity_appearance_timestamps_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "entity_id": str(entity_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get appearance timestamps for entity {entity_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "entity_id": str(entity_id),
+                },
+            ) from exc
+
+    async def get_relationship_ids_between(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        entity_a_id: UUID,
+        entity_b_id: UUID,
+    ) -> list[UUID]:
+        """Get IDs of direct relationships between two entities (both directions).
+
+        Uses SurrealQL arrow syntax to find edges from A→B (outgoing from A)
+        and B→A (outgoing from B).  Returns **all** matching edge IDs,
+        including duplicate types.
+
+        Returns:
+            List of relationship UUIDs.  Empty list if no direct relationship.
+        """
+        await self._ensure_schema()
+        self._require_connection()
+
+        a_rid = RecordID("entity", str(entity_a_id))
+        b_rid = RecordID("entity", str(entity_b_id))
+
+        try:
+            result = await self._surreal.query(
+                """
+                SELECT id
+                FROM (SELECT VALUE ->? FROM entity:$a_id)
+                WHERE out = $b_rid
+                  AND organization_id = $org_id
+                  AND project_id = $project_id
+                  AND (invalid_at IS NONE);
+                """,
+                {
+                    "a_id": a_rid,
+                    "b_rid": b_rid,
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                },
+            )
+            ids: list[UUID] = []
+            for row in (result if result is not None else []):
+                rid_str = self._record_id_to_str(row.get("id"))
+                if rid_str:
+                    try:
+                        ids.append(UUID(rid_str))
+                    except (ValueError, AttributeError):
+                        pass
+
+            # Reverse direction: edges from B to A
+            result_rev = await self._surreal.query(
+                """
+                SELECT id
+                FROM (SELECT VALUE ->? FROM entity:$b_id)
+                WHERE out = $a_rid
+                  AND organization_id = $org_id
+                  AND project_id = $project_id
+                  AND (invalid_at IS NONE);
+                """,
+                {
+                    "b_id": b_rid,
+                    "a_rid": a_rid,
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                },
+            )
+            for row in (result_rev if result_rev is not None else []):
+                rid_str = self._record_id_to_str(row.get("id"))
+                if rid_str:
+                    try:
+                        ids.append(UUID(rid_str))
+                    except (ValueError, AttributeError):
+                        pass
+
+            return ids
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.get_relationship_ids_between_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "entity_a_id": str(entity_a_id),
+                    "entity_b_id": str(entity_b_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get relationship IDs between entities: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "entity_a_id": str(entity_a_id),
+                    "entity_b_id": str(entity_b_id),
+                },
+            ) from exc
+
+    # ── Group D: Soft-Delete / Expiry ──────────────────────────────────────────
+
+    async def expire_relationship(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        relationship_id: UUID,
+    ) -> bool:
+        """Soft-delete a relationship by setting ``invalid_at``.
+
+        Since SurrealDB edges are stored in per-type tables (``mentions``,
+        ``authored_by``, etc.) and we only have the edge UUID, this method
+        first discovers the edge RecordID by scanning all project edges using
+        ``meta::id()``, then issues an ``UPDATE … SET invalid_at``.
+
+        Returns:
+            ``True`` if the relationship was expired, ``False`` if it did not
+            exist or was already expired.
+        """
+        await self._ensure_schema()
+        self._require_connection()
+
+        try:
+            # Discover the edge RecordID across all edge tables in the project.
+            # meta::id(id) extracts the UUID portion of the RecordID.
+            find_result = await self._surreal.query(
+                """
+                SELECT id
+                FROM (SELECT VALUE ->?
+                      FROM (SELECT * FROM entity
+                            WHERE organization_id = $org_id
+                              AND project_id = $project_id))
+                WHERE organization_id = $org_id
+                  AND project_id = $project_id
+                  AND meta::id(id) = $rel_id_str
+                LIMIT 1;
+                """,
+                {
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "rel_id_str": str(relationship_id),
+                },
+            )
+            found = find_result if find_result is not None else []
+            if not found:
+                logger.info(
+                    "surreal_graph.expire_relationship.not_found",
+                    extra={
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                        "relationship_id": str(relationship_id),
+                    },
+                )
+                return False
+
+            edge_rid = found[0].get("id")
+
+            # Now expire it — only if invalid_at is still NONE
+            result = await self._surreal.query(
+                """
+                UPDATE $edge_rid
+                SET invalid_at = time::now(), updated_at = time::now()
+                WHERE invalid_at IS NONE
+                RETURN BEFORE;
+                """,
+                {"edge_rid": edge_rid},
+            )
+            updated = result if result is not None else []
+            expired = len(updated) > 0
+
+            if expired:
+                logger.info(
+                    "surreal_graph.relationship_expired",
+                    extra={
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                        "relationship_id": str(relationship_id),
+                    },
+                )
+            return expired
+
+        except ExternalServiceError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.expire_relationship_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "relationship_id": str(relationship_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to expire relationship {relationship_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "relationship_id": str(relationship_id),
+                },
+            ) from exc

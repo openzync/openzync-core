@@ -16,13 +16,14 @@ from __future__ import annotations
 import base64
 import orjson
 from datetime import datetime, timezone
+from typing import Any
 from uuid import UUID
 
 import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.exceptions import ExternalServiceError, GraphBackendUnavailableError
+from core.exceptions import ExternalServiceError, GraphBackendUnavailableError, NotFoundError
 from packages.graph_backend.interface import GraphBackend
 
 logger = structlog.get_logger(__name__)
@@ -277,14 +278,30 @@ class PostgresGraphBackend(GraphBackend):
         org_id: UUID,
         project_id: UUID,
         entity_id: UUID,
+        *,
         name: str | None = None,
-        summary: str | None = None,
         entity_type: str | None = None,
-        attributes: dict | None = None,
-    ) -> dict | None:
-        """Update entity fields. Only provided fields are changed.
+        summary: str | None = None,
+    ) -> dict[str, Any]:
+        """Update an entity's mutable fields.
 
-        Returns the updated entity dict, or ``None`` if not found.
+        Only the provided fields are changed; ``None`` fields are left
+        untouched.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            entity_id: UUID of the entity to update.
+            name: New name, or ``None`` to leave unchanged.
+            entity_type: New type label, or ``None`` to leave unchanged.
+            summary: New summary text, or ``None`` to leave unchanged.
+
+        Returns:
+            The updated entity dict with at minimum ``id``, ``name``,
+            ``entity_type``, ``summary``, and ``updated_at`` keys.
+
+        Raises:
+            NotFoundError: If no entity with the given ID exists.
         """
         updates: dict[str, object] = {}
         update_cols: list[str] = []
@@ -292,18 +309,21 @@ class PostgresGraphBackend(GraphBackend):
         if name is not None:
             updates["name"] = name
             update_cols.append("name = :name")
-        if summary is not None:
-            updates["summary"] = summary
-            update_cols.append("summary = :summary")
         if entity_type is not None:
             updates["entity_type"] = entity_type
             update_cols.append("entity_type = :entity_type")
-        if attributes is not None:
-            updates["attributes_json"] = orjson.dumps(attributes)
-            update_cols.append("attributes = CAST(:attributes_json AS jsonb)")
+        if summary is not None:
+            updates["summary"] = summary
+            update_cols.append("summary = :summary")
 
         if not update_cols:
-            return await self.get_entity(org_id, project_id, entity_id)
+            entity = await self.get_entity(org_id, project_id, entity_id)
+            if entity is None:
+                raise NotFoundError(
+                    message=f"Entity {entity_id} not found",
+                    detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                )
+            return entity
 
         updates["org_id"] = str(org_id)
         updates["project_id"] = str(project_id)
@@ -319,13 +339,21 @@ class PostgresGraphBackend(GraphBackend):
                     WHERE id = :entity_id
                       AND organization_id = :org_id
                       AND project_id = :project_id
-                    RETURNING id, name, entity_type, summary, attributes, created_at
+                    RETURNING id, name, entity_type, summary, attributes,
+                              created_at, updated_at
                     """
                 ),
                 updates,
             )
             row = result.one_or_none()
-            return self._row_to_entity(row) if row else None
+            if row is None:
+                raise NotFoundError(
+                    message=f"Entity {entity_id} not found",
+                    detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                )
+            return self._row_to_entity(row)
+        except NotFoundError:
+            raise
         except Exception as exc:
             logger.error(
                 "pg_graph.update_entity_failed",
@@ -1146,6 +1174,823 @@ class PostgresGraphBackend(GraphBackend):
         except Exception:
             return False
 
+    # ── Group A: Entity-Episode Linking ────────────────────────────────────────
+
+    async def link_entity_to_episode(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        episode_id: UUID,
+        entity_id: UUID,
+    ) -> None:
+        """Record that an entity appears in a specific episode.
+
+        Idempotent — uses ``ON CONFLICT DO NOTHING``.
+        """
+        try:
+            await self._db.execute(
+                text("""
+                    INSERT INTO graph_episode_entities
+                        (episode_id, entity_id, project_id, created_at)
+                    VALUES (:episode_id, :entity_id, :project_id, now())
+                    ON CONFLICT (episode_id, entity_id) DO NOTHING
+                """),
+                {
+                    "episode_id": str(episode_id),
+                    "entity_id": str(entity_id),
+                    "project_id": str(project_id),
+                },
+            )
+        except Exception as exc:
+            logger.error(
+                "pg_graph.link_entity_to_episode_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "episode_id": str(episode_id),
+                    "entity_id": str(entity_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to link entity {entity_id} to episode {episode_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "episode_id": str(episode_id),
+                    "entity_id": str(entity_id),
+                },
+            ) from exc
+
+    async def get_entities_for_session(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        session_id: UUID,
+    ) -> list[dict[str, Any]]:
+        """Return all distinct graph entities linked to episodes in a session."""
+        try:
+            result = await self._db.execute(
+                text("""
+                    SELECT DISTINCT ge.id, ge.name, ge.entity_type, ge.summary
+                    FROM graph_entities ge
+                    JOIN graph_episode_entities gee ON ge.id = gee.entity_id
+                    JOIN episodes e ON e.id = gee.episode_id
+                    WHERE e.session_id = :session_id
+                      AND e.organization_id = :org_id
+                      AND ge.organization_id = :org_id
+                      AND ge.project_id = :project_id
+                      AND e.is_deleted = false
+                      AND ge.is_merged = false
+                    ORDER BY ge.name
+                """),
+                {
+                    "session_id": str(session_id),
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                },
+            )
+            return [
+                {
+                    "id": str(row.id),
+                    "name": row.name,
+                    "entity_type": row.entity_type,
+                    "summary": row.summary if row.summary else "",
+                }
+                for row in result.all()
+            ]
+        except Exception as exc:
+            logger.error(
+                "pg_graph.get_entities_for_session_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "session_id": str(session_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get entities for session {session_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "session_id": str(session_id),
+                },
+            ) from exc
+
+    async def get_co_occurring_entity_pairs(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        min_co_count: int = 2,
+    ) -> list[dict[str, Any]]:
+        """Find entity pairs that co-appear in episodes above a threshold."""
+        try:
+            result = await self._db.execute(
+                text("""
+                    SELECT
+                        a.entity_id AS entity_a_id,
+                        ge_a.name AS entity_a_name,
+                        b.entity_id AS entity_b_id,
+                        ge_b.name AS entity_b_name,
+                        COUNT(DISTINCT a.episode_id) AS co_count
+                    FROM graph_episode_entities a
+                    JOIN graph_episode_entities b
+                        ON a.episode_id = b.episode_id
+                        AND a.entity_id < b.entity_id
+                    JOIN graph_entities ge_a
+                        ON ge_a.id = a.entity_id
+                    JOIN graph_entities ge_b
+                        ON ge_b.id = b.entity_id
+                    WHERE a.project_id = :project_id
+                    GROUP BY entity_a_id, entity_a_name,
+                             entity_b_id, entity_b_name
+                    HAVING COUNT(DISTINCT a.episode_id) >= :min_count
+                    ORDER BY co_count DESC
+                """),
+                {
+                    "project_id": str(project_id),
+                    "min_count": min_co_count,
+                },
+            )
+            return [
+                {
+                    "entity_a_id": str(row.entity_a_id),
+                    "entity_a_name": row.entity_a_name,
+                    "entity_b_id": str(row.entity_b_id),
+                    "entity_b_name": row.entity_b_name,
+                    "co_count": row.co_count,
+                }
+                for row in result.all()
+            ]
+        except Exception as exc:
+            logger.error(
+                "pg_graph.get_co_occurring_pairs_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get co-occurring entity pairs: {exc}",
+                detail={"org_id": str(org_id), "project_id": str(project_id)},
+            ) from exc
+
+    # ── Group B: Bulk / Merge Operations ───────────────────────────────────────
+
+    async def get_all_entities(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        *,
+        include_merged: bool = False,
+    ) -> list[dict[str, Any]]:
+        # ⚠️ BATCH USE ONLY — no pagination, no limit. Potentially millions of rows.
+        try:
+            result = await self._db.execute(
+                text("""
+                    SELECT id, name, entity_type, summary, attributes,
+                           is_merged, created_at
+                    FROM graph_entities
+                    WHERE organization_id = :org_id
+                      AND project_id = :project_id
+                      AND (:include_merged OR is_merged = false)
+                    ORDER BY name
+                """),
+                {
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "include_merged": include_merged,
+                },
+            )
+            return [
+                {
+                    "id": str(row.id),
+                    "name": row.name,
+                    "entity_type": row.entity_type,
+                    "summary": row.summary if row.summary else "",
+                    "is_merged": bool(row.is_merged) if hasattr(row, "is_merged") else False,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
+                }
+                for row in result.all()
+            ]
+        except Exception as exc:
+            logger.error(
+                "pg_graph.get_all_entities_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get all entities: {exc}",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+    async def get_all_relationships(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+    ) -> list[dict[str, Any]]:
+        # ⚠️ BATCH USE ONLY — no pagination, no limit. Potentially millions of rows.
+        try:
+            result = await self._db.execute(
+                text("""
+                    SELECT id, source_id, target_id, relationship_type,
+                           properties, fact, confidence,
+                           valid_from, valid_to, created_at
+                    FROM graph_relationships
+                    WHERE organization_id = :org_id
+                      AND project_id = :project_id
+                      AND invalid_at IS NULL
+                    ORDER BY created_at DESC
+                """),
+                {
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                },
+            )
+            return [self._row_to_relationship(row) for row in result.all()]
+        except Exception as exc:
+            logger.error(
+                "pg_graph.get_all_relationships_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get all relationships: {exc}",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+    async def bulk_search_entities(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        query: str,
+        *,
+        fuzzy_threshold: float = 0.3,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Search entities using fuzzy string matching for dedup detection."""
+        try:
+            result = await self._db.execute(
+                text("""
+                    SELECT id, name, entity_type, summary, attributes, created_at,
+                           similarity(LOWER(name), LOWER(:query)) AS score
+                    FROM graph_entities
+                    WHERE organization_id = :org_id
+                      AND project_id = :project_id
+                      AND is_merged = false
+                      AND similarity(LOWER(name), LOWER(:query)) > :threshold
+                    ORDER BY score DESC
+                    LIMIT :limit
+                """),
+                {
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "query": query,
+                    "threshold": fuzzy_threshold,
+                    "limit": limit,
+                },
+            )
+            entities = []
+            for row in result.all():
+                entity = self._row_to_entity(row)
+                entity["score"] = (
+                    float(row.score)
+                    if hasattr(row, "score") and row.score is not None
+                    else 0.0
+                )
+                entities.append(entity)
+            return entities
+        except Exception as exc:
+            logger.error(
+                "pg_graph.bulk_search_entities_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "query": query,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Bulk entity search failed: {exc}",
+                detail={"org_id": str(org_id), "query": query},
+            ) from exc
+
+    async def merge_entities(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        canonical_id: UUID,
+        merged_ids: list[UUID],
+    ) -> dict[str, Any]:
+        """Merge duplicate entities atomically.
+
+        STRICT ATOMICITY CONTRACT: All-or-nothing. Uses a DB savepoint
+        so partial state is never visible.
+        """
+        if not merged_ids:
+            return {"rewired_count": 0, "deleted_count": 0, "merged_count": 0}
+
+        # Verify canonical entity exists
+        canonical = await self.get_entity(org_id, project_id, canonical_id)
+        if canonical is None:
+            raise NotFoundError(
+                message=f"Canonical entity {canonical_id} not found",
+                detail={"org_id": str(org_id), "canonical_id": str(canonical_id)},
+            )
+
+        merged_id_strs = [str(mid) for mid in merged_ids]
+
+        try:
+            async with self._db.begin_nested():
+                # Set statement timeout for CTE-heavy operations
+                await self._db.execute(
+                    text("SET LOCAL statement_timeout = '10s'")
+                )
+
+                # 1. Rewire relationships: source_id
+                src_result = await self._db.execute(
+                    text("""
+                        UPDATE graph_relationships
+                        SET source_id = :canonical_id::uuid
+                        WHERE organization_id = :org_id
+                          AND project_id = :project_id
+                          AND source_id = ANY(:merged_ids::uuid[])
+                          AND invalid_at IS NULL
+                    """),
+                    {
+                        "canonical_id": str(canonical_id),
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                        "merged_ids": merged_id_strs,
+                    },
+                )
+                rewired_source = src_result.rowcount
+
+                # 2. Rewire relationships: target_id
+                tgt_result = await self._db.execute(
+                    text("""
+                        UPDATE graph_relationships
+                        SET target_id = :canonical_id::uuid
+                        WHERE organization_id = :org_id
+                          AND project_id = :project_id
+                          AND target_id = ANY(:merged_ids::uuid[])
+                          AND invalid_at IS NULL
+                    """),
+                    {
+                        "canonical_id": str(canonical_id),
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                        "merged_ids": merged_id_strs,
+                    },
+                )
+                rewired_target = tgt_result.rowcount
+
+                # 3. Delete duplicate relationships created by rewiring
+                #    (same source, target, and type after rewiring)
+                del_result = await self._db.execute(
+                    text("""
+                        DELETE FROM graph_relationships g
+                        WHERE organization_id = :org_id
+                          AND project_id = :project_id
+                          AND invalid_at IS NULL
+                          AND g.id NOT IN (
+                              SELECT MIN(id)
+                              FROM graph_relationships
+                              WHERE organization_id = :org_id
+                                AND project_id = :project_id
+                                AND invalid_at IS NULL
+                              GROUP BY source_id, target_id, relationship_type
+                          )
+                    """),
+                    {
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                    },
+                )
+                deleted_count = del_result.rowcount
+
+                # 4. Mark merged entities
+                merge_result = await self._db.execute(
+                    text("""
+                        UPDATE graph_entities
+                        SET is_merged = true, updated_at = now()
+                        WHERE organization_id = :org_id
+                          AND project_id = :project_id
+                          AND id = ANY(:merged_ids::uuid[])
+                    """),
+                    {
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                        "merged_ids": merged_id_strs,
+                    },
+                )
+                merged_count = merge_result.rowcount
+
+            logger.info(
+                "pg_graph.entities_merged",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "canonical_id": str(canonical_id),
+                    "merged_count": merged_count,
+                    "rewired_count": rewired_source + rewired_target,
+                    "deleted_count": deleted_count,
+                },
+            )
+
+            return {
+                "rewired_count": rewired_source + rewired_target,
+                "deleted_count": deleted_count,
+                "merged_count": merged_count,
+            }
+        except Exception as exc:
+            logger.error(
+                "pg_graph.merge_entities_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "canonical_id": str(canonical_id),
+                    "merged_ids": merged_id_strs,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to merge entities: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "canonical_id": str(canonical_id),
+                },
+            ) from exc
+
+    async def create_relationship_bulk(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        relationships: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Batch-create multiple relationships in a single transaction.
+
+        Each dict in ``relationships`` must have ``source_id``, ``target_id``,
+        ``relationship_type``. Optional keys: ``confidence``, ``properties``,
+        ``valid_from``, ``valid_to``.
+        """
+        if not relationships:
+            return []
+
+        created: list[dict[str, Any]] = []
+        try:
+            async with self._db.begin_nested():
+                for rel in relationships:
+                    source_id = rel.get("source_id")
+                    target_id = rel.get("target_id")
+                    rel_type = rel.get("relationship_type")
+
+                    if not source_id or not target_id or not rel_type:
+                        raise ValueError(
+                            f"Each relationship must have source_id, target_id, "
+                            f"and relationship_type. Got: {rel}"
+                        )
+
+                    result = await self._db.execute(
+                        text("""
+                            INSERT INTO graph_relationships
+                                (organization_id, project_id, source_id, target_id,
+                                 relationship_type, properties, confidence,
+                                 valid_from, valid_to, created_at)
+                            VALUES
+                                (:org_id, :project_id, :source_id, :target_id,
+                                 :rel_type, CAST(:properties AS jsonb), :confidence,
+                                 :valid_from, :valid_to, now())
+                            ON CONFLICT (source_id, target_id, relationship_type)
+                            WHERE invalid_at IS NULL
+                            DO UPDATE SET
+                                confidence = GREATEST(graph_relationships.confidence, :confidence),
+                                updated_at = now()
+                            RETURNING id, source_id, target_id, relationship_type,
+                                      properties, fact, confidence,
+                                      valid_from, valid_to, created_at
+                        """),
+                        {
+                            "org_id": str(org_id),
+                            "project_id": str(project_id),
+                            "source_id": str(source_id),
+                            "target_id": str(target_id),
+                            "rel_type": rel_type,
+                            "properties": orjson.dumps(
+                                rel.get("properties") or {}
+                            ).decode("utf-8"),
+                            "confidence": rel.get("confidence", 1.0),
+                            "valid_from": rel.get("valid_from"),
+                            "valid_to": rel.get("valid_to"),
+                        },
+                    )
+                    created.append(self._row_to_relationship(result.one()))
+
+            return created
+        except ValueError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "pg_graph.create_relationship_bulk_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "count": len(relationships),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to create {len(relationships)} relationships: {exc}",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+    # ── Group C: Observations ──────────────────────────────────────────────────
+
+    async def upsert_observation(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        subject_entity_id: UUID,
+        observation_type: str,
+        content: str,
+        confidence: float,
+        *,
+        related_entity_id: UUID | None = None,
+        supporting_fact_ids: list[UUID] | None = None,
+        supporting_relationship_ids: list[UUID] | None = None,
+        valid_from: datetime | None = None,
+        valid_to: datetime | None = None,
+        observation_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create or update a graph-topology observation.
+
+        Upsert uses the functional unique index on
+        ``(project_id, subject_entity_id, observation_type,
+          COALESCE(related_entity_id, sentinel))``.
+        """
+        try:
+            result = await self._db.execute(
+                text("""
+                    INSERT INTO graph_observations
+                        (organization_id, project_id, subject_entity_id,
+                         related_entity_id, observation_type, content, confidence,
+                         supporting_fact_ids, supporting_relationship_ids,
+                         valid_from, valid_to, observation_metadata, updated_at)
+                    VALUES
+                        (:org_id, :project_id, :subject_entity_id,
+                         :related_entity_id, :obs_type, :content, :confidence,
+                         :fact_ids, :rel_ids, :valid_from, :valid_to,
+                         CAST(:obs_metadata AS jsonb), NOW())
+                    ON CONFLICT (project_id, subject_entity_id, observation_type,
+                                 COALESCE(related_entity_id,
+                                  '00000000-0000-0000-0000-000000000000'::uuid))
+                    DO UPDATE SET
+                        content = EXCLUDED.content,
+                        confidence = EXCLUDED.confidence,
+                        supporting_fact_ids = EXCLUDED.supporting_fact_ids,
+                        supporting_relationship_ids = EXCLUDED.supporting_relationship_ids,
+                        valid_from = EXCLUDED.valid_from,
+                        valid_to = EXCLUDED.valid_to,
+                        observation_metadata = EXCLUDED.observation_metadata,
+                        updated_at = NOW()
+                    RETURNING id, subject_entity_id, related_entity_id,
+                              observation_type, content, confidence,
+                              supporting_fact_ids, supporting_relationship_ids,
+                              valid_from, valid_to, observation_metadata,
+                              created_at, updated_at
+                """),
+                {
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "subject_entity_id": str(subject_entity_id),
+                    "related_entity_id": str(related_entity_id) if related_entity_id else None,
+                    "obs_type": observation_type,
+                    "content": content,
+                    "confidence": confidence,
+                    "fact_ids": (
+                        [str(fid) for fid in supporting_fact_ids]
+                        if supporting_fact_ids else None
+                    ),
+                    "rel_ids": (
+                        [str(rid) for rid in supporting_relationship_ids]
+                        if supporting_relationship_ids else None
+                    ),
+                    "valid_from": valid_from,
+                    "valid_to": valid_to,
+                    "obs_metadata": (
+                        orjson.dumps(observation_metadata).decode()
+                        if observation_metadata else None
+                    ),
+                },
+            )
+            return self._row_to_observation(result.one())
+        except Exception as exc:
+            logger.error(
+                "pg_graph.upsert_observation_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "subject_entity_id": str(subject_entity_id),
+                    "observation_type": observation_type,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to upsert observation: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "subject_entity_id": str(subject_entity_id),
+                },
+            ) from exc
+
+    async def get_observations(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        *,
+        subject_entity_id: UUID | None = None,
+        observation_type: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """List observations with optional filters and cursor pagination."""
+        limit = min(limit, 200)
+
+        where_clause = (
+            "o.organization_id = :org_id AND o.project_id = :project_id"
+        )
+        params: dict[str, object] = {
+            "org_id": str(org_id),
+            "project_id": str(project_id),
+            "limit": limit + 1,
+        }
+
+        if subject_entity_id is not None:
+            where_clause += " AND o.subject_entity_id = :subject_id"
+            params["subject_id"] = str(subject_entity_id)
+
+        if observation_type is not None:
+            where_clause += " AND o.observation_type = :obs_type"
+            params["obs_type"] = observation_type
+
+        if cursor:
+            try:
+                decoded = orjson.loads(base64.b64decode(cursor))
+                cursor_created_at = decoded["c"]
+                cursor_id = decoded["i"]
+                where_clause += (
+                    " AND (o.created_at, o.id) > (:cursor_ts, :cursor_id::uuid)"
+                )
+                params["cursor_ts"] = cursor_created_at
+                params["cursor_id"] = cursor_id
+            except Exception:
+                logger.warning(
+                    "pg_graph.get_observations.invalid_cursor",
+                    extra={"cursor": cursor},
+                )
+
+        try:
+            result = await self._db.execute(
+                text(f"""
+                    SELECT o.id, o.subject_entity_id, o.related_entity_id,
+                           o.observation_type, o.content, o.confidence,
+                           o.supporting_fact_ids, o.supporting_relationship_ids,
+                           o.valid_from, o.valid_to, o.observation_metadata,
+                           o.created_at, o.updated_at
+                    FROM graph_observations o
+                    WHERE {where_clause}
+                    ORDER BY o.created_at ASC, o.id ASC
+                    LIMIT :limit
+                """),
+                params,
+            )
+            rows = result.all()
+            has_more = len(rows) > limit
+            items = [self._row_to_observation(r) for r in rows[:limit]]
+
+            next_cursor = None
+            if has_more and items:
+                last = items[-1]
+                cursor_payload = orjson.dumps({
+                    "c": last["created_at"],
+                    "i": last["id"],
+                })
+                next_cursor = base64.b64encode(cursor_payload).decode()
+
+            return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
+        except Exception as exc:
+            logger.error(
+                "pg_graph.get_observations_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "subject_entity_id": str(subject_entity_id) if subject_entity_id else None,
+                    "observation_type": observation_type,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get observations: {exc}",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+    async def get_entity_appearance_timestamps(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        entity_id: UUID,
+    ) -> list[datetime]:
+        """Get all timestamps when an entity appeared in episodes."""
+        try:
+            result = await self._db.execute(
+                text("""
+                    SELECT e.created_at AS episode_created_at
+                    FROM graph_episode_entities gee
+                    JOIN episodes e
+                        ON e.id = gee.episode_id
+                        AND e.is_deleted = false
+                    WHERE gee.project_id = :project_id
+                      AND gee.entity_id = :entity_id
+                    ORDER BY e.created_at
+                """),
+                {
+                    "project_id": str(project_id),
+                    "entity_id": str(entity_id),
+                },
+            )
+            return [row.episode_created_at for row in result.all()]
+        except Exception as exc:
+            logger.error(
+                "pg_graph.get_entity_appearance_timestamps_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "entity_id": str(entity_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get appearance timestamps for entity {entity_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "entity_id": str(entity_id),
+                },
+            ) from exc
+
+    async def get_relationship_ids_between(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        entity_a_id: UUID,
+        entity_b_id: UUID,
+    ) -> list[UUID]:
+        """Get IDs of direct relationships between two entities (either direction)."""
+        try:
+            result = await self._db.execute(
+                text("""
+                    SELECT id FROM graph_relationships
+                    WHERE project_id = :project_id
+                      AND organization_id = :org_id
+                      AND invalid_at IS NULL
+                      AND ((source_id = :a AND target_id = :b)
+                           OR (source_id = :b AND target_id = :a))
+                    ORDER BY created_at DESC
+                """),
+                {
+                    "project_id": str(project_id),
+                    "org_id": str(org_id),
+                    "a": str(entity_a_id),
+                    "b": str(entity_b_id),
+                },
+            )
+            # asyncpg returns UUID columns as uuid.UUID objects
+            return [row.id for row in result.all()]
+        except Exception as exc:
+            logger.error(
+                "pg_graph.get_relationship_ids_between_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "entity_a_id": str(entity_a_id),
+                    "entity_b_id": str(entity_b_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get relationship IDs between entities: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "entity_a_id": str(entity_a_id),
+                    "entity_b_id": str(entity_b_id),
+                },
+            ) from exc
+
     # ── Internal Helpers ──────────────────────────────────────────────────────
 
     @staticmethod
@@ -1177,5 +2022,34 @@ class PostgresGraphBackend(GraphBackend):
             "confidence": float(row.confidence) if row.confidence is not None else 1.0,
             "valid_from": row.valid_from.isoformat() if row.valid_from else None,
             "valid_to": row.valid_to.isoformat() if row.valid_to else None,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+    @staticmethod
+    def _row_to_observation(row) -> dict:
+        """Convert a DB row to an observation dict matching ``GraphBackend`` spec."""
+        return {
+            "id": str(row.id),
+            "subject_entity_id": str(row.subject_entity_id),
+            "related_entity_id": (
+                str(row.related_entity_id) if row.related_entity_id else None
+            ),
+            "observation_type": row.observation_type,
+            "content": row.content,
+            "confidence": float(row.confidence) if row.confidence is not None else 0.0,
+            "supporting_fact_ids": (
+                [str(fid) for fid in row.supporting_fact_ids]
+                if row.supporting_fact_ids else []
+            ),
+            "supporting_relationship_ids": (
+                [str(rid) for rid in row.supporting_relationship_ids]
+                if row.supporting_relationship_ids else []
+            ),
+            "valid_from": row.valid_from.isoformat() if row.valid_from else None,
+            "valid_to": row.valid_to.isoformat() if row.valid_to else None,
+            "observation_metadata": (
+                dict(row.observation_metadata)
+                if row.observation_metadata else {}
+            ),
             "created_at": row.created_at.isoformat() if row.created_at else None,
         }

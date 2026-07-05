@@ -39,7 +39,11 @@ import orjson
 import structlog
 from falkordb.asyncio import FalkorDB
 
-from core.exceptions import ExternalServiceError, GraphBackendUnavailableError
+from core.exceptions import (
+    ExternalServiceError,
+    GraphBackendUnavailableError,
+    NotFoundError,
+)
 from packages.graph_backend.interface import GraphBackend
 
 logger = structlog.get_logger(__name__)
@@ -59,6 +63,12 @@ _DEFINE_QUERIES: list[str] = [
     "CREATE RANGE INDEX FOR (n:Entity) ON (n.name);",
     # Full-text BM25 index for entity name + summary search
     "CREATE FULLTEXT INDEX FOR (n:Entity) ON (n.name, n.summary) OPTIONS {language: 'english'};",
+    # Range index for episode stub lookup
+    "CREATE RANGE INDEX FOR (n:Episode) ON (n.id);",
+    # Range index for session stub lookup
+    "CREATE RANGE INDEX FOR (n:Session) ON (n.id);",
+    # Range index for observation upsert (MERGE on subject_entity_id + observation_type)
+    "CREATE RANGE INDEX FOR (n:Observation) ON (n.subject_entity_id, n.observation_type);",
 ]
 
 # ── Pagination helpers ────────────────────────────────────────────────────
@@ -105,6 +115,15 @@ _R_CONFIDENCE = 6
 _R_VALID_FROM = 7
 _R_VALID_TO = 8
 _R_CREATED = 9
+
+_O_ID = 0
+_O_SUBJECT_ID = 1
+_O_TYPE = 2
+_O_CONTENT = 3
+_O_CONFIDENCE = 4
+_O_RELATED_ID = 5
+_O_METADATA = 6
+_O_CREATED = 7
 
 
 # ── Backend Implementation ─────────────────────────────────────────────────
@@ -209,6 +228,139 @@ class FalkorGraphBackend(GraphBackend):
             except (orjson.JSONDecodeError, TypeError):
                 pass
         return {}
+
+    async def _ensure_episode_node(
+        self,
+        graph: Any,
+        episode_id: UUID,
+        org_id: UUID,
+        project_id: UUID,
+    ) -> None:
+        """Idempotently create a lightweight ``:Episode`` stub node.
+
+        FalkorDB has no built-in episode concept — episodes live in
+        PostgreSQL.  This stub provides a Cypher-traversable node that
+        links entities to episodes via ``(:Episode)-[:MENTIONS]->(:Entity)``.
+
+        The stub carries ``id``, ``organization_id``, ``project_id``, and
+        ``created_at`` so it can be used as a traversal hop for session-
+        scoped and co-occurrence queries.
+        """
+        try:
+            await graph.query(
+                """
+                MERGE (ep:Episode {id: $episode_id})
+                ON CREATE SET
+                    ep.organization_id = $org_id,
+                    ep.project_id = $project_id,
+                    ep.created_at = $now
+                """,
+                {
+                    "episode_id": str(episode_id),
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "now": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.ensure_episode_failed",
+                extra={
+                    "episode_id": str(episode_id),
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to ensure episode node {episode_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "episode_id": str(episode_id),
+                },
+            ) from exc
+
+    async def _ensure_session_node(
+        self,
+        graph: Any,
+        session_id: UUID,
+        org_id: UUID,
+        project_id: UUID,
+    ) -> None:
+        """Idempotently create a lightweight ``:Session`` stub node.
+
+        Same rationale as ``_ensure_episode_node`` — sessions live in
+        PostgreSQL, but a stub node is needed so that
+        ``get_entities_for_session`` can traverse
+        ``(:Session)-[:HAS_EPISODE]->(:Episode)-[:MENTIONS]->(:Entity)``.
+        """
+        try:
+            await graph.query(
+                """
+                MERGE (s:Session {id: $session_id})
+                ON CREATE SET
+                    s.organization_id = $org_id,
+                    s.project_id = $project_id,
+                    s.created_at = $now
+                """,
+                {
+                    "session_id": str(session_id),
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "now": datetime.now(timezone.utc).isoformat(),
+                },
+            )
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.ensure_session_failed",
+                extra={
+                    "session_id": str(session_id),
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to ensure session node {session_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "session_id": str(session_id),
+                },
+            ) from exc
+
+    @staticmethod
+    def _row_to_observation(row: Sequence[Any]) -> dict:
+        """Convert a result tuple to an observation dict.
+
+        Expected column order: ``id, subject_entity_id, observation_type,
+        content, confidence, related_entity_id, observation_metadata,
+        created_at``.
+        """
+        return {
+            "id": str(row[_O_ID]) if row[_O_ID] else "",
+            "subject_entity_id": str(row[_O_SUBJECT_ID]) if row[_O_SUBJECT_ID] else "",
+            "observation_type": str(row[_O_TYPE]) if row[_O_TYPE] else "",
+            "content": str(row[_O_CONTENT]) if row[_O_CONTENT] else "",
+            "confidence": (
+                float(row[_O_CONFIDENCE])
+                if len(row) > _O_CONFIDENCE and row[_O_CONFIDENCE] is not None
+                else 0.0
+            ),
+            "related_entity_id": (
+                str(row[_O_RELATED_ID]) if len(row) > _O_RELATED_ID and row[_O_RELATED_ID] else None
+            ),
+            "observation_metadata": (
+                FalkorGraphBackend._parse_json_field(row[_O_METADATA])
+                if len(row) > _O_METADATA
+                else {}
+            ),
+            "created_at": (
+                row[_O_CREATED].isoformat()
+                if len(row) > _O_CREATED
+                and hasattr(row[_O_CREATED], "isoformat")
+                else str(row[_O_CREATED]) if len(row) > _O_CREATED and row[_O_CREATED] else None
+            ),
+        }
 
     # ── Row → dict converters ─────────────────────────────────────────────
 
@@ -481,19 +633,38 @@ class FalkorGraphBackend(GraphBackend):
         org_id: UUID,
         project_id: UUID,
         entity_id: UUID,
+        *,
         name: str | None = None,
-        summary: str | None = None,
         entity_type: str | None = None,
-        attributes: dict | None = None,
-    ) -> dict | None:
+        summary: str | None = None,
+    ) -> dict[str, Any]:
         """Update entity fields.  Only provided fields are changed.
 
         Builds a dynamic ``SET`` clause with only the non-``None`` fields.
-        Returns the updated entity dict, or ``None`` if not found.
+        Raises ``NotFoundError`` if the entity does not exist.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            entity_id: UUID of the entity to update.
+            name: New name, or ``None`` to leave unchanged.
+            entity_type: New type label, or ``None`` to leave unchanged.
+            summary: New summary text, or ``None`` to leave unchanged.
+
+        Returns:
+            The updated entity dict including ``id``, ``name``, ``entity_type``,
+            ``summary``, and ``updated_at`` keys.
+
+        Raises:
+            NotFoundError: If no entity with the given ID exists.
+            ExternalServiceError: If the query fails.
         """
         graph = self._get_graph(org_id, project_id)
         if graph is None:
-            return None
+            raise ExternalServiceError(
+                message="FalkorDB not connected",
+                detail={"reason": "client is None"},
+            )
 
         set_parts: list[str] = []
         params: dict[str, object] = {"id": str(entity_id)}
@@ -501,18 +672,21 @@ class FalkorGraphBackend(GraphBackend):
         if name is not None:
             params["name"] = name.lower().strip()
             set_parts.append("n.name = $name")
-        if summary is not None:
-            params["summary"] = summary
-            set_parts.append("n.summary = $summary")
         if entity_type is not None:
             params["entity_type"] = entity_type
             set_parts.append("n.entity_type = $entity_type")
-        if attributes is not None:
-            params["attributes"] = orjson.dumps(attributes).decode("utf-8")
-            set_parts.append("n.attributes = $attributes")
+        if summary is not None:
+            params["summary"] = summary
+            set_parts.append("n.summary = $summary")
 
         if not set_parts:
-            return await self.get_entity(org_id, project_id, entity_id)
+            existing = await self.get_entity(org_id, project_id, entity_id)
+            if existing is None:
+                raise NotFoundError(
+                    message=f"Entity {entity_id} not found for update",
+                    detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                )
+            return existing
 
         set_clause = ", ".join(set_parts)
         params["now"] = datetime.now(timezone.utc).isoformat()
@@ -527,8 +701,13 @@ class FalkorGraphBackend(GraphBackend):
                 params,
             )
             if not result.result_set:
-                return None
+                raise NotFoundError(
+                    message=f"Entity {entity_id} not found for update",
+                    detail={"org_id": str(org_id), "entity_id": str(entity_id)},
+                )
             return self._row_to_entity(result.result_set[0])
+        except NotFoundError:
+            raise
         except Exception as exc:
             logger.error(
                 "falkordb_graph.update_entity_failed",
@@ -1270,3 +1449,1126 @@ class FalkorGraphBackend(GraphBackend):
             return True
         except Exception:
             return False
+
+    # ── Group A: Entity–Episode Linking ─────────────────────────────────────
+
+    async def link_entity_to_episode(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        episode_id: UUID,
+        entity_id: UUID,
+    ) -> None:
+        """Record that an entity appears in an episode via a stub ``:Episode`` node.
+
+        Idempotent — uses ``MERGE`` for both the episode stub and the
+        ``(:Episode)-[:MENTIONS]->(:Entity)`` edge.
+
+        Raises:
+            NotFoundError: If the entity does not exist in the graph.
+            ExternalServiceError: If the query fails.
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            raise ExternalServiceError(
+                message="FalkorDB not connected",
+                detail={"reason": "client is None"},
+            )
+
+        # Verify entity exists first
+        entity = await self.get_entity(org_id, project_id, entity_id)
+        if entity is None:
+            raise NotFoundError(
+                message=f"Entity {entity_id} not found for episode linking",
+                detail={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "entity_id": str(entity_id),
+                },
+            )
+
+        await self._ensure_episode_node(graph, episode_id, org_id, project_id)
+
+        try:
+            await graph.query(
+                """
+                MATCH (ep:Episode {id: $episode_id})
+                MATCH (en:Entity {id: $entity_id})
+                MERGE (ep)-[:MENTIONS]->(en)
+                """,
+                {
+                    "episode_id": str(episode_id),
+                    "entity_id": str(entity_id),
+                },
+            )
+            logger.info(
+                "falkordb_graph.entity_linked_to_episode",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "episode_id": str(episode_id),
+                    "entity_id": str(entity_id),
+                },
+            )
+        except NotFoundError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.link_entity_to_episode_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "episode_id": str(episode_id),
+                    "entity_id": str(entity_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to link entity {entity_id} to episode {episode_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "episode_id": str(episode_id),
+                    "entity_id": str(entity_id),
+                },
+            ) from exc
+
+    async def get_entities_for_session(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        session_id: UUID,
+    ) -> list[dict[str, Any]]:
+        """Return all distinct graph entities linked to episodes in a session.
+
+        Traverses ``(:Session)-[:HAS_EPISODE]->(:Episode)-[:MENTIONS]->(:Entity)``.
+        Requires ``:Session`` and ``:HAS_EPISODE`` edges to be created
+        externally (e.g. when episodes are assigned to sessions in the
+        calling service).
+
+        Returns:
+            List of entity dicts with ``id``, ``name``, ``entity_type``,
+            ``summary`` keys.
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            return []
+
+        try:
+            result = await graph.query(
+                """
+                MATCH (s:Session {id: $session_id})
+                  -[:HAS_EPISODE]->(ep:Episode)
+                  -[:MENTIONS]->(en:Entity)
+                RETURN DISTINCT
+                    en.id, en.name, en.entity_type, en.summary,
+                    en.attributes, en.created_at
+                """,
+                {"session_id": str(session_id)},
+            )
+            return [self._row_to_entity(row) for row in result.result_set]
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.get_entities_for_session_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "session_id": str(session_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get entities for session {session_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "session_id": str(session_id),
+                },
+            ) from exc
+
+    async def get_co_occurring_entity_pairs(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        min_co_count: int = 2,
+    ) -> list[dict[str, Any]]:
+        """Find entity pairs that co-appear in episodes above a threshold.
+
+        Uses the ``(:Episode)-[:MENTIONS]->(:Entity)`` pattern: two entities
+        co-occur when they share a common episode.  Results are sorted by
+        co-occurrence count descending.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            min_co_count: Minimum number of shared episodes. Defaults to 2.
+
+        Returns:
+            List of dicts with ``entity_a_id``, ``entity_a_name``,
+            ``entity_b_id``, ``entity_b_name``, ``co_count``.
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            return []
+
+        try:
+            result = await graph.query(
+                """
+                MATCH (a:Entity)<-[:MENTIONS]-(ep:Episode)-[:MENTIONS]->(b:Entity)
+                WHERE a.id < b.id
+                  AND a.organization_id = $org_id
+                  AND a.project_id = $project_id
+                  AND b.organization_id = $org_id
+                  AND b.project_id = $project_id
+                WITH a, b, count(ep) AS co_count
+                WHERE co_count >= $min_co_count
+                RETURN a.id AS entity_a_id, a.name AS entity_a_name,
+                       b.id AS entity_b_id, b.name AS entity_b_name,
+                       co_count
+                ORDER BY co_count DESC
+                """,
+                {
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "min_co_count": min_co_count,
+                },
+            )
+            pairs = []
+            for row in result.result_set:
+                pairs.append({
+                    "entity_a_id": str(row[0]) if row[0] else "",
+                    "entity_a_name": str(row[1]) if row[1] else "",
+                    "entity_b_id": str(row[2]) if row[2] else "",
+                    "entity_b_name": str(row[3]) if row[3] else "",
+                    "co_count": int(row[4]) if len(row) > 4 and row[4] is not None else 0,
+                })
+            return pairs
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.get_co_occurring_entity_pairs_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "min_co_count": min_co_count,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message="Failed to get co-occurring entity pairs",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+    # ── Group B: Bulk / Merge Operations ────────────────────────────────────
+
+    async def get_all_entities(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        *,
+        include_merged: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Return ALL entities for a project (no pagination).
+
+        WARNING: Intended for batch workers (merge dedup, community
+        detection).  Do NOT expose via API — no limit means it can return
+        millions of rows.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            include_merged: If ``True``, include soft-deleted (merged)
+                entities.  Defaults to ``False``.
+
+        Returns:
+            A complete list of entity dicts for the project.  Each dict
+            includes ``id``, ``name``, ``entity_type``, ``summary``,
+            ``is_merged``, and ``created_at``.
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            return []
+
+        try:
+            result = await graph.query(
+                """
+                MATCH (n:Entity {organization_id: $org_id, project_id: $project_id})
+                WHERE $include_merged = true
+                   OR n.is_merged IS NULL
+                   OR n.is_merged = false
+                RETURN n.id, n.name, n.entity_type, n.summary,
+                       n.attributes, n.created_at, n.is_merged
+                ORDER BY n.name
+                """,
+                {
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "include_merged": include_merged,
+                },
+            )
+            entities = []
+            for row in result.result_set:
+                entity = self._row_to_entity(row[:6])
+                entity["is_merged"] = (
+                    bool(row[6]) if len(row) > 6 and row[6] is not None else False
+                )
+                entities.append(entity)
+            return entities
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.get_all_entities_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message="Failed to get all entities",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+    async def get_all_relationships(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+    ) -> list[dict[str, Any]]:
+        """Return ALL active relationships for a project (no pagination).
+
+        Same warning as :meth:`get_all_entities` — batch use only.
+        Only non-expired (``invalid_at IS NULL``) relationships are returned.
+
+        Returns:
+            A complete list of relationship dicts.  Each dict includes
+            ``id``, ``source_id``, ``target_id``, ``relationship_type``,
+            ``confidence``, and ``created_at``.
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            return []
+
+        try:
+            result = await graph.query(
+                """
+                MATCH (s:Entity {organization_id: $org_id, project_id: $project_id})
+                  -[r]->(t:Entity)
+                WHERE (s.is_merged IS NULL OR s.is_merged = false)
+                  AND r.invalid_at IS NULL
+                RETURN r.id, r.source_id, r.target_id, type(r) AS rel_type,
+                       r.properties, r.fact, r.confidence,
+                       r.valid_from, r.valid_to, r.created_at
+                """,
+                {
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                },
+            )
+            rels = []
+            for row in result.result_set:
+                rel = self._row_to_relationship(row)
+                # Map internal 'type' key to ABC-expected 'relationship_type'
+                rel["relationship_type"] = rel.pop("type", "")
+                rels.append(rel)
+            return rels
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.get_all_relationships_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message="Failed to get all relationships",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+    async def bulk_search_entities(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        query: str,
+        *,
+        fuzzy_threshold: float = 0.3,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Search entities using BM25 full-text search for dedup detection.
+
+        FalkorDB uses RediSearch-backed fulltext index (BM25 scoring).
+        The ``fuzzy_threshold`` is applied as a minimum score filter.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            query: Search string to match against entity names/summaries.
+            fuzzy_threshold: Minimum BM25 score threshold (0.0–1.0).  Note
+                that FalkorDB/RediSearch BM25 scores are not normalised to
+                0–1 — this threshold acts as a semantic filter; lower values
+                are more permissive.
+            limit: Maximum results to return.  Defaults to 50.
+
+        Returns:
+            List of entity dicts with an added ``score`` key (float).
+            Sorted by descending score.
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            return []
+
+        try:
+            result = await graph.query(
+                """
+                CALL db.idx.fulltext.queryNodes('Entity', $query) YIELD node, score
+                WHERE score >= $threshold
+                  AND node.organization_id = $org_id
+                  AND node.project_id = $project_id
+                RETURN node.id, node.name, node.entity_type, node.summary,
+                       node.attributes, node.created_at, score
+                ORDER BY score DESC
+                LIMIT $limit
+                """,
+                {
+                    "query": query,
+                    "threshold": fuzzy_threshold,
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "limit": limit,
+                },
+            )
+            entities = []
+            for row in result.result_set:
+                entity = self._row_to_entity(row[:6])
+                entity["score"] = (
+                    float(row[6]) if len(row) > 6 and row[6] is not None else 0.0
+                )
+                entities.append(entity)
+            return entities
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.bulk_search_entities_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "query": query,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Bulk entity search failed: {exc}",
+                detail={"org_id": str(org_id), "query": query},
+            ) from exc
+
+    async def merge_entities(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        canonical_id: UUID,
+        merged_ids: list[UUID],
+    ) -> dict[str, Any]:
+        """Merge duplicate entities: rewire edges to canonical, soft-delete merged.
+
+        STRICT ATOMICITY CONTRACT: FalkorDB executes each rewiring step as
+        an atomic ``graph.query()``.  However, because dynamic edge types
+        prevent a single all-in-one Cypher statement, this method submits
+        one query per distinct edge type plus a final soft-delete query.
+        If a step fails mid-way, partial state may be visible — callers
+        should implement retry logic (the operation is idempotent).
+
+        Steps:
+        1. Verify that all entities (canonical + merged) exist.
+        2. Collect distinct relationship types connected to merged entities.
+        3. For each type, rewire incoming edges → canonical.
+        4. For each type, rewire outgoing edges → canonical.
+        5. Soft-delete merged entities (``is_merged = true``).
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            canonical_id: UUID of the surviving entity.
+            merged_ids: UUIDs of entities being absorbed.
+
+        Returns:
+            Dict with ``rewired_count`` (int), ``deleted_count`` (int, always
+            0 for FalkorDB — MERGE deduplicates), ``merged_count`` (int).
+
+        Raises:
+            NotFoundError: If canonical or any merged entity does not exist.
+            ExternalServiceError: If a query fails.
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            raise ExternalServiceError(
+                message="FalkorDB not connected",
+                detail={"reason": "client is None"},
+            )
+
+        canonical_str = str(canonical_id)
+        merged_strs = [str(mid) for mid in merged_ids]
+        all_ids = [canonical_str] + merged_strs
+
+        # Step 1: Verify all entities exist
+        try:
+            check_result = await graph.query(
+                """
+                UNWIND $ids AS eid
+                MATCH (n:Entity {id: eid})
+                RETURN collect(n.id) AS found
+                """,
+                {"ids": all_ids},
+            )
+            found_ids: list[str] = (
+                list(check_result.result_set[0][0])
+                if check_result.result_set
+                else []
+            )
+            missing = [eid for eid in all_ids if eid not in found_ids]
+            if missing:
+                raise NotFoundError(
+                    message=f"Entities not found: {missing}",
+                    detail={
+                        "org_id": str(org_id),
+                        "canonical_id": canonical_str,
+                        "missing_ids": missing,
+                    },
+                )
+        except NotFoundError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.merge_entities.verification_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "canonical_id": canonical_str,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Entity verification failed during merge: {exc}",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+        # Step 2: Collect distinct edge types connected to merged entities
+        try:
+            type_result = await graph.query(
+                """
+                MATCH (m:Entity) WHERE m.id IN $merged_ids
+                MATCH (m)-[r]-(connected:Entity)
+                WHERE connected.id <> $canonical_id
+                  AND r.invalid_at IS NULL
+                RETURN collect(DISTINCT type(r)) AS rel_types
+                """,
+                {
+                    "merged_ids": merged_strs,
+                    "canonical_id": canonical_str,
+                },
+            )
+            distinct_types: list[str] = (
+                list(type_result.result_set[0][0])
+                if type_result.result_set and type_result.result_set[0][0]
+                else []
+            )
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.merge_entities.type_collection_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "canonical_id": canonical_str,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to collect relationship types during merge: {exc}",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+        now_str = datetime.now(timezone.utc).isoformat()
+        rewired_count = 0
+
+        # Step 3 & 4: Rewire each edge type (incoming + outgoing)
+        for rel_type in distinct_types:
+            safe_type = self._sanitize_edge_type(rel_type)
+
+            # Incoming rewiring — edges pointing TO merged entities
+            try:
+                inc_result = await graph.query(
+                    f"""
+                    MATCH (m:Entity) WHERE m.id IN $merged_ids
+                    MATCH (s:Entity)-[r:{safe_type}]->(m)
+                    WHERE s.id <> $canonical_id
+                      AND r.invalid_at IS NULL
+                    MATCH (canon:Entity {{id: $canonical_id}})
+                    MERGE (s)-[nr:{safe_type}]->(canon)
+                    ON CREATE SET
+                        nr.id = r.id,
+                        nr.source_id = r.source_id,
+                        nr.target_id = $canonical_id,
+                        nr.properties = r.properties,
+                        nr.fact = r.fact,
+                        nr.confidence = r.confidence,
+                        nr.valid_from = r.valid_from,
+                        nr.valid_to = r.valid_to,
+                        nr.created_at = r.created_at,
+                        nr.updated_at = $now,
+                        nr.organization_id = r.organization_id,
+                        nr.project_id = r.project_id,
+                        nr.invalid_at = NULL
+                    WITH r
+                    DELETE r
+                    """,
+                    {
+                        "merged_ids": merged_strs,
+                        "canonical_id": canonical_str,
+                        "now": now_str,
+                    },
+                )
+                rewired_count += len(inc_result.result_set) if inc_result.result_set else 0
+            except Exception as exc:
+                logger.error(
+                    "falkordb_graph.merge_entities.incoming_rewire_failed",
+                    extra={
+                        "rel_type": rel_type,
+                        "canonical_id": canonical_str,
+                        "error": str(exc),
+                    },
+                )
+                raise ExternalServiceError(
+                    message=f"Failed to rewire incoming '{rel_type}' edges during merge: {exc}",
+                    detail={"org_id": str(org_id), "rel_type": rel_type},
+                ) from exc
+
+            # Outgoing rewiring — edges FROM merged entities
+            try:
+                out_result = await graph.query(
+                    f"""
+                    MATCH (m:Entity) WHERE m.id IN $merged_ids
+                    MATCH (m)-[r:{safe_type}]->(t:Entity)
+                    WHERE t.id <> $canonical_id
+                      AND r.invalid_at IS NULL
+                    MATCH (canon:Entity {{id: $canonical_id}})
+                    MERGE (canon)-[nr:{safe_type}]->(t)
+                    ON CREATE SET
+                        nr.id = r.id,
+                        nr.source_id = $canonical_id,
+                        nr.target_id = r.target_id,
+                        nr.properties = r.properties,
+                        nr.fact = r.fact,
+                        nr.confidence = r.confidence,
+                        nr.valid_from = r.valid_from,
+                        nr.valid_to = r.valid_to,
+                        nr.created_at = r.created_at,
+                        nr.updated_at = $now,
+                        nr.organization_id = r.organization_id,
+                        nr.project_id = r.project_id,
+                        nr.invalid_at = NULL
+                    WITH r
+                    DELETE r
+                    """,
+                    {
+                        "merged_ids": merged_strs,
+                        "canonical_id": canonical_str,
+                        "now": now_str,
+                    },
+                )
+                rewired_count += len(out_result.result_set) if out_result.result_set else 0
+            except Exception as exc:
+                logger.error(
+                    "falkordb_graph.merge_entities.outgoing_rewire_failed",
+                    extra={
+                        "rel_type": rel_type,
+                        "canonical_id": canonical_str,
+                        "error": str(exc),
+                    },
+                )
+                raise ExternalServiceError(
+                    message=f"Failed to rewire outgoing '{rel_type}' edges during merge: {exc}",
+                    detail={"org_id": str(org_id), "rel_type": rel_type},
+                ) from exc
+
+        # Step 5: Soft-delete merged entities
+        try:
+            soft_delete_result = await graph.query(
+                """
+                MATCH (m:Entity) WHERE m.id IN $merged_ids
+                SET m.is_merged = true, m.merged_into = $canonical_id
+                RETURN count(m) AS merged_count
+                """,
+                {
+                    "merged_ids": merged_strs,
+                    "canonical_id": canonical_str,
+                },
+            )
+            merged_count = (
+                int(soft_delete_result.result_set[0][0])
+                if soft_delete_result.result_set
+                else 0
+            )
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.merge_entities.soft_delete_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "canonical_id": canonical_str,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to soft-delete merged entities: {exc}",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+        logger.info(
+            "falkordb_graph.entities_merged",
+            extra={
+                "org_id": str(org_id),
+                "project_id": str(project_id),
+                "canonical_id": canonical_str,
+                "merged_ids": merged_strs,
+                "rewired_count": rewired_count,
+                "merged_count": merged_count,
+            },
+        )
+
+        return {
+            "rewired_count": rewired_count,
+            "deleted_count": 0,
+            "merged_count": merged_count,
+        }
+
+    async def create_relationship_bulk(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        relationships: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Batch-create multiple relationships in a single transaction.
+
+        Each dict in ``relationships`` must have ``source_id``, ``target_id``,
+        and ``relationship_type``.  Optional keys: ``confidence``,
+        ``properties``, ``valid_from``, ``valid_to``.
+
+        Uses one ``graph.query()`` call per relationship (since each may
+        have a different edge type).  The caller should ensure the list is
+        not excessively large.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            relationships: List of relationship descriptor dicts.
+
+        Returns:
+            List of created relationship dicts in the same order as the input.
+
+        Raises:
+            ValueError: If any input dict is missing required keys.
+            ExternalServiceError: If any query fails.
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            raise ExternalServiceError(
+                message="FalkorDB not connected",
+                detail={"reason": "client is None"},
+            )
+
+        results: list[dict[str, Any]] = []
+        for i, rel in enumerate(relationships):
+            source_id = rel.get("source_id")
+            target_id = rel.get("target_id")
+            rel_type = rel.get("relationship_type")
+
+            if not source_id or not target_id or not rel_type:
+                raise ValueError(
+                    f"Relationship at index {i} is missing required key(s): "
+                    "'source_id', 'target_id', 'relationship_type'. "
+                    f"Got keys: {list(rel.keys())}"
+                )
+
+            created = await self.create_relationship(
+                org_id=org_id,
+                project_id=project_id,
+                source_id=UUID(source_id) if isinstance(source_id, str) else source_id,
+                target_id=UUID(target_id) if isinstance(target_id, str) else target_id,
+                relationship_type=rel_type,
+                properties=rel.get("properties"),
+                confidence=rel.get("confidence"),
+                valid_from=rel.get("valid_from"),
+                valid_to=rel.get("valid_to"),
+            )
+            results.append(created)
+
+        return results
+
+    # ── Group C: Observations ───────────────────────────────────────────────
+
+    async def upsert_observation(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        subject_entity_id: UUID,
+        observation_type: str,
+        content: str,
+        confidence: float,
+        *,
+        related_entity_id: UUID | None = None,
+        supporting_fact_ids: list[UUID] | None = None,
+        supporting_relationship_ids: list[UUID] | None = None,
+        valid_from: datetime | None = None,
+        valid_to: datetime | None = None,
+        observation_metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Create or update a graph-topology observation.
+
+        Upsert uniqueness is determined by the triple
+        ``(subject_entity_id, observation_type, related_entity_id)``.
+        When ``related_entity_id`` is ``None``, a sentinel value
+        (``00000000-0000-0000-0000-000000000000``) is used as the
+        discriminator.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            subject_entity_id: The entity this observation is about.
+            observation_type: Semantic type label.
+            content: Human-readable description.
+            confidence: Confidence score 0.0–1.0.
+            related_entity_id: Optional secondary entity involved.
+            supporting_fact_ids: Optional list of supporting fact UUIDs.
+            supporting_relationship_ids: Optional list of supporting
+                relationship UUIDs.
+            valid_from: Optional temporal validity start.
+            valid_to: Optional temporal validity end.
+            observation_metadata: Optional arbitrary key-value metadata.
+
+        Returns:
+            The created or updated observation dict.
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            raise ExternalServiceError(
+                message="FalkorDB not connected",
+                detail={"reason": "client is None"},
+            )
+
+        # Use sentinel for None related_entity_id so MERGE works as unique key
+        related_discriminator = (
+            str(related_entity_id)
+            if related_entity_id is not None
+            else "00000000-0000-0000-0000-000000000000"
+        )
+
+        obs_id = str(uuid4())
+        now_str = datetime.now(timezone.utc).isoformat()
+
+        supporting_fact_strs: list[str] = (
+            [str(fid) for fid in supporting_fact_ids]
+            if supporting_fact_ids
+            else []
+        )
+        supporting_rel_strs: list[str] = (
+            [str(rid) for rid in supporting_relationship_ids]
+            if supporting_relationship_ids
+            else []
+        )
+
+        try:
+            result = await graph.query(
+                """
+                MERGE (o:Observation {
+                    subject_entity_id: $subject_id,
+                    observation_type: $type,
+                    related_entity_id: $related_id
+                })
+                ON CREATE SET
+                    o.id = $obs_id,
+                    o.organization_id = $org_id,
+                    o.project_id = $project_id,
+                    o.content = $content,
+                    o.confidence = $confidence,
+                    o.supporting_fact_ids = $supporting_fact_ids,
+                    o.supporting_relationship_ids = $supporting_rel_ids,
+                    o.observation_metadata = $metadata,
+                    o.valid_from = $valid_from,
+                    o.valid_to = $valid_to,
+                    o.created_at = $now,
+                    o.updated_at = $now
+                ON MATCH SET
+                    o.content = $content,
+                    o.confidence = $confidence,
+                    o.supporting_fact_ids = $supporting_fact_ids,
+                    o.supporting_relationship_ids = $supporting_rel_ids,
+                    o.observation_metadata = $metadata,
+                    o.valid_from = CASE WHEN $valid_from IS NOT NULL
+                        THEN $valid_from ELSE o.valid_from END,
+                    o.valid_to = CASE WHEN $valid_to IS NOT NULL
+                        THEN $valid_to ELSE o.valid_to END,
+                    o.updated_at = $now
+                RETURN o.id, o.subject_entity_id, o.observation_type,
+                       o.content, o.confidence, o.related_entity_id,
+                       o.observation_metadata, o.created_at
+                """,
+                {
+                    "subject_id": str(subject_entity_id),
+                    "type": observation_type,
+                    "related_id": related_discriminator,
+                    "obs_id": obs_id,
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "content": content,
+                    "confidence": confidence,
+                    "supporting_fact_ids": orjson.dumps(supporting_fact_strs).decode("utf-8"),
+                    "supporting_rel_ids": orjson.dumps(supporting_rel_strs).decode("utf-8"),
+                    "metadata": orjson.dumps(
+                        observation_metadata if observation_metadata is not None else {}
+                    ).decode("utf-8"),
+                    "valid_from": valid_from.isoformat() if valid_from else None,
+                    "valid_to": valid_to.isoformat() if valid_to else None,
+                    "now": now_str,
+                },
+            )
+            row = result.result_set[0]
+            observation = self._row_to_observation(row)
+
+            logger.info(
+                "falkordb_graph.observation_upserted",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "observation_id": observation["id"],
+                    "subject_entity_id": str(subject_entity_id),
+                    "observation_type": observation_type,
+                },
+            )
+            return observation
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.upsert_observation_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "subject_entity_id": str(subject_entity_id),
+                    "observation_type": observation_type,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to upsert observation for entity {subject_entity_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "subject_entity_id": str(subject_entity_id),
+                },
+            ) from exc
+
+    async def get_observations(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        *,
+        subject_entity_id: UUID | None = None,
+        observation_type: str | None = None,
+        limit: int = 50,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """List observations with optional filters and offset pagination.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            subject_entity_id: Optional filter — only observations about
+                this entity.
+            observation_type: Optional filter — only observations of
+                this type.
+            limit: Maximum results per page (max 200).
+            cursor: Base64-encoded offset cursor.
+
+        Returns:
+            A dict with ``items``, ``next_cursor`` (str or None), and
+            ``has_more`` (bool).
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            return {"items": [], "next_cursor": None, "has_more": False}
+
+        limit = min(limit, 200)
+        offset = _decode_offset_cursor(cursor)
+
+        params: dict[str, object] = {
+            "org_id": str(org_id),
+            "project_id": str(project_id),
+        }
+        subject_filter = "$org_id = $org_id"
+        type_filter = "$org_id = $org_id"
+
+        if subject_entity_id is not None:
+            subject_filter = "o.subject_entity_id = $subject_id"
+            params["subject_id"] = str(subject_entity_id)
+        if observation_type is not None:
+            type_filter = "o.observation_type = $type"
+            params["type"] = observation_type
+
+        try:
+            result = await graph.query(
+                f"""
+                MATCH (o:Observation)
+                WHERE o.organization_id = $org_id
+                  AND o.project_id = $project_id
+                  AND {subject_filter}
+                  AND {type_filter}
+                RETURN o.id, o.subject_entity_id, o.observation_type,
+                       o.content, o.confidence, o.related_entity_id,
+                       o.observation_metadata, o.created_at
+                ORDER BY o.created_at DESC
+                LIMIT {limit + 1}
+                """,
+                params,
+            )
+            rows = result.result_set
+            has_more = len(rows) > limit
+            items = [self._row_to_observation(r) for r in rows[:limit]]
+
+            next_cursor = None
+            if has_more and items:
+                next_cursor = _encode_offset_cursor(offset + len(items))
+
+            return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.get_observations_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "subject_entity_id": (
+                        str(subject_entity_id) if subject_entity_id else None
+                    ),
+                    "observation_type": observation_type,
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message="Failed to get observations",
+                detail={"org_id": str(org_id)},
+            ) from exc
+
+    async def get_entity_appearance_timestamps(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        entity_id: UUID,
+    ) -> list[datetime]:
+        """Get all timestamps when an entity appeared in episodes.
+
+        Queries the graph via ``(:Episode)-[:MENTIONS]->(:Entity)``.
+        Episode timestamps reflect when the stub node was first created
+        (i.e. when the entity was first linked to that episode).
+
+        Returns:
+            Sorted list of episode timestamps (oldest first).
+            Empty list if the entity has no linked episodes.
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            return []
+
+        try:
+            result = await graph.query(
+                """
+                MATCH (ep:Episode)-[:MENTIONS]->(en:Entity {id: $entity_id})
+                WHERE en.project_id = $project_id
+                RETURN ep.created_at
+                ORDER BY ep.created_at ASC
+                """,
+                {
+                    "entity_id": str(entity_id),
+                    "project_id": str(project_id),
+                },
+            )
+            timestamps: list[datetime] = []
+            for row in result.result_set:
+                ts = row[0]
+                if ts is not None:
+                    if isinstance(ts, datetime):
+                        timestamps.append(ts)
+                    elif isinstance(ts, str):
+                        try:
+                            timestamps.append(datetime.fromisoformat(ts))
+                        except (ValueError, TypeError):
+                            timestamps.append(datetime.now(timezone.utc))
+                    else:
+                        timestamps.append(datetime.now(timezone.utc))
+            return timestamps
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.get_entity_appearance_timestamps_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "entity_id": str(entity_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get appearance timestamps for entity {entity_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "entity_id": str(entity_id),
+                },
+            ) from exc
+
+    async def get_relationship_ids_between(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        entity_a_id: UUID,
+        entity_b_id: UUID,
+    ) -> list[UUID]:
+        """Get IDs of direct relationships between two entities.
+
+        Returns IDs for non-expired relationships in both directions.
+
+        Returns:
+            List of relationship UUIDs connecting the two entities.
+            Empty list if no direct relationship exists.
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            return []
+
+        try:
+            result = await graph.query(
+                """
+                MATCH (a:Entity {id: $entity_a_id})-[r]-(b:Entity {id: $entity_b_id})
+                WHERE r.invalid_at IS NULL
+                RETURN r.id
+                """,
+                {
+                    "entity_a_id": str(entity_a_id),
+                    "entity_b_id": str(entity_b_id),
+                },
+            )
+            rel_ids: list[UUID] = []
+            for row in result.result_set:
+                rid = row[0]
+                if rid is not None:
+                    try:
+                        rel_ids.append(UUID(str(rid)))
+                    except (ValueError, TypeError):
+                        logger.warning(
+                            "falkordb_graph.invalid_relationship_id",
+                            extra={"relationship_id": rid},
+                        )
+            return rel_ids
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.get_relationship_ids_between_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "entity_a_id": str(entity_a_id),
+                    "entity_b_id": str(entity_b_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get relationship IDs between {entity_a_id} and {entity_b_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "entity_a_id": str(entity_a_id),
+                    "entity_b_id": str(entity_b_id),
+                },
+            ) from exc

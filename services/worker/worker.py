@@ -420,10 +420,56 @@ async def main() -> NoReturn:
     )
     db_session_factory = get_async_session(db_engine)
 
+    # ── Graph backend dispatcher ──────────────────────────────────────────
+    # Single app-level registry of backend classes.  Per-org resolution
+    # happens inside worker tasks via resolve_graph_backend().
+    from core.graph_backend import init_dispatcher
+
+    dispatcher = init_dispatcher()
+
+    # ── SurrealDB per-org connection pool ────────────────────────────────
+    # Created once per worker process, caches per-org AsyncSurreal
+    # connections lazily.  SurrealDB is optional — the pool handles missing
+    # URLs gracefully by raising GraphBackendUnavailableError.
+    from core.surreal_pool import SurrealConnectionPool
+
+    surreal_pool = SurrealConnectionPool()
+
+    # ── FalkorDB client ──────────────────────────────────────────────────
+    # Single app-level connection pool shared across all worker tasks.
+    # FalkorDB is optional — only used when the per-org config selects it.
+    falkordb_client: FalkorDB | None = None  # type: ignore[name-defined]
+    try:
+        from falkordb.asyncio import FalkorDB
+        from redis.asyncio import BlockingConnectionPool
+
+        falkordb_pool = BlockingConnectionPool.from_url(
+            settings.FALKORDB_URL,
+            max_connections=settings.FALKORDB_MAX_CONNECTIONS,
+            socket_timeout=settings.FALKORDB_SOCKET_TIMEOUT,
+            socket_keepalive=True,
+            decode_responses=True,
+        )
+        falkordb_client = FalkorDB(connection_pool=falkordb_pool)
+        logger.info(
+            "falkordb_pool.initialised",
+            url=settings.FALKORDB_URL,
+            max_connections=settings.FALKORDB_MAX_CONNECTIONS,
+        )
+    except Exception:
+        logger.warning(
+            "falkordb_pool.init_failed",
+            exc_info=True,
+            message="FalkorDB is unavailable — graph backend will fall back to Postgres.",
+        )
+
     # Build the shared context dict passed to all ARQ tasks.
     worker_ctx: dict[str, Any] = {
         "db_engine": db_engine,
         "db_session_factory": db_session_factory,
+        "graph_backend_dispatcher": dispatcher,
+        "surreal_connection_pool": surreal_pool,
+        "falkordb_client": falkordb_client,
     }
 
     logger.info(
@@ -539,6 +585,15 @@ async def main() -> NoReturn:
         logger.info("worker.run_cancelled")
         raise
     finally:
+        # Shutdown graph backends (reverse order of initialisation)
+        if falkordb_client is not None:
+            try:
+                await falkordb_client.aclose()
+                logger.debug("worker.falkordb_client_closed")
+            except Exception:
+                logger.warning("worker.falkordb_close_failed", exc_info=True)
+        await surreal_pool.close_all()
+        logger.debug("worker.surreal_pool_closed")
         await db_engine.dispose()
         logger.debug("worker.db_engine_disposed")
         monitor_task.cancel()

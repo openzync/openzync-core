@@ -35,6 +35,7 @@ async def generate_user_summary(
     ctx: object,
     org_id: str,
     user_id: str,
+    project_id: str | None = None,
     trace_id: str = "",
 ) -> None:
     """Generate or refresh a user profile summary from conversation history.
@@ -99,6 +100,7 @@ async def generate_user_summary(
             "user_summary",
             org_id=org_id,
             user_id=user_id,
+            project_id=project_id,
             db_session_factory=session_factory,
         )
     except Exception:

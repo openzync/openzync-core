@@ -11,10 +11,16 @@ PostgreSQL, eliminating the need for a separate graph database.
 
 from __future__ import annotations
 
-import structlog
-from sqlalchemy import text
+from uuid import UUID
 
-from core.exceptions import EpisodeNotFoundError
+import structlog
+
+from core.exceptions import (
+    EpisodeNotFoundError,
+    GraphBackendUnavailableError,
+)
+from packages.graph_backend.interface import GraphBackend
+from workers.backend import resolve_graph_backend
 from workers.tasks.base import ENRICHMENT_ENTITY_LINKS, with_retry
 
 logger = structlog.get_logger()
@@ -56,9 +62,6 @@ async def link_entities_to_episode(
     if trace_id:
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
 
-    from datetime import datetime, timezone
-    from uuid import UUID
-
     from sqlalchemy import select
 
     from core.config import settings
@@ -82,7 +85,6 @@ async def link_entities_to_episode(
     session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
     if session_factory is None:
         session_factory = get_async_session(engine)
-    now = datetime.now(timezone.utc)
 
     try:
         async with session_factory() as db:
@@ -101,75 +103,90 @@ async def link_entities_to_episode(
                     detail={"episode_id": episode_id},
                 )
 
-            # ── 2. Search for matching entities ─────────────────────────────
+            # ── 2. Resolve graph backend ─────────────────────────────────────
+            backend: GraphBackend | None
+            try:
+                ctx_dict: dict = ctx if isinstance(ctx, dict) else {}
+                backend = await resolve_graph_backend(
+                    ctx_dict, UUID(org_id), db,
+                )
+            except Exception:
+                logger.warning(
+                    "link_entities_to_episode.backend_resolution_failed",
+                    org_id=org_id,
+                    exc_info=True,
+                )
+                backend = None
+
             # Extract potential entity names from content (simple keyword split)
-            # and search the graph_entities table for matches.
             words = set(
                 w.strip().rstrip(".,!?:;")
                 for w in content.split()
                 if len(w.strip()) > 2 and w.strip()[0].isupper()
             )
 
-            words_matched: int = 0
-            entities_found_per_word: list[int] = []
-            linked = 0
-            for word in words:
-                if not word:
-                    continue
-                # Search for entities whose name matches (fuzzy via pg_trgm).
-                # Skip merged/deprecated entities so episodes are only linked
-                # to active entities. Filter by project_id for project isolation.
-                entity_result = await db.execute(
-                    text(
-                        """
-                        SELECT id FROM graph_entities
-                        WHERE organization_id = :org_id
-                          AND project_id = :project_id
-                          AND is_merged = false
-                          AND (name ILIKE :word
-                               OR similarity(name, :word) > 0.3)
-                        LIMIT 5
-                        """
-                    ),
-                    {
-                        "org_id": UUID(org_id),
-                        "project_id": UUID(project_id),
-                        "word": f"%{word}%",
-                    },
+            if backend is None:
+                logger.info(
+                    "link_entities_to_episode.graph_disabled_skipping",
+                    org_id=org_id,
+                    episode_id=episode_id,
                 )
-                entity_rows = entity_result.all()
-                if entity_rows:
-                    words_matched += 1
-                    entities_found_per_word.append(len(entity_rows))
-                for entity_row in entity_rows:
-                    entity_id = str(entity_row[0])
-                    # Link entity to episode via graph_episode_entities
-                    await db.execute(
-                        text(
-                            """
-                            INSERT INTO graph_episode_entities
-                                (episode_id, entity_id, project_id, created_at)
-                            VALUES (:episode_id, :entity_id, :project_id, :created_at)
-                            ON CONFLICT (episode_id, entity_id) DO NOTHING
-                            """
-                        ),
-                        {
-                            "episode_id": UUID(episode_id),
-                            "entity_id": UUID(entity_id),
-                            "project_id": UUID(project_id),
-                            "created_at": now,
-                        },
-                    )
-                    linked += 1
+                # Skip entity linking — not critical for enrichment pipeline.
+                # Episodes can be re-linked later when the graph is available.
+                linked = 0
+                words_matched = 0
+                entities_found_per_word = []
+            else:
+                # ── 3. Search for matching entities via graph backend ──────────
 
-            # ── 3. Update enrichment_status bit 3 ───────────────────────────
+                words_matched = 0
+                entities_found_per_word: list[int] = []
+                linked = 0
+                for word in words:
+                    if not word:
+                        continue
+                    try:
+                        entities = await backend.bulk_search_entities(
+                            org_id=UUID(org_id),
+                            project_id=UUID(project_id),
+                            query=word,
+                            limit=5,
+                        )
+                    except GraphBackendUnavailableError:
+                        logger.warning(
+                            "link_entities_to_episode.search_failed",
+                            word=word,
+                            exc_info=True,
+                        )
+                        continue
+
+                    if entities:
+                        words_matched += 1
+                        entities_found_per_word.append(len(entities))
+                    for entity in entities:
+                        try:
+                            await backend.link_entity_to_episode(
+                                org_id=UUID(org_id),
+                                project_id=UUID(project_id),
+                                episode_id=UUID(episode_id),
+                                entity_id=UUID(entity["id"]),
+                            )
+                            linked += 1
+                        except GraphBackendUnavailableError:
+                            logger.warning(
+                                "link_entities_to_episode.link_failed",
+                                entity_id=entity.get("id"),
+                                exc_info=True,
+                            )
+
+            # ── 5. Update enrichment_status bit 3 ───────────────────────────
             episode_repo = EpisodeRepository(db)
             await episode_repo.apply_enrichment_bits(
                 UUID(episode_id), ENRICHMENT_ENTITY_LINKS
             )
             await db.commit()
 
-            # ── 4. Enqueue deferred observations pass (bit 6) ────────────────
+            # ── 6. Enqueue deferred observations pass (bit 6) ────────────────
             try:
                 arq_redis: object | None = None
                 if isinstance(ctx, dict):
@@ -200,7 +217,7 @@ async def link_entities_to_episode(
                 )
                 raise  # Propagate so ARQ retry mechanism handles it
 
-            # ── 5. Optionally trigger community detection (event-driven mode) ──
+            # ── 7. Optionally trigger community detection (event-driven mode) ──
             from services.worker.worker_settings import settings as worker_settings
             if worker_settings.AUTO_RUN_COMMUNITY_DETECTION:
                 try:

@@ -53,7 +53,7 @@ async def compute_observations(
         4. Run all detection algorithms (co-occurrence, temporal gaps,
            behavioral patterns).
         5. Optionally call LLM to generate ``content`` field.
-        6. Persist observations via ``ObservationRepository.upsert()``.
+        6. Persist observations via ``backend.upsert_observation()``.
         7. Set ``episodes.enrichment_status`` bit 6.
         8. Commit.
 
@@ -79,8 +79,8 @@ async def compute_observations(
     from core.config import settings
     from core.db import get_async_session
     from repositories.episode_repository import EpisodeRepository
-    from repositories.observation_repository import ObservationRepository
     from services.observation_service import ObservationService
+    from workers.backend import resolve_graph_backend
 
     logger.info(
         "compute_observations.started",
@@ -112,10 +112,13 @@ async def compute_observations(
 
     try:
         async with session_factory() as db:
-            # ── 1. Instantiate repos + service ───────────────────────────────
+            # ── 1. Resolve graph backend + instantiate service ──────────────
             episode_repo = EpisodeRepository(db)
-            obs_repo = ObservationRepository(db)
-            service = ObservationService(repo=obs_repo)
+            backend = await resolve_graph_backend(ctx, UUID(org_id), db)  # type: ignore[arg-type]
+            service = ObservationService(
+                graph_backend=backend,
+                db=db,
+            )
 
             # ── 2. Idempotency check: skip if bit 6 already set ──────────────
             episode = await episode_repo.get_by_id(UUID(episode_id))

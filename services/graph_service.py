@@ -121,23 +121,12 @@ class GraphService:
                 detail={"operation": "get_entities"},
             )
 
-        # Session-scoped query — use FactRepository to find entities linked
-        # to this session's episodes, then return in GraphNode-compatible format.
+        # Session-scoped query — delegate to graph backend.
         if session_id is not None:
-            if self._fact_repo is None:
-                logger.warning(
-                    "graph_service.no_fact_repo",
-                    extra={
-                        "operation": "get_entities",
-                        "session_id": str(session_id),
-                    },
-                )
-                return {"items": [], "next_cursor": None, "has_more": False}
-
-            entities = await self._fact_repo.get_entities_for_session(
-                session_id=session_id,
-                organization_id=org_id,
+            entities = await self._backend.get_entities_for_session(
+                org_id=org_id,
                 project_id=project_id,
+                session_id=session_id,
             )
 
             # Apply optional entity_type filter client-side

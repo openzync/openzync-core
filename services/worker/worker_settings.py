@@ -177,6 +177,26 @@ singleton — do not instantiate this class directly.
         ),
     )
 
+    # ── FalkorDB (graph backend) ─────────────────────────────────────────────
+    FALKORDB_URL: str = Field(
+        default="redis://localhost:6379",
+        description=(
+            "FalkorDB connection URL (Redis RESP protocol). "
+            "Defaults to localhost:6379."
+        ),
+    )
+    FALKORDB_MAX_CONNECTIONS: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="Max connections in the FalkorDB connection pool.",
+    )
+    FALKORDB_SOCKET_TIMEOUT: int = Field(
+        default=10,
+        ge=1,
+        description="Socket timeout in seconds for FalkorDB connections.",
+    )
+
     # ── Community Detection ──────────────────────────────────────────────────
     AUTO_RUN_COMMUNITY_DETECTION: bool = Field(
         default=False,

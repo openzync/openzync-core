@@ -78,6 +78,7 @@ async def extract_structured(
     from repositories.episode_repository import EpisodeRepository
     from schemas.llm_outputs import StructuredExtractionOutput
     from services.worker.worker_settings import settings as worker_settings
+    from workers.backend import resolve_graph_backend
 
     logger.info(
         "structured_extraction.started",
@@ -132,6 +133,17 @@ async def extract_structured(
                 )
                 return
 
+            # ── Resolve graph backend for session entity fetching ─────────────
+            backend: Any = None
+            try:
+                backend = await resolve_graph_backend(
+                    ctx if isinstance(ctx, dict) else {},
+                    uuid.UUID(org_id), db,
+                    fallback_to_postgres=True,
+                )
+            except Exception:
+                logger.warning("structured_extraction.backend_resolve_failed", exc_info=True)
+
             # ── 4. Render prompt (system instructions) with auto-injected context ──
             system_prompt, prompt_ctx = await render_prompt(
                 "structured_extraction",
@@ -139,6 +151,8 @@ async def extract_structured(
                 episode_id=episode_id,
                 session_id=session_id,
                 user_id=user_id,
+                project_id=project_id,
+                graph_backend=backend,
                 db_session_factory=session_factory,
                 return_context=True,
                 metadata=metadata or {},

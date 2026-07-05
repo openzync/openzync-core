@@ -36,6 +36,8 @@ import orjson
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from packages.graph_backend.interface import GraphBackend
+
 # ── Module layout ──────────────────────────────────────────────────────────────
 # 1. DataSource enum — every DB-backed variable type the system knows about
 # 2. TYPE_DATA_SOURCES — static registry: prompt_type → set of DataSource
@@ -193,23 +195,49 @@ async def _fetch_session_entities(
     db: AsyncSession,
     org_id: UUID,
     session_id: UUID | None,
-    **_: Any,
+    graph_backend: GraphBackend | None,
+    project_id: UUID | None,
+    **extra: Any,
 ) -> dict[str, Any]:
-    """Fetch known entities for a session.
+    """Fetch known entities for a session via the graph backend.
 
-    Returns ``{"known_entities": [...]}`` or an empty list if no session_id.
+    Returns ``{"known_entities": [...]}`` or an empty list if no session_id
+    or missing parameters.
+
+    Note:
+        PostgresGraphBackend stores a reference to its DB session.  If that
+        session is closed and later reused, SQLAlchemy silently acquires a
+        new connection that is never returned to the pool (connection leak).
+        To avoid this, we create a **fresh**, short-lived session specifically
+        for the Postgres backend call and close it immediately after.
     """
-    if session_id is None:
+    if session_id is None or project_id is None or graph_backend is None:
         return {"known_entities": []}
 
-    from repositories.fact_repository import (
-        FactRepository,  # noqa: PLC0415 — lazy import
-    )
+    # Fresh session to avoid connection leak from PostgresGraphBackend's
+    # stale session reference (see docstring note).
+    db_session_factory = extra.get("db_session_factory")
+    if db_session_factory is not None:
+        from packages.graph_backend.postgres import (
+            PostgresGraphBackend,  # noqa: PLC0415
+        )
 
-    repo = FactRepository(db)
-    entities = await repo.get_entities_for_session(
+        if isinstance(graph_backend, PostgresGraphBackend):
+            async with db_session_factory() as fresh_db:
+                fresh_backend = PostgresGraphBackend(db=fresh_db)
+                entities = await fresh_backend.get_entities_for_session(
+                    org_id=org_id,
+                    project_id=project_id,
+                    session_id=session_id,
+                )
+            return {"known_entities": entities}
+
+    # SurrealDB and FalkorDB manage their own connections — safe to use
+    # the backend's internal session directly.
+    entities = await graph_backend.get_entities_for_session(
+        org_id=org_id,
+        project_id=project_id,
         session_id=session_id,
-        organization_id=org_id,
     )
     return {"known_entities": entities}
 
@@ -491,8 +519,7 @@ async def _fetch_classification_labels(
                 "farewell, request, confirmation"
             ),
             "emotion_labels": (
-                "joy, frustration, sadness, anger, neutral, surprise, "
-                "fear, disgust"
+                "joy, frustration, sadness, anger, neutral, surprise, fear, disgust"
             ),
             "valence_options": "positive, negative, neutral",
             "arousal_options": "low, medium, high",
@@ -780,6 +807,8 @@ async def render_prompt(
     episode_id: UUID | str | None = None,
     session_id: UUID | str | None = None,
     user_id: UUID | str | None = None,
+    project_id: UUID | str | None = None,
+    graph_backend: GraphBackend | None = None,
     db_session_factory: async_sessionmaker[AsyncSession] | None = None,
     return_context: bool = False,
     **extra_context: Any,
@@ -844,10 +873,10 @@ async def render_prompt(
     # ── Resolve template text ──────────────────────────────────────────
     if template_text is None and org_id is not None and db_session_factory is not None:
         template_text = await resolve_prompt_template_by_type(
-                prompt_type,
-                org_id,
-                db_session_factory,
-            )
+            prompt_type,
+            org_id,
+            db_session_factory,
+        )
 
     if template_text is None:
         raise ValueError(
@@ -875,6 +904,9 @@ async def render_prompt(
             UUID(session_id) if isinstance(session_id, str) else session_id
         )
         resolved_user_id = UUID(user_id) if isinstance(user_id, str) else user_id
+        resolved_project_id = (
+            UUID(project_id) if isinstance(project_id, str) else project_id
+        )
 
         async with db_session_factory() as db:
             for source in sources:
@@ -888,6 +920,9 @@ async def render_prompt(
                     episode_id=resolved_episode_id,
                     session_id=resolved_session_id,
                     user_id=resolved_user_id,
+                    project_id=resolved_project_id,
+                    graph_backend=graph_backend,
+                    db_session_factory=db_session_factory,
                 )
 
                 # Provider returns dict[str, Any] — merge into context,

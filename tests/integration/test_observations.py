@@ -1,10 +1,10 @@
-"""Integration tests for graph observations — repository + service pipeline.
+"""Integration tests for graph observations — via GraphBackend + service pipeline.
 
 Tests two layers against real testcontainers PostgreSQL:
 
-1. **ObservationRepository** — upsert, query, and delete operations against
-   the ``graph_observations`` table, including the functional unique index
-   for idempotent re-upserts.
+1. **PostgresGraphBackend** — observation CRUD via the ABC (upsert, query)
+   using the ``graph_observations`` table, including the functional unique
+   index for idempotent re-upserts.
 
 2. **ObservationService run_full_project_scan** — the full detection pipeline
    with real seeded data: entities, episodes, links, facts, and relationships.
@@ -23,20 +23,9 @@ import pytest
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.graph_observation import GraphObservation, ObservationType
-from repositories.observation_repository import ObservationRepository
+from models.graph_observation import ObservationType
+from packages.graph_backend.postgres import PostgresGraphBackend
 from services.observation_service import ObservationService
-
-
-def _obs_to_dict(o: GraphObservation) -> dict[str, Any]:
-    """Serialize a GraphObservation to a plain dict before session closes.
-
-    Must be called while the instance is still bound to an active session.
-    """
-    return {
-        col.name: getattr(o, col.name)
-        for col in o.__table__.columns
-    }
 
 pytestmark = pytest.mark.integration
 
@@ -46,11 +35,11 @@ PROJECT_ID = UUID("00000000-0000-0000-0000-000000000002")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ObservationRepository — CRUD integration tests
+# PostgresGraphBackend observation integration tests
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @pytest.mark.asyncio
-class TestObservationRepository:
+class TestObservationBackend:
     """CRUD + upsert semantics against real PostgreSQL."""
 
     _ENTITY_A: UUID = uuid4()
@@ -86,11 +75,11 @@ class TestObservationRepository:
         await db.flush()
 
     async def _run(self, engine, fn) -> None:
-        """Open a session, run ``fn(db, repo)``, then roll back."""
+        """Open a session, run ``fn(db, backend)``, then roll back."""
         db = AsyncSession(engine, expire_on_commit=False)
         try:
-            repo = ObservationRepository(db)
-            await fn(db, repo)
+            backend = PostgresGraphBackend(db=db)
+            await fn(db, backend)
         finally:
             await db.rollback()
             await db.close()
@@ -99,10 +88,10 @@ class TestObservationRepository:
 
     async def test_upsert_inserts_new_observation(self, engine) -> None:
         """Upsert inserts a new observation row."""
-        async def _test(db: AsyncSession, repo: ObservationRepository) -> None:
+        async def _test(db: AsyncSession, backend: PostgresGraphBackend) -> None:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
-            await repo.upsert(
-                organization_id=ORG_ID,
+            await backend.upsert_observation(
+                org_id=ORG_ID,
                 project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
@@ -111,20 +100,20 @@ class TestObservationRepository:
                 related_entity_id=None,
                 valid_from=datetime(2024, 1, 1, tzinfo=timezone.utc),
             )
-            results = await repo.get_by_project(PROJECT_ID)
-            assert len(results) == 1
-            assert results[0].content == "Alice appears weekly."
-            assert results[0].confidence == 0.85
+            results = await backend.get_observations(ORG_ID, PROJECT_ID)
+            assert len(results["items"]) == 1
+            assert results["items"][0]["content"] == "Alice appears weekly."
+            assert results["items"][0]["confidence"] == 0.85
 
         await self._run(engine, _test)
 
     async def test_upsert_idempotent_reupdate(self, engine) -> None:
         """Upsert updates on dedup key collision vs insert duplicate."""
-        async def _test(db: AsyncSession, repo: ObservationRepository) -> None:
+        async def _test(db: AsyncSession, backend: PostgresGraphBackend) -> None:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
             # First insert
-            await repo.upsert(
-                organization_id=ORG_ID,
+            await backend.upsert_observation(
+                org_id=ORG_ID,
                 project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
@@ -133,8 +122,8 @@ class TestObservationRepository:
                 related_entity_id=None,
             )
             # Second upsert with different content — same dedup key
-            await repo.upsert(
-                organization_id=ORG_ID,
+            await backend.upsert_observation(
+                org_id=ORG_ID,
                 project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
@@ -142,23 +131,23 @@ class TestObservationRepository:
                 confidence=0.90,
                 related_entity_id=None,
             )
-            results = await repo.get_by_project(PROJECT_ID)
-            assert len(results) == 1, "Should still be one row"
-            assert results[0].content == "Alice appears daily."
-            assert results[0].confidence == 0.90
+            results = await backend.get_observations(ORG_ID, PROJECT_ID)
+            assert len(results["items"]) == 1, "Should still be one row"
+            assert results["items"][0]["content"] == "Alice appears daily."
+            assert results["items"][0]["confidence"] == 0.90
 
         await self._run(engine, _test)
 
     async def test_upsert_pair_and_entity_level_separate(self, engine) -> None:
         """Entity-level and pair-level observations with same entity+type
         are distinct rows (different related_entity_id)."""
-        async def _test(db: AsyncSession, repo: ObservationRepository) -> None:
+        async def _test(db: AsyncSession, backend: PostgresGraphBackend) -> None:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
             await self._seed_entity(db, self._ENTITY_B, "Bob")
 
             # Entity-level: related_entity_id is NULL
-            await repo.upsert(
-                organization_id=ORG_ID,
+            await backend.upsert_observation(
+                org_id=ORG_ID,
                 project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.CO_OCCURRENCE),
@@ -167,8 +156,8 @@ class TestObservationRepository:
                 related_entity_id=None,
             )
             # Pair-level: related_entity_id is set
-            await repo.upsert(
-                organization_id=ORG_ID,
+            await backend.upsert_observation(
+                org_id=ORG_ID,
                 project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.CO_OCCURRENCE),
@@ -176,134 +165,145 @@ class TestObservationRepository:
                 confidence=0.8,
                 related_entity_id=self._ENTITY_B,
             )
-            results = await repo.get_by_project(PROJECT_ID)
-            assert len(results) == 2, "Two distinct observations"
+            results = await backend.get_observations(ORG_ID, PROJECT_ID)
+            assert len(results["items"]) == 2, "Two distinct observations"
 
         await self._run(engine, _test)
 
     # ── Query methods ──────────────────────────────────────────────────────
 
     async def test_get_by_subject_filters_correctly(self, engine) -> None:
-        """get_by_subject returns only observations about that entity."""
-        async def _test(db: AsyncSession, repo: ObservationRepository) -> None:
+        """get_observations with subject_entity_id filter works."""
+        async def _test(db: AsyncSession, backend: PostgresGraphBackend) -> None:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
             await self._seed_entity(db, self._ENTITY_B, "Bob")
 
-            await repo.upsert(
-                organization_id=ORG_ID, project_id=PROJECT_ID,
+            await backend.upsert_observation(
+                org_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
                 content="Alice pattern.", confidence=0.8,
                 related_entity_id=None,
             )
-            await repo.upsert(
-                organization_id=ORG_ID, project_id=PROJECT_ID,
+            await backend.upsert_observation(
+                org_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_B,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
                 content="Bob pattern.", confidence=0.7,
                 related_entity_id=None,
             )
 
-            alice_obs = await repo.get_by_subject(PROJECT_ID, self._ENTITY_A)
-            assert len(alice_obs) == 1
-            assert alice_obs[0].content == "Alice pattern."
+            alice_obs = await backend.get_observations(
+                ORG_ID, PROJECT_ID, subject_entity_id=self._ENTITY_A,
+            )
+            assert len(alice_obs["items"]) == 1
+            assert alice_obs["items"][0]["content"] == "Alice pattern."
 
-            bob_obs = await repo.get_by_subject(PROJECT_ID, self._ENTITY_B)
-            assert len(bob_obs) == 1
-            assert bob_obs[0].content == "Bob pattern."
+            bob_obs = await backend.get_observations(
+                ORG_ID, PROJECT_ID, subject_entity_id=self._ENTITY_B,
+            )
+            assert len(bob_obs["items"]) == 1
+            assert bob_obs["items"][0]["content"] == "Bob pattern."
 
         await self._run(engine, _test)
 
     async def test_get_by_type_filters_correctly(self, engine) -> None:
-        """get_by_type returns only observations of that type."""
-        async def _test(db: AsyncSession, repo: ObservationRepository) -> None:
+        """get_observations with observation_type filter works."""
+        async def _test(db: AsyncSession, backend: PostgresGraphBackend) -> None:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
 
-            await repo.upsert(
-                organization_id=ORG_ID, project_id=PROJECT_ID,
+            await backend.upsert_observation(
+                org_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
                 content="Temporal", confidence=0.8,
                 related_entity_id=None,
             )
-            await repo.upsert(
-                organization_id=ORG_ID, project_id=PROJECT_ID,
+            await backend.upsert_observation(
+                org_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.BEHAVIORAL_PATTERN),
                 content="Behavioral", confidence=0.7,
                 related_entity_id=None,
             )
 
-            temporal = await repo.get_by_type(
-                PROJECT_ID, str(ObservationType.TEMPORAL_PATTERN),
+            temporal = await backend.get_observations(
+                ORG_ID, PROJECT_ID,
+                observation_type=str(ObservationType.TEMPORAL_PATTERN),
             )
-            assert len(temporal) == 1
-            assert temporal[0].content == "Temporal"
+            assert len(temporal["items"]) == 1
+            assert temporal["items"][0]["content"] == "Temporal"
 
-            behavioral = await repo.get_by_type(
-                PROJECT_ID, str(ObservationType.BEHAVIORAL_PATTERN),
+            behavioral = await backend.get_observations(
+                ORG_ID, PROJECT_ID,
+                observation_type=str(ObservationType.BEHAVIORAL_PATTERN),
             )
-            assert len(behavioral) == 1
-            assert behavioral[0].content == "Behavioral"
+            assert len(behavioral["items"]) == 1
+            assert behavioral["items"][0]["content"] == "Behavioral"
 
         await self._run(engine, _test)
 
     async def test_get_pair_observations_both_directions(self, engine) -> None:
-        """get_pair_observations finds observations in either direction."""
-        async def _test(db: AsyncSession, repo: ObservationRepository) -> None:
+        """Observations with related_entity_id can be found via subject filter."""
+        async def _test(db: AsyncSession, backend: PostgresGraphBackend) -> None:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
             await self._seed_entity(db, self._ENTITY_B, "Bob")
 
             # Observation: Alice → Bob
-            await repo.upsert(
-                organization_id=ORG_ID, project_id=PROJECT_ID,
+            await backend.upsert_observation(
+                org_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.CO_OCCURRENCE),
                 content="Alice with Bob.", confidence=0.8,
                 related_entity_id=self._ENTITY_B,
             )
 
-            # Query with A/B — should find the one above
-            results = await repo.get_pair_observations(
-                PROJECT_ID, self._ENTITY_A, self._ENTITY_B,
+            # Query with subject filter — should find the one above
+            results = await backend.get_observations(
+                ORG_ID, PROJECT_ID, subject_entity_id=self._ENTITY_A,
             )
-            assert len(results) == 1
-            assert results[0].subject_entity_id == self._ENTITY_A
-            assert results[0].related_entity_id == self._ENTITY_B
-
-            # Query with B/A — should find it too (OR logic)
-            results = await repo.get_pair_observations(
-                PROJECT_ID, self._ENTITY_B, self._ENTITY_A,
-            )
-            assert len(results) == 1
+            assert len(results["items"]) == 1
+            assert results["items"][0]["subject_entity_id"] == str(self._ENTITY_A)
+            assert results["items"][0]["related_entity_id"] == str(self._ENTITY_B)
 
         await self._run(engine, _test)
 
     # ── Delete ─────────────────────────────────────────────────────────────
 
-    async def test_delete_by_project_removes_all(self, engine) -> None:
-        """delete_by_project removes all observations for that project."""
-        async def _test(db: AsyncSession, repo: ObservationRepository) -> None:
+    async def test_upsert_dedup_key_enforces_uniqueness(self, engine) -> None:
+        """Same dedup key (subject+type+related) updates in-place, no second row."""
+        async def _test(db: AsyncSession, backend: PostgresGraphBackend) -> None:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
             await self._seed_entity(db, self._ENTITY_B, "Bob")
 
-            for i in range(3):
-                await repo.upsert(
-                    organization_id=ORG_ID, project_id=PROJECT_ID,
-                    subject_entity_id=self._ENTITY_A if i % 2 == 0
-                    else self._ENTITY_B,
-                    observation_type=str(ObservationType.TEMPORAL_PATTERN),
-                    content=f"Obs {i}", confidence=0.5,
-                    related_entity_id=None,
-                )
-            count = await repo.delete_by_project(PROJECT_ID)
-            # Only 2 distinct dedup keys: ENTITY_A+TEMPORAL_PATTERN and
-            # ENTITY_B+TEMPORAL_PATTERN (both with related_entity_id=None).
-            # Third call with ENTITY_A updates rather than inserts.
-            assert count == 2, f"Expected 2 rows (dedup), got {count}"
+            # Upsert two distinct observations
+            await backend.upsert_observation(
+                org_id=ORG_ID, project_id=PROJECT_ID,
+                subject_entity_id=self._ENTITY_A,
+                observation_type=str(ObservationType.TEMPORAL_PATTERN),
+                content="Obs 1", confidence=0.5,
+                related_entity_id=None,
+            )
+            await backend.upsert_observation(
+                org_id=ORG_ID, project_id=PROJECT_ID,
+                subject_entity_id=self._ENTITY_B,
+                observation_type=str(ObservationType.TEMPORAL_PATTERN),
+                content="Obs 2", confidence=0.5,
+                related_entity_id=None,
+            )
+            # Third upsert with same dedup key as first — update, not insert
+            await backend.upsert_observation(
+                org_id=ORG_ID, project_id=PROJECT_ID,
+                subject_entity_id=self._ENTITY_A,
+                observation_type=str(ObservationType.TEMPORAL_PATTERN),
+                content="Obs 1 updated", confidence=0.6,
+                related_entity_id=None,
+            )
 
-            remaining = await repo.get_by_project(PROJECT_ID)
-            assert len(remaining) == 0
+            results = await backend.get_observations(ORG_ID, PROJECT_ID)
+            assert len(results["items"]) == 2, "Expected 2 rows (dedup)"
+            contents = {r["content"] for r in results["items"]}
+            assert "Obs 1 updated" in contents
 
 
 
@@ -544,9 +544,10 @@ class TestObservationServicePipeline:
                 db, with_facts=with_facts,
                 with_relationships=with_relationships,
             )
-            repo = ObservationRepository(db)
+            backend = PostgresGraphBackend(db=db)
             service = ObservationService(
-                repo=repo,
+                graph_backend=backend,
+                db=db,
                 min_co_count=2,  # Lower threshold for small test data
                 min_appearances_for_temporal=3,
                 min_gap_hours=1.0,
@@ -558,11 +559,9 @@ class TestObservationServicePipeline:
                 llm_backend=None,  # Use template descriptions
             )
 
-            # Fetch all observations from the DB and serialize before
-            # the session closes (ORM instances expire on session close)
-            obs = await repo.get_by_project(PROJECT_ID)
-            obs_dicts = [_obs_to_dict(o) for o in obs]
-            return counts, obs_dicts
+            # Fetch all observations from the backend
+            obs_result = await backend.get_observations(ORG_ID, PROJECT_ID)
+            return counts, obs_result["items"]
         finally:
             await db.rollback()
             await db.close()
@@ -630,7 +629,7 @@ class TestObservationServicePipeline:
 
         # X appears every 7 days — should be "periodic" or "regular intervals"
         x_obs = [o for o in temporal_obs
-                 if o["subject_entity_id"] == self._ENTITY_X]
+                 if o["subject_entity_id"] == str(self._ENTITY_X)]
         assert len(x_obs) == 1
         content = x_obs[0]["content"]
         # Should mention the entity name and gap pattern
@@ -652,7 +651,7 @@ class TestObservationServicePipeline:
 
         # X has asked_about_pricing × 3 — should be the top predicate
         x_obs = [o for o in behavioral_obs
-                 if o["subject_entity_id"] == self._ENTITY_X]
+                 if o["subject_entity_id"] == str(self._ENTITY_X)]
         if x_obs:
             content = x_obs[0]["content"]
             assert "asked_about_pricing" in content or "UserX" in content
@@ -682,9 +681,10 @@ class TestObservationServicePipeline:
         db = AsyncSession(engine, expire_on_commit=False)
         try:
             await self._seed_graph(db)
-            repo = ObservationRepository(db)
+            backend = PostgresGraphBackend(db=db)
             service = ObservationService(
-                repo=repo,
+                graph_backend=backend,
+                db=db,
                 min_co_count=2,
                 min_appearances_for_temporal=3,
             )
@@ -693,24 +693,23 @@ class TestObservationServicePipeline:
             await service.run_full_project_scan(
                 PROJECT_ID, ORG_ID, llm_backend=None,
             )
-            obs_1 = await repo.get_by_project(PROJECT_ID)
+            obs_1 = await backend.get_observations(ORG_ID, PROJECT_ID)
 
             # Second run
             await service.run_full_project_scan(
                 PROJECT_ID, ORG_ID, llm_backend=None,
             )
-            obs_2 = await repo.get_by_project(PROJECT_ID)
+            obs_2 = await backend.get_observations(ORG_ID, PROJECT_ID)
 
             # Row count should be identical (upsert, not re-insert)
-            assert len(obs_1) == len(obs_2), (
-                f"Row count changed: {len(obs_1)} → {len(obs_2)}"
+            assert len(obs_1["items"]) == len(obs_2["items"]), (
+                f"Row count changed: {len(obs_1['items'])} → {len(obs_2['items'])}"
             )
 
-            # Content updated on second run
-            for i, (o1, o2) in enumerate(zip(obs_1, obs_2)):
-                assert o1.id == o2.id, (
-                    f"Row {i}: IDs differ — possible re-insert"
-                )
+            # IDs should be identical (upsert, not re-insert)
+            ids_1 = [o["id"] for o in obs_1["items"]]
+            ids_2 = [o["id"] for o in obs_2["items"]]
+            assert ids_1 == ids_2, "IDs differ — possible re-insert"
 
         finally:
             await db.rollback()

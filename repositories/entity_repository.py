@@ -13,7 +13,6 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import GraphBackendUnavailableError
-from packages.graph_backend.postgres import PostgresGraphBackend
 from packages.graph_backend.interface import GraphBackend
 
 logger = logging.getLogger(__name__)
@@ -28,6 +27,13 @@ class EntityRepository:
         db: An async SQLAlchemy session (request-scoped).
         graph_backend: An initialised ``GraphBackend`` instance.  If
             ``None``, all operations raise ``GraphBackendUnavailableError``.
+
+    Raises:
+        GraphBackendUnavailableError: If *graph_backend* is ``None``.
+            Callers must resolve the per-org backend via
+            ``workers.backend.resolve_graph_backend()`` or inject the backend
+            from the API dependency chain.  Silent Postgres fallback is no
+            longer supported.
     """
 
     def __init__(
@@ -37,13 +43,15 @@ class EntityRepository:
     ) -> None:
         self._db = db
         if graph_backend is None:
-            logger.info(
-                "entity_repository.using_postgres_backend",
-                extra={"reason": "no graph_backend provided"},
+            raise GraphBackendUnavailableError(
+                "EntityRepository requires a graph_backend. "
+                "Callers must resolve the per-org backend via "
+                "workers.backend.resolve_graph_backend() "
+                "or inject the backend from the API dependency chain. "
+                "This is a non-negotiable enforcement — "
+                "silent Postgres fallback is no longer supported."
             )
-            self._backend = PostgresGraphBackend(db)
-        else:
-            self._backend = graph_backend
+        self._backend = graph_backend
 
     @property
     def is_available(self) -> bool:
