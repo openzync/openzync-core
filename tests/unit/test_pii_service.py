@@ -15,41 +15,46 @@ from services.pii_service import PIIDetector
 class TestRegexPII:
     """Regex-based PII detection tests."""
 
+    @staticmethod
+    def _make_detector() -> PIIDetector:
+        """Create a PIIDetector with NER disabled — only regex is tested here."""
+        return PIIDetector(use_ner=False)
+
     def test_detects_email(self) -> None:
-        detector = PIIDetector()
+        detector = self._make_detector()
         result = detector.detect("Contact me at test@example.com")
         assert len(result) >= 1
         assert any(f.type == "email" for f in result)
 
     def test_detects_phone(self) -> None:
-        detector = PIIDetector()
+        detector = self._make_detector()
         result = detector.detect("Call +1-555-123-4567 for help")
         assert len(result) >= 1
         assert any(f.type == "phone" for f in result)
 
     def test_clean_text_no_pii(self) -> None:
-        detector = PIIDetector()
+        detector = self._make_detector()
         result = detector.detect("Hello, how are you today?")
         assert len(result) == 0
 
     def test_detects_ip_address(self) -> None:
-        detector = PIIDetector()
+        detector = self._make_detector()
         result = detector.detect("Server: 192.168.1.1")
         assert len(result) >= 1
 
     def test_detects_credit_card(self) -> None:
-        detector = PIIDetector()
+        detector = self._make_detector()
         result = detector.detect("Card: 4111-1111-1111-1111")
         assert len(result) >= 1
 
     def test_confidence_is_high_for_clear_patterns(self) -> None:
-        detector = PIIDetector()
+        detector = self._make_detector()
         result = detector.detect("test@example.com")
         if result:
             assert result[0].confidence >= 0.9
 
     def test_start_end_positions_are_correct(self) -> None:
-        detector = PIIDetector()
+        detector = self._make_detector()
         result = detector.detect("email: a@b.com")
         if result:
             assert result[0].start >= 0

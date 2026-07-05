@@ -62,6 +62,8 @@ class TestSettings:
     def test_defaults_are_sane(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Fields with defaults should match expected development values."""
         _set_required_env(monkeypatch)
+        # CI sets OZ_ENVIRONMENT=testing — clear it to test the default
+        monkeypatch.delenv("OZ_ENVIRONMENT", raising=False)
 
         s = _settings()
         assert s.ENVIRONMENT == "development"

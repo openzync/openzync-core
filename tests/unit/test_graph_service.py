@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from core.exceptions import EntityNotFoundError
+from core.exceptions import EntityNotFoundError, GraphBackendUnavailableError
 from services.graph_service import GraphService
 
 
@@ -18,10 +18,10 @@ class TestGraphService:
 
     @pytest.mark.asyncio
     async def test_get_entities_no_backend(self) -> None:
-        """Without a backend, returns empty defaults."""
+        """Without a backend, raises GraphBackendUnavailableError."""
         service = GraphService(graph_backend=None)
-        result = await service.get_entities(self.ORG_ID, self.PROJECT_ID)
-        assert result == {"items": [], "next_cursor": None, "has_more": False}
+        with pytest.raises(GraphBackendUnavailableError):
+            await service.get_entities(self.ORG_ID, self.PROJECT_ID)
 
     @pytest.mark.asyncio
     async def test_get_entities_with_backend(self) -> None:
@@ -40,10 +40,10 @@ class TestGraphService:
 
     @pytest.mark.asyncio
     async def test_get_entity_no_backend_raises(self) -> None:
-        """Without a backend, raises EntityNotFoundError."""
+        """Without a backend, raises GraphBackendUnavailableError."""
         service = GraphService(graph_backend=None)
 
-        with pytest.raises(EntityNotFoundError):
+        with pytest.raises(GraphBackendUnavailableError):
             await service.get_entity(self.ORG_ID, self.PROJECT_ID, uuid4())
 
     @pytest.mark.asyncio
@@ -58,11 +58,11 @@ class TestGraphService:
 
     @pytest.mark.asyncio
     async def test_delete_entity_no_backend(self) -> None:
-        """Without a backend, returns False."""
+        """Without a backend, raises GraphBackendUnavailableError."""
         service = GraphService(graph_backend=None)
 
-        result = await service.delete_entity(self.ORG_ID, self.PROJECT_ID, uuid4())
-        assert result is False
+        with pytest.raises(GraphBackendUnavailableError):
+            await service.delete_entity(self.ORG_ID, self.PROJECT_ID, uuid4())
 
     @pytest.mark.asyncio
     async def test_delete_entity_with_backend(self) -> None:
