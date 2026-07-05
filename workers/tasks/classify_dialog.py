@@ -61,7 +61,7 @@ async def classify_dialog(
         7. Fetch custom instructions for the ``classification`` scope.
         8. Render the ``classify_dialog_v1.jinja2`` prompt (with DB
            template + custom instructions).
-        9. Call the LLM backend (temperature 0.0, max_tokens 300).
+        9. Call the LLM backend (temperature 0.0, max_tokens 4096).
         10. Parse and validate the JSON response.
         11. Insert a ``DialogClassification`` row.
         12. Update ``enrichment_status`` bit 4.
@@ -175,7 +175,7 @@ async def classify_dialog(
                     ],
                     response_model=ClassificationOutput,
                     temperature=0.0,
-                    max_tokens=300,
+                    max_tokens=4096,
                 )
             except Exception as exc:
                 logger.error(

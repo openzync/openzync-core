@@ -27,7 +27,7 @@ Usage::
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -44,11 +44,23 @@ class EntityOutput(BaseModel):
 
 
 class RelationshipOutput(BaseModel):
-    """A directed relationship between two entities."""
+    """A directed relationship between two entities.
 
-    source: str
-    target: str
-    relation: str
+    Field names match the ``subject/predicate/object`` convention used in
+    all extraction prompt templates (not ``source/target/relation``).
+    """
+
+    subject: str = Field(min_length=1)
+    predicate: str = Field(min_length=1)
+    object: str = Field(min_length=1, alias="object")
+
+    @field_validator("subject", "predicate", "object")
+    @classmethod
+    def must_not_be_empty(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("Field must not be empty or whitespace-only")
+        return stripped
 
 
 class EntityExtractionOutput(BaseModel):
