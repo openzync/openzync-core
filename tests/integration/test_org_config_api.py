@@ -161,7 +161,9 @@ class TestCacheInvalidation:
         cache_key = f"org_config:{org_id}"
 
         # Warm the cache by fetching via the API
-        transport = ASGITransport(app=app)
+        from tests.integration.conftest import asgi_transport
+
+        transport = asgi_transport(app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             headers = {"Authorization": f"Bearer {org_and_key['api_key']}"}
             await client.get("/admin/org/config", headers=headers)

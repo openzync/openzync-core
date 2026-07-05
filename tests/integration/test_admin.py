@@ -17,7 +17,9 @@ from __future__ import annotations
 from uuid import UUID
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
+
+from tests.integration.conftest import asgi_transport
 
 
 class TestAdminBootstrap:
@@ -30,7 +32,7 @@ class TestAdminBootstrap:
     @pytest.fixture
     async def anon_client(self, app: pytest.fixture) -> AsyncClient:  # noqa: ARG002
         """Return an unauthenticated HTTP client."""
-        transport = ASGITransport(app=app)  # type: ignore[arg-type]
+        transport = asgi_transport(app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client
 

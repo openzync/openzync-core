@@ -27,6 +27,26 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def asgi_transport(app: Any) -> ASGITransport:
+    """Create an ASGITransport that injects ``scope["app"]``.
+
+    ``httpx.ASGITransport`` does not set ``scope["app"]``, but the
+    ``RateLimitMiddleware`` relies on it to access ``app.state.redis``.
+    This wrapper injects the app reference so the middleware can find
+    the Redis client.
+    """
+    async def _asgi_with_scope(
+        scope: dict, receive: Any, send: Any,
+    ) -> None:
+        scope["app"] = app
+        await app(scope, receive, send)
+
+    return ASGITransport(app=_asgi_with_scope)
+
 from core.config import settings
 from core.db import get_async_session
 from tests.conftest import (
@@ -170,24 +190,15 @@ async def app(engine, redis_client) -> Any:
                 await session.rollback()
                 raise
 
-    # ── Wrap ASGI app to inject ``scope["app"]`` ──────────────────────────
-    # ``httpx.ASGITransport`` does not set ``scope["app"]``, but the
-    # ``RateLimitMiddleware`` relies on it to access ``app.state.redis``.
-    async def _asgi_with_app_scope(
-        scope: dict, receive: Any, send: Any
-    ) -> None:
-        scope["app"] = app
-        await app(scope, receive, send)
-
     app.dependency_overrides[get_db] = _get_db_override
-    yield _asgi_with_app_scope
+    yield app
     app.dependency_overrides.clear()
 
 
 @pytest_asyncio.fixture
 async def async_client(app: Any) -> AsyncGenerator[AsyncClient, None]:
     """HTTP client backed by the FastAPI test app."""
-    transport = ASGITransport(app=app)
+    transport = asgi_transport(app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 
@@ -195,7 +206,7 @@ async def async_client(app: Any) -> AsyncGenerator[AsyncClient, None]:
 @pytest_asyncio.fixture
 async def org_and_key(app: Any) -> dict:
     """Create a test org + API key via the admin bootstrap endpoint."""
-    transport = ASGITransport(app=app)
+    transport = asgi_transport(app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(
             "/admin/organizations",
@@ -212,7 +223,7 @@ async def org_and_key(app: Any) -> dict:
 @pytest_asyncio.fixture
 async def auth_client(app: Any, org_and_key: dict) -> AsyncGenerator[AsyncClient, None]:
     """HTTP client pre-authenticated with a real API key."""
-    transport = ASGITransport(app=app)
+    transport = asgi_transport(app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         client.headers["Authorization"] = f"Bearer {org_and_key['api_key']}"
         yield client

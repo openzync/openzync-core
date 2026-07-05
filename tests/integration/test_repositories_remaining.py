@@ -258,7 +258,7 @@ class TestFactRepository:
             assert fact.id is not None
             assert fact.content == "Python is great"
 
-    async def test_soft_delete_by_user(self, engine) -> None:
+    async def test_soft_delete_by_project(self, engine) -> None:
         user_id, _ = await _seed_user_and_session(engine)
         async with AsyncSession(engine) as db:
             repo = FactRepository(db)
@@ -267,7 +267,7 @@ class TestFactRepository:
                 project_id=PROJECT_ID,
                 content="Delete me", subject="X", predicate="is", obj="Y",
             )
-            deleted = await repo.soft_delete_by_user(user_id)
+            deleted = await repo.soft_delete_by_project(PROJECT_ID)
             assert deleted >= 1
 
     async def test_list_by_session(self, engine) -> None:
