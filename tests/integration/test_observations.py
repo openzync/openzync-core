@@ -35,11 +35,11 @@ PROJECT_ID = UUID("00000000-0000-0000-0000-000000000002")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ObservationRepository — CRUD integration tests
+# PostgresGraphBackend observation integration tests
 # ═══════════════════════════════════════════════════════════════════════════════
 
 @pytest.mark.asyncio
-class TestObservationRepository:
+class TestObservationBackend:
     """CRUD + upsert semantics against real PostgreSQL."""
 
     _ENTITY_A: UUID = uuid4()

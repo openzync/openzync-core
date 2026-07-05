@@ -477,7 +477,7 @@ def _resolve_fact_entities(
     Args:
         facts: Filtered fact triples from ``_filter_facts``.
         known_entities: List of dicts with ``id``, ``name``, ``entity_type``
-            keys, typically from ``FactRepository.get_entities_for_session``.
+            keys, typically from ``GraphBackend.get_entities_for_session``.
 
     Returns:
         A new list of fact dicts with entity resolution applied.

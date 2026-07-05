@@ -552,66 +552,6 @@ class FactRepository:
         await self._db.flush()
         return result.rowcount  # type: ignore[return-value]
 
-    # ── Entity Lookup ───────────────────────────────────────────────────────────
-
-    async def get_entities_for_session(
-        self,
-        session_id: UUID,
-        organization_id: UUID,
-        project_id: UUID | None = None,
-    ) -> list[dict[str, Any]]:
-        """Return all distinct graph entities linked to episodes in a session.
-
-        Traverses the ``session → episodes → graph_episode_entities →
-        graph_entities`` chain to collect every entity that has been
-        extracted from any turn of this session.
-
-        Args:
-            session_id: The session to fetch entities for.
-            organization_id: Tenant scope.
-            project_id: Optional project UUID for defense-in-depth isolation.
-                The query is already scoped via session_id/project relationship,
-                but this adds project_id as an additional filter.
-
-        Returns:
-            A list of dicts with keys ``id``, ``name``, ``entity_type``,
-            ``summary``.
-        """
-        base_params: dict[str, Any] = {
-            "session_id": session_id,
-            "org_id": organization_id,
-        }
-        project_clause = ""
-        if project_id is not None:
-            project_clause = " AND e.project_id = :project_id"
-            base_params["project_id"] = project_id
-
-        result = await self._db.execute(
-            text(f"""
-                SELECT DISTINCT ge.id, ge.name, ge.entity_type, ge.summary
-                FROM graph_entities ge
-                JOIN graph_episode_entities gee ON ge.id = gee.entity_id
-                JOIN episodes e ON e.id = gee.episode_id
-                WHERE e.session_id = :session_id
-                  AND e.organization_id = :org_id
-                  AND ge.organization_id = :org_id
-                  AND e.is_deleted = false
-                  AND ge.is_merged = false{project_clause}
-                ORDER BY ge.name
-            """),
-            base_params,
-        )
-        rows = result.mappings().all()
-        return [
-            {
-                "id": row["id"],
-                "name": row["name"],
-                "entity_type": row["entity_type"],
-                "summary": row["summary"],
-            }
-            for row in rows
-        ]
-
     # ── List by Session ────────────────────────────────────────────────────────
 
     async def list_by_session(

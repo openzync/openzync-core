@@ -194,37 +194,22 @@ async def _fetch_session_entities(
     db: AsyncSession,
     org_id: UUID,
     session_id: UUID | None,
-    graph_backend: GraphBackend | None = None,
-    project_id: UUID | None = None,
+    graph_backend: GraphBackend,
+    project_id: UUID | None,
     **_: Any,
 ) -> dict[str, Any]:
-    """Fetch known entities for a session.
+    """Fetch known entities for a session via the graph backend.
 
-    Uses the graph backend when available; falls back to
-    ``FactRepository.get_entities_for_session`` for backward compat.
-
-    Returns ``{"known_entities": [...]}`` or an empty list if no session_id.
+    Returns ``{"known_entities": [...]}`` or an empty list if no session_id
+    or missing parameters.
     """
-    if session_id is None:
+    if session_id is None or project_id is None:
         return {"known_entities": []}
 
-    if graph_backend is not None and project_id is not None:
-        entities = await graph_backend.get_entities_for_session(
-            org_id=org_id,
-            project_id=project_id,
-            session_id=session_id,
-        )
-        return {"known_entities": entities}
-
-    # Fallback: old path via FactRepository (raw SQL)
-    from repositories.fact_repository import (
-        FactRepository,  # noqa: PLC0415 — lazy import
-    )
-
-    repo = FactRepository(db)
-    entities = await repo.get_entities_for_session(
+    entities = await graph_backend.get_entities_for_session(
+        org_id=org_id,
+        project_id=project_id,
         session_id=session_id,
-        organization_id=org_id,
     )
     return {"known_entities": entities}
 
