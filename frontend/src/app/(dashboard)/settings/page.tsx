@@ -160,8 +160,8 @@ export default function SettingsPage() {
       });
 
       if (!res.ok) {
-        const body = await safeJsonParse(res);
-        throw new Error(body.detail ?? "Failed to update profile");
+        const body = (await safeJsonParse(res)) as { detail?: string } | null;
+        throw new Error(body?.detail ?? "Failed to update profile");
       }
 
       showToast("Profile updated successfully", "success");
@@ -202,8 +202,8 @@ export default function SettingsPage() {
       });
 
       if (!res.ok) {
-        const body = await safeJsonParse(res);
-        throw new Error(body.detail ?? "Failed to update password");
+        const body = (await safeJsonParse(res)) as { detail?: string } | null;
+        throw new Error(body?.detail ?? "Failed to update password");
       }
 
       setCurrentPassword("");

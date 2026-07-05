@@ -240,8 +240,8 @@ export default function OnboardingPage() {
       });
 
       if (!res.ok) {
-        const body = await safeJsonParse(res);
-        throw new Error(body.detail ?? "Failed to save configuration");
+        const body = (await safeJsonParse(res)) as { detail?: string } | null;
+        throw new Error(body?.detail ?? "Failed to save configuration");
       }
 
       showToast("Configuration saved successfully", "success");

@@ -637,8 +637,8 @@ export default function UserDetailPage() {
       } else if (res.status === 429) {
         showToast("Please wait 5 minutes between summary generations.", "error");
       } else {
-        const body = await safeJsonParse(res);
-        throw new Error(body.detail ?? `Failed to generate summary (${res.status})`);
+        const body = (await safeJsonParse(res)) as { detail?: string } | null;
+        throw new Error(body?.detail ?? `Failed to generate summary (${res.status})`);
       }
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Failed to generate summary", "error");
@@ -656,8 +656,8 @@ export default function UserDetailPage() {
       body: JSON.stringify({ instructions: updatedInstructions }),
     });
     if (!res.ok) {
-      const body = await safeJsonParse(res);
-      throw new Error(body.detail ?? "Failed to update instructions");
+      const body = (await safeJsonParse(res)) as { detail?: string } | null;
+      throw new Error(body?.detail ?? "Failed to update instructions");
     }
     const result: InstructionsResponse = await res.json();
     setInstructions(result.data ?? []);

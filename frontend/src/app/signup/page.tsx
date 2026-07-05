@@ -52,8 +52,8 @@ export default function SignupPage() {
         }),
       });
       if (!res.ok) {
-        const data = await safeJsonParse(res);
-        throw new Error(data.detail ?? "Signup failed. Please try again.");
+        const data = (await safeJsonParse(res)) as { detail?: string } | null;
+        throw new Error(data?.detail ?? "Signup failed. Please try again.");
       }
       const data = await res.json();
       sessionStorage.setItem("mg_access_token", data.access_token);
