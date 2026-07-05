@@ -50,8 +50,8 @@ export default function LoginPage() {
         body: JSON.stringify({ email, password }),
       });
       if (!res.ok) {
-        const data = await safeJsonParse(res);
-        throw new Error(data.detail ?? "Invalid email or password.");
+        const data = (await safeJsonParse(res)) as { detail?: string } | null;
+        throw new Error(data?.detail ?? "Invalid email or password.");
       }
       const data = await res.json();
       // Store tokens
