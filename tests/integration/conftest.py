@@ -170,8 +170,17 @@ async def app(engine, redis_client) -> Any:
                 await session.rollback()
                 raise
 
+    # ── Wrap ASGI app to inject ``scope["app"]`` ──────────────────────────
+    # ``httpx.ASGITransport`` does not set ``scope["app"]``, but the
+    # ``RateLimitMiddleware`` relies on it to access ``app.state.redis``.
+    async def _asgi_with_app_scope(
+        scope: dict, receive: Any, send: Any
+    ) -> None:
+        scope["app"] = app
+        await app(scope, receive, send)
+
     app.dependency_overrides[get_db] = _get_db_override
-    yield app
+    yield _asgi_with_app_scope
     app.dependency_overrides.clear()
 
 

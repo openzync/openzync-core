@@ -100,7 +100,7 @@ class FactRepository:
             object_entity_id=object_entity_id,
             subject_type=subject_type,
             object_type=object_type,
-            embedding=[],
+            embedding=None,
         )
         self._db.add(fact)
         await self._db.flush()

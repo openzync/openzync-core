@@ -405,12 +405,9 @@ class TestRerankerFailure:
         mock_db_session: AsyncMock,
         sample_search_results: dict[str, Any],
         failing_reranker: AsyncMock,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """A failed re-rank logs an error and raises SearchLegFailedError."""
-        import logging
-
-        caplog.set_level(logging.ERROR)
+        from unittest.mock import patch
 
         retriever = _build_mocked_retriever(
             mock_db_session,
@@ -420,15 +417,15 @@ class TestRerankerFailure:
             reranker=failing_reranker,
         )
 
-        with pytest.raises(SearchLegFailedError, match="reranker"):
-            await retriever.hybrid_search("python", PROJECT_ID, limit=20)
+        with patch("services.hybrid_retriever.logger") as mock_logger:
+            with pytest.raises(SearchLegFailedError, match="reranker"):
+                await retriever.hybrid_search("python", PROJECT_ID, limit=20)
 
-        # Should have logged the failure — check that at least one ERROR
-        # record exists (the exact message format depends on structlog config)
-        assert len(caplog.records) > 0, (
-            "An error should be logged when the re-ranker fails"
-        )
-        assert any(r.levelno == logging.ERROR for r in caplog.records)
+            # Verify the error was logged with the rerank_failed event
+            mock_logger.error.assert_called_once()
+            args, kwargs = mock_logger.error.call_args
+            assert args[0] == "hybrid_retriever.rerank_failed"
+            assert kwargs["extra"]["leg"] == "reranker"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
