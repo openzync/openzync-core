@@ -81,17 +81,17 @@ migrate-downgrade:
 # ── Docker ────────────────────────────────────────────────────────────────────
 
 docker-up:
-	docker compose -f infra/docker-compose.yml up -d
+	docker compose -f infra/docker-compose.backend.yml up -d
 
 docker-down:
-	docker compose -f infra/docker-compose.yml down
+	docker compose -f infra/docker-compose.backend.yml down
 
 docker-logs:
-	docker compose -f infra/docker-compose.yml logs -f
+	docker compose -f infra/docker-compose.backend.yml logs -f
 
 docker-reset:
-	docker compose -f infra/docker-compose.yml down -v
-	docker compose -f infra/docker-compose.yml up -d
+	docker compose -f infra/docker-compose.backend.yml down -v
+	docker compose -f infra/docker-compose.backend.yml up -d
 
 # ── Documentation ─────────────────────────────────────────────────────────────
 

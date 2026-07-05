@@ -76,7 +76,7 @@ pip install -e ".[dev]"
 
 # 2. Start infrastructure (PostgreSQL + Redis + Ollama)
 cp .env.example .env
-docker compose -f infra/docker-compose.yml up -d
+docker compose -f infra/docker-compose.backend.yml up -d
 
 # 3. Pull a default LLM model (if using Ollama)
 ollama pull llama3.2:3b
@@ -152,7 +152,7 @@ Provider-specific keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) are read di
 
 ## Deployment
 
-- **Docker Compose** — `infra/docker-compose.yml` for development; `infra/docker-compose.prod.yml` for production (2 API replicas, resource limits, TLS-ready).
+- **Docker Compose** — `infra/docker-compose.backend.yml` for the backend stack; `infra/docker-compose.frontend.yml` for the frontend.
 - **Kubernetes** — Helm chart at `infra/helm/openzync/`.
 - **Requirements** — PostgreSQL 15+ (with pgvector extension), Redis 7+, and an LLM provider (Ollama local or cloud BYOK).
 - **Worker** — The ARQ worker runs as a separate process. In Docker Compose, it is the `worker` service.

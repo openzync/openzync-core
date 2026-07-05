@@ -98,31 +98,34 @@ else
 fi
 
 # ── Start infrastructure ──────────────────────────────────────────────────────
-COMPOSE_FILE="$PROJECT_ROOT/infra/docker-compose.yml"
-SERVICES="postgres redis falkordb"
+COMPOSE_FILE="$PROJECT_ROOT/infra/docker-compose.backend.yml"
+SERVICES="redis"
 
+# Start Redis via Docker Compose (if compose file exists)
 if [ -f "$COMPOSE_FILE" ]; then
     info "Starting Docker Compose services: $SERVICES ..."
-    docker compose -f "$COMPOSE_FILE" up -d $SERVICES 2>/dev/null || {
-        warn "Docker Compose failed — starting containers individually as fallback."
-
-        docker run -d --name openzync-postgres \
-            -e POSTGRES_USER="$POSTGRES_USER" \
-            -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
-            -e POSTGRES_DB="$POSTGRES_DB" \
-            -p 5432:5432 \
-            postgres:15 2>/dev/null || true
-
-        docker run -d --name openzync-redis \
-            -p 6379:6379 \
-            redis:7-alpine 2>/dev/null || true
-
-        docker run -d --name openzync-falkordb \
-            -p 6380:6379 \
-            falkordb/falkordb:latest 2>/dev/null || true
-    }
+    docker compose -f "$COMPOSE_FILE" up -d $SERVICES 2>/dev/null || true
 else
-    warn "No Docker Compose file found at $COMPOSE_FILE — assuming services are running externally."
+    warn "No Docker Compose file found at $COMPOSE_FILE — assuming Redis is running externally."
+fi
+
+# Start PostgreSQL if not already running (unconditional — not a fallback)
+if ! docker ps --format '{{.Names}}' | grep -q '^openzync-postgres$'; then
+    info "Starting PostgreSQL..."
+    docker run -d --name openzync-postgres \
+        -e POSTGRES_USER="$POSTGRES_USER" \
+        -e POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+        -e POSTGRES_DB="$POSTGRES_DB" \
+        -p 5432:5432 \
+        postgres:15 2>/dev/null || true
+fi
+
+# Start FalkorDB if not already running (unconditional — not a fallback)
+if ! docker ps --format '{{.Names}}' | grep -q '^openzync-falkordb$'; then
+    info "Starting FalkorDB..."
+    docker run -d --name openzync-falkordb \
+        -p 6380:6379 \
+        falkordb/falkordb:latest 2>/dev/null || true
 fi
 
 # ── Wait for PostgreSQL ───────────────────────────────────────────────────────

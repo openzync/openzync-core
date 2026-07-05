@@ -183,28 +183,7 @@ jobs:
           docker tag ghcr.io/${{ github.repository }}/frontend:$TAG ghcr.io/${{ github.repository }}/frontend:latest
           docker push --all-tags ghcr.io/${{ github.repository }}/frontend
 
-      - name: Deploy frontend on VPS
-        uses: appleboy/ssh-action@v1.0.3
-        env:
-          GHCR_PAT: ${{ secrets.GHCR_PAT }}
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          envs: GHCR_PAT
-          script: |
-            echo "$GHCR_PAT" | docker login ghcr.io -u rohnsha0 --password-stdin
-            cd /home/deploy/openzync
-            docker compose \
-              -f infra/docker-compose.yml \
-              -f infra/docker-compose.prod.yml \
-              -f infra/docker-compose.vps.yml \
-              pull frontend
-            docker compose \
-              -f infra/docker-compose.yml \
-              -f infra/docker-compose.prod.yml \
-              -f infra/docker-compose.vps.yml \
-              up -d frontend
+
 
   # ═════════════════════════════════════════════════════════════════════════════
   # DEPLOY  (VPS — main branch only)
@@ -212,7 +191,7 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    needs: [build-backend]
+    needs: [build-backend, build-frontend]
     steps:
       - uses: actions/checkout@v4
 
@@ -236,11 +215,8 @@ jobs:
 
           # Create tar archive of deployment files (runs on runner — resolves correctly)
             tar czf /tmp/deploy-files.tar.gz \
-              infra/docker-compose.yml \
-              infra/docker-compose.vps.yml \
-              infra/docker-compose.prod.yml \
-              infra/nginx/ \
-              scripts/deploy.sh
+              infra/docker-compose.backend.yml \
+              infra/docker-compose.frontend.yml
 
           # Upload via SCP directly
           scp -i ~/.ssh/id_ed25519 \
@@ -267,7 +243,6 @@ jobs:
             cd /home/deploy/openzync
             tar xzf deploy-files.tar.gz
             rm deploy-files.tar.gz
-            chmod +x scripts/deploy.sh
 
             # ── Create infra/.env from template + secrets ──────────────────
             cat > infra/.env << ENVEOF
@@ -290,7 +265,14 @@ jobs:
             NEXT_PUBLIC_API_URL=https://app.openzync.tech
             ENVEOF
 
-            bash scripts/deploy.sh
+            # ── Deploy backend: pull → migrate → restart ───────────────────
+            docker compose -f infra/docker-compose.backend.yml pull
+            docker compose -f infra/docker-compose.backend.yml run --rm api alembic upgrade head
+            docker compose -f infra/docker-compose.backend.yml up -d
+
+            # ── Deploy frontend: pull → restart (compose file uploaded above) ──
+            docker compose -f infra/docker-compose.frontend.yml pull frontend
+            docker compose -f infra/docker-compose.frontend.yml up -d frontend
 
   # ═════════════════════════════════════════════════════════════════════════════
   # SDK PUBLISH  (PyPI — tags only)
