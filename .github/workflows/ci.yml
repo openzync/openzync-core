@@ -216,7 +216,8 @@ jobs:
           # Create tar archive of deployment files (runs on runner — resolves correctly)
             tar czf /tmp/deploy-files.tar.gz \
               infra/docker-compose.backend.yml \
-              infra/docker-compose.frontend.yml
+              infra/docker-compose.frontend.yml \
+              infra/nginx/conf.d/
 
           # Upload via SCP directly
           scp -i ~/.ssh/id_ed25519 \
@@ -274,6 +275,12 @@ jobs:
             # ── Deploy frontend: pull → restart (compose file uploaded above) ──
             docker compose -f infra/docker-compose.frontend.yml pull frontend
             docker compose -f infra/docker-compose.frontend.yml up -d frontend
+
+            # ── Reload nginx so it resolves new container IPs ──────────────
+            # nginx -s reload forces re-resolution of upstream hostnames
+            # (api, frontend).  Without this, nginx caches the old container
+            # IP after redeploy and returns 502 Bad Gateway.
+            docker exec infra-nginx-1 nginx -s reload || true
 
   # ═════════════════════════════════════════════════════════════════════════════
   # SDK PUBLISH  (PyPI — tags only)
