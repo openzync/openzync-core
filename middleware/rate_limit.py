@@ -198,18 +198,16 @@ class RateLimitMiddleware:
             redis = getattr(_app.state, "redis", None) if _app is not None else None
 
         if redis is None:
-            logger.error("rate_limit.redis_not_configured")
-            raise RateLimitUnavailableError(
-                "Redis is not configured — rate limiting cannot operate."
-            )
+            logger.warning("rate_limit.redis_not_configured")
+            await self.app(scope, receive, send)
+            return
 
         try:
             await redis.ping()
         except Exception as exc:
-            logger.error("rate_limit.redis_unreachable", exc_info=True)
-            raise RateLimitUnavailableError(
-                "Redis is unreachable — rate limiting cannot operate."
-            ) from exc
+            logger.warning("rate_limit.redis_unreachable", exc_info=True)
+            await self.app(scope, receive, send)
+            return
 
         # ── Determine rate-limit key and parameters ─────────────────────
         state = scope.get("state") or {}
@@ -233,10 +231,9 @@ class RateLimitMiddleware:
                 window_seconds=window,
             )
         except Exception as exc:
-            logger.error("rate_limit.check_failed", exc_info=True)
-            raise RateLimitUnavailableError(
-                "Rate limit check failed due to infrastructure error."
-            ) from exc
+            logger.warning("rate_limit.check_failed", exc_info=True)
+            await self.app(scope, receive, send)
+            return
 
         retry_after = max(1, reset_time - int(time.time()))
 
