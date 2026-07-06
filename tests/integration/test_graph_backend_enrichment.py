@@ -76,14 +76,12 @@ async def db() -> AsyncGenerator[AsyncSession, None]:
     driver_url = url.replace("postgresql://", "postgresql+asyncpg://")
     engine = create_async_engine(driver_url, poolclass=NullPool, pool_pre_ping=True)
 
-    async with engine.connect() as conn:
-        await conn.execute(sa_text("SET search_path TO public"))
-        transaction = await conn.begin()
-        session = AsyncSession(bind=conn, expire_on_commit=False)
+    async with AsyncSession(engine, expire_on_commit=False) as session:
+        await session.execute(sa_text("SET search_path TO public"))
         try:
             yield session
         finally:
-            await transaction.rollback()
+            await session.rollback()
             await session.close()
 
     await engine.dispose()
