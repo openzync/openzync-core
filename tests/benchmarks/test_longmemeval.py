@@ -895,147 +895,151 @@ async def _run_benchmark_pipeline(
     project_id = await _create_project(api_client, token)
     logger.info("[%s] Created project %s", label, project_id)
 
-# ── Ingest all conversations ───────────────────────────────────────────
-    # Each dataset entry gets its own session so retrieval is measured
-    # across independent conversation contexts.
-    ingested_count = 0
-    for idx, entry in enumerate(dataset):
-        entry_id = entry.get("question_id", f"entry_{idx}")
-        haystack = entry.get("haystack_sessions", [])
-        messages = _flatten_messages(haystack)
-        if not messages:
-            logger.warning(
-                "[%s] Entry %s has empty messages — skipping",
-                label,
-                entry_id,
-            )
-            continue
-
-        # Create a session for this entry
-        session_id = await _create_session(
-            api_client,
-            token,
-            project_id,
-            external_id=f"longmemeval_{entry_id}",
-        )
-
-        # LongMemEval conversations may have many messages; batch if needed
-        batch_size = 500
-        for i in range(0, len(messages), batch_size):
-            batch = messages[i : i + batch_size]
-            await _ingest_memory(
-                api_client, token, project_id, batch,
-                session_id=session_id,
-            )
-            ingested_count += len(batch)
-
-    logger.info(
-        "[%s] Ingested %d messages across %d entries (1 session per entry)",
-        label,
-        ingested_count,
-        len(dataset),
-    )
-
-    # ── Wait for enrichment ────────────────────────────────────────────
-    logger.info("[%s] Waiting for enrichment to complete...", label)
     try:
-        await _wait_for_enrichment(api_client, token, project_id)
-    except TimeoutError:
-        logger.warning(
-            "[%s] Enrichment timed out — proceeding with partial data",
-            label,
-        )
+        # ── Ingest all conversations ───────────────────────────────────────────
+        # Each dataset entry gets its own session so retrieval is measured
+        # across independent conversation contexts.
+        ingested_count = 0
+        for idx, entry in enumerate(dataset):
+            entry_id = entry.get("question_id", f"entry_{idx}")
+            haystack = entry.get("haystack_sessions", [])
+            messages = _flatten_messages(haystack)
+            if not messages:
+                logger.warning(
+                    "[%s] Entry %s has empty messages — skipping",
+                    label,
+                    entry_id,
+                )
+                continue
 
-    # ── Query each question ────────────────────────────────────────────
-    results: list[dict[str, Any]] = []
-    for idx, entry in enumerate(dataset):
-        question = entry.get("question", "")
-        question_id = entry.get("question_id", str(idx))
-        # The LongMemEval-S dataset uses key "answer"; the oracle variant
-        # uses "expected_answer".  Try both for compatibility.
-        expected_answer = entry.get("answer", entry.get("expected_answer", ""))
-        qtype = entry.get("question_type", "unknown")
-        abstention = is_abstention(question_id)
+            # Create a session for this entry
+            session_id = await _create_session(
+                api_client,
+                token,
+                project_id,
+                external_id=f"longmemeval_{entry_id}",
+            )
+
+            # LongMemEval conversations may have many messages; batch if needed
+            batch_size = 500
+            for i in range(0, len(messages), batch_size):
+                batch = messages[i : i + batch_size]
+                await _ingest_memory(
+                    api_client, token, project_id, batch,
+                    session_id=session_id,
+                )
+                ingested_count += len(batch)
 
         logger.info(
-            "[%s] Query %d/%d: %s",
+            "[%s] Ingested %d messages across %d entries (1 session per entry)",
             label,
-            idx + 1,
+            ingested_count,
             len(dataset),
-            question_id,
         )
 
-        # R@k via search
-        search_results = await _search(
-            api_client, token, project_id, question, limit=10
-        )
-
-        r1 = compute_recall_at_k(search_results, expected_answer, k=1)
-        r5 = compute_recall_at_k(search_results, expected_answer, k=5)
-        r10 = compute_recall_at_k(search_results, expected_answer, k=10)
-
-        # End-to-end QA via context → LLM answer → judge
-        context_text = await _get_context(
-            api_client, token, project_id, question, limit=20
-        )
-
+        # ── Wait for enrichment ────────────────────────────────────────────
+        logger.info("[%s] Waiting for enrichment to complete...", label)
         try:
-            model_answer = await _answer_from_context(
-                backend=openrouter_backend,
-                question=question,
-                context=context_text,
-                is_abstention=abstention,
-            )
-            judge_result: EvaluationResult = await evaluate_answer(
-                backend=openrouter_backend,
-                question=question,
-                expected_answer=expected_answer,
-                model_answer=model_answer,
-                is_abstention=abstention,
-                temperature=0.0,
-                max_tokens=512,
-            )
-            correct = judge_result.correct
-            reasoning = judge_result.reasoning
-        except LLMStructuredOutputError as exc:
+            await _wait_for_enrichment(api_client, token, project_id)
+        except TimeoutError:
             logger.warning(
-                "[%s] Judge LLM failed for %s: %s — marking incorrect",
+                "[%s] Enrichment timed out — proceeding with partial data",
                 label,
-                question_id,
-                exc,
             )
-            correct = False
-            reasoning = f"Judge LLM error: {exc}"
-            model_answer = ""
 
-        result_entry = {
-            "id": question_id,
-            "question": question,
-            "question_type": qtype,
-            "expected_answer": expected_answer,
-            "abstention": abstention,
-            "correct": correct,
-            "reasoning": reasoning,
-            "r1": r1,
-            "r5": r5,
-            "r10": r10,
-            "search_result_count": len(search_results),
-            "model_answer": model_answer,
-        }
-        results.append(result_entry)
+        # ── Query each question ────────────────────────────────────────────
+        results: list[dict[str, Any]] = []
+        for idx, entry in enumerate(dataset):
+            question = entry.get("question", "")
+            question_id = entry.get("question_id", str(idx))
+            # The LongMemEval-S dataset uses key "answer"; the oracle variant
+            # uses "expected_answer".  Try both for compatibility.
+            expected_answer = entry.get("answer", entry.get("expected_answer", ""))
+            qtype = entry.get("question_type", "unknown")
+            abstention = is_abstention(question_id)
 
-        # Incremental save every 10 questions to protect against data loss
-        if (idx + 1) % 10 == 0:
-            _TMP_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-            tmp_path = _TMP_RESULTS_DIR / f"{label}_partial_{idx+1}.json"
-            with open(tmp_path, "w") as f:
-                json.dump(results, f, indent=2, default=str)
             logger.info(
-                "[%s] Progress: %d/%d questions — saved partial results to %s",
+                "[%s] Query %d/%d: %s",
                 label,
                 idx + 1,
                 len(dataset),
-                tmp_path,
+                question_id,
             )
 
+            # R@k via search
+            search_results = await _search(
+                api_client, token, project_id, question, limit=10
+            )
+
+            r1 = compute_recall_at_k(search_results, expected_answer, k=1)
+            r5 = compute_recall_at_k(search_results, expected_answer, k=5)
+            r10 = compute_recall_at_k(search_results, expected_answer, k=10)
+
+            # End-to-end QA via context → LLM answer → judge
+            context_text = await _get_context(
+                api_client, token, project_id, question, limit=20
+            )
+
+            try:
+                model_answer = await _answer_from_context(
+                    backend=openrouter_backend,
+                    question=question,
+                    context=context_text,
+                    is_abstention=abstention,
+                )
+                judge_result: EvaluationResult = await evaluate_answer(
+                    backend=openrouter_backend,
+                    question=question,
+                    expected_answer=expected_answer,
+                    model_answer=model_answer,
+                    is_abstention=abstention,
+                    temperature=0.0,
+                    max_tokens=512,
+                )
+                correct = judge_result.correct
+                reasoning = judge_result.reasoning
+            except LLMStructuredOutputError as exc:
+                logger.warning(
+                    "[%s] Judge LLM failed for %s: %s — marking incorrect",
+                    label,
+                    question_id,
+                    exc,
+                )
+                correct = False
+                reasoning = f"Judge LLM error: {exc}"
+                model_answer = ""
+
+            result_entry = {
+                "id": question_id,
+                "question": question,
+                "question_type": qtype,
+                "expected_answer": expected_answer,
+                "abstention": abstention,
+                "correct": correct,
+                "reasoning": reasoning,
+                "r1": r1,
+                "r5": r5,
+                "r10": r10,
+                "search_result_count": len(search_results),
+                "model_answer": model_answer,
+            }
+            results.append(result_entry)
+
+            # Incremental save every 10 questions to protect against data loss
+            if (idx + 1) % 10 == 0:
+                _TMP_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+                tmp_path = _TMP_RESULTS_DIR / f"{label}_partial_{idx+1}.json"
+                with open(tmp_path, "w") as f:
+                    json.dump(results, f, indent=2, default=str)
+                logger.info(
+                    "[%s] Progress: %d/%d questions — saved partial results to %s",
+                    label,
+                    idx + 1,
+                    len(dataset),
+                    tmp_path,
+                )
+
         return results
+    finally:
+        await _delete_project(api_client, token, project_id)
+        logger.info("[%s] Cleaned up project %s", label, project_id)

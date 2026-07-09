@@ -73,7 +73,7 @@ RATE_QUERIES: list[tuple[str, str]] = [
     ("rate_5xx", 'sum(rate(openzync_http_requests_total{status="5xx"}[5m]))'),
     (
         "error_rate_pct",
-        '(sum(rate(openzync_http_requests_total{status="5xx"}[5m])) / max(sum(rate(openzync_http_requests_total[5m])), 1)) * 100',
+        '(sum(rate(openzync_http_requests_total{status="5xx"}[5m])) / (sum(rate(openzync_http_requests_total[5m])) or vector(1))) * 100',
     ),
 ]
 

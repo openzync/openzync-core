@@ -19,7 +19,7 @@ import pytest
 from core.llm_backends import OpenRouterBackend
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Generator
+    from collections.abc import Generator
 
 # ── Load local .env file (if available) ───────────────────────────────────────
 # This allows benchmark credentials (BENCH_EMAIL, OZ_OPENROUTER_API_KEY, etc.)
@@ -154,20 +154,15 @@ def benchmark_config(request: pytest.FixtureRequest) -> SimpleNamespace:
 
 
 @pytest.fixture(scope="function")
-async def api_client() -> AsyncGenerator[httpx.AsyncClient, None]:
+def api_client() -> httpx.AsyncClient:
     """Create an ``httpx.AsyncClient`` pointed at the OpenZync API.
 
     Base URL is read from ``OPENZYNC_BASE_URL``
     (default: ``http://localhost:8000``).
 
-    Yields:
+    Returns:
         An ``httpx.AsyncClient`` configured with a default 60 s timeout.
+        The caller is responsible for closing the client (``await client.aclose()``).
     """
-    # OPENZYNC_BASE_URL is the legacy name — checked as fallback for
-    # backward compatibility with existing .env files.
-    base_url = os.environ.get(
-        "OPENZYNC_BASE_URL",
-        os.environ.get("OPENZYNC_BASE_URL", "http://localhost:8000"),
-    )
-    async with httpx.AsyncClient(base_url=base_url, timeout=60.0) as client:
-        yield client
+    base_url = os.environ.get("OPENZYNC_BASE_URL", "http://localhost:8000")
+    return httpx.AsyncClient(base_url=base_url, timeout=60.0)
