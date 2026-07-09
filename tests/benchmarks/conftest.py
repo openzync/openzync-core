@@ -153,16 +153,19 @@ def benchmark_config(request: pytest.FixtureRequest) -> SimpleNamespace:
     )
 
 
-@pytest.fixture(scope="function")
+@pytest.fixture(scope="session")
 def api_client() -> httpx.AsyncClient:
     """Create an ``httpx.AsyncClient`` pointed at the OpenZync API.
 
     Base URL is read from ``OPENZYNC_BASE_URL``
     (default: ``http://localhost:8000``).
 
+    Session-scoped: one client for the entire benchmark run.  Cleanup
+    is handled by garbage collection at process exit — avoids the
+    ``Event loop is closed`` teardown race in pytest-asyncio.
+
     Returns:
         An ``httpx.AsyncClient`` configured with a default 60 s timeout.
-        The caller is responsible for closing the client (``await client.aclose()``).
     """
     base_url = os.environ.get("OPENZYNC_BASE_URL", "http://localhost:8000")
     return httpx.AsyncClient(base_url=base_url, timeout=60.0)
