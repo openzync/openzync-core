@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import structlog
 
+from core.exceptions import EpisodeNotFoundError, SearchLegFailedError
 from workers.tasks.base import ENRICHMENT_EMBEDDING, with_retry
 
 logger = structlog.get_logger()
@@ -32,7 +33,7 @@ async def embed_episode(
     per-org config (``org_cfg.embedding_backend`` / ``embedding_model`` /
     ``embedding_dim``) resolved from the ``organizations.config`` JSONB
     column.  There is no env-var fallback — if any required field is
-    ``None`` the task logs a warning and returns early.
+    ``None`` the task raises ``SearchLegFailedError`` so ARQ retries.
 
     Args:
         ctx: ARQ worker context (unused — required by ARQ contract).
@@ -43,6 +44,9 @@ async def embed_episode(
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:
+        EpisodeNotFoundError: If no episode exists for ``episode_id``.
+        SearchLegFailedError: If org config fetch fails, org is not found,
+            or no embedding backend is configured.
         ValueError: If the embedding dimension does not match
             the per-org config ``embedding_dim``.
     """
@@ -50,9 +54,11 @@ async def embed_episode(
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
 
     # ── Lazy imports (ARQ workers run in a separate process) ──────────────
+    import uuid
     from core.config import settings
     from core.db import get_async_session
     from core.llm import resolve_backend
+    from core.org_config import get_org_config
     from repositories.episode_repository import EpisodeRepository
     from sqlalchemy import text
 
@@ -82,29 +88,56 @@ async def embed_episode(
     if session_factory is None:
         session_factory = get_async_session(engine)
 
-    # ── 2. Fetch per-organization config ───────────────────────────────────
-    import uuid
-    from core.org_config import get_org_config
+    # ── 2a. Idempotency check — skip if embedding bit already set ────────────
+    async with session_factory() as idempotency_db:
+        episode_repo = EpisodeRepository(idempotency_db)
+        episode = await episode_repo.get_by_id(uuid.UUID(episode_id))
+        if episode is None:
+            logger.warning(
+                "embed_episode.episode_not_found",
+                episode_id=episode_id,
+            )
+            raise EpisodeNotFoundError(
+                message=f"Episode {episode_id} not found for embedding.",
+                detail={"episode_id": episode_id},
+            )
+        if episode.enrichment_status & ENRICHMENT_EMBEDDING:
+            logger.debug(
+                "embed_episode.skipped_already_done",
+                episode_id=episode_id,
+                enrichment_status=episode.enrichment_status,
+            )
+            return
 
+    # ── 2b. Fetch per-organization config ──────────────────────────────────
     org_cfg = None
     try:
         async with session_factory() as _db:
             org_cfg = await get_org_config(uuid.UUID(org_id), _db, redis=None)
-    except Exception:
+    except Exception as exc:
         logger.warning(
             "embed_episode.org_config_fetch_failed",
             org_id=org_id,
             exc_info=True,
         )
+        raise SearchLegFailedError(
+            leg_name="embedding",
+            message=f"Failed to fetch org config for org {org_id}: {exc}",
+            original_error=str(exc),
+        ) from exc
 
-    # No env-var fallback — skip if org config is unavailable or
-    # no embedding backend is configured.
-    if org_cfg is None or org_cfg.embedding_backend is None:
-        logger.warning(
-            "embed_episode.skipped_no_embedding_config",
-            org_id=org_id,
+    if org_cfg is None:
+        raise SearchLegFailedError(
+            leg_name="embedding",
+            message=f"Org config not found for org {org_id}",
         )
-        return
+
+    if org_cfg.embedding_backend is None:
+        raise SearchLegFailedError(
+            leg_name="embedding",
+            message=f"No embedding backend configured for org {org_id}",
+            original_error=f"org_cfg.embedding_backend is None for org {org_id}",
+        )
 
     _embedding_backend = org_cfg.embedding_backend
     _embedding_model = org_cfg.embedding_model
