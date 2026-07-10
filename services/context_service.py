@@ -15,7 +15,7 @@ and formatting to ``context_formatter``.
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import orjson
@@ -31,6 +31,35 @@ if TYPE_CHECKING:
     from schemas.organization_config import OrgConfigBase
 
 logger = structlog.get_logger()
+
+
+def _preview(items: list[dict[str, Any]], max_chars: int = 500) -> str | None:
+    """Build a compact preview string for the top result in a list.
+
+    Includes all available scores (``score``, ``rrf_score``, ``reranker_score``)
+    and a truncated content preview.  Returns ``None`` when *items* is empty.
+
+    Args:
+        items: Ranked result list (episodes or facts) from the RRF merge.
+        max_chars: Maximum characters of content to include.
+
+    Returns:
+        A preview string like ``"[rrf_score=0.0161] Hey, I'm thinking of..."``
+        or ``None`` if there are no items to preview.
+    """
+    if not items:
+        return None
+    first = items[0]
+    content = (first.get("content") or "")[:max_chars]
+    scores = " | ".join(
+        f"{k}={v:.4f}"
+        for k in ("score", "rrf_score", "reranker_score")
+        if (v := first.get(k)) is not None
+    )
+    suffix = "..." if len(first.get("content") or "" ) > max_chars else ""
+    if scores:
+        return f"[{scores}] {content}{suffix}"
+    return f"{content}{suffix}"
 
 
 class ContextService:
@@ -116,11 +145,24 @@ class ContextService:
                 elapsed = (time.monotonic() - start) * 1000
                 context_latency_seconds.labels(type="warm").observe(elapsed / 1000)
                 logger.debug(
-                    "context.cache_hit",
+                    "context.assembled",
                     org_id=str(self._org_id),
                     project_id=str(project_id),
-                    query_hash=query,
+                    query=query[:200],
+                    cache_hit=True,
+                    format=format,
                     assembly_time_ms=round(elapsed, 1),
+                    source_counts={},
+                    total_items=0,
+                    context_length=len(cached),
+                    top_episode=None,
+                    top_fact=None,
+                    query_embedding_dim=None,
+                    configured_embedding_dim=(
+                        self._retriever._org_config.embedding_dim
+                        if self._retriever._org_config
+                        else None
+                    ),
                 )
                 return {
                     "context": cached,
@@ -168,10 +210,21 @@ class ContextService:
             "context.assembled",
             org_id=str(self._org_id),
             project_id=str(project_id),
-            query_hash=query,
+            query=query[:200],
+            cache_hit=False,
             format=format,
             assembly_time_ms=round(elapsed, 1),
+            source_counts=results.get("source_counts", {}),
             total_items=results.get("total_items", 0),
+            context_length=len(context_str),
+            top_episode=_preview(results.get("episodes", [])),
+            top_fact=_preview(results.get("facts", [])),
+            query_embedding_dim=results.get("query_embedding_dim"),
+            configured_embedding_dim=(
+                self._retriever._org_config.embedding_dim
+                if self._retriever._org_config
+                else None
+            ),
         )
 
         return {

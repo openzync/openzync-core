@@ -70,6 +70,10 @@ class HybridRetriever:
         self._graph_backends = graph_backends or []
         self._org_config = org_config
         self._reranker = reranker
+        self._last_query_embedding_dim: int | None = None
+        """Dimension of the most recently generated query embedding, or ``None`` if
+        no embedding has been generated yet (e.g. all vector legs failed).  Used
+        by callers for diagnostic logging to detect dimension mismatches."""
         self._rerank_top_k: int = (
             org_config.reranker_top_k if org_config and org_config.reranker_top_k else DEFAULT_RERANK_TOP_K
         )
@@ -262,6 +266,7 @@ class HybridRetriever:
                 },
             },
             "total_items": len(merged_episodes) + len(merged_facts) + len(entities),
+            "query_embedding_dim": self._last_query_embedding_dim,
         }
 
     # ── Vector Search ──────────────────────────────────────────────────────────
@@ -293,8 +298,12 @@ class HybridRetriever:
                 else None,
                 org_config=org_config_dict,
             )
-            response = await backend.embed([query])
+            response = await backend.embed(
+                [query],
+                model=self._org_config.embedding_model if self._org_config else None,
+            )
             if response.embeddings and len(response.embeddings) > 0:
+                self._last_query_embedding_dim = len(response.embeddings[0])
                 return response.embeddings[0]
             raise SearchLegFailedError(
                 leg_name="embedding",
