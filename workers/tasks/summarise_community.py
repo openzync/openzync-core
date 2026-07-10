@@ -19,10 +19,10 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.graph_entity import GraphEntity
+from models.organization import Organization
 from models.project import Project
 from packages.graph_backend.interface import GraphBackend
 from workers.backend import resolve_graph_backend
@@ -81,15 +81,30 @@ async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
             if org_id:
                 org_ids = [UUID(org_id)]
             else:
-                # Find orgs with enough non-community entities (ORM query,
-                # not raw SQL — GraphEntity.entity_type is in the model).
-                result = await db.execute(
-                    select(GraphEntity.organization_id)
-                    .where(GraphEntity.entity_type != "community")
-                    .group_by(GraphEntity.organization_id)
-                    .having(func.count() >= COMMUNITY_MIN_ENTITY_COUNT)
-                )
-                org_ids = [r[0] for r in result.all()]
+                # Discover eligible orgs via the Organization table — each
+                # org's resolved backend answers authoritatively for entity
+                # counts via get_all_entities().  Direct GraphEntity ORM
+                # queries are incorrect for non-Postgres backends.
+                result = await db.execute(select(Organization.id))
+                all_org_ids = [r[0] for r in result.all()]
+
+                org_ids = []
+                for oid in all_org_ids:
+                    try:
+                        backend = await resolve_graph_backend(ctx, oid, db)
+                        if backend is None:
+                            continue
+                        # Entity-count filtering happens inside _process_org
+                        # via backend.get_all_entities() — no need to
+                        # duplicate it here.
+                        org_ids.append(oid)
+                    except Exception:
+                        logger.error(
+                            "community.org_resolution_failed",
+                            extra={"org_id": str(oid)},
+                            exc_info=True,
+                        )
+                        continue
 
             if not org_ids:
                 return {"status": "skipped", "reason": "No eligible orgs found"}

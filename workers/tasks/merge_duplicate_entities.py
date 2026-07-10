@@ -32,10 +32,10 @@ import uuid
 from typing import Any
 
 import structlog
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.graph_entity import GraphEntity
+from models.organization import Organization
 from models.project import Project
 from packages.graph_backend.interface import GraphBackend
 from workers.backend import resolve_graph_backend
@@ -165,24 +165,21 @@ async def merge_duplicate_entities(
 
 
 async def _find_eligible_orgs(db: AsyncSession) -> list[uuid.UUID]:
-    """Find organizations with at least two entities in the graph.
+    """Return all organization IDs for duplicate-entity processing.
 
-    Uses the ORM (``GraphEntity``) — ``is_merged`` is not available in the
-    stub model, so this counts *all* entities.  Per-project filtering in
-    ``_process_org`` via ``get_all_entities(include_merged=False)`` refines
-    the candidate set.
+    Returns ALL orgs — per-org backend resolution and entity-count
+    filtering happens in ``_process_org`` / ``_process_project`` via
+    ``backend.get_all_entities()``.  Direct ``GraphEntity`` ORM queries
+    are incorrect for non-Postgres backends and silently return zero
+    results when entities live in SurrealDB or FalkorDB.
 
     Args:
         db: Database session.
 
     Returns:
-        List of organization UUIDs that have graph data.
+        List of all organization UUIDs.
     """
-    result = await db.execute(
-        select(GraphEntity.organization_id)
-        .group_by(GraphEntity.organization_id)
-        .having(func.count() >= 2)
-    )
+    result = await db.execute(select(Organization.id))
     return [r[0] for r in result.all()]
 
 

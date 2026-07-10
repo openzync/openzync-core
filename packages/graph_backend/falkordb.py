@@ -932,6 +932,126 @@ class FalkorGraphBackend(GraphBackend):
                 detail={"org_id": str(org_id), "entity_id": str(entity_id)},
             ) from exc
 
+    # ── Group C2: Aggregate Queries (for observation service) ────────────────────
+
+    async def get_total_entity_linked_episode_count(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+    ) -> int:
+        """Get total distinct episodes that have at least one linked entity.
+
+        Traverses ``(:Episode)-[:MENTIONS]->(:Entity)`` and counts distinct
+        episodes.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+
+        Returns:
+            Number of distinct episodes with linked entities.
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            raise GraphBackendUnavailableError(
+                "FalkorDB not connected — cannot count entity-linked episodes."
+            )
+
+        try:
+            result = await graph.query(
+                """
+                MATCH (ep:Episode {organization_id: $org_id, project_id: $project_id})
+                  -[:MENTIONS]->(en:Entity)
+                RETURN count(DISTINCT ep) AS total
+                """,
+                {
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                },
+            )
+            if result.result_set and result.result_set[0]:
+                return result.result_set[0][0]
+            return 0
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.get_total_entity_linked_episode_count_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message="Failed to count entity-linked episodes",
+                detail={"org_id": str(org_id), "project_id": str(project_id)},
+            ) from exc
+
+    async def resolve_entity_names(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        entity_ids: list[UUID],
+    ) -> dict[str, dict]:
+        """Resolve entity IDs to their names and types.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            entity_ids: List of entity UUIDs to resolve.
+
+        Returns:
+            Dict keyed by entity ID string with ``name`` and ``entity_type``.
+        """
+        if not entity_ids:
+            return {}
+
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            raise GraphBackendUnavailableError(
+                "FalkorDB not connected — cannot resolve entity names."
+            )
+
+        str_ids = [str(eid) for eid in entity_ids]
+
+        try:
+            result = await graph.query(
+                """
+                MATCH (e:Entity)
+                WHERE e.id IN $entity_ids
+                  AND e.organization_id = $org_id
+                  AND e.project_id = $project_id
+                RETURN e.id AS id, e.name AS name, e.entity_type AS entity_type
+                """,
+                {
+                    "entity_ids": str_ids,
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                },
+            )
+            output: dict[str, dict] = {}
+            for row in result.result_set:
+                eid_str = str(row[0]) if row[0] else ""
+                if eid_str:
+                    output[eid_str] = {
+                        "name": str(row[1]) if row[1] else "",
+                        "entity_type": str(row[2]) if row[2] else "",
+                    }
+            return output
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.resolve_entity_names_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "entity_id_count": len(str_ids),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message="Failed to resolve entity names",
+                detail={"org_id": str(org_id), "project_id": str(project_id)},
+            ) from exc
+
     async def expire_relationship(
         self,
         org_id: UUID,

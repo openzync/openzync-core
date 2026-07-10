@@ -1991,6 +1991,75 @@ class PostgresGraphBackend(GraphBackend):
                 },
             ) from exc
 
+    # ── Group C2: Aggregate Queries (for observation service) ──────────────────
+
+    async def get_total_entity_linked_episode_count(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+    ) -> int:
+        """Get total distinct episodes that have at least one linked entity.
+
+        Queries ``graph_episode_entities`` via the backend ABC so that this
+        works regardless of which graph backend is active.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+
+        Returns:
+            Number of distinct episodes with linked entities.
+        """
+        result = await self._db.execute(
+            text("""
+                SELECT COUNT(DISTINCT episode_id) AS total
+                FROM graph_episode_entities
+                WHERE project_id = :project_id
+                  AND organization_id = :org_id
+            """),
+            {"project_id": str(project_id), "org_id": str(org_id)},
+        )
+        row = result.mappings().one_or_none()
+        return row["total"] if row else 0
+
+    async def resolve_entity_names(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        entity_ids: list[UUID],
+    ) -> dict[str, dict]:
+        """Resolve entity IDs to their names and types.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            entity_ids: List of entity UUIDs to resolve.
+
+        Returns:
+            Dict keyed by entity ID string with ``name`` and ``entity_type``.
+        """
+        if not entity_ids:
+            return {}
+        result = await self._db.execute(
+            text("""
+                SELECT id, name, entity_type
+                FROM graph_entities
+                WHERE id = ANY(:entity_ids)
+                  AND organization_id = :org_id
+                  AND project_id = :project_id
+            """),
+            {
+                "entity_ids": [str(eid) for eid in entity_ids],
+                "org_id": str(org_id),
+                "project_id": str(project_id),
+            },
+        )
+        rows = result.mappings().all()
+        return {
+            str(row["id"]): {"name": row["name"], "entity_type": row["entity_type"]}
+            for row in rows
+        }
+
     # ── Internal Helpers ──────────────────────────────────────────────────────
 
     @staticmethod

@@ -321,7 +321,7 @@ class ObservationService:
             raise ValueError("organization_id is required when using GraphBackend")
 
         # Get total episode count for the project (denominator for ratio)
-        total_episodes = await self._get_episode_count(project_id)
+        total_episodes = await self._get_episode_count(project_id, organization_id)
         if total_episodes == 0:
             return []
 
@@ -495,7 +495,7 @@ class ObservationService:
             with notable fact-predicate patterns.
         """
         # Get predicate frequency for each entity via direct DB query
-        rows = await self._get_fact_predicate_counts(project_id)
+        rows = await self._get_fact_predicate_counts(project_id, organization_id)
 
         # Aggregate by entity
         entity_data: dict[UUID, dict[str, Any]] = {}
@@ -824,76 +824,120 @@ class ObservationService:
                 "ObservationService requires a graph_backend instance."
             )
 
-    async def _get_episode_count(self, project_id: UUID) -> int:
-        """Get total distinct episode count for a project.
+    async def _get_episode_count(
+        self,
+        project_id: UUID,
+        organization_id: UUID,
+    ) -> int:
+        """Get total distinct episode count for a project via graph backend.
 
-        Queries ``graph_episode_entities`` directly — this is not a
-        graph-backend operation (aggregate count not exposed on ABC).
+        Delegates to ``GraphBackend.get_total_entity_linked_episode_count``.
 
         Args:
             project_id: Project scope.
+            organization_id: Organisation scope (for RLS enforcement).
 
         Returns:
-            Number of distinct episodes.
+            Number of distinct episodes with linked entities.
+
+        Raises:
+            GraphBackendUnavailableError: If the backend is unavailable.
         """
-        if self._db is None:
+        if self._backend is None:
             raise GraphBackendUnavailableError(
-                "An AsyncSession is required for episode count queries."
+                "Graph backend is not available. "
+                "ObservationService requires a graph_backend instance."
             )
-        result = await self._db.execute(
-            text("""
-                SELECT COUNT(DISTINCT episode_id) AS total
-                FROM graph_episode_entities
-                WHERE project_id = :project_id
-            """),
-            {"project_id": project_id},
+        return await self._backend.get_total_entity_linked_episode_count(
+            org_id=organization_id,
+            project_id=project_id,
         )
-        row = result.mappings().one_or_none()
-        return row["total"] if row else 0
 
     async def _get_fact_predicate_counts(
         self,
         project_id: UUID,
+        organization_id: UUID | None = None,
     ) -> list[dict[str, Any]]:
         """Get predicate frequency for each entity (as subject).
 
-        Queries the ``facts`` table directly — this is not a graph-backend
-        operation.
+        Queries the ``facts`` table for predicate aggregates, then resolves
+        entity names via ``GraphBackend.resolve_entity_names``.
 
         Args:
             project_id: Project scope.
+            organization_id: Organisation scope — required for graph backend
+                entity-name resolution.
 
         Returns:
             List of dicts with keys: entity_id, entity_name, entity_type,
             predicate, predicate_count, total_facts.
+
+        Raises:
+            GraphBackendUnavailableError: If the backend is unavailable.
         """
+        if self._backend is None:
+            raise GraphBackendUnavailableError(
+                "Graph backend is not available. "
+                "ObservationService requires a graph_backend instance."
+            )
         if self._db is None:
             raise GraphBackendUnavailableError(
                 "An AsyncSession is required for fact predicate queries."
             )
+        if organization_id is None:
+            raise ValueError(
+                "organization_id is required when using GraphBackend for "
+                "entity name resolution."
+            )
+
+        # Query facts directly (PostgreSQL-native table — not a graph table)
         result = await self._db.execute(
             text("""
                 SELECT
                     f.subject_entity_id AS entity_id,
-                    ge.name AS entity_name,
-                    ge.entity_type,
                     f.predicate,
                     COUNT(*) AS predicate_count,
                     COUNT(*) OVER (PARTITION BY f.subject_entity_id) AS total_facts
                 FROM facts f
-                JOIN graph_entities ge
-                    ON ge.id = f.subject_entity_id
                 WHERE f.project_id = :project_id
                   AND f.subject_entity_id IS NOT NULL
                   AND f.invalid_at IS NULL
-                GROUP BY f.subject_entity_id, ge.name, ge.entity_type, f.predicate
+                GROUP BY f.subject_entity_id, f.predicate
                 HAVING COUNT(*) >= 2
                 ORDER BY entity_id, predicate_count DESC
             """),
             {"project_id": project_id},
         )
         rows = result.mappings().all()
-        return [dict(row) for row in rows]
+
+        if not rows:
+            return []
+
+        # Extract unique entity IDs
+        unique_entity_ids = list({UUID(row["entity_id"]) for row in rows})
+
+        # Resolve entity names via graph backend ABC
+        entity_names = await self._backend.resolve_entity_names(
+            org_id=organization_id,
+            project_id=project_id,
+            entity_ids=unique_entity_ids,
+        )
+
+        # Merge names into results
+        output: list[dict[str, Any]] = []
+        for row in rows:
+            eid_str = str(row["entity_id"])
+            name_info = entity_names.get(eid_str, {})
+            output.append({
+                "entity_id": UUID(eid_str),
+                "entity_name": name_info.get("name", "unknown"),
+                "entity_type": name_info.get("entity_type", "unknown"),
+                "predicate": row["predicate"],
+                "predicate_count": row["predicate_count"],
+                "total_facts": row["total_facts"],
+            })
+
+        return output
 
 # ── Module-level helpers ─────────────────────────────────────────────────────
 
