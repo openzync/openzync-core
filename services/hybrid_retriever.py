@@ -5,7 +5,9 @@ Rank Fusion (RRF) for robust context retrieval:
 
 1. **Vector search** (pgvector cosine similarity) — semantic matching.
 2. **BM25 search** (PostgreSQL ``ts_rank``) — keyword / lexical matching.
-3. **Graph BFS** (PostgreSQL recursive CTE) — entity-relationship traversal.
+3. **Graph BFS** — entity-relationship traversal via the configured
+   ``GraphBackend`` (PostgreSQL recursive CTE, SurrealQL graph traversal,
+   or FalkorDB Cypher).
 
 The RRF formula is: ``score(d) = Σ 1 / (60 + rank_s(d))`` across
 all three sources.  Results are deduplicated by source ID and the
@@ -35,12 +37,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-from packages.reranker import DEFAULT_RERANK_TOP_K, DEFAULT_RERANK_TOP_N
+from packages.reranker import DEFAULT_RERANK_TOP_K, DEFAULT_RERANK_TOP_N, RRF_K
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-
-RRF_K: int = 60
-"""RRF constant — controls how quickly rank contribution decays."""
 
 MAX_BFS_RESULTS: int = 50
 """Max results from the graph BFS leg before RRF merging."""
