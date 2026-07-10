@@ -109,6 +109,7 @@ from workers.tasks.link_entities_to_episode import link_entities_to_episode
 from workers.tasks.compute_observations import compute_observations
 from services.worker.tasks.deliver_webhook import deliver_webhook
 from workers.tasks.generate_user_summary import generate_user_summary
+from workers.tasks.reconcile_enrichment import reconcile_enrichment
 
 HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     classify_dialog,
@@ -128,6 +129,7 @@ LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     write_audit_log,
     deliver_webhook,
     generate_user_summary,
+    reconcile_enrichment,
 ]
 """Tasks assigned to the low-priority queue (scheduled batch)."""
 
@@ -506,6 +508,18 @@ async def main() -> NoReturn:
         ctx=worker_ctx,
     )
 
+    # ── Enrichment reconciliation (every 5 min) ────────────────────
+    # Safety net for worker crashes: re-enqueues enrichment tasks for
+    # episodes that have been stale for >10 minutes.
+    cron_jobs: list[CronJob] = [
+        cron(
+            reconcile_enrichment,
+            minute=list(range(0, 60, 5)),
+            unique=True,
+            job_id="enrichment_reconciliation",
+        ),
+    ]
+
     # ── Community detection scheduling ─────────────────────────────
     # Two modes controlled by AUTO_RUN_COMMUNITY_DETECTION:
     #   true  → event-driven (chained after link_entities_to_episode, with dedup)
@@ -533,13 +547,16 @@ async def main() -> NoReturn:
             mode="event-driven (after link_entities_to_episode)",
         )
 
+    # Combine all cron jobs
+    all_cron_jobs = cron_jobs + community_cron_jobs
+
     low_worker = create_arq_worker(
         queue_name=settings.LOW_QUEUE_NAME,
         functions=LOW_QUEUE_TASKS,
         redis_settings=redis_settings,
         concurrency=max(1, settings.MAX_WORKERS // 4),
         timeout=settings.JOB_TIMEOUT_DEFAULT * 2,
-        cron_jobs=community_cron_jobs,
+        cron_jobs=all_cron_jobs,
         ctx=worker_ctx,
     )
 
