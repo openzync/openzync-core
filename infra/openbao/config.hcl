@@ -25,9 +25,6 @@ seal "static_kv" {
   # BAO_STATIC_SEAL_KEY env var MUST be set on the container.
 }
 
-# mlock prevents memory from being swapped to disk.
-disable_mlock = false
-
 # Advertised addresses for cluster communication.
 api_addr     = "http://0.0.0.0:8200"
 cluster_addr = "https://0.0.0.0:8201"

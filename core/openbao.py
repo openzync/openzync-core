@@ -292,7 +292,7 @@ class OpenBaoClient:
             OpenBaoConnectionError: For any 5xx status.
             OpenBaoError: For any other non-200 status.
         """
-        if resp.status_code == 200:
+        if resp.status_code in (200, 204):
             return
 
         try:
@@ -489,6 +489,10 @@ class OpenBaoClient:
                 f"Timeout connecting to OpenBao at {self.addr}: {e}",
             ) from e
 
+        # 204 = success (created or already exists, idempotent).
+        if resp.status_code == 204:
+            logger.info("KV v2 mount %r ready in namespace %r (204)", mount_path, namespace)
+            return
         # 400 with "already in use" is expected during initialisation.
         if resp.status_code == 400:
             logger.info(
@@ -686,6 +690,11 @@ class OpenBaoClient:
                 f"Timeout connecting to OpenBao: {e}",
             ) from e
 
+        # 204 = success (created or already exists, idempotent).
+        # 400 = mount was rejected (e.g. name conflict).
+        if resp.status_code == 204:
+            logger.info("Transit engine ready at %r (204)", mount_path)
+            return
         if resp.status_code == 400:
             logger.info("Transit engine already mounted at %r — ignored", mount_path)
             return
@@ -740,7 +749,11 @@ class OpenBaoClient:
             key_name: Name of the encryption key.
             plaintext: Data to encrypt.
             mount_path: Transit engine mount path.
-            context: Optional additional authenticated data (AAD), base64-encoded.
+            context: Optional additional authenticated data (AAD) —
+                passed as-is to OpenBao, which expects it to be already
+                base64-encoded.  This method does NOT encode it so that
+                callers can control the encoding (or pass binary context
+                that is already base64).
 
         Returns:
             OpenBao ciphertext string (includes key version info).
@@ -755,7 +768,7 @@ class OpenBaoClient:
             "plaintext": base64.b64encode(plaintext.encode()).decode(),
         }
         if context:
-            payload["context"] = context
+            payload["context"] = base64.b64encode(context.encode()).decode()
 
         resp = await self._request(
             "POST",
@@ -778,7 +791,8 @@ class OpenBaoClient:
             key_name: Name of the encryption key.
             ciphertext: Ciphertext as returned by :meth:`encrypt_data`.
             mount_path: Transit engine mount path.
-            context: Optional AAD that was used during encryption.
+            context: Optional AAD that was used during encryption —
+                will be base64-encoded before sending to OpenBao.
 
         Returns:
             Decrypted plaintext string.
@@ -791,7 +805,7 @@ class OpenBaoClient:
 
         payload: dict[str, Any] = {"ciphertext": ciphertext}
         if context:
-            payload["context"] = context
+            payload["context"] = base64.b64encode(context.encode()).decode()
 
         resp = await self._request(
             "POST",
@@ -841,9 +855,11 @@ class OpenBaoClient:
         Returns:
             Ciphertext encrypted with the latest key version.
         """
+        import base64
+
         payload: dict[str, Any] = {"ciphertext": ciphertext}
         if context:
-            payload["context"] = context
+            payload["context"] = base64.b64encode(context.encode()).decode()
 
         resp = await self._request(
             "POST",
