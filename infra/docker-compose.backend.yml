@@ -1,16 +1,78 @@
 # ──────────────────────────────────────────────────────────────────────────────
-# OpenZync — Backend Stack
+# OpenZync — Backend Stack (v2: zero-fallback secrets bootstrap)
 # ──────────────────────────────────────────────────────────────────────────────
-# Self-contained: no external networks, no pre-created resources.
+# Self-contained: no external networks, no pre-created resources, no manual
+# unseal. `docker compose -f infra/docker-compose.backend.yml up -d` brings
+# the entire stack from a cold start to a working api + worker, with every
+# secret auto-generated, stored in OpenBao, and rendered at runtime to the
+# api/worker via OpenBao Agent sidecars.
 #
-# Default profile runs api + worker + redis.
-# Optional profiles:  --profile llm  (Ollama)
-#                     --profile observability  (Prometheus + Grafana + Alloy)
+# Service graph (default profile):
 #
-# Usage:
-#   docker compose -f infra/docker-compose.backend.yml up -d
-#   docker compose -f infra/docker-compose.backend.yml --profile llm up -d
-#   docker compose -f infra/docker-compose.backend.yml --profile observability up -d
+#   openbao ─► openbao-init ─► postgres ─► postgres-init ─► postgres-migrate
+#                                                          │
+#                              ┌───────────────────────────┘
+#                              ▼
+#                          openbao-write-db
+#                              │
+#                ┌─────────────┴─────────────┐
+#                ▼                           ▼
+#        openbao-agent-api            openbao-agent-worker
+#           (sidecar)                     (sidecar)
+#                │                           │
+#                ▼                           ▼
+#               api                        worker
+#                │                           │
+#                └─────────► redis ◄─────────┘
+#
+# One-shot services (exit 0, restart: no) sit on the critical path. Restart-
+# loop services (openbao, postgres, api, worker, agent sidecars, redis) come
+# up last and stay up.
+#
+# Secrets model:
+#   - OpenBao holds the system secret at system/config/data/system as a
+#     SINGLE flat object (REDIS_URL, SECRET_KEY, DATABASE_URL, JWT TTLs,
+#     rate limits, etc.). The init_openbao.sh script writes the static OZ_*
+#     env vars; write_db_to_openbao.sh appends DATABASE_URL once postgres
+#     has minted the application credentials.
+#   - Each app container has an OpenBao Agent sidecar that authenticates
+#     via AppRole and renders the system secret to a shared volume as
+#     /run/secrets/system.env (env-file format). The api/worker entrypoint
+#     scripts wait for that file, source it, and exec the app.
+#   - The migration container does NOT use an Agent sidecar — it reads the
+#     migrator password directly from /bao-init/db-creds.json (the file
+#     postgres-init wrote) via scripts/entrypoint_migrate.sh.
+#
+# Volume note:
+#   api-secrets and worker-secrets are regular named volumes (not tmpfs)
+#   so the sidecar (writer) and the app (reader) can share a single path
+#   across container boundaries. For production, replace them with
+#   tmpfs mounts (e.g. Kubernetes emptyDir.medium: Memory) — see the
+#   `# TechLead note:` in the services block.
+#
+# Profiles:
+#   --profile llm            (Ollama)
+#   --profile observability  (Prometheus + Grafana + Alloy)
+#
+# Required env vars (no defaults — compose will refuse to start if absent):
+#   BAO_STATIC_SEAL_KEY      64-char hex (openssl rand -hex 32)
+#   POSTGRES_PASSWORD        superuser password for first-boot cluster init
+#   OZ_SECRET_KEY            app SECRET_KEY (stored in OpenBao system secret)
+#   OZ_WEBHOOK_SIGNING_SECRET app webhook signing secret
+#
+# Optional env vars (defaults shown):
+#   OZ_ENVIRONMENT=development
+#   OZ_CORS_ORIGINS=http://localhost:3000
+#   OZ_LOG_LEVEL=INFO
+#   OZ_MAX_WORKERS=4
+#   OZ_JWT_ACCESS_TOKEN_TTL_MINUTES=30
+#   OZ_JWT_REFRESH_TOKEN_TTL_DAYS=7
+#   OZ_PROMETHEUS_URL=http://prometheus:9090
+#   OZ_FALKORDB_URL=redis://redis:6379
+#   OZ_FALKORDB_MAX_CONNECTIONS=20
+#   OZ_FALKORDB_SOCKET_TIMEOUT=30
+#   OZ_RATE_LIMIT_IP_MAX=10
+#   OZ_RATE_LIMIT_WINDOW_SEC=60
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ── Logging defaults ─────────────────────────────────────────────────────────
@@ -21,63 +83,290 @@ x-logging: &default-logging
     max-file: "3"
 
 services:
-  # ── FastAPI API server ────────────────────────────────────────────────────
+  # ── 1. OpenBao (secrets management) ───────────────────────────────────────
+  # The Raft storage backend holds KV data; the static_kv seal wraps the
+  # master key with BAO_STATIC_SEAL_KEY so the server auto-unseals on
+  # every restart. cap_add: IPC_LOCK lets the seal hold memory pages.
+  openbao:
+    image: openbao/openbao:2.5
+    container_name: openzync-openbao
+    cap_add: [IPC_LOCK]
+    ports: ["127.0.0.1:8200:8200"]
+    volumes:
+      - openbao-data:/vault/data
+      - ./openbao/config.hcl:/etc/openbao/config.hcl:ro
+    environment:
+      BAO_STATIC_SEAL_KEY: "${BAO_STATIC_SEAL_KEY:?BAO_STATIC_SEAL_KEY is required (generate with: openssl rand -hex 32)}"
+      BAO_ADDR: "http://0.0.0.0:8200"
+    command: ["server", "-config=/etc/openbao/config.hcl"]
+    healthcheck:
+      # Healthy only when initialised AND unsealed. `bao status` returns
+      # valid JSON in both states; the sealed flag flips to false once
+      # the static seal has decrypted the master key.
+      test: ["CMD-SHELL", "bao status -address http://127.0.0.1:8200 -format=json 2>&1 | grep -q '\"sealed\":false'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ── 2. OpenBao init (one-shot bootstrap) ──────────────────────────────────
+  # Idempotent (marker file in /bao-init). On first run: init + unseal +
+  # write the static OZ_* system secret + create AppRoles + write role_id /
+  # secret_id files for the api/worker Agent sidecars. On subsequent runs:
+  # short-circuits to exit 0 once the marker is present.
+  openbao-init:
+    image: openbao/openbao:2.5
+    container_name: openzync-openbao-init
+    depends_on:
+      openbao:
+        condition: service_started   # script has its own retry logic
+    environment:
+      BAO_ADDR: "http://openbao:8200"
+      BAO_SKIP_VERIFY: "true"
+      # All OZ_* env vars are written to the system secret (UPPERCASE keys).
+      # DATABASE_URL is intentionally NOT here — write_db_to_openbao.sh
+      # appends it after postgres-init + postgres-migrate complete.
+      OZ_REDIS_URL: "redis://redis:6379/0"
+      OZ_SECRET_KEY: "${OZ_SECRET_KEY:?OZ_SECRET_KEY is required for system secret}"
+      OZ_ENVIRONMENT: "${OZ_ENVIRONMENT:-development}"
+      OZ_CORS_ORIGINS: "${OZ_CORS_ORIGINS:-http://localhost:3000}"
+      OZ_LOG_LEVEL: "${OZ_LOG_LEVEL:-INFO}"
+      OZ_MAX_WORKERS: "${OZ_MAX_WORKERS:-4}"
+      OZ_JWT_ACCESS_TOKEN_TTL_MINUTES: "${OZ_JWT_ACCESS_TOKEN_TTL_MINUTES:-30}"
+      OZ_JWT_REFRESH_TOKEN_TTL_DAYS: "${OZ_JWT_REFRESH_TOKEN_TTL_DAYS:-7}"
+      OZ_WEBHOOK_SIGNING_SECRET: "${OZ_WEBHOOK_SIGNING_SECRET:?OZ_WEBHOOK_SIGNING_SECRET is required}"
+      OZ_PROMETHEUS_URL: "${OZ_PROMETHEUS_URL:-http://prometheus:9090}"
+      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-redis://redis:6379}"
+      OZ_FALKORDB_MAX_CONNECTIONS: "${OZ_FALKORDB_MAX_CONNECTIONS:-20}"
+      OZ_FALKORDB_SOCKET_TIMEOUT: "${OZ_FALKORDB_SOCKET_TIMEOUT:-30}"
+      OZ_RATE_LIMIT_IP_MAX: "${OZ_RATE_LIMIT_IP_MAX:-10}"
+      OZ_RATE_LIMIT_WINDOW_SEC: "${OZ_RATE_LIMIT_WINDOW_SEC:-60}"
+    volumes:
+      # Shared init volume — every downstream step reads or writes files
+      # here (unseal keys, AppRole creds, db-creds.json, write markers).
+      - openbao-init-data:/bao-init
+      - ./openbao/policies:/policies:ro
+      - ../scripts/init_openbao.sh:/init_openbao.sh:ro
+    entrypoint: ["/bin/sh", "/init_openbao.sh"]
+    logging: *default-logging
+    restart: "no"
+
+  # ── 3. Postgres (database) ────────────────────────────────────────────────
+  # pgvector image ships the vector extension types required by the
+  # embeddings schema. POSTGRES_PASSWORD must be set on FIRST boot;
+  # subsequent restarts use the password stored in postgres-data.
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: openzync-postgres
+    ports: ["127.0.0.1:5432:5432"]
+    environment:
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required for first boot}"
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ── 4. Postgres init (one-shot — create DB + users) ──────────────────────
+  # Creates the openzync database and two roles:
+  #   openzync_migrator  DDL (used by alembic upgrade head)
+  #   openzync_app       CRUD (used by api + worker at runtime)
+  # Always auto-generates fresh migrator + app passwords (rotation-friendly)
+  # and writes the JSON to /bao-init/db-creds.json for downstream steps.
+  # If POSTGRES_SUPERUSER_PASSWORD matches the env-provided POSTGRES_PASSWORD,
+  # the superuser is left untouched (so subsequent restarts still work).
+  postgres-init:
+    image: pgvector/pgvector:pg15
+    container_name: openzync-postgres-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      DB_NAME: openzync
+      # POSTGRES_SUPERUSER_PASSWORD is optional. If set, the script uses it
+      # and does NOT rotate the superuser. If unset, the script auto-generates
+      # one and rotates the superuser (preferred for zero-fallback).
+      # We pass POSTGRES_PASSWORD so the superuser password matches what
+      # the postgres container used for first-boot cluster init.
+      POSTGRES_SUPERUSER_PASSWORD: "${POSTGRES_PASSWORD}"
+    volumes:
+      - openbao-init-data:/bao-init
+      - ../scripts/init_postgres.sh:/init_postgres.sh:ro
+    entrypoint: ["/bin/bash", "/init_postgres.sh"]
+    logging: *default-logging
+    restart: "no"
+
+  # ── 5. Postgres migrate (one-shot — alembic upgrade head) ────────────────
+  # Reads the migrator password from /bao-init/db-creds.json (the file
+  # postgres-init wrote) and constructs DATABASE_URL on the fly. No
+  # OpenBao Agent sidecar — the migrator URL differs from the app URL,
+  # so reusing the api/worker Agent config would mean either widening
+  # the template or forking the AppRole policy. The direct-read approach
+  # is lighter and still uses the shared init volume for the credential.
+  postgres-migrate:
+    build:
+      context: ..
+      dockerfile: services/api/Dockerfile
+    image: openzync-api:latest
+    container_name: openzync-postgres-migrate
+    depends_on:
+      postgres-init:
+        condition: service_completed_successfully
+    environment:
+      OZ_ENVIRONMENT: development   # suppress any prod-only startup checks
+    volumes:
+      - openbao-init-data:/bao-init:ro
+      - ../scripts/entrypoint_migrate.sh:/entrypoint_migrate.sh:ro
+    entrypoint: ["/bin/sh", "/entrypoint_migrate.sh"]
+    command: ["alembic", "upgrade", "head"]
+    logging: *default-logging
+    restart: "no"
+
+  # ── 6. OpenBao write-db (one-shot — inject DB creds into KV) ─────────────
+  # Reads the existing system secret from OpenBao, merges DATABASE_URL
+  # (built from db-creds.json) into it, and writes the merged result
+  # back. After this step, the system secret contains every key the
+  # api/worker Agent templates render.
+  openbao-write-db:
+    image: openbao/openbao:2.5
+    container_name: openzync-openbao-write-db
+    depends_on:
+      postgres-migrate:
+        condition: service_completed_successfully
+    volumes:
+      - openbao-init-data:/bao-init
+      - ../scripts/write_db_to_openbao.sh:/write_db_to_openbao.sh:ro
+    entrypoint: ["/bin/bash", "/write_db_to_openbao.sh"]
+    logging: *default-logging
+    restart: "no"
+
+  # ── 7a. OpenBao Agent for api (sidecar) ──────────────────────────────────
+  # Authenticates as AppRole 'openzync-app' and renders system config to
+  # /openbao/agent/system.env (shared volume → /run/secrets/system.env in
+  # the api container). entrypoint_api.sh waits for that file before
+  # exec'ing uvicorn.
+  #
+  # TechLead note: api-secrets is a regular named volume here (NOT tmpfs)
+  # because the sidecar (writer) and the api (reader) must share a single
+  # path. In production / Kubernetes, replace this with a tmpfs-backed
+  # emptyDir (medium: Memory) at the pod spec level — the compose
+  # abstraction can't express a shared tmpfs across two containers.
+  openbao-agent-api:
+    image: openbao/openbao:2.5
+    container_name: openzync-openbao-agent-api
+    depends_on:
+      openbao-write-db:
+        condition: service_completed_successfully
+    command: ["agent", "-config=/etc/bao/agent.hcl"]
+    volumes:
+      - openbao-init-data:/openbao-bootstrap:ro
+      - api-secrets:/openbao/agent:rw
+      - ./openbao/agent/api.hcl:/etc/bao/agent.hcl:ro
+    healthcheck:
+      # Healthy once system.env exists AND contains DATABASE_URL= (the
+      # last key the Agent renders after openbao-write-db completes).
+      test: ["CMD-SHELL", "test -s /openbao/agent/system.env && grep -q '^DATABASE_URL=' /openbao/agent/system.env"]
+      interval: 5s
+      timeout: 3s
+      retries: 18   # 90s total — covers first-time auth + render
+      start_period: 10s
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ── 7b. API service ──────────────────────────────────────────────────────
+  # The api entrypoint (/entrypoint_api.sh, baked into the image) blocks
+  # until /run/secrets/system.env appears, sources it, then execs uvicorn
+  # so the worker becomes PID 1 and receives SIGTERM directly.
   api:
     build:
       context: ..
       dockerfile: services/api/Dockerfile
     image: ghcr.io/rohnsha0/openzync/api:latest
+    container_name: openzync-api
     environment:
-      OZ_OPENBAO_ADDR: http://openbao:8200
-      OZ_OPENBAO_ROLE_ID: "${OZ_OPENBAO_ROLE_ID}"
-      OZ_OPENBAO_SECRET_ID: "${OZ_OPENBAO_SECRET_ID}"
-      REDIS_URL: redis://redis:6379/0
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
+      # OZ_OPENBAO_ADDR tells the api code where to find OpenBao at runtime
+      # (for org namespace management, transit decrypt, etc.). All other
+      # OZ_* vars come from /run/secrets/system.env (rendered by the Agent).
+      OZ_OPENBAO_ADDR: "http://openbao:8200"
+      UVICORN_WORKERS: "1"
     depends_on:
+      openbao-agent-api:
+        condition: service_healthy
       redis:
         condition: service_healthy
-      openbao:
-        condition: service_healthy
+    volumes:
+      - api-secrets:/run/secrets:ro   # RO — the app must never write secrets
+    ports: ["127.0.0.1:8000:8000"]
     deploy:
       resources:
-        limits:
-          cpus: "1"
-          memory: "2G"
-        reservations:
-          cpus: "0.5"
-          memory: "1G"
+        limits: { cpus: "1", memory: "2G" }
+        reservations: { cpus: "0.5", memory: "1G" }
     logging: *default-logging
     restart: unless-stopped
 
-  # ── ARQ background worker ─────────────────────────────────────────────────
+  # ── 8a. OpenBao Agent for worker (sidecar) ───────────────────────────────
+  # Same pattern as the api sidecar, but uses the 'openzync-worker'
+  # AppRole (read-only policy — workers never write org config).
+  openbao-agent-worker:
+    image: openbao/openbao:2.5
+    container_name: openzync-openbao-agent-worker
+    depends_on:
+      openbao-write-db:
+        condition: service_completed_successfully
+    command: ["agent", "-config=/etc/bao/agent.hcl"]
+    volumes:
+      - openbao-init-data:/openbao-bootstrap:ro
+      - worker-secrets:/openbao/agent:rw
+      - ./openbao/agent/worker.hcl:/etc/bao/agent.hcl:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /openbao/agent/system.env && grep -q '^DATABASE_URL=' /openbao/agent/system.env"]
+      interval: 5s
+      timeout: 3s
+      retries: 18
+      start_period: 10s
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ── 8b. Worker service ───────────────────────────────────────────────────
+  # ARQ worker. entrypoint_worker.sh (baked into the image) waits for
+  # /run/secrets/system.env, sources it, then execs the worker loop.
   worker:
     build:
       context: ..
       dockerfile: services/worker/Dockerfile
     image: ghcr.io/rohnsha0/openzync/worker:latest
+    container_name: openzync-worker
     environment:
-      OZ_OPENBAO_ADDR: http://openbao:8200
-      OZ_OPENBAO_ROLE_ID: "${OZ_OPENBAO_ROLE_ID}"
-      OZ_OPENBAO_SECRET_ID: "${OZ_OPENBAO_SECRET_ID}"
-      REDIS_URL: redis://redis:6379/0
+      OZ_OPENBAO_ADDR: "http://openbao:8200"
     depends_on:
+      openbao-agent-worker:
+        condition: service_healthy
       redis:
         condition: service_healthy
-      openbao:
-        condition: service_healthy
+    volumes:
+      - worker-secrets:/run/secrets:ro
     deploy:
       resources:
-        limits:
-          cpus: "0.5"
-          memory: "1G"
+        limits: { cpus: "0.5", memory: "1G" }
     logging: *default-logging
     restart: unless-stopped
 
-  # ── Redis (caching, queues, pub/sub) ──────────────────────────────────────
+  # ── Redis (caching, queues, pub/sub) ─────────────────────────────────────
+  # api + worker depend on this with service_healthy so the redis-cli PING
+  # must pass before the app containers can start.
   redis:
     image: redis:7-alpine
-    ports:
-      - "127.0.0.1:6379:6379"
+    ports: ["127.0.0.1:6379:6379"]
     volumes:
       - redis-data:/data
     healthcheck:
@@ -88,82 +377,25 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
-  # ── OpenBao (secrets management) ──────────────────────────────────────────
-  openbao:
-    image: openbao/openbao:2.5
-    container_name: openzync-openbao
-    cap_add:
-      - IPC_LOCK
-    ports:
-      - "127.0.0.1:8200:8200"
-    volumes:
-      - openbao-data:/vault/data
-      - ./openbao/config.hcl:/etc/openbao/config.hcl:ro
-    environment:
-      BAO_STATIC_SEAL_KEY: "${BAO_STATIC_SEAL_KEY?BAO_STATIC_SEAL_KEY is required}"
-      BAO_ADDR: "http://0.0.0.0:8200"
-    command: server -config /etc/openbao/config.hcl
-    healthcheck:
-      # Returns healthy when OpenBao is initialized AND unsealed.
-      test: ["CMD-SHELL", "bao status -address http://127.0.0.1:8200 -format=json 2>&1 | grep -q '\"sealed\":false'"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-      start_period: 10s
-    logging: *default-logging
-    restart: unless-stopped
-
-  # ── OpenBao init (one-shot bootstrap) ─────────────────────────────────────
-  openbao-init:
-    image: openbao/openbao:2.5
-    container_name: openzync-openbao-init
-    depends_on:
-      openbao:
-        condition: service_started
-    environment:
-      BAO_ADDR: "http://openbao:8200"
-      BAO_SKIP_VERIFY: "true"
-      OZ_DATABASE_URL: "${OZ_DATABASE_URL}"
-      OZ_REDIS_URL: "${OZ_REDIS_URL}"
-      OZ_SECRET_KEY: "${OZ_SECRET_KEY}"
-      OZ_ENVIRONMENT: "${OZ_ENVIRONMENT:-development}"
-      OZ_CORS_ORIGINS: "${OZ_CORS_ORIGINS:-http://localhost:3000}"
-      OZ_LOG_LEVEL: "${OZ_LOG_LEVEL:-INFO}"
-      OZ_MAX_WORKERS: "${OZ_MAX_WORKERS:-4}"
-      OZ_JWT_ACCESS_TOKEN_TTL_MINUTES: "${OZ_JWT_ACCESS_TOKEN_TTL_MINUTES:-30}"
-      OZ_JWT_REFRESH_TOKEN_TTL_DAYS: "${OZ_JWT_REFRESH_TOKEN_TTL_DAYS:-7}"
-      OZ_WEBHOOK_SIGNING_SECRET: "${OZ_WEBHOOK_SIGNING_SECRET}"
-      OZ_PROMETHEUS_URL: "${OZ_PROMETHEUS_URL:-http://prometheus:9090}"
-      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-redis://redis:6379}"
-      OZ_FALKORDB_MAX_CONNECTIONS: "${OZ_FALKORDB_MAX_CONNECTIONS:-20}"
-      OZ_FALKORDB_SOCKET_TIMEOUT: "${OZ_FALKORDB_SOCKET_TIMEOUT:-30}"
-      OZ_RATE_LIMIT_IP_MAX: "${OZ_RATE_LIMIT_IP_MAX:-10}"
-      OZ_RATE_LIMIT_WINDOW_SEC: "${OZ_RATE_LIMIT_WINDOW_SEC:-60}"
-    volumes:
-      - openbao-init-data:/bao-init
-      - ./openbao/policies:/policies:ro
-      - ../scripts/init_openbao.sh:/init_openbao.sh:ro
-    entrypoint: ["/bin/sh", "/init_openbao.sh"]
-    logging: *default-logging
-    restart: "no"
-
-  # ── Ollama (local LLM inference) — OPTIONAL ───────────────────────────────
+  # ── Ollama (local LLM inference) — OPTIONAL ──────────────────────────────
   ollama:
     profiles: [llm]
     image: ollama/ollama:latest
-    ports:
-      - "11434:11434"
+    ports: ["11434:11434"]
     volumes:
       - ollama-data:/root/.ollama
     logging: *default-logging
     restart: unless-stopped
 
-  # ── Prometheus (metrics storage) — OPTIONAL ───────────────────────────────
+  # ── Prometheus (metrics storage) — OPTIONAL ──────────────────────────────
+  # extra_hosts lets the scrape config reach the api at host.docker.internal
+  # (compose v2+ maps this to the host gateway on macOS/Windows and the
+  # host's bridge on Linux). For Linux on a custom network, switch the
+  # scrape target to `api:8000` instead.
   prometheus:
     profiles: [observability]
     image: prom/prometheus:v2.53.0
-    ports:
-      - "9090:9090"
+    ports: ["9090:9090"]
     volumes:
       - ./prometheus:/etc/prometheus:ro
       - prometheus-data:/prometheus
@@ -172,12 +404,11 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
-  # ── Grafana (visualisation dashboards) — OPTIONAL ─────────────────────────
+  # ── Grafana (visualisation dashboards) — OPTIONAL ────────────────────────
   grafana:
     profiles: [observability]
     image: grafana/grafana:11.0.0
-    ports:
-      - "127.0.0.1:3000:3000"
+    ports: ["127.0.0.1:3000:3000"]
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"        # read-only — was Admin before audit
@@ -188,7 +419,7 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
-  # ── Grafana Alloy (OpenTelemetry collector) — OPTIONAL ────────────────────
+  # ── Grafana Alloy (OpenTelemetry collector) — OPTIONAL ───────────────────
   alloy:
     profiles: [observability]
     image: grafana/alloy:latest
@@ -206,10 +437,24 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
+# ── Named volumes ────────────────────────────────────────────────────────────
+# openbao-data:        Raft storage + seal
+# openbao-init-data:   Shared bootstrap artefacts (unseal keys, root token,
+#                      AppRole role_id/secret_id files, db-creds.json, markers)
+# postgres-data:       Postgres data directory
+# api-secrets:         Sidecar (writer) + api (reader) shared render path
+# worker-secrets:      Sidecar (writer) + worker (reader) shared render path
+# ⚠️ Production: replace api-secrets and worker-secrets with tmpfs-backed
+#    mounts (Kubernetes emptyDir.medium: Memory, or `--tmpfs /run/secrets`
+#    on a swarm config). Compose can't express a shared tmpfs between two
+#    containers, so we use regular named volumes here as a portable default.
 volumes:
-  redis-data:
-  ollama-data:
-  grafana-data:
-  prometheus-data:
-  openbao-data:
-  openbao-init-data:
+  redis-data: {}
+  ollama-data: {}
+  grafana-data: {}
+  prometheus-data: {}
+  openbao-data: {}
+  openbao-init-data: {}
+  postgres-data: {}
+  api-secrets: {}
+  worker-secrets: {}

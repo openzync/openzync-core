@@ -5,10 +5,27 @@
 # Run once on a fresh OpenBao data volume.
 # Idempotent: safe to re-run — uses a marker file to skip completed setup.
 #
+# What this script does:
+#   1. Initialises + unseals OpenBao (or unseals an existing instance).
+#   2. Creates the 'system' namespace and mounts KV v2 at system/config.
+#   3. Writes a SINGLE combined system secret to system/config/data/system
+#      containing all OZ_* env vars (UPPERCASE keys) — EXCEPT DATABASE_URL.
+#      The database URL is intentionally NOT written here, because postgres
+#      may not be up yet at this point. It is appended later by
+#      scripts/write_db_to_openbao.sh once postgres is healthy.
+#   4. Enables AppRole auth, writes ACL policies, creates the
+#      'openzync-app' and 'openzync-worker' AppRoles, and enables the
+#      Transit engine with the standard encryption keys.
+#   5. Writes the AppRole role_id and secret_id to four files in
+#      /bao-init/ (the shared volume with the api/worker Agent sidecars):
+#         api-role_id, api-secret_id, worker-role_id, worker-secret_id
+#      The OpenBao Agent reads these files on startup, authenticates, and
+#      renders system/config/data/system as /openbao/agent/system.env.
+#      secret_id files are deleted on first read by the Agent.
+#
 # Dependencies (all expected in openbao/openbao Docker image):
 #   - bao CLI
 #   - python3
-#   - wget or nc (for reachability check)
 # ──────────────────────────────────────────────────────────────────────────────
 set -e
 set -u
@@ -153,61 +170,94 @@ bao secrets enable \
     kv-v2 2>/dev/null \
     || log "KV v2 already mounted at system/config — continuing."
 
-# ── 8. Write system secrets from environment variables ──────────────────────
-# Mapping from OZ_ env vars → OpenBao KV key paths.
-# NOTE: This mirrors the mapping that will live in core/openbao.py
-#       as SYSTEM_KEY_MAPPING when the module is created.
-log "Writing system secrets from environment variables ..."
+# ── 8. Write combined system secret from environment variables ───────────────
+# Writes a SINGLE flat object at system/config/data/system (KV v2 data path).
+# Keys are UPPERCASE so the OpenBao Agent template renders them as proper
+# env var names (e.g. REDIS_URL=...). DATABASE_URL is intentionally NOT
+# written here — it is added later by scripts/write_db_to_openbao.sh once
+# postgres is reachable. The Agent template ranges over .Data.data, so
+# missing keys are simply absent from the rendered env file (the Agent
+# will re-render once write_db_to_openbao.sh adds DATABASE_URL).
+log "Writing combined system secret to system/config/data/system ..."
 python3 <<- 'PYEOF'
-	import json, os, subprocess, sys
+	import os, subprocess, sys
 
 	BAO_TOKEN = os.environ.get("BAO_TOKEN", "")
 	NAMESPACE = "system/"
-	MOUNT_PATH = "config"
+	SECRET_PATH = "config/data/system"
 
-	# Mapping: env var → OpenBao KV key
+	# Map OZ_* env vars → UPPERCASE keys (env-var name minus the OZ_ prefix).
+	# The OpenBao Agent template renders {{ $k }}={{ $v }} verbatim, so keys
+	# MUST match the env var names the application reads at runtime —
+	# Linux env vars are case-sensitive (REDIS_URL ≠ redis_url).
+	# DATABASE_URL is intentionally absent: write_db_to_openbao.sh appends
+	# it to the same secret once postgres is up. Adding an empty
+	# DATABASE_URL here would be overwritten by the next write anyway, so
+	# we skip it entirely.
 	KEY_MAPPING = {
-	    "OZ_DATABASE_URL": "database_url",
-	    "OZ_REDIS_URL": "redis_url",
-	    "OZ_SECRET_KEY": "secret_key",
-	    "OZ_PROMETHEUS_URL": "prometheus_url",
-	    "OZ_CORS_ORIGINS": "cors_origins",
-	    "OZ_HOSTS_ALLOWED": "hosts_allowed",
-	    "OZ_LOG_LEVEL": "log_level",
-	    "OZ_MAX_WORKERS": "max_workers",
-	    "OZ_JWT_ACCESS_TOKEN_TTL_MINUTES": "jwt_access_token_ttl_minutes",
-	    "OZ_JWT_REFRESH_TOKEN_TTL_DAYS": "jwt_refresh_token_ttl_days",
-	    "OZ_WEBHOOK_SIGNING_SECRET": "webhook_signing_secret",
-	    "OZ_FALKORDB_URL": "falkordb_url",
-	    "OZ_FALKORDB_MAX_CONNECTIONS": "falkordb_max_connections",
-	    "OZ_FALKORDB_SOCKET_TIMEOUT": "falkordb_socket_timeout",
-	    "OZ_RATE_LIMIT_IP_MAX": "rate_limit_ip_max",
-	    "OZ_RATE_LIMIT_WINDOW_SEC": "rate_limit_window_sec",
+	    "OZ_REDIS_URL":                    "REDIS_URL",
+	    "OZ_SECRET_KEY":                   "SECRET_KEY",
+	    "OZ_PROMETHEUS_URL":               "PROMETHEUS_URL",
+	    "OZ_CORS_ORIGINS":                 "CORS_ORIGINS",
+	    "OZ_HOSTS_ALLOWED":                "HOSTS_ALLOWED",
+	    "OZ_LOG_LEVEL":                    "LOG_LEVEL",
+	    "OZ_MAX_WORKERS":                  "MAX_WORKERS",
+	    "OZ_JWT_ACCESS_TOKEN_TTL_MINUTES": "JWT_ACCESS_TOKEN_TTL_MINUTES",
+	    "OZ_JWT_REFRESH_TOKEN_TTL_DAYS":   "JWT_REFRESH_TOKEN_TTL_DAYS",
+	    "OZ_WEBHOOK_SIGNING_SECRET":       "WEBHOOK_SIGNING_SECRET",
+	    "OZ_FALKORDB_URL":                 "FALKORDB_URL",
+	    "OZ_FALKORDB_MAX_CONNECTIONS":     "FALKORDB_MAX_CONNECTIONS",
+	    "OZ_FALKORDB_SOCKET_TIMEOUT":      "FALKORDB_SOCKET_TIMEOUT",
+	    "OZ_RATE_LIMIT_IP_MAX":            "RATE_LIMIT_IP_MAX",
+	    "OZ_RATE_LIMIT_WINDOW_SEC":        "RATE_LIMIT_WINDOW_SEC",
 	}
 
-	for env_key, bao_key in KEY_MAPPING.items():
+	# Build a flat dict of all keys present in the environment.
+	# Missing env vars are skipped (not written as empty) — we never want
+	# to inject a bogus empty value that could mask a real value written
+	# later by write_db_to_openbao.sh.
+	secret_data = {}
+	for env_key, secret_key in KEY_MAPPING.items():
 	    value = os.environ.get(env_key)
 	    if value is None:
-	        print(f"  SKIP {bao_key}: env var {env_key} not set", file=sys.stderr)
+	        print(f"  SKIP {secret_key}: env var {env_key} not set", file=sys.stderr)
 	        continue
-	    result = subprocess.run(
-	        ["bao", "kv", "put",
-	         "-namespace=" + NAMESPACE,
-	         MOUNT_PATH + "/data/" + bao_key,
-	         "value=" + value],
-	        capture_output=True, text=True,
-	        env={**os.environ, "BAO_TOKEN": BAO_TOKEN},
+	    secret_data[secret_key] = value
+
+	if not secret_data:
+	    print("  FATAL: no system secrets to write", file=sys.stderr)
+	    sys.exit(1)
+
+	# Build argv: `bao kv put -namespace=system/ config/data/system key=val ...`
+	# Each key=value is a SEPARATE argv item so that special characters
+	# (e.g. '!', '$', spaces in URLs) are passed verbatim to bao and never
+	# interpreted by the shell. Without this, bao kv put's internal
+	# value parsing can mangle secrets containing shell metacharacters.
+	cmd = [
+	    "bao", "kv", "put",
+	    "-namespace=" + NAMESPACE,
+	    SECRET_PATH,
+	]
+	for k, v in secret_data.items():
+	    cmd.append(f"{k}={v}")
+
+	result = subprocess.run(
+	    cmd,
+	    capture_output=True, text=True,
+	    env={**os.environ, "BAO_TOKEN": BAO_TOKEN},
+	)
+	if result.returncode != 0:
+	    print(
+	        f"  FATAL: failed to write system secret: {result.stderr.strip()}",
+	        file=sys.stderr,
 	    )
-	    if result.returncode != 0:
-	        print(
-	            f"  WARNING: failed to write {bao_key}: "
-	            f"{result.stderr.strip()}",
-	            file=sys.stderr,
-	        )
-	    else:
-	        print(f"  Wrote {bao_key}")
+	    sys.exit(1)
+
+	print(f"  Wrote {len(secret_data)} keys to {SECRET_PATH}:")
+	for k in sorted(secret_data.keys()):
+	    print(f"    - {k}")
 PYEOF
-log "System secrets written."
+log "System secret written."
 
 # ── 9. Enable AppRole auth method ────────────────────────────────────────────
 log "Enabling AppRole auth ..."
@@ -261,22 +311,44 @@ APP_SECRET_ID=$(bao write -f -field=secret_id auth/approle/role/openzync-app/sec
 WORKER_ROLE_ID=$(bao read -field=role_id auth/approle/role/openzync-worker/role-id)
 WORKER_SECRET_ID=$(bao write -f -field=secret_id auth/approle/role/openzync-worker/secret-id)
 
-# ── 14. Output credentials ───────────────────────────────────────────────────
+# ── 14. Write AppRole credentials for the OpenBao Agent sidecars ─────────────
+# The api and worker containers run an OpenBao Agent sidecar that
+# authenticates via AppRole. The Agent reads role_id and secret_id from
+# files in the shared /bao-init volume (mounted at /openbao-bootstrap in
+# the api/worker containers). The Agent's
+# `remove_secret_id_file_after_reading` flag deletes the secret_id file
+# after the first successful auth — the file only needs to exist for the
+# initial bootstrap.
+log "Writing AppRole credentials to ${BAO_INIT_DIR}/ ..."
+umask 077  # belt-and-suspenders: files start 0600 even if chmod misses one
+printf '%s' "${APP_ROLE_ID}"      > "${BAO_INIT_DIR}/api-role_id"
+chmod 0600 "${BAO_INIT_DIR}/api-role_id"
+printf '%s' "${APP_SECRET_ID}"    > "${BAO_INIT_DIR}/api-secret_id"
+chmod 0600 "${BAO_INIT_DIR}/api-secret_id"
+printf '%s' "${WORKER_ROLE_ID}"   > "${BAO_INIT_DIR}/worker-role_id"
+chmod 0600 "${BAO_INIT_DIR}/worker-role_id"
+printf '%s' "${WORKER_SECRET_ID}" > "${BAO_INIT_DIR}/worker-secret_id"
+chmod 0600 "${BAO_INIT_DIR}/worker-secret_id"
+log "  ${BAO_INIT_DIR}/api-role_id"
+log "  ${BAO_INIT_DIR}/api-secret_id          (deleted by Agent after first read)"
+log "  ${BAO_INIT_DIR}/worker-role_id"
+log "  ${BAO_INIT_DIR}/worker-secret_id        (deleted by Agent after first read)"
+
+# ── 15. Output summary ───────────────────────────────────────────────────────
 log "═══════════════════════════════════════════════════════════════════"
-log " OpenBao bootstrap complete!"
+log " OpenBao bootstrap complete."
 log "═══════════════════════════════════════════════════════════════════"
+log "  System secret:  system/config/data/system"
+log "  AppRole files:  ${BAO_INIT_DIR}/{api,worker}-{role_id,secret_id}"
+log "  OpenBao addr:   ${BAO_ADDR}"
 log ""
-log "  Add these to your .env or deployment secrets:"
-log ""
-log "  OZ_OPENBAO_ADDR=${BAO_ADDR}"
-log "  OZ_OPENBAO_ROLE_ID=${APP_ROLE_ID}"
-log "  OZ_OPENBAO_SECRET_ID=${APP_SECRET_ID}"
-log "  OZ_OPENBAO_WORKER_ROLE_ID=${WORKER_ROLE_ID}"
-log "  OZ_OPENBAO_WORKER_SECRET_ID=${WORKER_SECRET_ID}"
-log ""
+log "  Inspect (debug only — secret_id values are NOT printed by design):"
+log "    bao kv get -namespace=system/ config/data/system"
+log "    cat ${BAO_INIT_DIR}/api-role_id"
+log "    cat ${BAO_INIT_DIR}/worker-role_id"
 log "═══════════════════════════════════════════════════════════════════"
 
-# ── 15. Write marker file ────────────────────────────────────────────────────
+# ── 16. Write marker file ────────────────────────────────────────────────────
 date > "${INIT_MARKER}"
 log "Marker written to ${INIT_MARKER} — future runs will skip."
 log "Done."
