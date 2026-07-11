@@ -48,11 +48,16 @@ OpenZync exports all of these as Prometheus metrics by default.
 
 After monitoring production deployments, here are the patterns that matter:
 
-| Pattern | Impact |
-|---------|--------|
-| LLM timeout without retry | 40% of user-facing errors |
-| Missing idempotency keys | Duplicate side effects in 12% of workflows |
-| No circuit breaker on DB | Cascading failures under load |
+<table>
+  <thead>
+    <tr><th>Pattern</th><th>Impact</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>LLM timeout without retry</td><td>40% of user-facing errors</td></tr>
+    <tr><td>Missing idempotency keys</td><td>Duplicate side effects in 12% of workflows</td></tr>
+    <tr><td>No circuit breaker on DB</td><td>Cascading failures under load</td></tr>
+  </tbody>
+</table>
 
 All of these are now built into OpenZync's core — not bolted on as an afterthought.
 

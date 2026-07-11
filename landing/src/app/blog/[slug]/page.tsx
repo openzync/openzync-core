@@ -4,7 +4,6 @@ import { notFound } from "next/navigation";
 import { Badge } from "@openzync/design-system";
 import { ChevronLeft, Calendar, User, Share2, Globe, Link as LinkIcon } from "lucide-react";
 import { getBlogPost, getAllBlogPosts } from "@/lib/blog";
-import { MarkdownContent } from "@/components/landing/markdown-content";
 import { Breadcrumbs, buildBreadcrumbSegments } from "@/components/landing/breadcrumbs";
 
 const shareUrl = "https://openzync.tech";
@@ -22,7 +21,7 @@ export async function generateStaticParams() {
 /** Generate metadata for the page */
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const post = getBlogPost(slug);
+  const post = await getBlogPost(slug);
   if (!post) return {};
 
   return {
@@ -33,7 +32,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function BlogPostPage({ params }: Props) {
   const { slug } = await params;
-  const post = getBlogPost(slug);
+  const post = await getBlogPost(slug);
   if (!post) notFound();
 
   const segments = buildBreadcrumbSegments(`/blog/${slug}`);
@@ -110,7 +109,7 @@ export default async function BlogPostPage({ params }: Props) {
 
         {/* Post content */}
         <article className="prose-custom">
-          <MarkdownContent content={post.content} />
+          {post.MDXContent}
         </article>
       </div>
     </div>

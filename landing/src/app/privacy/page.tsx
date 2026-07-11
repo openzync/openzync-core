@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Breadcrumbs, buildBreadcrumbSegments } from "@/components/landing/breadcrumbs";
 import { CtaSection } from "@/components/landing/cta-section";
+import { LegalSection } from "@/components/landing/legal-section";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
@@ -27,15 +28,15 @@ export default function PrivacyPage() {
 
       <section className="pb-20">
         <div className="mx-auto max-w-3xl px-6 prose-custom">
-          <Section title="Introduction">
+          <LegalSection title="Introduction">
             <p>
               OpenZync (&ldquo;we,&rdquo; &ldquo;our,&rdquo; or &ldquo;us&rdquo;) is committed to protecting
               your privacy. This Privacy Policy explains how we collect, use, disclose, and
               safeguard your information when you visit our website and use our services.
             </p>
-          </Section>
+          </LegalSection>
 
-          <Section title="Information We Collect">
+          <LegalSection title="Information We Collect">
             <p>We may collect the following types of information:</p>
             <ul>
               <li>
@@ -55,9 +56,9 @@ export default function PrivacyPage() {
                 management. Analytics cookies are used only with your consent.
               </li>
             </ul>
-          </Section>
+          </LegalSection>
 
-          <Section title="How We Use Your Information">
+          <LegalSection title="How We Use Your Information">
             <p>We use the collected information to:</p>
             <ul>
               <li>Provide, maintain, and improve our services</li>
@@ -66,9 +67,9 @@ export default function PrivacyPage() {
               <li>Monitor usage patterns to improve performance and reliability</li>
               <li>Comply with legal obligations</li>
             </ul>
-          </Section>
+          </LegalSection>
 
-          <Section title="Data Security">
+          <LegalSection title="Data Security">
             <p>
               We implement industry-standard security measures to protect your data:
             </p>
@@ -78,26 +79,26 @@ export default function PrivacyPage() {
               <li>Strict access controls and authentication requirements</li>
               <li>Automated threat detection and incident response</li>
             </ul>
-          </Section>
+          </LegalSection>
 
-          <Section title="Data Retention">
+          <LegalSection title="Data Retention">
             <p>
               We retain your account information for as long as your account is active. Agent
               memory data is retained according to your configured retention policies. You can
               request deletion of your data at any time by contacting our support team.
             </p>
-          </Section>
+          </LegalSection>
 
-          <Section title="Third-Party Services">
+          <LegalSection title="Third-Party Services">
             <p>
               OpenZync integrates with third-party services including graph databases and LLM
               providers. Data processed through these integrations is subject to their respective
               privacy policies. We recommend reviewing the privacy policies of any third-party
               services you connect to OpenZync.
             </p>
-          </Section>
+          </LegalSection>
 
-          <Section title="Your Rights">
+          <LegalSection title="Your Rights">
             <p>Depending on your jurisdiction, you may have the right to:</p>
             <ul>
               <li>Access the personal data we hold about you</li>
@@ -107,9 +108,9 @@ export default function PrivacyPage() {
               <li>Data portability</li>
               <li>Withdraw consent at any time</li>
             </ul>
-          </Section>
+          </LegalSection>
 
-          <Section title="Contact Us">
+          <LegalSection title="Contact Us">
             <p>
               If you have questions about this Privacy Policy or our data practices, please
               contact us at{" "}
@@ -118,7 +119,7 @@ export default function PrivacyPage() {
               </a>
               .
             </p>
-          </Section>
+          </LegalSection>
         </div>
       </section>
 
@@ -127,13 +128,3 @@ export default function PrivacyPage() {
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="mb-10">
-      <h2 className="text-xl font-bold text-text-primary mb-4">{title}</h2>
-      <div className="text-surface-400 leading-relaxed space-y-3 text-sm [&_ul]:space-y-2 [&_ul]:pl-5 [&_li]:list-disc [&_strong]:text-surface-300">
-        {children}
-      </div>
-    </div>
-  );
-}

@@ -4,6 +4,10 @@
 
 import fs from "fs";
 import path from "path";
+import type { ReactElement } from "react";
+import { parseFrontmatter } from "@/lib/frontmatter";
+import { compileMDX } from "next-mdx-remote/rsc";
+import { useMDXComponents } from "@/app/mdx-components";
 
 export interface ChangelogEntry {
   slug: string;
@@ -14,40 +18,14 @@ export interface ChangelogEntry {
   content: string;
 }
 
+/** A changelog entry ready to render in the detail page. */
+export type ChangelogEntryDetail = Omit<ChangelogEntry, "content"> & {
+  MDXContent: ReactElement;
+};
+
 const CHANGELOG_DIR = path.join(process.cwd(), "content/changelog");
 
-/**
- * Parse frontmatter from MDX content manually (avoids gray-matter dependency).
- * Supports: title, date, version, excerpt
- */
-function parseFrontmatter(fileContent: string): {
-  metadata: Record<string, string>;
-  content: string;
-} {
-  const metadata: Record<string, string> = {};
-  let content = fileContent;
-
-  if (content.startsWith("---")) {
-    const endIndex = content.indexOf("---", 3);
-    if (endIndex !== -1) {
-      const frontmatter = content.slice(3, endIndex).trim();
-      content = content.slice(endIndex + 3).trim();
-
-      for (const line of frontmatter.split("\n")) {
-        const colonIndex = line.indexOf(":");
-        if (colonIndex !== -1) {
-          const key = line.slice(0, colonIndex).trim();
-          const value = line.slice(colonIndex + 1).trim().replace(/^"|"$/g, "");
-          metadata[key] = value;
-        }
-      }
-    }
-  }
-
-  return { metadata, content };
-}
-
-/** Get all changelog entries, sorted by date descending. */
+/** Get all changelog entries (metadata only), sorted by date descending. */
 export function getAllChangelogEntries(): ChangelogEntry[] {
   if (!fs.existsSync(CHANGELOG_DIR)) {
     return [];
@@ -81,13 +59,19 @@ export function getAllChangelogEntries(): ChangelogEntry[] {
   return entries;
 }
 
-/** Get a single changelog entry by slug. */
-export function getChangelogEntry(slug: string): ChangelogEntry | null {
+/** Get a single changelog entry by slug, compiled as MDX. */
+export async function getChangelogEntry(slug: string): Promise<ChangelogEntryDetail | null> {
   const filePath = path.join(CHANGELOG_DIR, `${slug}.mdx`);
   if (!fs.existsSync(filePath)) return null;
 
   const raw = fs.readFileSync(filePath, "utf-8");
   const { metadata, content } = parseFrontmatter(raw);
+
+  const { content: MDXContent } = await compileMDX({
+    source: content,
+    components: useMDXComponents({}),
+    options: { parseFrontmatter: false },
+  });
 
   return {
     slug,
@@ -95,6 +79,6 @@ export function getChangelogEntry(slug: string): ChangelogEntry | null {
     date: metadata.date ?? "",
     version: metadata.version ?? "",
     excerpt: metadata.excerpt ?? "",
-    content,
+    MDXContent,
   };
 }
