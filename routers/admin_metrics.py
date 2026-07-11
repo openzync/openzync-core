@@ -236,11 +236,36 @@ async def _fetch_db_counts(
     )
     episodes_pending = pending_result.scalar() or 0
 
+    # Fully enriched episodes (all 6 bits = status 63)
+    fully_enriched_result = await db.execute(
+        select(func.count(Episode.id)).where(
+            Episode.organization_id == org_id,
+            Episode.is_deleted.is_(False),
+            Episode.enrichment_status == 63,
+        )
+    )
+    episodes_fully_enriched = fully_enriched_result.scalar() or 0
+
+    # Episodes with embedding populated
+    with_embeddings_result = await db.execute(
+        select(func.count(Episode.id)).where(
+            Episode.organization_id == org_id,
+            Episode.is_deleted.is_(False),
+            Episode.embedding.isnot(None),
+        )
+    )
+    episodes_with_embeddings = with_embeddings_result.scalar() or 0
+
     episode_stats = EpisodeStats(
         added_total=episodes_total,
         added_24h=episodes_24h,
         in_progress=episodes_in_progress,
         enrichment_pending=episodes_pending,
+        fully_enriched=episodes_fully_enriched,
+        with_embeddings=episodes_with_embeddings,
+        fully_enriched_pct=round(
+            episodes_fully_enriched / episodes_total * 100, 1
+        ) if episodes_total > 0 else 0.0,
     )
 
     # ── Graph counts ────────────────────────────────────────────────────

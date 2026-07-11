@@ -686,7 +686,7 @@ def _save_results(
             "reranker_enabled": config.reranker,
             "baseline_mode": config.baseline,
             "benchmark_limit": config.benchmark_limit,
-            "llm_judge_model": "openai/gpt-oss-120b",
+            "llm_judge_model": "openai/gpt-oss-120b:free",
             "judge_temperature": 0.0,
         },
         "metrics": metrics,

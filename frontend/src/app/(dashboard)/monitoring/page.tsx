@@ -9,6 +9,7 @@ import {
   Info,
   TrendingUp,
   Database,
+  BarChart2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { get } from "@/lib/api-client";
@@ -25,6 +26,7 @@ import { Button } from "@/components/ui/button";
 
 interface EpisodesMetrics {
   added_total: number; added_24h: number; in_progress: number; enrichment_pending: number;
+  fully_enriched: number; with_embeddings: number; fully_enriched_pct: number;
 }
 
 interface GraphsMetrics {
@@ -169,7 +171,69 @@ export default function MonitoringPage() {
       {/* KPI cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Episodes Added (24h)" value={summary?.episodes.added_24h?.toLocaleString() ?? null} icon={TrendingUp} color="text-brand-300" loading={loading} trend={summary && summary.episodes.added_24h > 0 ? "up" : null} />
-        <StatCard label="Enrichment Pending" value={summary?.episodes.enrichment_pending?.toLocaleString() ?? null} icon={Timer} color="text-warning" loading={loading} trend={summary && summary.episodes.enrichment_pending > 0 ? "up" : null} />
+        <div className="rounded-lg border border-surface-800 p-4 space-y-3 hover:border-surface-700 transition-colors">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-medium text-surface-400">
+              <BarChart2 size={14} />Enrichment Progress
+            </div>
+            {summary && (
+              <span className="text-xs text-surface-500">
+                {summary.episodes.fully_enriched.toLocaleString()} / {summary.episodes.added_total.toLocaleString()}
+              </span>
+            )}
+          </div>
+
+          {/* Progress bar */}
+          {loading ? (
+            <div className="h-5 rounded-full bg-surface-800 animate-pulse" />
+          ) : summary ? (
+            <div className="space-y-1.5">
+              <div className="h-5 w-full rounded-full bg-surface-800 overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all duration-500 ease-out"
+                  style={{
+                    width: `${Math.min(summary.episodes.fully_enriched_pct, 100)}%`,
+                    backgroundColor: summary.episodes.fully_enriched_pct >= 80 ? '#22c55e'
+                      : summary.episodes.fully_enriched_pct >= 50 ? '#eab308'
+                      : '#ef4444',
+                  }}
+                />
+              </div>
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-surface-400">
+                  {summary.episodes.fully_enriched_pct.toFixed(1)}% complete
+                </span>
+                <span className="text-surface-500">
+                  {summary.episodes.in_progress.toLocaleString()} in progress
+                </span>
+              </div>
+            </div>
+          ) : (
+            <div className="h-5 rounded-full bg-surface-800" />
+          )}
+
+          {/* Mini stat row */}
+          <div className="grid grid-cols-3 gap-2 pt-1">
+            <div className="text-center">
+              <div className="text-lg font-semibold text-surface-200 font-mono">
+                {loading ? '—' : summary?.episodes.fully_enriched.toLocaleString() ?? '—'}
+              </div>
+              <div className="text-[10px] text-surface-500 uppercase tracking-wider">Enriched</div>
+            </div>
+            <div className="text-center">
+              <div className="text-lg font-semibold text-surface-200 font-mono">
+                {loading ? '—' : summary?.episodes.with_embeddings.toLocaleString() ?? '—'}
+              </div>
+              <div className="text-[10px] text-surface-500 uppercase tracking-wider">Embedded</div>
+            </div>
+            <div className="text-center">
+              <div className="text-lg font-semibold text-surface-200 font-mono">
+                {loading ? '—' : summary?.episodes.enrichment_pending.toLocaleString() ?? '—'}
+              </div>
+              <div className="text-[10px] text-surface-500 uppercase tracking-wider">Pending</div>
+            </div>
+          </div>
+        </div>
         <StatCard label="Error Rate" value={summary != null ? `${summary.error_rate_pct.toFixed(2)}%` : null} icon={AlertTriangle}
           color={summary && summary.error_rate_pct > 5 ? "text-error" : summary && summary.error_rate_pct > 1 ? "text-warning" : "text-success"}
           loading={loading} trend={summary && summary.error_rate_pct > 1 ? "up" : "down"} />

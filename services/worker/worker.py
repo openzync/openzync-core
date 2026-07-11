@@ -514,7 +514,7 @@ async def main() -> NoReturn:
     cron_jobs: list[CronJob] = [
         cron(
             reconcile_enrichment,
-            minute=list(range(0, 60, 5)),
+            minute=set(range(0, 60, 5)),
             unique=True,
             job_id="enrichment_reconciliation",
         ),
