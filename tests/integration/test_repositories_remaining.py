@@ -15,7 +15,6 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.config import settings
 from models.episode import Episode
 from models.fact import Fact
 from repositories.api_key_repository import ApiKeyRepository

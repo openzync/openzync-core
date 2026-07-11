@@ -51,7 +51,7 @@ from uuid import UUID  # noqa: TCH003 — used in type hints for callers
 from redis import asyncio as aioredis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.config import settings
+from core.config import get_settings
 from repositories.episode_repository import EpisodeRepository
 
 logger = logging.getLogger(__name__)
@@ -142,13 +142,15 @@ class IdempotencyService:
         self._redis = redis
 
         # ── Key prefixes ─────────────────────────────────────────────────
-        self._idem_prefix: str = f"OpenZync:{settings.ENVIRONMENT}:idempotency:"
-        self._content_prefix: str = f"OpenZync:{settings.ENVIRONMENT}:contenthash:"
-        self._cache_prefix: str = f"OpenZync:{settings.ENVIRONMENT}:cache:"
+        _env = get_settings().ENVIRONMENT
+        self._idem_prefix: str = f"OpenZync:{_env}:idempotency:"
+        self._content_prefix: str = f"OpenZync:{_env}:contenthash:"
+        self._cache_prefix: str = f"OpenZync:{_env}:cache:"
 
         # ── TTL ──────────────────────────────────────────────────────────
+        _s = get_settings()
         self._idem_ttl: int = getattr(
-            settings, "IDEMPOTENCY_TTL_SECONDS", 172800  # 48 hours
+            _s, "IDEMPOTENCY_TTL_SECONDS", 172800  # 48 hours
         )
         self._content_ttl: int = self._idem_ttl
 

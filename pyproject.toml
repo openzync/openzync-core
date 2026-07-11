@@ -159,6 +159,10 @@ filterwarnings = [
     "ignore::DeprecationWarning:alembic.*",
     "ignore::DeprecationWarning:sqlalchemy.*",
     "ignore::DeprecationWarning:testcontainers.*",
+    # FastAPI 0.115.x uses starlette imports that trigger
+    # StarletteDeprecationWarning (HTTP_422_UNPROCESSABLE_ENTITY →
+    # HTTP_422_UNPROCESSABLE_CONTENT).  This is cosmetic in our codebase.
+    "ignore::starlette.exceptions.StarletteDeprecationWarning",
     # Session-scoped async fixtures (e.g. OpenRouter backend's internal
     # httpx.AsyncClient) may leave transports unclosed after the event
     # loop shuts down.  This is cosmetic — no data loss or leak.

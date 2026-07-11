@@ -14,6 +14,7 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from starlette.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.auth import get_dashboard_user, require_org_id
@@ -403,7 +404,7 @@ async def clear_custom_instructions(
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_org_id),
     _user_id: str = Depends(get_dashboard_user),
-) -> None:
+) -> Response:
     """Clear all extraction custom instructions for the organization.
 
     All instructions in the ``extraction`` scope are removed.  This is a
@@ -420,3 +421,4 @@ async def clear_custom_instructions(
         target_id=None,
         instructions=[],
     )
+    return Response(status_code=204)

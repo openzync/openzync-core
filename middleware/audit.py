@@ -26,7 +26,7 @@ from uuid import UUID
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from core.config import settings
+from core.config import get_settings
 from core.exceptions import DatabaseUnavailableError
 from services.pii_service import PIIDetector, PIIRedactor
 from services.worker.worker_settings import get_queue_name
@@ -95,7 +95,7 @@ async def _resolve_audit_body_capture(
         if factory is None:
             from core.db import init_db_engine
 
-            engine = init_db_engine(str(settings.DATABASE_URL))
+            engine = init_db_engine(str(get_settings().DATABASE_URL))
             factory = async_sessionmaker(
                 bind=engine, class_=AsyncSession, expire_on_commit=False
             )
@@ -320,7 +320,7 @@ class AuditMiddleware:
             logger.warning("audit.no_arq_pool", extra={"path": path})
             return
 
-        queue_full_name = get_queue_name(settings.ENVIRONMENT, "low")
+        queue_full_name = get_queue_name(get_settings().ENVIRONMENT, "low")
         await arq_pool.enqueue(
             "write_audit_log",
             queue_name=queue_full_name,

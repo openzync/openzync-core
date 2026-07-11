@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import get_arq
-from core.config import settings
+from core.config import get_settings
 from core.events import EventType
 from core.exceptions import NotFoundError
 from repositories.fact_repository import FactRepository
@@ -368,5 +368,5 @@ class FactService:
         Returns:
             Fully qualified queue name for the current environment.
         """
-        env = settings.ENVIRONMENT if hasattr(settings, "ENVIRONMENT") else "development"
+        env = get_settings().ENVIRONMENT
         return f"OpenZync:{env}:queue:{queue_type}"

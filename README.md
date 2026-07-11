@@ -62,38 +62,43 @@ flowchart LR
 
 The API receives messages and persists them immediately. ARQ background workers asynchronously extract entities, facts, and embeddings, then sync everything to the knowledge graph. Context is retrieved at query time via hybrid search across vector, text, and graph indices.
 
+The system follows an OpenBao-zero-fallback architecture (see [ADR-003](docs/adr/003-openbao-zero-fallback.md) and [ADR-004](docs/adr/004-self-bootstrapping-postgres.md)) — all runtime configuration is auto-generated and stored in OpenBao; no secrets in `.env` beyond the OpenBao seal key.
+
 ---
 
 ## Quick Start
 
-**Prerequisites:** Python 3.11+, Docker, Ollama (for local LLM).
+**Prerequisites:** Docker, Docker Compose v2, and ~3 GB of free disk space.
 
 ```bash
-# 1. Clone and install
+# 1. Clone and generate the OpenBao seal key (64-char hex / 32 bytes)
 git clone https://github.com/rohnsha0/openzync.git
 cd openzync
-pip install -e ".[dev]"
-
-# 2. Start infrastructure (PostgreSQL + Redis + Ollama)
 cp .env.example .env
+echo "BAO_STATIC_SEAL_KEY=$(openssl rand -hex 32)" >> .env
+
+# 2. Bring up the entire stack — OpenBao, Postgres, migrations, api, worker
 docker compose -f infra/docker-compose.backend.yml up -d
 
-# 3. Pull a default LLM model (if using Ollama)
-ollama pull llama3.2:3b
-ollama pull nomic-embed-text
+# The first boot takes ~60 seconds:
+#   • 0-10s  OpenBao starts
+#   • 10-30s OpenBao is initialised + unsealed; system secrets + AppRole credentials written
+#   • 30-40s Postgres starts + creates DB and least-privilege roles
+#   • 40-50s Alembic migrations run (as openzync_migrator)
+#   • 50-55s Database credentials merged into the OpenBao system secret
+#   • 55-60s api and worker start (OpenBao Agent sidecar authenticates + renders secrets)
 
-# 4. Start the API
-make dev
-# => Uvicorn running on http://localhost:8000
+# 3. Verify
+curl -s http://localhost:8000/v1/health
+curl -s http://localhost:8000/v1/ready
 
-# 5. In a second terminal, start the worker
-python -m services.worker.worker
-
-# 6. Sign up and ingest a message
+# 4. Sign up and ingest a message
 curl -X POST http://localhost:8000/v1/auth/signup \
   -H "Content-Type: application/json" \
   -d '{"email":"demo@example.com","password":"changethis","name":"Demo","organization_name":"DemoOrg"}'
 ```
+
+**That's it.** No `make migrate`, no manual secret copy-paste, no `.env` full of OZ_* keys. The database password is auto-generated and stored in OpenBao. The api and worker fetch their config from OpenBao at startup.
 
 See [docs/implementation/13-deployment.md](docs/implementation/13-deployment.md) for production setup.
 
@@ -132,21 +137,40 @@ For detailed API docs, see [docs/implementation/08-api-gateway.md](docs/implemen
 
 ## Configuration
 
-Configuration is via environment variables (all prefixed with `OZ_`). Copy `.env.example` to `.env` and edit.
+OpenZync follows an **OpenBao-zero-fallback** architecture: the OpenBao secrets store is the **sole source of truth** for all runtime configuration. There is no `.env` fallback. The api and worker services fetch their config from OpenBao at startup via the OpenBao Agent sidecar pattern.
 
-| Variable | Default | Description |
+### What goes in `.env` (at first boot only)
+
+| Variable | Required? | Description |
 |---|---|---|
-| `OZ_DATABASE_URL` | — | PostgreSQL connection string (`postgresql+asyncpg://...`) |
-| `OZ_REDIS_URL` | `redis://localhost:6379/0` | Redis connection string |
-| `OZ_GRAPH_BACKEND` | `postgres` | Graph backend (`postgres` or `none`) |
-| `OZ_LLM_BACKEND` | `ollama` | LLM provider (`ollama`, `openai`, `azure`, `anthropic`, `openrouter`) |
-| `OZ_LLM_MODEL` | `llama3.2:3b` | Model name for the LLM provider |
-| `OZ_AUTO_RUN_COMMUNITY_DETECTION` | `false` | When `true`, runs community detection after each graph sync (deduped to once/hour/org); when `false`, runs nightly at 02:00 UTC |
-| `OZ_LOG_LEVEL` | `INFO` | Minimum log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
-| `OZ_SECRET_KEY` | — | Server secret key (min 32 chars) |
-| `OZ_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed CORS origins |
+| `BAO_STATIC_SEAL_KEY` | Yes | OpenBao seal key. Generate with `openssl rand -hex 32` (64 hex chars). **Dev only** — production must use Shamir or cloud KMS. If lost, ALL secrets in OpenBao are irrecoverable. |
 
-Provider-specific keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) are read directly without the `OZ_` prefix.
+### What OpenZync auto-generates and stores in OpenBao
+
+- **Database credentials** — auto-generated on first boot by `init_postgres.sh`; passwords for `openzync_migrator` (DDL) and `openzync_app` (CRUD) are written to OpenBao KV after the migration completes.
+- **AppRole credentials** — `openzync-app` and `openzync-worker` AppRoles are created at bootstrap; the api/worker OpenBao Agent sidecars authenticate using files in a shared docker volume.
+- **All system config** — Redis URL, secret key, webhook signing secret, CORS origins, rate limits, JWT TTLs, etc. are written to a single combined secret at `system/config/data/system`.
+
+### How the api/worker read config at runtime
+
+Each service has an OpenBao Agent sidecar. The Agent:
+1. Authenticates to OpenBao via AppRole using files in `/openbao-bootstrap/`
+2. Renders the `system` secret to a tmpfs-mounted file as `KEY=VALUE` lines
+3. The api/worker entrypoint script (`scripts/entrypoint_api.sh`, `scripts/entrypoint_worker.sh`) sources that file and `exec`s uvicorn/ARQ
+
+See [ADR-004: Self-Bootstrapping Postgres via OpenBao-Injected Credentials](docs/adr/004-self-bootstrapping-postgres.md) for the full architecture.
+
+### Overriding config at runtime (advanced)
+
+To temporarily override a config value without re-bootstrapping:
+
+```bash
+docker compose -f infra/docker-compose.backend.yml exec openbao \
+  bao kv put -namespace=system/ config/data/system \
+  SECRET_KEY=my-new-secret-key
+```
+
+The OpenBao Agent sidecar re-renders the system secret every 5 minutes (`static_secret_render_interval`), so the api/worker will pick up the new value on the next cycle. The api/worker should be restarted for the change to take effect immediately.
 
 ---
 
@@ -164,17 +188,27 @@ See [docs/implementation/13-deployment.md](docs/implementation/13-deployment.md)
 
 ## Development
 
+For local development with hot-reload:
+
 ```bash
-make dev              # Start API server (hot-reload on :8000)
-python -m services.worker.worker   # Start ARQ background worker
+# First, bring up the supporting infrastructure (OpenBao, Postgres, Redis, worker)
+docker compose -f infra/docker-compose.backend.yml up -d openbao postgres redis worker openbao-agent-api
+
+# Then run the API locally with hot-reload
+make dev   # runs: uvicorn services.api.asgi:app --reload --port 8000
+```
+
+The local API process bootstraps from OpenBao (just like the container) and reads the same `system` secret.
+
+Other commands:
+```bash
 make test             # Run unit tests
 make test-all         # Run all tests (unit + integration + security)
 make lint             # Ruff check + mypy
 make lint-fix         # Auto-fix lint issues
-make migrate          # Apply pending Alembic migrations
-make migrate-new      # Auto-generate a new migration revision
-make docker-up        # Start infra containers (Postgres, Redis, Ollama)
-make docker-down      # Stop infra containers
+make migrate          # Apply pending Alembic migrations (runs against the bootstrapped DB)
+make docker-up        # Start the full backend stack
+make docker-down      # Stop the backend stack
 ```
 
 The project enforces strict separation of concerns (`routers → services → repositories → models`), async throughout, and typed interfaces. See [docs/implementation/](docs/implementation/) for detailed documentation covering data models, auth, core memory, knowledge graph, NLP pipeline, worker system, SDK, MCP, dashboard, observability, testing, and deployment.

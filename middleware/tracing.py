@@ -28,7 +28,7 @@ from typing import Any
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from core.config import settings
+from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ def _init_tracer() -> Any | None:
         resource = Resource.create(
             attributes={
                 "service.name": service_name,
-                "deployment.environment": settings.ENVIRONMENT,
+                "deployment.environment": get_settings().ENVIRONMENT,
             }
         )
 

@@ -8,6 +8,7 @@ from uuid import UUID
 
 import pytest
 
+from repositories.organization_repository import OrganizationRepository
 from schemas.organizations import CreateOrgRequest
 from services.organization_service import OrganizationService
 
@@ -48,7 +49,9 @@ class TestOrganizationService:
         mock_org.id = UUID("00000000-0000-0000-0000-000000000001")
         mock_org.name = "Test Org"
 
-        service = OrganizationService(db=mock_db)
+        mock_repo = MagicMock(spec=OrganizationRepository)
+        mock_repo._db = mock_db
+        service = OrganizationService(repo=mock_repo)
         # Replace the Organization constructor to return our mock
         import services.organization_service as os_mod
 

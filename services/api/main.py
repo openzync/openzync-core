@@ -26,7 +26,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from core.arq import close_arq, init_arq
-from core.config import Settings
+from core.config import get_settings
 from core.db import close_db_engine, get_async_session, init_db_engine
 from core.exceptions import register_exception_handlers
 from core.graph_backend import init_dispatcher
@@ -77,7 +77,7 @@ def create_app() -> FastAPI:
     Returns:
         A configured :class:`FastAPI` instance ready for uvicorn.
     """
-    settings = Settings()
+    settings = get_settings()
     setup_logging(settings.ENVIRONMENT, settings.LOG_LEVEL)
 
     @asynccontextmanager

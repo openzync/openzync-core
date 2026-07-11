@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.config import settings
+from core.config import get_settings
 from dependencies.auth import require_org_id
 from dependencies.db import get_db
 from models.episode import Episode
@@ -43,7 +43,7 @@ router = APIRouter(
 
 def _get_metrics_service() -> MetricsService:
     """Dependency factory for ``MetricsService``."""
-    return MetricsService(prometheus_url=settings.PROMETHEUS_URL)
+    return MetricsService(prometheus_url=get_settings().PROMETHEUS_URL)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -112,7 +112,7 @@ async def get_promql_query(
     """
     import httpx
 
-    base_url = settings.PROMETHEUS_URL.rstrip("/")
+    base_url = get_settings().PROMETHEUS_URL.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.get(
@@ -152,7 +152,7 @@ async def get_prometheus_targets(
     """
     import httpx
 
-    base_url = settings.PROMETHEUS_URL.rstrip("/")
+    base_url = get_settings().PROMETHEUS_URL.rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=3) as client:
             resp = await client.get(f"{base_url}/api/v1/targets")

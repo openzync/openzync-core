@@ -16,7 +16,7 @@ from uuid import UUID
 import structlog
 
 from core.arq import get_arq
-from core.config import settings
+from core.config import get_settings
 from repositories.fact_repository import FactRepository
 
 logger = logging.getLogger(__name__)
@@ -132,7 +132,7 @@ async def ingest_business_data(
         from core.db import init_db_engine
 
         engine = init_db_engine(
-            str(settings.DATABASE_URL),
+            str(get_settings().DATABASE_URL),
             pool_size=5,
             max_overflow=2,
         )
@@ -244,5 +244,5 @@ def _arq_queue_name(queue_type: str) -> str:
     Returns:
         Fully qualified queue name for the current environment.
     """
-    env = settings.ENVIRONMENT if hasattr(settings, "ENVIRONMENT") else "development"
+    env = get_settings().ENVIRONMENT
     return f"OpenZync:{env}:queue:{queue_type}"

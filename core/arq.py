@@ -20,7 +20,7 @@ from arq import create_pool
 from arq.connections import RedisSettings
 from arq.jobs import Job  # noqa: F401 — re-exported for convenience
 
-from core.config import settings
+from core.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,7 @@ class ARQPool:
             redis_url: Redis connection string.  Falls back to
                 ``settings.REDIS_URL``.
         """
-        self._redis_url: str = redis_url or str(settings.REDIS_URL)
+        self._redis_url: str = redis_url or str(get_settings().REDIS_URL)
         self._pool: Any = None  # arq.connections.ArqRedis (not exported)
 
     # ── Lifecycle ──────────────────────────────────────────────────────────────
