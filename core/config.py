@@ -158,6 +158,36 @@ class Settings(BaseSettings):
         validation_alias="OZ_FALKORDB_SOCKET_TIMEOUT",
     )
 
+    # ── Prompt Caching ────────────────────────────────────────────────────
+    PROMPT_CACHING_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Master switch for provider-side prompt caching. "
+            "When True, Anthropic gets cache_control markers on system prompts, "
+            "OpenAI/Azure get automatic prefix caching, "
+            "and OpenRouter gets session_id for sticky routing."
+        ),
+        validation_alias="OZ_PROMPT_CACHING_ENABLED",
+    )
+    PROMPT_CACHING_ANTHROPIC_MIN_TOKENS: int = Field(
+        default=1024, ge=512,
+        description=(
+            "Minimum estimated token count for the system prompt before "
+            "cache_control is applied to Anthropic calls. "
+            "Approximated as len(text) // 4. "
+            "Models vary: 1024 covers Sonnet 4.6, 4096 covers Opus 4.6."
+        ),
+        validation_alias="OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS",
+    )
+    PROMPT_CACHING_ANTHROPIC_TTL: Literal["5m", "1h"] = Field(
+        default="5m",
+        description=(
+            "Anthropic cache TTL: '5m' (1.25x write cost, default) "
+            "or '1h' (2x write cost). Cache reads are always 0.1x."
+        ),
+        validation_alias="OZ_PROMPT_CACHING_ANTHROPIC_TTL",
+    )
+
     # ── Rate Limiting ─────────────────────────────────────────────────────
     RATE_LIMIT_IP_MAX: int = Field(
         default=10,
