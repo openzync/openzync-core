@@ -31,6 +31,7 @@ from core.llm import (
     EmbeddingResponse,
     LLMBackend,
     LLMBackendRegistry,
+    PromptCachingConfig,
     TokenUsage,
 )
 
@@ -73,13 +74,17 @@ class OllamaBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self.DEFAULT_EMBED_DIM
 
-    async def _chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
         """Send a chat completion request to Ollama's ``/api/chat``.
 
         Supported kwargs (forwarded to Ollama):
             ``model``, ``temperature``, ``top_p``, ``max_tokens``, ``stream``.
         """
         model = kwargs.pop("model", self._chat_model)
+
+        if cache_config and cache_config.enabled:
+            logger.debug("ollama.cache_unsupported", extra={"model": model})
+
         payload = {
             "model": model,
             "messages": messages,
@@ -227,7 +232,7 @@ class OpenAIBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self.DEFAULT_EMBED_DIM
 
-    async def _chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
         """Send a chat completion request.
 
         Supported kwargs: ``temperature``, ``max_tokens``, ``top_p``,
@@ -272,9 +277,17 @@ class OpenAIBackend(LLMBackend):
                             "OpenAI response content is None and no tool calls present"
                         )
                 usage_data = response.usage
+                cached_tokens = 0
+                cache_write_tokens = 0
+                if usage_data and hasattr(usage_data, 'prompt_tokens_details') and usage_data.prompt_tokens_details:
+                    cached_tokens = getattr(usage_data.prompt_tokens_details, 'cached_tokens', 0) or 0
+                    cache_write_tokens = getattr(usage_data.prompt_tokens_details, 'cache_write_tokens', 0) or 0
+
                 usage = TokenUsage(
                     prompt_tokens=usage_data.prompt_tokens if usage_data else 0,
                     completion_tokens=usage_data.completion_tokens if usage_data else 0,
+                    cache_read_input_tokens=cached_tokens,
+                    cache_creation_input_tokens=cache_write_tokens,
                 )
 
                 logger.info(
@@ -285,6 +298,8 @@ class OpenAIBackend(LLMBackend):
                         "duration_ms": round(elapsed * 1000),
                         "prompt_tokens": usage.prompt_tokens,
                         "completion_tokens": usage.completion_tokens,
+                        "cached_tokens": cached_tokens,
+                        "cache_write_tokens": cache_write_tokens,
                     },
                 )
 
@@ -407,7 +422,7 @@ class AzureBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self.DEFAULT_EMBED_DIM
 
-    async def _chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
         """Send a chat completion request to Azure OpenAI.
 
         Supported kwargs: ``temperature``, ``max_tokens``, ``top_p``, etc.
@@ -452,9 +467,17 @@ class AzureBackend(LLMBackend):
                             "Azure OpenAI response content is None and no tool calls present"
                         )
                 usage_data = response.usage
+                cached_tokens = 0
+                cache_write_tokens = 0
+                if usage_data and hasattr(usage_data, 'prompt_tokens_details') and usage_data.prompt_tokens_details:
+                    cached_tokens = getattr(usage_data.prompt_tokens_details, 'cached_tokens', 0) or 0
+                    cache_write_tokens = getattr(usage_data.prompt_tokens_details, 'cache_write_tokens', 0) or 0
+
                 usage = TokenUsage(
                     prompt_tokens=usage_data.prompt_tokens if usage_data else 0,
                     completion_tokens=usage_data.completion_tokens if usage_data else 0,
+                    cache_read_input_tokens=cached_tokens,
+                    cache_creation_input_tokens=cache_write_tokens,
                 )
 
                 logger.info(
@@ -465,6 +488,8 @@ class AzureBackend(LLMBackend):
                         "duration_ms": round(elapsed * 1000),
                         "prompt_tokens": usage.prompt_tokens,
                         "completion_tokens": usage.completion_tokens,
+                        "cached_tokens": cached_tokens,
+                        "cache_write_tokens": cache_write_tokens,
                     },
                 )
 
@@ -545,12 +570,16 @@ class AnthropicBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return 0  # Anthropic does not offer a public embedding API.
 
-    async def _chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
         """Send a chat completion request to the Anthropic API.
 
         Handles Anthropic's ``system`` message convention: if the first
         message has ``role == "system"``, it is extracted and passed as the
         ``system`` parameter (omitted from the messages array).
+
+        When ``cache_config`` is provided with caching enabled, the system
+        block is sent as a list-of-blocks format with ``cache_control`` markers
+        to enable prompt caching.
 
         Supported kwargs: ``max_tokens``, ``temperature``, ``top_p``,
         ``top_k``, ``stop_sequences``, ``model``.
@@ -560,11 +589,24 @@ class AnthropicBackend(LLMBackend):
         temperature = kwargs.pop("temperature", 0.0)
 
         # Anthropic requires a separate ``system`` parameter.
-        system: str | None = None
+        system: str | list[dict] | None = None
         anthropic_messages = messages
         if messages and messages[0].get("role") == "system":
-            system = messages[0]["content"]
+            system_text = messages[0]["content"]
             anthropic_messages = messages[1:]
+
+            if cache_config and cache_config.enabled:
+                # Use list-of-blocks format to enable cache_control.
+                system_block: dict[str, Any] = {"type": "text", "text": system_text}
+                approx_tokens = len(system_text) // 4
+                if approx_tokens >= cache_config.anthropic_min_tokens:
+                    cache_kw: dict[str, Any] = {"type": "ephemeral"}
+                    if cache_config.anthropic_cache_ttl == "1h":
+                        cache_kw["ttl"] = "1h"
+                    system_block["cache_control"] = cache_kw
+                system = [system_block]
+            else:
+                system = system_text
 
         last_exception: Exception | None = None
         for attempt in range(1, self.MAX_RETRIES + 1):
@@ -589,6 +631,8 @@ class AnthropicBackend(LLMBackend):
                 usage = TokenUsage(
                     prompt_tokens=response.usage.input_tokens,
                     completion_tokens=response.usage.output_tokens,
+                    cache_read_input_tokens=getattr(response.usage, 'cache_read_input_tokens', 0) or 0,
+                    cache_creation_input_tokens=getattr(response.usage, 'cache_creation_input_tokens', 0) or 0,
                 )
 
                 logger.info(
@@ -599,6 +643,9 @@ class AnthropicBackend(LLMBackend):
                         "duration_ms": round(elapsed * 1000),
                         "prompt_tokens": usage.prompt_tokens,
                         "completion_tokens": usage.completion_tokens,
+                        "cache_read_tokens": usage.cache_read_input_tokens,
+                        "cache_creation_tokens": usage.cache_creation_input_tokens,
+                        "cache_hit": usage.cache_read_input_tokens > 0,
                     },
                 )
 
@@ -685,15 +732,25 @@ class OpenRouterBackend(LLMBackend):
     def embedding_dim(self) -> int:
         raise NotImplementedError("OpenRouter does not support embeddings")
 
-    async def _chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
         """Send a chat completion via OpenRouter.
 
         Retries on 429/5xx (exponential backoff) and on empty responses
         where content is ``None`` with no tool calls present.
+
+        When ``cache_config`` is provided with caching enabled, a
+        ``session_id`` is passed in the request body to encourage OpenRouter
+        to route requests to the same upstream provider, improving cache
+        hit rates.
         """
         model = kwargs.pop("model", self._chat_model)
         temperature = kwargs.pop("temperature", 0.1)
         max_tokens = kwargs.pop("max_tokens", 4096)
+
+        # ── Session stickiness for OpenRouter provider routing ──
+        extra_body: dict[str, Any] = {}
+        if cache_config and cache_config.enabled and cache_config.session_id:
+            extra_body["session_id"] = cache_config.session_id
 
         last_exception: Exception | None = None
         for attempt in range(1, self.MAX_RETRIES + 1):
@@ -704,6 +761,7 @@ class OpenRouterBackend(LLMBackend):
                     messages=messages,
                     temperature=temperature,
                     max_tokens=max_tokens,
+                    extra_body=extra_body or None,
                     **kwargs,
                 )
                 elapsed = time.monotonic() - start
@@ -756,9 +814,24 @@ class OpenRouterBackend(LLMBackend):
                         )
                         break
 
+                # Parse cache metrics from underlying provider
+                cached_tokens = 0
+                cache_write_tokens = 0
+                if response.usage and hasattr(response.usage, 'prompt_tokens_details') and response.usage.prompt_tokens_details:
+                    cached_tokens = getattr(response.usage.prompt_tokens_details, 'cached_tokens', 0) or 0
+                    cache_write_tokens = getattr(response.usage.prompt_tokens_details, 'cache_write_tokens', 0) or 0
+
+                # OpenRouter-specific cache_discount
+                # The OpenAI SDK strips unknown fields; access via model_extra.
+                cache_discount = 0.0
+                model_extra = getattr(response, 'model_extra', None) or {}
+                cache_discount = model_extra.get('cache_discount', 0.0) or 0.0
+
                 usage = TokenUsage(
                     prompt_tokens=response.usage.prompt_tokens if response.usage else 0,
                     completion_tokens=response.usage.completion_tokens if response.usage else 0,
+                    cache_read_input_tokens=cached_tokens,
+                    cache_creation_input_tokens=cache_write_tokens,
                 )
                 logger.info(
                     "openrouter.chat_completed",
@@ -767,6 +840,9 @@ class OpenRouterBackend(LLMBackend):
                         "duration_ms": round(elapsed * 1000),
                         "prompt_tokens": usage.prompt_tokens,
                         "completion_tokens": usage.completion_tokens,
+                        "cached_tokens": cached_tokens,
+                        "cache_write_tokens": cache_write_tokens,
+                        "cache_discount": cache_discount,
                     },
                 )
                 return ChatResponse(content=content, model=response.model, usage=usage)

@@ -94,21 +94,22 @@ async def embed_fact(
 
             async with session_factory() as _cfg_db:
                 org_cfg = await get_org_config(uuid.UUID(_org_id), _cfg_db, redis=None)
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "embed_fact.org_config_fetch_failed",
                 org_id=_org_id,
                 exc_info=True,
             )
+            raise RuntimeError(
+                f"Failed to fetch org config for org {_org_id}"
+            ) from exc
 
-    # No env-var fallback — skip if org config is unavailable or
-    # no embedding backend is configured.
-    if org_cfg is None or org_cfg.embedding_backend is None:
-        logger.warning(
-            "embed_fact.skipped_no_embedding_config",
-            org_id=_org_id,
+    if org_cfg is None:
+        raise RuntimeError(f"Org config not found for org {_org_id}")
+    if org_cfg.embedding_backend is None:
+        raise RuntimeError(
+            f"No embedding backend configured for org {_org_id}"
         )
-        return
 
     _embedding_backend = org_cfg.embedding_backend
     _embedding_model = org_cfg.embedding_model

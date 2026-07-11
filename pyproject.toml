@@ -45,6 +45,8 @@ dependencies = [
     "pyjwt>=2.8.0",
     "PyYAML>=6.0",
     "redis[hiredis]>=5.0.0",
+    "FalkorDB==1.2.0",
+    "surrealdb==2.0.0",
     "sqlalchemy[asyncio]>=2.0.30",
     "starlette>=0.37.0",
     "structlog>=24.1.0",
@@ -64,6 +66,7 @@ dev = [
     "ruff>=0.4.0",
     "mypy>=1.10.0",
     "pre-commit>=3.7.0",
+    "openai>=1.30.0",
 ]
 llm = [
     "openai>=1.30.0",

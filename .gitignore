@@ -77,3 +77,4 @@ graphify-out/
 tests/benchmarks/data/
 # Benchmark result JSON files are generated per-run
 benchmarks/results/*.json
+benchmarks/results/.in_progress/

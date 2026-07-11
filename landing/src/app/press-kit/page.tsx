@@ -85,7 +85,7 @@ export default function PressKitPage() {
             <div className="card-base p-8 flex flex-col items-center justify-center">
               <div className="text-4xl font-bold tracking-tight mb-4">
                 <span className="text-brand-300">O</span>
-                <span className="text-text-primary">penZep</span>
+                <span className="text-text-primary">penZync</span>
               </div>
               <p className="text-xs text-surface-500 mb-4">Default dark mode</p>
               <span className="inline-flex items-center gap-2 text-sm text-brand-300">
@@ -98,7 +98,7 @@ export default function PressKitPage() {
             <div className="card-base p-8 flex flex-col items-center justify-center bg-white">
               <div className="text-4xl font-bold tracking-tight mb-4 text-[#0F0F12]">
                 <span className="text-[#6366F1]">O</span>
-                <span>penZep</span>
+                <span>penZync</span>
               </div>
               <p className="text-xs text-surface-500 mb-4">Light mode variant</p>
               <span className="inline-flex items-center gap-2 text-sm text-brand-300">

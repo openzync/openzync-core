@@ -221,7 +221,7 @@ def backend(
 
         bk = FalkorGraphBackend(client=mock_falkordb_client)
         bk._schema_ensured = {
-            f"openzynk_{ORG_ID}_{PROJ_ID}": True,
+            f"openzync_{ORG_ID}_{PROJ_ID}": True,
         }
         return bk
 

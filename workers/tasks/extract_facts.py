@@ -214,6 +214,7 @@ async def extract_facts(
 
     # ── 4. Filter, resolve entities, persist, and set enrichment bit ─────────
     # Uses the shared engine from worker ctx (set earlier in this function).
+    _embed_targets: list[tuple[str, str]] = []
     persisted = 0
     try:
         async with session_factory() as db:
@@ -293,6 +294,11 @@ async def extract_facts(
                         # Entity resolution fallback + graph relationship
                         # materialization for newly created facts only.
                         for fact_obj in new_facts:
+                            # Collect for downstream embedding enqueue —
+                            # accumulated here regardless of graph resolution
+                            # success so embed_fact always runs.
+                            _embed_targets.append((str(fact_obj.id), fact_obj.content))
+
                             input_fact = content_to_fact.get(fact_obj.content)
                             if input_fact is None:
                                 continue  # guard against logic errors
@@ -396,6 +402,46 @@ async def extract_facts(
     finally:
         if _own_engine:
             await engine.dispose()
+
+    # ── 5. Chain embed_fact for each persisted fact ──────────────────────────
+    # Runs after the enrichment bit is committed.  Failures here are
+    # non-blocking — the embed_fact task will re-pull content from the DB
+    # on its own retry cycle.
+    if _embed_targets:
+        try:
+            from services.worker.worker_settings import get_queue_name
+            from services.worker.worker_settings import settings as w_settings
+
+            arq_redis = ctx.get("redis") if isinstance(ctx, dict) else None
+            if arq_redis is not None:
+                for fact_id, fact_content in _embed_targets:
+                    await arq_redis.enqueue_job(
+                        "embed_fact",
+                        fact_id=fact_id,
+                        org_id=org_id,
+                        content=fact_content,
+                        trace_id=trace_id,
+                        _queue_name=get_queue_name(w_settings.ENV, "high"),
+                    )
+                    logger.info(
+                        "fact_extraction.embed_enqueued",
+                        episode_id=episode_id,
+                        fact_id=fact_id,
+                    )
+            else:
+                logger.warning(
+                    "fact_extraction.no_arq_redis",
+                    episode_id=episode_id,
+                )
+        except Exception:
+            logger.warning(
+                "fact_extraction.embed_enqueue_failed",
+                episode_id=episode_id,
+                org_id=org_id,
+                count=len(_embed_targets),
+                exc_info=True,
+            )
+            # Non-blocking — fact extraction already committed successfully.
 
     if persisted:
         logger.info(

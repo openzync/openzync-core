@@ -4,42 +4,20 @@
 
 import fs from "fs";
 import path from "path";
+import type { ReactElement } from "react";
 import type { BlogPost } from "@/content/blog";
+import { parseFrontmatter } from "@/lib/frontmatter";
+import { compileMDX } from "next-mdx-remote/rsc";
+import { useMDXComponents } from "@/app/mdx-components";
 
 const BLOG_DIR = path.join(process.cwd(), "content/blog");
 
-/**
- * Parse frontmatter from MDX content manually.
- * Supports: title, date, excerpt, author, category
- */
-function parseFrontmatter(fileContent: string): {
-  metadata: Record<string, string>;
-  content: string;
-} {
-  const metadata: Record<string, string> = {};
-  let content = fileContent;
+/** A blog post ready to render in the detail page. */
+export type BlogPostDetail = Omit<BlogPost, "content"> & {
+  MDXContent: ReactElement;
+};
 
-  if (content.startsWith("---")) {
-    const endIndex = content.indexOf("---", 3);
-    if (endIndex !== -1) {
-      const frontmatter = content.slice(3, endIndex).trim();
-      content = content.slice(endIndex + 3).trim();
-
-      for (const line of frontmatter.split("\n")) {
-        const colonIndex = line.indexOf(":");
-        if (colonIndex !== -1) {
-          const key = line.slice(0, colonIndex).trim();
-          const value = line.slice(colonIndex + 1).trim().replace(/^"|"$/g, "");
-          metadata[key] = value;
-        }
-      }
-    }
-  }
-
-  return { metadata, content };
-}
-
-/** Get all blog posts, sorted by date descending. */
+/** Get all blog posts (metadata only), sorted by date descending. */
 export function getAllBlogPosts(): BlogPost[] {
   if (!fs.existsSync(BLOG_DIR)) return [];
 
@@ -69,13 +47,19 @@ export function getAllBlogPosts(): BlogPost[] {
   return posts;
 }
 
-/** Get a single blog post by slug. */
-export function getBlogPost(slug: string): BlogPost | null {
+/** Get a single blog post by slug, compiled as MDX. */
+export async function getBlogPost(slug: string): Promise<BlogPostDetail | null> {
   const filePath = path.join(BLOG_DIR, `${slug}.mdx`);
   if (!fs.existsSync(filePath)) return null;
 
   const raw = fs.readFileSync(filePath, "utf-8");
   const { metadata, content } = parseFrontmatter(raw);
+
+  const { content: MDXContent } = await compileMDX({
+    source: content,
+    components: useMDXComponents({}),
+    options: { parseFrontmatter: false },
+  });
 
   return {
     slug,
@@ -84,6 +68,6 @@ export function getBlogPost(slug: string): BlogPost | null {
     excerpt: metadata.excerpt ?? "",
     author: metadata.author ?? "OpenZync Team",
     category: metadata.category ?? "community",
-    content,
+    MDXContent,
   };
 }

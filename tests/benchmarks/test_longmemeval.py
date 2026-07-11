@@ -178,11 +178,22 @@ async def _request_with_retry(
                 continue
             raise
 
-    # Should not reach here — last retry raises naturally
-    raise httpx.HTTPStatusError(
-        f"Request failed after {max_retries} retries",
-        request=last_exc.__traceback__ if hasattr(last_exc, "__traceback__") else None,
-    )
+    # All retries exhausted — re-raise the last exception with context
+    if isinstance(last_exc, httpx.HTTPStatusError):
+        raise httpx.HTTPStatusError(
+            f"Request failed after {max_retries} retries: {last_exc}",
+            request=last_exc.request,
+            response=last_exc.response,
+        ) from last_exc
+    if isinstance(last_exc, httpx.RequestError):
+        raise httpx.HTTPStatusError(
+            f"Request failed after {max_retries} retries: {last_exc}",
+            request=last_exc.request,
+            response=None,  # type: ignore[arg-type]
+        ) from last_exc
+    raise RuntimeError(
+        f"Request failed after {max_retries} retries"
+    ) from last_exc
 
 
 async def _login(client: httpx.AsyncClient) -> str:
@@ -216,27 +227,94 @@ def _auth_header(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-async def _create_project(
-    client: httpx.AsyncClient, token: str, name: str | None = None
-) -> str:
-    """Create a fresh project for benchmark ingestion.
+BENCHMARK_PROJECT_PREFIX: str = "longmemeval-benchmark"
+"""Prefix for persistent benchmark project names.
+
+The full name is ``{prefix}-{variant}`` (e.g. ``longmemeval-benchmark-s``).
+Data persists across runs so enrichment is performed once and reused.
+"""
+
+
+async def _find_project_by_name(
+    client: httpx.AsyncClient, token: str, name: str
+) -> str | None:
+    """Look up a project by name.  Returns its ID, or ``None`` if not found.
+
+    Only returns non-archived projects.
+    """
+    resp = await _request_with_retry(
+        client, "GET", "/v1/projects",
+        params={"limit": 200},
+        headers=_auth_header(token),
+    )
+    for project in resp.json():
+        if project.get("name") == name and not project.get("is_archived", False):
+            return str(project["id"])
+    return None
+
+
+async def _ensure_project(
+    client: httpx.AsyncClient, token: str, variant: str
+) -> tuple[str, bool]:
+    """Get or create a persistent benchmark project.
+
+    Reuses existing project data (from earlier benchmark runs) to avoid
+    re-ingesting conversations.  Falls back to any project whose name
+    contains ``"longmemeval"`` (e.g. ``longmemeval-1783604743`` from a
+    previous run before the naming convention was introduced).
+
+    Resolution order:
+    1. Look for project named ``longmemeval-benchmark-{variant}``
+    2. Fall back to any non-archived project with ``"longmemeval"`` in name
+    3. Create a new project with the deterministic name
 
     Args:
         client: Authenticated HTTP client.
         token: JWT access token.
-        name: Optional project name (auto-generated if omitted).
+        variant: Dataset variant (``"s"``, ``"oracle"``, etc.).
 
     Returns:
-        The created project's UUID as a string.
+        A tuple of ``(project_id, is_new)`` where ``is_new`` is ``True``
+        if the project was just created (needs ingestion + enrichment).
     """
-    project_name = name or f"longmemeval-{int(time.time())}"
+    project_name = f"{BENCHMARK_PROJECT_PREFIX}-{variant}"
+
+    # Priority 1: exact match by name
+    existing = await _find_project_by_name(client, token, project_name)
+    if existing is not None:
+        logger.info("Reusing project %s (%s)", project_name, existing)
+        return existing, False
+
+    # Priority 2: any non-archived project with "longmemeval" in its name
+    # (catches legacy project names like longmemeval-1783604743)
+    resp = await _request_with_retry(
+        client, "GET", "/v1/projects",
+        params={"limit": 200},
+        headers=_auth_header(token),
+    )
+    for project in resp.json():
+        if project.get("is_archived", False):
+            continue
+        name = project.get("name", "")
+        if "longmemeval" in name.lower():
+            pid = str(project["id"])
+            logger.info(
+                "Reusing existing project %s (%s) — skipping ingest",
+                name,
+                pid,
+            )
+            return pid, False
+
+    # Priority 3: create new
     resp = await _request_with_retry(
         client, "POST", "/v1/projects",
         json={"name": project_name},
         headers=_auth_header(token),
     )
     data: dict = resp.json()
-    return str(data["id"])
+    project_id = str(data["id"])
+    logger.info("Created new project %s (%s)", project_name, project_id)
+    return project_id, True
 
 
 async def _set_org_graph_backend(
@@ -290,22 +368,6 @@ async def _create_session(
     )
     data: dict = resp.json()
     return str(data["id"])
-
-
-async def _delete_project(
-    client: httpx.AsyncClient, token: str, project_id: str
-) -> None:
-    """Archive (soft-delete) a benchmark project.
-
-    Args:
-        client: Authenticated HTTP client.
-        token: JWT access token.
-        project_id: The project UUID to delete.
-    """
-    await _request_with_retry(
-        client, "DELETE", f"/v1/projects/{project_id}",
-        headers=_auth_header(token),
-    )
 
 
 async def _ingest_memory(
@@ -624,7 +686,7 @@ def _save_results(
             "reranker_enabled": config.reranker,
             "baseline_mode": config.baseline,
             "benchmark_limit": config.benchmark_limit,
-            "llm_judge_model": "openai/gpt-oss-120b",
+            "llm_judge_model": "openai/gpt-oss-120b:free",
             "judge_temperature": 0.0,
         },
         "metrics": metrics,
@@ -779,6 +841,7 @@ async def test_longmemeval_benchmark(
         dataset=dataset,
         openrouter_backend=openrouter_backend,
         reranker=benchmark_config.reranker,
+        variant=variant,
         label="full",
     )
 
@@ -795,6 +858,7 @@ async def test_longmemeval_benchmark(
                 dataset=dataset,
                 openrouter_backend=openrouter_backend,
                 reranker=False,
+                variant=f"{variant}-baseline",
                 label="baseline",
             )
         finally:
@@ -871,12 +935,15 @@ async def _run_benchmark_pipeline(
     dataset: list[dict[str, Any]],
     openrouter_backend: LLMBackend,
     reranker: bool,
+    variant: str,
     label: str = "run",
 ) -> list[dict[str, Any]]:
     """Execute a single benchmark pipeline run (ingest → enrich → query).
 
-    Creates a project, ingests all conversations, waits for enrichment,
-    then queries each question for R@k and QA accuracy.
+    Uses a persistent project (``longmemeval-benchmark-{variant}``) so
+    enriched data survives across runs.  On the first run it creates the
+    project and ingests conversations; on subsequent runs it reuses the
+    existing enriched data and skips straight to querying.
 
     Args:
         api_client: Authenticated HTTP client.
@@ -884,6 +951,8 @@ async def _run_benchmark_pipeline(
         dataset: LongMemEval question entries.
         openrouter_backend: LLM backend for answer evaluation.
         reranker: Whether the reranker is enabled for this run.
+        variant: Dataset variant (``"s"``, ``"oracle"``, etc.) — used
+            to derive the persistent project name.
         label: Short label for logging (e.g. ``"full"``, ``"baseline"``).
 
     Returns:
@@ -891,59 +960,65 @@ async def _run_benchmark_pipeline(
         ``question_type``, ``correct``, ``reasoning``, ``r1``, ``r5``, ``r10``,
         ``context``, ``model_answer``.
     """
-    # ── Create project ─────────────────────────────────────────────────────
-    project_id = await _create_project(api_client, token)
-    logger.info("[%s] Created project %s", label, project_id)
+    # ── Get or create persistent project ──────────────────────────────────
+    project_id, is_new = await _ensure_project(api_client, token, variant)
 
-# ── Ingest all conversations ───────────────────────────────────────────
-    # Each dataset entry gets its own session so retrieval is measured
-    # across independent conversation contexts.
-    ingested_count = 0
-    for idx, entry in enumerate(dataset):
-        entry_id = entry.get("question_id", f"entry_{idx}")
-        haystack = entry.get("haystack_sessions", [])
-        messages = _flatten_messages(haystack)
-        if not messages:
-            logger.warning(
-                "[%s] Entry %s has empty messages — skipping",
-                label,
-                entry_id,
+    if is_new:
+        # ── Ingest all conversations ───────────────────────────────────────────
+        # Each dataset entry gets its own session so retrieval is measured
+        # across independent conversation contexts.
+        ingested_count = 0
+        for idx, entry in enumerate(dataset):
+            entry_id = entry.get("question_id", f"entry_{idx}")
+            haystack = entry.get("haystack_sessions", [])
+            messages = _flatten_messages(haystack)
+            if not messages:
+                logger.warning(
+                    "[%s] Entry %s has empty messages — skipping",
+                    label,
+                    entry_id,
+                )
+                continue
+
+            # Create a session for this entry
+            session_id = await _create_session(
+                api_client,
+                token,
+                project_id,
+                external_id=f"longmemeval_{entry_id}",
             )
-            continue
 
-        # Create a session for this entry
-        session_id = await _create_session(
-            api_client,
-            token,
-            project_id,
-            external_id=f"longmemeval_{entry_id}",
+            # LongMemEval conversations may have many messages; batch if needed
+            batch_size = 500
+            for i in range(0, len(messages), batch_size):
+                batch = messages[i : i + batch_size]
+                await _ingest_memory(
+                    api_client, token, project_id, batch,
+                    session_id=session_id,
+                )
+                ingested_count += len(batch)
+
+        logger.info(
+            "[%s] Ingested %d messages across %d entries (1 session per entry)",
+            label,
+            ingested_count,
+            len(dataset),
         )
 
-        # LongMemEval conversations may have many messages; batch if needed
-        batch_size = 500
-        for i in range(0, len(messages), batch_size):
-            batch = messages[i : i + batch_size]
-            await _ingest_memory(
-                api_client, token, project_id, batch,
-                session_id=session_id,
+        # ── Wait for enrichment ────────────────────────────────────────────
+        logger.info("[%s] Waiting for enrichment to complete...", label)
+        try:
+            await _wait_for_enrichment(api_client, token, project_id)
+        except TimeoutError:
+            logger.warning(
+                "[%s] Enrichment timed out — proceeding with partial data",
+                label,
             )
-            ingested_count += len(batch)
-
-    logger.info(
-        "[%s] Ingested %d messages across %d entries (1 session per entry)",
-        label,
-        ingested_count,
-        len(dataset),
-    )
-
-    # ── Wait for enrichment ────────────────────────────────────────────
-    logger.info("[%s] Waiting for enrichment to complete...", label)
-    try:
-        await _wait_for_enrichment(api_client, token, project_id)
-    except TimeoutError:
-        logger.warning(
-            "[%s] Enrichment timed out — proceeding with partial data",
+    else:
+        logger.info(
+            "[%s] Project %s already has data — skipping ingestion + enrichment",
             label,
+            project_id,
         )
 
     # ── Query each question ────────────────────────────────────────────
@@ -1024,6 +1099,19 @@ async def _run_benchmark_pipeline(
         }
         results.append(result_entry)
 
+        # ── Real-time progress ──────────────────────────────────────────────
+        correct_so_far = sum(1 for r in results if r.get("correct", False))
+        total_so_far = len(results)
+        running_acc = correct_so_far / total_so_far * 100
+        print(
+            f"\n  [{idx + 1}/{len(dataset)}] {question_id}"
+            f"\n    {'✅' if correct else '❌'}  | "
+            f"R@1: {'✅' if r1 else '❌'} "
+            f"R@5: {'✅' if r5 else '❌'} "
+            f"R@10: {'✅' if r10 else '❌'}"
+            f"\n    Running: {correct_so_far}/{total_so_far} ({running_acc:.1f}%)"
+        )
+
         # Incremental save every 10 questions to protect against data loss
         if (idx + 1) % 10 == 0:
             _TMP_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1038,4 +1126,4 @@ async def _run_benchmark_pipeline(
                 tmp_path,
             )
 
-        return results
+    return results

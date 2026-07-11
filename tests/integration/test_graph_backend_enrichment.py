@@ -21,7 +21,7 @@ from uuid import UUID, uuid4
 import pytest
 import pytest_asyncio
 from sqlalchemy import text as sa_text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from core.exceptions import NotFoundError
@@ -71,22 +71,42 @@ def teardown_module() -> None:
 
 @pytest_asyncio.fixture
 async def db() -> AsyncGenerator[AsyncSession, None]:
-    """Create a fresh async session per test — rolled back on teardown."""
+    """Create a fresh async session per test — rolled back on teardown.
+
+    Uses ``join_transaction_mode="create_savepoint"`` so that the ORM
+    session creates savepoints within the outer connection-level
+    transaction rather than trying to ``BEGIN``/``COMMIT`` directly on
+    the connection.  This avoids both ``InvalidRequestError`` (from
+    autobegin conflict) and ``InterfaceError`` (from greenlet-spawn
+    interleaving) when backend methods use ``begin_nested()``.
+    """
     url = _pg_container.get_connection_url()
     driver_url = url.replace("postgresql://", "postgresql+asyncpg://")
     engine = create_async_engine(driver_url, poolclass=NullPool, pool_pre_ping=True)
 
-    async with engine.connect() as conn:
-        await conn.execute(sa_text("SET search_path TO public"))
-        transaction = await conn.begin()
-        session = AsyncSession(bind=conn, expire_on_commit=False)
-        try:
-            yield session
-        finally:
-            await transaction.rollback()
-            await session.close()
+    conn: AsyncConnection | None = None
+    trans: Any = None
+    session: AsyncSession | None = None
+    try:
+        conn = await engine.connect()
+        trans = await conn.begin()
 
-    await engine.dispose()
+        session = AsyncSession(
+            bind=conn,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
+
+        await session.execute(sa_text("SET search_path TO public"))
+        yield session
+    finally:
+        if session is not None:
+            await session.close()
+        if trans is not None:
+            await trans.rollback()
+        if conn is not None:
+            await conn.close()
+        await engine.dispose()
 
 
 @pytest_asyncio.fixture

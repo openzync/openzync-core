@@ -32,6 +32,25 @@ export function Navbar() {
     setMobileExpanded(null);
   }, [pathname]);
 
+  // Track announcement-bar height so the navbar re-renders when it changes.
+  // (React does not re-evaluate `style` props when CSS custom properties change.)
+  const [topOffset, setTopOffset] = useState("0px");
+  useEffect(() => {
+    const update = () => {
+      const h = getComputedStyle(document.documentElement)
+        .getPropertyValue("--announcement-height")
+        .trim();
+      setTopOffset(h || "0px");
+    };
+    update();
+    const observer = new MutationObserver(update);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["style"],
+    });
+    return () => observer.disconnect();
+  }, []);
+
   // Prevent body scroll when mobile menu is open
   // Uses ref-based save/restore to avoid clobbering other scroll locks
   const prevOverflowRef = useRef<string | null>(null);
@@ -64,7 +83,7 @@ export function Navbar() {
           ? "bg-surface-950/95 border-b border-surface-800"
           : "bg-transparent",
       )}
-      style={{ top: "var(--announcement-height, 0px)" }}
+      style={{ top: topOffset }}
     >
       <div className="mx-auto max-w-7xl flex h-16 items-center justify-between px-6">
         {/* Logo */}

@@ -679,6 +679,60 @@ class GraphBackend(ABC):
         """
         ...
 
+    # ── Group C2: Aggregate Queries (for observation service) ────────────────────
+
+    @abstractmethod
+    async def get_total_entity_linked_episode_count(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+    ) -> int:
+        """Get total distinct episodes that have at least one linked entity.
+
+        Used by the observation service to compute co-occurrence confidence.
+        Replaces direct SQL on ``graph_episode_entities``.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+
+        Returns:
+            Total number of distinct episodes in the project that have
+            at least one entity linked to them.
+
+        Raises:
+            GraphBackendUnavailableError: If the backend is unreachable.
+        """
+        ...
+
+    @abstractmethod
+    async def resolve_entity_names(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        entity_ids: list[UUID],
+    ) -> dict[str, dict]:
+        """Resolve entity IDs to their names and types.
+
+        Used by the observation service's behavioural pattern detection to
+        attach entity metadata to fact-predicate aggregates.  Replaces
+        direct SQL join between ``facts`` and ``graph_entities``.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            entity_ids: List of entity UUIDs to resolve.
+
+        Returns:
+            Dict keyed by entity ID string, where each value is:
+            ``{"name": str, "entity_type": str}``.
+            Entity IDs not found in the graph are omitted from the result.
+
+        Raises:
+            GraphBackendUnavailableError: If the backend is unreachable.
+        """
+        ...
+
     # ── Group D: Soft-Delete / Expiry ──────────────────────────────────────────
 
     @abstractmethod

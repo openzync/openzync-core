@@ -19,7 +19,7 @@
   </defs>
   <!-- Logo mark -->
   <text x="120" y="340" font-family="Inter, -apple-system, sans-serif" font-size="96" font-weight="900" fill="#F1F1F6">
-    <tspan fill="url(#accent)">O</tspan>penZep
+    <tspan fill="url(#accent)">O</tspan>penZync
   </text>
   <!-- Tagline -->
   <text x="120" y="400" font-family="Inter, -apple-system, sans-serif" font-size="32" fill="#8B8BA7" font-weight="400">

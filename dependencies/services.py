@@ -23,6 +23,7 @@ Usage in a router::
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -35,6 +36,7 @@ from dependencies.org_config import get_org_config
 if TYPE_CHECKING:
     from core.graph_backend import GraphBackendDispatcher
     from schemas.organization_config import OrgConfigBase
+from core.exceptions import GraphBackendUnavailableError
 from middleware.auth_throttle import AuthThrottle
 from repositories.auth_repository import AuthRepository
 from repositories.episode_repository import EpisodeRepository
@@ -50,6 +52,8 @@ from services.memory_service import MemoryService
 from services.session_service import SessionService
 from services.user_service import UserService
 from services.webhook_service import WebhookService
+
+logger = logging.getLogger(__name__)
 
 
 # ── Webhook (must be first — other factories depend on it) ────────────────────
@@ -180,10 +184,29 @@ async def get_graph_service(
     """
     dispatcher: GraphBackendDispatcher = request.app.state.graph_backend_dispatcher
 
-    # Resolve SurrealDB connection from the per-org pool.
-    pool = request.app.state.surreal_connection_pool
+    # Resolve SurrealDB connection only when the org explicitly configures SurrealDB.
+    # For postgres or none backends, skip the pool entirely — avoids unnecessary
+    # network round-trips and prevents failures when SurrealDB is down.
+    surreal = None
     org_id = UUID(request.state.org_id)
-    surreal = await pool.get_or_create(org_id, org_config)
+    if org_config.graph_backend == "surrealdb":
+        pool = request.app.state.surreal_connection_pool
+        if pool is not None:
+            try:
+                surreal = await pool.get_or_create(org_id, org_config)
+            except Exception as exc:
+                logger.error(
+                    "graph_service.surreal_connection_failed",
+                    extra={
+                        "org_id": str(org_id),
+                        "backend": "surrealdb",
+                        "error": str(exc),
+                    },
+                )
+                raise GraphBackendUnavailableError(
+                    f"SurrealDB connection failed for org {org_id} "
+                    f"with graph_backend='surrealdb': {exc}"
+                ) from exc
 
     # Read the FalkorDB client from app state (may be None if not configured).
     falkordb_client = getattr(request.app.state, "falkordb_client", None)

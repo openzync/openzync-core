@@ -144,9 +144,17 @@ async def engine():
     _testcontainers.clear()
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture
 async def redis_client(engine) -> Any:
-    """Session-scoped async Redis client connected to testcontainers Redis."""
+    """Function-scoped async Redis client connected to testcontainers Redis.
+
+    Function scope ensures the client is created on the same event loop as
+    the test that uses it, preventing ``Future attached to a different loop``
+    errors when the session-scoped ``app`` fixture uses ``loop_scope="function"``.
+
+    The underlying Redis container is session-scoped (started by ``engine``),
+    so only a lightweight connection is created/closed per test.
+    """
     from redis.asyncio import Redis as AsyncRedis
 
     container = _testcontainers["redis"]
@@ -163,10 +171,10 @@ async def redis_client(engine) -> Any:
     try:
         await client.aclose()
     except RuntimeError:
-        pass  # event loop already closed during session teardown
+        pass  # event loop already closed during fixture teardown
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def app(engine, redis_client) -> Any:
     """Create the FastAPI app wired to the testcontainers database + Redis."""
     from services.api.main import create_app

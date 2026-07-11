@@ -4,7 +4,6 @@ import { notFound } from "next/navigation";
 import { Badge } from "@openzync/design-system";
 import { ChevronLeft, Calendar } from "lucide-react";
 import { getChangelogEntry, getAllChangelogEntries } from "@/lib/changelog";
-import { MarkdownContent } from "@/components/landing/markdown-content";
 
 interface Props {
   params: Promise<{ slug: string }>;
@@ -19,7 +18,7 @@ export async function generateStaticParams() {
 /** Generate metadata for the page */
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
-  const entry = getChangelogEntry(slug);
+  const entry = await getChangelogEntry(slug);
   if (!entry) return {};
 
   return {
@@ -30,7 +29,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function ChangelogEntryPage({ params }: Props) {
   const { slug } = await params;
-  const entry = getChangelogEntry(slug);
+  const entry = await getChangelogEntry(slug);
   if (!entry) notFound();
 
   return (
@@ -71,7 +70,7 @@ export default async function ChangelogEntryPage({ params }: Props) {
 
         {/* Entry content */}
         <article className="prose-custom">
-          <MarkdownContent content={entry.content} />
+          {entry.MDXContent}
         </article>
       </div>
     </div>

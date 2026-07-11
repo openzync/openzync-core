@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, GitFork, GitBranch, Shield, Puzzle, ChevronDown } from "lucide-react";
+import { ArrowRight, GitFork, GitBranch, Shield, Puzzle } from "lucide-react";
 import { Button } from "@openzync/design-system";
 import { siteConfig } from "@/content/site-config";
 
@@ -21,7 +21,7 @@ const valueBadges: ValueBadge[] = [
  */
 export function Hero() {
   return (
-    <section className="relative min-h-screen flex items-center justify-center overflow-hidden">
+    <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-24 lg:pt-16">
       {/* Decorative grid pattern */}
       <div
         className="absolute inset-0 opacity-[0.03]"
@@ -64,23 +64,14 @@ export function Hero() {
               </Link>
             </div>
 
-            {/* Terminal mockup — visible on mobile/tablet, hidden on desktop */}
-            <div className="mt-12 lg:hidden">
-              <TerminalMockup />
-            </div>
-
             {/* Compact value badges */}
             <div className="mt-10 flex flex-wrap items-center justify-center lg:justify-start gap-2.5">
-              {valueBadges.map((badge, idx) => {
+              {valueBadges.map((badge) => {
                 const Icon = badge.icon;
                 return (
                   <div
                     key={badge.title}
-                    className={`inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 ${
-                      idx === 0
-                        ? "border-brand-500/30 bg-brand-500/[0.04]"
-                        : "border-surface-700/50 bg-surface-900"
-                    }`}
+                    className="inline-flex items-center gap-2 rounded-lg border border-surface-700/50 bg-surface-900 px-3 py-1.5"
                   >
                     <Icon size={14} className="text-brand-300 shrink-0" />
                     <span className="text-sm font-medium text-text-primary">
@@ -101,13 +92,6 @@ export function Hero() {
         </div>
       </div>
 
-      {/* Scroll indicator */}
-      <div className="absolute bottom-0 left-0 right-0 h-16 flex items-end justify-center pb-4 pointer-events-none">
-        <div className="flex flex-col items-center gap-1.5 text-surface-600">
-          <span className="text-[10px] uppercase tracking-widest font-medium">Scroll</span>
-          <ChevronDown size={16} className="animate-bounce-down" />
-        </div>
-      </div>
     </section>
   );
 }

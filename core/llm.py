@@ -51,11 +51,35 @@ class TokenUsage:
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    cache_read_input_tokens: int = 0       # tokens served from provider cache
+    cache_creation_input_tokens: int = 0   # tokens written to provider cache
 
     @property
     def total_tokens(self) -> int:
         """Sum of prompt and completion tokens."""
         return self.prompt_tokens + self.completion_tokens
+
+    @property
+    def total_cache_tokens(self) -> int:
+        """Sum of cache read and creation tokens."""
+        return self.cache_read_input_tokens + self.cache_creation_input_tokens
+
+
+@dataclass
+class PromptCachingConfig:
+    """Per-call configuration for provider-side prompt caching.
+
+    Each backend interprets the fields relevant to it:
+    - Anthropic: enabled, anthropic_min_tokens, anthropic_cache_ttl
+    - OpenAI/Azure: enabled (automatic prefix caching needs no config)
+    - OpenRouter: enabled, session_id (for sticky routing)
+    - Ollama: ignored (no caching support)
+    """
+
+    enabled: bool = True
+    anthropic_min_tokens: int = 1024
+    anthropic_cache_ttl: str = "5m"
+    session_id: str | None = None
 
 
 @dataclass
@@ -81,6 +105,55 @@ class EmbeddingResponse:
     embeddings: list[list[float]]
     model: str
     dim: int
+
+
+def build_cache_config(
+    org_config: dict | None = None,
+    session_id: str | None = None,
+) -> PromptCachingConfig:
+    """Build a PromptCachingConfig from per-org settings or global defaults.
+
+    ``OZ_PROMPT_CACHING_ENABLED`` is a hard kill switch: when set to
+    ``False``, caching is disabled for all orgs regardless of per-org
+    config.  This allows operators to disable caching globally without
+    touching every org's settings.
+
+    Resolution order:
+    1. ``settings.PROMPT_CACHING_ENABLED`` — hard kill switch (returns
+       ``enabled=False`` immediately if ``False``).
+    2. ``org_config.get("prompt_caching")`` dict — per-org overrides for
+       ``anthropic_min_tokens`` and ``anthropic_cache_ttl``.
+    3. ``settings.PROMPT_CACHING_*`` — global defaults fallback.
+
+    Args:
+        org_config: Optional per-org config dict (from DB JSONB column).
+            May contain a ``"prompt_caching"`` key with ``enabled``,
+            ``anthropic_min_tokens``, ``anthropic_cache_ttl``.
+        session_id: Optional session ID for OpenRouter sticky routing.
+
+    Returns:
+        A ``PromptCachingConfig`` instance.
+    """
+    # Lazy import to avoid circular dependency at module load time.
+    from core.config import settings  # noqa: PLC0415  # fmt: skip
+
+    if not settings.PROMPT_CACHING_ENABLED:
+        return PromptCachingConfig(enabled=False)
+
+    pc: dict = {}
+    if org_config:
+        pc = org_config.get("prompt_caching") or {}
+
+    return PromptCachingConfig(
+        enabled=pc.get("enabled", settings.PROMPT_CACHING_ENABLED),
+        anthropic_min_tokens=pc.get(
+            "anthropic_min_tokens", settings.PROMPT_CACHING_ANTHROPIC_MIN_TOKENS
+        ),
+        anthropic_cache_ttl=pc.get(
+            "anthropic_cache_ttl", settings.PROMPT_CACHING_ANTHROPIC_TTL
+        ),
+        session_id=session_id,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -138,6 +211,7 @@ class LLMBackend(ABC):
         messages: list[dict],
         response_model: type[BaseModel] | None = None,
         validation_retries: int | None = None,
+        cache_config: PromptCachingConfig | None = None,
         **kwargs: Any,
     ) -> ChatResponse:
         """Send a chat completion, optionally validating against a Pydantic model.
@@ -166,6 +240,9 @@ class LLMBackend(ABC):
                 emit JSON matching the model's schema.
             validation_retries: Override for the number of validation retry
                 attempts.  Defaults to :attr:`VALIDATION_RETRIES`.
+            cache_config: Optional prompt caching configuration.  Passed
+                through to the backend's ``_chat`` which interprets it
+                according to the provider's caching capabilities.
             **kwargs: Additional provider-specific parameters (temperature,
                 max_tokens, top_p, etc.).
 
@@ -184,12 +261,12 @@ class LLMBackend(ABC):
 
         # No schema — fast path, delegate directly.
         if response_model is None:
-            return await self._chat(messages, **kwargs)
+            return await self._chat(messages, cache_config=cache_config, **kwargs)
 
         messages = self._inject_schema_instr(messages, response_model)
 
         for attempt in range(retries + 1):
-            response: ChatResponse = await self._chat(messages, **kwargs)
+            response: ChatResponse = await self._chat(messages, cache_config=cache_config, **kwargs)
 
             # ── Try clean model_validate_json first ───────────────────────────
             try:
@@ -233,7 +310,12 @@ class LLMBackend(ABC):
         raise RuntimeError("unreachable")  # pragma: no cover
 
     @abstractmethod
-    async def _chat(self, messages: list[dict], **kwargs: Any) -> ChatResponse:
+    async def _chat(
+        self,
+        messages: list[dict],
+        cache_config: PromptCachingConfig | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
         """Provider-specific chat implementation.
 
         Override this in each backend.  The public :meth:`chat` wraps
@@ -241,6 +323,9 @@ class LLMBackend(ABC):
 
         Args:
             messages: List of message dicts following OpenAI format.
+            cache_config: Optional prompt caching configuration.  Each
+                backend interprets this according to its provider's
+                caching capabilities.
             **kwargs: Provider-specific parameters.
 
         Returns:

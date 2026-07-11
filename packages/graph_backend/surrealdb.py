@@ -1234,7 +1234,7 @@ class SurrealGraphBackend(GraphBackend):
                         exc_info=True,
                     )
                     raise GraphBackendUnavailableError(
-                        f"SurrealDB graph traversal failed for entity {entity_id_str} during retrieve_graph."
+                        f"SurrealDB traverse failed for entity {entity_id_str} during retrieve_graph."
                     ) from exc
 
                 for node in related:
@@ -1254,6 +1254,8 @@ class SurrealGraphBackend(GraphBackend):
             results.sort(key=lambda x: x.get("distance", 99))
             return results[:max_results]
 
+        except GraphBackendUnavailableError:
+            raise  # Already translated — propagate as-is
         except Exception as exc:
             logger.error(
                 "surreal_graph.retrieve_graph_failed",
@@ -2447,6 +2449,91 @@ class SurrealGraphBackend(GraphBackend):
                     "entity_b_id": str(entity_b_id),
                 },
             ) from exc
+
+    # ── Group C2: Aggregate Queries (for observation service) ────────────────────
+
+    async def get_total_entity_linked_episode_count(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+    ) -> int:
+        """Get total distinct episodes that have at least one linked entity.
+
+        Traverses the ``has_entity`` edge table — ``in`` is the episode
+        RecordID.  ``out`` is the entity RecordID.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+
+        Returns:
+            Number of distinct episodes with linked entities.
+        """
+        await self._ensure_schema()
+        self._require_connection()
+
+        result = await self._surreal.query(
+            """
+            SELECT count(DISTINCT in) AS total
+            FROM has_entity
+            WHERE organization_id = $org_id
+              AND project_id = $project_id
+            GROUP ALL
+            """,
+            {
+                "org_id": str(org_id),
+                "project_id": str(project_id),
+            },
+        )
+        rows = result[0] if result else []
+        return rows[0]["total"] if rows else 0
+
+    async def resolve_entity_names(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        entity_ids: list[UUID],
+    ) -> dict[str, dict]:
+        """Resolve entity IDs to their names and types.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            entity_ids: List of entity UUIDs to resolve.
+
+        Returns:
+            Dict keyed by entity ID string with ``name`` and ``entity_type``.
+        """
+        if not entity_ids:
+            return {}
+        from surrealdb import RecordID
+
+        await self._ensure_schema()
+        self._require_connection()
+
+        rids = [RecordID("entity", str(eid)) for eid in entity_ids]
+        result = await self._surreal.query(
+            """
+            SELECT id, name, entity_type
+            FROM entity
+            WHERE id INSIDE $entity_ids
+              AND organization_id = $org_id
+              AND project_id = $project_id
+            """,
+            {
+                "entity_ids": rids,
+                "org_id": str(org_id),
+                "project_id": str(project_id),
+            },
+        )
+        rows = result if result else []
+        return {
+            self._record_id_to_str(row["id"]): {
+                "name": row["name"],
+                "entity_type": row["entity_type"],
+            }
+            for row in rows
+        }
 
     # ── Group D: Soft-Delete / Expiry ──────────────────────────────────────────
 

@@ -27,7 +27,7 @@ import pytest
 
 pytest.importorskip("falkordb")
 
-from core.exceptions import ExternalServiceError
+from core.exceptions import ExternalServiceError, NotFoundError
 from packages.graph_backend.falkordb import (
     FalkorGraphBackend,
     _decode_offset_cursor,
@@ -139,7 +139,7 @@ def mock_graph(mock_client: MagicMock) -> AsyncMock:
 def backend(mock_client: MagicMock) -> FalkorGraphBackend:
     """A ``FalkorGraphBackend`` with schema bootstrap pre-completed."""
     bk = FalkorGraphBackend(client=mock_client, max_traversal_depth=2)
-    bk._schema_ensured = {"openzynk_00000000-0000-0000-0000-000000000001_00000000-0000-0000-0000-000000000002": True}
+    bk._schema_ensured = {"openzync_00000000-0000-0000-0000-000000000001_00000000-0000-0000-0000-000000000002": True}
     return bk
 
 
@@ -287,8 +287,8 @@ class TestFalkorGraphBackendHelpers:
         g1 = bk._get_graph(UUID("11111111-1111-1111-1111-111111111111"), UUID("22222222-2222-2222-2222-222222222222"))
         g2 = bk._get_graph(UUID("33333333-3333-3333-3333-333333333333"), UUID("44444444-4444-4444-4444-444444444444"))
 
-        assert client.select_graph.call_args_list[0][0][0] == "openzynk_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222"
-        assert client.select_graph.call_args_list[1][0][0] == "openzynk_33333333-3333-3333-3333-333333333333_44444444-4444-4444-4444-444444444444"
+        assert client.select_graph.call_args_list[0][0][0] == "openzync_11111111-1111-1111-1111-111111111111_22222222-2222-2222-2222-222222222222"
+        assert client.select_graph.call_args_list[1][0][0] == "openzync_33333333-3333-3333-3333-333333333333_44444444-4444-4444-4444-444444444444"
         assert g1 is not g2
 
 
@@ -487,7 +487,6 @@ class TestFalkorGraphBackendEntityCrud:
         assert "n.name = $name" in query
         assert "n.summary = $summary" not in query  # not provided
         assert "n.entity_type = $entity_type" not in query
-        assert "n.attributes = $attributes" not in query
         assert "n.updated_at = $now" in query
         assert "now" in params
         assert params["now"] != ""
@@ -511,7 +510,6 @@ class TestFalkorGraphBackendEntityCrud:
             name="New-Name",
             summary="new summary",
             entity_type="Org",
-            attributes={"key": "val"},
         )
 
         query = mock_graph.query.call_args[0][0]
@@ -519,7 +517,6 @@ class TestFalkorGraphBackendEntityCrud:
         assert "n.name = $name" in query
         assert "n.summary = $summary" in query
         assert "n.entity_type = $entity_type" in query
-        assert "n.attributes = $attributes" in query
         assert "n.updated_at = $now" in query
         assert "now" in params
         assert params["now"] != ""
@@ -529,16 +526,16 @@ class TestFalkorGraphBackendEntityCrud:
         backend: FalkorGraphBackend,
         mock_graph: AsyncMock,
     ) -> None:
-        """Returns None when entity does not exist."""
+        """Raises NotFoundError when entity does not exist."""
         mock_graph.query.return_value = MockQueryResult([])
 
-        result = await backend.update_entity(
-            org_id=ORG_ID,
-            project_id=PROJ_ID,
-            entity_id=ENTITY_ID,
-            name="Anything",
-        )
-        assert result is None
+        with pytest.raises(NotFoundError, match="not found for update"):
+            await backend.update_entity(
+                org_id=ORG_ID,
+                project_id=PROJ_ID,
+                entity_id=ENTITY_ID,
+                name="Anything",
+            )
 
     @staticmethod
     async def test_update_entity_no_fields(
@@ -563,15 +560,15 @@ class TestFalkorGraphBackendEntityCrud:
 
     @staticmethod
     async def test_update_entity_no_client() -> None:
-        """No client → returns None (graceful)."""
+        """No client → raises ExternalServiceError."""
         bk = FalkorGraphBackend(client=None)
-        result = await bk.update_entity(
-            org_id=ORG_ID,
-            project_id=PROJ_ID,
-            entity_id=ENTITY_ID,
-            name="Anything",
-        )
-        assert result is None
+        with pytest.raises(ExternalServiceError, match="FalkorDB not connected"):
+            await bk.update_entity(
+                org_id=ORG_ID,
+                project_id=PROJ_ID,
+                entity_id=ENTITY_ID,
+                name="Anything",
+            )
 
     @staticmethod
     async def test_update_entity_db_error(

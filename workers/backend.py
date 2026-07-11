@@ -92,28 +92,28 @@ async def resolve_graph_backend(
         )
         return PostgresGraphBackend(db) if fallback_to_postgres else None  # type: ignore[abstract]
 
-    # Get SurrealDB connection (may be None — that's fine, only SurrealDB
-    # backend uses it).
+    # Get SurrealDB connection — only when the org explicitly configures
+    # SurrealDB.  For postgres or none backends the pool is never touched,
+    # avoiding unnecessary network round-trips and preventing failures when
+    # SurrealDB is down.  If SurrealDB is configured but unreachable the
+    # error is raised loudly — no silent fallback to Postgres.
     surreal = None
-    surreal_pool = ctx.get("surreal_connection_pool")
-    if surreal_pool is not None:
-        try:
-            surreal = await surreal_pool.get_or_create(org_id, org_config)
-            logger.debug(
-                "worker.surreal_connection_acquired",
-                extra={"org_id": str(org_id)},
-            )
-        except GraphBackendUnavailableError:
-            logger.warning(
-                "worker.surreal_pool_unavailable",
-                extra={"org_id": str(org_id)},
-            )
-        except Exception:
-            logger.warning(
-                "worker.surreal_pool_failed",
-                extra={"org_id": str(org_id)},
-                exc_info=True,
-            )
+    if org_config.graph_backend == "surrealdb":
+        surreal_pool = ctx.get("surreal_connection_pool")
+        if surreal_pool is not None:
+            try:
+                surreal = await surreal_pool.get_or_create(org_id, org_config)
+                logger.debug(
+                    "worker.surreal_connection_acquired",
+                    extra={"org_id": str(org_id)},
+                )
+            except GraphBackendUnavailableError:
+                raise
+            except Exception as exc:
+                raise GraphBackendUnavailableError(
+                    f"SurrealDB connection failed for org {org_id} "
+                    f"with graph_backend='surrealdb': {exc}"
+                ) from exc
 
     # Get FalkorDB client (may be None)
     falkordb_client = ctx.get("falkordb_client")
