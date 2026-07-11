@@ -14,7 +14,7 @@ from typing import Any
 import httpx
 from arq import Retry
 
-from core.config import settings
+from core.config import get_settings
 from core.db import get_async_session, init_db_engine
 from models.webhook import WebhookDeliveryLog
 
@@ -137,7 +137,7 @@ async def _log_delivery(
     and survives worker restarts.
     """
     _engine = init_db_engine(
-        str(settings.DATABASE_URL),
+        str(get_settings().DATABASE_URL),
         pool_size=2,
         max_overflow=2,
     )

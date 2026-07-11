@@ -27,7 +27,7 @@ from typing import Any
 import redis.asyncio as aioredis
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from core.config import settings
+from core.config import get_settings
 from core.exceptions import RateLimitUnavailableError
 
 logger = logging.getLogger(__name__)
@@ -186,7 +186,7 @@ class RateLimitMiddleware:
         # ── Bypass for non-production environments ──────────────────────
         # Rate limiting is only enforced in staging and production to avoid
         # hitting per-IP limits during development and CI testing.
-        if settings.ENVIRONMENT not in ("staging", "production"):
+        if get_settings().ENVIRONMENT not in ("staging", "production"):
             await self.app(scope, receive, send)
             return
 
@@ -225,8 +225,8 @@ class RateLimitMiddleware:
             rate_key = f"rate:api:{org_id}"
         else:
             client_ip = _get_client_ip(scope)
-            max_req = settings.RATE_LIMIT_IP_MAX
-            window = settings.RATE_LIMIT_WINDOW_SEC
+            max_req = get_settings().RATE_LIMIT_IP_MAX
+            window = get_settings().RATE_LIMIT_WINDOW_SEC
             rate_key = f"rate:auth:{client_ip}"
 
         # ── Check sliding window ────────────────────────────────────────

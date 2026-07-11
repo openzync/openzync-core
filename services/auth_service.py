@@ -17,7 +17,7 @@ import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from core.config import settings
+from core.config import get_settings
 from core.exceptions import AuthenticationError, ConflictError, NotFoundError, ValidationError
 from repositories.auth_repository import AuthRepository
 from schemas.auth import (
@@ -34,8 +34,14 @@ from utils.password import hash_password, verify_password
 # Constants
 # ═══════════════════════════════════════════════════════════════════════════════
 
-ACCESS_TOKEN_TTL = timedelta(minutes=settings.JWT_ACCESS_TOKEN_TTL_MINUTES)
-REFRESH_TOKEN_TTL = timedelta(days=settings.JWT_REFRESH_TOKEN_TTL_DAYS)
+def _access_token_ttl() -> timedelta:
+    """Lazy access to JWT access token TTL from settings."""
+    return timedelta(minutes=get_settings().JWT_ACCESS_TOKEN_TTL_MINUTES)
+
+
+def _refresh_token_ttl() -> timedelta:
+    """Lazy access to JWT refresh token TTL from settings."""
+    return timedelta(days=get_settings().JWT_REFRESH_TOKEN_TTL_DAYS)
 
 _JWT_ALGORITHM = "HS256"
 
@@ -227,14 +233,14 @@ class AuthService:
                 "role": role,
                 "type": "access",
             },
-            secret=settings.SECRET_KEY,
-            expires_delta=ACCESS_TOKEN_TTL,
+            secret=get_settings().SECRET_KEY,
+            expires_delta=_access_token_ttl(),
         )
 
         # Refresh token (opaque — stored as SHA-256 hash)
         raw_refresh = secrets.token_hex(32)
         refresh_hash = self._hash_refresh_token(raw_refresh)
-        refresh_expires = now + REFRESH_TOKEN_TTL
+        refresh_expires = now + _refresh_token_ttl()
 
         await self._repo.create_refresh_token(
             user_id=user_id,
@@ -246,7 +252,7 @@ class AuthService:
         return TokenResponse(
             access_token=access_token,
             refresh_token=raw_refresh,
-            expires_in=int(ACCESS_TOKEN_TTL.total_seconds()),
+            expires_in=int(_access_token_ttl().total_seconds()),
         )
 
     @staticmethod

@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import get_arq
-from core.config import settings
+from core.config import get_settings
 from core.events import EventType
 from core.exceptions import NotFoundError, ValidationError
 from repositories.episode_repository import EpisodeRepository
@@ -87,7 +87,7 @@ def _arq_queue_name(queue_type: str) -> str:
     Returns:
         Fully qualified queue name for the current environment.
     """
-    env = settings.ENVIRONMENT if hasattr(settings, "ENVIRONMENT") else "development"
+    env = get_settings().ENVIRONMENT
     return f"OpenZync:{env}:queue:{queue_type}"
 
 

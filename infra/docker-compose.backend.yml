@@ -27,13 +27,16 @@ services:
       context: ..
       dockerfile: services/api/Dockerfile
     image: ghcr.io/rohnsha0/openzync/api:latest
-    env_file: .env
     environment:
+      OZ_OPENBAO_ADDR: http://openbao:8200
+      OZ_OPENBAO_ROLE_ID: "${OZ_OPENBAO_ROLE_ID}"
+      OZ_OPENBAO_SECRET_ID: "${OZ_OPENBAO_SECRET_ID}"
       REDIS_URL: redis://redis:6379/0
       OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4317
-      LOG_LEVEL: INFO
     depends_on:
       redis:
+        condition: service_healthy
+      openbao:
         condition: service_healthy
     deploy:
       resources:
@@ -52,12 +55,15 @@ services:
       context: ..
       dockerfile: services/worker/Dockerfile
     image: ghcr.io/rohnsha0/openzync/worker:latest
-    env_file: .env
     environment:
+      OZ_OPENBAO_ADDR: http://openbao:8200
+      OZ_OPENBAO_ROLE_ID: "${OZ_OPENBAO_ROLE_ID}"
+      OZ_OPENBAO_SECRET_ID: "${OZ_OPENBAO_SECRET_ID}"
       REDIS_URL: redis://redis:6379/0
-      LOG_LEVEL: INFO
     depends_on:
       redis:
+        condition: service_healthy
+      openbao:
         condition: service_healthy
     deploy:
       resources:
@@ -81,6 +87,65 @@ services:
       retries: 5
     logging: *default-logging
     restart: unless-stopped
+
+  # ── OpenBao (secrets management) ──────────────────────────────────────────
+  openbao:
+    image: openbao/openbao:2.5
+    container_name: openzync-openbao
+    cap_add:
+      - IPC_LOCK
+    ports:
+      - "127.0.0.1:8200:8200"
+    volumes:
+      - openbao-data:/vault/data
+      - ./openbao/config.hcl:/etc/openbao/config.hcl:ro
+    environment:
+      BAO_STATIC_SEAL_KEY: "${BAO_STATIC_SEAL_KEY?BAO_STATIC_SEAL_KEY is required}"
+      BAO_ADDR: "http://0.0.0.0:8200"
+    command: server -config /etc/openbao/config.hcl
+    healthcheck:
+      # Returns healthy when OpenBao is initialized AND unsealed.
+      test: ["CMD-SHELL", "bao status -address http://127.0.0.1:8200 -format=json 2>&1 | grep -q '\"sealed\":false'"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ── OpenBao init (one-shot bootstrap) ─────────────────────────────────────
+  openbao-init:
+    image: openbao/openbao:2.5
+    container_name: openzync-openbao-init
+    depends_on:
+      openbao:
+        condition: service_started
+    environment:
+      BAO_ADDR: "http://openbao:8200"
+      BAO_SKIP_VERIFY: "true"
+      OZ_DATABASE_URL: "${OZ_DATABASE_URL}"
+      OZ_REDIS_URL: "${OZ_REDIS_URL}"
+      OZ_SECRET_KEY: "${OZ_SECRET_KEY}"
+      OZ_ENVIRONMENT: "${OZ_ENVIRONMENT:-development}"
+      OZ_CORS_ORIGINS: "${OZ_CORS_ORIGINS:-http://localhost:3000}"
+      OZ_LOG_LEVEL: "${OZ_LOG_LEVEL:-INFO}"
+      OZ_MAX_WORKERS: "${OZ_MAX_WORKERS:-4}"
+      OZ_JWT_ACCESS_TOKEN_TTL_MINUTES: "${OZ_JWT_ACCESS_TOKEN_TTL_MINUTES:-30}"
+      OZ_JWT_REFRESH_TOKEN_TTL_DAYS: "${OZ_JWT_REFRESH_TOKEN_TTL_DAYS:-7}"
+      OZ_WEBHOOK_SIGNING_SECRET: "${OZ_WEBHOOK_SIGNING_SECRET}"
+      OZ_PROMETHEUS_URL: "${OZ_PROMETHEUS_URL:-http://prometheus:9090}"
+      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-redis://redis:6379}"
+      OZ_FALKORDB_MAX_CONNECTIONS: "${OZ_FALKORDB_MAX_CONNECTIONS:-20}"
+      OZ_FALKORDB_SOCKET_TIMEOUT: "${OZ_FALKORDB_SOCKET_TIMEOUT:-30}"
+      OZ_RATE_LIMIT_IP_MAX: "${OZ_RATE_LIMIT_IP_MAX:-10}"
+      OZ_RATE_LIMIT_WINDOW_SEC: "${OZ_RATE_LIMIT_WINDOW_SEC:-60}"
+    volumes:
+      - openbao-init-data:/bao-init
+      - ./openbao/policies:/policies:ro
+      - ../scripts/init_openbao.sh:/init_openbao.sh:ro
+    entrypoint: ["/bin/sh", "/init_openbao.sh"]
+    logging: *default-logging
+    restart: "no"
 
   # ── Ollama (local LLM inference) — OPTIONAL ───────────────────────────────
   ollama:
@@ -146,3 +211,5 @@ volumes:
   ollama-data:
   grafana-data:
   prometheus-data:
+  openbao-data:
+  openbao-init-data:

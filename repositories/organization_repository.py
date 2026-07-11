@@ -6,14 +6,11 @@ No business logic — pure query construction and execution.
 
 from __future__ import annotations
 
-import orjson
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from core.exceptions import NotFoundError
 
 
 class OrganizationRepository:
@@ -44,34 +41,6 @@ class OrganizationRepository:
         )
         row = result.one_or_none()
         return dict(row.config) if row and row.config else {}
-
-    async def update_config(
-        self, org_id: UUID, config: dict[str, Any]
-    ) -> dict[str, Any]:
-        """Replace the ``config`` JSONB column entirely.
-
-        Args:
-            org_id: The organization UUID.
-            config: The full config dict to persist.
-
-        Returns:
-            The newly stored config dict.
-
-        Raises:
-            NotFoundError: If no organization with *org_id* exists.
-        """
-        result = await self._db.execute(
-            text(
-                "UPDATE organizations SET config = :config "
-                "WHERE id = :org_id RETURNING config"
-            ),
-            {"org_id": org_id, "config": orjson.dumps(config).decode("utf-8")},
-        )
-        row = result.one_or_none()
-        if row is None:
-            raise NotFoundError(f"Organization {org_id} not found")
-        await self._db.flush()
-        return dict(row.config)
 
     # ── PII config (from quotas->'pii') ──────────────────────────────────────
 

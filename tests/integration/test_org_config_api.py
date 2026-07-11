@@ -154,7 +154,7 @@ class TestCacheInvalidation:
         org_and_key: dict,
     ) -> None:
         """After a core-level update, the cache should be invalidated."""
-        from dependencies.db import get_db
+        from unittest.mock import AsyncMock
 
         org_id = org_and_key["org_id"]
         redis = app.state.redis
@@ -171,10 +171,13 @@ class TestCacheInvalidation:
         cached_before = await redis.get(cache_key)
         assert cached_before is not None, "Cache should have been warmed"
 
-        # Update via core function (not API — API requires admin:write scope)
-        async for session in app.dependency_overrides[get_db]():
-            update = UpdateOrgConfigRequest(llm_backend="anthropic")
-            await update_org_config(org_id, update, session, redis=redis)
+        # Update via core function with a mock OpenBao client
+        mock_bao = AsyncMock()
+        mock_bao.read_org_config.return_value = {"llm_backend": "old-value"}
+        mock_bao.write_org_config.return_value = None
+
+        update = UpdateOrgConfigRequest(llm_backend="anthropic")
+        await update_org_config(org_id, update, bao_client=mock_bao, redis=redis)
 
         # Cache should be invalidated
         cached_after = await redis.get(cache_key)
@@ -195,44 +198,50 @@ class TestResolutionEndToEnd:
         org_and_key: dict,
     ) -> None:
         """An org with no stored config should return all-None fields (no env defaults)."""
-        from dependencies.db import get_db
+        from unittest.mock import AsyncMock
 
-        # Get a DB session from the app
-        async for session in app.dependency_overrides[get_db]():
-            config = await get_org_config(
-                org_and_key["org_id"],
-                session,
-                redis=app.state.redis,
+        mock_bao = AsyncMock()
+        mock_bao.read_org_config.return_value = {}
+
+        config = await get_org_config(
+            org_and_key["org_id"],
+            redis=app.state.redis,
+            bao_client=mock_bao,
+        )
+        assert isinstance(config, OrgConfigBase)
+        # Every field should be None
+        for field_name in OrgConfigBase.model_fields:
+            assert getattr(config, field_name) is None, (
+                f"Expected {field_name} to be None, got {getattr(config, field_name)!r}"
             )
-            assert isinstance(config, OrgConfigBase)
-            # Every field should be None
-            for field_name in OrgConfigBase.model_fields:
-                assert getattr(config, field_name) is None, (
-                    f"Expected {field_name} to be None, got {getattr(config, field_name)!r}"
-                )
 
-    async def test_stored_config_reflects_db_overrides(
+    async def test_stored_config_reflects_openbao_overrides(
         self,
         app: Any,
         org_and_key: dict,
     ) -> None:
-        """After a DB update, stored config should reflect the override."""
-        from dependencies.db import get_db
+        """After an OpenBao update, stored config should reflect the override."""
+        from unittest.mock import AsyncMock
 
         org_id = org_and_key["org_id"]
 
-        async for session in app.dependency_overrides[get_db]():
-            # Update via core function
-            update = UpdateOrgConfigRequest(
-                llm_backend="anthropic",
-                llm_model="claude-3-5-sonnet",
-                context_cache_ttl=120,
-            )
-            config = await update_org_config(
-                org_id, update, session, redis=app.state.redis
-            )
-            assert config.llm_backend == "anthropic"
-            assert config.llm_model == "claude-3-5-sonnet"
-            assert config.context_cache_ttl == 120
-            # Unset fields should use schema defaults (graph_backend → surrealdb)
-            assert config.graph_backend == "surrealdb"
+        mock_bao = AsyncMock()
+        mock_bao.read_org_config.return_value = {}
+
+        # Update via core function — write and then read back
+        def _side_effect(*, config: dict) -> None:
+            mock_bao.read_org_config.return_value = config
+
+        mock_bao.write_org_config = AsyncMock(side_effect=_side_effect)
+
+        update = UpdateOrgConfigRequest(
+            llm_backend="anthropic",
+            llm_model="claude-3-5-sonnet",
+            context_cache_ttl=120,
+        )
+        config = await update_org_config(
+            org_id, update, bao_client=mock_bao, redis=app.state.redis
+        )
+        assert config.llm_backend == "anthropic"
+        assert config.llm_model == "claude-3-5-sonnet"
+        assert config.context_cache_ttl == 120

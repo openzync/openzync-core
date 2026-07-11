@@ -7,14 +7,19 @@ authentication requirement and runs before any user exists.
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import structlog
+import yaml
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.openbao import OpenBaoClient
 from models.api_key import ApiKey
 from models.organization import Organization
 from models.project import Project
+from repositories.organization_repository import OrganizationRepository
 from schemas.organizations import CreateOrgRequest, CreateOrgResponse
 from utils.crypto import compute_lookup_hash, generate_api_key, hash_api_key
 
@@ -25,11 +30,22 @@ class OrganizationService:
     """Business logic for organization bootstrap and management.
 
     Args:
-        db: An async SQLAlchemy session.
+        repo: Repository for organization DB access.
+        bao_client: Optional OpenBao client for per-org namespace + config
+            seeding at org creation time.
     """
 
-    def __init__(self, db: AsyncSession) -> None:
-        self._db = db
+    def __init__(
+        self,
+        repo: OrganizationRepository,
+        bao_client: OpenBaoClient | None = None,
+    ) -> None:
+        self._repo = repo
+        # ⚠️ Direct session access for multi-table transaction in
+        #    create_organization.  Will be fully migrated to repo methods
+        #    in a follow-up refactor.
+        self._db: AsyncSession = repo._db  # type: ignore[assignment]
+        self._bao_client = bao_client
 
     async def create_organization(
         self, payload: CreateOrgRequest
@@ -97,6 +113,27 @@ class OrganizationService:
         # ── 5. Commit everything atomically ──────────────────────────────
         await self._db.commit()
 
+        # ── 6. Bootstrap OpenBao namespace + default config ──────────────
+        if self._bao_client is not None:
+            try:
+                await self._bao_client.create_org_namespace(org.id)
+                defaults = self._load_org_defaults()
+                if defaults:
+                    await self._bao_client.write_org_config(org.id, defaults)
+                logger.info(
+                    "organization.openbao_bootstrapped",
+                    org_id=str(org.id),
+                    defaults_count=len(defaults),
+                )
+            except Exception:
+                # ⚠️ Non-fatal: if OpenBao is down during org creation we
+                #    still return success — the namespace can be bootstrapped
+                #    later by an admin or a background reconciliation job.
+                logger.exception(
+                    "organization.openbao_bootstrap_failed",
+                    org_id=str(org.id),
+                )
+
         logger.info(
             "organization.created",
             org_id=str(org.id),
@@ -111,3 +148,21 @@ class OrganizationService:
             api_key=raw_key,
             api_key_name="default",
         )
+
+    def _load_org_defaults(self) -> dict[str, Any]:
+        """Load default per-org config values from ``config/defaults/org_config.yaml``.
+
+        Returns:
+            A flat dict of key/value pairs, or ``{}`` if the file is missing
+            or unreadable.
+        """
+        path = Path(__file__).parent.parent / "config" / "defaults" / "org_config.yaml"
+        try:
+            with open(path) as f:
+                return yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            logger.warning("org_config.defaults_file_not_found", path=str(path))
+            return {}
+        except yaml.YAMLError as e:
+            logger.warning("org_config.defaults_file_invalid", path=str(path), error=str(e))
+            return {}

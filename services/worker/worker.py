@@ -38,7 +38,14 @@ from arq.worker import Worker as ArqWorker
 from prometheus_client import Counter, Gauge, Histogram
 from prometheus_client import start_http_server as start_prometheus_server
 
-from services.worker.worker_settings import get_queue_name, settings
+from services.worker.worker_settings import (
+    get_queue_name,
+    init_worker_settings_from_bao,
+    settings,
+)
+
+from core.config import BootstrapSettings
+from core.openbao import OpenBaoClient
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Structlog setup
@@ -384,18 +391,40 @@ async def main() -> NoReturn:
 
     Startup sequence:
 
-    1. Configure structured logging
-    2. Start the Prometheus metrics HTTP server on ``PROMETHEUS_PORT``
-    3. Create ARQ Redis connection settings from ``REDIS_URL``
-    4. Create high and low priority worker pools
-    5. Register SIGTERM / SIGINT handlers for graceful shutdown
-    6. Start aiohttp health check server on ``HEALTH_PORT`` (``/health``, ``/ready``)
-    7. Start queue depth monitoring as a background :class:`asyncio.Task`
-    8. Run both worker pools concurrently until a shutdown signal is received
+    1. Bootstrap from OpenBao — load secrets (DATABASE_URL, REDIS_URL) via
+       worker-specific or main AppRole credentials (fail-fast).
+    2. Configure structured logging
+    3. Start the Prometheus metrics HTTP server on ``PROMETHEUS_PORT``
+    4. Create ARQ Redis connection settings from ``REDIS_URL``
+    5. Create high and low priority worker pools
+    6. Register SIGTERM / SIGINT handlers for graceful shutdown
+    7. Start aiohttp health check server on ``HEALTH_PORT`` (``/health``, ``/ready``)
+    8. Start queue depth monitoring as a background :class:`asyncio.Task`
+    9. Run both worker pools concurrently until a shutdown signal is received
 
     Returns:
         Never returns normally — always exits via signal handler.
     """
+    # ═══════════════════════════════════════════════════════════════
+    # Phase 1: Bootstrap from OpenBao (fail-fast)
+    # ═══════════════════════════════════════════════════════════════
+    # Use worker-specific AppRole credentials if provided, falling back
+    # to the main OpenBao credentials.  This allows operators to scope
+    # worker permissions independently from the API service.
+    _bootstrap = BootstrapSettings()
+    _role_id = _bootstrap.OPENBAO_WORKER_ROLE_ID or _bootstrap.OPENBAO_ROLE_ID
+    _secret_id = _bootstrap.OPENBAO_WORKER_SECRET_ID or _bootstrap.OPENBAO_SECRET_ID
+    async with OpenBaoClient(
+        _bootstrap.OPENBAO_ADDR,
+        _role_id,
+        _secret_id,
+        timeout=15.0,
+    ) as _bao:
+        await init_worker_settings_from_bao(_bao)
+
+    # ═══════════════════════════════════════════════════════════════
+    # Phase 2: Normal startup (uses settings from OpenBao)
+    # ═══════════════════════════════════════════════════════════════
     setup_logging()
 
     logger.info(

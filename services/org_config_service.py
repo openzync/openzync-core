@@ -1,8 +1,8 @@
-"""Organization config service — CRUD for UI-exposed per-org settings.
+"""Organization config service — CRUD backed by OpenBao.
 
 This service orchestrates the config update flow:
 1. Validate the update payload.
-2. Delegate to ``core.org_config`` for the DB update + cache invalidation.
+2. Delegate to ``core.org_config`` for the OpenBao update + cache invalidation.
 3. Return the stored config.
 
 Wire-up in router::
@@ -16,8 +16,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from core.openbao import OpenBaoClient
 from core.org_config import (
     get_org_config,
     update_org_config as core_update_org_config,
@@ -33,12 +32,12 @@ class OrgConfigService:
     """Business logic for per-organization configuration management.
 
     Args:
-        db: An async SQLAlchemy session.
+        bao_client: An authenticated :class:`OpenBaoClient`.
         redis: An optional async Redis client (for caching).
     """
 
-    def __init__(self, db: AsyncSession, redis: Any | None = None) -> None:
-        self._db = db
+    def __init__(self, bao_client: OpenBaoClient, redis: Any | None = None) -> None:
+        self._bao_client = bao_client
         self._redis = redis
 
     async def get_config(self, org_id: UUID) -> OrgConfigBase:
@@ -51,7 +50,11 @@ class OrgConfigService:
             An ``OrgConfigBase`` with only explicitly stored fields.
             Unset fields are ``None``.
         """
-        return await get_org_config(org_id, self._db, redis=self._redis)
+        return await get_org_config(
+            org_id,
+            redis=self._redis,
+            bao_client=self._bao_client,
+        )
 
     async def get_config_response(self, org_id: UUID) -> OrgConfigResponse:
         """Return the stored config wrapped in an ``OrgConfigResponse``.
@@ -84,6 +87,6 @@ class OrgConfigService:
         return await core_update_org_config(
             org_id,
             update_data=payload,
-            db=self._db,
+            bao_client=self._bao_client,
             redis=self._redis,
         )

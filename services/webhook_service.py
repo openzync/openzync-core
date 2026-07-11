@@ -20,7 +20,7 @@ import uuid
 from collections.abc import Mapping
 
 from core.arq import get_arq
-from core.config import settings
+from core.config import get_settings
 from repositories.webhook_repository import WebhookRepository
 
 logger = logging.getLogger("openzync.webhooks")
@@ -101,7 +101,7 @@ class WebhookService:
             events=events,
         )
 
-        return self._serialize(endpoint), settings.WEBHOOK_SIGNING_SECRET
+        return self._serialize(endpoint), get_settings().WEBHOOK_SIGNING_SECRET
 
     async def update_endpoint(
         self,
@@ -174,7 +174,7 @@ class WebhookService:
         payload = payload if payload is not None else {}
         body_bytes = orjson.dumps({"type": event_type, "payload": payload})
         body = body_bytes.decode()
-        signing_secret = settings.WEBHOOK_SIGNING_SECRET
+        signing_secret = get_settings().WEBHOOK_SIGNING_SECRET
 
         try:
             arq_pool = get_arq()
@@ -251,5 +251,5 @@ def _arq_queue_name(queue_type: str) -> str:
     Returns:
         Fully qualified queue name for the current environment.
     """
-    env = settings.ENVIRONMENT if hasattr(settings, "ENVIRONMENT") else "development"
+    env = get_settings().ENVIRONMENT
     return f"OpenZync:{env}:queue:{queue_type}"

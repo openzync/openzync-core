@@ -47,7 +47,6 @@ def asgi_transport(app: Any) -> ASGITransport:
 
     return ASGITransport(app=_asgi_with_scope)
 
-from core.config import settings
 from core.db import get_async_session
 from tests.conftest import (
     _start_postgres_container,
