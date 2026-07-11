@@ -21,13 +21,6 @@ export function ReleaseSpotlight() {
             {latestRelease.title}
           </h2>
 
-          {/* Inline install terminal */}
-          <div className="inline-flex items-center gap-2 rounded-lg border border-surface-700/50 bg-surface-900 px-4 py-2 font-mono text-sm text-surface-300 mb-6">
-            <span className="text-surface-600">$</span>
-            <span className="text-accent-400">pip install</span>
-            <span className="text-brand-300">openzync=={latestRelease.version}</span>
-          </div>
-
           {/* Description */}
           <p className="text-surface-400 leading-relaxed max-w-xl mx-auto mb-8">
             {latestRelease.description}

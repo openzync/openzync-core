@@ -118,61 +118,59 @@ function TerminalMockup() {
         <div>
           <span className="text-accent-400">from</span> openzync{" "}
           <span className="text-accent-400">import</span>{" "}
-          <span className="text-brand-300">AgentMemory</span>
+          <span className="text-brand-300">AsyncOpenZync</span>
+        </div>
+
+        <div className="mt-1.5" />
+
+        <div className="mt-1">
+          <span className="text-accent-400">async with</span>{" "}
+          <span className="text-brand-300">AsyncOpenZync</span>(
+          api_key=<span className="text-accent-400">"oz_..."</span>){" "}
+          <span className="text-accent-400">as</span> oz:
         </div>
 
         <div className="mt-1.5">
-          <span className="text-surface-600"># Initialize persistent memory</span>
-        </div>
-        <div className="mt-1">
-          memory = <span className="text-brand-300">AgentMemory</span>(
+          <span className="text-surface-600"># Store conversation in memory</span>
         </div>
         <div className="ml-4">
-          backend=<span className="text-accent-400">"neo4j"</span>,
-        </div>
-        <div className="ml-4">
-          llm=<span className="text-accent-400">"claude-sonnet"</span>,
-        </div>
-        <div className="ml-4">
-          api_key=<span className="text-surface-600">os.getenv</span>(
-          <span className="text-accent-400">"OPENZYNC_KEY"</span>)
-        </div>
-        <div>)</div>
-
-        <div className="mt-2">
-          <span className="text-surface-600"># Store conversational memory</span>
-        </div>
-        <div className="mt-1">
-          <span className="text-accent-400">await</span> memory.store(
-        </div>
-        <div className="ml-4">
-          session_id=<span className="text-accent-400">"session_abc"</span>,
-        </div>
-        <div className="ml-4">
-          data={"\u007B "}<span className="text-accent-400">"role"</span>: <span className="text-accent-400">"user"</span>,
+          <span className="text-accent-400">await</span> oz.memory.ingest(
         </div>
         <div className="ml-8">
-          <span className="text-accent-400">"content"</span>: <span className="text-accent-400">"..."</span>,
+          project_id=<span className="text-accent-400">"proj_abc"</span>,
         </div>
-        <div className="ml-8">{"}"}</div>
-        <div>)</div>
+        <div className="ml-8">
+          messages=[{"\u007B"}
+          <span className="text-accent-400">"role"</span>: <span className="text-accent-400">"user"</span>,
+        </div>
+        <div className="ml-12">
+          <span className="text-accent-400">"content"</span>:{" "}
+          <span className="text-accent-400">"Deploy API to prod"</span>,
+        </div>
+        <div className="ml-8">{"}"}],</div>
+        <div className="ml-8">
+          session_id=<span className="text-accent-400">"session_xyz"</span>,
+        </div>
+        <div className="ml-4">)</div>
 
-        <div className="mt-2">
-          <span className="text-surface-600"># Retrieve relevant context</span>
-        </div>
-        <div className="mt-1">
-          results = <span className="text-accent-400">await</span> memory.search(
+        <div className="mt-1.5">
+          <span className="text-surface-600"># Retrieve context in new session</span>
         </div>
         <div className="ml-4">
-          query=<span className="text-accent-400">"previous project context"</span>,
+          ctx = <span className="text-accent-400">await</span> oz.memory.get_context(
         </div>
-        <div className="ml-4">
-          limit=<span className="text-brand-300">5</span>
+        <div className="ml-8">
+          project_id=<span className="text-accent-400">"proj_abc"</span>,
         </div>
-        <div>)</div>
+        <div className="ml-8">
+          query=<span className="text-accent-400">"deployment status"</span>,
+        </div>
+        <div className="ml-4">)</div>
 
         <div className="mt-2 text-brand-300/50">
-          <span className="text-surface-600"># </span>✓ Retrieved 3 relevant memories in 42ms
+          <span className="text-surface-600"># </span>✓ Retrieved context:{" "}
+          <span className="text-accent-400">"Deploy API to prod"</span>{" "}
+          (<span className="text-brand-300">42</span>ms)
         </div>
       </div>
     </div>
