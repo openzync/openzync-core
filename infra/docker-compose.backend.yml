@@ -126,7 +126,7 @@ services:
     environment:
       BAO_ADDR: "http://openbao:8200"
       BAO_SKIP_VERIFY: "true"
-      # All OZ_* env vars are written to the system secret (UPPERCASE keys).
+      # All OZ_* env vars are written to the system secret (lowercase snake_case keys).
       # DATABASE_URL is intentionally NOT here — write_db_to_openbao.sh
       # appends it after postgres-init + postgres-migrate complete.
       OZ_REDIS_URL: "redis://redis:6379/0"
@@ -144,6 +144,10 @@ services:
       OZ_FALKORDB_SOCKET_TIMEOUT: "${OZ_FALKORDB_SOCKET_TIMEOUT:-30}"
       OZ_RATE_LIMIT_IP_MAX: "${OZ_RATE_LIMIT_IP_MAX:-10}"
       OZ_RATE_LIMIT_WINDOW_SEC: "${OZ_RATE_LIMIT_WINDOW_SEC:-60}"
+      OZ_HOSTS_ALLOWED: "${OZ_HOSTS_ALLOWED:-localhost:8000}"
+      OZ_PROMPT_CACHING_ENABLED: "${OZ_PROMPT_CACHING_ENABLED:-true}"
+      OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS: "${OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS:-1024}"
+      OZ_PROMPT_CACHING_ANTHROPIC_TTL: "${OZ_PROMPT_CACHING_ANTHROPIC_TTL:-5m}"
     volumes:
       # Shared init volume — every downstream step reads or writes files
       # here (unseal keys, AppRole creds, db-creds.json, write markers).

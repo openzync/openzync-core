@@ -200,6 +200,7 @@ python3 <<- 'PYEOF'
 	    "OZ_PROMETHEUS_URL":               "prometheus_url",
 	    "OZ_CORS_ORIGINS":                 "cors_origins",
 	    "OZ_HOSTS_ALLOWED":                "hosts_allowed",
+	    "OZ_ENVIRONMENT":                  "environment",
 	    "OZ_LOG_LEVEL":                    "log_level",
 	    "OZ_MAX_WORKERS":                  "max_workers",
 	    "OZ_JWT_ACCESS_TOKEN_TTL_MINUTES": "jwt_access_token_ttl_minutes",

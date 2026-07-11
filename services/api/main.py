@@ -121,11 +121,32 @@ def create_app() -> FastAPI:
             logger.warning("falkordb_pool.initialisation_failed — FalkorDB is optional")
             app.state.falkordb_client = None
 
+        # ── Init OpenBao client for runtime config + Transit operations ────
+        # The bootstrap client in asgi.py loads system settings and is closed.
+        # This client persists for the app lifetime, handling org config
+        # lookups and Transit encryption. Credentials are read from env vars
+        # (injected by entrypoint sourcing system.env + AppRole file fallback).
+        from core.config import BootstrapSettings
+        from core.openbao import OpenBaoClient
+
+        _bootstrap = BootstrapSettings()
+        _bao = OpenBaoClient(
+            _bootstrap.OPENBAO_ADDR,
+            _bootstrap.OPENBAO_ROLE_ID,
+            _bootstrap.OPENBAO_SECRET_ID,
+            timeout=15.0,
+        )
+        await _bao.__aenter__()  # sets up httpx client + authenticates via AppRole
+        app.state.openbao_client = _bao
+        logger.info("openbao_client.initialised")
+
         yield
 
         # ── Shutdown (reverse order of initialisation) ────────────────────
         if getattr(app.state, "falkordb_client", None) is not None:
             await app.state.falkordb_client.aclose()
+        if getattr(app.state, "openbao_client", None) is not None:
+            await app.state.openbao_client.__aexit__(None, None, None)
         await app.state.surreal_connection_pool.close_all()
         await close_arq()
         await close_redis(redis_client)

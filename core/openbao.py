@@ -13,8 +13,10 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+import time
+from typing import TYPE_CHECKING, Any, overload
 
 import httpx
 
@@ -69,6 +71,9 @@ SYSTEM_KEY_MAPPING: dict[str, str] = {
 }
 """Maps OpenBao config key names (snake_case) to ``OZ_`` environment variable names."""
 
+_MAX_RETRIES = 3
+"""Maximum number of times to retry a request that receives a 429 (rate-limited)."""
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Client
@@ -116,6 +121,7 @@ class OpenBaoClient:
         self.timeout = timeout
         self._client_token: str | None = None
         self._http: httpx.AsyncClient | None = None
+        self._token_expires_at: float | None = None
 
     # ── Async context manager ───────────────────────────────────────────────
 
@@ -187,6 +193,9 @@ class OpenBaoClient:
         try:
             body = resp.json()
             self._client_token = body["auth"]["client_token"]
+            # Calculate token expiry threshold (renew at 80% of TTL)
+            lease_duration = body.get("auth", {}).get("lease_duration", 3600)
+            self._token_expires_at = time.monotonic() + lease_duration * 0.8
         except (KeyError, TypeError, ValueError) as e:
             raise OpenBaoAuthError(
                 f"[auth/approle/login] Response missing 'auth.client_token': {e}",
@@ -218,6 +227,16 @@ class OpenBaoClient:
             headers["X-Vault-Namespace"] = namespace
         return headers
 
+    async def _ensure_auth(self) -> None:
+        """Re-authenticate if the current token is near or past its TTL.
+
+        Uses monotonic time (no API call) so this is effectively free in
+        the common case. Only triggers a real auth call at ~80% of TTL.
+        """
+        if self._token_expires_at is not None and time.monotonic() >= self._token_expires_at:
+            logger.info("OpenBao token near expiry \u2014 re-authenticating")
+            await self._authenticate()
+
     # ── Low-level request helper ────────────────────────────────────────────
 
     async def _request(
@@ -231,6 +250,8 @@ class OpenBaoClient:
 
         Wraps network-level errors in :class:`OpenBaoConnectionError` and
         delegates HTTP status-code handling to :meth:`_raise_on_error`.
+        Retries up to :data:`_MAX_RETRIES` times on ``OpenBaoRateLimitError``
+        with exponential backoff.
 
         Args:
             method: HTTP method (``GET``, ``POST``, ``LIST``, ``DELETE``, …).
@@ -247,7 +268,7 @@ class OpenBaoClient:
             OpenBaoAuthError: On 401 or 403.
             OpenBaoSecretNotFoundError: On 404.
             OpenBaoNamespaceError: On 412.
-            OpenBaoRateLimitError: On 429.
+            OpenBaoRateLimitError: On 429 (raised after retries are exhausted).
             OpenBaoError: On any other non-200 status.
         """
         if self._http is None:
@@ -255,25 +276,39 @@ class OpenBaoClient:
                 "HTTP client not initialised; use 'async with'",
             )
 
+        await self._ensure_auth()
         url = f"/v1/{path.lstrip('/')}"
-        try:
-            resp = await self._http.request(
-                method,
-                url,
-                headers=self._headers(namespace),
-                **kwargs,
-            )
-        except httpx.ConnectError as e:
-            raise OpenBaoConnectionError(
-                f"Cannot connect to OpenBao at {self.addr}: {e}",
-            ) from e
-        except httpx.TimeoutException as e:
-            raise OpenBaoConnectionError(
-                f"Timeout connecting to OpenBao at {self.addr}: {e}",
-            ) from e
 
-        self._raise_on_error(resp, path)
-        return resp
+        for attempt in range(_MAX_RETRIES):
+            try:
+                resp = await self._http.request(
+                    method,
+                    url,
+                    headers=self._headers(namespace),
+                    **kwargs,
+                )
+            except httpx.ConnectError as e:
+                raise OpenBaoConnectionError(
+                    f"Cannot connect to OpenBao at {self.addr}: {e}",
+                ) from e
+            except httpx.TimeoutException as e:
+                raise OpenBaoConnectionError(
+                    f"Timeout connecting to OpenBao at {self.addr}: {e}",
+                ) from e
+
+            try:
+                self._raise_on_error(resp, path)
+                return resp
+            except OpenBaoRateLimitError:
+                if attempt < _MAX_RETRIES - 1:
+                    wait = 2 ** attempt
+                    logger.warning(
+                        "Rate limited by OpenBao, retrying in %ds (attempt %d/%d)",
+                        wait, attempt + 1, _MAX_RETRIES,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                raise
 
     # ═════════════════════════════════════════════════════════════════════════
     # Static error mapper
@@ -323,32 +358,61 @@ class OpenBaoClient:
     # KV v2 low-level operations
     # ═════════════════════════════════════════════════════════════════════════
 
+    @overload
     async def _kv_read(
         self,
         path: str,
         namespace: str | None = None,
-    ) -> dict[str, Any]:
+        *,
+        include_meta: bool = False,
+    ) -> dict[str, Any]: ...
+
+    @overload
+    async def _kv_read(
+        self,
+        path: str,
+        namespace: str | None = None,
+        *,
+        include_meta: bool = True,
+    ) -> tuple[dict[str, Any], int]: ...
+
+    async def _kv_read(
+        self,
+        path: str,
+        namespace: str | None = None,
+        *,
+        include_meta: bool = False,
+    ) -> dict[str, Any] | tuple[dict[str, Any], int]:
         """Read a secret from a KV v2 engine.
 
         Args:
             path: Full KV path including mount (e.g. ``config/data/database_url``).
             namespace: Optional namespace.
+            include_meta: If ``True``, also return the version number as a
+                second element for CAS-aware writes.
 
         Returns:
-            The ``data.data`` dict from the response.
+            The ``data.data`` dict from the response, or a ``(data, version)``
+            tuple when ``include_meta`` is ``True``.
 
         Raises:
             OpenBaoSecretNotFoundError: If the path does not exist.
         """
         resp = await self._request("GET", path, namespace=namespace)
         body = resp.json()
-        return body["data"]["data"]
+        data = body["data"]["data"]
+        if include_meta:
+            version = body["data"].get("metadata", {}).get("version", 0)
+            return data, version
+        return data
 
     async def _kv_write(
         self,
         path: str,
         data: dict[str, Any],
         namespace: str | None = None,
+        *,
+        cas_version: int | None = None,
     ) -> None:
         """Write a secret to a KV v2 engine.
 
@@ -356,12 +420,17 @@ class OpenBaoClient:
             path: Full KV path including mount (e.g. ``config/data/database_url``).
             data: The secret data to persist.
             namespace: Optional namespace.
+            cas_version: If set, the write will only succeed if the current
+                version matches (Compare-And-Swap).  Requires KV v2.
         """
+        options: dict[str, Any] = {}
+        if cas_version is not None:
+            options["cas"] = cas_version
         await self._request(
             "POST",
             path,
             namespace=namespace,
-            json={"data": data, "options": {}},
+            json={"data": data, "options": options},
         )
 
     async def _kv_list(
@@ -532,18 +601,32 @@ class OpenBaoClient:
     async def write_system_config(self, config: dict[str, Any]) -> None:
         """Write system config as a single combined secret at ``config/data/system``.
 
-        Uses read-modify-write so that concurrent writers (e.g. the shell
-        bootstrap script and Python runtime) do not clobber each other's keys.
+        Uses CAS-aware read-modify-write so that concurrent writers (e.g. the
+        shell bootstrap script and Python runtime) do not silently clobber each
+        other's keys.
 
         Args:
             config: Flat dict of key/value pairs to merge into the system secret.
+
+        Raises:
+            OpenBaoError: If the underlying secret version has changed since
+                the read (CAS mismatch).  The caller should retry.
         """
-        existing = await self.read_system_config()
+        try:
+            existing, version = await self._kv_read(
+                f"{KV_MOUNT}/data/system",
+                namespace=SYSTEM_NAMESPACE,
+                include_meta=True,
+            )
+        except OpenBaoSecretNotFoundError:
+            existing = {}
+            version = 0
         existing.update(config)
         await self._kv_write(
             f"{KV_MOUNT}/data/system",
             existing,
             namespace=SYSTEM_NAMESPACE,
+            cas_version=version,
         )
 
     # ═════════════════════════════════════════════════════════════════════════

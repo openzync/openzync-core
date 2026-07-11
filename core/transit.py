@@ -20,13 +20,13 @@ Usage::
 
 from __future__ import annotations
 
-import logging
+import structlog
 from typing import Any
 from uuid import UUID
 
 from core.openbao import OpenBaoClient
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Encryption key names (used as Transit engine key identifiers)
@@ -202,11 +202,12 @@ class TransitManager:
             try:
                 await self._bao.rotate_encryption_key(key_name)
                 results[key_name] = "rotated"
-                logger.info("transit.key_rotated", extra={"key": key_name})
+                logger.info("transit.key_rotated", key=key_name)
             except Exception as exc:  # noqa: BLE001
                 results[key_name] = f"failed: {exc}"
                 logger.exception(
                     "transit.key_rotate_failed",
-                    extra={"key": key_name, "error": str(exc)},
+                    key=key_name,
+                    error=str(exc),
                 )
         return results

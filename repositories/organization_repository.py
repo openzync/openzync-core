@@ -23,6 +23,15 @@ class OrganizationRepository:
     def __init__(self, db: AsyncSession) -> None:
         self._db = db
 
+    @property
+    def session(self) -> AsyncSession:
+        """Return the database session for transactional operations.
+
+        Exposed as a public property so service-layer code can run
+        multi-table transactions that span multiple repository methods.
+        """
+        return self._db
+
     # ── Config JSONB (Groups A, B, C — UI-exposed settings) ─────────────────
 
     async def get_config(self, org_id: UUID) -> dict[str, Any]:

@@ -18,7 +18,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from core.openbao import OpenBaoClient
+from core.openbao import OpenBaoClient, SYSTEM_KEY_MAPPING
 
 
 def get_queue_name(env: str, queue_type: str) -> str:
@@ -231,25 +231,44 @@ class WorkerSettings(BaseModel):
         """
         config = await bao_client.read_system_config()
 
-        # Map OpenBao key names → WorkerSettings field names (lowercase)
-        mapping: dict[str, str] = {
-            "database_url": "DATABASE_URL",
-            "redis_url": "REDIS_URL",
-            "environment": "ENV",
-            "log_level": "LOG_LEVEL",
-            "falkordb_url": "FALKORDB_URL",
-            "falkordb_max_connections": "FALKORDB_MAX_CONNECTIONS",
-            "falkordb_socket_timeout": "FALKORDB_SOCKET_TIMEOUT",
-            "max_workers": "MAX_WORKERS",
-        }
-        int_fields = {"MAX_WORKERS", "FALKORDB_MAX_CONNECTIONS", "FALKORDB_SOCKET_TIMEOUT"}
+        # Worker reads a subset of the canonical SYSTEM_KEY_MAPPING keys.
+        # Defined explicitly here but validated against the canonical source
+        # so a drift is caught at startup, not at runtime.
+        _WORKER_KEYS: frozenset[str] = frozenset({
+            "database_url",
+            "redis_url",
+            "environment",
+            "log_level",
+            "falkordb_url",
+            "falkordb_max_connections",
+            "falkordb_socket_timeout",
+            "max_workers",
+        })
+        # Canary: fail fast if SYSTEM_KEY_MAPPING drifts from worker keys
+        _canary = _WORKER_KEYS - SYSTEM_KEY_MAPPING.keys()
+        if _canary:
+            raise ValueError(
+                f"Worker keys not found in SYSTEM_KEY_MAPPING: {_canary}. "
+                "Add missing keys to both mappings.",
+            )
+
+        # OpenBao key → WorkerSettings field name.
+        # Most keys map 1:1 (snake_case to UPPER_SNAKE_CASE) except
+        # 'environment' → 'ENV' (not 'ENVIRONMENT' like Settings).
+        _FIELD_OVERRIDES: dict[str, str] = {"environment": "ENV"}
+        _INT_FIELDS: frozenset[str] = frozenset({
+            "max_workers",
+            "falkordb_max_connections",
+            "falkordb_socket_timeout",
+        })
 
         kwargs: dict[str, Any] = {}
-        for bao_key, field_name in mapping.items():
+        for bao_key in _WORKER_KEYS:
             value = config.get(bao_key)
             if value is not None:
+                field_name = _FIELD_OVERRIDES.get(bao_key, bao_key.upper())
                 key = field_name.lower()
-                kwargs[key] = int(value) if field_name in int_fields else value
+                kwargs[key] = int(value) if bao_key in _INT_FIELDS else value
 
         # Deployment-specific defaults (env-alterable but not stored in OpenBao)
         kwargs.setdefault("JOB_TIMEOUT_DEFAULT", 300)

@@ -31,10 +31,13 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger(__name__)
 
 # Re-export init_settings so callers can do:
 #   from core.config import init_settings, BootstrapSettings
@@ -238,14 +241,35 @@ class Settings(BaseModel):
         ),
         validation_alias="OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS",
     )
-    PROMPT_CACHING_ANTHROPIC_TTL: Literal["5m", "1h"] = Field(
+    PROMPT_CACHING_ANTHROPIC_TTL: str = Field(
         default="5m",
         description=(
             "Anthropic cache TTL: '5m' (1.25x write cost, default) "
-            "or '1h' (2x write cost). Cache reads are always 0.1x."
+            "or '1h' (2x write cost). Cache reads are always 0.1x. "
+            "Invalid values fall back to '5m'."
         ),
         validation_alias="OZ_PROMPT_CACHING_ANTHROPIC_TTL",
     )
+
+    # ── Validators ────────────────────────────────────────────────────────
+
+    @field_validator("PROMPT_CACHING_ANTHROPIC_TTL", mode="before")
+    @classmethod
+    def _validate_cache_ttl(cls, v: str) -> str:
+        """Validate cache TTL, falling back to default on invalid input.
+
+        OpenBao KV has no schema enforcement — a manual ``bao kv put``
+        could write any value. Rather than crashing the application on a
+        Pydantic ``ValidationError``, we silently fall back to the default
+        of ``"5m"``.
+        """
+        if v in ("5m", "1h"):
+            return v
+        logger.warning(
+            "Invalid PROMPT_CACHING_ANTHROPIC_TTL=%r, falling back to '5m'",
+            v,
+        )
+        return "5m"
 
     # ── Rate Limiting ─────────────────────────────────────────────────────
     RATE_LIMIT_IP_MAX: int = Field(

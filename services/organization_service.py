@@ -41,10 +41,9 @@ class OrganizationService:
         bao_client: OpenBaoClient | None = None,
     ) -> None:
         self._repo = repo
-        # ⚠️ Direct session access for multi-table transaction in
-        #    create_organization.  Will be fully migrated to repo methods
-        #    in a follow-up refactor.
-        self._db: AsyncSession = repo._db  # type: ignore[assignment]
+        # Session for multi-table transactions in create_organization.
+        # Exposed via OrganizationRepository.session as a public property.
+        self._db: AsyncSession = repo.session
         self._bao_client = bao_client
 
     async def create_organization(
