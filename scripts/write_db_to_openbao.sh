@@ -196,13 +196,15 @@ if result.returncode != 0:
     if "not found" in result.stderr.lower() or "no value found" in result.stderr.lower():
         print("[merge] No existing system secret — starting with empty dict")
         existing = {}
+        version = 0
     else:
         sys.exit("FATAL: bao kv get failed: " + result.stderr.strip())
 else:
-    # KV v2 wraps the data: {"data": {"data": {<our keys>}}}
+    # KV v2 wraps the data: {"data": {"data": {<our keys>}, "metadata": {"version": N}}}
     parsed = json.loads(result.stdout)
     existing = parsed.get("data", {}).get("data", {})
-    print("[merge] Read existing system secret with " + str(len(existing)) + " keys")
+    version = parsed.get("data", {}).get("metadata", {}).get("version", 0)
+    print("[merge] Read existing system secret with " + str(len(existing)) + " keys (version " + str(version) + ")")
 
 # ── 3. Merge: add/overwrite database_url ───────────────────────────────────
 existing["database_url"] = database_url
@@ -212,7 +214,12 @@ print("[merge] Merged system secret now has " + str(len(existing)) + " keys")
 # KV v2 syntax: bao kv put <path> key1=value1 key2=value2 ...
 # We pass each key=value as a separate argv to avoid any shell-interpolation
 # issues with passwords containing $ or &.
-args = ["bao", "kv", "put", "-namespace=" + NAMESPACE, SECRET_PATH]
+args = ["bao", "kv", "put", "-namespace=" + NAMESPACE]
+# CAS with version=0 means "create only if doesn't exist" —
+# that would block initial writes. Skip the flag to allow bootstrap.
+if version > 0:
+    args.append("-cas=" + str(version))
+args.append(SECRET_PATH)
 for k, v in existing.items():
     args.append(k + "=" + str(v))
 
@@ -240,7 +247,7 @@ if "database_url" not in written:
     sys.exit("FATAL: database_url not present in verified secret")
 if written["database_url"] != database_url:
     sys.exit("FATAL: written database_url does not match the constructed one")
-print("[merge] Read-back verification succeeded — database_url is in the secret")
+print("[merge] Read-back verification succeeded — database_url is in the secret (version " + str(parsed.get("data", {}).get("metadata", {}).get("version", "unknown")) + ")")
 PYEOF
 
 # ── 9. Write marker file (only after every step succeeded) ──────────────────

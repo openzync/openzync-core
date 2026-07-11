@@ -172,8 +172,8 @@ bao secrets enable \
 
 # ── 8. Write combined system secret from environment variables ───────────────
 # Writes a SINGLE flat object at system/config/data/system (KV v2 data path).
-# Keys are UPPERCASE so the OpenBao Agent template renders them as proper
-# env var names (e.g. REDIS_URL=...). DATABASE_URL is intentionally NOT
+# Keys are lowercase snake_case; the Python openbao_settings.py maps
+# them to OZ_ env var names via SYSTEM_KEY_MAPPING. DATABASE_URL is intentionally NOT
 # written here — it is added later by scripts/write_db_to_openbao.sh once
 # postgres is reachable. The Agent template ranges over .Data.data, so
 # missing keys are simply absent from the rendered env file (the Agent
@@ -186,30 +186,33 @@ python3 <<- 'PYEOF'
 	NAMESPACE = "system/"
 	SECRET_PATH = "config/data/system"
 
-	# Map OZ_* env vars → UPPERCASE keys (env-var name minus the OZ_ prefix).
+	# Map OZ_* env vars → lowercase snake_case secret keys (matching Python SYSTEM_KEY_MAPPING).
 	# The OpenBao Agent template renders {{ $k }}={{ $v }} verbatim, so keys
-	# MUST match the env var names the application reads at runtime —
-	# Linux env vars are case-sensitive (REDIS_URL ≠ redis_url).
+	# MUST match the snake_case keys the Python SYSTEM_KEY_MAPPING
+	# expects at runtime (e.g. "redis_url" → OZ_REDIS_URL).
 	# DATABASE_URL is intentionally absent: write_db_to_openbao.sh appends
 	# it to the same secret once postgres is up. Adding an empty
 	# DATABASE_URL here would be overwritten by the next write anyway, so
 	# we skip it entirely.
 	KEY_MAPPING = {
-	    "OZ_REDIS_URL":                    "REDIS_URL",
-	    "OZ_SECRET_KEY":                   "SECRET_KEY",
-	    "OZ_PROMETHEUS_URL":               "PROMETHEUS_URL",
-	    "OZ_CORS_ORIGINS":                 "CORS_ORIGINS",
-	    "OZ_HOSTS_ALLOWED":                "HOSTS_ALLOWED",
-	    "OZ_LOG_LEVEL":                    "LOG_LEVEL",
-	    "OZ_MAX_WORKERS":                  "MAX_WORKERS",
-	    "OZ_JWT_ACCESS_TOKEN_TTL_MINUTES": "JWT_ACCESS_TOKEN_TTL_MINUTES",
-	    "OZ_JWT_REFRESH_TOKEN_TTL_DAYS":   "JWT_REFRESH_TOKEN_TTL_DAYS",
-	    "OZ_WEBHOOK_SIGNING_SECRET":       "WEBHOOK_SIGNING_SECRET",
-	    "OZ_FALKORDB_URL":                 "FALKORDB_URL",
-	    "OZ_FALKORDB_MAX_CONNECTIONS":     "FALKORDB_MAX_CONNECTIONS",
-	    "OZ_FALKORDB_SOCKET_TIMEOUT":      "FALKORDB_SOCKET_TIMEOUT",
-	    "OZ_RATE_LIMIT_IP_MAX":            "RATE_LIMIT_IP_MAX",
-	    "OZ_RATE_LIMIT_WINDOW_SEC":        "RATE_LIMIT_WINDOW_SEC",
+	    "OZ_REDIS_URL":                    "redis_url",
+	    "OZ_SECRET_KEY":                   "secret_key",
+	    "OZ_PROMETHEUS_URL":               "prometheus_url",
+	    "OZ_CORS_ORIGINS":                 "cors_origins",
+	    "OZ_HOSTS_ALLOWED":                "hosts_allowed",
+	    "OZ_LOG_LEVEL":                    "log_level",
+	    "OZ_MAX_WORKERS":                  "max_workers",
+	    "OZ_JWT_ACCESS_TOKEN_TTL_MINUTES": "jwt_access_token_ttl_minutes",
+	    "OZ_JWT_REFRESH_TOKEN_TTL_DAYS":   "jwt_refresh_token_ttl_days",
+	    "OZ_WEBHOOK_SIGNING_SECRET":       "webhook_signing_secret",
+	    "OZ_FALKORDB_URL":                 "falkordb_url",
+	    "OZ_FALKORDB_MAX_CONNECTIONS":     "falkordb_max_connections",
+	    "OZ_FALKORDB_SOCKET_TIMEOUT":      "falkordb_socket_timeout",
+	    "OZ_RATE_LIMIT_IP_MAX":            "rate_limit_ip_max",
+	    "OZ_RATE_LIMIT_WINDOW_SEC":        "rate_limit_window_sec",
+	    "OZ_PROMPT_CACHING_ENABLED":        "prompt_caching_enabled",
+	    "OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS": "prompt_caching_anthropic_min_tokens",
+	    "OZ_PROMPT_CACHING_ANTHROPIC_TTL":  "prompt_caching_anthropic_ttl",
 	}
 
 	# Build a flat dict of all keys present in the environment.
@@ -348,7 +351,19 @@ log "    cat ${BAO_INIT_DIR}/api-role_id"
 log "    cat ${BAO_INIT_DIR}/worker-role_id"
 log "═══════════════════════════════════════════════════════════════════"
 
-# ── 16. Write marker file ────────────────────────────────────────────────────
+# ── 16. Revoke root token (optional, gated by env var) ──────────────────────
+# The root token is kept by default for operational access. In production,
+# set BAO_REVOKE_ROOT_TOKEN=true to revoke after bootstrap. The token file
+# is preserved so a future regeneration can use recovered unseal keys.
+if [ "${BAO_REVOKE_ROOT_TOKEN:-false}" = "true" ]; then
+    log "Revoking root token (BAO_REVOKE_ROOT_TOKEN=true) ..."
+    bao token revoke -self
+    log "Root token revoked. Keep the unseal keys safe for recovery."
+    date > "${BAO_INIT_DIR}/root-revoked"
+    log "Revocation marker written to ${BAO_INIT_DIR}/root-revoked"
+fi
+
+# ── 17. Write marker file ────────────────────────────────────────────────────
 date > "${INIT_MARKER}"
 log "Marker written to ${INIT_MARKER} — future runs will skip."
 log "Done."

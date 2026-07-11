@@ -63,6 +63,9 @@ SYSTEM_KEY_MAPPING: dict[str, str] = {
     "falkordb_socket_timeout": "OZ_FALKORDB_SOCKET_TIMEOUT",
     "rate_limit_ip_max": "OZ_RATE_LIMIT_IP_MAX",
     "rate_limit_window_sec": "OZ_RATE_LIMIT_WINDOW_SEC",
+    "prompt_caching_enabled": "OZ_PROMPT_CACHING_ENABLED",
+    "prompt_caching_anthropic_min_tokens": "OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS",
+    "prompt_caching_anthropic_ttl": "OZ_PROMPT_CACHING_ANTHROPIC_TTL",
 }
 """Maps OpenBao config key names (snake_case) to ``OZ_`` environment variable names."""
 
@@ -509,53 +512,39 @@ class OpenBaoClient:
     # ═════════════════════════════════════════════════════════════════════════
 
     async def read_system_config(self) -> dict[str, Any]:
-        """Read all system-level configuration keys.
+        """Read system config from the combined secret at ``config/data/system``.
 
-        Lists all keys under ``config/metadata/`` in the ``system/``
-        namespace, then batch-reads each key's ``value`` field.
+        The shell bootstrap scripts write all config keys as a single flat
+        secret at this path. This method reads that combined secret directly.
 
         Returns:
-            A flat dict mapping config key names to their values, or an
-            empty dict if the metadata path does not exist yet.
+            A flat dict of config key/value pairs, or an empty dict if no
+            system secret exists yet.
         """
         try:
-            keys = await self._kv_list(
-                f"{KV_MOUNT}/metadata/",
+            return await self._kv_read(
+                f"{KV_MOUNT}/data/system",
                 namespace=SYSTEM_NAMESPACE,
             )
         except OpenBaoSecretNotFoundError:
             return {}
 
-        result: dict[str, Any] = {}
-        for key in keys:
-            try:
-                data = await self._kv_read(
-                    f"{KV_MOUNT}/data/{key}",
-                    namespace=SYSTEM_NAMESPACE,
-                )
-                result[key] = data.get("value")
-            except OpenBaoSecretNotFoundError:
-                # Key was deleted between list and read — skip.
-                continue
-
-        return result
-
     async def write_system_config(self, config: dict[str, Any]) -> None:
-        """Write system-level configuration key/value pairs.
+        """Write system config as a single combined secret at ``config/data/system``.
 
-        Each key is written as a separate secret at ``config/data/{key}``
-        in the ``system/`` namespace with the value stored under the
-        ``value`` key.
+        Uses read-modify-write so that concurrent writers (e.g. the shell
+        bootstrap script and Python runtime) do not clobber each other's keys.
 
         Args:
-            config: Flat dict of key/value pairs to persist.
+            config: Flat dict of key/value pairs to merge into the system secret.
         """
-        for key, value in config.items():
-            await self._kv_write(
-                f"{KV_MOUNT}/data/{key}",
-                {"value": value},
-                namespace=SYSTEM_NAMESPACE,
-            )
+        existing = await self.read_system_config()
+        existing.update(config)
+        await self._kv_write(
+            f"{KV_MOUNT}/data/system",
+            existing,
+            namespace=SYSTEM_NAMESPACE,
+        )
 
     # ═════════════════════════════════════════════════════════════════════════
     # Organisation configuration

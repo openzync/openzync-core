@@ -95,6 +95,7 @@ services:
     volumes:
       - openbao-data:/vault/data
       - ./openbao/config.hcl:/etc/openbao/config.hcl:ro
+      - openbao-audit-logs:/vault/logs
     environment:
       BAO_STATIC_SEAL_KEY: "${BAO_STATIC_SEAL_KEY:?BAO_STATIC_SEAL_KEY is required (generate with: openssl rand -hex 32)}"
       BAO_ADDR: "http://0.0.0.0:8200"
@@ -306,6 +307,7 @@ services:
         condition: service_healthy
     volumes:
       - api-secrets:/run/secrets:ro   # RO — the app must never write secrets
+      - openbao-init-data:/openbao-bootstrap:ro  # AppRole credentials for runtime auth
     ports: ["127.0.0.1:8000:8000"]
     deploy:
       resources:
@@ -355,6 +357,7 @@ services:
         condition: service_healthy
     volumes:
       - worker-secrets:/run/secrets:ro
+      - openbao-init-data:/openbao-bootstrap:ro  # AppRole credentials for runtime auth
     deploy:
       resources:
         limits: { cpus: "0.5", memory: "1G" }
@@ -453,6 +456,7 @@ volumes:
   ollama-data: {}
   grafana-data: {}
   prometheus-data: {}
+  openbao-audit-logs: {}
   openbao-data: {}
   openbao-init-data: {}
   postgres-data: {}

@@ -15,7 +15,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 set -e
 set -u
-set -o pipefail
+# ponytail: pipefail would be ideal but /bin/sh is dash on python:3.12-slim
 
 log() { echo "[entrypoint_worker] $(date -Iseconds) $*"; }
 
@@ -43,6 +43,24 @@ log "OpenBao Agent secrets ready. Sourcing ${SECRETS_FILE} ..."
 set -a
 . "${SECRETS_FILE}"
 set +a
+
+# Fallback: if OZ_OPENBAO_ROLE_ID / OZ_OPENBAO_SECRET_ID were not in the
+# system.env (they are NOT part of the system secret), read them from the
+# bootstrap files written by init_openbao.sh to the shared init-data volume.
+# The worker sidecar Agent authenticates using worker-role_id / worker-secret_id;
+# the Python OpenBaoClient reuses the same credentials for runtime auth.
+if [ -z "${OZ_OPENBAO_ROLE_ID:-}" ] || [ -z "${OZ_OPENBAO_SECRET_ID:-}" ]; then
+    if [ -f /openbao-bootstrap/worker-role_id ] && [ -f /openbao-bootstrap/worker-secret_id ]; then
+        log "Reading OpenBao AppRole credentials from bootstrap files ..."
+        OZ_OPENBAO_ROLE_ID=$(cat /openbao-bootstrap/worker-role_id)
+        OZ_OPENBAO_SECRET_ID=$(cat /openbao-bootstrap/worker-secret_id)
+        export OZ_OPENBAO_ROLE_ID OZ_OPENBAO_SECRET_ID
+    else
+        log "WARNING: OZ_OPENBAO_ROLE_ID not set and bootstrap files not found at /openbao-bootstrap/"
+        log "WARNING: Python OpenBaoClient will fail at startup without these credentials."
+    fi
+fi
+
 log "DATABASE_URL set: $(echo "$DATABASE_URL" | sed 's|://[^:]*:[^@]*@|://***:***@|')"
 log "Starting ARQ worker ..."
 exec python -m services.worker.worker
