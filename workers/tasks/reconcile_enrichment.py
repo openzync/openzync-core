@@ -14,6 +14,7 @@ leaves episodes un-enriched until an operator manually intervenes.
 from __future__ import annotations
 
 import structlog
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from workers.tasks.base import (
@@ -125,9 +126,11 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
         )
 
     # ── Query stale episodes ─────────────────────────────────────────────
-    from sqlalchemy import select, text
+    from sqlalchemy import select
 
     from models.episode import Episode
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=STALE_AFTER_MINUTES)
 
     stale_episodes: list[dict[str, Any]] = []
 
@@ -136,14 +139,12 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
             select(
                 Episode.id,
                 Episode.content,
-                Episode.org_id,
+                Episode.organization_id,
                 Episode.project_id,
                 Episode.enrichment_status,
             ).where(
                 Episode.enrichment_status != ENRICHMENT_ALL,
-                text(
-                    "updated_at < NOW() - INTERVAL ':mins minutes'"
-                ).bindparams(mins=STALE_AFTER_MINUTES),
+                Episode.updated_at < cutoff,
             )
             .order_by(Episode.updated_at.asc())
             .limit(RECONCILE_BATCH_SIZE)
@@ -154,7 +155,7 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
             stale_episodes.append({
                 "id": str(row.id),
                 "content": row.content,
-                "org_id": str(row.org_id),
+                "org_id": str(row.organization_id),
                 "project_id": str(row.project_id),
                 "enrichment_status": row.enrichment_status,
             })
@@ -202,7 +203,7 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
                 await arq_redis.enqueue_job(
                     task_name,
                     **common_kwargs,
-                    _queue_name=queue_name,
+                    _queue_name=high_queue_name,
                 )
                 total_enqueued += 1
             except Exception as exc:

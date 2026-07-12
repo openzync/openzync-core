@@ -36,6 +36,7 @@ from dependencies.org_config import get_org_config
 if TYPE_CHECKING:
     from core.graph_backend import GraphBackendDispatcher
     from schemas.organization_config import OrgConfigBase
+from core.config import get_settings
 from core.exceptions import GraphBackendUnavailableError
 from middleware.auth_throttle import AuthThrottle
 from repositories.auth_repository import AuthRepository
@@ -231,7 +232,8 @@ async def get_auth_throttle(
 ) -> AuthThrottle:
     """Dependency that yields an initialised AuthThrottle.
 
-    Reads the Redis client from ``request.app.state.redis``.
+    Reads the Redis client from ``request.app.state.redis`` and applies
+    the system-level rate-limit settings for IP-based throttling.
     """
     redis = getattr(request.app.state, "redis", None)
     if redis is None:
@@ -239,7 +241,12 @@ async def get_auth_throttle(
             "Redis client not found on app.state. "
             "Ensure init_redis() was called during the application lifespan."
         )
-    return AuthThrottle(redis)
+    settings = get_settings()
+    return AuthThrottle(
+        redis=redis,
+        login_max_per_ip=settings.RATE_LIMIT_IP_MAX,
+        login_window_sec=settings.RATE_LIMIT_WINDOW_SEC,
+    )
 
 
 

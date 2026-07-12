@@ -94,7 +94,7 @@ services:
     ports: ["127.0.0.1:8200:8200"]
     volumes:
       - openbao-data:/vault/data
-      - ./openbao/config.hcl:/etc/openbao/config.hcl:ro
+      - ./openbao/config.hcl:/etc/openbao/config.hcl:ro,z
       - openbao-audit-logs:/vault/logs
     environment:
       BAO_STATIC_SEAL_KEY: "${BAO_STATIC_SEAL_KEY:?BAO_STATIC_SEAL_KEY is required (generate with: openssl rand -hex 32)}"

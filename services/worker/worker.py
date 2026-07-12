@@ -44,7 +44,7 @@ from services.worker.worker_settings import (
     settings,
 )
 
-from core.config import BootstrapSettings
+from core.config import BootstrapSettings, init_settings
 from core.openbao import OpenBaoClient
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -423,6 +423,7 @@ async def main() -> NoReturn:
         timeout=15.0,
     ) as _bao:
         await init_worker_settings_from_bao(_bao)
+        await init_settings(_bao)
 
     # ═══════════════════════════════════════════════════════════════
     # Phase 2: Normal startup (uses settings from OpenBao)

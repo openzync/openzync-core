@@ -14,17 +14,39 @@ from core.exceptions import RateLimitError
 class AuthThrottle:
     """Rate-limits authentication attempts per-email and per-IP.
 
-    Uses two Redis counters:
-    - Per-email: 5 attempts per 15-minute window.
-    - Per-IP:    20 attempts per 15-minute window for login,
-                  3 attempts per 1-hour window for signup.
+    Uses Redis counters for login (per-email and per-IP) and signup
+    (per-IP).  Limits are configurable at construction time; defaults
+    match the original hardcoded values for backward compatibility.
 
     Args:
         redis: An async Redis client.
+        login_max_per_ip: Max failed login attempts per IP before
+            throttling (default 20).
+        login_window_sec: Login throttle window in seconds (default 900
+            = 15 minutes).
+        login_max_per_email: Max failed login attempts per email before
+            throttling (default 5).
+        signup_max_per_ip: Max signup attempts per IP before throttling
+            (default 3).
+        signup_window_sec: Signup throttle window in seconds (default
+            3600 = 1 hour).
     """
 
-    def __init__(self, redis: AsyncRedis) -> None:
+    def __init__(
+        self,
+        redis: AsyncRedis,
+        login_max_per_ip: int = 20,
+        login_window_sec: int = 900,
+        login_max_per_email: int = 5,
+        signup_max_per_ip: int = 3,
+        signup_window_sec: int = 3600,
+    ) -> None:
         self._redis = redis
+        self._login_max_per_ip = login_max_per_ip
+        self._login_window_sec = login_window_sec
+        self._login_max_per_email = login_max_per_email
+        self._signup_max_per_ip = signup_max_per_ip
+        self._signup_window_sec = signup_window_sec
 
     async def check_login_attempt(self, email: str, ip: str) -> None:
         """Check and increment login attempt counters.
@@ -36,24 +58,22 @@ class AuthThrottle:
         Raises:
             RateLimitError: If the rate limit is exceeded.
         """
-        # Per-email: 5 attempts per 15 min
         email_key = f"auth:throttle:login:email:{email}"
         email_attempts = await self._redis.incr(email_key)
         if email_attempts == 1:
-            await self._redis.expire(email_key, 900)
+            await self._redis.expire(email_key, self._login_window_sec)
 
-        # Per-IP: 20 attempts per 15 min
         ip_key = f"auth:throttle:login:ip:{ip}"
         ip_attempts = await self._redis.incr(ip_key)
         if ip_attempts == 1:
-            await self._redis.expire(ip_key, 900)
+            await self._redis.expire(ip_key, self._login_window_sec)
 
-        if email_attempts > 5:
+        if email_attempts > self._login_max_per_email:
             raise RateLimitError(
                 "Too many login attempts for this account. "
                 "Try again later."
             )
-        if ip_attempts > 20:
+        if ip_attempts > self._login_max_per_ip:
             raise RateLimitError(
                 "Too many login attempts from this IP address. "
                 "Try again later."
@@ -71,8 +91,8 @@ class AuthThrottle:
         key = f"auth:throttle:signup:ip:{ip}"
         attempts = await self._redis.incr(key)
         if attempts == 1:
-            await self._redis.expire(key, 3600)  # 1 hour
-        if attempts > 3:
+            await self._redis.expire(key, self._signup_window_sec)
+        if attempts > self._signup_max_per_ip:
             raise RateLimitError(
                 "Too many signup attempts from this IP address. "
                 "Try again later."

@@ -267,8 +267,7 @@ class WorkerSettings(BaseModel):
             value = config.get(bao_key)
             if value is not None:
                 field_name = _FIELD_OVERRIDES.get(bao_key, bao_key.upper())
-                key = field_name.lower()
-                kwargs[key] = int(value) if bao_key in _INT_FIELDS else value
+                kwargs[field_name] = int(value) if bao_key in _INT_FIELDS else value
 
         # Deployment-specific defaults (env-alterable but not stored in OpenBao)
         kwargs.setdefault("JOB_TIMEOUT_DEFAULT", 300)

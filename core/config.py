@@ -93,6 +93,7 @@ class BootstrapSettings(BaseSettings):
     model_config = SettingsConfigDict(
         extra="ignore",
         frozen=True,
+        env_file=".env",
     )
 
 

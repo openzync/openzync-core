@@ -41,8 +41,16 @@ async def _bootstrap() -> None:
         await init_settings(bao)
 
 
-# Fail fast at import time — uvicorn never starts without OpenBao
-asyncio.run(_bootstrap())
+# Fail fast at import time — uvicorn never starts without OpenBao.
+try:
+    asyncio.run(_bootstrap())
+except RuntimeError:
+    # ── Running in uvicorn --reload subprocess (uvloop already active).
+    #    Run bootstrap in a separate thread with its own event loop.
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
+        _pool.submit(asyncio.run, _bootstrap()).result()
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Monkey-patch: Fix FastAPI 0.115.x regression where `-> None` annotation
