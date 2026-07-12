@@ -200,7 +200,13 @@ async def list_graph_edges(
     request: Request,
     subject_id: UUID | None = Query(
         default=None,
-        description="Required: UUID of the source entity whose edges to list.",
+        description="UUID of the source entity whose edges to list. "
+        "Alternative to subject_ids for single-entity listing.",
+    ),
+    subject_ids: str | None = Query(
+        default=None,
+        description="Comma-separated UUIDs of entities whose edges to list. "
+        "Alternative to subject_id for batch fetching.",
     ),
     predicate: str | None = Query(
         default=None,
@@ -222,16 +228,34 @@ async def list_graph_edges(
     org_id = UUID(request.state.org_id)
     project_id = UUID(request.path_params["project_id"])
 
-    if subject_id is None:
+    if subject_id is None and subject_ids is None:
         raise HTTPException(
             status_code=422,
-            detail="The 'subject_id' query parameter is required to list edges.",
+            detail="Either 'subject_id' or 'subject_ids' query parameter is required.",
         )
+
+    parsed_ids: list[UUID] | None = None
+    if subject_ids is not None:
+        try:
+            parsed_ids = [
+                UUID(s.strip()) for s in subject_ids.split(",") if s.strip()
+            ]
+        except ValueError:
+            raise HTTPException(
+                status_code=422,
+                detail="'subject_ids' must contain valid comma-separated UUIDs.",
+            )
+        if not parsed_ids:
+            raise HTTPException(
+                status_code=422,
+                detail="'subject_ids' must contain at least one valid UUID.",
+            )
 
     result = await service.get_edges(
         org_id=org_id,
         project_id=project_id,
         subject_id=subject_id,
+        subject_ids=parsed_ids,
         predicate=predicate,
         limit=limit,
         cursor=cursor,

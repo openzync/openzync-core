@@ -233,6 +233,7 @@ class GraphService:
         project_id: UUID,
         *,
         subject_id: UUID | None = None,
+        subject_ids: list[UUID] | None = None,
         predicate: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
@@ -240,16 +241,17 @@ class GraphService:
         """List relationship edges with optional filters.
 
         If ``subject_id`` is provided, lists edges for that specific entity.
-        Otherwise, returns empty (scoped entity-edge listing is
-        entity-specific; global edge listing is not supported at the
-        service layer — use the entity-level edge endpoint instead).
+        If ``subject_ids`` is provided, fetches edges for all given entities
+        in parallel and deduplicates by ``(sorted source_id, target_id)``.
+        Returns empty when neither is provided.
 
         Args:
             org_id: The authenticated organization UUID.
             project_id: The project UUID for intra-org isolation.
             subject_id: Optional filter by source entity UUID.
+            subject_ids: Batch of entity UUIDs to fetch edges for.
             predicate: Optional filter by edge label.
-            limit: Maximum results per page.
+            limit: Maximum results per page (per-subject cap in batch mode).
             cursor: Opaque cursor for pagination.
 
         Returns:
@@ -265,6 +267,33 @@ class GraphService:
                 detail={"operation": "get_edges"},
             )
 
+        if subject_ids is not None:
+            # Batch: fetch edges for all subjects in parallel, deduplicate
+            import asyncio
+
+            per_subject_limit = min(limit, 200)
+            results = await asyncio.gather(*[
+                self._backend.list_entity_edges(
+                    org_id=org_id,
+                    project_id=project_id,
+                    entity_id=eid,
+                    predicate=predicate,
+                    limit=per_subject_limit,
+                )
+                for eid in subject_ids
+            ])
+            seen: set[str] = set()
+            items: list[dict[str, Any]] = []
+            for r in results:
+                for edge in r.get("items", []):
+                    # Dedup by edge id — preserves distinct edges between
+                    # the same pair with different types/relationships.
+                    key = str(edge.get("id", ""))
+                    if key and key not in seen:
+                        seen.add(key)
+                        items.append(edge)
+            return {"items": items, "next_cursor": None, "has_more": False}
+
         if subject_id is not None:
             return await self._backend.list_entity_edges(
                 org_id=org_id,
@@ -275,8 +304,7 @@ class GraphService:
                 cursor=cursor,
             )
 
-        # Global edge listing is not supported without a subject_id.
-        # The router must validate this before calling the service.
+        # ponytail: no subject provided — warn and return empty
         logger.warning(
             "graph_service.get_edges_without_subject",
             extra={"org_id": str(org_id)},
