@@ -48,6 +48,7 @@ from routers import (
     admin_schemas,
     admin_stats,
     admin_webhooks,
+    api_key_self,
     audit_log,
     auth,
     classifications,
@@ -253,6 +254,7 @@ def create_app() -> FastAPI:
     app.include_router(facts.router)
     app.include_router(projects.router)
     app.include_router(project_api_keys.router)
+    app.include_router(api_key_self.router)
 
     # Metrics: intentionally registered last and outside /v1 so it responds
     # at ``/metrics`` (not ``/v1/metrics``) for standard Prometheus scraping.

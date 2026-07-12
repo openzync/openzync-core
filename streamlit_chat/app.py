@@ -175,7 +175,7 @@ def _ensure_project(client: AsyncOpenZync, name: str) -> str:
 def _list_sessions(client: AsyncOpenZync, project_id: str) -> list[dict[str, Any]]:
     """List all sessions for a project (newest first)."""
     try:
-        result = _await(client.sessions.list(project_id, limit=100))
+        result = _await(client.sessions.list(limit=100))
         sessions_raw = result.get("data", []) if isinstance(result, dict) else result.data
         sessions_raw.sort(key=lambda s: (
             s.get("created_at") if isinstance(s, dict) else s.created_at
@@ -196,7 +196,7 @@ def _create_session(client: AsyncOpenZync, project_id: str) -> tuple[str, str]:
     """
     external_id = f"chat-{uuid.uuid4().hex[:12]}"
     try:
-        session = _await(client.sessions.create(project_id, external_id=external_id))
+        session = _await(client.sessions.create(external_id=external_id))
     except Exception as exc:
         logger.error("Failed to create session: %s", exc)
         raise RuntimeError(
