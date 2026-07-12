@@ -15,10 +15,8 @@ from uuid import UUID
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.auth import require_org_id, require_scope
-from dependencies.db import get_db
 from schemas.organization_config import (
     OrgConfigBase,
     OrgConfigResponse,
@@ -40,15 +38,20 @@ DEFAULTS_PATH = Path(__file__).parent.parent / "config" / "defaults" / "org_conf
 
 def _get_config_service(
     request: Request,
-    db: AsyncSession = Depends(get_db),
 ) -> OrgConfigService:
     """Build a request-scoped OrgConfigService.
 
-    Reads the Redis client from ``request.app.state.redis`` (initialised
-    during the application lifespan).
+    Reads the OpenBao client and Redis client from ``request.app.state``
+    (initialised during the application lifespan).
     """
+    bao_client = getattr(request.app.state, "openbao_client", None)
+    if bao_client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="OpenBao client not available — secrets backend not initialised",
+        )
     redis = getattr(request.app.state, "redis", None)
-    return OrgConfigService(db=db, redis=redis)
+    return OrgConfigService(bao_client=bao_client, redis=redis)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
