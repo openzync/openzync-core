@@ -9,18 +9,18 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ── System namespace: read-only config access ────────────────────────────────
+# NOTE: OpenBao does not support the "namespace" key in ACL policy paths.
+#       Namespace-scoped paths are written as literal path prefixes.
+path "system/config/data/*" {
+  capabilities = ["read", "list"]
+}
+
+path "system/config/metadata/*" {
+  capabilities = ["list"]
+}
+
 path "sys/namespaces/system/" {
   capabilities = ["read", "list"]
-}
-
-path "config/data/*" {
-  capabilities = ["read", "list"]
-  namespace    = "system/"
-}
-
-path "config/metadata/*" {
-  capabilities = ["list"]
-  namespace    = "system/"
 }
 
 # ── Namespace management ────────────────────────────────────────────────────
@@ -28,8 +28,14 @@ path "sys/namespaces/*" {
   capabilities = ["create", "read", "update", "delete", "list"]
 }
 
-# ── Enable secrets engines inside org namespaces ────────────────────────────
+# ── Enable secrets engines — root level and inside ANY namespace ────────────
+# The "+" glob matches a single namespace segment (e.g. "org_<uuid>").
+# Without this, root-level "sys/mounts/*" does not apply within namespaces.
 path "sys/mounts/*" {
+  capabilities = ["create", "read", "update", "delete"]
+}
+
+path "+/sys/mounts/*" {
   capabilities = ["create", "read", "update", "delete"]
 }
 
@@ -39,6 +45,14 @@ path "+/config/data/*" {
 }
 
 path "+/config/metadata/*" {
+  capabilities = ["list"]
+}
+
+path "config/data/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
+}
+
+path "config/metadata/*" {
   capabilities = ["list"]
 }
 

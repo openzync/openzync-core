@@ -690,6 +690,8 @@ class OpenBaoClient:
                 trigger deletion.
         """
         ns = self._org_ns(org_id)
+        # Ensure namespace + KV engine exist (idempotent, one-time cost per org)
+        await self.create_org_namespace(org_id)
         for key, value in config.items():
             path = f"{KV_MOUNT}/data/{key}"
             if value is None:
@@ -712,6 +714,7 @@ class OpenBaoClient:
         ns_name = f"{ORG_NAMESPACE_PREFIX}{org_id}"
         await self.create_namespace(ns_name)
         await self.enable_kv_v2(KV_MOUNT, namespace=ns_name)
+        logger.debug("org namespace ensured: %s", ns_name)
 
     async def delete_org_namespace(self, org_id: UUID) -> None:
         """Tear down the namespace for an organisation.

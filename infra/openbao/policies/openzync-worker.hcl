@@ -7,14 +7,14 @@
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ── System namespace: read-only config access ────────────────────────────────
-path "config/data/*" {
+# NOTE: OpenBao does not support the "namespace" key in ACL policy paths.
+#       Namespace-scoped paths are written as literal path prefixes.
+path "system/config/data/*" {
   capabilities = ["read", "list"]
-  namespace    = "system/"
 }
 
-path "config/metadata/*" {
+path "system/config/metadata/*" {
   capabilities = ["list"]
-  namespace    = "system/"
 }
 
 # ── Org-level config: read-only within any org_* namespace ──────────────────
