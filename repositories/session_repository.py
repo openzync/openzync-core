@@ -474,9 +474,11 @@ class SessionRepository:
     # ── Stats ───────────────────────────────────────────────────────────────
 
     async def get_stats(self, session_id: UUID) -> dict[str, Any]:
-        """Return aggregate counts for a session in a single query.
+        """Return aggregate counts for a session.
 
-        Single query with outer joins — no N+1 risk.
+        Uses independent correlated subqueries (not joins) to avoid
+        multiplicative row inflation when a session has both episodes
+        and facts.
 
         Args:
             session_id: The session's UUID.
@@ -485,15 +487,36 @@ class SessionRepository:
             A dict with ``message_count``, ``fact_count``, and
             ``last_message_at``.
         """
-        stmt = select(
-            func.count(Episode.id).label("message_count"),
-            func.count(Fact.id).label("fact_count"),
-            func.max(Episode.created_at).label("last_message_at"),
-        ).select_from(Session).outerjoin(
-            Episode, Episode.session_id == Session.id
-        ).outerjoin(
-            Fact, Fact.source_episode_id == Episode.id
-        ).where(Session.id == session_id).group_by(Session.id)
+        msg_subq = (
+            select(func.count(Episode.id))
+            .where(Episode.session_id == Session.id, Episode.is_deleted.is_(False))
+            .correlate(Session)
+            .scalar_subquery()
+            .label("message_count")
+        )
+        fact_subq = (
+            select(func.count(Fact.id))
+            .where(
+                Fact.source_episode_id == Episode.id,
+                Fact.invalid_at.is_(None),
+                Episode.session_id == Session.id,
+                Episode.is_deleted.is_(False),
+            )
+            .correlate(Session)
+            .scalar_subquery()
+            .label("fact_count")
+        )
+        last_msg_subq = (
+            select(func.max(Episode.created_at))
+            .where(Episode.session_id == Session.id, Episode.is_deleted.is_(False))
+            .correlate(Session)
+            .scalar_subquery()
+            .label("last_message_at")
+        )
+
+        stmt = select(msg_subq, fact_subq, last_msg_subq).where(
+            Session.id == session_id
+        )
 
         result = await self._db.execute(stmt)
         row = result.one_or_none()
@@ -514,25 +537,38 @@ class SessionRepository:
     async def batch_get_stats(
         self, session_ids: list[UUID], organization_id: UUID
     ) -> dict[UUID, dict[str, int]]:
-        """Batch-load message counts per session in a single query.
+        """Batch-load message and fact counts per session in a single query.
 
         Eliminates the N+1 problem when rendering session list pages.
-        Only non-deleted episodes are counted.
+        Uses a correlated subquery for fact count to avoid multiplicative
+        row inflation from joining episodes to facts.
 
         Args:
             session_ids: The session UUIDs to fetch stats for.
             organization_id: Tenant isolation scope.
 
         Returns:
-            Dict mapping ``session_id`` → ``{"message_count": int}``.
+            Dict mapping ``session_id`` → ``{"message_count": int, "fact_count": int}``.
             Sessions with no episodes are omitted from the result.
         """
         if not session_ids:
             return {}
 
+        # Correlated subquery: count facts per episode, summed per session
+        fact_subq = (
+            select(func.count(Fact.id))
+            .where(
+                Fact.source_episode_id == Episode.id,
+                Fact.invalid_at.is_(None),
+            )
+            .correlate(Episode)
+            .scalar_subquery()
+        )
+
         stmt = select(
             Episode.session_id,
             func.count(Episode.id).label("message_count"),
+            func.coalesce(func.sum(fact_subq), 0).label("fact_count"),
         ).where(
             Episode.session_id.in_(session_ids),
             Episode.organization_id == organization_id,
@@ -541,7 +577,10 @@ class SessionRepository:
 
         result = await self._db.execute(stmt)
         return {
-            row.session_id: {"message_count": row.message_count}
+            row.session_id: {
+                "message_count": row.message_count,
+                "fact_count": row.fact_count,
+            }
             for row in result.all()
         }
 

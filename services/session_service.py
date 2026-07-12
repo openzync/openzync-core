@@ -243,7 +243,7 @@ class SessionService:
             include_closed=include_closed,
         )
 
-        # Batch-load message counts — one query instead of N+1.
+        # Batch-load message and fact counts — one query instead of N+1.
         session_ids = [s.id for s in sessions]
         stats = await self._repo.batch_get_stats(session_ids, org_id) if session_ids else {}
 
@@ -252,6 +252,7 @@ class SessionService:
                 session_to_list_dict(
                     s,
                     message_count=stats.get(s.id, {}).get("message_count", 0),
+                    fact_count=stats.get(s.id, {}).get("fact_count", 0),
                 )
             )
             for s in sessions
