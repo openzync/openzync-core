@@ -92,8 +92,25 @@ async def embed_fact(
         try:
             from core.org_config import get_org_config
 
-            async with session_factory() as _cfg_db:
-                org_cfg = await get_org_config(uuid.UUID(_org_id), _cfg_db, redis=None)
+            bao_client = ctx.get("openbao_client") if isinstance(ctx, dict) else None
+            if bao_client is not None:
+                org_cfg = await get_org_config(
+                    uuid.UUID(_org_id), redis=None, bao_client=bao_client
+                )
+            else:
+                from core.config import BootstrapSettings
+                from core.openbao import OpenBaoClient
+
+                bootstrap = BootstrapSettings()
+                async with OpenBaoClient(
+                    bootstrap.OPENBAO_ADDR,
+                    bootstrap.OPENBAO_ROLE_ID,
+                    bootstrap.OPENBAO_SECRET_ID,
+                    timeout=10.0,
+                ) as _tmp_bao:
+                    org_cfg = await get_org_config(
+                        uuid.UUID(_org_id), redis=None, bao_client=_tmp_bao
+                    )
         except Exception as exc:
             logger.warning(
                 "embed_fact.org_config_fetch_failed",

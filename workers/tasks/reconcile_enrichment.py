@@ -141,6 +141,8 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
                 Episode.content,
                 Episode.organization_id,
                 Episode.project_id,
+                Episode.session_id,
+                Episode.metadata_,
                 Episode.enrichment_status,
             ).where(
                 Episode.enrichment_status != ENRICHMENT_ALL,
@@ -157,6 +159,8 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
                 "content": row.content,
                 "org_id": str(row.organization_id),
                 "project_id": str(row.project_id),
+                "session_id": str(row.session_id),
+                "metadata": row.metadata_,
                 "enrichment_status": row.enrichment_status,
             })
 
@@ -193,6 +197,8 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
             "episode_id": episode_id,
             "org_id": org_id,
             "project_id": project_id,
+            "session_id": ep.get("session_id", ""),
+            "metadata": ep.get("metadata", {}),
             "trace_id": f"reconcile_{episode_id[:8]}",
         }
         if content is not None:

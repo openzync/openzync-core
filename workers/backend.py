@@ -179,11 +179,25 @@ async def _resolve_org_config(
     """
     # ── Primary path: standard org config resolution (cache-first) ────────
     try:
+        from core.config import BootstrapSettings
+        from core.openbao import OpenBaoClient
         from core.org_config import get_org_config
 
-        # NOTE: signature is get_org_config(org_id, db, redis=None)
         redis = ctx.get("redis")  # may not be present in worker ctx
-        return await get_org_config(org_id, db, redis=redis)
+        bao_client = ctx.get("openbao_client")
+        if bao_client is None:
+            # Fallback: create a short-lived client using bootstrap settings.
+            bootstrap = BootstrapSettings()
+            async with OpenBaoClient(
+                bootstrap.OPENBAO_ADDR,
+                bootstrap.OPENBAO_ROLE_ID,
+                bootstrap.OPENBAO_SECRET_ID,
+                timeout=10.0,
+            ) as bao_client:
+                return await get_org_config(
+                    org_id, redis=redis, bao_client=bao_client
+                )
+        return await get_org_config(org_id, redis=redis, bao_client=bao_client)
     except ImportError:
         logger.debug("worker.org_config_module_not_available")
     except Exception:

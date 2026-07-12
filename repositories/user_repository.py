@@ -381,7 +381,10 @@ class UserRepository:
     async def get_stats(self, user_id: UUID) -> dict[str, int]:
         """Return aggregate counts for a user.
 
-        Uses a single round-trip query with subqueries — **not** N+1.
+        Uses correlated scalar subqueries (not joins) to avoid multiplicative
+        row inflation when a user has episodes, facts, and sessions each on an
+        independent 1:N axis.  Each subquery can use the ``ix_*_user_id``
+        index for a constant-time count per table.
 
         Args:
             user_id: The internal OpenZync user UUID.
@@ -390,18 +393,30 @@ class UserRepository:
             Dictionary with ``message_count``, ``fact_count``, and
             ``session_count`` keys (all defaulting to 0).
         """
-        stmt = (
-            select(
-                func.count(func.distinct(Episode.id)).label("message_count"),
-                func.count(func.distinct(Fact.id)).label("fact_count"),
-                func.count(func.distinct(Session.id)).label("session_count"),
-            )
-            .select_from(User)
-            .outerjoin(Episode, Episode.user_id == User.id)
-            .outerjoin(Fact, Fact.user_id == User.id)
-            .outerjoin(Session, Session.user_id == User.id)
-            .where(User.id == user_id)
-            .group_by(User.id)
+        msg_subq = (
+            select(func.count(Episode.id))
+            .where(Episode.user_id == User.id, Episode.is_deleted.is_(False))
+            .correlate(User)
+            .scalar_subquery()
+            .label("message_count")
+        )
+        fact_subq = (
+            select(func.count(Fact.id))
+            .where(Fact.user_id == User.id, Fact.invalid_at.is_(None))
+            .correlate(User)
+            .scalar_subquery()
+            .label("fact_count")
+        )
+        session_subq = (
+            select(func.count(Session.id))
+            .where(Session.user_id == User.id, Session.is_deleted.is_(False))
+            .correlate(User)
+            .scalar_subquery()
+            .label("session_count")
+        )
+
+        stmt = select(msg_subq, fact_subq, session_subq).where(
+            User.id == user_id
         )
 
         result = await self._db.execute(stmt)

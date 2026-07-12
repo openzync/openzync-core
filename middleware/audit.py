@@ -83,26 +83,32 @@ async def _resolve_audit_body_capture(
                     return bool(org_val)
         except Exception:
             logger.warning("audit.org_config_cache_read_failed", exc_info=True)
-            # Fall through to DB — cache miss is acceptable, DB is authoritative
+            # Fall through to OpenBao — cache miss is acceptable, OpenBao is authoritative
 
-    # Cache miss — resolve from DB (post-response so user doesn't wait).
+    # Cache miss — resolve from OpenBao (post-response so user doesn't wait).
     try:
-        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-
         from core.org_config import get_org_config
 
-        factory = getattr(app.state, "db_session_factory", None)
-        if factory is None:
-            from core.db import init_db_engine
-
-            engine = init_db_engine(str(get_settings().DATABASE_URL))
-            factory = async_sessionmaker(
-                bind=engine, class_=AsyncSession, expire_on_commit=False
+        bao_client = getattr(app.state, "openbao_client", None)
+        if bao_client is not None:
+            config = await get_org_config(
+                UUID(org_id), redis=redis, bao_client=bao_client, skip_cache=True
             )
+        else:
+            from core.config import BootstrapSettings
+            from core.openbao import OpenBaoClient
 
-        async with factory() as db:
-            config = await get_org_config(UUID(org_id), db, redis=redis, skip_cache=True)
-            return bool(config.audit_log_response_body) if config.audit_log_response_body is not None else False
+            bootstrap = BootstrapSettings()
+            async with OpenBaoClient(
+                bootstrap.OPENBAO_ADDR,
+                bootstrap.OPENBAO_ROLE_ID,
+                bootstrap.OPENBAO_SECRET_ID,
+                timeout=10.0,
+            ) as _bao:
+                config = await get_org_config(
+                    UUID(org_id), redis=redis, bao_client=_bao, skip_cache=True
+                )
+        return bool(config.audit_log_response_body) if config.audit_log_response_body is not None else False
     except Exception as exc:
         logger.error("audit.org_config_db_resolve_failed", exc_info=True)
         raise DatabaseUnavailableError(

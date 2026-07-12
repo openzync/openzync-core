@@ -222,6 +222,7 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
             for community_nodes in communities:
                 try:
                     await _create_community(
+                        ctx=ctx,
                         backend=backend,
                         db=db,
                         org_id=org_id,
@@ -259,6 +260,7 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
 
 
 async def _create_community(
+    ctx: dict,
     backend: GraphBackend,
     db: AsyncSession,
     org_id: UUID,
@@ -306,7 +308,25 @@ async def _create_community(
     # Generate summary via LLM
     try:
         prompt = _build_community_prompt(context_entities, context_rels)
-        org_cfg = await get_org_config(org_id, db, redis=None)
+        bao_client = ctx.get("openbao_client") if isinstance(ctx, dict) else None
+        if bao_client is not None:
+            org_cfg = await get_org_config(
+                org_id, redis=None, bao_client=bao_client
+            )
+        else:
+            from core.config import BootstrapSettings
+            from core.openbao import OpenBaoClient
+
+            bootstrap = BootstrapSettings()
+            async with OpenBaoClient(
+                bootstrap.OPENBAO_ADDR,
+                bootstrap.OPENBAO_ROLE_ID,
+                bootstrap.OPENBAO_SECRET_ID,
+                timeout=10.0,
+            ) as _tmp_bao:
+                org_cfg = await get_org_config(
+                    org_id, redis=None, bao_client=_tmp_bao
+                )
         llm = await resolve_llm_backend(org_config=org_cfg.to_llm_config_dict())
         response = await llm.chat(
             [

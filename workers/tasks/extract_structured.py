@@ -175,9 +175,25 @@ async def extract_structured(
             max_tokens = worker_settings.STRUCTURED_EXTRACTION_MAX_TOKENS
 
             # ── 7b. Fetch per-organization config ──────────────────────────
-            org_cfg = await get_org_config(
-                uuid.UUID(org_id), db, redis=None
-            )
+            bao_client = ctx.get("openbao_client") if isinstance(ctx, dict) else None
+            if bao_client is not None:
+                org_cfg = await get_org_config(
+                    uuid.UUID(org_id), redis=None, bao_client=bao_client
+                )
+            else:
+                from core.config import BootstrapSettings
+                from core.openbao import OpenBaoClient
+
+                bootstrap = BootstrapSettings()
+                async with OpenBaoClient(
+                    bootstrap.OPENBAO_ADDR,
+                    bootstrap.OPENBAO_ROLE_ID,
+                    bootstrap.OPENBAO_SECRET_ID,
+                    timeout=10.0,
+                ) as _tmp_bao:
+                    org_cfg = await get_org_config(
+                        uuid.UUID(org_id), redis=None, bao_client=_tmp_bao
+                    )
             llm_config_dict = org_cfg.to_llm_config_dict()
 
             # ── 8-9. Call LLM with structured-output validation ─────────────

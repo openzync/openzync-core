@@ -333,11 +333,14 @@ async def on_job_end(ctx: dict[str, Any]) -> None:
 
 
 async def on_shutdown(_ctx: dict[str, Any]) -> None:
-    """Log when the worker pool shuts down.
+    """Log when the worker pool shuts down and clean up resources.
 
     Args:
         _ctx: ARQ worker context dict (unused on shutdown).
     """
+    bao = _ctx.get("openbao_client")
+    if bao is not None:
+        await bao.__aexit__(None, None, None)
     logger.info("worker.shutdown_complete")
 
 
@@ -425,6 +428,17 @@ async def main() -> NoReturn:
         await init_worker_settings_from_bao(_bao)
         await init_settings(_bao)
 
+    # ── Persistent OpenBao client for org config resolution ──────────────
+    # Used by _resolve_org_config in workers/backend.py to fetch per-org
+    # config from OpenBao without creating a new client per task.
+    _openbao_client = OpenBaoClient(
+        _bootstrap.OPENBAO_ADDR,
+        _role_id,
+        _secret_id,
+        timeout=15.0,
+    )
+    await _openbao_client.__aenter__()
+
     # ═══════════════════════════════════════════════════════════════
     # Phase 2: Normal startup (uses settings from OpenBao)
     # ═══════════════════════════════════════════════════════════════
@@ -502,6 +516,7 @@ async def main() -> NoReturn:
         "graph_backend_dispatcher": dispatcher,
         "surreal_connection_pool": surreal_pool,
         "falkordb_client": falkordb_client,
+        "openbao_client": _openbao_client,
     }
 
     logger.info(
