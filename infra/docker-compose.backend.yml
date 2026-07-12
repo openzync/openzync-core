@@ -455,6 +455,10 @@ services:
 #    mounts (Kubernetes emptyDir.medium: Memory, or `--tmpfs /run/secrets`
 #    on a swarm config). Compose can't express a shared tmpfs between two
 #    containers, so we use regular named volumes here as a portable default.
+networks:
+  default:
+    name: openzync_network
+
 volumes:
   redis-data: {}
   ollama-data: {}

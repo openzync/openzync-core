@@ -6,7 +6,7 @@
 #   test-unit       → pytest with coverage
 #   test-integration → pytest with Postgres + Redis (testcontainers)
 #   build           → Docker image (main/tags only) pushed to ghcr.io
-#   deploy          → SSH into VPS, pull images, migrate, restart  (main only)
+#   deploy          → SSH into VPS, pull images, migrate, restart backend (main only)
 #   sdk-publish     → PyPI (tags only)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -159,31 +159,6 @@ jobs:
           docker push --all-tags ghcr.io/${{ github.repository }}/api
           docker push --all-tags ghcr.io/${{ github.repository }}/worker
 
-  # ═════════════════════════════════════════════════════════════════════════════
-  # BUILD FRONTEND  (separate from backend — failure doesn't block deploy)
-  # ═════════════════════════════════════════════════════════════════════════════
-  build-frontend:
-    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    needs: [build-backend]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - run: |
-          TAG="${{ needs.build-backend.outputs.tag }}"
-          docker build \
-            --build-arg NEXT_PUBLIC_API_URL=https://app.openzync.tech \
-            -t ghcr.io/${{ github.repository }}/frontend:$TAG \
-            -f frontend/Dockerfile frontend/
-          docker tag ghcr.io/${{ github.repository }}/frontend:$TAG ghcr.io/${{ github.repository }}/frontend:latest
-          docker push --all-tags ghcr.io/${{ github.repository }}/frontend
-
-
 
   # ═════════════════════════════════════════════════════════════════════════════
   # DEPLOY  (VPS — main branch only)
@@ -191,7 +166,7 @@ jobs:
   deploy:
     if: github.ref == 'refs/heads/master' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    needs: [build-backend, build-frontend]
+    needs: [build-backend]
     steps:
       - uses: actions/checkout@v4
 
@@ -216,7 +191,6 @@ jobs:
           # Create tar archive of deployment files (runs on runner — resolves correctly)
             tar czf /tmp/deploy-files.tar.gz \
               infra/docker-compose.backend.yml \
-              infra/docker-compose.frontend.yml \
               infra/nginx/conf.d/
 
           # Upload via SCP directly
@@ -264,7 +238,6 @@ jobs:
             OZ_EMBEDDING_BACKEND=ollama
             OZ_EMBEDDING_MODEL=nomic-embed-text
             OZ_EMBEDDING_DIM=768
-            NEXT_PUBLIC_API_URL=https://app.openzync.tech
             ENVEOF
 
             # ── Deploy backend: pull → migrate → restart ───────────────────
@@ -272,14 +245,11 @@ jobs:
             docker compose -f infra/docker-compose.backend.yml run --rm api alembic upgrade head
             docker compose -f infra/docker-compose.backend.yml up -d
 
-            # ── Deploy frontend: pull → restart (compose file uploaded above) ──
-            docker compose -f infra/docker-compose.frontend.yml pull frontend
-            docker compose -f infra/docker-compose.frontend.yml up -d frontend
-
             # ── Reload nginx so it resolves new container IPs ──────────────
             # nginx -s reload forces re-resolution of upstream hostnames
-            # (api, frontend).  Without this, nginx caches the old container
-            # IP after redeploy and returns 502 Bad Gateway.
+            # (api).  Frontend is deployed and reloaded independently via
+            # its own CI pipeline (openzync-frontend).  Without a reload
+            # nginx caches the old container IP and returns 502.
             docker exec infra-nginx-1 nginx -s reload || true
 
   # ═════════════════════════════════════════════════════════════════════════════

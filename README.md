@@ -176,7 +176,7 @@ The OpenBao Agent sidecar re-renders the system secret every 5 minutes (`static_
 
 ## Deployment
 
-- **Docker Compose** — `infra/docker-compose.backend.yml` for the backend stack; `infra/docker-compose.frontend.yml` for the frontend.
+- **Docker Compose** — `infra/docker-compose.backend.yml` for the backend stack. The frontend has its own deployment at `openzync-frontend/deploy/docker-compose.yml`.
 - **Kubernetes** — Helm chart at `infra/helm/openzync/`.
 - **Requirements** — PostgreSQL 15+ (with pgvector extension), Redis 7+, and an LLM provider (Ollama local or cloud BYOK).
 - **Worker** — The ARQ worker runs as a separate process. In Docker Compose, it is the `worker` service.
