@@ -226,6 +226,28 @@ class AuthRepository:
                 rt.rotated_by = uuid.UUID(rotated_by)
             await self._db.flush()
 
+    async def revoke_all_refresh_tokens(self, user_id: uuid.UUID) -> None:
+        """Revoke all active refresh tokens for a given user.
+
+        Called after a password reset to invalidate all existing sessions —
+        the user must re-authenticate with the new password.
+
+        Args:
+            user_id: The user's UUID.
+        """
+        from sqlalchemy import update
+
+        stmt = (
+            update(RefreshToken)
+            .where(
+                RefreshToken.user_id == str(user_id),
+                RefreshToken.is_revoked.is_(False),
+            )
+            .values(is_revoked=True)
+        )
+        await self._db.execute(stmt)
+        await self._db.flush()
+
     # ── Email verification ─────────────────────────────────────────────────
 
     async def mark_email_verified(self, user_id: uuid.UUID) -> User:

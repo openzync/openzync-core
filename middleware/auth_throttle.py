@@ -131,3 +131,71 @@ class AuthThrottle:
                 "Too many verification attempts from this IP address. "
                 "Try again later."
             )
+
+    async def check_forgot_password_attempt(self, email: str, ip: str) -> None:
+        """Check and increment forgot-password request counters.
+
+        Limits: 3 requests per email per hour, 10 per IP per 15 min.
+
+        Args:
+            email: The email requesting a password reset.
+            ip: The client IP address.
+
+        Raises:
+            RateLimitError: If the rate limit is exceeded.
+        """
+        email_key = f"auth:throttle:forgot:email:{email}"
+        email_attempts = await self._redis.incr(email_key)
+        if email_attempts == 1:
+            await self._redis.expire(email_key, 3600)  # 1 hour window
+
+        ip_key = f"auth:throttle:forgot:ip:{ip}"
+        ip_attempts = await self._redis.incr(ip_key)
+        if ip_attempts == 1:
+            await self._redis.expire(ip_key, 900)  # 15 min window
+
+        if email_attempts > 3:
+            raise RateLimitError(
+                "Too many password reset requests for this email. "
+                "Try again later."
+            )
+        if ip_attempts > 10:
+            raise RateLimitError(
+                "Too many password reset requests from this IP address. "
+                "Try again later."
+            )
+
+    async def check_reset_attempt(self, email: str, ip: str) -> None:
+        """Check and increment password-reset (OTP verify) attempt counters.
+
+        Protects the ``/v1/auth/reset-password`` endpoint from brute-force
+        OTP guessing.  Limits: 10 attempts per email per 15 min, 20 per IP
+        per 15 min.
+
+        Args:
+            email: The email being reset.
+            ip: The client IP address.
+
+        Raises:
+            RateLimitError: If the rate limit is exceeded.
+        """
+        email_key = f"auth:throttle:reset:email:{email}"
+        email_attempts = await self._redis.incr(email_key)
+        if email_attempts == 1:
+            await self._redis.expire(email_key, 900)  # 15 min window
+
+        ip_key = f"auth:throttle:reset:ip:{ip}"
+        ip_attempts = await self._redis.incr(ip_key)
+        if ip_attempts == 1:
+            await self._redis.expire(ip_key, 900)  # 15 min window
+
+        if email_attempts > 10:
+            raise RateLimitError(
+                "Too many reset attempts for this email. "
+                "Please request a new code."
+            )
+        if ip_attempts > 20:
+            raise RateLimitError(
+                "Too many reset attempts from this IP address. "
+                "Try again later."
+            )

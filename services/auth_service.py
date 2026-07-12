@@ -35,6 +35,7 @@ from schemas.auth import (
     UpdateProfileRequest,
     VerifyEmailRequest,
 )
+from schemas.email import OtpResponse, ResetPasswordRequest
 from utils.crypto import create_jwt_token
 from utils.password import hash_password, verify_password
 
@@ -220,6 +221,100 @@ class AuthService:
         return SignupResponse(
             message="Verification code resent to email.",
             email=email,
+        )
+
+    # ── Password reset ─────────────────────────────────────────────────────
+
+    async def forgot_password(self, email: str) -> OtpResponse:
+        """Send a password-reset OTP to the user's email.
+
+        For privacy, this method returns a success message regardless of
+        whether the email exists (prevents email enumeration by attackers).
+        If the email does not exist, the OTP is silently not sent.
+
+        Args:
+            email: The registered email address.
+
+        Returns:
+            An ``OtpResponse`` confirming the code was sent.
+        """
+        user = await self._repo.find_user_by_email(email)
+        if user is None or user.password_hash is None:
+            # Return 200 regardless — anti-enumeration.
+            return OtpResponse(
+                message="If an account exists with this email, "
+                "a password reset code has been sent.",
+            )
+
+        await self._otp_service.generate_and_send(
+            email=email,
+            purpose="password_reset",
+        )
+
+        return OtpResponse(
+            message="If an account exists with this email, "
+            "a password reset code has been sent.",
+        )
+
+    async def reset_password(self, payload: ResetPasswordRequest) -> OtpResponse:
+        """Reset the user's password using an OTP-verified request.
+
+        Flow:
+        1. Verify the OTP against the stored hash in Redis.
+        2. Validate and hash the new password.
+        3. Update the user's ``password_hash``.
+        4. Invalidate the OTP so it cannot be reused.
+        5. Revoke all existing refresh tokens (force re-login).
+
+        Args:
+            payload: Email, OTP code, and new password.
+
+        Returns:
+            An ``OtpResponse`` confirming the password was changed.
+
+        Raises:
+            NotFoundError: If the user does not exist.
+            AuthenticationError: If the OTP is invalid or expired.
+            ValidationError: If the new password is too weak.
+        """
+        user = await self._repo.find_user_by_email(payload.email)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+
+        # Verify OTP
+        verified = await self._otp_service.verify(
+            email=payload.email,
+            purpose="password_reset",
+            code=payload.otp,
+        )
+        if not verified:
+            raise AuthenticationError(
+                "Invalid or expired reset code. "
+                "Please request a new code.",
+            )
+
+        # Validate and hash new password
+        self._validate_password(payload.new_password)
+        new_hash = hash_password(payload.new_password)
+
+        # Update password hash
+        await self._repo.update_dashboard_user(
+            user_id=user.id,
+            password_hash=new_hash,
+        )
+
+        # Revoke all refresh tokens to force re-login
+        await self._repo.revoke_all_refresh_tokens(user.id)
+
+        # Invalidate OTP so it cannot be reused
+        await self._otp_service.invalidate(
+            email=payload.email,
+            purpose="password_reset",
+        )
+
+        return OtpResponse(
+            message="Your password has been reset successfully. "
+            "Please log in with your new password.",
         )
 
     # ── Login ───────────────────────────────────────────────────────────────

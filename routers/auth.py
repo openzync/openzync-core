@@ -1,13 +1,15 @@
 """Dashboard authentication endpoints — HTTP adapter layer only.
 
 Endpoints:
-    POST   /v1/auth/signup        — Create org + admin user, send OTP
-    POST   /v1/auth/verify-email  — Verify email with OTP, return JWT
-    POST   /v1/auth/resend-otp    — Resend verification OTP
-    POST   /v1/auth/login         — Authenticate by email/password, return JWT
-    POST   /v1/auth/refresh       — Rotate refresh token, return new JWT pair
-    GET    /v1/auth/me            — Get current dashboard user profile
-    PATCH  /v1/auth/me            — Update profile name, email, or password
+    POST   /v1/auth/signup          — Create org + admin user, send OTP
+    POST   /v1/auth/verify-email    — Verify email with OTP, return JWT
+    POST   /v1/auth/resend-otp      — Resend verification OTP
+    POST   /v1/auth/forgot-password — Send password-reset OTP
+    POST   /v1/auth/reset-password  — Reset password with OTP
+    POST   /v1/auth/login           — Authenticate by email/password, return JWT
+    POST   /v1/auth/refresh         — Rotate refresh token, return new JWT pair
+    GET    /v1/auth/me              — Get current dashboard user profile
+    PATCH  /v1/auth/me              — Update profile name, email, or password
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from schemas.auth import (
     UpdateProfileRequest,
     VerifyEmailRequest,
 )
-from schemas.email import SendOtpRequest
+from schemas.email import OtpResponse, ResetPasswordRequest, SendOtpRequest
 from services.auth_service import AuthService
 
 router = APIRouter(
@@ -140,6 +142,70 @@ async def resend_otp(
         Confirmation message.
     """
     return await service.resend_verification(payload.email)
+
+
+@router.post(
+    "/forgot-password",
+    response_model=OtpResponse,
+    summary="Send password-reset OTP",
+    description=(
+        "Sends a 6-digit verification code to the user's email for "
+        "password reset.  Returns the same message whether or not the "
+        "email exists (prevents email enumeration).  Rate-limited: "
+        "at most 3 requests per email per hour."
+    ),
+)
+async def forgot_password(
+    payload: SendOtpRequest,
+    request: Request,
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
+    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
+) -> OtpResponse:
+    """Send a password-reset OTP to the user's email.
+
+    Args:
+        payload: Email address to send the reset code to.
+        request: Incoming HTTP request (for IP extraction).
+        service: Injected auth service.
+        throttle: Injected auth throttle.
+
+    Returns:
+        Confirmation message (same for existing and non-existing accounts).
+    """
+    await throttle.check_forgot_password_attempt(payload.email, _client_ip(request))
+    return await service.forgot_password(payload.email)
+
+
+@router.post(
+    "/reset-password",
+    response_model=OtpResponse,
+    summary="Reset password with OTP",
+    description=(
+        "Accepts the email, the 6-digit OTP received via email, and a "
+        "new password.  On success, the password is updated and all "
+        "existing sessions are invalidated (the user must log in again).  "
+        "Rate-limited to prevent brute-force OTP guessing."
+    ),
+)
+async def reset_password(
+    payload: ResetPasswordRequest,
+    request: Request,
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
+    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
+) -> OtpResponse:
+    """Reset a user's password using an OTP-verified request.
+
+    Args:
+        payload: Email, OTP code, and new password.
+        request: Incoming HTTP request (for IP extraction).
+        service: Injected auth service.
+        throttle: Injected auth throttle.
+
+    Returns:
+        Confirmation message and forces re-login.
+    """
+    await throttle.check_reset_attempt(payload.email, _client_ip(request))
+    return await service.reset_password(payload)
 
 
 @router.post(
