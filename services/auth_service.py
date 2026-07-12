@@ -35,7 +35,7 @@ from schemas.auth import (
     UpdateProfileRequest,
     VerifyEmailRequest,
 )
-from schemas.email import OtpResponse, ResetPasswordRequest
+from schemas.email import OtpResponse, ResetPasswordRequest, VerifyOtpRequest
 from utils.crypto import create_jwt_token
 from utils.password import hash_password, verify_password
 
@@ -315,6 +315,85 @@ class AuthService:
         return OtpResponse(
             message="Your password has been reset successfully. "
             "Please log in with your new password.",
+        )
+
+    # ── Passwordless login ─────────────────────────────────────────────────
+
+    async def generate_login_otp(self, email: str) -> OtpResponse:
+        """Send a passwordless login OTP to the user's email.
+
+        Args:
+            email: The registered email address.
+
+        Returns:
+            An ``OtpResponse`` confirming the code was sent.
+
+        Raises:
+            NotFoundError: If no user with this email exists.
+        """
+        user = await self._repo.find_user_by_email(email)
+        if user is None:
+            raise NotFoundError("No account found with this email address.")
+
+        await self._otp_service.generate_and_send(
+            email=email,
+            purpose="passwordless_login",
+        )
+
+        return OtpResponse(
+            message="Login code sent to email. "
+            "Use POST /v1/auth/login/otp/verify to complete login.",
+        )
+
+    async def passwordless_login(self, payload: VerifyOtpRequest) -> TokenResponse:
+        """Authenticate a user via email OTP (no password required).
+
+        Flow:
+        1. Find user by email.
+        2. Verify the OTP against the stored hash in Redis.
+        3. Auto-verify the email if not already verified (OTP proves ownership).
+        4. Invalidate the OTP so it cannot be reused.
+        5. Issue and return JWT access + refresh tokens.
+
+        Args:
+            payload: Email and OTP code.
+
+        Returns:
+            A ``TokenResponse`` with access and refresh tokens.
+
+        Raises:
+            NotFoundError: If the user does not exist.
+            AuthenticationError: If the OTP is invalid or expired.
+        """
+        user = await self._repo.find_user_by_email(payload.email)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+
+        verified = await self._otp_service.verify(
+            email=payload.email,
+            purpose="passwordless_login",
+            code=payload.otp,
+        )
+        if not verified:
+            raise AuthenticationError(
+                "Invalid or expired login code. "
+                "Please request a new code.",
+            )
+
+        # Auto-verify email if this is the user's first login
+        if not user.is_email_verified:
+            await self._repo.mark_email_verified(user.id)
+
+        # Invalidate OTP so it cannot be reused
+        await self._otp_service.invalidate(
+            email=payload.email,
+            purpose="passwordless_login",
+        )
+
+        return await self._issue_tokens(
+            user_id=user.id,
+            organization_id=user.organization_id,
+            role=user.role if user.role is not None else "member",
         )
 
     # ── Login ───────────────────────────────────────────────────────────────

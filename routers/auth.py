@@ -1,15 +1,17 @@
 """Dashboard authentication endpoints — HTTP adapter layer only.
 
 Endpoints:
-    POST   /v1/auth/signup          — Create org + admin user, send OTP
-    POST   /v1/auth/verify-email    — Verify email with OTP, return JWT
-    POST   /v1/auth/resend-otp      — Resend verification OTP
-    POST   /v1/auth/forgot-password — Send password-reset OTP
-    POST   /v1/auth/reset-password  — Reset password with OTP
-    POST   /v1/auth/login           — Authenticate by email/password, return JWT
-    POST   /v1/auth/refresh         — Rotate refresh token, return new JWT pair
-    GET    /v1/auth/me              — Get current dashboard user profile
-    PATCH  /v1/auth/me              — Update profile name, email, or password
+    POST   /v1/auth/signup             — Create org + admin user, send OTP
+    POST   /v1/auth/verify-email       — Verify email with OTP, return JWT
+    POST   /v1/auth/resend-otp         — Resend verification OTP
+    POST   /v1/auth/login/otp/send     — Send passwordless login OTP
+    POST   /v1/auth/login/otp/verify   — Verify login OTP, return JWT
+    POST   /v1/auth/forgot-password    — Send password-reset OTP
+    POST   /v1/auth/reset-password     — Reset password with OTP
+    POST   /v1/auth/login              — Authenticate by email/password, return JWT
+    POST   /v1/auth/refresh            — Rotate refresh token, return new JWT pair
+    GET    /v1/auth/me                 — Get current dashboard user profile
+    PATCH  /v1/auth/me                 — Update profile name, email, or password
 """
 
 from __future__ import annotations
@@ -31,7 +33,12 @@ from schemas.auth import (
     UpdateProfileRequest,
     VerifyEmailRequest,
 )
-from schemas.email import OtpResponse, ResetPasswordRequest, SendOtpRequest
+from schemas.email import (
+    OtpResponse,
+    ResetPasswordRequest,
+    SendOtpRequest,
+    VerifyOtpRequest,
+)
 from services.auth_service import AuthService
 
 router = APIRouter(
@@ -142,6 +149,71 @@ async def resend_otp(
         Confirmation message.
     """
     return await service.resend_verification(payload.email)
+
+
+@router.post(
+    "/login/otp/send",
+    response_model=OtpResponse,
+    summary="Send passwordless login OTP",
+    description=(
+        "Sends a 6-digit verification code to the user's email for "
+        "passwordless login.  The user enters this code at "
+        "``POST /v1/auth/login/otp/verify`` to receive JWT tokens.  "
+        "Requires an existing user account."
+    ),
+)
+async def send_login_otp(
+    payload: SendOtpRequest,
+    request: Request,
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
+    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
+) -> OtpResponse:
+    """Send a passwordless login OTP to the user's email.
+
+    Args:
+        payload: Email address to send the login code to.
+        request: Incoming HTTP request (for IP extraction).
+        service: Injected auth service.
+        throttle: Injected auth throttle.
+
+    Returns:
+        Confirmation message.
+    """
+    await throttle.check_passwordless_send(payload.email, _client_ip(request))
+    return await service.generate_login_otp(payload.email)
+
+
+@router.post(
+    "/login/otp/verify",
+    response_model=TokenResponse,
+    summary="Verify login OTP and receive JWT tokens",
+    description=(
+        "Accepts the email address and the 6-digit OTP sent for "
+        "passwordless login.  On success, returns a JWT access token "
+        "and refresh token pair.  The user's email is auto-verified "
+        "if this is their first login.  Rate-limited to prevent "
+        "brute-force OTP guessing."
+    ),
+)
+async def verify_login_otp(
+    payload: VerifyOtpRequest,
+    request: Request,
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
+    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
+) -> TokenResponse:
+    """Verify a passwordless login OTP and receive JWT tokens.
+
+    Args:
+        payload: Email and OTP code.
+        request: Incoming HTTP request (for IP extraction).
+        service: Injected auth service.
+        throttle: Injected auth throttle.
+
+    Returns:
+        Access and refresh tokens.
+    """
+    await throttle.check_passwordless_verify(payload.email, _client_ip(request))
+    return await service.passwordless_login(payload)
 
 
 @router.post(

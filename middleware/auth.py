@@ -89,6 +89,8 @@ PUBLIC_ENDPOINTS: set[str] = {
     "/v1/auth/resend-otp",
     "/v1/auth/forgot-password",
     "/v1/auth/reset-password",
+    "/v1/auth/login/otp/send",
+    "/v1/auth/login/otp/verify",
 }
 """Paths that are allowed without authentication.
 

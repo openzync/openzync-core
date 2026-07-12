@@ -199,3 +199,69 @@ class AuthThrottle:
                 "Too many reset attempts from this IP address. "
                 "Try again later."
             )
+
+    async def check_passwordless_send(self, email: str, ip: str) -> None:
+        """Check and increment passwordless-login OTP send counters.
+
+        Limits: 5 sends per email per hour, 10 per IP per 15 min.
+
+        Args:
+            email: The email requesting a login code.
+            ip: The client IP address.
+
+        Raises:
+            RateLimitError: If the rate limit is exceeded.
+        """
+        email_key = f"auth:throttle:passwordless:send:email:{email}"
+        email_attempts = await self._redis.incr(email_key)
+        if email_attempts == 1:
+            await self._redis.expire(email_key, 3600)  # 1 hour window
+
+        ip_key = f"auth:throttle:passwordless:send:ip:{ip}"
+        ip_attempts = await self._redis.incr(ip_key)
+        if ip_attempts == 1:
+            await self._redis.expire(ip_key, 900)  # 15 min window
+
+        if email_attempts > 5:
+            raise RateLimitError(
+                "Too many login code requests for this email. "
+                "Try again later."
+            )
+        if ip_attempts > 10:
+            raise RateLimitError(
+                "Too many login code requests from this IP address. "
+                "Try again later."
+            )
+
+    async def check_passwordless_verify(self, email: str, ip: str) -> None:
+        """Check and increment passwordless-login OTP verify counters.
+
+        Limits: 10 attempts per email per 15 min, 20 per IP per 15 min.
+
+        Args:
+            email: The email verifying a login code.
+            ip: The client IP address.
+
+        Raises:
+            RateLimitError: If the rate limit is exceeded.
+        """
+        email_key = f"auth:throttle:passwordless:verify:email:{email}"
+        email_attempts = await self._redis.incr(email_key)
+        if email_attempts == 1:
+            await self._redis.expire(email_key, 900)  # 15 min window
+
+        ip_key = f"auth:throttle:passwordless:verify:ip:{ip}"
+        ip_attempts = await self._redis.incr(ip_key)
+        if ip_attempts == 1:
+            await self._redis.expire(ip_key, 900)  # 15 min window
+
+        if email_attempts > 10:
+            raise RateLimitError(
+                "Too many login verification attempts for this email. "
+                "Please request a new code."
+            )
+        if ip_attempts > 20:
+            raise RateLimitError(
+                "Too many login verification attempts from this IP address. "
+                "Try again later."
+            )
