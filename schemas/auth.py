@@ -38,6 +38,47 @@ class SignupRequest(BaseModel):
     )
 
 
+class SignupResponse(BaseModel):
+    """Response body for ``POST /v1/auth/signup``.
+
+    Instead of returning tokens directly (the user must first verify their
+    email), signup returns a confirmation message.  The client should then
+    call ``POST /v1/auth/verify-email`` with the OTP received via email.
+    """
+
+    message: str = Field(
+        ...,
+        description="Human-readable confirmation message.",
+        examples=["Verification code sent to email"],
+    )
+    email: EmailStr = Field(
+        ...,
+        description="Email address the verification code was sent to.",
+        examples=["admin@acme.com"],
+    )
+
+
+class VerifyEmailRequest(BaseModel):
+    """Request body for ``POST /v1/auth/verify-email``.
+
+    The OTP is a 6-digit code received via email.  On success, returns a
+    ``TokenResponse`` so the user is immediately authenticated.
+    """
+
+    email: EmailStr = Field(
+        ...,
+        description="Email address the OTP was sent to.",
+        examples=["admin@acme.com"],
+    )
+    otp: str = Field(
+        ...,
+        min_length=4,
+        max_length=8,
+        description="The one-time passcode received via email.",
+        examples=["483926"],
+    )
+
+
 class LoginRequest(BaseModel):
     """Request body for ``POST /v1/auth/login``."""
 
@@ -99,6 +140,10 @@ class DashboardUserResponse(BaseModel):
     name: str | None = Field(default=None, description="Display name.")
     role: str = Field(default="member", description="User role.")
     organization_id: UUID = Field(..., description="Owning organization ID.")
+    is_email_verified: bool = Field(
+        default=False,
+        description="Whether the user's email has been verified.",
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -15,20 +15,31 @@ from __future__ import annotations
 import hashlib
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from core.config import get_settings
-from core.exceptions import AuthenticationError, ConflictError, NotFoundError, ValidationError
+from core.exceptions import (
+    AuthenticationError,
+    ConflictError,
+    NotFoundError,
+    ValidationError,
+)
 from repositories.auth_repository import AuthRepository
 from schemas.auth import (
     DashboardUserResponse,
     LoginRequest,
     SignupRequest,
+    SignupResponse,
     TokenResponse,
     UpdateProfileRequest,
+    VerifyEmailRequest,
 )
 from utils.crypto import create_jwt_token
 from utils.password import hash_password, verify_password
+
+if TYPE_CHECKING:
+    from services.otp_service import OtpService
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Constants
@@ -56,28 +67,30 @@ class AuthService:
 
     Args:
         repo: Repository for auth-related DB access.
+        otp_service: OTP service for email verification during signup.
     """
 
-    def __init__(self, repo: AuthRepository) -> None:
+    def __init__(self, repo: AuthRepository, otp_service: OtpService) -> None:  # noqa: F821
         self._repo = repo
+        self._otp_service = otp_service
 
     # ── Signup ──────────────────────────────────────────────────────────────
 
-    async def signup(self, payload: SignupRequest) -> TokenResponse:
+    async def signup(self, payload: SignupRequest) -> SignupResponse:
         """Create a new organization with an admin dashboard user.
 
         Flow:
         1. Check email uniqueness (no existing user with this email).
         2. Create the organization.
         3. Hash the password and create the dashboard admin user.
-        4. Generate and persist a refresh token.
-        5. Return access + refresh token pair.
+        4. Send an OTP verification code to the user's email.
+        5. Return a confirmation message (no tokens — user must verify email).
 
         Args:
             payload: Signup request with email, password, org name.
 
         Returns:
-            A ``TokenResponse`` with access and refresh tokens.
+            A ``SignupResponse`` with a confirmation message.
 
         Raises:
             ConflictError: If the email is already registered.
@@ -104,7 +117,7 @@ class AuthService:
 
         # Create dashboard admin user
         pw_hash = hash_password(payload.password)
-        user = await self._repo.create_dashboard_user(
+        await self._repo.create_dashboard_user(
             organization_id=org.id,
             email=payload.email,
             password_hash=pw_hash,
@@ -112,11 +125,101 @@ class AuthService:
             role="admin",
         )
 
-        # Generate tokens
+        # Send verification OTP — no tokens issued until email is verified.
+        await self._otp_service.generate_and_send(
+            email=payload.email,
+            purpose="signup",
+        )
+
+        return SignupResponse(
+            message="Verification code sent to email. "
+            "Use POST /v1/auth/verify-email to complete signup.",
+            email=payload.email,
+        )
+
+    # ── Email verification ──────────────────────────────────────────────────
+
+    async def verify_email(
+        self,
+        payload: VerifyEmailRequest,
+    ) -> TokenResponse:
+        """Verify a user's email address with the OTP and issue tokens.
+
+        Flow:
+        1. Verify the OTP against the stored hash in Redis.
+        2. Mark the user's email as verified in the database.
+        3. Issue and return JWT access + refresh tokens.
+
+        Args:
+            payload: Email and OTP code.
+
+        Returns:
+            A ``TokenResponse`` with access and refresh tokens.
+
+        Raises:
+            AuthenticationError: If the OTP is invalid or expired.
+            NotFoundError: If the user does not exist.
+        """
+        user = await self._repo.find_user_by_email(payload.email)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+
+        verified = await self._otp_service.verify(
+            email=payload.email,
+            purpose="signup",
+            code=payload.otp,
+        )
+        if not verified:
+            raise AuthenticationError(
+                "Invalid or expired verification code. "
+                "Please request a new code."
+            )
+
+        # Mark email as verified
+        await self._repo.mark_email_verified(user.id)
+
+        # Issue tokens now that email is verified
         return await self._issue_tokens(
             user_id=user.id,
-            organization_id=org.id,
+            organization_id=user.organization_id,
             role=user.role if user.role is not None else "admin",
+        )
+
+    async def resend_verification(self, email: str) -> SignupResponse:
+        """Resend the email verification OTP.
+
+        Rate limiting is handled internally by the OtpService (cooldown
+        and hourly send cap).
+
+        Args:
+            email: The email address registered during signup.
+
+        Returns:
+            A ``SignupResponse`` confirming the code was sent.
+
+        Raises:
+            NotFoundError: If no user with this email exists.
+        """
+        user = await self._repo.find_user_by_email(email)
+        if user is None:
+            raise NotFoundError(
+                "No account found with this email address."
+            )
+
+        if user.is_email_verified:
+            return SignupResponse(
+                message="Email is already verified. You can log in.",
+                email=email,
+            )
+
+        await self._otp_service.generate_and_send(
+            email=email,
+            purpose="signup",
+        )
+
+        return SignupResponse(
+            message="Verification code resent to email.",
+            email=email,
         )
 
     # ── Login ───────────────────────────────────────────────────────────────
@@ -131,7 +234,8 @@ class AuthService:
             A ``TokenResponse`` with access and refresh tokens.
 
         Raises:
-            AuthenticationError: If email not found or password wrong.
+            AuthenticationError: If email not found, password wrong,
+                email not verified, or account deactivated.
         """
         user = await self._repo.find_user_by_email(payload.email)
         if user is None:
@@ -147,6 +251,12 @@ class AuthService:
 
         if not user.is_active or user.is_deleted:
             raise AuthenticationError("This account has been deactivated.")
+
+        if not user.is_email_verified:
+            raise AuthenticationError(
+                "Email not verified. Please check your inbox for the "
+                "verification code, or request a new one."
+            )
 
         return await self._issue_tokens(
             user_id=user.id,
@@ -223,7 +333,7 @@ class AuthService:
         """
         # Use naive UTC datetime for DB storage (refresh_token.expires_at
         # is TIMESTAMP WITHOUT TIME ZONE).
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        now = datetime.now(UTC).replace(tzinfo=None)
 
         # Access token
         access_token = create_jwt_token(
@@ -290,6 +400,7 @@ class AuthService:
             name=user.name,
             role=user.role if user.role is not None else "member",
             organization_id=user.organization_id,
+            is_email_verified=user.is_email_verified,
         )
 
     async def update_profile(
@@ -362,6 +473,7 @@ class AuthService:
             name=user.name,
             role=user.role if user.role is not None else "member",
             organization_id=user.organization_id,
+            is_email_verified=user.is_email_verified,
         )
 
     @staticmethod

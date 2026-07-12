@@ -226,6 +226,32 @@ class AuthRepository:
                 rt.rotated_by = uuid.UUID(rotated_by)
             await self._db.flush()
 
+    # ── Email verification ─────────────────────────────────────────────────
+
+    async def mark_email_verified(self, user_id: uuid.UUID) -> User:
+        """Mark a user's email as verified and record the timestamp.
+
+        Args:
+            user_id: The user's UUID.
+
+        Returns:
+            The updated User instance.
+
+        Raises:
+            NotFoundError: If the user does not exist.
+        """
+        from core.exceptions import NotFoundError
+
+        user = await self.get_user_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+
+        user.is_email_verified = True
+        user.email_verified_at = datetime.utcnow()
+        await self._db.flush()
+        await self._db.refresh(user)
+        return user
+
     # ── Session helpers (used by service layer for ORM mutations) ─────────
 
     async def flush(self) -> None:

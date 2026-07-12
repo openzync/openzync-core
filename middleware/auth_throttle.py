@@ -97,3 +97,37 @@ class AuthThrottle:
                 "Too many signup attempts from this IP address. "
                 "Try again later."
             )
+
+    async def check_verify_attempt(self, email: str, ip: str) -> None:
+        """Check and increment email-verification attempt counter.
+
+        Protects the ``/v1/auth/verify-email`` endpoint from brute-force
+        OTP guessing.
+
+        Args:
+            email: The email being verified.
+            ip: The client IP address.
+
+        Raises:
+            RateLimitError: If the rate limit is exceeded.
+        """
+        email_key = f"auth:throttle:verify:email:{email}"
+        email_attempts = await self._redis.incr(email_key)
+        if email_attempts == 1:
+            await self._redis.expire(email_key, 900)  # 15 min window
+
+        ip_key = f"auth:throttle:verify:ip:{ip}"
+        ip_attempts = await self._redis.incr(ip_key)
+        if ip_attempts == 1:
+            await self._redis.expire(ip_key, 900)  # 15 min window
+
+        if email_attempts > 10:
+            raise RateLimitError(
+                "Too many verification attempts for this email. "
+                "Please request a new code."
+            )
+        if ip_attempts > 20:
+            raise RateLimitError(
+                "Too many verification attempts from this IP address. "
+                "Try again later."
+            )

@@ -1,11 +1,13 @@
 """Dashboard authentication endpoints — HTTP adapter layer only.
 
 Endpoints:
-    POST   /v1/auth/signup  — Create org + admin user, return JWT
-    POST   /v1/auth/login   — Authenticate by email/password, return JWT
-    POST   /v1/auth/refresh — Rotate refresh token, return new JWT pair
-    GET    /v1/auth/me      — Get current dashboard user profile
-    PATCH  /v1/auth/me      — Update profile name, email, or password
+    POST   /v1/auth/signup        — Create org + admin user, send OTP
+    POST   /v1/auth/verify-email  — Verify email with OTP, return JWT
+    POST   /v1/auth/resend-otp    — Resend verification OTP
+    POST   /v1/auth/login         — Authenticate by email/password, return JWT
+    POST   /v1/auth/refresh       — Rotate refresh token, return new JWT pair
+    GET    /v1/auth/me            — Get current dashboard user profile
+    PATCH  /v1/auth/me            — Update profile name, email, or password
 """
 
 from __future__ import annotations
@@ -22,9 +24,12 @@ from schemas.auth import (
     LoginRequest,
     RefreshRequest,
     SignupRequest,
+    SignupResponse,
     TokenResponse,
     UpdateProfileRequest,
+    VerifyEmailRequest,
 )
+from schemas.email import SendOtpRequest
 from services.auth_service import AuthService
 
 router = APIRouter(
@@ -49,22 +54,22 @@ def _client_ip(request: Request) -> str:
 
 @router.post(
     "/signup",
-    response_model=TokenResponse,
+    response_model=SignupResponse,
     status_code=201,
     summary="Create organization and admin user",
     description=(
         "Registers a new organization with an admin dashboard user "
-        "identified by email and password.  Returns a JWT access token "
-        "and a refresh token for session management.  The access token "
-        "expires in 30 minutes (default); the refresh token in 7 days."
+        "identified by email and password.  A verification code is sent "
+        "to the user's email.  The user must call ``POST /v1/auth/verify-email`` "
+        "with the code to complete signup and receive JWT tokens."
     ),
 )
 async def signup(
     payload: SignupRequest,
     request: Request,
-    service: AuthService = Depends(get_auth_service),
-    throttle: AuthThrottle = Depends(get_auth_throttle),
-) -> TokenResponse:
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
+    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
+) -> SignupResponse:
     """Sign up a new organization with an admin dashboard user.
 
     Args:
@@ -74,10 +79,67 @@ async def signup(
         throttle: Injected auth throttle.
 
     Returns:
-        Access and refresh tokens.
+        Confirmation message (tokens obtained via verify-email).
     """
     await throttle.check_signup_attempt(_client_ip(request))
     return await service.signup(payload)
+
+
+@router.post(
+    "/verify-email",
+    response_model=TokenResponse,
+    summary="Verify email with OTP and receive JWT tokens",
+    description=(
+        "Accepts the email address and the 6-digit OTP sent during signup. "
+        "On success, marks the email as verified and returns a JWT access "
+        "token and refresh token pair.  Rate-limited to prevent brute-force."
+    ),
+)
+async def verify_email(
+    payload: VerifyEmailRequest,
+    request: Request,
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
+    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
+) -> TokenResponse:
+    """Verify a user's email address with the OTP code.
+
+    Args:
+        payload: Email and OTP code.
+        request: Incoming HTTP request (for IP extraction).
+        service: Injected auth service.
+        throttle: Injected auth throttle.
+
+    Returns:
+        Access and refresh tokens on successful verification.
+    """
+    await throttle.check_verify_attempt(payload.email, _client_ip(request))
+    return await service.verify_email(payload)
+
+
+@router.post(
+    "/resend-otp",
+    response_model=SignupResponse,
+    summary="Resend the email verification OTP",
+    description=(
+        "Resends the 6-digit verification code to the user's email. "
+        "Rate-limited: at most one request per 60s per email, and "
+        "at most 5 sends per hour."
+    ),
+)
+async def resend_otp(
+    payload: SendOtpRequest,
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
+) -> SignupResponse:
+    """Resend the email verification code.
+
+    Args:
+        payload: Email address.
+        service: Injected auth service.
+
+    Returns:
+        Confirmation message.
+    """
+    return await service.resend_verification(payload.email)
 
 
 @router.post(
@@ -85,17 +147,18 @@ async def signup(
     response_model=TokenResponse,
     summary="Authenticate dashboard user",
     description=(
-        "Authenticates a dashboard user by email and password.  Returns "
-        "a JWT access token and a refresh token.  The access token is "
-        "valid for 30 minutes (default); use the refresh token at "
-        "``POST /v1/auth/refresh`` to obtain a new pair."
+        "Authenticates a dashboard user by email and password.  "
+        "Returns a JWT access token and a refresh token.  The user's "
+        "email must be verified before login is allowed.  "
+        "The access token is valid for 30 minutes (default); use the "
+        "refresh token at ``POST /v1/auth/refresh`` to obtain a new pair."
     ),
 )
 async def login(
     payload: LoginRequest,
     request: Request,
-    service: AuthService = Depends(get_auth_service),
-    throttle: AuthThrottle = Depends(get_auth_throttle),
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
+    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
 ) -> TokenResponse:
     """Log in a dashboard user.
 
@@ -124,7 +187,7 @@ async def login(
 )
 async def refresh(
     payload: RefreshRequest,
-    service: AuthService = Depends(get_auth_service),
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
 ) -> TokenResponse:
     """Refresh an expired access token.
 
@@ -148,7 +211,7 @@ async def refresh(
     ),
 )
 async def get_profile(
-    service: AuthService = Depends(get_auth_service),
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
     user_id: str = Depends(get_dashboard_user),
 ) -> DashboardUserResponse:
     """Get the current dashboard user's profile.
@@ -158,7 +221,7 @@ async def get_profile(
         user_id: Authenticated user UUID from JWT claims.
 
     Returns:
-        The user's public profile (email, name, role, org).
+        The user's public profile (email, name, role, org, verification).
     """
     return await service.get_profile(user_id=UUID(user_id))
 
@@ -176,7 +239,7 @@ async def get_profile(
 )
 async def update_profile(
     payload: UpdateProfileRequest,
-    service: AuthService = Depends(get_auth_service),
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
     user_id: str = Depends(get_dashboard_user),
 ) -> DashboardUserResponse:
     """Update the current dashboard user's profile.
