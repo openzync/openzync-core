@@ -136,7 +136,11 @@ async def get_auth_service(
     email_service = EmailService(email_config)
     otp_service = OtpService(redis=redis_client, email_service=email_service)
 
-    return AuthService(repo=AuthRepository(db), otp_service=otp_service)
+    return AuthService(
+        repo=AuthRepository(db),
+        otp_service=otp_service,
+        redis=redis_client,
+    )
 
 
 # ── Fact ────────────────────────────────────────────────────────────────────────

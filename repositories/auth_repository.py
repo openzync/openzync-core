@@ -274,6 +274,32 @@ class AuthRepository:
         await self._db.refresh(user)
         return user
 
+    # ── MFA ────────────────────────────────────────────────────────────────
+
+    async def set_mfa_enabled(self, user_id: uuid.UUID, enabled: bool) -> User:
+        """Enable or disable MFA for a dashboard user.
+
+        Args:
+            user_id: The user's UUID.
+            enabled: ``True`` to enable MFA, ``False`` to disable.
+
+        Returns:
+            The updated User instance.
+
+        Raises:
+            NotFoundError: If the user does not exist.
+        """
+        from core.exceptions import NotFoundError
+
+        user = await self.get_user_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+
+        user.mfa_enabled = enabled
+        await self._db.flush()
+        await self._db.refresh(user)
+        return user
+
     # ── Session helpers (used by service layer for ORM mutations) ─────────
 
     async def flush(self) -> None:

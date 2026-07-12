@@ -144,8 +144,49 @@ class DashboardUserResponse(BaseModel):
         default=False,
         description="Whether the user's email has been verified.",
     )
+    mfa_enabled: bool = Field(
+        default=False,
+        description="Whether MFA is enabled.",
+    )
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class LoginResponse(BaseModel):
+    """Unified response for ``POST /v1/auth/login``.
+
+    When MFA is disabled, returns JWT tokens as normal.
+    When MFA is enabled, returns ``requires_mfa=true`` with a
+    ``mfa_session_token`` for the second step.
+    """
+
+    access_token: str | None = Field(default=None, description="JWT access token (null when MFA required).")
+    refresh_token: str | None = Field(default=None, description="Opaque refresh token (null when MFA required).")
+    expires_in: int | None = Field(default=None, description="Access token TTL in seconds.")
+    token_type: str | None = Field(default=None, description="Token type — ``Bearer``.")
+    requires_mfa: bool = Field(default=False, description="Whether MFA verification is required.")
+    mfa_session_token: str | None = Field(default=None, description="Session token for MFA step 2 (null when MFA not required).")
+
+
+class MfaVerifyRequest(BaseModel):
+    """Request body for ``POST /v1/auth/mfa/verify`` — second step of MFA login."""
+
+    email: EmailStr = Field(..., description="Email address.")
+    otp: str = Field(..., min_length=4, max_length=8, description="The MFA one-time passcode.")
+    mfa_session_token: str = Field(..., min_length=1, description="Session token from the login response.")
+
+
+class MfaEnableRequest(BaseModel):
+    """Request body for ``POST /v1/auth/mfa/enable``."""
+
+    password: str = Field(..., min_length=1, description="Current password for re-authentication.")
+
+
+class MfaDisableRequest(BaseModel):
+    """Request body for ``POST /v1/auth/mfa/disable``."""
+
+    password: str = Field(..., min_length=1, description="Current password for re-authentication.")
+    otp: str = Field(..., min_length=4, max_length=8, description="MFA OTP for verification.")
 
 
 class UpdateProfileRequest(BaseModel):

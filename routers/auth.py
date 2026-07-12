@@ -8,7 +8,10 @@ Endpoints:
     POST   /v1/auth/login/otp/verify   — Verify login OTP, return JWT
     POST   /v1/auth/forgot-password    — Send password-reset OTP
     POST   /v1/auth/reset-password     — Reset password with OTP
-    POST   /v1/auth/login              — Authenticate by email/password, return JWT
+    POST   /v1/auth/login              — Authenticate by email/password, return JWT/MFA
+    POST   /v1/auth/mfa/verify         — Complete MFA login with OTP
+    POST   /v1/auth/mfa/enable         — Enable MFA (requires JWT)
+    POST   /v1/auth/mfa/disable        — Disable MFA (requires JWT + OTP)
     POST   /v1/auth/refresh            — Rotate refresh token, return new JWT pair
     GET    /v1/auth/me                 — Get current dashboard user profile
     PATCH  /v1/auth/me                 — Update profile name, email, or password
@@ -26,6 +29,10 @@ from middleware.auth_throttle import AuthThrottle
 from schemas.auth import (
     DashboardUserResponse,
     LoginRequest,
+    LoginResponse,
+    MfaDisableRequest,
+    MfaEnableRequest,
+    MfaVerifyRequest,
     RefreshRequest,
     SignupRequest,
     SignupResponse,
@@ -282,14 +289,15 @@ async def reset_password(
 
 @router.post(
     "/login",
-    response_model=TokenResponse,
+    response_model=LoginResponse,
     summary="Authenticate dashboard user",
     description=(
         "Authenticates a dashboard user by email and password.  "
-        "Returns a JWT access token and a refresh token.  The user's "
-        "email must be verified before login is allowed.  "
-        "The access token is valid for 30 minutes (default); use the "
-        "refresh token at ``POST /v1/auth/refresh`` to obtain a new pair."
+        "If MFA is disabled, returns JWT tokens directly.  "
+        "If MFA is enabled, returns ``requires_mfa=true`` with a "
+        "``mfa_session_token`` — the client must then call "
+        "``POST /v1/auth/mfa/verify`` with the OTP sent via email.  "
+        "The user's email must be verified before login is allowed."
     ),
 )
 async def login(
@@ -297,7 +305,7 @@ async def login(
     request: Request,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
     throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
-) -> TokenResponse:
+) -> LoginResponse:
     """Log in a dashboard user.
 
     Args:
@@ -307,10 +315,101 @@ async def login(
         throttle: Injected auth throttle.
 
     Returns:
-        Access and refresh tokens.
+        Tokens (MFA off) or MFA challenge (MFA on).
     """
     await throttle.check_login_attempt(payload.email, _client_ip(request))
     return await service.login(payload)
+
+
+@router.post(
+    "/mfa/verify",
+    response_model=TokenResponse,
+    summary="Complete MFA login with OTP",
+    description=(
+        "Second step of MFA-authenticated login.  Accepts the email, "
+        "the 6-digit MFA code from email, and the ``mfa_session_token`` "
+        "obtained from ``POST /v1/auth/login``.  On success, returns "
+        "a JWT access token and refresh token pair."
+    ),
+)
+async def mfa_verify(
+    payload: MfaVerifyRequest,
+    request: Request,
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
+    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
+) -> TokenResponse:
+    """Complete MFA-authenticated login.
+
+    Args:
+        payload: Email, OTP code, and MFA session token.
+        request: Incoming HTTP request (for IP extraction).
+        service: Injected auth service.
+        throttle: Injected auth throttle.
+
+    Returns:
+        Access and refresh tokens.
+    """
+    await throttle.check_mfa_verify(payload.email, _client_ip(request))
+    return await service.mfa_verify(payload)
+
+
+@router.post(
+    "/mfa/enable",
+    response_model=OtpResponse,
+    summary="Enable MFA for the current user",
+    description=(
+        "Enables email-based MFA for the authenticated user.  "
+        "Requires the current password for re-authentication.  "
+        "A confirmation email is sent to the user's registered email.  "
+        "Requires JWT authentication."
+    ),
+)
+async def mfa_enable(
+    payload: MfaEnableRequest,
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
+    user_id: str = Depends(get_dashboard_user),
+) -> OtpResponse:
+    """Enable MFA for the current dashboard user.
+
+    Args:
+        payload: Current password for re-authentication.
+        service: Injected auth service.
+        user_id: Authenticated user UUID from JWT claims.
+
+    Returns:
+        Confirmation message.
+    """
+    return await service.enable_mfa(user_id=UUID(user_id), payload=payload)
+
+
+@router.post(
+    "/mfa/disable",
+    response_model=OtpResponse,
+    summary="Disable MFA for the current user",
+    description=(
+        "Disables email-based MFA for the authenticated user.  "
+        "Requires the current password AND an MFA OTP for verification.  "
+        "To obtain an OTP, first call ``POST /v1/auth/login`` (which "
+        "sends an MFA code if MFA is enabled).  "
+        "Requires JWT authentication."
+    ),
+)
+async def mfa_disable(
+    payload: MfaDisableRequest,
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
+    user_id: str = Depends(get_dashboard_user),
+) -> OtpResponse:
+    """Disable MFA for the current dashboard user.
+
+    Args:
+        payload: Current password and MFA OTP for verification.
+        service: Injected auth service.
+        user_id: Authenticated user UUID from JWT claims.
+
+    Returns:
+        Confirmation message.
+    """
+    return await service.disable_mfa(user_id=UUID(user_id), payload=payload)
 
 
 @router.post(

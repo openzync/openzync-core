@@ -13,6 +13,7 @@ Responsibilities:
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -29,6 +30,10 @@ from repositories.auth_repository import AuthRepository
 from schemas.auth import (
     DashboardUserResponse,
     LoginRequest,
+    LoginResponse,
+    MfaDisableRequest,
+    MfaEnableRequest,
+    MfaVerifyRequest,
     SignupRequest,
     SignupResponse,
     TokenResponse,
@@ -40,6 +45,8 @@ from utils.crypto import create_jwt_token
 from utils.password import hash_password, verify_password
 
 if TYPE_CHECKING:
+    from redis.asyncio import Redis as AsyncRedis
+
     from services.otp_service import OtpService
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -56,6 +63,7 @@ def _refresh_token_ttl() -> timedelta:
     return timedelta(days=get_settings().JWT_REFRESH_TOKEN_TTL_DAYS)
 
 _JWT_ALGORITHM = "HS256"
+_MFA_SESSION_TTL_SEC = 600  # 10 minutes — MFA pending session lifetime
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -68,12 +76,19 @@ class AuthService:
 
     Args:
         repo: Repository for auth-related DB access.
-        otp_service: OTP service for email verification during signup.
+        otp_service: OTP service for email verification and MFA.
+        redis: Async Redis client for MFA session storage.
     """
 
-    def __init__(self, repo: AuthRepository, otp_service: OtpService) -> None:  # noqa: F821
+    def __init__(
+        self,
+        repo: AuthRepository,
+        otp_service: OtpService,  # noqa: F821
+        redis: AsyncRedis,  # noqa: F821
+    ) -> None:
         self._repo = repo
         self._otp_service = otp_service
+        self._redis = redis
 
     # ── Signup ──────────────────────────────────────────────────────────────
 
@@ -398,18 +413,19 @@ class AuthService:
 
     # ── Login ───────────────────────────────────────────────────────────────
 
-    async def login(self, payload: LoginRequest) -> TokenResponse:
-        """Authenticate a dashboard user and return tokens.
+    async def login(self, payload: LoginRequest) -> LoginResponse:
+        """Authenticate a dashboard user and return tokens or MFA challenge.
+
+        If the user has MFA disabled, behaves as before and returns tokens.
+        If MFA is enabled, sends an OTP, creates a pending session in Redis,
+        and returns an MFA challenge response.
 
         Args:
             payload: Login request with email and password.
 
         Returns:
-            A ``TokenResponse`` with access and refresh tokens.
-
-        Raises:
-            AuthenticationError: If email not found, password wrong,
-                email not verified, or account deactivated.
+            A ``LoginResponse`` — either with tokens (MFA off) or
+            ``requires_mfa=True`` with an ``mfa_session_token`` (MFA on).
         """
         user = await self._repo.find_user_by_email(payload.email)
         if user is None:
@@ -432,10 +448,190 @@ class AuthService:
                 "verification code, or request a new one."
             )
 
-        return await self._issue_tokens(
+        role = user.role if user.role is not None else "member"
+
+        # ── MFA gate ─────────────────────────────────────────────────────────
+        if user.mfa_enabled:
+            # Generate a cryptographically random session token
+            session_token = secrets.token_hex(32)
+
+            # Store pending MFA session in Redis
+            redis_key = f"mfa:session:{session_token}"
+            session_data = {
+                "user_id": str(user.id),
+                "org_id": str(user.organization_id),
+                "role": role,
+            }
+            await self._redis.setex(
+                redis_key,
+                _MFA_SESSION_TTL_SEC,
+                json.dumps(session_data),
+            )
+
+            # Send MFA OTP
+            await self._otp_service.generate_and_send(
+                email=payload.email,
+                purpose="mfa",
+            )
+
+            return LoginResponse(
+                requires_mfa=True,
+                mfa_session_token=session_token,
+            )
+
+        # ── Normal login (MFA disabled) ──────────────────────────────────────
+        tokens = await self._issue_tokens(
             user_id=user.id,
             organization_id=user.organization_id,
-            role=user.role if user.role is not None else "member",
+            role=role,
+        )
+        return LoginResponse(
+            access_token=tokens.access_token,
+            refresh_token=tokens.refresh_token,
+            expires_in=tokens.expires_in,
+            token_type=tokens.token_type,
+            requires_mfa=False,
+        )
+
+    # ── MFA verify ─────────────────────────────────────────────────────────
+
+    async def mfa_verify(self, payload: MfaVerifyRequest) -> TokenResponse:
+        """Complete MFA-authenticated login by verifying the OTP.
+
+        Flow:
+        1. Retrieve and validate the pending MFA session from Redis.
+        2. Verify the OTP against the stored hash (purpose="mfa").
+        3. Issue JWT tokens.
+
+        Args:
+            payload: Email, OTP code, and MFA session token.
+
+        Returns:
+            A ``TokenResponse`` with access and refresh tokens.
+
+        Raises:
+            AuthenticationError: If the session token is invalid/expired,
+                or the OTP is invalid.
+        """
+        # Validate MFA session
+        redis_key = f"mfa:session:{payload.mfa_session_token}"
+        session_raw = await self._redis.get(redis_key)
+
+        if session_raw is None:
+            raise AuthenticationError(
+                "MFA session has expired or is invalid. "
+                "Please log in again."
+            )
+
+        session_data = json.loads(session_raw)
+        await self._redis.delete(redis_key)  # single-use
+
+        # Verify OTP
+        verified = await self._otp_service.verify(
+            email=payload.email,
+            purpose="mfa",
+            code=payload.otp,
+        )
+        if not verified:
+            raise AuthenticationError(
+                "Invalid or expired MFA code. "
+                "Please request a new code during login.",
+            )
+
+        # Issue tokens
+        user_id = uuid.UUID(session_data["user_id"])
+        org_id = uuid.UUID(session_data["org_id"])
+        role = session_data["role"]
+
+        return await self._issue_tokens(
+            user_id=user_id,
+            organization_id=org_id,
+            role=role,
+        )
+
+    # ── MFA enable / disable ───────────────────────────────────────────────
+
+    async def enable_mfa(
+        self,
+        user_id: uuid.UUID,
+        payload: MfaEnableRequest,
+    ) -> OtpResponse:
+        """Enable MFA for a dashboard user.
+
+        Requires password re-authentication.  Sends a confirmation OTP
+        as a notification (the user does not need to verify it to complete
+        the flow).
+
+        Args:
+            user_id: The authenticated user's UUID.
+            payload: Current password for re-auth.
+
+        Returns:
+            An ``OtpResponse`` confirming MFA was enabled.
+        """
+        user = await self._repo.get_user_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+
+        if user.password_hash is None or not verify_password(
+            payload.password, user.password_hash,
+        ):
+            raise AuthenticationError("Current password is incorrect.")
+
+        await self._repo.set_mfa_enabled(user_id, enabled=True)
+
+        # Send confirmation email
+        await self._otp_service.generate_and_send(
+            email=user.email or "",
+            purpose="mfa",
+        )
+
+        return OtpResponse(
+            message="MFA has been enabled. "
+            "Future logins will require a verification code sent to your email.",
+        )
+
+    async def disable_mfa(
+        self,
+        user_id: uuid.UUID,
+        payload: MfaDisableRequest,
+    ) -> OtpResponse:
+        """Disable MFA for a dashboard user.
+
+        Requires password re-authentication AND an MFA OTP to ensure the
+        user still has access to their email.
+
+        Args:
+            user_id: The authenticated user's UUID.
+            payload: Current password and MFA OTP.
+
+        Returns:
+            An ``OtpResponse`` confirming MFA was disabled.
+        """
+        user = await self._repo.get_user_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+
+        if user.password_hash is None or not verify_password(
+            payload.password, user.password_hash,
+        ):
+            raise AuthenticationError("Current password is incorrect.")
+
+        verified = await self._otp_service.verify(
+            email=user.email or "",
+            purpose="mfa",
+            code=payload.otp,
+        )
+        if not verified:
+            raise AuthenticationError(
+                "Invalid MFA code. Please request a new code.",
+            )
+
+        await self._repo.set_mfa_enabled(user_id, enabled=False)
+        await self._otp_service.invalidate(email=user.email or "", purpose="mfa")
+
+        return OtpResponse(
+            message="MFA has been disabled.",
         )
 
     # ── Refresh ─────────────────────────────────────────────────────────────
@@ -575,6 +771,7 @@ class AuthService:
             role=user.role if user.role is not None else "member",
             organization_id=user.organization_id,
             is_email_verified=user.is_email_verified,
+            mfa_enabled=user.mfa_enabled,
         )
 
     async def update_profile(
@@ -648,6 +845,7 @@ class AuthService:
             role=user.role if user.role is not None else "member",
             organization_id=user.organization_id,
             is_email_verified=user.is_email_verified,
+            mfa_enabled=user.mfa_enabled,
         )
 
     @staticmethod
