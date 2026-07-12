@@ -41,6 +41,7 @@ _INT_FIELDS = {
     "FALKORDB_SOCKET_TIMEOUT",
     "RATE_LIMIT_IP_MAX",
     "RATE_LIMIT_WINDOW_SEC",
+    "SMTP_PORT",
 }
 """Set of ``Settings`` field names whose values must be cast to ``int``.
 

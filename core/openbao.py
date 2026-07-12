@@ -68,6 +68,13 @@ SYSTEM_KEY_MAPPING: dict[str, str] = {
     "prompt_caching_enabled": "OZ_PROMPT_CACHING_ENABLED",
     "prompt_caching_anthropic_min_tokens": "OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS",
     "prompt_caching_anthropic_ttl": "OZ_PROMPT_CACHING_ANTHROPIC_TTL",
+    "smtp_host": "OZ_SMTP_HOST",
+    "smtp_port": "OZ_SMTP_PORT",
+    "smtp_username": "OZ_SMTP_USERNAME",
+    "smtp_password": "OZ_SMTP_PASSWORD",
+    "smtp_from_addr": "OZ_SMTP_FROM_ADDR",
+    "smtp_use_tls": "OZ_SMTP_USE_TLS",
+    "smtp_start_tls": "OZ_SMTP_START_TLS",
 }
 """Maps OpenBao config key names (snake_case) to ``OZ_`` environment variable names."""
 

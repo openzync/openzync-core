@@ -272,6 +272,38 @@ class Settings(BaseModel):
         )
         return "5m"
 
+    # ── Email / SMTP ──────────────────────────────────────────────────────
+    SMTP_HOST: str = Field(
+        default="localhost",
+        description="SMTP server hostname for sending transactional emails.",
+    )
+    SMTP_PORT: int = Field(
+        default=587,
+        ge=1,
+        le=65535,
+        description="SMTP server port (default 587 for STARTTLS).",
+    )
+    SMTP_USERNAME: str = Field(
+        default="",
+        description="SMTP username (empty = no auth).",
+    )
+    SMTP_PASSWORD: str = Field(
+        default="",
+        description="SMTP password (empty = no auth).",
+    )
+    SMTP_FROM_ADDR: str = Field(
+        default="noreply@openzync.tech",
+        description="From: address for outgoing emails.",
+    )
+    SMTP_USE_TLS: bool = Field(
+        default=True,
+        description="Use implicit TLS (SMTPS) on connect.",
+    )
+    SMTP_START_TLS: bool = Field(
+        default=True,
+        description="Use STARTTLS to upgrade to TLS after connect.",
+    )
+
     # ── Rate Limiting ─────────────────────────────────────────────────────
     RATE_LIMIT_IP_MAX: int = Field(
         default=10,

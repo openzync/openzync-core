@@ -1,5 +1,6 @@
 aiohappyeyeballs==2.6.2
 aiohttp==3.14.0
+aiosmtplib==3.0.2
 aiosignal==1.4.0
 alembic==1.18.4
 altair==6.2.1
