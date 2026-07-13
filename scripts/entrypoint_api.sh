@@ -12,7 +12,7 @@
 set -e
 set -u
 # set -x  # uncomment temporarily to enable command tracing for debugging
-# ponytail: pipefail would be ideal but /bin/sh is dash on python:3.12-slim
+# pipefail would be ideal but /bin/sh is dash on python:3.12-slim
 
 log() { echo "[entrypoint_api] $(date -Iseconds) $*"; }
 trap 'log "FATAL: unexpected error on line $LINENO — exiting"; exit 1' ERR

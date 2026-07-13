@@ -304,7 +304,7 @@ class GraphService:
                 cursor=cursor,
             )
 
-        # ponytail: no subject provided — warn and return empty
+        # no subject provided — warn and return empty
         logger.warning(
             "graph_service.get_edges_without_subject",
             extra={"org_id": str(org_id)},

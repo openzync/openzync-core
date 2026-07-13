@@ -25,6 +25,7 @@ classifiers = [
 
 dependencies = [
     "aiohttp>=3.9.0",
+    "aiosmtplib>=3.0.0",
     "alembic>=1.13.0",
     "arq>=0.26.0",
     "asyncpg>=0.29.0",
@@ -159,10 +160,9 @@ filterwarnings = [
     "ignore::DeprecationWarning:alembic.*",
     "ignore::DeprecationWarning:sqlalchemy.*",
     "ignore::DeprecationWarning:testcontainers.*",
-    # FastAPI 0.115.x uses starlette imports that trigger
-    # StarletteDeprecationWarning (HTTP_422_UNPROCESSABLE_ENTITY →
-    # HTTP_422_UNPROCESSABLE_CONTENT).  This is cosmetic in our codebase.
-    "ignore::starlette.exceptions.StarletteDeprecationWarning",
+    # FastAPI / Starlette deprecation warnings — harmless in our codebase.
+    # Removed: starlette.exceptions.StarletteDeprecationWarning does not
+    # exist in starlette 1.1.0 (the version currently installed).
     # Session-scoped async fixtures (e.g. OpenRouter backend's internal
     # httpx.AsyncClient) may leave transports unclosed after the event
     # loop shuts down.  This is cosmetic — no data loss or leak.

@@ -226,6 +226,104 @@ class AuthRepository:
                 rt.rotated_by = uuid.UUID(rotated_by)
             await self._db.flush()
 
+    async def revoke_all_refresh_tokens(self, user_id: uuid.UUID) -> None:
+        """Revoke all active refresh tokens for a given user.
+
+        Called after a password reset to invalidate all existing sessions —
+        the user must re-authenticate with the new password.
+
+        Args:
+            user_id: The user's UUID.
+        """
+        from sqlalchemy import update
+
+        stmt = (
+            update(RefreshToken)
+            .where(
+                RefreshToken.user_id == str(user_id),
+                RefreshToken.is_revoked.is_(False),
+            )
+            .values(is_revoked=True)
+        )
+        await self._db.execute(stmt)
+        await self._db.flush()
+
+    # ── Email verification ─────────────────────────────────────────────────
+
+    async def mark_email_verified(self, user_id: uuid.UUID) -> User:
+        """Mark a user's email as verified and record the timestamp.
+
+        Args:
+            user_id: The user's UUID.
+
+        Returns:
+            The updated User instance.
+
+        Raises:
+            NotFoundError: If the user does not exist.
+        """
+        from core.exceptions import NotFoundError
+
+        user = await self.get_user_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+
+        user.is_email_verified = True
+        user.email_verified_at = datetime.utcnow()
+        await self._db.flush()
+        await self._db.refresh(user)
+        return user
+
+    async def reset_email_verification(self, user_id: uuid.UUID) -> User:
+        """Reset a user's email verification status (e.g. after email change).
+
+        Args:
+            user_id: The user's UUID.
+
+        Returns:
+            The updated User instance.
+
+        Raises:
+            NotFoundError: If the user does not exist.
+        """
+        from core.exceptions import NotFoundError
+
+        user = await self.get_user_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+
+        user.is_email_verified = False
+        user.email_verified_at = None
+        await self._db.flush()
+        await self._db.refresh(user)
+        return user
+
+    # ── MFA ────────────────────────────────────────────────────────────────
+
+    async def set_mfa_enabled(self, user_id: uuid.UUID, enabled: bool) -> User:
+        """Enable or disable MFA for a dashboard user.
+
+        Args:
+            user_id: The user's UUID.
+            enabled: ``True`` to enable MFA, ``False`` to disable.
+
+        Returns:
+            The updated User instance.
+
+        Raises:
+            NotFoundError: If the user does not exist.
+        """
+        from core.exceptions import NotFoundError
+
+        user = await self.get_user_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+
+        user.mfa_enabled = enabled
+        await self._db.flush()
+        await self._db.refresh(user)
+        return user
+
     # ── Session helpers (used by service layer for ORM mutations) ─────────
 
     async def flush(self) -> None:
