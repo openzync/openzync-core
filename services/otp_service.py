@@ -302,7 +302,7 @@ class OtpService:
 
         await self._email_service.send_email(
             to=email_key,
-            subject=f"Your verification code: {otp}",
+            subject="Your OpenZync verification code",
             html_body=html_body,
             text_body=text_body,
         )

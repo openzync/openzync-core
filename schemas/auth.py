@@ -37,7 +37,6 @@ class SignupRequest(BaseModel):
         examples=["Acme Corp"],
     )
 
-
 class SignupResponse(BaseModel):
     """Response body for ``POST /v1/auth/signup``.
 

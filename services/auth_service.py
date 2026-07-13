@@ -19,6 +19,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from sqlalchemy.exc import IntegrityError
+
 from core.config import get_settings
 from core.exceptions import (
     AuthenticationError,
@@ -123,29 +125,34 @@ class AuthService:
             )
 
         # Create organization
-        org = await self._repo.create_organization(
-            name=payload.organization_name,
-            plan="free",
-        )
+        try:
+            org = await self._repo.create_organization(
+                name=payload.organization_name,
+                plan="free",
+            )
 
-        # Seed default prompt templates for the new org
-        await self._repo.seed_prompts_for_org(org.id)
+            # Seed default prompt templates for the new org
+            await self._repo.seed_prompts_for_org(org.id)
 
-        # Create dashboard admin user
-        pw_hash = hash_password(payload.password)
-        await self._repo.create_dashboard_user(
-            organization_id=org.id,
-            email=payload.email,
-            password_hash=pw_hash,
-            name=payload.email.split("@")[0],  # default name from email
-            role="admin",
-        )
+            # Create dashboard admin user
+            pw_hash = hash_password(payload.password)
+            await self._repo.create_dashboard_user(
+                organization_id=org.id,
+                email=payload.email,
+                password_hash=pw_hash,
+                name=payload.email.split("@")[0],  # default name from email
+                role="admin",
+            )
 
-        # Send verification OTP — no tokens issued until email is verified.
-        await self._otp_service.generate_and_send(
-            email=payload.email,
-            purpose="signup",
-        )
+            # Send verification OTP — no tokens issued until email is verified.
+            await self._otp_service.generate_and_send(
+                email=payload.email,
+                purpose="signup",
+            )
+        except IntegrityError:
+            raise ConflictError(
+                f"A user with email '{payload.email}' is already registered."
+            )
 
         return SignupResponse(
             message="Verification code sent to email. "
@@ -180,6 +187,9 @@ class AuthService:
         if user is None:
             raise NotFoundError("Dashboard user not found.")
 
+        # Always verify the OTP — even for already-verified users.
+        # This prevents an unauthenticated attacker who knows a verified
+        # email from obtaining JWT tokens (privilege escalation).
         verified = await self._otp_service.verify(
             email=payload.email,
             purpose="signup",
@@ -191,8 +201,9 @@ class AuthService:
                 "Please request a new code."
             )
 
-        # Mark email as verified
-        await self._repo.mark_email_verified(user.id)
+        # Only update DB if email was not already verified
+        if not user.is_email_verified:
+            await self._repo.mark_email_verified(user.id)
 
         # Issue tokens now that email is verified
         return await self._issue_tokens(
@@ -452,8 +463,13 @@ class AuthService:
 
         # ── MFA gate ─────────────────────────────────────────────────────────
         if user.mfa_enabled:
-            # Generate a cryptographically random session token
             session_token = secrets.token_hex(32)
+
+            # Send MFA OTP FIRST — if this fails, no session is orphaned
+            await self._otp_service.generate_and_send(
+                email=payload.email,
+                purpose="mfa",
+            )
 
             # Store pending MFA session in Redis
             redis_key = f"mfa:session:{session_token}"
@@ -466,12 +482,6 @@ class AuthService:
                 redis_key,
                 _MFA_SESSION_TTL_SEC,
                 json.dumps(session_data),
-            )
-
-            # Send MFA OTP
-            await self._otp_service.generate_and_send(
-                email=payload.email,
-                purpose="mfa",
             )
 
             return LoginResponse(
@@ -816,6 +826,13 @@ class AuthService:
             update_kwargs["email"] = payload.email
             has_changes = True
 
+            # New email must be re-verified — reset flag and send OTP
+            await self._repo.reset_email_verification(user_id)
+            await self._otp_service.generate_and_send(
+                email=payload.email,
+                purpose="signup",
+            )
+
         # Password change
         if payload.new_password is not None:
             if not payload.current_password:
@@ -862,4 +879,15 @@ class AuthService:
             raise ValidationError(
                 "Password must be at least 8 characters long."
             )
-        # Additional checks (uppercase, digit, etc.) can be added here.
+        if not any(c.isupper() for c in password):
+            raise ValidationError(
+                "Password must contain at least one uppercase letter."
+            )
+        if not any(c.islower() for c in password):
+            raise ValidationError(
+                "Password must contain at least one lowercase letter."
+            )
+        if not any(c.isdigit() for c in password):
+            raise ValidationError(
+                "Password must contain at least one digit."
+            )

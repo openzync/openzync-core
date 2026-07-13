@@ -274,6 +274,30 @@ class AuthRepository:
         await self._db.refresh(user)
         return user
 
+    async def reset_email_verification(self, user_id: uuid.UUID) -> User:
+        """Reset a user's email verification status (e.g. after email change).
+
+        Args:
+            user_id: The user's UUID.
+
+        Returns:
+            The updated User instance.
+
+        Raises:
+            NotFoundError: If the user does not exist.
+        """
+        from core.exceptions import NotFoundError
+
+        user = await self.get_user_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+
+        user.is_email_verified = False
+        user.email_verified_at = None
+        await self._db.flush()
+        await self._db.refresh(user)
+        return user
+
     # ── MFA ────────────────────────────────────────────────────────────────
 
     async def set_mfa_enabled(self, user_id: uuid.UUID, enabled: bool) -> User:
