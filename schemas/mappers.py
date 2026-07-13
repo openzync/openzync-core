@@ -25,10 +25,17 @@ def session_to_dict(
     *,
     message_count: int = 0,
     fact_count: int = 0,
+    pending_enrichment_count: int = 0,
 ) -> dict[str, Any]:
     """Convert a Session ORM model to a flat dict for schema construction.
 
     Handles the ``metadata_`` → ``metadata`` field-name mapping.
+
+    Args:
+        session: The Session ORM instance.
+        message_count: Total number of messages in the session.
+        fact_count: Total number of extracted facts.
+        pending_enrichment_count: Number of messages pending enrichment.
     """
     return {
         "id": session.id,
@@ -42,6 +49,7 @@ def session_to_dict(
         "updated_at": session.updated_at,
         "message_count": message_count,
         "fact_count": fact_count,
+        "pending_enrichment_count": pending_enrichment_count,
     }
 
 
