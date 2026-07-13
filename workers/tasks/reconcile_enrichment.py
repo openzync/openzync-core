@@ -46,23 +46,40 @@ than workers can drain them when there's already a large backlog."""
 
 # ── Task implementation ────────────────────────────────────────────────────────
 
-# Map enrichment bit → (task_name, kwarg_needs)
+# Map enrichment bit → (task_name, accepted_kwargs, queue_label)
 # Each missing bit maps to a specific ARQ task that sets it.
-_ENRICHMENT_TASK_MAP: dict[int, tuple[str, list[str]]] = {
-    ENRICHMENT_ENTITIES: ("extract_entities", ["episode_id", "content", "org_id"]),
-    ENRICHMENT_EMBEDDING: ("embed_episode", ["episode_id", "content", "org_id"]),
-    ENRICHMENT_FACTS: ("extract_facts", ["episode_id", "content", "org_id"]),
+# accepted_kwargs limits what the reconciler passes — only params the task
+# signature actually accepts. queue_label determines routing ("high" or "low").
+_ENRICHMENT_TASK_MAP: dict[int, tuple[str, set[str], str]] = {
+    ENRICHMENT_ENTITIES: (
+        "extract_entities",
+        {"episode_id", "org_id", "project_id", "content", "session_id", "trace_id", "metadata"},
+        "high",
+    ),
+    ENRICHMENT_EMBEDDING: (
+        "embed_episode",
+        {"episode_id", "org_id", "project_id", "content", "trace_id", "metadata"},
+        "high",
+    ),
+    ENRICHMENT_FACTS: (
+        "extract_facts",
+        {"episode_id", "org_id", "project_id", "content", "session_id", "trace_id", "metadata"},
+        "high",
+    ),
     ENRICHMENT_ENTITY_LINKS: (
         "link_entities_to_episode",
-        ["episode_id", "org_id"],
+        {"episode_id", "org_id", "project_id", "content", "role", "trace_id", "metadata"},
+        "low",
     ),
     ENRICHMENT_CLASSIFICATION: (
         "classify_dialog",
-        ["episode_id", "content", "org_id"],
+        {"episode_id", "org_id", "project_id", "content", "session_id", "trace_id", "metadata"},
+        "high",
     ),
     ENRICHMENT_STRUCTURED_EXTRACTION: (
         "extract_structured",
-        ["episode_id", "content", "org_id"],
+        {"episode_id", "org_id", "project_id", "content", "session_id", "trace_id", "metadata"},
+        "high",
     ),
 }
 
@@ -184,16 +201,8 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
         content: str | None = ep.get("content")
         project_id: str = ep.get("project_id", "")
 
-        missing_tasks: list[str] = []
-        for bit, (task_name, needed_kwargs) in _ENRICHMENT_TASK_MAP.items():
-            if current_status & bit == 0:
-                missing_tasks.append(task_name)
-
-        if not missing_tasks:
-            continue
-
-        # Build kwargs common to all tasks for this episode
-        common_kwargs: dict[str, Any] = {
+        # Build superset of all possible kwargs from the DB row
+        base_kwargs: dict[str, Any] = {
             "episode_id": episode_id,
             "org_id": org_id,
             "project_id": project_id,
@@ -202,14 +211,27 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
             "trace_id": f"reconcile_{episode_id[:8]}",
         }
         if content is not None:
-            common_kwargs["content"] = content
+            base_kwargs["content"] = content
 
-        for task_name in missing_tasks:
+        for bit, (task_name, kwarg_set, queue_label) in _ENRICHMENT_TASK_MAP.items():
+            if current_status & bit:
+                continue  # bit already set — nothing to do
+
+            # Filter to only what this task's signature accepts
+            task_kwargs = {k: v for k, v in base_kwargs.items() if k in kwarg_set}
+
+            # Add task-specific kwargs not available from the episode row
+            if "role" in kwarg_set and "role" not in task_kwargs:
+                task_kwargs["role"] = "user"
+
+            # Route to correct queue
+            target_queue = queue_name if queue_label == "low" else high_queue_name
+
             try:
                 await arq_redis.enqueue_job(
                     task_name,
-                    **common_kwargs,
-                    _queue_name=high_queue_name,
+                    **task_kwargs,
+                    _queue_name=target_queue,
                 )
                 total_enqueued += 1
             except Exception as exc:
@@ -220,10 +242,6 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
                     error=str(exc),
                 )
 
-        # Update enrichment_status to mark reconciliation as "attempted"
-        # by setting ENRICHMENT_ENTITY_LINKS bit (harmless side-effect).
-        # This prevents the same episode from being re-processed on every tick
-        # while still allowing individual tasks to set their own bits.
         episodes_touched += 1
 
     summary = (
