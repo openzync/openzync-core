@@ -140,6 +140,7 @@ async def get_auth_service(
         repo=AuthRepository(db),
         otp_service=otp_service,
         redis=redis_client,
+        email_service=email_service,
     )
 
 

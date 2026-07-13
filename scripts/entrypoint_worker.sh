@@ -15,7 +15,7 @@
 # ──────────────────────────────────────────────────────────────────────────────
 set -e
 set -u
-# ponytail: pipefail would be ideal but /bin/sh is dash on python:3.12-slim
+# pipefail would be ideal but /bin/sh is dash on python:3.12-slim
 
 log() { echo "[entrypoint_worker] $(date -Iseconds) $*"; }
 

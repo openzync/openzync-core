@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -49,7 +50,10 @@ from utils.password import hash_password, verify_password
 if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
 
+    from services.email_service import EmailService
     from services.otp_service import OtpService
+
+logger = logging.getLogger(__name__)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Constants
@@ -80,6 +84,8 @@ class AuthService:
         repo: Repository for auth-related DB access.
         otp_service: OTP service for email verification and MFA.
         redis: Async Redis client for MFA session storage.
+        email_service: Optional email service for notification-only emails
+            (e.g. password-change confirmation).  ``None`` skips notifications.
     """
 
     def __init__(
@@ -87,10 +93,12 @@ class AuthService:
         repo: AuthRepository,
         otp_service: OtpService,  # noqa: F821
         redis: AsyncRedis,  # noqa: F821
+        email_service: EmailService | None = None,  # noqa: F821
     ) -> None:
         self._repo = repo
         self._otp_service = otp_service
         self._redis = redis
+        self._email_service = email_service
 
     # ── Signup ──────────────────────────────────────────────────────────────
 
@@ -254,22 +262,19 @@ class AuthService:
     async def forgot_password(self, email: str) -> OtpResponse:
         """Send a password-reset OTP to the user's email.
 
-        For privacy, this method returns a success message regardless of
-        whether the email exists (prevents email enumeration by attackers).
-        If the email does not exist, the OTP is silently not sent.
-
         Args:
             email: The registered email address.
 
         Returns:
             An ``OtpResponse`` confirming the code was sent.
+
+        Raises:
+            ValidationError: If no user with this email address exists.
         """
         user = await self._repo.find_user_by_email(email)
         if user is None or user.password_hash is None:
-            # Return 200 regardless — anti-enumeration.
-            return OtpResponse(
-                message="If an account exists with this email, "
-                "a password reset code has been sent.",
+            raise ValidationError(
+                "No account found with this email address.",
             )
 
         await self._otp_service.generate_and_send(
@@ -848,6 +853,34 @@ class AuthService:
             self._validate_password(payload.new_password)
             update_kwargs["password_hash"] = hash_password(payload.new_password)
             has_changes = True
+
+            # Send password-change notification email
+            if self._email_service is not None:
+                user_email = user.email or user.external_id
+                if user_email:
+                    from services.email_service import (  # noqa: PLC0415
+                        render_email_template,
+                        render_text_template,
+                    )
+
+                    context: dict[str, object] = {
+                        "name": user.name or "there",
+                    }
+                    html_body = await render_email_template("password_changed", context)
+                    text_body = await render_text_template("password_changed", context)
+
+                    try:
+                        await self._email_service.send_email(
+                            to=user_email,
+                            subject="Your OpenZync password was changed",
+                            html_body=html_body,
+                            text_body=text_body,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to send password-change notification email",
+                            extra={"email": user_email[:3] + "**@" + user_email.split("@")[-1]},
+                        )
 
         if has_changes:
             user = await self._repo.update_dashboard_user(
