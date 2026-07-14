@@ -11,6 +11,7 @@ from models.fact import Fact
 from models.graph_entity import GraphEntity
 from models.graph_observation import GraphObservation, ObservationType
 from models.llm_usage import LLMUsage
+from models.oauth_account import OAuthAccount
 from models.organization import Organization
 from models.project import Project
 from models.project_member import ProjectMember
@@ -36,6 +37,7 @@ __all__: list[str] = [
     "GraphEntity",
     "GraphObservation",
     "ObservationType",
+    "OAuthAccount",
     "StructuredExtraction",
     "DialogClassification",
     "ExtractionSchema",

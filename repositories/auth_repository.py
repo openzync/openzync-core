@@ -119,11 +119,14 @@ class AuthRepository:
         self,
         organization_id: uuid.UUID,
         email: str,
-        password_hash: str,
+        password_hash: str | None,
         name: str | None = None,
         role: str = "admin",
     ) -> User:
-        """Create a dashboard user (admin/member) with password auth.
+        """Create a dashboard user (admin/member).
+
+        Supports both password-authenticated users (email/password) and
+        OAuth-authenticated users (no password — pass ``None``).
 
         Sets ``external_id`` to the email for simplicity.  The unique
         constraint on ``(organization_id, external_id)`` prevents two
@@ -132,7 +135,8 @@ class AuthRepository:
         Args:
             organization_id: Owning organization.
             email: Email address (used as external_id too).
-            password_hash: bcrypt hash of the password.
+            password_hash: bcrypt hash of the password, or ``None`` for
+                OAuth-authenticated users.
             name: Optional display name.
             role: Role string (``'admin'`` or ``'member'``).
 

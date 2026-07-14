@@ -214,7 +214,7 @@ class AuthService:
             await self._repo.mark_email_verified(user.id)
 
         # Issue tokens now that email is verified
-        return await self._issue_tokens(
+        return await self.issue_tokens(
             user_id=user.id,
             organization_id=user.organization_id,
             role=user.role if user.role is not None else "admin",
@@ -421,7 +421,7 @@ class AuthService:
             purpose="passwordless_login",
         )
 
-        return await self._issue_tokens(
+        return await self.issue_tokens(
             user_id=user.id,
             organization_id=user.organization_id,
             role=user.role if user.role is not None else "member",
@@ -495,7 +495,7 @@ class AuthService:
             )
 
         # ── Normal login (MFA disabled) ──────────────────────────────────────
-        tokens = await self._issue_tokens(
+        tokens = await self.issue_tokens(
             user_id=user.id,
             organization_id=user.organization_id,
             role=role,
@@ -558,7 +558,7 @@ class AuthService:
         org_id = uuid.UUID(session_data["org_id"])
         role = session_data["role"]
 
-        return await self._issue_tokens(
+        return await self.issue_tokens(
             user_id=user_id,
             organization_id=org_id,
             role=role,
@@ -679,7 +679,7 @@ class AuthService:
         role = user.role if user.role is not None else "member"
 
         # Issue new tokens first, then revoke + chain the old one
-        new_tokens = await self._issue_tokens(
+        new_tokens = await self.issue_tokens(
             user_id=user_id,
             organization_id=stored.organization_id,
             role=role,
@@ -698,15 +698,18 @@ class AuthService:
 
         return new_tokens
 
-    # ── Internal helpers ────────────────────────────────────────────────────
+    # ── Token issuance ─────────────────────────────────────────────────────
 
-    async def _issue_tokens(
+    async def issue_tokens(
         self,
         user_id: uuid.UUID,
         organization_id: uuid.UUID,
         role: str,
     ) -> TokenResponse:
-        """Generate and persist an access + refresh token pair.
+        """Issue an access + refresh token pair.
+
+        This is a public method — OAuthService calls it directly to issue
+        tokens after a successful OAuth login or account link.
 
         Args:
             user_id: The authenticated user's UUID.

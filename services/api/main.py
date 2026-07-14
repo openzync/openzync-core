@@ -51,6 +51,7 @@ from routers import (
     audit_log,
     auth,
     classifications,
+    oauth,
     context,
     facts,
     graph,
@@ -242,6 +243,7 @@ def create_app() -> FastAPI:
     app.include_router(audit_log.router)
     app.include_router(admin_metrics.router)
     app.include_router(auth.router)
+    app.include_router(oauth.router)
     app.include_router(users.router)
     app.include_router(sessions.router)
     app.include_router(classifications.router)

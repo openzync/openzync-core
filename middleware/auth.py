@@ -92,6 +92,10 @@ PUBLIC_ENDPOINTS: set[str] = {
     "/v1/auth/login/otp/send",
     "/v1/auth/login/otp/verify",
     "/v1/auth/mfa/verify",
+    "/v1/auth/oauth/google/login",
+    "/v1/auth/oauth/google/callback",
+    "/v1/auth/oauth/github/login",
+    "/v1/auth/oauth/github/callback",
 }
 """Paths that are allowed without authentication.
 

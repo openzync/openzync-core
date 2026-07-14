@@ -43,6 +43,7 @@ from middleware.auth_throttle import AuthThrottle
 from repositories.auth_repository import AuthRepository
 from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
+from repositories.oauth_repository import OAuthRepository
 from repositories.organization_repository import OrganizationRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
@@ -50,6 +51,7 @@ from repositories.webhook_repository import WebhookRepository
 from services.auth_service import AuthService
 from services.email_service import EmailService
 from services.fact_service import FactService
+from services.oauth_service import OAuthService
 from services.graph_service import GraphService
 from services.memory_service import MemoryService
 from services.otp_service import OtpService
@@ -277,6 +279,40 @@ async def get_auth_throttle(
         redis=redis,
         login_max_per_ip=settings.RATE_LIMIT_IP_MAX,
         login_window_sec=settings.RATE_LIMIT_WINDOW_SEC,
+    )
+
+
+# ── OAuth ─────────────────────────────────────────────────────────────────────
+
+
+async def get_oauth_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> OAuthService:
+    """Dependency that yields an initialised OAuthService.
+
+    Wires in the ``OAuthRepository``, ``AuthRepository``, and Redis client
+    so the OAuth service can manage state tokens, look up users, and
+    issue JWT tokens.
+
+    Args:
+        request: Incoming HTTP request (for ``app.state.redis``).
+        db: Async DB session from dependency injection.
+
+    Returns:
+        An initialised ``OAuthService`` with full authentication support.
+    """
+    redis_client = getattr(request.app.state, "redis", None)
+    if redis_client is None:
+        raise RuntimeError(
+            "Redis client not found on app.state. "
+            "Ensure init_redis() was called during the application lifespan."
+        )
+
+    return OAuthService(
+        oauth_repo=OAuthRepository(db),
+        auth_repo=AuthRepository(db),
+        redis=redis_client,
     )
 
 

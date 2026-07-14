@@ -304,6 +304,44 @@ class Settings(BaseModel):
         description="Use STARTTLS to upgrade to TLS after connect.",
     )
 
+    # ── OAuth (Google / GitHub) ─────────────────────────────────────────────
+    GOOGLE_CLIENT_ID: str = Field(
+        default="",
+        description="Google OAuth 2.0 client ID (from Google Cloud Console).",
+    )
+    GOOGLE_CLIENT_SECRET: str = Field(
+        default="",
+        description="Google OAuth 2.0 client secret.",
+    )
+    GITHUB_CLIENT_ID: str = Field(
+        default="",
+        description="GitHub OAuth app client ID (from GitHub Developer Settings).",
+    )
+    GITHUB_CLIENT_SECRET: str = Field(
+        default="",
+        description="GitHub OAuth app client secret.",
+    )
+    OAUTH_ENABLED: bool = Field(
+        default=False,
+        description="Master switch for OAuth login. When False, OAuth endpoints return 404.",
+    )
+    OAUTH_STATE_TTL_SECONDS: int = Field(
+        default=600,
+        ge=60,
+        le=3600,
+        description="TTL in seconds for OAuth state tokens stored in Redis (default 10 min).",
+    )
+    OAUTH_CALLBACK_BASE_URL: str = Field(
+        default="",
+        description=(
+            "Base URL for OAuth callback endpoints, e.g. "
+            "'https://api.openzync.tech'.  When empty, the first CORS origin "
+            "is used as a fallback (dev mode).  In production with separate "
+            "API and frontend domains, this MUST be set to the API's base URL "
+            "so that OAuth providers redirect to the correct callback endpoint."
+        ),
+    )
+
     # ── Rate Limiting ─────────────────────────────────────────────────────
     RATE_LIMIT_IP_MAX: int = Field(
         default=10,
