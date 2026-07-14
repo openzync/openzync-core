@@ -3,7 +3,7 @@
 Runs after an episode is committed to PostgreSQL.  Uses an LLM to extract
 named entities (people, organisations, products, locations, etc.) and the
 relationships between them from a single conversation turn.  Persists
-entities to the Graphiti knowledge graph (if available) and relationships
+entities to the knowledge graph (if available) and relationships
 to the ``facts`` table in PostgreSQL.
 
 Bitmask:
