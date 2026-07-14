@@ -106,6 +106,7 @@ logger: structlog.stdlib.BoundLogger = structlog.get_logger("OpenZync.worker")
 from workers.tasks.classify_dialog import classify_dialog
 from workers.tasks.embed_episode import embed_episode
 from workers.tasks.embed_fact import embed_fact
+from workers.tasks.enrich_episode import enrich_episode
 from workers.tasks.extract_entities import extract_entities
 from workers.tasks.extract_facts import extract_facts
 from workers.tasks.extract_structured import extract_structured
@@ -119,6 +120,7 @@ from workers.tasks.generate_user_summary import generate_user_summary
 from workers.tasks.reconcile_enrichment import reconcile_enrichment
 
 HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
+    enrich_episode,  # combined LLM enrichment — replaces classify_dialog, extract_entities, extract_facts, extract_structured
     classify_dialog,
     extract_entities,
     embed_episode,

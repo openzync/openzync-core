@@ -27,6 +27,14 @@ from workers.tasks.base import (
     ENRICHMENT_STRUCTURED_EXTRACTION,
 )
 
+# Combined LLM enrichment bits — one task replaces 4 individual LLM calls
+LLM_ENRICHMENT_BITS: int = (
+    ENRICHMENT_ENTITIES
+    | ENRICHMENT_FACTS
+    | ENRICHMENT_CLASSIFICATION
+    | ENRICHMENT_STRUCTURED_EXTRACTION
+)
+
 logger = structlog.get_logger()
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -44,26 +52,13 @@ BACKLOG_SKIP_THRESHOLD: int = 1_000
 threshold, skip reconciliation entirely.  Prevents adding jobs faster
 than workers can drain them when there's already a large backlog."""
 
-# ── Task implementation ────────────────────────────────────────────────────────
+# ── Task configuration ─────────────────────────────────────────────────────────
 
-# Map enrichment bit → (task_name, accepted_kwargs, queue_label)
-# Each missing bit maps to a specific ARQ task that sets it.
-# accepted_kwargs limits what the reconciler passes — only params the task
-# signature actually accepts. queue_label determines routing ("high" or "low").
-_ENRICHMENT_TASK_MAP: dict[int, tuple[str, set[str], str]] = {
-    ENRICHMENT_ENTITIES: (
-        "extract_entities",
-        {"episode_id", "org_id", "project_id", "content", "session_id", "trace_id", "metadata"},
-        "high",
-    ),
+# Non-LLM tasks (individual bits, each enqueued separately).
+_NON_LLM_TASK_MAP: dict[int, tuple[str, set[str], str]] = {
     ENRICHMENT_EMBEDDING: (
         "embed_episode",
         {"episode_id", "org_id", "project_id", "content", "trace_id", "metadata"},
-        "high",
-    ),
-    ENRICHMENT_FACTS: (
-        "extract_facts",
-        {"episode_id", "org_id", "project_id", "content", "session_id", "trace_id", "metadata"},
         "high",
     ),
     ENRICHMENT_ENTITY_LINKS: (
@@ -71,17 +66,17 @@ _ENRICHMENT_TASK_MAP: dict[int, tuple[str, set[str], str]] = {
         {"episode_id", "org_id", "project_id", "content", "role", "trace_id", "metadata"},
         "low",
     ),
-    ENRICHMENT_CLASSIFICATION: (
-        "classify_dialog",
-        {"episode_id", "org_id", "project_id", "content", "session_id", "trace_id", "metadata"},
-        "high",
-    ),
-    ENRICHMENT_STRUCTURED_EXTRACTION: (
-        "extract_structured",
-        {"episode_id", "org_id", "project_id", "content", "session_id", "trace_id", "metadata"},
-        "high",
-    ),
 }
+
+# Combined LLM task — handles all 4 LLM enrichment bits in one job.
+_LLM_TASK_DETAILS: tuple[str, set[str], str] = (
+    "enrich_episode",
+    {
+        "episode_id", "org_id", "project_id", "content",
+        "session_id", "trace_id", "metadata", "role",
+    },
+    "high",
+)
 
 
 async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
@@ -213,18 +208,38 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
         if content is not None:
             base_kwargs["content"] = content
 
-        for bit, (task_name, kwarg_set, queue_label) in _ENRICHMENT_TASK_MAP.items():
+        # ── Check combined LLM enrichment ────────────────────────────
+        # If ANY of the 4 LLM bits are missing, enqueue enrich_episode once.
+        if (current_status & LLM_ENRICHMENT_BITS) != LLM_ENRICHMENT_BITS:
+            task_name, fields, queue_label = _LLM_TASK_DETAILS
+            task_kwargs = {k: v for k, v in base_kwargs.items() if k in fields}
+            if "role" in fields and "role" not in task_kwargs:
+                task_kwargs["role"] = "user"
+            target_queue = queue_name if queue_label == "low" else high_queue_name
+
+            try:
+                await arq_redis.enqueue_job(
+                    task_name,
+                    **task_kwargs,
+                    _queue_name=target_queue,
+                )
+                total_enqueued += 1
+            except Exception as exc:
+                logger.warning(
+                    "reconcile_enrichment.enqueue_failed",
+                    task=task_name,
+                    episode_id=episode_id,
+                    error=str(exc),
+                )
+
+        # ── Check individual non-LLM bits ────────────────────────────
+        for bit, (task_name, kwarg_set, queue_label) in _NON_LLM_TASK_MAP.items():
             if current_status & bit:
                 continue  # bit already set — nothing to do
 
-            # Filter to only what this task's signature accepts
             task_kwargs = {k: v for k, v in base_kwargs.items() if k in kwarg_set}
-
-            # Add task-specific kwargs not available from the episode row
             if "role" in kwarg_set and "role" not in task_kwargs:
                 task_kwargs["role"] = "user"
-
-            # Route to correct queue
             target_queue = queue_name if queue_label == "low" else high_queue_name
 
             try:

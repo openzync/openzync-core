@@ -20,12 +20,23 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 import structlog
 
 from core.exceptions import EpisodeNotFoundError, GraphBackendUnavailableError
 from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
 from workers.tasks.base import ENRICHMENT_FACTS, with_retry
+
+if TYPE_CHECKING:
+    from arq.connections import ArqRedis
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from packages.graph_backend.interface import GraphBackend
+    from repositories.entity_repository import EntityRepository
+    from repositories.episode_repository import EpisodeRepository
+    from repositories.fact_repository import FactRepository
+    from schemas.llm_outputs import FactExtractionOutput
 
 logger = structlog.get_logger()
 
@@ -227,245 +238,58 @@ async def extract_facts(
         raise  # Let the @with_retry decorator handle transient failures
 
     parsed = response.validated_data  # FactExtractionOutput instance
-    facts: list[dict] = [f.model_dump() for f in parsed.facts]
 
     # ── 4. Filter, resolve entities, persist, and set enrichment bit ─────────
     # Uses the shared engine from worker ctx (set earlier in this function).
-    _embed_targets: list[tuple[str, str]] = []
-    persisted = 0
+    persisted_ids: list[str] = []
     try:
         async with session_factory() as db:
-            # Persist facts (if any) AND set enrichment bit in a single
-            # transaction so that a persistence failure does NOT leave a
-            # falsely-completed enrichment marker.
-            #
-            # note: The enrichment bit is set AFTER fact persistence
-            # inside the same transaction.  If the fact inserts fail the
-            # transaction rolls back and the bit is NOT set, allowing the
-            # retry mechanism to re-attempt the work.
-            if facts:
-                valid_facts = _filter_facts(facts)
-                if valid_facts:
-                    # Resolve subject/object pronouns against known entities
-                    resolved_facts = _resolve_fact_entities(valid_facts, known_entities)
-
-                    # ── Deduplicate against existing facts ──────────────────
-                    # Filters out facts that already exist in the session
-                    # (same normalized triple) to prevent re-extraction from
-                    # assistant echo messages or overlapping extractions.
-                    resolved_facts = _deduplicate_facts(
-                        resolved_facts,
-                        existing_facts,
-                    )
-
-                    if resolved_facts:
-                        # ── Resolve graph backend for this org ──────────────
-                        # Entity relationships are materialized in the graph
-                        # if available; fact persistence to PostgreSQL always
-                        # succeeds regardless of graph backend state.
-                        backend = await resolve_graph_backend(
-                            ctx,
-                            uuid.UUID(org_id),
-                            db,
-                        )
-
-                        repo = FactRepository(db)
-                        # Also init entity repo for graph relationship upserts
-                        from repositories.entity_repository import (
-                            EntityRepository as _EntityRepo,
-                        )
-
-                        entity_repo = _EntityRepo(db=db, graph_backend=backend)
-
-                        # ══════════════════════════════════════════════════════
-                        # Batch-create all unique facts in a single query
-                        # instead of N individual round-trips.
-                        # ══════════════════════════════════════════════════════
-                        new_facts = await repo.batch_create_or_skip(
-                            facts=resolved_facts,
-                            user_id=uuid.UUID(user_id),
-                            organization_id=uuid.UUID(org_id),
-                            project_id=uuid.UUID(project_id),
-                            source_episode_id=uuid.UUID(episode_id),
-                        )
-
-                        # Build a lookup from content string → input fact dict
-                        # to match returned Fact ORM objects back to their
-                        # original input for entity resolution and graph upserts.
-                        content_to_fact: dict[str, dict] = {
-                            f"{f['subject']} {f['predicate']} {f['object']}": f
-                            for f in resolved_facts
-                        }
-
-                        persisted = len(new_facts)
-
-                        duplicates_count = len(resolved_facts) - len(new_facts)
-                        if duplicates_count:
-                            logger.info(
-                                "fact_extraction.duplicates_skipped",
-                                episode_id=episode_id,
-                                count=duplicates_count,
-                            )
-
-                        # ── Post-insert per-fact processing ──────────────────
-                        # Entity resolution fallback + graph relationship
-                        # materialization for newly created facts only.
-                        for fact_obj in new_facts:
-                            # Collect for downstream embedding enqueue —
-                            # accumulated here regardless of graph resolution
-                            # success so embed_fact always runs.
-                            _embed_targets.append((str(fact_obj.id), fact_obj.content))
-
-                            input_fact = content_to_fact.get(fact_obj.content)
-                            if input_fact is None:
-                                continue  # guard against logic errors
-
-                            # ── Also persist to graph_relationships ──────────
-                            # When both entity IDs are resolved, materialize
-                            # the relationship in the graph for traversal queries.
-                            subj_id = input_fact.get("subject_entity_id")
-                            obj_id = input_fact.get("object_entity_id")
-
-                            # ── Live entity lookup fallback ────────────────
-                            # extract_entities always completes before this
-                            # worker runs (it chains after via enqueue), so
-                            # entities are guaranteed to be in the DB.
-                            # If the graph backend is unavailable, log the
-                            # error and continue — fact persistence to
-                            # PostgreSQL is the primary concern.
-                            if subj_id is None:
-                                try:
-                                    subj_node = await entity_repo.get_entity_by_name(
-                                        org_id=uuid.UUID(org_id),
-                                        project_id=uuid.UUID(project_id),
-                                        name=input_fact["subject"],
-                                    )
-                                except GraphBackendUnavailableError:
-                                    subj_node = None
-                                    logger.error(
-                                        "fact_extraction.graph_backend_unavailable",
-                                        episode_id=episode_id,
-                                        operation="get_entity_by_name",
-                                        role="subject",
-                                        entity_name=input_fact["subject"],
-                                        exc_info=True,
-                                    )
-                                if subj_node is not None:
-                                    subj_id = uuid.UUID(subj_node["id"])
-                                    input_fact["subject_entity_id"] = subj_id
-                                    logger.info(
-                                        "fact_extraction.live_entity_resolved",
-                                        episode_id=episode_id,
-                                        entity_name=input_fact["subject"],
-                                        role="subject",
-                                    )
-
-                            if obj_id is None:
-                                try:
-                                    obj_node = await entity_repo.get_entity_by_name(
-                                        org_id=uuid.UUID(org_id),
-                                        project_id=uuid.UUID(project_id),
-                                        name=input_fact["object"],
-                                    )
-                                except GraphBackendUnavailableError:
-                                    obj_node = None
-                                    logger.error(
-                                        "fact_extraction.graph_backend_unavailable",
-                                        episode_id=episode_id,
-                                        operation="get_entity_by_name",
-                                        role="object",
-                                        entity_name=input_fact["object"],
-                                        exc_info=True,
-                                    )
-                                if obj_node is not None:
-                                    obj_id = uuid.UUID(obj_node["id"])
-                                    input_fact["object_entity_id"] = obj_id
-                                    logger.info(
-                                        "fact_extraction.live_entity_resolved",
-                                        episode_id=episode_id,
-                                        entity_name=input_fact["object"],
-                                        role="object",
-                                    )
-
-                            if subj_id is not None and obj_id is not None:
-                                try:
-                                    await entity_repo.upsert_relationship(
-                                        subject=input_fact["subject"],
-                                        predicate=input_fact["predicate"],
-                                        obj=input_fact["object"],
-                                        org_id=uuid.UUID(org_id),
-                                        project_id=uuid.UUID(project_id),
-                                    )
-                                except GraphBackendUnavailableError:
-                                    # Non-fatal: fact is already persisted in
-                                    # PostgreSQL, graph relationship is secondary.
-                                    logger.error(
-                                        "fact_extraction.graph_backend_unavailable",
-                                        episode_id=episode_id,
-                                        operation="upsert_relationship",
-                                        subject=input_fact["subject"],
-                                        predicate=input_fact["predicate"],
-                                        object=input_fact["object"],
-                                        exc_info=True,
-                                    )
-
-            # Set enrichment bit after fact persistence, inside the same
-            # transaction — rollback-safe.
-            episode_repo = EpisodeRepository(db)
-            await episode_repo.apply_enrichment_bits(
-                uuid.UUID(episode_id), ENRICHMENT_FACTS
+            # Resolve graph backend for this org's persistence session.
+            backend = await resolve_graph_backend(
+                ctx,
+                uuid.UUID(org_id),
+                db,
             )
+
+            repo = FactRepository(db)
+            from repositories.entity_repository import (
+                EntityRepository as _EntityRepo,
+            )
+
+            entity_repo = _EntityRepo(db=db, graph_backend=backend)
+            episode_repo = EpisodeRepository(db)
+            arq_redis = ctx.get("redis") if isinstance(ctx, dict) else None
+
+            persisted_ids = await process_facts_output(
+                db=db,
+                graph_backend=backend,
+                entity_repo=entity_repo,
+                fact_repo=repo,
+                episode_repo=episode_repo,
+                org_id=org_id,
+                episode_id=episode_id,
+                project_id=project_id,
+                session_id=session_id or "",
+                user_id=user_id,
+                trace_id=trace_id,
+                parsed=parsed,
+                known_entities=known_entities,
+                existing_facts=existing_facts,
+                arq_redis=arq_redis,
+            )
+
             await db.commit()
     finally:
         if _own_engine:
             await engine.dispose()
 
-    # ── 5. Chain embed_fact for each persisted fact ──────────────────────────
-    # Runs after the enrichment bit is committed.  Failures here are
-    # non-blocking — the embed_fact task will re-pull content from the DB
-    # on its own retry cycle.
-    if _embed_targets:
-        try:
-            from services.worker.worker_settings import get_queue_name
-            from services.worker.worker_settings import settings as w_settings
-
-            arq_redis = ctx.get("redis") if isinstance(ctx, dict) else None
-            if arq_redis is not None:
-                for fact_id, fact_content in _embed_targets:
-                    await arq_redis.enqueue_job(
-                        "embed_fact",
-                        fact_id=fact_id,
-                        org_id=org_id,
-                        content=fact_content,
-                        trace_id=trace_id,
-                        _queue_name=get_queue_name(w_settings.ENV, "high"),
-                    )
-                    logger.info(
-                        "fact_extraction.embed_enqueued",
-                        episode_id=episode_id,
-                        fact_id=fact_id,
-                    )
-            else:
-                logger.warning(
-                    "fact_extraction.no_arq_redis",
-                    episode_id=episode_id,
-                )
-        except Exception:
-            logger.warning(
-                "fact_extraction.embed_enqueue_failed",
-                episode_id=episode_id,
-                org_id=org_id,
-                count=len(_embed_targets),
-                exc_info=True,
-            )
-            # Non-blocking — fact extraction already committed successfully.
-
-    if persisted:
+    # ── Logging ──────────────────────────────────────────────────────────────
+    if persisted_ids:
         logger.info(
             "fact_extraction.completed",
             episode_id=episode_id,
             project_id=project_id,
-            facts=persisted,
+            facts=len(persisted_ids),
         )
     else:
         logger.info(
@@ -755,3 +579,244 @@ def _deduplicate_facts(
         deduped.append(nf)
 
     return deduped
+
+
+# ── Public helper (exported for Wave 1d combined-worker refactor) ─────────────
+
+
+async def process_facts_output(
+    db: AsyncSession,
+    graph_backend: GraphBackend | None,
+    entity_repo: EntityRepository | None,
+    fact_repo: FactRepository,
+    episode_repo: EpisodeRepository | None,
+    org_id: str,
+    episode_id: str,
+    project_id: str,
+    session_id: str,
+    user_id: str,
+    trace_id: str,
+    parsed: FactExtractionOutput,
+    known_entities: list[dict],
+    existing_facts: list[dict],
+    arq_redis: ArqRedis | None = None,
+) -> list[str]:
+    """Process and persist fact extraction output from LLM.
+
+    Filters by confidence, resolves entity references, deduplicates
+    against existing facts, persists new facts, applies enrichment bits,
+    and optionally chains embed_fact jobs.
+
+    Does NOT manage transactions — caller is responsible for commit/rollback
+    of *db*.
+
+    Args:
+        db: Active database session (caller manages commit/rollback).
+        graph_backend: Resolved graph backend for relationship upsert.
+            Can be None; graph operations are skipped in that case.
+        entity_repo: Entity repository for live entity lookup fallback
+            and graph relationship upsert.  Can be None; graph operations
+            are skipped in that case.
+        fact_repo: Fact repository for batch_create_or_skip.
+        episode_repo: Optional episode repository.  If provided, sets
+            ``ENRICHMENT_FACTS`` bit on the episode inside the transaction.
+        org_id: Organization UUID string.
+        episode_id: Episode UUID string.
+        project_id: Project UUID string.
+        session_id: Session UUID string.
+        user_id: User UUID string (owner of the extracted facts).
+        trace_id: Trace/job ID string for log correlation.
+        parsed: The validated ``FactExtractionOutput`` from the LLM.
+        known_entities: List of known entity dicts for entity resolution.
+        existing_facts: List of existing fact dicts for deduplication.
+        arq_redis: Optional ARQ Redis client.  If provided, chains an
+            ``embed_fact`` job per persisted fact (non-blocking — failures
+            are logged as warnings and do not propagate).
+
+    Returns:
+        List of persisted fact UUID strings (empty if nothing was persisted).
+
+    Raises:
+        Various DB errors on persistence failure.
+    """
+    facts: list[dict] = [f.model_dump() for f in parsed.facts]
+    if not facts:
+        return []
+
+    valid_facts = _filter_facts(facts)
+    if not valid_facts:
+        return []
+
+    resolved_facts = _resolve_fact_entities(valid_facts, known_entities)
+    resolved_facts = _deduplicate_facts(resolved_facts, existing_facts)
+    if not resolved_facts:
+        return []
+
+    # ── Batch-persist all new facts ─────────────────────────────────────────
+    new_facts = await fact_repo.batch_create_or_skip(
+        facts=resolved_facts,
+        user_id=uuid.UUID(user_id),
+        organization_id=uuid.UUID(org_id),
+        project_id=uuid.UUID(project_id),
+        source_episode_id=uuid.UUID(episode_id),
+    )
+
+    # Build a lookup from content string → input fact dict to match returned
+    # Fact ORM objects back to their original input for entity resolution
+    # and graph upserts.
+    content_to_fact: dict[str, dict] = {
+        f"{f['subject']} {f['predicate']} {f['object']}": f
+        for f in resolved_facts
+    }
+
+    persisted_ids: list[str] = []
+
+    duplicates_count = len(resolved_facts) - len(new_facts)
+    if duplicates_count:
+        logger.info(
+            "fact_extraction.duplicates_skipped",
+            episode_id=episode_id,
+            count=duplicates_count,
+        )
+
+    # ── Post-insert per-fact processing ─────────────────────────────────────
+    # Entity resolution fallback + graph relationship materialization for
+    # newly created facts only.
+    for fact_obj in new_facts:
+        persisted_ids.append(str(fact_obj.id))
+
+        input_fact = content_to_fact.get(fact_obj.content)
+        if input_fact is None:
+            continue  # guard against logic errors
+
+        subj_id: uuid.UUID | None = input_fact.get("subject_entity_id")
+        obj_id: uuid.UUID | None = input_fact.get("object_entity_id")
+
+        # ── Live entity lookup fallback ──────────────────────────────────
+        # extract_entities always completes before this worker runs (it
+        # chains after via enqueue), so entities are guaranteed to be in
+        # the DB.  If the graph backend is unavailable, log the error and
+        # continue — fact persistence to PostgreSQL is the primary concern.
+        if subj_id is None and entity_repo is not None:
+            try:
+                subj_node = await entity_repo.get_entity_by_name(
+                    org_id=uuid.UUID(org_id),
+                    project_id=uuid.UUID(project_id),
+                    name=input_fact["subject"],
+                )
+            except GraphBackendUnavailableError:
+                subj_node = None
+                logger.error(
+                    "fact_extraction.graph_backend_unavailable",
+                    episode_id=episode_id,
+                    operation="get_entity_by_name",
+                    role="subject",
+                    entity_name=input_fact["subject"],
+                    exc_info=True,
+                )
+            if subj_node is not None:
+                subj_id = uuid.UUID(subj_node["id"])
+                input_fact["subject_entity_id"] = subj_id
+                logger.info(
+                    "fact_extraction.live_entity_resolved",
+                    episode_id=episode_id,
+                    entity_name=input_fact["subject"],
+                    role="subject",
+                )
+
+        if obj_id is None and entity_repo is not None:
+            try:
+                obj_node = await entity_repo.get_entity_by_name(
+                    org_id=uuid.UUID(org_id),
+                    project_id=uuid.UUID(project_id),
+                    name=input_fact["object"],
+                )
+            except GraphBackendUnavailableError:
+                obj_node = None
+                logger.error(
+                    "fact_extraction.graph_backend_unavailable",
+                    episode_id=episode_id,
+                    operation="get_entity_by_name",
+                    role="object",
+                    entity_name=input_fact["object"],
+                    exc_info=True,
+                )
+            if obj_node is not None:
+                obj_id = uuid.UUID(obj_node["id"])
+                input_fact["object_entity_id"] = obj_id
+                logger.info(
+                    "fact_extraction.live_entity_resolved",
+                    episode_id=episode_id,
+                    entity_name=input_fact["object"],
+                    role="object",
+                )
+
+        # ── Graph relationship upsert ────────────────────────────────────
+        # When both entity IDs are resolved, materialize the relationship
+        # in the graph for traversal queries.
+        if subj_id is not None and obj_id is not None and entity_repo is not None:
+            try:
+                await entity_repo.upsert_relationship(
+                    subject=input_fact["subject"],
+                    predicate=input_fact["predicate"],
+                    obj=input_fact["object"],
+                    org_id=uuid.UUID(org_id),
+                    project_id=uuid.UUID(project_id),
+                )
+            except GraphBackendUnavailableError:
+                # Non-fatal: fact is already persisted in PostgreSQL,
+                # graph relationship is secondary.
+                logger.error(
+                    "fact_extraction.graph_backend_unavailable",
+                    episode_id=episode_id,
+                    operation="upsert_relationship",
+                    subject=input_fact["subject"],
+                    predicate=input_fact["predicate"],
+                    object=input_fact["object"],
+                    exc_info=True,
+                )
+
+    # ── Enrichment bit ──────────────────────────────────────────────────────
+    # Set after fact persistence, inside the same transaction —
+    # rollback-safe.  Only applied when an episode_repo is provided.
+    if episode_repo is not None:
+        await episode_repo.apply_enrichment_bits(
+            uuid.UUID(episode_id), ENRICHMENT_FACTS
+        )
+
+    await db.flush()
+
+    # ── Chain embed_fact per persisted fact ─────────────────────────────────
+    # Runs after flush but before the caller commits.  Failures here are
+    # non-blocking — the embed_fact task re-pulls content from the DB on
+    # its own retry cycle.
+    if arq_redis is not None and persisted_ids:
+        try:
+            from services.worker.worker_settings import get_queue_name
+            from services.worker.worker_settings import settings as w_settings
+
+            for fact_obj in new_facts:
+                await arq_redis.enqueue_job(
+                    "embed_fact",
+                    fact_id=str(fact_obj.id),
+                    org_id=org_id,
+                    content=fact_obj.content,
+                    trace_id=trace_id,
+                    _queue_name=get_queue_name(w_settings.ENV, "high"),
+                )
+                logger.info(
+                    "fact_extraction.embed_enqueued",
+                    episode_id=episode_id,
+                    fact_id=str(fact_obj.id),
+                )
+        except Exception:
+            logger.warning(
+                "fact_extraction.embed_enqueue_failed",
+                episode_id=episode_id,
+                org_id=org_id,
+                count=len(persisted_ids),
+                exc_info=True,
+            )
+            # Non-blocking — fact extraction already committed via flush.
+
+    return persisted_ids

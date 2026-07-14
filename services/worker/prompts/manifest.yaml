@@ -76,3 +76,9 @@ templates:
     type: observation_generation
     description: Generate natural-language description from graph-topology patterns
     is_default_for_type: true
+
+  - file: enrich_episode_v1.jinja2
+    name: enrich_episode_v1
+    type: enrich_episode
+    description: Combined episode enrichment (classification + entities + facts + structured) in a single LLM call
+    is_default_for_type: true

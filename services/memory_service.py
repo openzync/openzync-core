@@ -63,12 +63,9 @@ CONTEXT_CACHE_PATTERN = "ctx:{org_id}:{project_id}:*"
 """Redis key pattern for context cache entries to invalidate."""
 
 ARQ_TASKS = [
-    "classify_dialog",
+    "enrich_episode",  # replaces classify_dialog, extract_entities, extract_facts, extract_structured
     "link_entities_to_episode",
-    "extract_entities",
-    "extract_facts",
     "embed_episode",
-    "extract_structured",
 ]
 """ARQ worker task names enqueued after a successful ingestion."""
 
@@ -628,23 +625,13 @@ class MemoryService:
                     "metadata": metadata,
                 }
 
+                # Single combined enrichment — replaces 4 LLM workers
                 await arq_pool.enqueue(
-                    "classify_dialog",
+                    "enrich_episode",
                     queue_name=qname,
                     **common,
                     session_id=session_id,
-                )
-                await arq_pool.enqueue(
-                    "extract_entities",
-                    queue_name=qname,
-                    **common,
-                    session_id=session_id,
-                )
-                await arq_pool.enqueue(
-                    "extract_facts",
-                    queue_name=qname,
-                    **common,
-                    session_id=session_id,
+                    role=role,
                 )
                 await arq_pool.enqueue("embed_episode", queue_name=qname, **common)
                 await arq_pool.enqueue(
@@ -652,12 +639,6 @@ class MemoryService:
                     queue_name=_arq_queue_name("low"),
                     **common,
                     role=role,
-                )
-                await arq_pool.enqueue(
-                    "extract_structured",
-                    queue_name=qname,
-                    **common,
-                    session_id=session_id,
                 )
 
             logger.info(

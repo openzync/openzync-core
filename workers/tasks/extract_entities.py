@@ -15,6 +15,14 @@ from __future__ import annotations
 
 import re
 import uuid
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from packages.graph_backend.interface import GraphBackend
+    from repositories.entity_repository import EntityRepository
+    from repositories.episode_repository import EpisodeRepository
+    from schemas.llm_outputs import EntityExtractionOutput
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 import structlog
 
@@ -225,6 +233,123 @@ async def extract_entities(
         raise  # Let the @with_retry decorator handle transient failures
 
     parsed = response.validated_data  # EntityExtractionOutput instance
+
+    # ── Post-processing via extracted helper ────────────────────────────────
+    # Persist entities, relationships, and set enrichment bits.
+    try:
+        async with session_factory() as _db:
+            backend = await resolve_graph_backend(
+                ctx if isinstance(ctx, dict) else {},
+                uuid.UUID(org_id),
+                _db,
+            )
+            if backend is None:
+                raise GraphBackendUnavailableError(
+                    "Graph backend unavailable for entity extraction.",
+                    detail={"org_id": org_id},
+                )
+            entity_repo = EntityRepository(db=_db, graph_backend=backend)
+            episode_repo = EpisodeRepository(_db)
+
+            entity_name_map = await process_entities_output(
+                db=_db,
+                graph_backend=backend,
+                entity_repo=entity_repo,
+                episode_repo=episode_repo,
+                org_id=org_id,
+                episode_id=episode_id,
+                project_id=project_id,
+                parsed=parsed,
+                entity_types=entity_types,
+            )
+
+            # ⚠️ Commit is required — SQLAlchemy AsyncSession does NOT
+            # auto-commit when the context manager exits. Without this,
+            # all entity/relationship writes are silently rolled back.
+            await _db.commit()
+    finally:
+        if _own_engine:
+            await engine.dispose()
+
+    if entity_name_map:
+        logger.info(
+            "entity_extraction.completed",
+            episode_id=episode_id,
+            entities=len(entity_name_map),
+        )
+    else:
+        logger.info("entity_extraction.done", episode_id=episode_id)
+
+    # ── 10. Enqueue fact extraction (now that entities are committed) ──
+    # extract_facts must run AFTER entities are in the DB so that entity
+    # IDs can be resolved for graph_relationship edges.  Chaining via
+    # enqueue eliminates the race condition.
+    try:
+        from services.worker.worker_settings import get_queue_name
+        from services.worker.worker_settings import settings as w_settings
+
+        arq_redis = ctx.get("redis") if isinstance(ctx, dict) else None
+        if arq_redis is not None:
+            await arq_redis.enqueue_job(
+                "extract_facts",
+                episode_id=episode_id,
+                org_id=org_id,
+                project_id=project_id,
+                content=content,
+                session_id=session_id,
+                trace_id=trace_id,
+                metadata=metadata,
+                _queue_name=get_queue_name(w_settings.ENV, "high"),
+            )
+    except Exception:
+        logger.warning(
+            "entity_extraction.facts_enqueue_failed",
+            episode_id=episode_id,
+            exc_info=True,
+        )
+        raise  # Propagate so ARQ retry mechanism handles it
+
+
+# ── Shared post-processing (exported for combined worker) ──────────────────
+
+
+async def process_entities_output(
+    db: AsyncSession,
+    graph_backend: GraphBackend,
+    entity_repo: EntityRepository,
+    episode_repo: EpisodeRepository | None,
+    org_id: str,
+    episode_id: str,
+    project_id: str,
+    parsed: EntityExtractionOutput,
+    entity_types: list[str],
+) -> dict[str, str]:
+    """Process and persist entity extraction output from LLM.
+
+    Filters pronouns, validates entity types, upserts entities and
+    relationships in the graph backend, and links entities to the episode.
+    Does NOT manage transactions — caller is responsible for commit/rollback.
+
+    Args:
+        db: Active database session.
+        graph_backend: Resolved graph backend for entity/relationship CRUD.
+        entity_repo: Entity repository for upsert operations.
+        episode_repo: Optional episode repository for setting enrichment bits.
+            If None, bits are not set (caller manages this).
+        org_id: Organization UUID string.
+        episode_id: Episode UUID string.
+        project_id: Project UUID string.
+        parsed: The validated EntityExtractionOutput from the LLM.
+        entity_types: List of allowed entity type strings from org config.
+
+    Returns:
+        A dict mapping entity names to their UUID strings, for use by
+        downstream fact processing.
+
+    Raises:
+        Various DB/graph errors on persistence failure.
+    """
+    # ── 1. Convert parsed output to mutable dicts ──────────────────────────
     entities: list[dict] = [e.model_dump() for e in parsed.entities]
     relationships: list[dict] = [r.model_dump() for r in parsed.relationships]
 
@@ -348,7 +473,7 @@ async def extract_entities(
         relationships=len(relationships),
     )
 
-    # ── 5. Validate entity types against allowed ontology ────────────────
+    # ── 2. Validate entity types against allowed ontology ────────────────
     allowed_types: set[str] = set(entity_types) | {"Custom"}
     for entity in entities:
         raw_type = entity.get("type")
@@ -363,150 +488,122 @@ async def extract_entities(
             )
             entity["type"] = "Custom"
 
-    # ── 6. Persist entities to graph (if available) ─────────────────────
-    # Uses the shared engine from worker ctx (set earlier in this function).
-
+    # ── 3. Upsert entities to graph ────────────────────────────────────
     name_to_node: dict[str, dict] = {}
 
-    # ── Failure counters for enrichment-bit gating ──────────────────────
+    # ── Failure counters for enrichment-bit gating ─────────────────────
     # Note: entity failures now raise GraphBackendUnavailableError and trigger
     # retry via @with_retry. Only relationship failures (entity-not-found in
     # graph) are counted here since they are non-fatal edge cases.
     relationship_failure_count: int = 0
     relationship_skip_count: int = 0
 
-    try:
-        async with session_factory() as _db:
-            # Resolve per-org graph backend for entity CRUD.
-            backend = await resolve_graph_backend(ctx, uuid.UUID(org_id), _db)
-            if backend is None:
-                raise GraphBackendUnavailableError(
-                    "Graph backend unavailable for entity extraction.",
-                    detail={"org_id": org_id},
-                )
-            entity_repo = EntityRepository(db=_db, graph_backend=backend)
+    for entity in entities:
+        entity_name = entity.get("name", "")
+        entity_type = entity.get("type", "Custom")
+        mentions: list[str] = entity.get("mentions", [])
 
-            for entity in entities:
-                entity_name = entity.get("name", "")
-                entity_type = entity.get("type", "Custom")
-                mentions: list[str] = entity.get("mentions", [])
+        # ── Normalize entity name casing ────────────────────────────
+        normalized_name = entity_name
+        if mentions:
+            first_mention = mentions[0].strip()
+            if first_mention and len(first_mention) > 1:
+                normalized_name = first_mention
+        elif entity_name and entity_name.islower():
+            normalized_name = entity_name.capitalize()
 
-                # ── Normalize entity name casing ─────────────────────────
-                # Use the first mention's casing if available (it preserves
-                # the user's original casing), otherwise capitalize the
-                # first letter of a lowercase name.
-                normalized_name = entity_name
-                if mentions:
-                    first_mention = mentions[0].strip()
-                    # Only override if the mention looks like a user-typed
-                    # name (not a generic noun) — trust the LLM's name field
-                    # for the canonical form but prefer title-case mentions.
-                    if first_mention and len(first_mention) > 1:
-                        normalized_name = first_mention
-                elif entity_name and entity_name.islower():
-                    normalized_name = entity_name.capitalize()
+        summary = (
+            f"{normalized_name} ({entity_type}) — "
+            f"mentioned as: {', '.join(set(mentions))}"
+            if mentions
+            else f"{normalized_name} ({entity_type})"
+        )
 
-                summary = (
-                    f"{normalized_name} ({entity_type}) — "
-                    f"mentioned as: {', '.join(set(mentions))}"
-                    if mentions
-                    else f"{normalized_name} ({entity_type})"
-                )
+        node = await entity_repo.upsert_entity(
+            org_id=uuid.UUID(org_id),
+            project_id=uuid.UUID(project_id),
+            name=normalized_name,
+            entity_type=entity_type,
+            summary=summary,
+        )
+        name_to_node[normalized_name] = node
+        # Also key by original name as fallback for callers
+        # that might use the raw LLM output
+        if normalized_name != entity_name:
+            name_to_node[entity_name] = node
 
-                node = await entity_repo.upsert_entity(
+    # ── 4. Upsert relationships to graph ─────────────────────────────
+    for rel in relationships:
+        subject = rel.get("subject", "")
+        predicate = rel.get("predicate", "")
+        obj = rel.get("object", "")
+
+        if not subject or not predicate or not obj:
+            continue
+
+        # ── On-the-fly entity recovery pass ────────────────────────
+        # If the LLM included a name in a relationship but didn't
+        # declare it in the entities array, auto-create it as a
+        # "Custom" type entity so the graph edge is not lost.
+        for name in (subject, obj):
+            if name not in name_to_node:
+                fallback_node = await entity_repo.upsert_entity(
                     org_id=uuid.UUID(org_id),
                     project_id=uuid.UUID(project_id),
-                    name=normalized_name,
-                    entity_type=entity_type,
-                    summary=summary,
+                    name=name,
+                    entity_type="Custom",
+                    summary=(
+                        f"Auto-created from relationship: "
+                        f"{subject} {predicate} {obj}"
+                    ),
                 )
-                # Key by normalized name so relationship lookups work
-                name_to_node[normalized_name] = node
-                # Also key by original name as fallback for callers
-                # that might use the raw LLM output
-                if normalized_name != entity_name:
-                    name_to_node[entity_name] = node
-
-            # ── 7. Persist relationships to graph ─────────────────────────
-            for rel in relationships:
-                subject = rel.get("subject", "")
-                predicate = rel.get("predicate", "")
-                obj = rel.get("object", "")
-
-                if not subject or not predicate or not obj:
-                    continue
-
-                # ── On-the-fly entity recovery pass ─────────────────────
-                # If the LLM included a name in a relationship but didn't
-                # declare it in the entities array, auto-create it as a
-                # "Custom" type entity so the graph edge is not lost.
-                for name in (subject, obj):
-                    if name not in name_to_node:
-                        fallback_node = await entity_repo.upsert_entity(
-                            org_id=uuid.UUID(org_id),
-                            project_id=uuid.UUID(project_id),
-                            name=name,
-                            entity_type="Custom",
-                            summary=(
-                                f"Auto-created from relationship: "
-                                f"{subject} {predicate} {obj}"
-                            ),
-                        )
-                        name_to_node[name] = fallback_node
-                        logger.info(
-                            "entity_extraction.relationship_entity_recovered",
-                            episode_id=episode_id,
-                            entity_name=name,
-                            relationship=f"{subject} {predicate} {obj}",
-                        )
-
-                if subject in name_to_node and obj in name_to_node:
-                    result = await entity_repo.upsert_relationship(
-                        subject=subject,
-                        predicate=predicate,
-                        obj=obj,
-                        org_id=uuid.UUID(org_id),
-                        project_id=uuid.UUID(project_id),
-                    )
-                    if result is None:
-                        relationship_failure_count += 1
-                else:
-                    relationship_skip_count += 1
-                    logger.warning(
-                        "entity_extraction.relationship_skipped_missing_entity",
-                        episode_id=episode_id,
-                        subject=subject,
-                        predicate=predicate,
-                        object=obj,
-                        subject_in_graph=subject in name_to_node,
-                        object_in_graph=obj in name_to_node,
-                    )
-
-            # ── 8. Link entities to this episode via graph backend ─────────
-            # This replaces the separate link_entities_to_episode ARQ task.  Linking
-            # happens inline so it's always consistent with entity extraction.
-            episode_uuid = uuid.UUID(episode_id)
-            for entity_name, entity_node in name_to_node.items():
-                await backend.link_entity_to_episode(
-                    org_id=uuid.UUID(org_id),
-                    project_id=uuid.UUID(project_id),
-                    episode_id=episode_uuid,
-                    entity_id=uuid.UUID(entity_node["id"]),
+                name_to_node[name] = fallback_node
+                logger.info(
+                    "entity_extraction.relationship_entity_recovered",
+                    episode_id=episode_id,
+                    entity_name=name,
+                    relationship=f"{subject} {predicate} {obj}",
                 )
 
-            # ── 9. Set enrichment_status bit 0 inside the same transaction ──
-            episode_repo = EpisodeRepository(_db)
-            await episode_repo.apply_enrichment_bits(
-                uuid.UUID(episode_id), ENRICHMENT_ENTITIES
+        if subject in name_to_node and obj in name_to_node:
+            result = await entity_repo.upsert_relationship(
+                subject=subject,
+                predicate=predicate,
+                obj=obj,
+                org_id=uuid.UUID(org_id),
+                project_id=uuid.UUID(project_id),
+            )
+            if result is None:
+                relationship_failure_count += 1
+        else:
+            relationship_skip_count += 1
+            logger.warning(
+                "entity_extraction.relationship_skipped_missing_entity",
+                episode_id=episode_id,
+                subject=subject,
+                predicate=predicate,
+                object=obj,
+                subject_in_graph=subject in name_to_node,
+                object_in_graph=obj in name_to_node,
             )
 
-            # ⚠️ Commit is required — SQLAlchemy AsyncSession does NOT
-            # auto-commit when the context manager exits. Without this,
-            # all entity/relationship writes are silently rolled back.
-            await _db.commit()
-    finally:
-        if _own_engine:
-            await engine.dispose()
+    # ── 5. Link entities to this episode via graph backend ──────────
+    episode_uuid = uuid.UUID(episode_id)
+    for entity_node in name_to_node.values():
+        await graph_backend.link_entity_to_episode(
+            org_id=uuid.UUID(org_id),
+            project_id=uuid.UUID(project_id),
+            episode_id=episode_uuid,
+            entity_id=uuid.UUID(entity_node["id"]),
+        )
+
+    # ── 6. Set enrichment_status bit 0 (if repo provided) ──────────
+    if episode_repo is not None:
+        await episode_repo.apply_enrichment_bits(
+            uuid.UUID(episode_id), ENRICHMENT_ENTITIES
+        )
+
+    await db.flush()
 
     logger.info(
         "entity_extraction.persisted",
@@ -518,41 +615,4 @@ async def extract_entities(
         relationship_skip_count=relationship_skip_count,
     )
 
-    entity_count = len(entities)
-    if entity_count:
-        logger.info(
-            "entity_extraction.completed",
-            episode_id=episode_id,
-            entities=entity_count,
-        )
-    else:
-        logger.info("entity_extraction.done", episode_id=episode_id)
-
-    # ── 10. Enqueue fact extraction (now that entities are committed) ──
-    # extract_facts must run AFTER entities are in the DB so that entity
-    # IDs can be resolved for graph_relationship edges.  Chaining via
-    # enqueue eliminates the race condition.
-    try:
-        from services.worker.worker_settings import get_queue_name
-        from services.worker.worker_settings import settings as w_settings
-
-        arq_redis = ctx.get("redis") if isinstance(ctx, dict) else None
-        if arq_redis is not None:
-            await arq_redis.enqueue_job(
-                "extract_facts",
-                episode_id=episode_id,
-                org_id=org_id,
-                project_id=project_id,
-                content=content,
-                session_id=session_id,
-                trace_id=trace_id,
-                metadata=metadata,
-                _queue_name=get_queue_name(w_settings.ENV, "high"),
-            )
-    except Exception:
-        logger.warning(
-            "entity_extraction.facts_enqueue_failed",
-            episode_id=episode_id,
-            exc_info=True,
-        )
-        raise  # Propagate so ARQ retry mechanism handles it
+    return {name: node["id"] for name, node in name_to_node.items()}
