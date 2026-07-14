@@ -33,7 +33,9 @@ PG_RETRY_DELAY=2
 log() { echo "[init_postgres] $(date -Iseconds) $*"; }
 
 # ── Tool check ───────────────────────────────────────────────────────────────
-for _cmd in psql pg_isready openssl python3; do
+# python3 is intentionally omitted — pgvector/pgvector:pg15 stopped shipping it.
+# JSON credentials are written using pure shell (see section 11).
+for _cmd in psql pg_isready openssl; do
     if ! command -v "${_cmd}" >/dev/null 2>&1; then
         log "FATAL: Required tool '${_cmd}' is not available in PATH."
         exit 1
@@ -162,60 +164,24 @@ ALTER DEFAULT PRIVILEGES FOR ROLE ${MIGRATOR_USER} IN SCHEMA public GRANT SELECT
 ALTER DEFAULT PRIVILEGES FOR ROLE ${MIGRATOR_USER} IN SCHEMA public GRANT USAGE, SELECT ON SEQUENCES TO ${APP_USER};
 EOSQL
 
-# ── 11. Write credentials JSON (mode 0600, built safely via python3) ────────
+# ── 11. Write credentials JSON (mode 0600, built safely via pure shell) ─────
 GENERATED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 log "Writing credentials to ${CREDS_FILE} (mode 0600) ..."
-python3 - "${CREDS_FILE}" \
-    "${MIGRATOR_USER}" \
-    "${APP_USER}" \
-    "${OP_MIGRATOR_PASSWORD}" \
-    "${OP_APP_PASSWORD}" \
-    "${POSTGRES_HOST}" \
-    "${POSTGRES_PORT}" \
-    "${DB_NAME}" \
-    "${GENERATED_AT}" <<-'PYEOF'
-"""
-Build the credentials JSON safely.
-
-The script-injected argv values are passed positionally (not interpolated into
-Python source), so no escaping is required. The file is opened with mode 0o600
-atomically via os.open() to avoid any race with the process umask.
-"""
-import json
-import os
-import sys
-
-creds_file      = sys.argv[1]
-migrator_user   = sys.argv[2]
-app_user        = sys.argv[3]
-migrator_pw     = sys.argv[4]
-app_pw          = sys.argv[5]
-db_host         = sys.argv[6]
-db_port         = int(sys.argv[7])
-db_name         = sys.argv[8]
-generated_at    = sys.argv[9]
-
-payload = {
-    "migrator": migrator_pw,
-    "app": app_pw,
-    "migrator_user": migrator_user,
-    "app_user": app_user,
-    "db_host": db_host,
-    "db_port": db_port,
-    "db_name": db_name,
-    "generated_at": generated_at,
-}
-
-fd = os.open(
-    creds_file,
-    os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
-    0o600,
-)
-with os.fdopen(fd, "w") as f:
-    json.dump(payload, f, indent=2)
-    f.write("\n")
-PYEOF
+# Build JSON using shell — avoids python3 dependency.
+# Atomic write: write to .tmp, then mv (rename is atomic on same filesystem).
+{
+  echo "{"
+  echo "  \"migrator\": \"${OP_MIGRATOR_PASSWORD}\","
+  echo "  \"app\": \"${OP_APP_PASSWORD}\","
+  echo "  \"migrator_user\": \"${MIGRATOR_USER}\","
+  echo "  \"app_user\": \"${APP_USER}\","
+  echo "  \"db_host\": \"${POSTGRES_HOST}\","
+  echo "  \"db_port\": ${POSTGRES_PORT},"
+  echo "  \"db_name\": \"${DB_NAME}\","
+  echo "  \"generated_at\": \"${GENERATED_AT}\""
+  echo "}"
+} > "${CREDS_FILE}.tmp" && mv "${CREDS_FILE}.tmp" "${CREDS_FILE}"
 chmod 600 "${CREDS_FILE}"
 
 # ── 12. Clear passwords from memory ─────────────────────────────────────────
