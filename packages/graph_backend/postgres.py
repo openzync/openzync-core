@@ -1231,17 +1231,32 @@ class PostgresGraphBackend(GraphBackend):
         try:
             result = await self._db.execute(
                 text("""
-                    SELECT DISTINCT ge.id, ge.name, ge.entity_type, ge.summary
-                    FROM graph_entities ge
-                    JOIN graph_episode_entities gee ON ge.id = gee.entity_id
-                    JOIN episodes e ON e.id = gee.episode_id
-                    WHERE e.session_id = :session_id
-                      AND e.organization_id = :org_id
-                      AND ge.organization_id = :org_id
-                      AND ge.project_id = :project_id
-                      AND e.is_deleted = false
-                      AND ge.is_merged = false
-                    ORDER BY ge.name
+                    WITH session_entities AS (
+                        SELECT DISTINCT ge.id, ge.name, ge.entity_type, ge.summary
+                        FROM graph_entities ge
+                        JOIN graph_episode_entities gee ON ge.id = gee.entity_id
+                        JOIN episodes e ON e.id = gee.episode_id
+                        WHERE e.session_id = :session_id
+                          AND e.organization_id = :org_id
+                          AND ge.organization_id = :org_id
+                          AND ge.project_id = :project_id
+                          AND e.is_deleted = false
+                          AND ge.is_merged = false
+                    )
+                    SELECT * FROM session_entities
+                    UNION
+                    SELECT ge2.id, ge2.name, ge2.entity_type, ge2.summary
+                    FROM graph_entities ge2
+                    JOIN graph_relationships gr ON gr.target_id = ge2.id
+                    WHERE gr.relationship_type = 'member_of'
+                      AND gr.organization_id = :org_id
+                      AND gr.project_id = :project_id
+                      AND ge2.organization_id = :org_id
+                      AND ge2.project_id = :project_id
+                      AND ge2.entity_type = 'community'
+                      AND ge2.is_merged = false
+                      AND gr.source_id IN (SELECT id FROM session_entities)
+                    ORDER BY name
                 """),
                 {
                     "session_id": str(session_id),

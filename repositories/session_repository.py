@@ -484,8 +484,8 @@ class SessionRepository:
             session_id: The session's UUID.
 
         Returns:
-            A dict with ``message_count``, ``fact_count``, and
-            ``last_message_at``.
+            A dict with ``message_count``, ``fact_count``,
+            ``last_message_at``, and ``pending_enrichment_count``.
         """
         msg_subq = (
             select(func.count(Episode.id))
@@ -513,8 +513,19 @@ class SessionRepository:
             .scalar_subquery()
             .label("last_message_at")
         )
+        pending_enrich_subq = (
+            select(func.count(Episode.id))
+            .where(
+                Episode.session_id == Session.id,
+                Episode.is_deleted.is_(False),
+                Episode.enrichment_status != 63,  # ENRICHMENT_ALL = bits 0-5
+            )
+            .correlate(Session)
+            .scalar_subquery()
+            .label("pending_enrichment_count")
+        )
 
-        stmt = select(msg_subq, fact_subq, last_msg_subq).where(
+        stmt = select(msg_subq, fact_subq, last_msg_subq, pending_enrich_subq).where(
             Session.id == session_id
         )
 
@@ -526,12 +537,14 @@ class SessionRepository:
                 "message_count": 0,
                 "fact_count": 0,
                 "last_message_at": None,
+                "pending_enrichment_count": 0,
             }
 
         return {
             "message_count": row.message_count or 0,
             "fact_count": row.fact_count or 0,
             "last_message_at": row.last_message_at,
+            "pending_enrichment_count": row.pending_enrichment_count or 0,
         }
 
     async def batch_get_stats(

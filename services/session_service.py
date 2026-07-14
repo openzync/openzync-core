@@ -142,6 +142,7 @@ class SessionService:
                 session,
                 message_count=stats["message_count"],
                 fact_count=stats["fact_count"],
+                pending_enrichment_count=stats.get("pending_enrichment_count", 0),
             )
         )
 

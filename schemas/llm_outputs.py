@@ -27,6 +27,8 @@ Usage::
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -136,3 +138,32 @@ class StructuredExtractionOutput(BaseModel):
     """
 
     model_config = ConfigDict(extra="allow")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Combined enrichment output
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class CombinedLLMOutput(BaseModel):
+    """Single LLM response combining all episode enrichment tasks.
+
+    Used by the ``enrich_episode`` worker to produce all enrichment outputs
+    in a single LLM call instead of 4 separate calls.  Each field maps to
+    one of the previously independent LLM responses.
+    """
+
+    classification: ClassificationOutput = Field(default_factory=ClassificationOutput)
+    """Classification result (intent, emotion, valence, arousal)."""
+
+    entities: list[EntityOutput] = Field(default_factory=list)
+    """Named entities extracted from the episode."""
+
+    relationships: list[RelationshipOutput] = Field(default_factory=list)
+    """Directed subject-predicate-object triples between entities."""
+
+    facts: list[FactOutput] = Field(default_factory=list)
+    """Factual knowledge triples with confidence scores."""
+
+    structured_extractions: dict[str, Any] = Field(default_factory=dict)
+    """Org-defined structured extractions keyed by schema name."""

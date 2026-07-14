@@ -14,17 +14,21 @@ No business logic. No database queries.
 
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import GraphBackendUnavailableError
 from dependencies.db import get_db
 from dependencies.org_config import get_org_config
 from dependencies.project_auth import require_project_membership
 from schemas.context import ContextResponse
 from schemas.organization_config import OrgConfigBase
 from services.context_service import ContextService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/v1/projects/{project_id}/context",
@@ -107,8 +111,30 @@ async def get_context(
     # ── Assemble context ────────────────────────────────────────────────
     redis = getattr(request.app.state, "redis", None) if request else None
     dispatcher = request.app.state.graph_backend_dispatcher
-    pool = request.app.state.surreal_connection_pool
-    surreal = await pool.get_or_create(org_id, org_config)
+
+    # Connect to SurrealDB only when the org explicitly configures it.
+    # For postgres or none backends, skip the pool entirely — avoids
+    # unnecessary connections and prevents 503 when SurrealDB isn't running.
+    surreal = None
+    if org_config.graph_backend == "surrealdb":
+        pool = request.app.state.surreal_connection_pool
+        if pool is not None:
+            try:
+                surreal = await pool.get_or_create(org_id, org_config)
+            except Exception as exc:
+                logger.error(
+                    "context.surreal_connection_failed",
+                    extra={
+                        "org_id": str(org_id),
+                        "backend": "surrealdb",
+                        "error": str(exc),
+                    },
+                )
+                raise GraphBackendUnavailableError(
+                    f"SurrealDB connection failed for org {org_id} "
+                    f"with graph_backend='surrealdb': {exc}"
+                ) from exc
+
     graph_backends = dispatcher.create_all_backends(db, org_config, surreal=surreal)
     service = ContextService(
         db, org_id, redis, graph_backends=graph_backends, org_config=org_config

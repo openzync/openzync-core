@@ -67,6 +67,10 @@ class SessionResponse(BaseModel):
         default=0,
         description="Total number of facts extracted from this session's messages.",
     )
+    pending_enrichment_count: int = Field(
+        default=0,
+        description="Number of messages in this session pending enrichment completion.",
+    )
     closed_at: datetime | None = Field(
         default=None,
         description="Timestamp when the session was closed. Null if open.",
