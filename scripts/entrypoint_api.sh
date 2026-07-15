@@ -37,11 +37,14 @@ fi
 
 log "OpenBao Agent secrets ready. Sourcing /run/secrets/system.env ..."
 
-# `set -a` auto-exports every variable assigned during the source — the POSIX
-# equivalent of bash's `source <(envsubst ...)` and works identically.
-set -a
-. /run/secrets/system.env
-set +a
+# Load env file safely — values may contain shell-special chars (e.g. ')'
+# from URL-encoded passwords.  Simple `. file` would fail; this loop reads
+# key=value pairs with 'read -r' and exports with proper quoting.
+while IFS='=' read -r _key _rest || [ -n "$_key" ]; do
+  [ -z "$_key" ] && continue
+  case "$_key" in (\#*) continue ;; esac
+  export "${_key}=${_rest}"
+done < /run/secrets/system.env
 
 # Fallback: if OZ_OPENBAO_ROLE_ID / OZ_OPENBAO_SECRET_ID were not in the
 # system.env (they are NOT part of the system secret), read them from the

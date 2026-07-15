@@ -41,9 +41,15 @@ if [ "$_i" -ge "${TIMEOUT_SEC}" ]; then
 fi
 
 log "OpenBao Agent secrets ready. Sourcing ${SECRETS_FILE} ..."
-set -a
-. "${SECRETS_FILE}"
-set +a
+
+# Load env file safely — values may contain shell-special chars (e.g. ')'
+# from URL-encoded passwords.  Simple `. file` would fail; this loop reads
+# key=value pairs with 'read -r' and exports with proper quoting.
+while IFS='=' read -r _key _rest || [ -n "$_key" ]; do
+  [ -z "$_key" ] && continue
+  case "$_key" in (\#*) continue ;; esac
+  export "${_key}=${_rest}"
+done < "${SECRETS_FILE}"
 
 # Fallback: if OZ_OPENBAO_ROLE_ID / OZ_OPENBAO_SECRET_ID were not in the
 # system.env (they are NOT part of the system secret), read them from the
