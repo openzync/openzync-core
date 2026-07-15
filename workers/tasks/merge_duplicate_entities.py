@@ -29,17 +29,20 @@ Bitmask:
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.organization import Organization
 from models.project import Project
-from packages.graph_backend.interface import GraphBackend
 from workers.backend import resolve_graph_backend
 from workers.tasks.base import with_retry
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from packages.graph_backend.interface import GraphBackend
 
 logger = structlog.get_logger()
 
@@ -135,7 +138,7 @@ async def merge_duplicate_entities(
 
             if org_errors and len(org_errors) == len(org_ids):
                 raise RuntimeError(
-                    f"All {len(org_ids)} orgs failed to merge duplicates: {', '.join(org_errors)}"
+                    f"All {len(org_ids)} orgs failed: {', '.join(org_errors)}"
                 )
 
             logger.info(
@@ -214,7 +217,7 @@ async def _process_org(
     result = await db.execute(
         select(Project.id).where(
             Project.organization_id == org_id,
-            Project.is_archived == False,
+            Project.is_archived.is_(False),
         )
     )
     project_ids = [r[0] for r in result.all()]
@@ -365,7 +368,7 @@ async def _find_duplicate_clusters(
         name_lower = entity["name"].lower().strip()
         name_groups.setdefault(name_lower, []).append(entity)
 
-    for name_lower, group in name_groups.items():
+    for _name_lower, group in name_groups.items():
         if len(group) > 1:
             clusters.append(group)
             for e in group:

@@ -17,15 +17,19 @@ All raw SQL has been removed — every graph operation goes through the
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.organization import Organization
 from models.project import Project
-from packages.graph_backend.interface import GraphBackend
 from workers.backend import resolve_graph_backend
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from packages.graph_backend.interface import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +57,6 @@ async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
         Dict with ``status``, ``orgs_processed``, ``orgs_failed``,
         ``communities_created``.
     """
-    from sqlalchemy.ext.asyncio import AsyncSession
-
     from core.config import settings
     from core.db import get_async_session
 
@@ -124,7 +126,7 @@ async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
 
             if org_errors and len(org_errors) == len(org_ids):
                 raise RuntimeError(
-                    f"All {len(org_ids)} orgs failed to process communities: {', '.join(org_errors)}"
+                    f"All {len(org_ids)} orgs failed: {', '.join(org_errors)}"
                 )
 
             return {
@@ -170,7 +172,7 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
     result = await db.execute(
         select(Project.id).where(
             Project.organization_id == org_id,
-            Project.is_archived == False,
+            Project.is_archived.is_(False),
         )
     )
     project_ids = [r[0] for r in result.all()]
@@ -274,6 +276,7 @@ async def _create_community(
     Uses the graph backend for all persistence — no raw SQL.
 
     Args:
+        ctx: ARQ worker context (used for LLM backend resolution).
         backend: Initialised graph backend for this org.
         db: Database session (for org config resolution).
         org_id: Organization UUID.
@@ -332,7 +335,9 @@ async def _create_community(
             [
                 {
                     "role": "system",
-                    "content": "You are an analyst. Output ONLY the summary text, no preamble.",
+                    "content": (
+                        "You are an analyst. Output ONLY the summary text, no preamble."
+                    ),
                 },
                 {"role": "user", "content": prompt},
             ]
@@ -408,7 +413,10 @@ def _build_community_prompt(
     ]
     for e in entities:
         parts.append(
-            f"- {e.get('name', '?')} ({e.get('type', '?')}): {e.get('summary', '')[:100]}"
+            "- {} ({}): {}".format(
+                e.get("name", "?"), e.get("type", "?"),
+                e.get("summary", "")[:100],
+            )
         )
 
     if relationships:

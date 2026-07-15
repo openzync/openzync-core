@@ -17,10 +17,8 @@ Bitmask:
 
 from __future__ import annotations
 
-import re
 import uuid
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -87,6 +85,7 @@ async def extract_facts(
             Used to fetch previously extracted entities and recent
             conversation turns for pronoun resolution.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
+        metadata: Optional metadata dict forwarded from the enrichment pipeline.
 
     Raises:
         Exception: Re-raises the last LLM or DB error after retry exhaustion
@@ -565,9 +564,7 @@ def _deduplicate_facts(
             if pred in synonyms:
                 candidate_preds.add(canonical)
 
-        if key in existing_pairs:
-            # Check if any candidate predicate overlaps with existing
-            if candidate_preds & existing_pairs[key]:
+        if key in existing_pairs and candidate_preds & existing_pairs[key]:
                 logger.debug(
                     "fact_dedup.duplicate_skipped",
                     subject=nf["subject"],

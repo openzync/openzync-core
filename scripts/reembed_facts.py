@@ -20,6 +20,18 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 logger = logging.getLogger("reembed_facts")
 
 
+# nomic-embed-text context window is 2048 tokens; ~1.3 tok/word
+_MAX_TOKENS = 1500
+
+
+def _truncate(text: str, max_words: int = _MAX_TOKENS) -> str:
+    """Truncate *text* to *max_words* words so it fits the model's context window."""
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    return " ".join(words[:max_words])
+
+
 async def _embed_one(
     sem: asyncio.Semaphore,
     client: httpx.AsyncClient,
@@ -30,9 +42,10 @@ async def _embed_one(
 ) -> tuple[uuid.UUID, list[float] | None]:
     """Embed a single item, rate-limited by *sem*."""
     async with sem:
+        prompt = _truncate(content)
         resp = await client.post(
             f"{ollama_url}/api/embeddings",
-            json={"model": model, "prompt": content},
+            json={"model": model, "prompt": prompt},
         )
         resp.raise_for_status()
         data = resp.json()

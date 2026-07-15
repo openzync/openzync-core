@@ -55,7 +55,7 @@ async def enrich_episode(
     metadata: dict | None = None,
     role: str = "user",
 ) -> None:
-    """Single enrichment pass: classify + extract entities/facts/structured in one LLM call.
+    """Single enrichment pass: classify + extract entities/facts/structured.
 
     Pipeline:
         1. Open session, set RLS context.

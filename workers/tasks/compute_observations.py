@@ -26,7 +26,6 @@ from __future__ import annotations
 import structlog
 
 from core.exceptions import EpisodeNotFoundError
-from services.worker.prompt_renderer import render_prompt
 from workers.tasks.base import ENRICHMENT_OBSERVATIONS, with_retry
 
 logger = structlog.get_logger()

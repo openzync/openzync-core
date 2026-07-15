@@ -22,7 +22,6 @@ from __future__ import annotations
 import uuid
 
 import structlog
-from sqlalchemy import text
 
 from services.worker.prompt_renderer import render_prompt
 from workers.tasks.base import with_retry
@@ -56,6 +55,7 @@ async def generate_user_summary(
         ctx: ARQ worker context (unused — required by ARQ contract).
         org_id: UUID of the owning organization (string, from ARQ).
         user_id: UUID of the user to summarise.
+        project_id: Optional project UUID to scope data fetching.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
 
     Raises:

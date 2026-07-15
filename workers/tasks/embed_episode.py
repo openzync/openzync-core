@@ -42,6 +42,7 @@ async def embed_episode(
         project_id: UUID of the project for project scoping (observability).
         content: Episode message text to embed.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
+        metadata: Optional metadata dict forwarded from the enrichment pipeline.
 
     Raises:
         EpisodeNotFoundError: If no episode exists for ``episode_id``.
@@ -55,12 +56,14 @@ async def embed_episode(
 
     # ── Lazy imports (ARQ workers run in a separate process) ──────────────
     import uuid
+
+    from sqlalchemy import text
+
     from core.config import settings
     from core.db import get_async_session
     from core.llm import resolve_backend
     from core.org_config import get_org_config
     from repositories.episode_repository import EpisodeRepository
-    from sqlalchemy import text
 
     logger.info(
         "embed_episode.started",
@@ -162,7 +165,9 @@ async def embed_episode(
     _org_config_dict = org_cfg.to_llm_config_dict()
 
     # ── 3. Resolve the embedding backend ──────────────────────────────────
-    llm = await resolve_backend(provider=_embedding_backend, org_config=_org_config_dict)
+    llm = await resolve_backend(
+        provider=_embedding_backend, org_config=_org_config_dict,
+    )
 
     # ── 4. Generate embedding ────────────────────────────────────────────
     try:

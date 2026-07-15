@@ -11,20 +11,20 @@ Bitmask:
 
 from __future__ import annotations
 
-import orjson
 import uuid
 from typing import TYPE_CHECKING, Any
 
+import orjson
 import structlog
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import EpisodeNotFoundError
+from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
 from workers.tasks.base import ENRICHMENT_STRUCTURED_EXTRACTION, with_retry
 
-from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
-
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from repositories.episode_repository import EpisodeRepository
 
 logger = structlog.get_logger()
@@ -67,6 +67,7 @@ async def extract_structured(
         session_id: UUID of the session (for FK to structured_extractions).
         content: The message text to extract data from.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
+        metadata: Optional metadata dict forwarded from the enrichment pipeline.
 
     Raises:
         Exception: Re-raises the last LLM or DB error after retry exhaustion.
@@ -126,7 +127,9 @@ async def extract_structured(
                     episode_id=episode_id,
                 )
                 raise EpisodeNotFoundError(
-                    message=f"Episode {episode_id} not found for structured extraction.",
+                    message=(
+                        f"Episode {episode_id} not found for structured extraction."
+                    ),
                     detail={"episode_id": episode_id},
                 )
             user_id: str = str(episode.user_id)
@@ -146,7 +149,9 @@ async def extract_structured(
                     fallback_to_postgres=True,
                 )
             except Exception:
-                logger.warning("structured_extraction.backend_resolve_failed", exc_info=True)
+                logger.warning(
+                    "structured_extraction.backend_resolve_failed", exc_info=True,
+                )
 
             # ── 4. Render prompt (system instructions) with auto-injected context ──
             system_prompt, prompt_ctx = await render_prompt(
@@ -348,7 +353,7 @@ async def process_structured_output(
             k: v for k, v in data.items() if v is not None
         }
 
-        TYPE_DEFAULTS: dict[str, object] = {
+        type_defaults: dict[str, object] = {
             "string": "unknown",
             "number": 0,
             "integer": 0,
@@ -362,7 +367,7 @@ async def process_structured_output(
                     .get(field, {})
                     .get("type", "string")
                 )
-                cleaned[field] = TYPE_DEFAULTS.get(ftype, "unknown")
+                cleaned[field] = type_defaults.get(ftype, "unknown")
 
         try:
             _validate_against_schema(cleaned, schema_info["json_schema"])

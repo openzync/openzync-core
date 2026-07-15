@@ -11,6 +11,7 @@ PostgreSQL, eliminating the need for a separate graph database.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
@@ -19,9 +20,11 @@ from core.exceptions import (
     EpisodeNotFoundError,
     GraphBackendUnavailableError,
 )
-from packages.graph_backend.interface import GraphBackend
 from workers.backend import resolve_graph_backend
 from workers.tasks.base import ENRICHMENT_ENTITY_LINKS, with_retry
+
+if TYPE_CHECKING:
+    from packages.graph_backend.interface import GraphBackend
 
 logger = structlog.get_logger()
 
@@ -57,6 +60,7 @@ async def link_entities_to_episode(
         content: Episode message text (used for entity name matching).
         role: Message role (user/assistant/system/tool).
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
+        metadata: Optional metadata dict forwarded from the enrichment pipeline.
 
     """
     if trace_id:

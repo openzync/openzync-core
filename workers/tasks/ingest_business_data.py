@@ -71,7 +71,10 @@ async def ingest_business_data(
     )
 
     if not facts:
-        return {"status": "completed", "accepted": 0, "errors": [], "detail": "No facts provided"}
+        return {
+            "status": "completed", "accepted": 0, "errors": [],
+            "detail": "No facts provided",
+        }
 
     org_uuid = UUID(org_id)
     user_uuid = UUID(user_id)

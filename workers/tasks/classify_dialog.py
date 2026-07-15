@@ -11,18 +11,19 @@ Bitmask:
 
 from __future__ import annotations
 
-import orjson
 import uuid
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+import orjson
 import structlog
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import EpisodeNotFoundError
 from workers.tasks.base import ENRICHMENT_CLASSIFICATION, with_retry
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from repositories.episode_repository import EpisodeRepository
     from schemas.llm_outputs import ClassificationOutput
 
@@ -78,6 +79,9 @@ async def classify_dialog(
         project_id: UUID of the project for project scoping.
         content: The message text to classify.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
+        session_id: UUID of the session for FK to dialog_classifications.
+        user_id: UUID of the user who sent the message.
+        metadata: Optional metadata dict forwarded from the enrichment pipeline.
 
     Raises:
         Exception: Re-raises the last LLM or DB error after retry exhaustion.

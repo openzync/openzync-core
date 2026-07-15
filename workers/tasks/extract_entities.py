@@ -13,16 +13,16 @@ Bitmask:
 
 from __future__ import annotations
 
-import re
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from packages.graph_backend.interface import GraphBackend
     from repositories.entity_repository import EntityRepository
     from repositories.episode_repository import EpisodeRepository
     from schemas.llm_outputs import EntityExtractionOutput
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 import structlog
 
@@ -84,6 +84,7 @@ async def extract_entities(
         session_id: UUID of the session (passed from MemoryService).
             Used to fetch known entities for delta extraction.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
+        metadata: Optional metadata dict forwarded from the enrichment pipeline.
 
     Raises:
         Exception: Re-raises the last LLM or DB error after retry exhaustion
@@ -357,7 +358,7 @@ async def process_entities_output(
     #    misspellings.  Pronouns like "I", "me", "my" should never be
     #    persisted as graph entities — they are resolved to the speaker
     #    during fact extraction (see _match_entity in extract_facts.py).
-    _PRONOUN_SKIP_NAMES: set[str] = {
+    _pronoun_skip_names: set[str] = {
         # First‑person
         "i",
         "me",
@@ -427,7 +428,7 @@ async def process_entities_output(
                 episode_id=episode_id,
             )
             continue
-        if name.lower() in _PRONOUN_SKIP_NAMES:
+        if name.lower() in _pronoun_skip_names:
             logger.info(
                 "entity_extraction.pronoun_skipped",
                 episode_id=episode_id,
@@ -451,7 +452,7 @@ async def process_entities_output(
                 object=obj,
             )
             continue
-        if subj.lower() in _PRONOUN_SKIP_NAMES or obj.lower() in _PRONOUN_SKIP_NAMES:
+        if subj.lower() in _pronoun_skip_names or obj.lower() in _pronoun_skip_names:
             logger.info(
                 "entity_extraction.relationship_pronoun_skipped",
                 episode_id=episode_id,

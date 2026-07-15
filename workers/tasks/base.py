@@ -12,7 +12,10 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
-from typing import Any, Callable, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
 

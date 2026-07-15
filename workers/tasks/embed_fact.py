@@ -37,6 +37,7 @@ async def embed_fact(
         content: Fact text content to embed. If not provided (e.g. when
             called from ``fact_service``), it will be fetched from the DB.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
+        **kwargs: Additional context (org_id, user_id) forwarded from the caller.
 
     Raises:
         ValueError: If the embedding dimension does not match
@@ -46,10 +47,11 @@ async def embed_fact(
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
 
     # ── Lazy imports (ARQ workers run in a separate process) ──────────────
+    from sqlalchemy import text
+
     from core.config import settings
     from core.db import get_async_session
     from core.llm import resolve_backend
-    from sqlalchemy import text
 
     logger.info("embed_fact.started", fact_id=fact_id, trace_id=trace_id)
 
@@ -134,7 +136,9 @@ async def embed_fact(
     _org_config_dict = org_cfg.to_llm_config_dict()
 
     # ── 1. Resolve the embedding backend ──────────────────────────────────
-    llm = await resolve_backend(provider=_embedding_backend, org_config=_org_config_dict)
+    llm = await resolve_backend(
+        provider=_embedding_backend, org_config=_org_config_dict,
+    )
 
     # ── 2. Generate embedding ────────────────────────────────────────────
     try:

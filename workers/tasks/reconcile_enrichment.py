@@ -13,9 +13,10 @@ leaves episodes un-enriched until an operator manually intervenes.
 
 from __future__ import annotations
 
-import structlog
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
+
+import structlog
 
 from workers.tasks.base import (
     ENRICHMENT_ALL,
@@ -63,7 +64,10 @@ _NON_LLM_TASK_MAP: dict[int, tuple[str, set[str], str]] = {
     ),
     ENRICHMENT_ENTITY_LINKS: (
         "link_entities_to_episode",
-        {"episode_id", "org_id", "project_id", "content", "role", "trace_id", "metadata"},
+        {
+            "episode_id", "org_id", "project_id",
+            "content", "role", "trace_id", "metadata",
+        },
         "low",
     ),
 }
@@ -142,7 +146,7 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
 
     from models.episode import Episode
 
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=STALE_AFTER_MINUTES)
+    cutoff = datetime.now(datetime.UTC) - timedelta(minutes=STALE_AFTER_MINUTES)
 
     stale_episodes: list[dict[str, Any]] = []
 
