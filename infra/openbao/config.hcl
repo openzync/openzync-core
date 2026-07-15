@@ -18,13 +18,7 @@ listener "tcp" {
   tls_disable   = true
 }
 
-# Static KV seal reads an AES-256-GCM key from the BAO_STATIC_SEAL_KEY
-# environment variable.  The key must be a 64-character hex string
-# (32 bytes encoded as hex).
-seal "static_kv" {
-  # BAO_STATIC_SEAL_KEY env var MUST be set on the container.
-}
-
+# BAO_STATIC_SEAL_KEY env var auto-configures the static KV seal.
 # File audit log — enabled at runtime via API (`bao audit enable file ...`)
 # Mount /vault/logs as a volume in production to persist audit trail.
 # audit "file" {
