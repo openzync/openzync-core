@@ -1,26 +1,25 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # OpenZync API Server — OpenBao ACL Policy
 # ──────────────────────────────────────────────────────────────────────────────
-# Grants the API server (via AppRole "openzync-app") permission to:
-#   1. Read system-level config from the system/ namespace.
-#   2. Create, read, update, and delete org-level namespaces.
-#   3. Enable secrets engines within org namespaces.
-#   4. Read and write org-level config keys.
+# Grants the API server (via AppRole "openzync-app" in system/ namespace):
+#   1. Read and write system-level config (config/data/*).
+#   2. Create, read, update, and delete child namespaces (org_<uuid>/).
+#   3. Enable and configure secrets engines within child namespaces.
+#   4. Read and write org-level config keys (+/config/data/*).
 # ──────────────────────────────────────────────────────────────────────────────
 
-# ── System namespace: read-only config access ────────────────────────────────
-# NOTE: OpenBao does not support the "namespace" key in ACL policy paths.
-#       Namespace-scoped paths are written as literal path prefixes.
-path "system/config/data/*" {
-  capabilities = ["read", "list"]
+# ── Config access (system + org — all relative to system/ namespace) ─────────
+# The AppRole token is scoped to the system/ namespace (AppRole auth is
+# enabled inside system/).  All paths are relative to system/:
+#   config/data/system       → system/config/data/system
+#   config/data/org_<uuid>/  → system/config/data/org_<uuid>/
+#   org_<uuid>/config/data/  → system/org_<uuid>/config/data/   (+ glob)
+path "config/data/*" {
+  capabilities = ["create", "read", "update", "delete", "list"]
 }
 
-path "system/config/metadata/*" {
+path "config/metadata/*" {
   capabilities = ["list"]
-}
-
-path "sys/namespaces/system/" {
-  capabilities = ["read", "list"]
 }
 
 # ── Namespace management ────────────────────────────────────────────────────
@@ -36,9 +35,9 @@ path "sys/internal/ui/mounts/*" {
   capabilities = ["read", "list"]
 }
 
-# ── Enable secrets engines — root level and inside ANY namespace ────────────
-# The "+" glob matches a single namespace segment (e.g. "org_<uuid>").
-# Without this, root-level "sys/mounts/*" does not apply within namespaces.
+# ── Enable secrets engines — within system/ + inside child namespaces ────────
+# The "+" glob matches a single namespace segment (e.g. "org_<uuid>") within
+# the system/ namespace, so the API can enable KV/transit in org sub-namespaces.
 path "sys/mounts/*" {
   capabilities = ["create", "read", "update", "delete"]
 }
@@ -53,14 +52,6 @@ path "+/config/data/*" {
 }
 
 path "+/config/metadata/*" {
-  capabilities = ["list"]
-}
-
-path "config/data/*" {
-  capabilities = ["create", "read", "update", "delete", "list"]
-}
-
-path "config/metadata/*" {
   capabilities = ["list"]
 }
 

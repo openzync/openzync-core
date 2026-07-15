@@ -1,19 +1,19 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # OpenZync Background Worker — OpenBao ACL Policy
 # ──────────────────────────────────────────────────────────────────────────────
-# Grants the ARQ worker (via AppRole "openzync-worker") permission to:
-#   1. Read system-level config from the system/ namespace.
-#   2. Read org-level config keys (read-only — the worker never writes config).
+# Grants the ARQ worker (via AppRole "openzync-worker" in system/ namespace):
+#   1. Read system-level config (config/data/*).
+#   2. Read org-level config keys (+/config/data/*) — read-only.
 # ──────────────────────────────────────────────────────────────────────────────
 
-# ── System namespace: read-only config access ────────────────────────────────
-# NOTE: OpenBao does not support the "namespace" key in ACL policy paths.
-#       Namespace-scoped paths are written as literal path prefixes.
-path "system/config/data/*" {
+# ── Config access (system + org — relative to system/ namespace) ─────────────
+# The AppRole token is scoped to the system/ namespace. All policy paths are
+# relative to system/ — config/data/* matches system/config/data/* from root.
+path "config/data/*" {
   capabilities = ["read", "list"]
 }
 
-path "system/config/metadata/*" {
+path "config/metadata/*" {
   capabilities = ["list"]
 }
 
@@ -25,7 +25,7 @@ path "sys/internal/ui/mounts/*" {
   capabilities = ["read", "list"]
 }
 
-# ── Org-level config: read-only within any org_* namespace ──────────────────
+# ── Org-level config: read-only (within system/ child namespaces) ───────────
 path "+/config/data/*" {
   capabilities = ["read", "list"]
 }

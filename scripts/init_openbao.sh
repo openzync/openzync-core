@@ -269,33 +269,48 @@ python3 <<- 'PYEOF'
 PYEOF
 log "System secret written."
 
-# ── 10. Enable AppRole auth method ───────────────────────────────────────────
-log "Enabling AppRole auth ..."
+# ── 10. Enable AppRole auth method (root + system/ namespace) ─────────────────
+# Root-level AppRole for backward compatibility (no agent currently uses it).
+log "Enabling AppRole auth (root) ..."
 bao auth enable approle 2>/dev/null \
-    || log "AppRole auth already enabled — continuing."
+    || log "AppRole auth already enabled (root) — continuing."
+# system/ namespace AppRole — agents authenticate here.
+log "Enabling AppRole auth (system/ namespace) ..."
+bao auth enable -namespace=system/ approle 2>/dev/null \
+    || log "AppRole auth already enabled (system/) — continuing."
 
-# ── 11. Write ACL policies from mounted files ────────────────────────────────
+# ── 11. Write ACL policies (root + system/ namespace) ─────────────────────────
+# Policies are namespace-scoped in OpenBao. Write to both root (for root-level
+# AppRole) and system/ (for the AppRoles that agents + Python client use).
 POLICIES_DIR="${POLICIES_DIR:-/policies}"
 if [ -d "${POLICIES_DIR}" ]; then
-    for _policy_file in "${POLICIES_DIR}"/*.hcl; do
-        [ -f "${_policy_file}" ] || continue
-        _name=$(basename "${_policy_file}" .hcl)
-        log "Writing policy '${_name}' from ${_policy_file} ..."
-        bao policy write "${_name}" "${_policy_file}"
+    for _ns in "" "system/"; do
+        _ns_flag=""
+        [ -n "${_ns}" ] && _ns_flag="-namespace=${_ns}"
+        for _policy_file in "${POLICIES_DIR}"/*.hcl; do
+            [ -f "${_policy_file}" ] || continue
+            _name=$(basename "${_policy_file}" .hcl)
+            log "Writing policy '${_name}' in namespace '${_ns:-root}' ..."
+            # shellcheck disable=SC2086
+            bao policy write ${_ns_flag} "${_name}" "${_policy_file}"
+        done
     done
 else
     log "WARNING: ${POLICIES_DIR} not found — skipping policy write."
 fi
 
-# ── 12. Create AppRole roles ─────────────────────────────────────────────────
-log "Creating AppRole 'openzync-app' ..."
-bao write auth/approle/role/openzync-app \
+# ── 12. Create AppRole roles (inside system/ namespace) ───────────────────────
+# Agents authenticate with VAULT_NAMESPACE=system/ and read the AppRole from
+# system/auth/approle/role/.  The Python OpenBaoClient also authenticates in
+# system/ (default namespace="system/").
+log "Creating AppRole 'openzync-app' in system/ namespace ..."
+bao write -namespace=system/ auth/approle/role/openzync-app \
     token_policies="openzync-app" \
     token_ttl="24h" \
     token_max_ttl="72h"
 
-log "Creating AppRole 'openzync-worker' ..."
-bao write auth/approle/role/openzync-worker \
+log "Creating AppRole 'openzync-worker' in system/ namespace ..."
+bao write -namespace=system/ auth/approle/role/openzync-worker \
     token_policies="openzync-worker" \
     token_ttl="72h" \
     token_max_ttl="168h"
@@ -312,14 +327,18 @@ for _key in org-api-key webhook-secret pii-encryption; do
         || log "  Key '${_key}' already exists — continuing."
 done
 
-# ── 14. Retrieve credentials ─────────────────────────────────────────────────
-log "Retrieving AppRole credentials ..."
+# ── 14. Retrieve credentials (from system/ namespace) ─────────────────────────
+# The AppRoles were created inside system/ namespace (section 12), so read
+# the credentials from the same namespace.  Agents authenticate via
+# VAULT_NAMESPACE=system/ and read these credential files from the shared
+# bootstrap volume.
+log "Retrieving AppRole credentials from system/ namespace ..."
 
-APP_ROLE_ID=$(bao read -field=role_id auth/approle/role/openzync-app/role-id)
-APP_SECRET_ID=$(bao write -f -field=secret_id auth/approle/role/openzync-app/secret-id)
+APP_ROLE_ID=$(bao read -namespace=system/ -field=role_id auth/approle/role/openzync-app/role-id)
+APP_SECRET_ID=$(bao write -f -namespace=system/ -field=secret_id auth/approle/role/openzync-app/secret-id)
 
-WORKER_ROLE_ID=$(bao read -field=role_id auth/approle/role/openzync-worker/role-id)
-WORKER_SECRET_ID=$(bao write -f -field=secret_id auth/approle/role/openzync-worker/secret-id)
+WORKER_ROLE_ID=$(bao read -namespace=system/ -field=role_id auth/approle/role/openzync-worker/role-id)
+WORKER_SECRET_ID=$(bao write -f -namespace=system/ -field=secret_id auth/approle/role/openzync-worker/secret-id)
 
 # ── 15. Write AppRole credentials for the OpenBao Agent sidecars ─────────────
 # The api and worker containers run an OpenBao Agent sidecar that
