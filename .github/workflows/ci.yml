@@ -221,6 +221,8 @@ jobs:
             # Log in to ghcr.io so Docker can pull our private images
             echo "$GHCR_PAT" | docker login ghcr.io -u rohnsha0 --password-stdin
             cd /home/deploy/openzync
+            # Remove stale infra dir to avoid file-level permission conflicts
+            rm -rf infra
             tar xzf deploy-files.tar.gz
             rm deploy-files.tar.gz
 
