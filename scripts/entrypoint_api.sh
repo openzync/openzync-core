@@ -23,7 +23,7 @@ log "Waiting for OpenBao Agent to render secrets to /run/secrets/system.env ..."
 
 i=0
 while [ "$i" -lt 90 ]; do
-  if [ -s /run/secrets/system.env ] && grep -q '^DATABASE_URL=' /run/secrets/system.env; then
+  if [ -s /run/secrets/system.env ] && grep -q '^OZ_DATABASE_URL=' /run/secrets/system.env; then
     break
   fi
   i=$((i + 1))
@@ -60,8 +60,8 @@ if [ -z "${OZ_OPENBAO_ROLE_ID:-}" ] || [ -z "${OZ_OPENBAO_SECRET_ID:-}" ]; then
     fi
 fi
 
-log "DATABASE_URL set: $(echo "$DATABASE_URL" | sed 's|://[^:]*:[^@]*@|://***:***@|')"
-log "SECRET_KEY set: ${SECRET_KEY:+yes (length=${#SECRET_KEY})}"
+log "DATABASE_URL set: $(echo "$OZ_DATABASE_URL" | sed 's|://[^:]*:[^@]*@|://***:***@|')"
+log "SECRET_KEY set: ${OZ_SECRET_KEY:+yes (length=${#OZ_SECRET_KEY})}"
 
 log "Starting uvicorn ..."
 exec uvicorn services.api.asgi:app --host 0.0.0.0 --port 8000 --workers "${UVICORN_WORKERS:-1}"

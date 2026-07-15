@@ -28,7 +28,7 @@ TIMEOUT_SEC=90
 log "Waiting for OpenBao Agent to render secrets to ${SECRETS_FILE} ..."
 _i=0
 while [ "$_i" -lt "${TIMEOUT_SEC}" ]; do
-    if [ -s "${SECRETS_FILE}" ] && grep -q '^DATABASE_URL=' "${SECRETS_FILE}"; then
+    if [ -s "${SECRETS_FILE}" ] && grep -q '^OZ_DATABASE_URL=' "${SECRETS_FILE}"; then
         break
     fi
     _i=$((_i + 1))
@@ -62,6 +62,6 @@ if [ -z "${OZ_OPENBAO_ROLE_ID:-}" ] || [ -z "${OZ_OPENBAO_SECRET_ID:-}" ]; then
     fi
 fi
 
-log "DATABASE_URL set: $(echo "$DATABASE_URL" | sed 's|://[^:]*:[^@]*@|://***:***@|')"
+log "DATABASE_URL set: $(echo "$OZ_DATABASE_URL" | sed 's|://[^:]*:[^@]*@|://***:***@|')"
 log "Starting ARQ worker ..."
 exec python -m services.worker.worker
