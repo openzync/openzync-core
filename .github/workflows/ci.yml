@@ -192,6 +192,7 @@ jobs:
             tar czf /tmp/deploy-files.tar.gz \
               infra/docker-compose.backend.yml \
               infra/Dockerfile.openbao-tooling \
+              infra/openbao/ \
               infra/nginx/conf.d/ \
               scripts/
 
