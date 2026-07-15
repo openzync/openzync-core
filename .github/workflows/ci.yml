@@ -214,7 +214,7 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: GHCR_PAT, OZ_DATABASE_URL, OZ_SECRET_KEY, VPS_HOST, BAO_STATIC_SEAL_KEY, OZ_WEBHOOK_SIGNING_SECRET
+          envs: GHCR_PAT,OZ_DATABASE_URL,OZ_SECRET_KEY,VPS_HOST,BAO_STATIC_SEAL_KEY,OZ_WEBHOOK_SIGNING_SECRET
           script: |
             # Log in to ghcr.io so Docker can pull our private images
             echo "$GHCR_PAT" | docker login ghcr.io -u rohnsha0 --password-stdin
