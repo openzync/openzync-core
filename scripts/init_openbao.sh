@@ -2,32 +2,29 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # OpenZync — OpenBao Bootstrap Initialisation Script
 # ──────────────────────────────────────────────────────────────────────────────
-# ALWAYS unseals OpenBao on restart, but bootstraps (namespace, KV, policies,
-# AppRoles, Transit) only on the first run.
-#
-# The unseal step must run every time because OpenBao starts sealed on every
-# container restart (Shamir seal).  The bootstrap steps are guarded by a marker
-# file so they run exactly once.
+# ALWAYS runs the full bootstrap (namespace, KV, policies, AppRoles, Transit)
+# on every restart.  Every step is fully idempotent (bao commands use
+# ``2>/dev/null || log "exists"``).  Running every time ensures code changes
+# (KV paths, AppRole namespace, etc.) take effect immediately without manual
+# marker deletion.
 #
 # What this script does:
 #   1. Waits for OpenBao to be reachable (always).
 #   2. Initialises + unseals if first boot, or re-unseals from saved keys.
 #   3. Authenticates with the root token.
-#   4. Checks the marker file — if present, bootstrap is done, exits.
-#   5. Creates the 'system' namespace and mounts KV v2 at system/config.
-#   6. Writes a SINGLE combined system secret at system/config/system
+#   4. Creates the 'system' namespace and mounts KV v2 at system/config.
+#   5. Writes a SINGLE combined system secret at system/config/system
 #      containing all OZ_* env vars (UPPERCASE keys) — EXCEPT DATABASE_URL.
 #      The database URL is added later by scripts/write_db_to_openbao.sh.
-#   7. Enables AppRole auth, writes ACL policies, creates the
+#   6. Enables AppRole auth, writes ACL policies, creates the
 #      'openzync-app' and 'openzync-worker' AppRoles, and enables the
 #      Transit engine with the standard encryption keys.
-#   8. Writes the AppRole role_id and secret_id to four files in
+#   7. Writes the AppRole role_id and secret_id to four files in
 #      /bao-init/ (the shared volume with the api/worker Agent sidecars):
 #         api-role_id, api-secret_id, worker-role_id, worker-secret_id
 #      secret_id files persist on disk (bootstrap volume is read-only to
 #      agent sidecars, so cleanup is deferred — token auto-renewal means
 #      the secret_id is never needed again after initial auth).
-#   9. Writes the marker file so future runs skip bootstrap.
 #
 # Dependencies (all expected in openbao/openbao Docker image):
 #   - bao CLI
@@ -38,7 +35,10 @@ set -u
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 BAO_INIT_DIR="${BAO_INIT_DIR:-/bao-init}"
-INIT_MARKER="${BAO_INIT_DIR}/init-complete"
+# NOTE: init-complete marker file removed.  Every bootstrap step is fully
+# idempotent so the entire init runs on every restart.  This ensures code
+# changes (KV paths, AppRole namespace, etc.) take effect without manual
+# marker deletion.
 UNSEAL_KEYS_FILE="${BAO_INIT_DIR}/unseal-keys.json"
 ROOT_TOKEN_FILE="${BAO_INIT_DIR}/root-token"
 BAO_ADDR="${BAO_ADDR:-http://localhost:8200}"
@@ -156,17 +156,12 @@ BAO_TOKEN=$(cat "${ROOT_TOKEN_FILE}")
 export BAO_TOKEN
 log "Authenticated with root token."
 
-# ── 6. Check marker file (unseal already done above) ────────────────────────
-# On every restart after the first successful bootstrap, the marker exists and
-# we stop here — the unseal at step 4 is all that's needed to make OpenBao
-# operational.  The bootstrap steps below (namespace, KV, AppRole, Transit)
-# only need to run once.
-if [ -f "${INIT_MARKER}" ]; then
-    log "Marker ${INIT_MARKER} exists — bootstrap already complete. Exiting."
-    exit 0
-fi
-
 # ── 7. Create system namespace ───────────────────────────────────────────────
+# NOTE: previously guarded by a marker file. Removed because every bootstrap
+# step is fully idempotent (bao commands use '2>/dev/null || log "exists"').
+# Running the full bootstrap on every restart ensures that code changes
+# (e.g. corrected KV paths, AppRole namespace) take effect immediately
+# without manual marker deletion.
 # 'bao namespace create' errors with "namespace already exists" if re-run.
 log "Creating namespace 'system' ..."
 bao namespace create system 2>/dev/null \
@@ -390,7 +385,4 @@ if [ "${BAO_REVOKE_ROOT_TOKEN:-false}" = "true" ]; then
     log "Revocation marker written to ${BAO_INIT_DIR}/root-revoked"
 fi
 
-# ── 18. Write marker file ────────────────────────────────────────────────────
-date > "${INIT_MARKER}"
-log "Marker written to ${INIT_MARKER} — future runs will skip."
 log "Done."
