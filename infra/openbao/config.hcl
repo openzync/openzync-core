@@ -25,15 +25,14 @@ seal "static_kv" {
   # BAO_STATIC_SEAL_KEY env var MUST be set on the container.
 }
 
-# File audit log — JSON-formatted record of every authenticated request
-# and response. Required for compliance and incident investigation.
+# File audit log — enabled at runtime via API (`bao audit enable file ...`)
 # Mount /vault/logs as a volume in production to persist audit trail.
-audit "file" {
-  path         = "/vault/logs/audit.log"
-  log_raw      = false
-  format       = "json"
-  prefix       = "[audit]"
-}
+# audit "file" {
+#   path         = "/vault/logs/audit.log"
+#   log_raw      = false
+#   format       = "json"
+#   prefix       = "[audit]"
+# }
 
 # Advertised addresses for cluster communication.
 api_addr     = "http://0.0.0.0:8200"
