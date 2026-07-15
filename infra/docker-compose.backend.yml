@@ -292,7 +292,8 @@ services:
     depends_on:
       openbao-init:
         condition: service_completed_successfully
-    command: ["agent", "-config=/etc/bao/agent.hcl"]
+    entrypoint: ["/usr/bin/dumb-init", "--"]
+    command: ["/bin/sh", "-c", "chown -R openbao:openbao /openbao/agent 2>/dev/null; exec bao agent -config=/etc/bao/agent.hcl"]
     volumes:
       - openbao-init-data:/openbao-bootstrap:ro
       - api-secrets:/openbao/agent:rw
@@ -349,7 +350,8 @@ services:
     depends_on:
       openbao-init:
         condition: service_completed_successfully
-    command: ["agent", "-config=/etc/bao/agent.hcl"]
+    entrypoint: ["/usr/bin/dumb-init", "--"]
+    command: ["/bin/sh", "-c", "chown -R openbao:openbao /openbao/agent 2>/dev/null; exec bao agent -config=/etc/bao/agent.hcl"]
     volumes:
       - openbao-init-data:/openbao-bootstrap:ro
       - worker-secrets:/openbao/agent:rw
