@@ -15,8 +15,9 @@ set -u
 # pipefail would be ideal but /bin/sh is dash on python:3.12-slim
 
 log() { echo "[entrypoint_api] $(date -Iseconds) $*"; }
-# shellcheck disable=SC3040  # ERR trap is supported in dash (Debian 11+)
-trap 'log "FATAL: unexpected error (exit $?)"; exit 1' ERR
+# ERR trap not supported in this dash version (python:3.12-slim).
+# 'set -e' handles error exits; the trap would just add diagnostics.
+# If ERR trap support is needed, wrap in: trap ... ERR 2>/dev/null || true
 
 log "Waiting for OpenBao Agent to render secrets to /run/secrets/system.env ..."
 

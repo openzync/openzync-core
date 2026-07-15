@@ -20,8 +20,8 @@ set -u
 log() { echo "[entrypoint_worker] $(date -Iseconds) $*"; }
 
 # Surface any unexpected failure as a visible FATAL line before exiting.
-# shellcheck disable=SC3040  # ERR trap supported in dash (Debian 11+)
-trap 'log "FATAL: unexpected error (exit $?)"; exit 1' ERR
+# ERR trap is NOT supported in this dash version — 'set -e' handles exits.
+# If ERR trap is added later, wrap in: trap ... ERR 2>/dev/null || true
 
 SECRETS_FILE="/run/secrets/system.env"
 TIMEOUT_SEC=90
