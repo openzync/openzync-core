@@ -101,7 +101,7 @@ services:
     # to the root-owned /vault/data volume.  chown the volume first, then run the
     # stock entrypoint so it can proceed without permission errors.
     entrypoint: ["/usr/bin/dumb-init", "--"]
-    command: ["/bin/sh", "-c", "chown -R openbao:openbao /vault/data 2>/dev/null; exec /usr/local/bin/docker-entrypoint.sh bao server -config=/etc/openbao/config.hcl"]
+    command: ["/bin/sh", "-c", "chown -R openbao:openbao /vault/data 2>/dev/null; exec /usr/local/bin/docker-entrypoint.sh server -config=/etc/openbao/config.hcl"]
     cap_add: [IPC_LOCK]
     ports: ["127.0.0.1:8200:8200"]
     volumes:
