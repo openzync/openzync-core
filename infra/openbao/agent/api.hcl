@@ -26,7 +26,7 @@ auto_auth {
       type   = "file"
       config = {
         path = "/openbao/agent/.token"
-        mode = "0600"
+        mode = 384  # 0600 octal
       }
     }
   }
