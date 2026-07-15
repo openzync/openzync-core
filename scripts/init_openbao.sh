@@ -2,26 +2,32 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # OpenZync — OpenBao Bootstrap Initialisation Script
 # ──────────────────────────────────────────────────────────────────────────────
-# Run once on a fresh OpenBao data volume.
-# Idempotent: safe to re-run — uses a marker file to skip completed setup.
+# ALWAYS unseals OpenBao on restart, but bootstraps (namespace, KV, policies,
+# AppRoles, Transit) only on the first run.
+#
+# The unseal step must run every time because OpenBao starts sealed on every
+# container restart (Shamir seal).  The bootstrap steps are guarded by a marker
+# file so they run exactly once.
 #
 # What this script does:
-#   1. Initialises + unseals OpenBao (or unseals an existing instance).
-#   2. Creates the 'system' namespace and mounts KV v2 at system/config.
-#   3. Writes a SINGLE combined system secret to system/config/data/system
+#   1. Waits for OpenBao to be reachable (always).
+#   2. Initialises + unseals if first boot, or re-unseals from saved keys.
+#   3. Authenticates with the root token.
+#   4. Checks the marker file — if present, bootstrap is done, exits.
+#   5. Creates the 'system' namespace and mounts KV v2 at system/config.
+#   6. Writes a SINGLE combined system secret to system/config/data/system
 #      containing all OZ_* env vars (UPPERCASE keys) — EXCEPT DATABASE_URL.
-#      The database URL is intentionally NOT written here, because postgres
-#      may not be up yet at this point. It is appended later by
-#      scripts/write_db_to_openbao.sh once postgres is healthy.
-#   4. Enables AppRole auth, writes ACL policies, creates the
+#      The database URL is added later by scripts/write_db_to_openbao.sh.
+#   7. Enables AppRole auth, writes ACL policies, creates the
 #      'openzync-app' and 'openzync-worker' AppRoles, and enables the
 #      Transit engine with the standard encryption keys.
-#   5. Writes the AppRole role_id and secret_id to four files in
+#   8. Writes the AppRole role_id and secret_id to four files in
 #      /bao-init/ (the shared volume with the api/worker Agent sidecars):
 #         api-role_id, api-secret_id, worker-role_id, worker-secret_id
-#      The OpenBao Agent reads these files on startup, authenticates, and
-#      renders system/config/data/system as /openbao/agent/system.env.
-#      secret_id files are deleted on first read by the Agent.
+#      secret_id files persist on disk (bootstrap volume is read-only to
+#      agent sidecars, so cleanup is deferred — token auto-renewal means
+#      the secret_id is never needed again after initial auth).
+#   9. Writes the marker file so future runs skip bootstrap.
 #
 # Dependencies (all expected in openbao/openbao Docker image):
 #   - bao CLI
@@ -63,12 +69,6 @@ for part in parts:
 print(current)
 "
 }
-
-# ── 1. Check marker file ─────────────────────────────────────────────────────
-if [ -f "${INIT_MARKER}" ]; then
-    log "Marker ${INIT_MARKER} exists — initialisation already complete. Exiting."
-    exit 0
-fi
 
 # Verify required tools
 for _cmd in bao python3; do
@@ -156,13 +156,23 @@ BAO_TOKEN=$(cat "${ROOT_TOKEN_FILE}")
 export BAO_TOKEN
 log "Authenticated with root token."
 
-# ── 6. Create system namespace ───────────────────────────────────────────────
+# ── 6. Check marker file (unseal already done above) ────────────────────────
+# On every restart after the first successful bootstrap, the marker exists and
+# we stop here — the unseal at step 4 is all that's needed to make OpenBao
+# operational.  The bootstrap steps below (namespace, KV, AppRole, Transit)
+# only need to run once.
+if [ -f "${INIT_MARKER}" ]; then
+    log "Marker ${INIT_MARKER} exists — bootstrap already complete. Exiting."
+    exit 0
+fi
+
+# ── 7. Create system namespace ───────────────────────────────────────────────
 # 'bao namespace create' errors with "namespace already exists" if re-run.
 log "Creating namespace 'system' ..."
 bao namespace create system 2>/dev/null \
     || log "Namespace 'system' already exists — continuing."
 
-# ── 7. Enable KV v2 secrets engine at system/config ─────────────────────────
+# ── 8. Enable KV v2 secrets engine at system/config ─────────────────────────
 log "Enabling KV v2 at system/config ..."
 bao secrets enable \
     -namespace=system/ \
@@ -170,7 +180,7 @@ bao secrets enable \
     kv-v2 2>/dev/null \
     || log "KV v2 already mounted at system/config — continuing."
 
-# ── 8. Write combined system secret from environment variables ───────────────
+# ── 9. Write combined system secret from environment variables ───────────────
 # Writes a SINGLE flat object at system/config/data/system (KV v2 data path).
 # Keys are lowercase snake_case; the Python openbao_settings.py maps
 # them to OZ_ env var names via SYSTEM_KEY_MAPPING. DATABASE_URL is intentionally NOT
@@ -259,12 +269,12 @@ python3 <<- 'PYEOF'
 PYEOF
 log "System secret written."
 
-# ── 9. Enable AppRole auth method ────────────────────────────────────────────
+# ── 10. Enable AppRole auth method ───────────────────────────────────────────
 log "Enabling AppRole auth ..."
 bao auth enable approle 2>/dev/null \
     || log "AppRole auth already enabled — continuing."
 
-# ── 10. Write ACL policies from mounted files ────────────────────────────────
+# ── 11. Write ACL policies from mounted files ────────────────────────────────
 POLICIES_DIR="${POLICIES_DIR:-/policies}"
 if [ -d "${POLICIES_DIR}" ]; then
     for _policy_file in "${POLICIES_DIR}"/*.hcl; do
@@ -277,7 +287,7 @@ else
     log "WARNING: ${POLICIES_DIR} not found — skipping policy write."
 fi
 
-# ── 11. Create AppRole roles ─────────────────────────────────────────────────
+# ── 12. Create AppRole roles ─────────────────────────────────────────────────
 log "Creating AppRole 'openzync-app' ..."
 bao write auth/approle/role/openzync-app \
     token_policies="openzync-app" \
@@ -290,7 +300,7 @@ bao write auth/approle/role/openzync-worker \
     token_ttl="72h" \
     token_max_ttl="168h"
 
-# ── 12. Enable Transit engine ────────────────────────────────────────────────
+# ── 13. Enable Transit engine ────────────────────────────────────────────────
 log "Enabling Transit engine at transit/ ..."
 bao secrets enable -path=transit transit 2>/dev/null \
     || log "Transit engine already enabled at transit/ — continuing."
@@ -302,7 +312,7 @@ for _key in org-api-key webhook-secret pii-encryption; do
         || log "  Key '${_key}' already exists — continuing."
 done
 
-# ── 13. Retrieve credentials ─────────────────────────────────────────────────
+# ── 14. Retrieve credentials ─────────────────────────────────────────────────
 log "Retrieving AppRole credentials ..."
 
 APP_ROLE_ID=$(bao read -field=role_id auth/approle/role/openzync-app/role-id)
@@ -311,14 +321,15 @@ APP_SECRET_ID=$(bao write -f -field=secret_id auth/approle/role/openzync-app/sec
 WORKER_ROLE_ID=$(bao read -field=role_id auth/approle/role/openzync-worker/role-id)
 WORKER_SECRET_ID=$(bao write -f -field=secret_id auth/approle/role/openzync-worker/secret-id)
 
-# ── 14. Write AppRole credentials for the OpenBao Agent sidecars ─────────────
+# ── 15. Write AppRole credentials for the OpenBao Agent sidecars ─────────────
 # The api and worker containers run an OpenBao Agent sidecar that
 # authenticates via AppRole. The Agent reads role_id and secret_id from
-# files in the shared /bao-init volume (mounted at /openbao-bootstrap in
-# the api/worker containers). The Agent's
-# `remove_secret_id_file_after_reading` flag deletes the secret_id file
-# after the first successful auth — the file only needs to exist for the
-# initial bootstrap.
+# files in the shared /bao-init volume (mounted at /openbao-bootstrap as
+# read-only in the api/worker containers).  The secret_id is single-use;
+# after the initial auth the Agent renews its session token automatically.
+# The files persist on disk because the bootstrap volume is read-only to
+# the sidecars (least privilege — the root token and unseal keys share
+# this volume).
 log "Writing AppRole credentials to ${BAO_INIT_DIR}/ ..."
 umask 077  # belt-and-suspenders: files start 0600 even if chmod misses one
 printf '%s' "${APP_ROLE_ID}"      > "${BAO_INIT_DIR}/api-role_id"
@@ -334,7 +345,7 @@ log "  ${BAO_INIT_DIR}/api-secret_id          (deleted by Agent after first read
 log "  ${BAO_INIT_DIR}/worker-role_id"
 log "  ${BAO_INIT_DIR}/worker-secret_id        (deleted by Agent after first read)"
 
-# ── 15. Output summary ───────────────────────────────────────────────────────
+# ── 16. Output summary ───────────────────────────────────────────────────────
 log "═══════════════════════════════════════════════════════════════════"
 log " OpenBao bootstrap complete."
 log "═══════════════════════════════════════════════════════════════════"
@@ -348,7 +359,7 @@ log "    cat ${BAO_INIT_DIR}/api-role_id"
 log "    cat ${BAO_INIT_DIR}/worker-role_id"
 log "═══════════════════════════════════════════════════════════════════"
 
-# ── 16. Revoke root token (optional, gated by env var) ──────────────────────
+# ── 17. Revoke root token (optional, gated by env var) ──────────────────────
 # The root token is kept by default for operational access. In production,
 # set BAO_REVOKE_ROOT_TOKEN=true to revoke after bootstrap. The token file
 # is preserved so a future regeneration can use recovered unseal keys.
@@ -360,7 +371,7 @@ if [ "${BAO_REVOKE_ROOT_TOKEN:-false}" = "true" ]; then
     log "Revocation marker written to ${BAO_INIT_DIR}/root-revoked"
 fi
 
-# ── 17. Write marker file ────────────────────────────────────────────────────
+# ── 18. Write marker file ────────────────────────────────────────────────────
 date > "${INIT_MARKER}"
 log "Marker written to ${INIT_MARKER} — future runs will skip."
 log "Done."
