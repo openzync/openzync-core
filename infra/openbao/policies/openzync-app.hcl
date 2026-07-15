@@ -28,6 +28,14 @@ path "sys/namespaces/*" {
   capabilities = ["create", "read", "update", "delete", "list"]
 }
 
+# ── KV v2 preflight check (required by OpenBao Agent template rendering) ─────
+# The Agent calls sys/internal/ui/mounts/<path> to detect KV v2 mounts before
+# template rendering.  Without this, the Agent gets a 403 on preflight even if
+# the path itself is ACL-granted.
+path "sys/internal/ui/mounts/*" {
+  capabilities = ["read", "list"]
+}
+
 # ── Enable secrets engines — root level and inside ANY namespace ────────────
 # The "+" glob matches a single namespace segment (e.g. "org_<uuid>").
 # Without this, root-level "sys/mounts/*" does not apply within namespaces.

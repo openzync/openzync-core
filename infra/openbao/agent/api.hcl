@@ -44,7 +44,7 @@ template {
   perms                = "0600"
   error_on_missing_key = true
   contents = <<EOT
-{{- with secret "config/data/system" -}}
+{{- with secret "config/data/data/system" -}}
 {{- range $k, $v := .Data.data }}
 {{ $k }}={{ $v }}
 {{ end -}}
@@ -53,8 +53,7 @@ EOT
 }
 
 vault {
-  address   = "http://openbao:8200"
-  namespace = "system/"
+  address = "http://openbao:8200"
   retry {
     backoff     = "exponential"
     max_retries = 10

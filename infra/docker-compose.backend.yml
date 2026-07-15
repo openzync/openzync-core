@@ -294,6 +294,8 @@ services:
         condition: service_completed_successfully
     entrypoint: ["/usr/bin/dumb-init", "--"]
     command: ["/bin/sh", "-c", "chown -R openbao:openbao /openbao/agent 2>/dev/null; exec bao agent -config=/etc/bao/agent.hcl"]
+    environment:
+      VAULT_NAMESPACE: "system/"
     volumes:
       - openbao-init-data:/openbao-bootstrap:ro
       - api-secrets:/openbao/agent:rw
@@ -352,6 +354,8 @@ services:
         condition: service_completed_successfully
     entrypoint: ["/usr/bin/dumb-init", "--"]
     command: ["/bin/sh", "-c", "chown -R openbao:openbao /openbao/agent 2>/dev/null; exec bao agent -config=/etc/bao/agent.hcl"]
+    environment:
+      VAULT_NAMESPACE: "system/"
     volumes:
       - openbao-init-data:/openbao-bootstrap:ro
       - worker-secrets:/openbao/agent:rw

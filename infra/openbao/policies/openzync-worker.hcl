@@ -17,6 +17,14 @@ path "system/config/metadata/*" {
   capabilities = ["list"]
 }
 
+# ── KV v2 preflight check (required by OpenBao Agent template rendering) ─────
+# The Agent calls sys/internal/ui/mounts/<path> to detect KV v2 mounts before
+# attempting template rendering.  Without this, the Agent gets a 403 on the
+# preflight check and never renders the secret.
+path "sys/internal/ui/mounts/*" {
+  capabilities = ["read", "list"]
+}
+
 # ── Org-level config: read-only within any org_* namespace ──────────────────
 path "+/config/data/*" {
   capabilities = ["read", "list"]
