@@ -43,7 +43,7 @@ template {
   perms                = "0600"
   error_on_missing_key = true
   contents = <<EOT
-{{- with secret "config/data/data/system" -}}
+{{- with secret "config/data/system" -}}
 {{- range $k, $v := .Data.data }}
 {{ $k }}={{ $v }}
 {{ end -}}

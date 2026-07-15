@@ -15,7 +15,7 @@
 #   3. Authenticates with the root token.
 #   4. Checks the marker file — if present, bootstrap is done, exits.
 #   5. Creates the 'system' namespace and mounts KV v2 at system/config.
-#   6. Writes a SINGLE combined system secret to system/config/data/system
+#   6. Writes a SINGLE combined system secret at system/config/system
 #      containing all OZ_* env vars (UPPERCASE keys) — EXCEPT DATABASE_URL.
 #      The database URL is added later by scripts/write_db_to_openbao.sh.
 #   7. Enables AppRole auth, writes ACL policies, creates the
@@ -181,20 +181,20 @@ bao secrets enable \
     || log "KV v2 already mounted at system/config — continuing."
 
 # ── 9. Write combined system secret from environment variables ───────────────
-# Writes a SINGLE flat object at system/config/data/system (KV v2 data path).
+# Writes a SINGLE flat object at system/config/system (logical KV v2 path).
 # Keys are lowercase snake_case; the Python openbao_settings.py maps
 # them to OZ_ env var names via SYSTEM_KEY_MAPPING. DATABASE_URL is intentionally NOT
 # written here — it is added later by scripts/write_db_to_openbao.sh once
 # postgres is reachable. The Agent template ranges over .Data.data, so
 # missing keys are simply absent from the rendered env file (the Agent
 # will re-render once write_db_to_openbao.sh adds DATABASE_URL).
-log "Writing combined system secret to system/config/data/system ..."
+log "Writing combined system secret to system/config/system ..."
 python3 <<- 'PYEOF'
 	import os, subprocess, sys
 
 	BAO_TOKEN = os.environ.get("BAO_TOKEN", "")
 	NAMESPACE = "system/"
-	SECRET_PATH = "config/data/system"
+	SECRET_PATH = "config/system"
 
 	# Write OZ_* env vars with their original UPPERCASE names so the
 	# Agent template can output them directly without any transform.
@@ -238,7 +238,7 @@ python3 <<- 'PYEOF'
 	    print("  FATAL: no system secrets to write", file=sys.stderr)
 	    sys.exit(1)
 
-	# Build argv: `bao kv put -namespace=system/ config/data/system key=val ...`
+	# Build argv: `bao kv put -namespace=system/ config/system key=val ...`
 	# Each key=value is a SEPARATE argv item so that special characters
 	# (e.g. '!', '$', spaces in URLs) are passed verbatim to bao and never
 	# interpreted by the shell. Without this, bao kv put's internal
@@ -349,12 +349,12 @@ log "  ${BAO_INIT_DIR}/worker-secret_id        (deleted by Agent after first rea
 log "═══════════════════════════════════════════════════════════════════"
 log " OpenBao bootstrap complete."
 log "═══════════════════════════════════════════════════════════════════"
-log "  System secret:  system/config/data/system"
+log "  System secret:  system/config/system"
 log "  AppRole files:  ${BAO_INIT_DIR}/{api,worker}-{role_id,secret_id}"
 log "  OpenBao addr:   ${BAO_ADDR}"
 log ""
 log "  Inspect (debug only — secret_id values are NOT printed by design):"
-log "    bao kv get -namespace=system/ config/data/system"
+log "    bao kv get -namespace=system/ config/system"
 log "    cat ${BAO_INIT_DIR}/api-role_id"
 log "    cat ${BAO_INIT_DIR}/worker-role_id"
 log "═══════════════════════════════════════════════════════════════════"

@@ -4,7 +4,8 @@
 # which entrypoint_api.sh sources via `set -a; . ...; set +a`.
 # role_id is cached; secret_id is NOT deleted after reading (bootstrap volume is read-only).
 # init_openbao.sh must write all system keys as a single flat JSON
-# object under the KV v2 key 'system' at system/config/data/system.
+# object under the KV v2 mount at system/config/system.
+# The Agent template reads via the API path config/data/system.
 
 auto_auth {
   method "approle" {
@@ -44,7 +45,7 @@ template {
   perms                = "0600"
   error_on_missing_key = true
   contents = <<EOT
-{{- with secret "config/data/data/system" -}}
+{{- with secret "config/data/system" -}}
 {{- range $k, $v := .Data.data }}
 {{ $k }}={{ $v }}
 {{ end -}}
