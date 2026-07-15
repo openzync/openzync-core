@@ -221,9 +221,9 @@ jobs:
             # Log in to ghcr.io so Docker can pull our private images
             echo "$GHCR_PAT" | docker login ghcr.io -u rohnsha0 --password-stdin
             cd /home/deploy/openzync
-            # Remove stale infra dir (may be root-owned from prior docker mounts)
-            sudo rm -rf infra 2>/dev/null || rm -rf infra 2>/dev/null || true
-            tar xzf deploy-files.tar.gz
+            # Remove stale infra dir — may be root-owned from prior docker bind-mounts
+            docker run --rm -v "$(pwd):/target:rw" alpine:3.24 rm -rf /target/infra /target/scripts 2>/dev/null || true
+            tar xzf deploy-files.tar.gz --no-same-owner
             rm deploy-files.tar.gz
 
             # ── Create .env from template + secrets (at project root, both ──
