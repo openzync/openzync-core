@@ -191,6 +191,7 @@ jobs:
           # Create tar archive of deployment files (runs on runner — resolves correctly)
             tar czf /tmp/deploy-files.tar.gz \
               infra/docker-compose.backend.yml \
+              infra/Dockerfile.openbao-tooling \
               infra/nginx/conf.d/ \
               scripts/
 
