@@ -29,8 +29,9 @@ listener "tcp" {
 # }
 
 # Advertised addresses for cluster communication.
-api_addr     = "http://0.0.0.0:8200"
-cluster_addr = "https://0.0.0.0:8201"
+# Raft storage requires a specific IP/hostname, not 0.0.0.0.
+api_addr     = "http://openbao:8200"
+cluster_addr = "https://openbao:8201"
 
 # Log verbosity — align with the application's LOG_LEVEL.
 log_level = "info"
