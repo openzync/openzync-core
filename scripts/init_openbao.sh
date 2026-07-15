@@ -186,35 +186,30 @@ python3 <<- 'PYEOF'
 	NAMESPACE = "system/"
 	SECRET_PATH = "config/data/system"
 
-	# Map OZ_* env vars → lowercase snake_case secret keys (matching Python SYSTEM_KEY_MAPPING).
-	# The OpenBao Agent template renders {{ $k }}={{ $v }} verbatim, so keys
-	# MUST match the snake_case keys the Python SYSTEM_KEY_MAPPING
-	# expects at runtime (e.g. "redis_url" → OZ_REDIS_URL).
-	# DATABASE_URL is intentionally absent: write_db_to_openbao.sh appends
-	# it to the same secret once postgres is up. Adding an empty
-	# DATABASE_URL here would be overwritten by the next write anyway, so
-	# we skip it entirely.
+	# Write OZ_* env vars with their original UPPERCASE names so the
+	# Agent template can output them directly without any transform.
+	# (The template engine in OpenBao 2.5 lacks the `upper` function.)
 	KEY_MAPPING = {
-	    "OZ_REDIS_URL":                    "redis_url",
-	    "OZ_SECRET_KEY":                   "secret_key",
-	    "OZ_PROMETHEUS_URL":               "prometheus_url",
-	    "OZ_CORS_ORIGINS":                 "cors_origins",
-	    "OZ_HOSTS_ALLOWED":                "hosts_allowed",
-	    "OZ_ENVIRONMENT":                  "environment",
-	    "OZ_LOG_LEVEL":                    "log_level",
-	    "OZ_MAX_WORKERS":                  "max_workers",
-	    "OZ_JWT_ACCESS_TOKEN_TTL_MINUTES": "jwt_access_token_ttl_minutes",
-	    "OZ_JWT_REFRESH_TOKEN_TTL_DAYS":   "jwt_refresh_token_ttl_days",
-	    "OZ_WEBHOOK_SIGNING_SECRET":       "webhook_signing_secret",
-	    "OZ_FALKORDB_URL":                 "falkordb_url",
-	    "OZ_FALKORDB_MAX_CONNECTIONS":     "falkordb_max_connections",
-	    "OZ_FALKORDB_SOCKET_TIMEOUT":      "falkordb_socket_timeout",
-	    "OZ_RATE_LIMIT_IP_MAX":            "rate_limit_ip_max",
-	    "OZ_RATE_LIMIT_WINDOW_SEC":        "rate_limit_window_sec",
-	    "OZ_PROMPT_CACHING_ENABLED":        "prompt_caching_enabled",
-	    "OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS": "prompt_caching_anthropic_min_tokens",
-	    "OZ_PROMPT_CACHING_ANTHROPIC_TTL":  "prompt_caching_anthropic_ttl",
-	    "OZ_DATABASE_URL":                  "database_url",
+	    "OZ_REDIS_URL":                    "OZ_REDIS_URL",
+	    "OZ_SECRET_KEY":                   "OZ_SECRET_KEY",
+	    "OZ_PROMETHEUS_URL":               "OZ_PROMETHEUS_URL",
+	    "OZ_CORS_ORIGINS":                 "OZ_CORS_ORIGINS",
+	    "OZ_HOSTS_ALLOWED":                "OZ_HOSTS_ALLOWED",
+	    "OZ_ENVIRONMENT":                  "OZ_ENVIRONMENT",
+	    "OZ_LOG_LEVEL":                    "OZ_LOG_LEVEL",
+	    "OZ_MAX_WORKERS":                  "OZ_MAX_WORKERS",
+	    "OZ_JWT_ACCESS_TOKEN_TTL_MINUTES": "OZ_JWT_ACCESS_TOKEN_TTL_MINUTES",
+	    "OZ_JWT_REFRESH_TOKEN_TTL_DAYS":   "OZ_JWT_REFRESH_TOKEN_TTL_DAYS",
+	    "OZ_WEBHOOK_SIGNING_SECRET":       "OZ_WEBHOOK_SIGNING_SECRET",
+	    "OZ_FALKORDB_URL":                 "OZ_FALKORDB_URL",
+	    "OZ_FALKORDB_MAX_CONNECTIONS":     "OZ_FALKORDB_MAX_CONNECTIONS",
+	    "OZ_FALKORDB_SOCKET_TIMEOUT":      "OZ_FALKORDB_SOCKET_TIMEOUT",
+	    "OZ_RATE_LIMIT_IP_MAX":            "OZ_RATE_LIMIT_IP_MAX",
+	    "OZ_RATE_LIMIT_WINDOW_SEC":        "OZ_RATE_LIMIT_WINDOW_SEC",
+	    "OZ_PROMPT_CACHING_ENABLED":        "OZ_PROMPT_CACHING_ENABLED",
+	    "OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS": "OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS",
+	    "OZ_PROMPT_CACHING_ANTHROPIC_TTL":  "OZ_PROMPT_CACHING_ANTHROPIC_TTL",
+	    "OZ_DATABASE_URL":                  "OZ_DATABASE_URL",
 	}
 
 	# Build a flat dict of all keys present in the environment.

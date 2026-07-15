@@ -45,7 +45,7 @@ template {
   contents = <<EOT
 {{- with secret "system/config/data/system" -}}
 {{- range $k, $v := .Data.data }}
-{{ $k | upper }}={{ $v }}
+{{ $k }}={{ $v }}
 {{ end -}}
 {{- end }}
 EOT
