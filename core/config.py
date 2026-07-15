@@ -93,7 +93,10 @@ class BootstrapSettings(BaseSettings):
     model_config = SettingsConfigDict(
         extra="ignore",
         frozen=True,
-        env_file=".env",
+        # Intentionally no ``env_file`` — bootstrap settings are read from
+        # actual environment variables only (injected by the entrypoint or
+        # orchestrator).  A .env file would defeat the security property that
+        # AppRole credentials must never be committed to disk.
     )
 
 

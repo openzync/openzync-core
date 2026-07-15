@@ -176,7 +176,30 @@ async def redis_client(engine) -> Any:
 
 @pytest_asyncio.fixture(loop_scope="function")
 async def app(engine, redis_client) -> Any:
-    """Create the FastAPI app wired to the testcontainers database + Redis."""
+    """Create the FastAPI app wired to the testcontainers database + Redis.
+
+    Before importing ``create_app`` we must initialise the ``Settings``
+    singleton, because ``create_app()`` calls ``get_settings()`` at
+    construction time (module-level ``app = create_app()`` in main.py).
+    """
+    from core.config import Settings, set_settings
+
+    pg_container = _testcontainers["pg"]
+    pg_url = pg_container.get_connection_url()
+    driver_url = pg_url.replace("postgresql://", "postgresql+asyncpg://")
+    redis_container = _testcontainers["redis"]
+    redis_url = (
+        f"redis://{redis_container.get_container_host_ip()}:"
+        f"{redis_container.get_exposed_port(6379)}/0"
+    )
+    settings = Settings(
+        DATABASE_URL=driver_url,
+        REDIS_URL=redis_url,
+        SECRET_KEY="i" * 32,
+        WEBHOOK_SIGNING_SECRET="j" * 32,
+    )
+    set_settings(settings)
+
     from services.api.main import create_app
     from dependencies.db import get_db
 
@@ -187,6 +210,16 @@ async def app(engine, redis_client) -> Any:
     # Wire Redis client — the app's lifespan normally does this, but it
     # is not run when we call create_app() directly in tests.
     app.state.redis = redis_client
+
+    # Wire a mock OpenBao client — the real lifespan tries to establish
+    # a real connection, which we skip in integration tests.  Routes that
+    # depend on openbao_client (e.g. org config) will use this mock.
+    from unittest.mock import AsyncMock
+
+    mock_bao = AsyncMock()
+    mock_bao.read_org_config.return_value = {}
+    mock_bao.write_org_config.return_value = None
+    app.state.openbao_client = mock_bao
 
     async def _get_db_override() -> AsyncGenerator[AsyncSession, None]:
         async with session_factory() as session:

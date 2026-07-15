@@ -41,6 +41,7 @@ class TestContextService:
             "source_counts": {"episodes": {}, "facts": {}, "entities": {}},
             "total_items": 0,
         }
+        mock_retriever._org_config = None
         svc._retriever = mock_retriever
         return svc
 

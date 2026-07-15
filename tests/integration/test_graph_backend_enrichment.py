@@ -52,13 +52,67 @@ _pg_container: Any = None
 
 
 def setup_module() -> None:
-    """One-time container + migration for all tests in this module."""
+    """One-time container + migration + seed data for all tests in this module."""
     global _pg_container
     _ensure_testcontainers_env()
     _pg_container = _start_postgres_container()
     url = _pg_container.get_connection_url()
     driver_url = url.replace("postgresql://", "postgresql+asyncpg://")
     _run_alembic_upgrade(driver_url)
+
+    # Seed well-known test objects so FK constraints are satisfied.
+    from sqlalchemy import create_engine as create_sync_engine, text
+
+    sync_url = url.replace("+asyncpg", "")  # strip asyncpg driver for sync engine
+    sync_engine = create_sync_engine(sync_url, pool_pre_ping=True)
+    with sync_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO organizations (id, name, plan) "
+                "VALUES ('00000000-0000-0000-0000-000000000001', 'Test Org', 'free') "
+                "ON CONFLICT (id) DO NOTHING"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO projects (id, organization_id, name) "
+                "VALUES ('00000000-0000-0000-0000-000000000002', "
+                "'00000000-0000-0000-0000-000000000001', 'Test Project') "
+                "ON CONFLICT (id) DO NOTHING"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO users (id, organization_id, external_id, name, email, is_active) "
+                "VALUES ('00000000-0000-0000-0000-000000000005', "
+                "'00000000-0000-0000-0000-000000000001', 'enrich-user', 'Enrich User', "
+                "'enrich@test.local', TRUE) ON CONFLICT (id) DO NOTHING"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO sessions (id, user_id, organization_id, project_id, external_id) "
+                "VALUES ('00000000-0000-0000-0000-000000000010', "
+                "'00000000-0000-0000-0000-000000000005', "
+                "'00000000-0000-0000-0000-000000000001', "
+                "'00000000-0000-0000-0000-000000000002', 'enrich-session') "
+                "ON CONFLICT (id) DO NOTHING"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO episodes (id, session_id, user_id, role, content, "
+                "organization_id, project_id) "
+                "VALUES ('00000000-0000-0000-0000-000000000020', "
+                "'00000000-0000-0000-0000-000000000010', "
+                "'00000000-0000-0000-0000-000000000005', "
+                "'user', 'test episode', "
+                "'00000000-0000-0000-0000-000000000001', "
+                "'00000000-0000-0000-0000-000000000002') "
+                "ON CONFLICT (id) DO NOTHING"
+            )
+        )
+    sync_engine.dispose()
 
 
 def teardown_module() -> None:
@@ -69,9 +123,13 @@ def teardown_module() -> None:
         _pg_container = None
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def db() -> AsyncGenerator[AsyncSession, None]:
     """Create a fresh async session per test — rolled back on teardown.
+
+    ``loop_scope="function"`` prevents ``Future attached to a different loop``
+    errors when the internally-created ``AsyncEngine`` is used in the test's
+    event loop.
 
     Uses ``join_transaction_mode="create_savepoint"`` so that the ORM
     session creates savepoints within the outer connection-level
@@ -109,9 +167,13 @@ async def db() -> AsyncGenerator[AsyncSession, None]:
         await engine.dispose()
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def backend(db: AsyncSession) -> Any:
-    """PostgresGraphBackend scoped to a single test."""
+    """PostgresGraphBackend scoped to a single test.
+
+    ``loop_scope="function"`` matches ``db`` to prevent event-loop
+    conflicts when the backend executes queries against the session.
+    """
     from packages.graph_backend.postgres import PostgresGraphBackend
 
     return PostgresGraphBackend(db=db, max_traversal_depth=5)
@@ -126,7 +188,7 @@ class TestGraphBackendEnrichmentPipeline:
     persist observations → verify cross-project isolation.
     """
 
-    async def test_full_pipeline(self, backend: Any) -> None:
+    async def test_full_pipeline(self, backend: Any, db: AsyncSession) -> None:
         """Step-by-step enrichment pipeline:
 
         1. Create entities from extracted content.
@@ -219,7 +281,10 @@ class TestGraphBackendEnrichmentPipeline:
             ORG_ID, PROJ_ID, min_co_count=1,
         )
         assert len(pairs) >= 1
-        pair_names = {p["entity_a_name"], p["entity_b_name"]}
+        pair_names = set()
+        for pair in pairs:
+            pair_names.add(pair["entity_a_name"])
+            pair_names.add(pair["entity_b_name"])
         assert "john doe" in pair_names or "acme corp" in pair_names
 
         # ── Step 5: Search ───────────────────────────────────────────────
@@ -247,7 +312,9 @@ class TestGraphBackendEnrichmentPipeline:
         duplicate_id = UUID(duplicate["id"])
 
         # Link duplicate to an episode so we can verify rewiring
-        alt_episode = uuid4()
+        from tests.integration.test_graph_backend_postgres import _create_test_episode
+
+        alt_episode = await _create_test_episode(db, uuid4())
         await backend.link_entity_to_episode(
             org_id=ORG_ID,
             project_id=PROJ_ID,

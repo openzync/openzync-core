@@ -229,7 +229,7 @@ class TestResolutionEndToEnd:
         mock_bao.read_org_config.return_value = {}
 
         # Update via core function — write and then read back
-        def _side_effect(*, config: dict) -> None:
+        def _side_effect(org_id: UUID, config: dict) -> None:
             mock_bao.read_org_config.return_value = config
 
         mock_bao.write_org_config = AsyncMock(side_effect=_side_effect)

@@ -1532,10 +1532,10 @@ class PostgresGraphBackend(GraphBackend):
                 src_result = await self._db.execute(
                     text("""
                         UPDATE graph_relationships
-                        SET source_id = :canonical_id::uuid
+                        SET source_id = CAST(:canonical_id AS uuid)
                         WHERE organization_id = :org_id
                           AND project_id = :project_id
-                          AND source_id = ANY(:merged_ids::uuid[])
+                          AND source_id = ANY(CAST(:merged_ids AS uuid[]))
                           AND invalid_at IS NULL
                     """),
                     {
@@ -1551,10 +1551,10 @@ class PostgresGraphBackend(GraphBackend):
                 tgt_result = await self._db.execute(
                     text("""
                         UPDATE graph_relationships
-                        SET target_id = :canonical_id::uuid
+                        SET target_id = CAST(:canonical_id AS uuid)
                         WHERE organization_id = :org_id
                           AND project_id = :project_id
-                          AND target_id = ANY(:merged_ids::uuid[])
+                          AND target_id = ANY(CAST(:merged_ids AS uuid[]))
                           AND invalid_at IS NULL
                     """),
                     {
@@ -1574,8 +1574,8 @@ class PostgresGraphBackend(GraphBackend):
                         WHERE organization_id = :org_id
                           AND project_id = :project_id
                           AND invalid_at IS NULL
-                          AND g.id NOT IN (
-                              SELECT MIN(id)
+                          AND CAST(g.id AS text) NOT IN (
+                              SELECT MIN(CAST(id AS text))
                               FROM graph_relationships
                               WHERE organization_id = :org_id
                                 AND project_id = :project_id
@@ -1597,7 +1597,7 @@ class PostgresGraphBackend(GraphBackend):
                         SET is_merged = true, updated_at = now()
                         WHERE organization_id = :org_id
                           AND project_id = :project_id
-                          AND id = ANY(:merged_ids::uuid[])
+                          AND id = ANY(CAST(:merged_ids AS uuid[]))
                     """),
                     {
                         "org_id": str(org_id),
@@ -2030,9 +2030,8 @@ class PostgresGraphBackend(GraphBackend):
                 SELECT COUNT(DISTINCT episode_id) AS total
                 FROM graph_episode_entities
                 WHERE project_id = :project_id
-                  AND organization_id = :org_id
             """),
-            {"project_id": str(project_id), "org_id": str(org_id)},
+            {"project_id": str(project_id)},
         )
         row = result.mappings().one_or_none()
         return row["total"] if row else 0

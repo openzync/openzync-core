@@ -144,6 +144,7 @@ class TestTypeDataSourceRegistry:
             "classification",
             "structured_extraction",
             "user_summary",
+            "enrich_episode",
         }
 
     def test_fact_extraction_sources(self) -> None:

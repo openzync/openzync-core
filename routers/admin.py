@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.db import get_db
+from repositories.organization_repository import OrganizationRepository
 from schemas.organizations import CreateOrgRequest, CreateOrgResponse
 from services.organization_service import OrganizationService
 
@@ -54,5 +55,5 @@ async def create_organization(
     Returns:
         A ``CreateOrgResponse`` with the org details and raw API key.
     """
-    service = OrganizationService(db=db)
+    service = OrganizationService(repo=OrganizationRepository(db=db))
     return await service.create_organization(payload)

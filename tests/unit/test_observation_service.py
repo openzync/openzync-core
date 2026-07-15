@@ -64,7 +64,17 @@ def service(
 
     Uses default thresholds (min_co_count=3,
     min_appearances_for_temporal=3).
+
+    Sets a default return value for the episode-count query so tests
+    that call ``detect_co_occurrences`` don't get an unwrapped AsyncMock
+    as the co-occurrence total (which would fail type/semantic assertions).
     """
+    mock_repo.get_total_entity_linked_episode_count.return_value = 10
+    # Default: resolve_entity_names returns a dict-like mapping so that
+    # downstream ``.get()`` calls on the result work without wrapping
+    # them in coroutines (an AsyncMock's attribute access intercepts
+    # regular method calls and creates coroutines).
+    mock_repo.resolve_entity_names.return_value = {}
     return ObservationService(
         graph_backend=mock_repo,
         db=mock_db,
@@ -320,7 +330,7 @@ class TestDetectBehavioralPatterns:
     ) -> None:
         """No facts for the project → empty list."""
         mock_db.execute.return_value.mappings.return_value.all.return_value = []
-        patterns = await service.detect_behavioral_patterns(PROJECT_ID)
+        patterns = await service.detect_behavioral_patterns(PROJECT_ID, organization_id=ORG_ID)
         assert patterns == []
 
     async def test_single_entity_with_frequent_predicate(
@@ -340,7 +350,7 @@ class TestDetectBehavioralPatterns:
                 "total_facts": 8,
             },
         ]
-        patterns = await service.detect_behavioral_patterns(PROJECT_ID)
+        patterns = await service.detect_behavioral_patterns(PROJECT_ID, organization_id=ORG_ID)
         assert len(patterns) == 1
         assert patterns[0].entity_id == ENTITY_A_ID
         assert patterns[0].frequent_predicates == {"upgrades": 5}
@@ -379,7 +389,7 @@ class TestDetectBehavioralPatterns:
                 "total_facts": 10,
             },
         ]
-        patterns = await service.detect_behavioral_patterns(PROJECT_ID)
+        patterns = await service.detect_behavioral_patterns(PROJECT_ID, organization_id=ORG_ID)
         assert len(patterns) == 1
         preds = list(patterns[0].frequent_predicates.items())
         assert preds[0] == ("upgrades", 5)

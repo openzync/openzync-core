@@ -50,13 +50,37 @@ _pg_container: Any = None
 
 
 def setup_module() -> None:
-    """One-time container + migration for all tests in this module."""
+    """One-time container + migration + seed data for all tests in this module."""
     global _pg_container
     _ensure_testcontainers_env()
     _pg_container = _start_postgres_container()
     url = _pg_container.get_connection_url()
     driver_url = url.replace("postgresql://", "postgresql+asyncpg://")
     _run_alembic_upgrade(driver_url)
+
+    # Seed the well-known test organization and project so FK constraints
+    # (graph_entities.organization_id → organizations.id) are satisfied.
+    from sqlalchemy import create_engine as create_sync_engine, text
+
+    sync_url = url.replace("+asyncpg", "")  # strip asyncpg driver for sync engine
+    sync_engine = create_sync_engine(sync_url, pool_pre_ping=True)
+    with sync_engine.begin() as conn:
+        conn.execute(
+            text(
+                "INSERT INTO organizations (id, name, plan) "
+                "VALUES ('00000000-0000-0000-0000-000000000001', 'Test Org', 'free') "
+                "ON CONFLICT (id) DO NOTHING"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO projects (id, organization_id, name) "
+                "VALUES ('00000000-0000-0000-0000-000000000002', "
+                "'00000000-0000-0000-0000-000000000001', 'Test Project') "
+                "ON CONFLICT (id) DO NOTHING"
+            )
+        )
+    sync_engine.dispose()
 
 
 def teardown_module() -> None:
@@ -67,9 +91,14 @@ def teardown_module() -> None:
         _pg_container = None
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def db() -> AsyncGenerator[AsyncSession, None]:
     """Create a fresh async session per test, rolled back on teardown.
+
+    ``loop_scope="function"`` is required because this fixture creates an
+    ``AsyncEngine`` and ``AsyncSession`` internally; using the default
+    session-scoped loop would cause ``Future attached to a different loop``
+    errors when the test runs in a fresh event loop.
 
     Uses ``join_transaction_mode="create_savepoint"`` so that the ORM
     session creates savepoints within the outer connection-level
@@ -107,12 +136,71 @@ async def db() -> AsyncGenerator[AsyncSession, None]:
         await engine.dispose()
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def backend(db: AsyncSession) -> Any:
-    """A PostgresGraphBackend scoped to one test."""
+    """A PostgresGraphBackend scoped to one test.
+
+    ``loop_scope="function"`` matches the scoping of its dependency
+    ``db`` so that the SQLAlchemy engine and session are bound to the
+    same event loop the test runs in.  Without this, the default
+    session-scoped loop causes ``greenlet_spawn`` / ``MissingGreenlet``
+    errors when the backend executes queries against the session.
+    """
     from packages.graph_backend.postgres import PostgresGraphBackend
 
     return PostgresGraphBackend(db=db, max_traversal_depth=3)
+
+
+async def _create_test_episode(
+    db: Any,
+    episode_id: UUID | None = None,
+) -> UUID:
+    """Insert an episode row so FK constraints on ``graph_episode_entities`` are satisfied.
+
+    Creates placeholder user + session rows first (required FK chain),
+    then inserts the episode.  Returns the episode UUID.
+    """
+    eid = episode_id or uuid4()
+    uid = uuid4()
+    sid = uuid4()
+
+    await db.execute(
+        sa_text(
+            "INSERT INTO users (id, organization_id, external_id, name, email, is_active) "
+            "VALUES (:id, :org_id, :ext, :name, :email, TRUE) "
+            "ON CONFLICT (id) DO NOTHING"
+        ),
+        {
+            "id": str(uid), "org_id": str(ORG_ID),
+            "ext": f"ep-user-{uid}", "name": "ep-test-user",
+            "email": f"{uid}@test.local",
+        },
+    )
+    await db.execute(
+        sa_text(
+            "INSERT INTO sessions (id, user_id, organization_id, project_id, external_id) "
+            "VALUES (:id, :uid, :org_id, :proj_id, :ext) "
+            "ON CONFLICT (id) DO NOTHING"
+        ),
+        {
+            "id": str(sid), "uid": str(uid),
+            "org_id": str(ORG_ID), "proj_id": str(PROJ_ID),
+            "ext": f"ep-session-{sid}",
+        },
+    )
+    await db.execute(
+        sa_text(
+            "INSERT INTO episodes (id, session_id, user_id, role, content, organization_id, project_id) "
+            "VALUES (:id, :sid, :uid, 'user', 'test', :org_id, :proj_id) "
+            "ON CONFLICT (id) DO NOTHING"
+        ),
+        {
+            "id": str(eid), "sid": str(sid), "uid": str(uid),
+            "org_id": str(ORG_ID), "proj_id": str(PROJ_ID),
+        },
+    )
+    await db.flush()
+    return eid
 
 
 async def _create_test_entity(
@@ -214,7 +302,7 @@ class TestEntityCrud:
             name="Updated",
             summary="new summary",
         )
-        assert updated["name"] == "updated"
+        assert updated["name"] == "Updated"
         assert updated["summary"] == "new summary"
 
     async def test_update_entity_not_found(self, backend: Any) -> None:
@@ -275,24 +363,32 @@ class TestRelationships:
 
 
 class TestEntityEpisodeLinking:
-    """Entity-Episode linking and session-scoped queries."""
+    """Entity-Episode linking and session-scoped queries.
 
-    async def test_link_entity_to_episode(self, backend: Any) -> None:
+    .. note::
+
+        ``graph_episode_entities.episode_id`` has a FK constraint to
+        ``episodes.id``, so each test must create the episode row first
+        via ``_create_test_episode`` before attempting to link.
+    """
+
+    async def test_link_entity_to_episode(self, backend: Any, db: AsyncSession) -> None:
         """link_entity_to_episode succeeds and returns None."""
         entity = await _create_test_entity(backend, name="Linked")
+        episode_id = await _create_test_episode(db)
         result = await backend.link_entity_to_episode(
             org_id=ORG_ID,
             project_id=PROJ_ID,
-            episode_id=uuid4(),
+            episode_id=episode_id,
             entity_id=UUID(entity["id"]),
         )
         assert result is None
 
-    async def test_link_entity_to_episode_idempotent(self, backend: Any) -> None:
+    async def test_link_entity_to_episode_idempotent(self, backend: Any, db: AsyncSession) -> None:
         """Duplicate link does not raise."""
         entity = await _create_test_entity(backend, name="LinkIdempotent")
         entity_id = UUID(entity["id"])
-        episode_id = uuid4()
+        episode_id = await _create_test_episode(db)
 
         await backend.link_entity_to_episode(
             org_id=ORG_ID,

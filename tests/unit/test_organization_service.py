@@ -50,7 +50,7 @@ class TestOrganizationService:
         mock_org.name = "Test Org"
 
         mock_repo = MagicMock(spec=OrganizationRepository)
-        mock_repo._db = mock_db
+        mock_repo.session = mock_db
         service = OrganizationService(repo=mock_repo)
         # Replace the Organization constructor to return our mock
         import services.organization_service as os_mod

@@ -913,8 +913,11 @@ class ObservationService:
         if not rows:
             return []
 
-        # Extract unique entity IDs
-        unique_entity_ids = list({UUID(row["entity_id"]) for row in rows})
+        # Extract unique entity IDs (may be str or UUID — handle both)
+        def _ensure_uuid(val: object) -> UUID:
+            return val if isinstance(val, UUID) else UUID(str(val))
+
+        unique_entity_ids = list({_ensure_uuid(row["entity_id"]) for row in rows})
 
         # Resolve entity names via graph backend ABC
         entity_names = await self._backend.resolve_entity_names(
