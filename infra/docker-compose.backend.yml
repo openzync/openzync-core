@@ -97,6 +97,7 @@ services:
   openbao:
     image: openbao/openbao:2.5
     container_name: openzync-openbao
+    user: "0"  # root — volume perms from prior runs may not match the image's non-root user
     cap_add: [IPC_LOCK]
     ports: ["127.0.0.1:8200:8200"]
     volumes:
