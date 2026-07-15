@@ -85,7 +85,7 @@ while [ "${_i}" -le 60 ]; do
     # `bao status` exits 0 (unsealed), 1 (not init), 2 (sealed), or crashes
     # We check if the server returned valid JSON (reachable) vs connection error
     _output=$(bao status -format=json 2>&1) || true
-    if echo "${_output}" | python3 -c "import sys; json.load(sys.stdin)" >/dev/null 2>&1; then
+    if echo "${_output}" | python3 -c "import sys, json; json.load(sys.stdin)" >/dev/null 2>&1; then
         log "OpenBao is reachable."
         break
     fi
