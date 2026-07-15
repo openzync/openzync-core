@@ -250,10 +250,10 @@ jobs:
             ENVEOF
 
             # ── Deploy backend: pull → migrate → restart ───────────────────
-            docker compose -f infra/docker-compose.backend.yml pull
-            docker compose -f infra/docker-compose.backend.yml run --rm --no-deps api alembic upgrade head || true
+            docker compose --env-file .env -f infra/docker-compose.backend.yml pull
+            docker compose --env-file .env -f infra/docker-compose.backend.yml run --rm --no-deps api alembic upgrade head || true
             # --pull always: use pre-built ghcr.io images; build openbao-tooling locally
-            docker compose -f infra/docker-compose.backend.yml up -d --pull always
+            docker compose --env-file .env -f infra/docker-compose.backend.yml up -d --pull always
 
             # ── Reload nginx so it resolves new container IPs ──────────────
             # nginx -s reload forces re-resolution of upstream hostnames
