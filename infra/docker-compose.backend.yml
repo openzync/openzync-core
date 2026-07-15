@@ -319,7 +319,7 @@ services:
     build:
       context: ..
       dockerfile: services/api/Dockerfile
-    image: ghcr.io/rohnsha0/openzync/api:latest
+    image: ghcr.io/openzync/openzync-core/api:latest
     container_name: openzync-api
     environment:
       # OZ_OPENBAO_ADDR tells the api code where to find OpenBao at runtime
@@ -376,7 +376,7 @@ services:
     build:
       context: ..
       dockerfile: services/worker/Dockerfile
-    image: ghcr.io/rohnsha0/openzync/worker:latest
+    image: ghcr.io/openzync/openzync-core/worker:latest
     container_name: openzync-worker
     environment:
       OZ_OPENBAO_ADDR: "http://openbao:8200"
