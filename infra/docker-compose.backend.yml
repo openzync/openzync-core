@@ -125,7 +125,9 @@ services:
   # secret_id files for the api/worker Agent sidecars. On subsequent runs:
   # short-circuits to exit 0 once the marker is present.
   openbao-init:
-    image: openbao/openbao:2.5
+    build:
+      context: .
+      dockerfile: Dockerfile.openbao-tooling
     container_name: openzync-openbao-init
     depends_on:
       openbao:
@@ -255,7 +257,9 @@ services:
   # api/worker Agent templates render.
   openbao-write-db:
     profiles: [local-db]
-    image: openbao/openbao:2.5
+    build:
+      context: .
+      dockerfile: Dockerfile.openbao-tooling
     container_name: openzync-openbao-write-db
     depends_on:
       postgres-migrate:
