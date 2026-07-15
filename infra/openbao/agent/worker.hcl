@@ -9,7 +9,8 @@
 #
 # init_openbao.sh writes worker-role_id + worker-secret_id (mode 0600)
 # into the shared /openbao-bootstrap/ volume; compose mounts them here.
-# secret_id is read once then deleted; tokens auto-renew before expiry.
+# secret_id is NOT deleted after reading (bootstrap volume is read-only);
+# tokens auto-renew before expiry.
 # ──────────────────────────────────────────────────────────────────────
 
 auto_auth {
@@ -18,7 +19,6 @@ auto_auth {
     config = {
       role_id_file_path   = "/openbao-bootstrap/worker-role_id"
       secret_id_file_path = "/openbao-bootstrap/worker-secret_id"
-      remove_secret_id_file_after_reading = true
     }
   }
 
@@ -43,7 +43,7 @@ template {
   perms                = "0600"
   error_on_missing_key = true
   contents = <<EOT
-{{- with secret "system/config/data/system" -}}
+{{- with secret "config/data/system" -}}
 {{- range $k, $v := .Data.data }}
 {{ $k }}={{ $v }}
 {{ end -}}
@@ -52,7 +52,8 @@ EOT
 }
 
 vault {
-  address = "http://openbao:8200"
+  address   = "http://openbao:8200"
+  namespace = "system/"
   retry {
     backoff     = "exponential"
     max_retries = 10

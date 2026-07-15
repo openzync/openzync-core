@@ -115,7 +115,7 @@ services:
       # Healthy only when initialised AND unsealed. `bao status` returns
       # valid JSON in both states; the sealed flag flips to false once
       # the static seal has decrypted the master key.
-      test: ["CMD-SHELL", "bao status -address http://127.0.0.1:8200 -format=json 2>&1 | grep -q '\"sealed\":false'"]
+      test: ["CMD-SHELL", "bao status -address http://127.0.0.1:8200 -format=json 2>&1 | grep -q '\"sealed\": *false'"]
       interval: 5s
       timeout: 5s
       retries: 10
