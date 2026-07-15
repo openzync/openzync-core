@@ -97,11 +97,11 @@ services:
   openbao:
     image: openbao/openbao:2.5
     container_name: openzync-openbao
-    # Bypass the image's docker-entrypoint.sh which drops to openbao user (UID 100)
-    # via su-exec — that user can't write to the root-owned /vault/data volume.
-    # Run bao server directly under dumb-init as root.
+    # The image drops to the openbao user (UID 100) via su-exec, which can't write
+    # to the root-owned /vault/data volume.  chown the volume first, then run the
+    # stock entrypoint so it can proceed without permission errors.
     entrypoint: ["/usr/bin/dumb-init", "--"]
-    command: ["bao", "server", "-config=/etc/openbao/config.hcl"]
+    command: ["/bin/sh", "-c", "chown -R openbao:openbao /vault/data 2>/dev/null; exec /usr/local/bin/docker-entrypoint.sh bao server -config=/etc/openbao/config.hcl"]
     cap_add: [IPC_LOCK]
     ports: ["127.0.0.1:8200:8200"]
     volumes:
