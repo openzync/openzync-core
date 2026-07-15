@@ -17,8 +17,10 @@ import builtins
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import numpy as np
 import pytest
+
+pytest.importorskip("numpy", reason="reranker tests require numpy")
+import numpy as np
 
 from packages.reranker import (
     CohereReranker,
