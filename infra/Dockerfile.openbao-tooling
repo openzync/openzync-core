@@ -1,0 +1,17 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# OpenZync — OpenBao Tooling Image
+# ──────────────────────────────────────────────────────────────────────────────
+# Extends openbao/openbao:2.5 with python3 so the bootstrap scripts
+# (init_openbao.sh, write_db_to_openbao.sh) can run their inline Python
+# routines for JSON manipulation, KV secret merging, and subprocess
+# orchestration.
+#
+# Used by the `openbao-init` and `openbao-write-db` Compose services.
+# ──────────────────────────────────────────────────────────────────────────────
+FROM openbao/openbao:2.5
+
+RUN apk add --no-cache python3 bash
+
+# Keep the same entrypoint as the base image — the init/write-db scripts
+# override it via `entrypoint:` in compose.
+ENTRYPOINT ["bao"]
