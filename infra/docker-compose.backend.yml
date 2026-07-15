@@ -97,7 +97,11 @@ services:
   openbao:
     image: openbao/openbao:2.5
     container_name: openzync-openbao
-    user: "0"  # root — volume perms from prior runs may not match the image's non-root user
+    # Bypass the image's docker-entrypoint.sh which drops to openbao user (UID 100)
+    # via su-exec — that user can't write to the root-owned /vault/data volume.
+    # Run bao server directly under dumb-init as root.
+    entrypoint: ["/usr/bin/dumb-init", "--"]
+    command: ["bao", "server", "-config=/etc/openbao/config.hcl"]
     cap_add: [IPC_LOCK]
     ports: ["127.0.0.1:8200:8200"]
     volumes:
@@ -107,7 +111,6 @@ services:
     environment:
       BAO_STATIC_SEAL_KEY: "${BAO_STATIC_SEAL_KEY:?BAO_STATIC_SEAL_KEY is required (generate with: openssl rand -hex 32)}"
       BAO_ADDR: "http://0.0.0.0:8200"
-    command: ["server", "-config=/etc/openbao/config.hcl"]
     healthcheck:
       # Healthy only when initialised AND unsealed. `bao status` returns
       # valid JSON in both states; the sealed flag flips to false once
