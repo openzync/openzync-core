@@ -113,6 +113,7 @@ class OpenBaoClient:
         secret_id: str,
         *,
         timeout: float = 10.0,
+        namespace: str = "system/",
     ) -> None:
         """Initialise the client — does not connect until entering the context.
 
@@ -121,11 +122,14 @@ class OpenBaoClient:
             role_id: AppRole RoleID.
             secret_id: AppRole SecretID.
             timeout: HTTP request timeout in seconds (default 10).
+            namespace: OpenBao namespace for auth and API requests
+                       (default ``system/``, pass ``""`` for root).
         """
         self.addr = addr
         self.role_id = role_id
         self.secret_id = secret_id
         self.timeout = timeout
+        self._namespace = namespace
         self._client_token: str | None = None
         self._http: httpx.AsyncClient | None = None
         self._token_expires_at: float | None = None
@@ -175,8 +179,12 @@ class OpenBaoClient:
             )
 
         try:
+            headers: dict[str, str] = {}
+            if self._namespace:
+                headers["X-Vault-Namespace"] = self._namespace
             resp = await self._http.post(
                 "/v1/auth/approle/login",
+                headers=headers,
                 json={"role_id": self.role_id, "secret_id": self.secret_id},
             )
         except httpx.ConnectError as e:
