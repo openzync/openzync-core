@@ -40,9 +40,19 @@ For commercial licensing inquiries, contact:
 | Priority support | ❌ Community only | ✅ Included |
 | Access to proprietary components | ✅ Source-available | ✅ Full access |
 
-## SDK & OSS Components
+## Other Components
 
-The OpenZync Python SDK (`oss/sdk-python/`), API schemas (`oss/schemas/`), routers (`oss/routers/`), and infrastructure configs (`oss/infra/`) are licensed under MIT or Apache 2.0 — not AGPL. You can integrate, modify, and distribute these components without restriction, including in proprietary applications.
+Components outside the core server are licensed permissively — not AGPL — to encourage adoption and integration:
+
+| Component | License | Use |
+|-----------|---------|-----|
+| Python SDK (`openzync-sdk-python`) | Apache 2.0 | Client library for integrating with OpenZync from Python |
+| MCP Server (`openzync-mcp`) | Apache 2.0 | Model Context Protocol server for AI agent tool integration |
+| Web Frontend (`openzync-frontend`) | MIT | Next.js-based user interface |
+| Landing Page (`openzync-landing`) | MIT | Marketing & documentation site |
+| Documentation (`openzync-docs`) | CC-BY-4.0 | User guides and API reference |
+
+You can integrate, modify, and distribute these components without restriction, including in proprietary applications.
 
 ---
 

@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Open-source agent memory platform — persistent, queryable, graph-based memory for AI agents."
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = { text = "AGPL-3.0-only" }
 authors = [
     { name = "Rohan Shaw", email = "rohnsha0@gmail.com" },
 ]
@@ -17,7 +17,7 @@ keywords = ["agent", "memory", "graph", "ai", "RAG", "llm"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",

@@ -62,7 +62,7 @@ flowchart LR
 
 The API receives messages and persists them immediately. ARQ background workers asynchronously extract entities, facts, and embeddings, then sync everything to the knowledge graph. Context is retrieved at query time via hybrid search across vector, text, and graph indices.
 
-The system follows an OpenBao-zero-fallback architecture (see [ADR-003](docs/adr/003-openbao-zero-fallback.md) and [ADR-004](docs/adr/004-self-bootstrapping-postgres.md)) — all runtime configuration is auto-generated and stored in OpenBao; no secrets in `.env` beyond the OpenBao seal key.
+The system follows an OpenBao-zero-fallback architecture (see [ADR-003](docs/adr/003-openbao-zero-fallback.md) and [ADR-004](docs/adr/004-self-bootstrapping-postgres.md)) — all runtime configuration is auto-generated and stored in OpenBao; only bootstrap secrets (seal key, postgres password, secret key, webhook signing secret) live in `.env`.
 
 ---
 
@@ -71,11 +71,16 @@ The system follows an OpenBao-zero-fallback architecture (see [ADR-003](docs/adr
 **Prerequisites:** Docker, Docker Compose v2, and ~3 GB of free disk space.
 
 ```bash
-# 1. Clone and generate the OpenBao seal key (64-char hex / 32 bytes)
+# 1. Clone, set up .env with all required bootstrap secrets
 git clone https://github.com/rohnsha0/openzync.git
 cd openzync
 cp .env.example .env
+
+# Generate and append all four required secrets
 echo "BAO_STATIC_SEAL_KEY=$(openssl rand -hex 32)" >> .env
+echo "POSTGRES_PASSWORD=$(openssl rand -base64 32)" >> .env
+echo "OZ_SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" >> .env
+echo "OZ_WEBHOOK_SIGNING_SECRET=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" >> .env
 
 # 2. Bring up the entire stack — OpenBao, Postgres, migrations, api, worker
 docker compose -f infra/docker-compose.backend.yml up -d
@@ -92,15 +97,27 @@ docker compose -f infra/docker-compose.backend.yml up -d
 curl -s http://localhost:8000/v1/health
 curl -s http://localhost:8000/v1/ready
 
-# 4. Sign up and ingest a message
+# 4. Sign up (returns a confirmation — tokens issued after email verification)
 curl -X POST http://localhost:8000/v1/auth/signup \
   -H "Content-Type: application/json" \
-  -d '{"email":"demo@example.com","password":"changethis","name":"Demo","organization_name":"DemoOrg"}'
+  -d '{"email":"demo@example.com","password":"Changeth1s","organization_name":"DemoOrg"}'
+
+# 5. Check the api container logs for the 6-digit OTP, then verify
+curl -X POST http://localhost:8000/v1/auth/verify-email \
+  -H "Content-Type: application/json" \
+  -d '{"email":"demo@example.com","otp":"<otp-from-logs>"}'
+
+# 6. Use the returned access_token for authenticated calls
+export TOKEN="<access-token-from-step-5>"
+curl -X POST http://localhost:8000/v1/projects/{project_id}/memory \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"default","messages":[{"role":"user","content":"Hello world"}]}'
 ```
 
 **That's it.** No `make migrate`, no manual secret copy-paste, no `.env` full of OZ_* keys. The database password is auto-generated and stored in OpenBao. The api and worker fetch their config from OpenBao at startup.
 
-See [docs/implementation/13-deployment.md](docs/implementation/13-deployment.md) for production setup.
+See [the deployment documentation](https://github.com/rohnsha0/openzync/tree/main/infra) for production setup (Docker Compose and Helm charts).
 
 ---
 
@@ -110,24 +127,24 @@ All endpoints are prefixed with `/v1`.
 
 | Endpoint | Description |
 |---|---|
-| `POST /users/{id}/memory` | Ingest conversation messages (episodes) |
-| `GET /users/{id}/context` | Retrieve relevant context for LLM prompts |
-| `GET /search?q=...` | Hybrid search across entities, episodes, facts |
-| `GET /users/{id}/graph/nodes` | List knowledge graph entities |
-| `GET /users/{id}/graph/edges` | List knowledge graph relationships |
-| `GET /users/{id}/graph/communities` | List community clusters |
+| `POST /v1/projects/{project_id}/memory` | Ingest conversation messages (episodes) into a project's memory |
+| `GET /v1/projects/{project_id}/context` | Retrieve relevant context for LLM prompts, scoped to a project |
+| `GET /v1/projects/{project_id}/search?q=...` | Hybrid search across a project's episodes, facts, and entities |
+| `GET /v1/projects/{project_id}/graph/nodes` | List knowledge graph entities for a project |
+| `GET /v1/projects/{project_id}/graph/edges` | List knowledge graph relationships for a project |
+| `GET /v1/projects/{project_id}/graph/communities` | List community clusters for a project |
 | `POST /auth/signup` | Register a new user + org |
 | `POST /auth/login` | Authenticate and receive a JWT |
 | `GET /health` | Liveness probe |
 | `GET /ready` | Readiness probe (checks DB + Redis) |
 
-For detailed API docs, see [docs/implementation/08-api-gateway.md](docs/implementation/08-api-gateway.md) or run the server and visit `/docs`.
+For detailed API docs, run the server and visit `/docs` (Swagger UI) or see the [API Reference](https://github.com/rohnsha0/openzync/tree/main/routers) for endpoint listings.
 
 ---
 
 ## Memory Pipeline
 
-1. **Ingest** — `POST /users/{id}/memory` accepts messages and persists them as episodes in PostgreSQL.
+1. **Ingest** — `POST /v1/projects/{project_id}/memory` accepts messages and persists them as episodes in PostgreSQL.
 2. **Enrich** — ARQ workers consume episodes asynchronously: extract entities, facts, and classifications; generate embeddings.
 3. **Graph sync** — entities and relationships are synced to the graph backend (PostgreSQL-native by default), with temporal edges linking episodes to entities.
 4. **Retrieve** — hybrid search combines cosine similarity (pgvector), BM25 full-text, and graph BFS traversal. Results are fused via RRF and assembled into a structured prompt context.
@@ -144,6 +161,9 @@ OpenZync follows an **OpenBao-zero-fallback** architecture: the OpenBao secrets 
 | Variable | Required? | Description |
 |---|---|---|
 | `BAO_STATIC_SEAL_KEY` | Yes | OpenBao seal key. Generate with `openssl rand -hex 32` (64 hex chars). **Dev only** — production must use Shamir or cloud KMS. If lost, ALL secrets in OpenBao are irrecoverable. |
+| `POSTGRES_PASSWORD` | Yes (first boot) | Postgres superuser password for first-boot cluster init. Generate with `openssl rand -base64 32`. Auto-rotated after bootstrap. |
+| `OZ_SECRET_KEY` | Yes | Application secret key for JWT signing and other crypto operations. Stored in OpenBao system secret. Generate with `python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`. |
+| `OZ_WEBHOOK_SIGNING_SECRET` | Yes | Webhook signing secret (HMAC-SHA256, Svix-compatible). Stored in OpenBao system secret. Generate with `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`. |
 
 ### What OpenZync auto-generates and stores in OpenBao
 
@@ -182,7 +202,7 @@ The OpenBao Agent sidecar re-renders the system secret every 5 minutes (`static_
 - **Worker** — The ARQ worker runs as a separate process. In Docker Compose, it is the `worker` service.
 - **Migrations** — Apply with `make migrate` or `alembic upgrade head`.
 
-See [docs/implementation/13-deployment.md](docs/implementation/13-deployment.md) for environment setup, migration runbook, air-gapped deployment, and disaster recovery.
+See the [infra directory](https://github.com/rohnsha0/openzync/tree/main/infra) for Docker Compose, Helm, and deployment configurations.
 
 ---
 
@@ -211,7 +231,7 @@ make docker-up        # Start the full backend stack
 make docker-down      # Stop the backend stack
 ```
 
-The project enforces strict separation of concerns (`routers → services → repositories → models`), async throughout, and typed interfaces. See [docs/implementation/](docs/implementation/) for detailed documentation covering data models, auth, core memory, knowledge graph, NLP pipeline, worker system, SDK, MCP, dashboard, observability, testing, and deployment.
+The project enforces strict separation of concerns (`routers → services → repositories → models`), async throughout, and typed interfaces. See the [README documentation sections](#api-overview) above and the [docs directory](https://github.com/rohnsha0/openzync/tree/main/docs) for more details.
 
 ---
 
