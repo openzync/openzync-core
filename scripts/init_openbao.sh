@@ -214,6 +214,7 @@ python3 <<- 'PYEOF'
 	    "OZ_PROMPT_CACHING_ENABLED":        "prompt_caching_enabled",
 	    "OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS": "prompt_caching_anthropic_min_tokens",
 	    "OZ_PROMPT_CACHING_ANTHROPIC_TTL":  "prompt_caching_anthropic_ttl",
+	    "OZ_DATABASE_URL":                  "database_url",
 	}
 
 	# Build a flat dict of all keys present in the environment.
@@ -223,7 +224,7 @@ python3 <<- 'PYEOF'
 	secret_data = {}
 	for env_key, secret_key in KEY_MAPPING.items():
 	    value = os.environ.get(env_key)
-	    if value is None:
+	    if not value:
 	        print(f"  SKIP {secret_key}: env var {env_key} not set", file=sys.stderr)
 	        continue
 	    secret_data[secret_key] = value

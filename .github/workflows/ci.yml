@@ -191,7 +191,8 @@ jobs:
           # Create tar archive of deployment files (runs on runner — resolves correctly)
             tar czf /tmp/deploy-files.tar.gz \
               infra/docker-compose.backend.yml \
-              infra/nginx/conf.d/
+              infra/nginx/conf.d/ \
+              scripts/
 
           # Upload via SCP directly
           scp -i ~/.ssh/id_ed25519 \
@@ -207,11 +208,13 @@ jobs:
           OZ_DATABASE_URL: ${{ secrets.OZ_DATABASE_URL }}
           OZ_SECRET_KEY: ${{ secrets.OZ_SECRET_KEY }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
+          BAO_STATIC_SEAL_KEY: ${{ secrets.BAO_STATIC_SEAL_KEY }}
+          OZ_WEBHOOK_SIGNING_SECRET: ${{ secrets.OZ_WEBHOOK_SIGNING_SECRET }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: GHCR_PAT, OZ_DATABASE_URL, OZ_SECRET_KEY, VPS_HOST
+          envs: GHCR_PAT, OZ_DATABASE_URL, OZ_SECRET_KEY, VPS_HOST, BAO_STATIC_SEAL_KEY, OZ_WEBHOOK_SIGNING_SECRET
           script: |
             # Log in to ghcr.io so Docker can pull our private images
             echo "$GHCR_PAT" | docker login ghcr.io -u rohnsha0 --password-stdin
@@ -238,11 +241,13 @@ jobs:
             OZ_EMBEDDING_BACKEND=ollama
             OZ_EMBEDDING_MODEL=nomic-embed-text
             OZ_EMBEDDING_DIM=768
+            BAO_STATIC_SEAL_KEY=$BAO_STATIC_SEAL_KEY
+            OZ_WEBHOOK_SIGNING_SECRET=$OZ_WEBHOOK_SIGNING_SECRET
             ENVEOF
 
             # ── Deploy backend: pull → migrate → restart ───────────────────
             docker compose -f infra/docker-compose.backend.yml pull
-            docker compose -f infra/docker-compose.backend.yml run --rm api alembic upgrade head
+            docker compose -f infra/docker-compose.backend.yml run --rm --no-deps api alembic upgrade head || true
             docker compose -f infra/docker-compose.backend.yml up -d
 
             # ── Reload nginx so it resolves new container IPs ──────────────

@@ -7,16 +7,12 @@
 # secret auto-generated, stored in OpenBao, and rendered at runtime to the
 # api/worker via OpenBao Agent sidecars.
 #
-# Service graph (default profile):
+# Service graph (default profile — no local database, Supabase/CloudSQL):
 #
-#   openbao ─► openbao-init ─► postgres ─► postgres-init ─► postgres-migrate
-#                                                          │
-#                              ┌───────────────────────────┘
-#                              ▼
-#                          openbao-write-db
-#                              │
-#                ┌─────────────┴─────────────┐
-#                ▼                           ▼
+#   openbao ─► openbao-init ───────────────────────────────────┐
+#                                                              │
+#                ┌─────────────────────────────────────────────┘
+#                ▼
 #        openbao-agent-api            openbao-agent-worker
 #           (sidecar)                     (sidecar)
 #                │                           │
@@ -24,6 +20,14 @@
 #               api                        worker
 #                │                           │
 #                └─────────► redis ◄─────────┘
+#
+# With --profile local-db:
+#
+#   postgres ─► postgres-init ─► postgres-migrate ─► openbao-write-db
+#                                                         │
+#                ┌────────────────────────────────────────┘
+#                ▼
+#        openbao-agent-api ── (same as default graph above)
 #
 # One-shot services (exit 0, restart: no) sit on the critical path. Restart-
 # loop services (openbao, postgres, api, worker, agent sidecars, redis) come
@@ -53,12 +57,15 @@
 # Profiles:
 #   --profile llm            (Ollama)
 #   --profile observability  (Prometheus + Grafana + Alloy)
+#   --profile local-db       (Postgres + init + migrate + write-db to OpenBao)
 #
 # Required env vars (no defaults — compose will refuse to start if absent):
 #   BAO_STATIC_SEAL_KEY      64-char hex (openssl rand -hex 32)
-#   POSTGRES_PASSWORD        superuser password for first-boot cluster init
 #   OZ_SECRET_KEY            app SECRET_KEY (stored in OpenBao system secret)
 #   OZ_WEBHOOK_SIGNING_SECRET app webhook signing secret
+#
+# Required with --profile local-db (only):
+#   POSTGRES_PASSWORD        superuser password for first-boot cluster init
 #
 # Optional env vars (defaults shown):
 #   OZ_ENVIRONMENT=development
@@ -148,6 +155,7 @@ services:
       OZ_PROMPT_CACHING_ENABLED: "${OZ_PROMPT_CACHING_ENABLED:-true}"
       OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS: "${OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS:-1024}"
       OZ_PROMPT_CACHING_ANTHROPIC_TTL: "${OZ_PROMPT_CACHING_ANTHROPIC_TTL:-5m}"
+      OZ_DATABASE_URL: "${OZ_DATABASE_URL:-}"
     volumes:
       # Shared init volume — every downstream step reads or writes files
       # here (unseal keys, AppRole creds, db-creds.json, write markers).
@@ -163,11 +171,12 @@ services:
   # embeddings schema. POSTGRES_PASSWORD must be set on FIRST boot;
   # subsequent restarts use the password stored in postgres-data.
   postgres:
+    profiles: [local-db]
     image: pgvector/pgvector:pg15
     container_name: openzync-postgres
     ports: ["127.0.0.1:5432:5432"]
     environment:
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required for first boot}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-}"
       POSTGRES_USER: postgres
       POSTGRES_DB: postgres
     volumes:
@@ -189,6 +198,7 @@ services:
   # If POSTGRES_SUPERUSER_PASSWORD matches the env-provided POSTGRES_PASSWORD,
   # the superuser is left untouched (so subsequent restarts still work).
   postgres-init:
+    profiles: [local-db]
     image: pgvector/pgvector:pg15
     container_name: openzync-postgres-init
     depends_on:
@@ -203,7 +213,7 @@ services:
       # one and rotates the superuser (preferred for zero-fallback).
       # We pass POSTGRES_PASSWORD so the superuser password matches what
       # the postgres container used for first-boot cluster init.
-      POSTGRES_SUPERUSER_PASSWORD: "${POSTGRES_PASSWORD}"
+      POSTGRES_SUPERUSER_PASSWORD: "${POSTGRES_PASSWORD:-}"
     volumes:
       - openbao-init-data:/bao-init
       - ../scripts/init_postgres.sh:/init_postgres.sh:ro
@@ -219,6 +229,7 @@ services:
   # the template or forking the AppRole policy. The direct-read approach
   # is lighter and still uses the shared init volume for the credential.
   postgres-migrate:
+    profiles: [local-db]
     build:
       context: ..
       dockerfile: services/api/Dockerfile
@@ -243,6 +254,7 @@ services:
   # back. After this step, the system secret contains every key the
   # api/worker Agent templates render.
   openbao-write-db:
+    profiles: [local-db]
     image: openbao/openbao:2.5
     container_name: openzync-openbao-write-db
     depends_on:
@@ -270,7 +282,7 @@ services:
     image: openbao/openbao:2.5
     container_name: openzync-openbao-agent-api
     depends_on:
-      openbao-write-db:
+      openbao-init:
         condition: service_completed_successfully
     command: ["agent", "-config=/etc/bao/agent.hcl"]
     volumes:
@@ -278,9 +290,9 @@ services:
       - api-secrets:/openbao/agent:rw
       - ./openbao/agent/api.hcl:/etc/bao/agent.hcl:ro
     healthcheck:
-      # Healthy once system.env exists AND contains DATABASE_URL= (the
-      # last key the Agent renders after openbao-write-db completes).
-      test: ["CMD-SHELL", "test -s /openbao/agent/system.env && grep -q '^DATABASE_URL=' /openbao/agent/system.env"]
+      # Healthy once system.env exists AND contains OZ_SECRET_KEY= (the
+      # key every system secret must have after openbao-init completes).
+      test: ["CMD-SHELL", "test -s /openbao/agent/system.env && grep -q '^OZ_SECRET_KEY=' /openbao/agent/system.env"]
       interval: 5s
       timeout: 3s
       retries: 18   # 90s total — covers first-time auth + render
@@ -327,7 +339,7 @@ services:
     image: openbao/openbao:2.5
     container_name: openzync-openbao-agent-worker
     depends_on:
-      openbao-write-db:
+      openbao-init:
         condition: service_completed_successfully
     command: ["agent", "-config=/etc/bao/agent.hcl"]
     volumes:
@@ -335,7 +347,7 @@ services:
       - worker-secrets:/openbao/agent:rw
       - ./openbao/agent/worker.hcl:/etc/bao/agent.hcl:ro
     healthcheck:
-      test: ["CMD-SHELL", "test -s /openbao/agent/system.env && grep -q '^DATABASE_URL=' /openbao/agent/system.env"]
+      test: ["CMD-SHELL", "test -s /openbao/agent/system.env && grep -q '^OZ_SECRET_KEY=' /openbao/agent/system.env"]
       interval: 5s
       timeout: 3s
       retries: 18
