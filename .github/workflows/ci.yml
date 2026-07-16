@@ -193,7 +193,7 @@ jobs:
               infra/docker-compose.backend.yml \
               infra/Dockerfile.openbao-tooling \
               infra/openbao/ \
-              infra/nginx/conf.d/ \
+              infra/nginx/templates/ \
               scripts/
 
           # Upload via SCP directly
@@ -261,6 +261,23 @@ jobs:
             # its own CI pipeline (openzync-frontend).  Without a reload
             # nginx caches the old container IP and returns 502.
             docker exec infra-nginx-1 nginx -s reload || true
+
+            # ════════════════════════════════════════════════════════════════
+            # ⚠️  nginx site configs are NOT deployed by CI
+            # ════════════════════════════════════════════════════════════════
+            # The infra/nginx/conf.d/ directory is bind-mounted into the
+            # nginx container and NOT included in the deployment archive.
+            # To update nginx config, apply manually on the VPS:
+            #
+            #   cp infra/nginx/templates/openzync.conf infra/nginx/conf.d/
+            #
+            # If you also need SSL (Cloudflare Origin certs required):
+            #
+            #   cp infra/nginx/templates/openzync.ssl.conf infra/nginx/conf.d/
+            # ================================================================
+            echo ""
+            echo "⚠️  nginx config unchanged — update conf.d/ manually if needed"
+            echo "   cp infra/nginx/templates/openzync.conf infra/nginx/conf.d/"
 
   # ═════════════════════════════════════════════════════════════════════════════
   # SDK PUBLISH  (PyPI — tags only)
