@@ -38,9 +38,6 @@ logger = logging.getLogger(__name__)
 # Constants
 # ═══════════════════════════════════════════════════════════════════════════════
 
-SYSTEM_NAMESPACE = "system/"
-"""Namespace path where system-level configuration is stored."""
-
 ORG_NAMESPACE_PREFIX = "org_"
 """Prefix applied to organisation namespace names."""
 
@@ -251,23 +248,6 @@ class OpenBaoClient:
         if self._token_expires_at is not None and time.monotonic() >= self._token_expires_at:
             logger.info("OpenBao token near expiry \u2014 re-authenticating")
             await self._authenticate()
-
-    def _ns_or_none(self, ns: str) -> str | None:
-        """Return ``None`` if *ns* matches the client's default namespace.
-
-        OpenBao treats ``X-Vault-Namespace`` as relative to the token's own
-        namespace.  When the target namespace IS the token's namespace,
-        sending the header would navigate to a child namespace with the same
-        name (e.g. ``system/system/``).  Return ``None`` to omit the header
-        and let the token's context resolve the path.
-
-        Args:
-            ns: The namespace path to check (e.g. ``"system/"``).
-
-        Returns:
-            ``ns`` if it differs from the client default, ``None`` otherwise.
-        """
-        return None if self._namespace == ns else ns
 
     # ── Low-level request helper ────────────────────────────────────────────
 
@@ -625,7 +605,7 @@ class OpenBaoClient:
         try:
             return await self._kv_read(
                 f"{KV_MOUNT}/data/system",
-                namespace=self._ns_or_none(SYSTEM_NAMESPACE),
+                namespace=self._namespace,
             )
         except OpenBaoSecretNotFoundError:
             return {}
@@ -647,7 +627,7 @@ class OpenBaoClient:
         try:
             existing, version = await self._kv_read(
                 f"{KV_MOUNT}/data/system",
-                namespace=self._ns_or_none(SYSTEM_NAMESPACE),
+                namespace=self._namespace,
                 include_meta=True,
             )
         except OpenBaoSecretNotFoundError:
@@ -657,7 +637,7 @@ class OpenBaoClient:
         await self._kv_write(
             f"{KV_MOUNT}/data/system",
             existing,
-            namespace=self._ns_or_none(SYSTEM_NAMESPACE),
+            namespace=self._namespace,
             cas_version=version,
         )
 
