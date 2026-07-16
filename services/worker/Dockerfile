@@ -55,7 +55,7 @@ ENV PATH=/root/.local/bin:$PATH \
 # managed by the ARQ worker loop. The 30s start-period covers the OpenBao Agent
 # auth + render cycle; if /health is not up by then, the container is unhealthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \
-    CMD python -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3).status == 200 else 1)" || exit 1
+    CMD python -c "import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=3).status == 200 else 1)" || exit 1
 
 # Entrypoint waits for /run/secrets/system.env (rendered by OpenBao Agent
 # sidecar), sources it, then execs the ARQ worker. CMD is intentionally
