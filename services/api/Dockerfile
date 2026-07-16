@@ -54,7 +54,7 @@ ENV PATH=/root/.local/bin:$PATH \
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-    CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8000/v1/health || exit 1
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/health')" || exit 1
 
 # ENTRYPOINT runs the secret-wait + uvicorn-launch sequence as PID 1 (so the
 # container receives SIGTERM directly for graceful shutdown). CMD is empty so
