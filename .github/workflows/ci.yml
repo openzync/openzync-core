@@ -194,6 +194,7 @@ jobs:
               infra/Dockerfile.openbao-tooling \
               infra/openbao/ \
               infra/nginx/templates/ \
+              infra/nginx/conf.d/ \
               scripts/
 
           # Upload via SCP directly
@@ -221,10 +222,30 @@ jobs:
             # Log in to ghcr.io so Docker can pull our private images
             echo "$GHCR_PAT" | docker login ghcr.io -u rohnsha0 --password-stdin
             cd /home/deploy/openzync
+
+            # ── Preserve nginx conf.d/ inode across deploy ────────────────
+            # Docker bind mounts capture the directory inode at container
+            # creation time.  If we delete and recreate conf.d/, the running
+            # nginx container sees an empty directory (new inode) and serves
+            # no sites.  mv preserves the inode on the same filesystem.
+            mv infra/nginx/conf.d /tmp/nginx-conf.d.bak 2>/dev/null || true
+
             # Remove stale infra dir — may be root-owned from prior docker bind-mounts
             docker run --rm -v "$(pwd):/target:rw" alpine:3.24 rm -rf /target/infra /target/scripts 2>/dev/null || true
             tar xzf deploy-files.tar.gz --no-same-owner
             rm deploy-files.tar.gz
+
+            # ── Restore nginx conf.d/ inode and deploy default config ─────
+            # mv back preserves the same inode, so the running nginx
+            # container's bind mount remains valid.  If no backup existed
+            # (first deploy), mkdir -p creates a new directory.
+            mv /tmp/nginx-conf.d.bak infra/nginx/conf.d 2>/dev/null || mkdir -p infra/nginx/conf.d
+
+            # Always copy the default HTTP template into conf.d/.  The SSL
+            # template (openzync.ssl.conf) is NOT auto-copied — it requires
+            # Cloudflare Origin CA certs in /etc/nginx/certs/.  Enable it
+            # manually when certs exist.
+            cp infra/nginx/templates/openzync.conf infra/nginx/conf.d/openzync.conf
 
             # ── Create .env from template + secrets (at project root, both ──
             #    compose files reference it via env_file: ../.env)
@@ -263,21 +284,22 @@ jobs:
             docker exec infra-nginx-1 nginx -s reload || true
 
             # ════════════════════════════════════════════════════════════════
-            # ⚠️  nginx site configs are NOT deployed by CI
+            # ⚠️  nginx HTTP config auto-deployed; SSL config is manual
             # ════════════════════════════════════════════════════════════════
-            # The infra/nginx/conf.d/ directory is bind-mounted into the
-            # nginx container and NOT included in the deployment archive.
-            # To update nginx config, apply manually on the VPS:
+            # The default HTTP template (openzync.conf) is auto-copied to
+            # conf.d/ above.  nginx is NOT restarted — only existing
+            # connections use the cached config.  Reload only needed if
+            # bind mount was empty before this deploy:
             #
-            #   cp infra/nginx/templates/openzync.conf infra/nginx/conf.d/
+            #   docker exec infra-nginx-1 nginx -s reload
             #
-            # If you also need SSL (Cloudflare Origin certs required):
+            # SSL (Cloudflare Origin certs required) — manual only:
             #
             #   cp infra/nginx/templates/openzync.ssl.conf infra/nginx/conf.d/
+            #   docker exec infra-nginx-1 nginx -s reload
             # ================================================================
             echo ""
-            echo "⚠️  nginx config unchanged — update conf.d/ manually if needed"
-            echo "   cp infra/nginx/templates/openzync.conf infra/nginx/conf.d/"
+            echo "✅ nginx HTTP config deployed (conf.d/openzync.conf)"
 
   # ═════════════════════════════════════════════════════════════════════════════
   # SDK PUBLISH  (PyPI — tags only)
