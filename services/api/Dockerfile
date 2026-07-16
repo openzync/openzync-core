@@ -27,7 +27,7 @@ WORKDIR /app
 
 # Install build dependencies and the package itself.
 COPY pyproject.toml .
-RUN pip install --no-cache-dir --user -e .
+RUN pip install --no-cache-dir --user -e ".[llm]"
 
 # ──────────────────────────────────────────────────────────────────────────────
 
