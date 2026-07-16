@@ -111,6 +111,7 @@ class OpenBaoClient:
         *,
         timeout: float = 10.0,
         namespace: str = "system/",
+        root_token_path: str | None = "/openbao-bootstrap/root-token",
     ) -> None:
         """Initialise the client — does not connect until entering the context.
 
@@ -121,6 +122,8 @@ class OpenBaoClient:
             timeout: HTTP request timeout in seconds (default 10).
             namespace: OpenBao namespace for auth and API requests
                        (default ``system/``, pass ``""`` for root).
+            root_token_path: Path to root token file for namespace creation.
+                             ``None`` disables root-token fallback.
         """
         self.addr = addr
         self.role_id = role_id
@@ -130,6 +133,8 @@ class OpenBaoClient:
         self._client_token: str | None = None
         self._http: httpx.AsyncClient | None = None
         self._token_expires_at: float | None = None
+        self._root_token: str | None = None
+        self._root_token_path = root_token_path
 
     # ── Async context manager ───────────────────────────────────────────────
 
@@ -148,6 +153,14 @@ class OpenBaoClient:
             timeout=self.timeout,
             http2=True,
         )
+        # Read root token for namespace creation (must be from root namespace)
+        if self._root_token_path is not None:
+            try:
+                with open(self._root_token_path) as f:
+                    self._root_token = f.read().strip()
+            except OSError:
+                logger.debug("Root token not found at %s", self._root_token_path)
+
         await self._authenticate()
         return self
 
@@ -483,14 +496,21 @@ class OpenBaoClient:
     # Namespace management
     # ═════════════════════════════════════════════════════════════════════════
 
-    async def create_namespace(self, name: str) -> None:
+    async def create_namespace(self, name: str, parent: str = "") -> None:
         """Create a new OpenBao namespace.
+
+        Uses the root token (from bootstrap file) if available, because
+        ``/sys/namespaces`` is a restricted API path that can only be
+        called from the root namespace (per OpenBao docs). Falls back to
+        the client token if no root token is available.
 
         If the namespace already exists, the operation is silently ignored
         (HTTP 400 with ``"already exists"`` is treated as a no-op).
 
         Args:
             name: Namespace name (e.g. ``org_<uuid>``).
+            parent: Parent namespace path to create under (e.g. ``system/``).
+                   Empty string means root namespace.
 
         Raises:
             OpenBaoConnectionError: On network errors.
@@ -502,10 +522,22 @@ class OpenBaoClient:
             )
 
         path = f"sys/namespaces/{name}"
+
+        # Use root token without namespace header — /sys/namespaces is
+        # restricted to the root namespace per OpenBao's API docs.
+        # If a parent is specified, set X-Vault-Namespace so the
+        # namespace is created as a child of the parent, not at root.
+        token = self._root_token or self._client_token
+        headers: dict[str, str] = {}
+        if token:
+            headers["X-Vault-Token"] = token
+        if parent:
+            headers["X-Vault-Namespace"] = parent
+
         try:
             resp = await self._http.post(
                 f"/v1/{path}",
-                headers=self._headers(),
+                headers=headers,
             )
         except httpx.ConnectError as e:
             raise OpenBaoConnectionError(
@@ -538,6 +570,8 @@ class OpenBaoClient:
         self,
         mount_path: str,
         namespace: str | None = None,
+        *,
+        use_root_token: bool = False,
     ) -> None:
         """Enable the KV v2 secrets engine at the given mount path.
 
@@ -558,10 +592,20 @@ class OpenBaoClient:
             )
 
         path = f"sys/mounts/{mount_path}"
+
+        # sys/mounts is restricted to root namespace — use root token when
+        # operating in a child namespace (same pattern as create_namespace).
+        if use_root_token and self._root_token:
+            req_headers = {"X-Vault-Token": self._root_token}
+            if namespace:
+                req_headers["X-Vault-Namespace"] = namespace
+        else:
+            req_headers = self._headers(namespace)
+
         try:
             resp = await self._http.post(
                 f"/v1/{path}",
-                headers=self._headers(namespace),
+                headers=req_headers,
                 json={"type": "kv-v2"},
             )
         except httpx.ConnectError as e:
@@ -646,16 +690,18 @@ class OpenBaoClient:
     # ═════════════════════════════════════════════════════════════════════════
 
     @staticmethod
-    def _org_ns(org_id: UUID) -> str:
+    def _org_ns(org_id: UUID, parent: str = "") -> str:
         """Build the namespace path for an organisation.
 
         Args:
             org_id: Organisation UUID.
+            parent: Parent namespace to prepend (e.g. ``system/``).
+                    Defaults to the client's namespace.
 
         Returns:
-            Namespace string (e.g. ``org_<uuid>/``).
+            Namespace string (e.g. ``system/org_<uuid>/``).
         """
-        return f"{ORG_NAMESPACE_PREFIX}{org_id}/"
+        return f"{parent}{ORG_NAMESPACE_PREFIX}{org_id}/"
 
     async def read_org_config(self, org_id: UUID) -> dict[str, Any]:
         """Read all configuration keys for an organisation.
@@ -670,7 +716,7 @@ class OpenBaoClient:
             Flat dict of key/value pairs, or empty dict if no config
             exists yet.
         """
-        ns = self._org_ns(org_id)
+        ns = self._org_ns(org_id, parent=self._namespace or "")
         try:
             keys = await self._kv_list(f"{KV_MOUNT}/metadata/", namespace=ns)
         except OpenBaoSecretNotFoundError:
@@ -701,9 +747,7 @@ class OpenBaoClient:
             config: Flat dict of key/value pairs.  ``None`` values
                 trigger deletion.
         """
-        ns = self._org_ns(org_id)
-        # Ensure namespace + KV engine exist (idempotent, one-time cost per org)
-        await self.create_org_namespace(org_id)
+        ns = self._org_ns(org_id, parent=self._namespace or "")
         for key, value in config.items():
             path = f"{KV_MOUNT}/data/{key}"
             if value is None:
@@ -724,8 +768,13 @@ class OpenBaoClient:
             org_id: Organisation UUID.
         """
         ns_name = f"{ORG_NAMESPACE_PREFIX}{org_id}"
-        await self.create_namespace(ns_name)
-        await self.enable_kv_v2(KV_MOUNT, namespace=ns_name)
+        ns_path = self._org_ns(org_id, parent=self._namespace or "")
+        # Create namespace under system/ so AppRole token (scoped to system/)
+        # can operate within org_<uuid>/ via X-Vault-Namespace header.
+        await self.create_namespace(ns_name, parent="system/")
+        # enable_kv_v2 uses root token (for sys/mounts which is root-only).
+        # Pass the full namespace path.
+        await self.enable_kv_v2(KV_MOUNT, namespace=ns_path, use_root_token=True)
         logger.debug("org namespace ensured: %s", ns_name)
 
     async def delete_org_namespace(self, org_id: UUID) -> None:

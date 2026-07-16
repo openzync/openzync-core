@@ -299,8 +299,8 @@ class Settings(BaseModel):
         description="From: address for outgoing emails.",
     )
     SMTP_USE_TLS: bool = Field(
-        default=True,
-        description="Use implicit TLS (SMTPS) on connect.",
+        default=False,
+        description="Use implicit TLS (SMTPS) on connect (port 465). Set false for STARTTLS (port 587).",
     )
     SMTP_START_TLS: bool = Field(
         default=True,

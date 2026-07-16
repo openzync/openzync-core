@@ -50,6 +50,7 @@ from utils.password import hash_password, verify_password
 if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
 
+    from core.openbao import OpenBaoClient
     from services.email_service import EmailService
     from services.otp_service import OtpService
 
@@ -86,6 +87,8 @@ class AuthService:
         redis: Async Redis client for MFA session storage.
         email_service: Optional email service for notification-only emails
             (e.g. password-change confirmation).  ``None`` skips notifications.
+        bao_client: Optional OpenBao client for bootstrapping org namespaces
+            during email verification.
     """
 
     def __init__(
@@ -94,11 +97,13 @@ class AuthService:
         otp_service: OtpService,  # noqa: F821
         redis: AsyncRedis,  # noqa: F821
         email_service: EmailService | None = None,  # noqa: F821
+        bao_client: OpenBaoClient | None = None,  # noqa: F821
     ) -> None:
         self._repo = repo
         self._otp_service = otp_service
         self._redis = redis
         self._email_service = email_service
+        self._bao_client = bao_client
 
     # ── Signup ──────────────────────────────────────────────────────────────
 
@@ -212,6 +217,18 @@ class AuthService:
         # Only update DB if email was not already verified
         if not user.is_email_verified:
             await self._repo.mark_email_verified(user.id)
+
+        # Bootstrap OpenBao namespace for the org (idempotent — skips if exists)
+        if self._bao_client is not None:
+            try:
+                await self._bao_client.create_org_namespace(
+                    user.organization_id
+                )
+            except Exception:
+                logger.exception(
+                    "auth_service.openbao_ns_bootstrap_failed org_id=%s",
+                    str(user.organization_id),
+                )
 
         # Issue tokens now that email is verified
         return await self._issue_tokens(

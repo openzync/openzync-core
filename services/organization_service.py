@@ -115,6 +115,7 @@ class OrganizationService:
         # ── 6. Bootstrap OpenBao namespace + default config ──────────────
         if self._bao_client is not None:
             try:
+                await self._bao_client.create_org_namespace(org.id)
                 defaults = self._load_org_defaults()
                 if defaults:
                     await self._bao_client.write_org_config(org.id, defaults)
