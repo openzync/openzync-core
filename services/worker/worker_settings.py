@@ -235,14 +235,14 @@ class WorkerSettings(BaseModel):
         # Defined explicitly here but validated against the canonical source
         # so a drift is caught at startup, not at runtime.
         _WORKER_KEYS: frozenset[str] = frozenset({
-            "database_url",
-            "redis_url",
-            "environment",
-            "log_level",
-            "falkordb_url",
-            "falkordb_max_connections",
-            "falkordb_socket_timeout",
-            "max_workers",
+            "OZ_DATABASE_URL",
+            "OZ_REDIS_URL",
+            "OZ_ENVIRONMENT",
+            "OZ_LOG_LEVEL",
+            "OZ_FALKORDB_URL",
+            "OZ_FALKORDB_MAX_CONNECTIONS",
+            "OZ_FALKORDB_SOCKET_TIMEOUT",
+            "OZ_MAX_WORKERS",
         })
         # Canary: fail fast if SYSTEM_KEY_MAPPING drifts from worker keys
         _canary = _WORKER_KEYS - SYSTEM_KEY_MAPPING.keys()
@@ -253,20 +253,20 @@ class WorkerSettings(BaseModel):
             )
 
         # OpenBao key → WorkerSettings field name.
-        # Most keys map 1:1 (snake_case to UPPER_SNAKE_CASE) except
-        # 'environment' → 'ENV' (not 'ENVIRONMENT' like Settings).
-        _FIELD_OVERRIDES: dict[str, str] = {"environment": "ENV"}
+        # Most keys strip the ``OZ_`` prefix, except:
+        #   OZ_ENVIRONMENT → 'ENV' (not 'ENVIRONMENT' like Settings).
+        _FIELD_OVERRIDES: dict[str, str] = {"OZ_ENVIRONMENT": "ENV"}
         _INT_FIELDS: frozenset[str] = frozenset({
-            "max_workers",
-            "falkordb_max_connections",
-            "falkordb_socket_timeout",
+            "OZ_MAX_WORKERS",
+            "OZ_FALKORDB_MAX_CONNECTIONS",
+            "OZ_FALKORDB_SOCKET_TIMEOUT",
         })
 
         kwargs: dict[str, Any] = {}
         for bao_key in _WORKER_KEYS:
             value = config.get(bao_key)
             if value is not None:
-                field_name = _FIELD_OVERRIDES.get(bao_key, bao_key.upper())
+                field_name = _FIELD_OVERRIDES.get(bao_key, bao_key.removeprefix("OZ_"))
                 kwargs[field_name] = int(value) if bao_key in _INT_FIELDS else value
 
         # Deployment-specific defaults (env-alterable but not stored in OpenBao)
