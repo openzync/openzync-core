@@ -436,7 +436,7 @@ def _match_entity(
     5. **Aggressive normalization fallback**: both strings are lowercased,
        stripped, punctuation removed, and whitespace collapsed before
        comparison.  Catches residual case/whitespace/punctuation mismatches
-       like ``"Nikita"`` ↔ ``"nikita"`` or ``"theLinkAI"`` ↔ ``"the link ai"``.
+       like ``"Nikita"`` ↔ ``"nikita"`` or ``"ExampleOrg"`` ↔ ``"the link ai"``.
 
     Only the first match is returned.  Entities are ordered
     alphabetically by name for deterministic matching.

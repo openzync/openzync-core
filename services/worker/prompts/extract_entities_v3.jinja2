@@ -224,7 +224,7 @@ User: Alice is still using FastAPI for her API layer.
 | Name | Type | Description |
 |------|------|-------------|
 | Rohan Shaw | Person | An AI engineer |
-| TheLinkAI | Organization | An AI Solutions company |
+| ExampleOrg | Organization | An AI Solutions company |
 
 **New conversation:**
 ```
@@ -250,7 +250,7 @@ User: Nikita is my colleague at the company.
     {
       "subject": "Nikita",
       "predicate": "works_at",
-      "object": "TheLinkAI"
+      "object": "ExampleOrg"
     }
   ]
 }
@@ -262,8 +262,8 @@ User: Nikita is my colleague at the company.
   `Rohan Shaw` → NOT extracted as a new entity.  The relationship is emitted
   using the canonical name `Rohan Shaw`.
 - `"the company"` is a definite description referring to the known Organization
-  `TheLinkAI` (the only Organization in the known list) → NOT extracted as a
-  new entity.  The relationship uses the canonical name `TheLinkAI`.
+  `ExampleOrg` (the only Organization in the known list) → NOT extracted as a
+  new entity.  The relationship uses the canonical name `ExampleOrg`.
 - No new `company` (Organization) or `colleague` (Person) entities are created.
 
 ---

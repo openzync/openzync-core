@@ -23,7 +23,7 @@ def known_entities() -> list[dict]:
     return [
         {"id": uuid.UUID("a60dc62c-6f20-4123-b704-dad184f1004f"), "name": "Rohan", "entity_type": "Person", "summary": None},
         {"id": uuid.UUID("e3d80c00-7ca3-4774-90fb-ecaad13ffd04"), "name": "Kolkata", "entity_type": "Location", "summary": None},
-        {"id": uuid.UUID("bc064116-5312-4d2c-b0b2-eaa43bebd506"), "name": "theLinkAI", "entity_type": "Organization", "summary": None},
+        {"id": uuid.UUID("bc064116-5312-4d2c-b0b2-eaa43bebd506"), "name": "ExampleOrg", "entity_type": "Organization", "summary": None},
         {"id": uuid.UUID("c9dd30ea-820e-4271-868f-f438d6141362"), "name": "AI Engineer", "entity_type": "Custom", "summary": None},
         {"id": uuid.UUID("f47ac10b-58cc-4372-a567-0e02b2c3d479"), "name": "Alice", "entity_type": "Person", "summary": None},
         {"id": uuid.UUID("9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"), "name": "Acme Corp", "entity_type": "Organization", "summary": None},
@@ -44,9 +44,9 @@ class TestMatchEntity:
 
     def test_exact_match(self, known_entities: list[dict]) -> None:
         """Exact match returns the entity."""
-        result = _match_entity("theLinkAI", known_entities)
+        result = _match_entity("ExampleOrg", known_entities)
         assert result is not None
-        assert result["name"] == "theLinkAI"
+        assert result["name"] == "ExampleOrg"
         assert result["entity_type"] == "Organization"
 
     def test_entity_name_is_substring_of_candidate(self, known_entities: list[dict]) -> None:
@@ -112,7 +112,7 @@ class TestResolveFactEntities:
             {
                 "subject": "I",
                 "predicate": "works_at",
-                "object": "theLinkAI",
+                "object": "ExampleOrg",
                 "confidence": 0.97,
                 "subject_type": "literal",
                 "object_type": "literal",
@@ -169,14 +169,14 @@ class TestResolveFactEntities:
         """When no Person entity exists, first-person pronouns fall through to
         exact/substring matching — and remain literal if no match."""
         entities_no_person: list[dict] = [
-            {"id": uuid.UUID("11111111-1111-4111-8111-111111111111"), "name": "theLinkAI", "entity_type": "Organization", "summary": None},
+            {"id": uuid.UUID("11111111-1111-4111-8111-111111111111"), "name": "ExampleOrg", "entity_type": "Organization", "summary": None},
             {"id": uuid.UUID("22222222-2222-4222-8222-222222222222"), "name": "Acme Corp", "entity_type": "Organization", "summary": None},
         ]
         facts: list[dict[str, Any]] = [
             {
                 "subject": "I",
                 "predicate": "works_at",
-                "object": "theLinkAI",
+                "object": "ExampleOrg",
                 "confidence": 0.97,
                 "subject_type": "literal",
                 "object_type": "literal",
@@ -191,12 +191,12 @@ class TestResolveFactEntities:
         assert resolved[0]["subject_entity_id"] is None
 
     def test_resolves_object_when_known(self, known_entities: list[dict]) -> None:
-        """Object 'theLinkAI' should resolve to theLinkAI entity."""
+        """Object 'ExampleOrg' should resolve to ExampleOrg entity."""
         facts: list[dict[str, Any]] = [
             {
                 "subject": "Rohan",
                 "predicate": "works_at",
-                "object": "theLinkAI",
+                "object": "ExampleOrg",
                 "confidence": 0.97,
                 "subject_type": "literal",
                 "object_type": "literal",
@@ -209,7 +209,7 @@ class TestResolveFactEntities:
         assert resolved[0]["subject"] == "Rohan"
         assert resolved[0]["subject_type"] == "entity"
         assert resolved[0]["subject_entity_id"] == known_entities[0]["id"]
-        assert resolved[0]["object"] == "theLinkAI"
+        assert resolved[0]["object"] == "ExampleOrg"
         assert resolved[0]["object_type"] == "entity"
         assert resolved[0]["object_entity_id"] == known_entities[2]["id"]
 
@@ -258,7 +258,7 @@ class TestResolveFactEntities:
             {
                 "subject": "Rohan",
                 "predicate": "works_at",
-                "object": "theLinkAI",
+                "object": "ExampleOrg",
                 "confidence": 0.97,
                 "subject_type": "literal",
                 "object_type": "literal",
@@ -278,7 +278,7 @@ class TestResolveFactEntities:
             {
                 "subject": "Rohan",
                 "predicate": "works_at",
-                "object": "theLinkAI",
+                "object": "ExampleOrg",
                 "confidence": 0.97,
                 "subject_type": "literal",
                 "object_type": "literal",

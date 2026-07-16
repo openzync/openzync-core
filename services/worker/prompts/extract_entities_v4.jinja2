@@ -12,7 +12,7 @@ Ask before extracting:
 ```
 Is this a DISTINCT THING with its own identity?
   → Is it a named PERSON?  ("Alice", "Rohan Shaw", "Nikita")
-  → Is it a named ORGANIZATION?  ("Acme Corp", "TheLinkAI", "Google")
+  → Is it a named ORGANIZATION?  ("Acme Corp", "ExampleOrg", "Google")
   → Is it a named PRODUCT/TOOL?  ("PostgreSQL", "Python", "FastAPI")
   → Is it a LOCATION?  ("Kolkata", "FIEM College")
   → Is it any other named thing with its own persistent identity?
@@ -107,11 +107,11 @@ Output: {"entities":[],"relationships":[]}
 ```
 
 **Message:** "My colleague at the company uses Python."
-**Graph has:** Rohan(Person), TheLinkAI(Organization)
+**Graph has:** Rohan(Person), ExampleOrg(Organization)
 
 ```
 → "my colleague" — common noun referring to a Person.  Ambiguous.  Skip.
-→ "the company" — definite description resolving to TheLinkAI.  Already
+→ "the company" — definite description resolving to ExampleOrg.  Already
    a known entity.  Skip.
 → "Python" — skill mention.  Skip.
 Output: {"entities":[],"relationships":[]}

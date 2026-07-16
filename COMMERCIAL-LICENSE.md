@@ -25,7 +25,7 @@ If you wish to offer OpenZync as a hosted service (SaaS) WITHOUT releasing your 
 
 For commercial licensing inquiries, contact:
 
-- **Email:** licensing@thelinkai.com
+- **Email:** rohnsha0@gmail.com
 - **Website:** https://github.com/rohnsha0/openzync
 
 ## License Comparison

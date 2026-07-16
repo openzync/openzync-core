@@ -239,6 +239,6 @@ The project enforces strict separation of concerns (`routers → services → re
 
 The core platform is licensed under the **GNU Affero General Public License v3** — see [LICENSE](./LICENSE).
 
-**Commercial license** available for SaaS deployments that do not wish to release modifications — contact `licensing@thelinkai.com`.
+**Commercial license** available for SaaS deployments that do not wish to release modifications — contact `rohnsha0@gmail.com`.
 
 The Python SDK (`oss/sdk-python/`) is licensed under **Apache 2.0**.

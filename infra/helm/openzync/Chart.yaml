@@ -9,8 +9,9 @@ home: https://openzync.tech
 sources:
   - https://github.com/rohnsha0/openzync
 maintainers:
-  - name: TheLinkAI Engineering
-    email: engineering@thelinkai.com
+  - name: Rohan Shaw
+    email: rohnsha0@gmail.com
+  - name: Nikita Prasad
 keywords:
   - memory
   - llm

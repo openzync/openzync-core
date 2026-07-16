@@ -85,8 +85,8 @@ common noun (e.g. "the company", "my team", "the organization", "our startup",
 | "my manager", "my boss", "the director" | `Person` | Use the known Person if exactly one fits |
 
 **Examples:**
-- ✅ "Nikita works at the company" + TheLinkAI is the only known Organization
-  → output `{"subject": "Nikita", "predicate": "works_at", "object": "TheLinkAI"}`
+- ✅ "Nikita works at the company" + ExampleOrg is the only known Organization
+  → output `{"subject": "Nikita", "predicate": "works_at", "object": "ExampleOrg"}`
 - ✅ "I work with my colleague on the project" + Rohan is a known Person
   → if context makes Rohan the colleague, output `"subject": "Rohan"`
 - ❌ "the company" + multiple known Organizations → leave as "company" with
@@ -156,7 +156,7 @@ Return a JSON array of fact triples:
 8. **Resolve definite descriptions.**  If a subject or object is a generic
    common noun (e.g. "company", "team", "colleague") and a known entity of the
    matching type exists, substitute the canonical entity name.  Do not output
-   "company" as an Organization when TheLinkAI is already a known Organization.
+   "company" as an Organization when ExampleOrg is already a known Organization.
    If multiple entities of the same type exist, leave the generic noun as-is
    but assign a confidence ≤ 0.5.
 9. **Never extract meta-facts.**  Do not output facts whose predicate describes
@@ -221,12 +221,12 @@ User: Alice still works at Acme Corp, nothing has changed.
 | Name | Type | Description |
 |------|------|-------------|
 | Rohan Shaw | Person | An AI engineer |
-| TheLinkAI | Organization | An AI Solutions company |
+| ExampleOrg | Organization | An AI Solutions company |
 
 **Existing facts (already extracted):**
 | Subject | Predicate | Object | Confidence |
 |---------|-----------|--------|------------|
-| Rohan Shaw | works_at | TheLinkAI | 0.95 |
+| Rohan Shaw | works_at | ExampleOrg | 0.95 |
 | Rohan Shaw | works_as | ai engineer | 0.9 |
 
 **New message:**
@@ -246,7 +246,7 @@ Nikita is my colleague at the company.
   {
     "subject": "Nikita",
     "predicate": "works_at",
-    "object": "TheLinkAI",
+    "object": "ExampleOrg",
     "confidence": 0.85
   }
 ]
@@ -255,11 +255,11 @@ Nikita is my colleague at the company.
 **Why this is correct:**
 - `"Nikita"` is a new proper name — used as-is.
 - `"my colleague"` is a definite description → resolved to the known Person
-  `Rohan Shaw` (the only Person whose organization is TheLinkAI).
+  `Rohan Shaw` (the only Person whose organization is ExampleOrg).
 - `"the company"` is a definite description → resolved to the known Organization
-  `TheLinkAI` (the only Organization in known entities).
+  `ExampleOrg` (the only Organization in known entities).
 - No generic "company" or "colleague" entities leak into the output.
-- The existing fact `Rohan Shaw works_at TheLinkAI` is not re-extracted.
+- The existing fact `Rohan Shaw works_at ExampleOrg` is not re-extracted.
 
 ### Example 4 — Assistant Echo (No New Facts)
 
@@ -267,12 +267,12 @@ Nikita is my colleague at the company.
 | Subject | Predicate | Object | Confidence |
 |---------|-----------|--------|------------|
 | nikita | coworker_of | Rohan Shaw | 0.95 |
-| nikita | works_at | TheLinkAI | 0.95 |
+| nikita | works_at | ExampleOrg | 0.95 |
 | nikita | is_a | python developer | 0.9 |
 
 **New message (assistant echoing the user):**
 ```
-Assistant: Sounds like Nikita is a top-notch Python backend developer at TheLinkAI
+Assistant: Sounds like Nikita is a top-notch Python backend developer at ExampleOrg
 and your coworker — quite the skilled teammate!
 ```
 
@@ -282,7 +282,7 @@ and your coworker — quite the skilled teammate!
 ```
 
 **Why this is correct:** The assistant's message is re-stating facts already
-captured ("Nikita is a Python developer", "Nikita works at TheLinkAI",
+captured ("Nikita is a Python developer", "Nikita works at ExampleOrg",
 "Nikita is Rohan's coworker").  These already exist in the table above, so
 they are NOT re-extracted.  The fact that the message is from the assistant
 (rather than the user providing new information) is a strong signal that no
