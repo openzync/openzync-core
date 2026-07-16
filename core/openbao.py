@@ -252,6 +252,24 @@ class OpenBaoClient:
             logger.info("OpenBao token near expiry \u2014 re-authenticating")
             await self._authenticate()
 
+    @staticmethod
+    def _ns_or_none(ns: str) -> str | None:
+        """Return ``None`` if *ns* matches the client's default namespace.
+
+        OpenBao treats ``X-Vault-Namespace`` as relative to the token's own
+        namespace.  When the target namespace IS the token's namespace,
+        sending the header would navigate to a child namespace with the same
+        name (e.g. ``system/system/``).  Return ``None`` to omit the header
+        and let the token's context resolve the path.
+
+        Args:
+            ns: The namespace path to check (e.g. ``"system/"``).
+
+        Returns:
+            ``ns`` if it differs from the client default, ``None`` otherwise.
+        """
+        return None if self._namespace == ns else ns
+
     # ── Low-level request helper ────────────────────────────────────────────
 
     async def _request(
@@ -608,7 +626,7 @@ class OpenBaoClient:
         try:
             return await self._kv_read(
                 f"{KV_MOUNT}/data/system",
-                namespace=SYSTEM_NAMESPACE,
+                namespace=self._ns_or_none(SYSTEM_NAMESPACE),
             )
         except OpenBaoSecretNotFoundError:
             return {}
@@ -630,7 +648,7 @@ class OpenBaoClient:
         try:
             existing, version = await self._kv_read(
                 f"{KV_MOUNT}/data/system",
-                namespace=SYSTEM_NAMESPACE,
+                namespace=self._ns_or_none(SYSTEM_NAMESPACE),
                 include_meta=True,
             )
         except OpenBaoSecretNotFoundError:
@@ -640,7 +658,7 @@ class OpenBaoClient:
         await self._kv_write(
             f"{KV_MOUNT}/data/system",
             existing,
-            namespace=SYSTEM_NAMESPACE,
+            namespace=self._ns_or_none(SYSTEM_NAMESPACE),
             cas_version=version,
         )
 
