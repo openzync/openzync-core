@@ -252,8 +252,7 @@ class OpenBaoClient:
             logger.info("OpenBao token near expiry \u2014 re-authenticating")
             await self._authenticate()
 
-    @staticmethod
-    def _ns_or_none(ns: str) -> str | None:
+    def _ns_or_none(self, ns: str) -> str | None:
         """Return ``None`` if *ns* matches the client's default namespace.
 
         OpenBao treats ``X-Vault-Namespace`` as relative to the token's own
