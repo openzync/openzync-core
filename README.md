@@ -1,12 +1,15 @@
-# OpenZync — Open-Source Agent Memory Platform
+# OpenZync Core
 
-Persistent, queryable, graph-based memory for AI agents.
+**Persistent, queryable, graph-based memory for AI agents.**
 
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPLv3-blue" alt="AGPL v3"></a>
   <img src="https://img.shields.io/badge/python-%3E%3D3.11-blue" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status: Alpha">
+  <img src="https://img.shields.io/badge/fastapi-0.110+-brightgreen" alt="FastAPI">
 </p>
+
+This is the **core backend** of the OpenZync platform — a FastAPI monolith that powers the entire agent memory system. It handles ingestion, enrichment, graph storage, hybrid search, multi-tenant auth, and background workers.
 
 ---
 
@@ -25,9 +28,9 @@ Persistent, queryable, graph-based memory for AI agents.
 
 ---
 
-## What is OpenZync?
+## What is OpenZync Core?
 
-OpenZync is an open-source memory platform for AI agents. It ingests conversational data, enriches it asynchronously into a knowledge graph with entities, facts, and embeddings, and exposes a hybrid search API for LLM context retrieval.
+OpenZync Core is the backend monolith for the OpenZync agent memory platform. It ingests conversational data, enriches it asynchronously into a knowledge graph with entities, facts, and embeddings, and exposes a hybrid search API for LLM context retrieval.
 
 Built for developers who need persistent, queryable agent memory without vendor lock-in. Bring your own LLM (OpenAI, Anthropic, Ollama, Azure, OpenRouter) and your own infrastructure.
 
@@ -44,6 +47,11 @@ Built for developers who need persistent, queryable agent memory without vendor 
 - **MCP server** — expose memory tools to any MCP-compatible LLM (Claude Desktop, etc.)
 - **Admin dashboard** — Next.js frontend for graph exploration and tenant management
 - **Python SDK** — `pip install openzync` (Apache 2.0)
+- **MCP server** — expose agent memory tools to any MCP-compatible client (Claude Desktop, Cursor, etc.)
+- **OpenBao-zero-fallback** — all runtime config auto-generated and stored in OpenBao; only 4 bootstrap secrets in `.env`
+- **Async enrichment pipeline** — ARQ background workers extract entities, facts, embeddings, and classifications
+- **Multi-graph backends** — PostgreSQL-native (default), FalkorDB, or SurrealDB
+- **Observability** — Prometheus metrics, structured logging (structlog), Grafana dashboards
 
 ---
 
@@ -72,8 +80,8 @@ The system follows an OpenBao-zero-fallback architecture (see [ADR-003](docs/adr
 
 ```bash
 # 1. Clone, set up .env with all required bootstrap secrets
-git clone https://github.com/rohnsha0/openzync.git
-cd openzync
+git clone https://github.com/openzync/openzync-core.git
+cd openzync-core
 cp .env.example .env
 
 # Generate and append all four required secrets
@@ -117,7 +125,7 @@ curl -X POST http://localhost:8000/v1/projects/{project_id}/memory \
 
 **That's it.** No `make migrate`, no manual secret copy-paste, no `.env` full of OZ_* keys. The database password is auto-generated and stored in OpenBao. The api and worker fetch their config from OpenBao at startup.
 
-See [the deployment documentation](https://github.com/rohnsha0/openzync/tree/main/infra) for production setup (Docker Compose and Helm charts).
+See [the deployment documentation](./infra) for production setup (Docker Compose and Helm charts).
 
 ---
 
@@ -138,7 +146,7 @@ All endpoints are prefixed with `/v1`.
 | `GET /health` | Liveness probe |
 | `GET /ready` | Readiness probe (checks DB + Redis) |
 
-For detailed API docs, run the server and visit `/docs` (Swagger UI) or see the [API Reference](https://github.com/rohnsha0/openzync/tree/main/routers) for endpoint listings.
+For detailed API docs, run the server and visit `/docs` (Swagger UI) or see the [routers directory](./routers) for endpoint listings.
 
 ---
 
@@ -202,7 +210,7 @@ The OpenBao Agent sidecar re-renders the system secret every 5 minutes (`static_
 - **Worker** — The ARQ worker runs as a separate process. In Docker Compose, it is the `worker` service.
 - **Migrations** — Apply with `make migrate` or `alembic upgrade head`.
 
-See the [infra directory](https://github.com/rohnsha0/openzync/tree/main/infra) for Docker Compose, Helm, and deployment configurations.
+See the [infra directory](./infra) for Docker Compose, Helm, and deployment configurations.
 
 ---
 
@@ -231,7 +239,7 @@ make docker-up        # Start the full backend stack
 make docker-down      # Stop the backend stack
 ```
 
-The project enforces strict separation of concerns (`routers → services → repositories → models`), async throughout, and typed interfaces. See the [README documentation sections](#api-overview) above and the [docs directory](https://github.com/rohnsha0/openzync/tree/main/docs) for more details.
+The project enforces strict separation of concerns (`routers → services → repositories → models`), async throughout, and typed interfaces. See the [docs directory](./docs) for more details, or visit [openzync.readthedocs.io](https://openzync.readthedocs.io).
 
 ---
 
