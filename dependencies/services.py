@@ -44,6 +44,7 @@ from repositories.auth_repository import AuthRepository
 from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
 from repositories.organization_repository import OrganizationRepository
+from repositories.project_repository import ProjectRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
 from repositories.webhook_repository import WebhookRepository
@@ -53,6 +54,7 @@ from services.fact_service import FactService
 from services.graph_service import GraphService
 from services.memory_service import MemoryService
 from services.otp_service import OtpService
+from services.quick_actions_service import QuickActionsService
 from services.session_service import SessionService
 from services.user_service import UserService
 from services.webhook_service import WebhookService
@@ -279,6 +281,24 @@ async def get_auth_throttle(
         redis=redis,
         login_max_per_ip=settings.RATE_LIMIT_IP_MAX,
         login_window_sec=settings.RATE_LIMIT_WINDOW_SEC,
+    )
+
+
+# ── Quick Actions ──────────────────────────────────────────────────────────────
+
+
+async def get_quick_actions_service(
+    db: AsyncSession = Depends(get_db),
+) -> QuickActionsService:
+    """Dependency that yields an initialised QuickActionsService.
+
+    Wires in the project, user, and organization repositories for
+    context-aware action generation.
+    """
+    return QuickActionsService(
+        project_repo=ProjectRepository(db),
+        user_repo=UserRepository(db),
+        org_repo=OrganizationRepository(db),
     )
 
 

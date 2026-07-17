@@ -202,6 +202,23 @@ class ProjectRepository:
         await self._db.refresh(project)
         return project
 
+    async def count_active(self, organization_id: UUID) -> int:
+        """Count non-archived projects for the given organization.
+
+        Args:
+            organization_id: Tenant scope.
+
+        Returns:
+            Number of active projects (0 if none).
+        """
+        result = await self._db.execute(
+            select(func.count(Project.id)).where(
+                Project.organization_id == organization_id,
+                Project.is_archived.is_(False),
+            )
+        )
+        return result.scalar() or 0
+
     # ── Member Management ────────────────────────────────────────────────────
 
     async def add_member(
