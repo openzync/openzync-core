@@ -474,6 +474,23 @@ class UserRepository:
             return None, None
         return row.summary, row.summary_updated_at
 
+    async def count_active(self, organization_id: UUID) -> int:
+        """Count non-deleted users for the given organization.
+
+        Args:
+            organization_id: Tenant scope.
+
+        Returns:
+            Number of active users (0 if none).
+        """
+        result = await self._db.execute(
+            select(func.count(User.id)).where(
+                User.organization_id == organization_id,
+                User.is_deleted.is_(False),
+            )
+        )
+        return result.scalar() or 0
+
     # ── Existence Check ─────────────────────────────────────────────────────
 
     async def exists_by_external_id(

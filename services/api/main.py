@@ -45,6 +45,7 @@ from routers import (
     admin_metrics,
     admin_org_config,
     admin_organizations,
+    admin_quick_actions,
     admin_schemas,
     admin_stats,
     admin_webhooks,
@@ -237,6 +238,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_metrics.router)
     app.include_router(admin_schemas.router)
     app.include_router(admin_stats.router)
+    app.include_router(admin_quick_actions.router)
     app.include_router(admin_webhooks.router)
     app.include_router(admin_organizations.router)
     app.include_router(admin_org_config.router)
