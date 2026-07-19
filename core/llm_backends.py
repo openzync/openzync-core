@@ -693,8 +693,9 @@ class OpenRouterBackend(LLMBackend):
     The API key and model must be provided via the constructor (from per-org config).
     There is no env-var fallback and no hardcoded default.
 
-    Does **not** support embeddings — use a different backend (Ollama, OpenAI,
-    or Azure) for pgvector embedding generation.
+    Supports both chat completions and embeddings.  Embedding models are
+    configured separately via ``org_config.embedding_model`` and the dimension
+    is set via ``org_config.embedding_dim``.
     """
 
     BASE_URL: ClassVar[str] = "https://openrouter.ai/api/v1"
@@ -730,7 +731,7 @@ class OpenRouterBackend(LLMBackend):
 
     @property
     def embedding_dim(self) -> int:
-        raise NotImplementedError("OpenRouter does not support embeddings")
+        return 0  # Dimension is dynamic per model; set via org_config.embedding_dim
 
     async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
         """Send a chat completion via OpenRouter.
@@ -897,10 +898,146 @@ class OpenRouterBackend(LLMBackend):
         ) from last_exception
 
     async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:
-        """Embeddings are not supported by OpenRouter."""
-        raise NotImplementedError(
-            "OpenRouter does not offer an embedding API. "
-            "Use a different backend (Ollama, OpenAI, or Azure) for embeddings."
+        """Generate embeddings via OpenRouter's OpenAI-compatible API.
+
+        OpenRouter proxies embedding models (e.g. ``text-embedding-3-small``,
+        ``cohere/embed-english-v3.0``, etc.) through the ``/v1/embeddings``
+        endpoint.  The model name and dimension come from the per-org config
+        (``embedding_model``, ``embedding_dim``).
+
+        Uses ``httpx`` directly (not the OpenAI SDK) because OpenRouter's
+        response includes extra fields (``provider``, ``id``, extended
+        ``usage``) that the OpenAI SDK's parser rejects.
+
+        Retries on 429/5xx with exponential backoff.
+
+        Supported kwargs:
+            ``model`` — the embedding model name (required, from
+            ``org_config.embedding_model``).
+
+        Raises:
+            LLMConfigurationError: If no ``model`` kwarg is provided.
+        """
+        model = kwargs.pop("model", None)
+        if not model:
+            raise LLMConfigurationError(
+                "OpenRouter embedding requires a model name. "
+                "Set embedding_model in the per-org configuration "
+                "via PATCH /admin/org/config."
+            )
+
+        headers = {
+            "Authorization": f"Bearer {self._client.api_key}",
+            "Content-Type": "application/json",
+        }
+        payload: dict[str, Any] = {
+            "model": model,
+            "input": texts,
+        }
+
+        last_exception: Exception | None = None
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                start = time.monotonic()
+                async with httpx.AsyncClient(timeout=120) as client:
+                    resp = await client.post(
+                        f"{self.BASE_URL}/embeddings",
+                        headers=headers,
+                        json=payload,
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                elapsed = time.monotonic() - start
+
+                raw_embeddings = data.get("data", [])
+                if not raw_embeddings:
+                    raise ValueError(
+                        f"Empty embedding response from OpenRouter for model {model}"
+                    )
+
+                embeddings = [item["embedding"] for item in raw_embeddings]
+                dim = len(embeddings[0]) if embeddings else 0
+
+                logger.info(
+                    "llm.embed_completed",
+                    extra={
+                        "provider": "openrouter",
+                        "model": data.get("model", model),
+                        "num_texts": len(texts),
+                        "dim": dim,
+                        "duration_ms": round(elapsed * 1000),
+                    },
+                )
+
+                return EmbeddingResponse(
+                    embeddings=embeddings,
+                    model=data.get("model", model),
+                    dim=dim,
+                )
+
+            except httpx.HTTPStatusError as exc:
+                last_exception = exc
+                status_code = exc.response.status_code
+                if status_code in (429, 500, 502, 503):
+                    wait = 2**attempt
+                    logger.warning(
+                        "openrouter.embed_retrying",
+                        extra={
+                            "attempt": attempt,
+                            "wait_seconds": wait,
+                            "status_code": status_code,
+                        },
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                # Non-retryable HTTP error — raise immediately.
+                logger.error(
+                    "openrouter.embed_http_error",
+                    extra={
+                        "status_code": status_code,
+                        "detail": exc.response.text[:500],
+                        "model": model,
+                    },
+                )
+                raise
+            except httpx.TimeoutException:
+                last_exception = httpx.TimeoutException(
+                    f"OpenRouter embedding timed out for model {model}"
+                )
+                wait = 2**attempt
+                logger.warning(
+                    "openrouter.embed_retrying",
+                    extra={
+                        "attempt": attempt,
+                        "wait_seconds": wait,
+                        "error_type": "timeout",
+                    },
+                )
+                await asyncio.sleep(wait)
+                continue
+            except (httpx.NetworkError, httpx.ConnectError) as exc:
+                last_exception = exc
+                wait = 2**attempt
+                logger.warning(
+                    "openrouter.embed_retrying",
+                    extra={
+                        "attempt": attempt,
+                        "wait_seconds": wait,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+                await asyncio.sleep(wait)
+                continue
+            except Exception as exc:
+                # Non-retryable error (e.g. response parse failure) — raise immediately.
+                logger.error(
+                    "openrouter.embed_error",
+                    extra={"error": str(exc), "model": model},
+                )
+                raise
+
+        raise RuntimeError(
+            f"OpenRouter embedding failed after {self.MAX_RETRIES} retries: {last_exception}"
         )
 
 

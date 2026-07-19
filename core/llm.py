@@ -43,6 +43,7 @@ class LLMProvider(str, Enum):
     OPENAI = "openai"
     AZURE = "azure"
     ANTHROPIC = "anthropic"
+    OPENROUTER = "openrouter"
 
 
 @dataclass
