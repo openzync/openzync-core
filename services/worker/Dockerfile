@@ -27,7 +27,8 @@ FROM python:3.12-slim AS builder
 WORKDIR /app
 
 # Install build dependencies and the package itself.
-COPY pyproject.toml .
+# NOTE: README.md must be copied too — hatchling validates it exists at build time.
+COPY pyproject.toml README.md .
 RUN pip install --no-cache-dir --user -e ".[llm]"
 
 # ──────────────────────────────────────────────────────────────────────────────
