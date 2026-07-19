@@ -10,6 +10,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 
+from core._version import __version__
+
 router = APIRouter()
 
 
@@ -24,7 +26,7 @@ async def health() -> dict[str, str]:
     Does **not** check downstream dependencies — that is the job of
     ``/ready``.
     """
-    return {"status": "ok", "service": "openzync-api"}
+    return {"status": "ok", "service": "openzync-api", "version": __version__}
 
 
 # ── Readiness (check all dependencies) ──────────────────────────────────────

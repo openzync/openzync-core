@@ -154,9 +154,11 @@ def create_app() -> FastAPI:
         await close_redis(redis_client)
         await close_db_engine(db_engine)
 
+    from core._version import __version__
+
     app = FastAPI(
         title="OpenZync API",
-        version="1.0.0",
+        version=__version__,
         lifespan=lifespan,
         docs_url="/docs",
         redoc_url="/redoc",

@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.27", "hatch-vcs"]
+build-backend = "hatchling.build"
 
 [project]
 name = "openzync"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Open-source agent memory platform — persistent, queryable, graph-based memory for AI agents."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -90,8 +90,16 @@ all = [
     "openzync[dev,llm,doc,reranker,cohere]",
 ]
 
-[tool.setuptools.packages.find]
-include = ["openzync*"]
+[tool.hatch.version]
+source = "vcs"
+fallback-version = "0.0.0"
+raw-options = { search_parent_directories = true, local_scheme = "no-local-version" }
+
+[tool.hatch.build.targets.sdist]
+include = ["/core", "/models", "/routers", "/services", "/workers", "/schemas", "/repositories", "/middleware", "/dependencies", "/packages", "/migrations", "/utils", "/prompts", "/config", "/scripts"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
 
 [tool.ruff]
 line-length = 88
