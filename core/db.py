@@ -101,6 +101,7 @@ def get_async_session(
         bind=engine,
         class_=AsyncSession,
         expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
     )
 
 
