@@ -253,11 +253,16 @@ jobs:
             docker compose --env-file .env -f infra/docker-compose.backend.yml run --rm --no-deps api alembic upgrade head || true
 
             # Remove ALL existing containers for api and worker services —
-            # both compose-tracked containers (run containers from migration)
+            # compose-tracked service containers, compose run containers
+            # (infra-api-run-*, infra-worker-run-* from migration step),
             # and orphaned containers with matching names. This ensures
             # compose up below creates fresh containers with proper labels.
             docker compose --env-file .env -f infra/docker-compose.backend.yml rm -f -s api worker 2>/dev/null || true
-            docker rm -f openzync-api openzync-worker 2>/dev/null || true
+            docker rm -f \
+              openzync-api openzync-worker \
+              $(docker ps -a -q --filter "name=infra-api-run") \
+              $(docker ps -a -q --filter "name=infra-worker-run") \
+              2>/dev/null || true
 
             # --pull always: use pre-built ghcr.io images; build openbao-tooling locally
             docker compose --env-file .env -f infra/docker-compose.backend.yml up -d --force-recreate --pull always --remove-orphans
