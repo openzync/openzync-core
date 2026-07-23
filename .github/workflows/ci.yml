@@ -251,6 +251,12 @@ jobs:
             # ── Deploy backend: pull → migrate → restart ───────────────────
             docker compose --env-file .env -f infra/docker-compose.backend.yml pull
             docker compose --env-file .env -f infra/docker-compose.backend.yml run --rm --no-deps api alembic upgrade head || true
+
+            # Remove orphaned containers that may have detached from compose project
+            # (e.g. stale containers from a different compose project name or
+            # manually created containers with conflicting names).
+            docker rm -f openzync-api openzync-worker 2>/dev/null || true
+
             # --pull always: use pre-built ghcr.io images; build openbao-tooling locally
             docker compose --env-file .env -f infra/docker-compose.backend.yml up -d --force-recreate --pull always --remove-orphans
 
