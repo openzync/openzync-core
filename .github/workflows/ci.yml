@@ -277,8 +277,16 @@ jobs:
             if [ ! -f infra/nginx/conf.d/openzync.ssl.conf ] && [ -f /etc/nginx/certs/fullchain.pem ]; then
                 cp infra/nginx/templates/openzync.ssl.conf infra/nginx/conf.d/openzync.ssl.conf
             fi
-            # Reload nginx if any config was restored.
-            docker exec infra-nginx-1 nginx -s reload 2>/dev/null || docker restart infra-nginx-1 2>/dev/null || true
+            # Recreate nginx container — CI's rm -rf infra/ destroys the
+            # bind mount inode, so reload/restart won't see the new config.
+            # Recreating the container picks up the fresh inode.
+            docker rm -f infra-nginx-1 2>/dev/null || true
+            docker run -d --name infra-nginx-1 \
+              --network openzync_network \
+              -p 80:80 -p 443:443 \
+              -v /home/deploy/openzync/infra/nginx/conf.d:/etc/nginx/conf.d:ro \
+              -v /etc/nginx/certs:/etc/nginx/certs:ro \
+              nginx:alpine 2>/dev/null || true
 
   # ═════════════════════════════════════════════════════════════════════════════
   # SDK PUBLISH  (PyPI — tags only)
