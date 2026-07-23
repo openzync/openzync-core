@@ -236,16 +236,18 @@ class GraphBackendDispatcher:
                 ):
                     kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
             elif backend_name == "surrealdb":
-                if surreal is not None:
-                    kwargs["surreal"] = surreal
+                if surreal is None:
+                    continue
+                kwargs["surreal"] = surreal
                 if (
                     org_config is not None
                     and org_config.graph_max_traversal_depth is not None
                 ):
                     kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
             elif backend_name == "falkordb":
-                if falkordb_client is not None:
-                    kwargs["client"] = falkordb_client
+                if falkordb_client is None:
+                    continue
+                kwargs["client"] = falkordb_client
                 if (
                     org_config is not None
                     and org_config.graph_max_traversal_depth is not None
