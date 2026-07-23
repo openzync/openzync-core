@@ -192,6 +192,8 @@ jobs:
               infra/docker-compose.backend.yml \
               infra/Dockerfile.openbao-tooling \
               infra/openbao/ \
+              infra/nginx/templates/openzync.conf \
+              infra/nginx/templates/openzync.ssl.conf \
               scripts/
 
           # Upload via SCP directly
@@ -252,20 +254,31 @@ jobs:
             docker compose --env-file .env -f infra/docker-compose.backend.yml pull
             docker compose --env-file .env -f infra/docker-compose.backend.yml run --rm --no-deps api alembic upgrade head || true
 
-            # Remove ALL existing containers for api and worker services —
-            # compose-tracked service containers, compose run containers
-            # (infra-api-run-*, infra-worker-run-* from migration step),
-            # and orphaned containers with matching names. This ensures
-            # compose up below creates fresh containers with proper labels.
-            docker compose --env-file .env -f infra/docker-compose.backend.yml rm -f -s api worker 2>/dev/null || true
-            docker rm -f \
-              openzync-api openzync-worker \
-              $(docker ps -a -q --filter "name=infra-api-run") \
-              $(docker ps -a -q --filter "name=infra-worker-run") \
-              2>/dev/null || true
+            # Force-recreate api and worker — removes stale containers (including
+            # infra-api-run-* from the migration step above, plus any orphaned
+            # containers with matching names) and creates fresh ones from the
+            # newly pulled images.
+            docker compose --env-file .env -f infra/docker-compose.backend.yml up -d --force-recreate --no-deps api worker
 
-            # --pull always: use pre-built ghcr.io images; build openbao-tooling locally
-            docker compose --env-file .env -f infra/docker-compose.backend.yml up -d --force-recreate --pull always --remove-orphans
+            # Ensure remaining services are running and clean orphans.
+            docker compose --env-file .env -f infra/docker-compose.backend.yml up -d --remove-orphans
+
+            # Restore nginx config from templates — CI wipes conf.d/
+            # with rm -rf infra/, but nginx needs it to proxy traffic.
+            mkdir -p infra/nginx/conf.d
+            if [ ! -f infra/nginx/conf.d/openzync.conf ]; then
+                cp infra/nginx/templates/openzync.conf infra/nginx/conf.d/openzync.conf
+            fi
+            # Restore SSL config and symlink certs if certs exist.
+            # The SSL template expects origin-cert.pem / origin-key.pem,
+            # actual files from Cloudflare are fullchain.pem / privkey.pem.
+            ln -sf /etc/nginx/certs/fullchain.pem /etc/nginx/certs/origin-cert.pem 2>/dev/null || true
+            ln -sf /etc/nginx/certs/privkey.pem /etc/nginx/certs/origin-key.pem 2>/dev/null || true
+            if [ ! -f infra/nginx/conf.d/openzync.ssl.conf ] && [ -f /etc/nginx/certs/fullchain.pem ]; then
+                cp infra/nginx/templates/openzync.ssl.conf infra/nginx/conf.d/openzync.ssl.conf
+            fi
+            # Reload nginx if any config was restored.
+            docker exec infra-nginx-1 nginx -s reload 2>/dev/null || docker restart infra-nginx-1 2>/dev/null || true
 
   # ═════════════════════════════════════════════════════════════════════════════
   # SDK PUBLISH  (PyPI — tags only)
