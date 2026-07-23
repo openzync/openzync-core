@@ -234,7 +234,7 @@ jobs:
             OZ_ENVIRONMENT=production
             OZ_LOG_LEVEL=INFO
             OZ_CORS_ORIGINS=http://$VPS_HOST,http://localhost:3100,https://app.openzync.tech
-            OZ_HOSTS_ALLOWED=$VPS_HOST,localhost,app.openzync.tech
+            OZ_HOSTS_ALLOWED=$VPS_HOST,localhost,127.0.0.1,app.openzync.tech
             OZ_GRAPH_BACKEND=postgres
             OZ_CONTEXT_CACHE_TTL=30
             OZ_RATE_LIMIT_IP_MAX=60
@@ -252,7 +252,7 @@ jobs:
             docker compose --env-file .env -f infra/docker-compose.backend.yml pull
             docker compose --env-file .env -f infra/docker-compose.backend.yml run --rm --no-deps api alembic upgrade head || true
             # --pull always: use pre-built ghcr.io images; build openbao-tooling locally
-            docker compose --env-file .env -f infra/docker-compose.backend.yml up -d --force-recreate --pull always
+            docker compose --env-file .env -f infra/docker-compose.backend.yml up -d --force-recreate --pull always --remove-orphans
 
   # ═════════════════════════════════════════════════════════════════════════════
   # SDK PUBLISH  (PyPI — tags only)
