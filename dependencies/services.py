@@ -41,6 +41,7 @@ from core.email import EmailConfig
 from core.exceptions import GraphBackendUnavailableError
 from middleware.auth_throttle import AuthThrottle
 from repositories.auth_repository import AuthRepository
+from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
 from repositories.organization_repository import OrganizationRepository
@@ -199,6 +200,7 @@ async def get_memory_service(
         fact_repo=FactRepository(db),
         org_repo=OrganizationRepository(db),
         webhook_service=webhook,
+        blob_repo=EpisodeBlobRepository(db),
     )
 
 

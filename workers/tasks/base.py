@@ -45,6 +45,7 @@ ENRICHMENT_ENTITY_LINKS: int = 1 << 3  # bit 3
 ENRICHMENT_CLASSIFICATION: int = 1 << 4  # bit 4
 ENRICHMENT_STRUCTURED_EXTRACTION: int = 1 << 5  # bit 5
 ENRICHMENT_OBSERVATIONS: int = 1 << 6  # bit 6 — reserved, not in ALL
+ENRICHMENT_BLOB_TEXT: int = 1 << 7  # bit 7 — blob text extraction complete
 
 ENRICHMENT_ALL: int = (
     ENRICHMENT_ENTITIES
@@ -187,6 +188,7 @@ __all__ = [
     "ENRICHMENT_ENTITIES",
     "ENRICHMENT_ENTITY_LINKS",
     "ENRICHMENT_FACTS",
+    "ENRICHMENT_BLOB_TEXT",
     "ENRICHMENT_OBSERVATIONS",
     "ENRICHMENT_STRUCTURED_EXTRACTION",
     "with_retry",

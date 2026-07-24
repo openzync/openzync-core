@@ -6,6 +6,7 @@ from models.base import Base, CreatedAtMixin, TimestampMixin
 from models.custom_instruction import CustomInstruction
 from models.dialog_classification import DialogClassification
 from models.episode import Episode
+from models.episode_blob import EpisodeBlob
 from models.extraction_schema import ExtractionSchema
 from models.fact import Fact
 from models.graph_entity import GraphEntity
@@ -32,6 +33,7 @@ __all__: list[str] = [
     "User",
     "Session",
     "Episode",
+    "EpisodeBlob",
     "Fact",
     "GraphEntity",
     "GraphObservation",

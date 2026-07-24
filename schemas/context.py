@@ -8,6 +8,7 @@ assembly endpoint.  Schemas must never import from ``models/``,
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -38,6 +39,22 @@ class ContextMetadata(BaseModel):
         default=0,
         description="Total number of items included in the context.",
     )
+
+
+class ContextBlob(BaseModel):
+    """A blob referenced in context assembly.
+
+    Attributes:
+        id: Blob UUID.
+        file_name: Original filename.
+        mime_type: MIME type (e.g. ``"application/pdf"``).
+        file_size: Size in bytes.
+    """
+
+    id: UUID
+    file_name: str
+    mime_type: str
+    file_size: int
 
 
 class ContextRequest(BaseModel):

@@ -7,8 +7,36 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class BlobMetadata(BaseModel):
+    """Metadata referencing an uploaded blob in a multipart request.
+
+    Attributes:
+        blob_id: Index into the uploaded blobs list (blob_<id> field).
+        mime_type: Client-declared MIME type.
+        file_name: Original filename.
+    """
+
+    blob_id: int = Field(
+        ..., ge=0, description="Index into the uploaded blobs list (blob_<id> field).",
+    )
+    mime_type: str = Field(
+        ..., max_length=128, description="Client-declared MIME type.",
+    )
+    file_name: str = Field(
+        ..., max_length=512, description="Original filename.",
+    )
+
+    @field_validator("mime_type")
+    @classmethod
+    def check_mime_not_empty(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("mime_type must not be empty")
+        return v.strip().lower()
 
 
 class Message(BaseModel):
@@ -41,11 +69,16 @@ class Message(BaseModel):
         default_factory=dict,
         description="Optional caller-defined metadata (tags, labels, etc.).",
     )
+    blobs: list[BlobMetadata] = Field(
+        default_factory=list,
+        description="Attached binary files (images, PDFs, etc.). References are "
+        "indexed by position in the multipart upload.",
+    )
 
     @field_validator("content")
     @classmethod
-    def check_byte_size(cls, v: str) -> str:
-        """Enforce 64KB wire-level limit per SEC-09.
+    def check_at_least_one_or_bytesize(cls, v: str, info: Any) -> str:
+        """Allow empty content when blobs are present; otherwise validate size.
 
         ``max_length`` on the ``Field`` only checks Unicode code-point count.
         Multi-byte characters (e.g. emoji) can blow past 64KB on the wire
@@ -53,14 +86,19 @@ class Message(BaseModel):
 
         Args:
             v: The content string to validate.
+            info: Validation info — used to check whether blobs are present.
 
         Returns:
             The content string unchanged if valid.
 
         Raises:
-            ValueError: If the UTF-8 encoded content exceeds 65536 bytes.
+            ValueError: If content is empty AND no blobs are present, or
+                if the UTF-8 encoded content exceeds 65536 bytes.
         """
-        if len(v.encode("utf-8")) > 65536:
+        blobs = info.data.get("blobs", [])
+        if not v and not blobs:
+            raise ValueError("Either content or at least one blob must be provided")
+        if v and len(v.encode("utf-8")) > 65536:
             raise ValueError("Content exceeds 64KB when encoded as UTF-8")
         return v
 
@@ -107,6 +145,10 @@ class IngestMemoryResponse(BaseModel):
         default=0,
         description="Number of episodes (messages) ingested.",
     )
+    blob_count: int = Field(
+        default=0,
+        description="Number of blobs (file attachments) ingested.",
+    )
     status: str = Field(
         default="accepted",
         description="Always 'accepted' for synchronous acknowledgement.",
@@ -115,6 +157,32 @@ class IngestMemoryResponse(BaseModel):
         default="Messages accepted for processing",
         description="Human-readable status message.",
     )
+
+
+class BlobResponse(BaseModel):
+    """Response model for a single blob returned by GET endpoints.
+
+    Attributes:
+        id: UUID of the blob record.
+        file_name: Original filename from the upload.
+        mime_type: MIME type (e.g. ``"application/pdf"``).
+        file_size: Size in bytes.
+        storage_url: Signed/redirect URL for direct S3 download (may be null).
+        width: Image width in pixels (null for non-images).
+        height: Image height in pixels (null for non-images).
+        blob_index: Positional index within the episode's blobs (0-based).
+    """
+
+    id: UUID
+    file_name: str
+    mime_type: str
+    file_size: int
+    storage_url: str | None = None
+    width: int | None = None
+    height: int | None = None
+    blob_index: int = 0
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DeleteMemoryResponse(BaseModel):
