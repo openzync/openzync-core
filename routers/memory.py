@@ -98,21 +98,34 @@ async def ingest_messages(
     # Parse the JSON payload from the multipart form
     payload = IngestMemoryRequest.model_validate_json(data)
 
-    # Validate that every blob_id referenced in messages has a matching upload
-    max_referenced = -1
+    # Validate blob reference integrity
+    referenced_ids: set[int] = set()
     for msg in payload.messages:
-        for blob_ref in msg.blobs:
-            if blob_ref.blob_id > max_referenced:
-                max_referenced = blob_ref.blob_id
-    if max_referenced >= 0 and len(blobs) <= max_referenced:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"Message references blob_id={max_referenced} but only "
-                f"{len(blobs)} file(s) were uploaded.  Ensure every "
-                "referenced blob has a corresponding multipart file field."
+        for bm in msg.blobs:
+            if bm.blob_id < 0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Invalid blob_id {bm.blob_id}: must be non-negative",
+                )
+            referenced_ids.add(bm.blob_id)
+
+    if blobs:
+        # Every referenced blob must have a corresponding uploaded file
+        max_allowed = len(blobs) - 1
+        if any(bid > max_allowed for bid in referenced_ids):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"blob_id out of range: max is {max_allowed} "
+                       f"but referenced IDs include {referenced_ids}",
             )
-        )
+
+        # Every uploaded file must be referenced by at least one message
+        for i, _ in enumerate(blobs):
+            if i not in referenced_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Uploaded file blob_{i} is not referenced by any message",
+                )
 
     result = await service.ingest(
         org_id=org_id,

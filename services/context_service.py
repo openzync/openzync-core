@@ -14,6 +14,7 @@ and formatting to ``context_formatter``.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -29,6 +30,9 @@ from services.hybrid_retriever import HybridRetriever
 
 if TYPE_CHECKING:
     from schemas.organization_config import OrgConfigBase
+
+from repositories.episode_blob_repository import EpisodeBlobRepository
+from services.blob_storage_service import BlobStorageService
 
 logger = structlog.get_logger()
 
@@ -95,6 +99,7 @@ class ContextService:
             else None
         )
         self._org_id = org_id
+        self._org_config = org_config
 
     # ── Public API ──────────────────────────────────────────────────────────────
 
@@ -178,6 +183,58 @@ class ContextService:
         # Step 2 — Run hybrid search
         # ═══════════════════════════════════════════════════════════════════
         results = await self._retriever.hybrid_search(query, project_id, limit)
+
+        # ═══════════════════════════════════════════════════════════════════
+        # Step 2b — Load blobs for returned episodes and generate presigned
+        #           download URLs (best-effort, non-blocking on failure)
+        # ═══════════════════════════════════════════════════════════════════
+        episodes = results.get("episodes", [])
+        if episodes:
+            blob_repo = EpisodeBlobRepository(self._db)
+            storage_config = (
+                self._org_config.to_blob_storage_config()
+                if self._org_config is not None
+                else None
+            )
+
+            # Load blobs for all returned episodes concurrently (N+1 guard)
+            episode_ids = [ep["id"] for ep in episodes if ep.get("id")]
+            all_episode_blobs = await asyncio.gather(
+                *[blob_repo.get_by_episode(eid) for eid in episode_ids],
+            )
+            # Index by episode id for O(1) lookup
+            blobs_by_eid: dict[UUID, list[Any]] = {}
+            for eid, blbs in zip(episode_ids, all_episode_blobs):
+                if blbs:
+                    blobs_by_eid[eid] = blbs
+
+            for ep in episodes:
+                eid = ep.get("id")
+                if not eid or eid not in blobs_by_eid:
+                    continue
+                blbs = blobs_by_eid[eid]
+                urls: list[str | None] = (
+                    await asyncio.gather(*[
+                        BlobStorageService.generate_download_url(
+                            storage_key=bl.storage_key,
+                            storage_config=storage_config,
+                            expires_in=300,
+                        )
+                        for bl in blbs
+                    ])
+                    if storage_config
+                    else [None] * len(blbs)
+                )
+                ep["blobs"] = [
+                    {
+                        "id": bl.id,
+                        "file_name": bl.file_name,
+                        "mime_type": bl.mime_type,
+                        "file_size": bl.file_size,
+                        "download_url": url,
+                    }
+                    for bl, url in zip(blbs, urls)
+                ]
 
         # ═══════════════════════════════════════════════════════════════════
         # Step 3 — Format

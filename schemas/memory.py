@@ -11,6 +11,15 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+__all__ = [
+    "BlobMetadata",
+    "BlobResponse",
+    "DeleteMemoryResponse",
+    "IngestMemoryRequest",
+    "IngestMemoryResponse",
+    "Message",
+]
+
 
 class BlobMetadata(BaseModel):
     """Metadata referencing an uploaded blob in a multipart request.
@@ -159,6 +168,8 @@ class IngestMemoryResponse(BaseModel):
     )
 
 
+# TODO(blob-get-endpoint): Add a GET /v1/projects/{id}/memory/blobs/{blob_id}
+# endpoint that uses this schema. Currently scaffold-only.
 class BlobResponse(BaseModel):
     """Response model for a single blob returned by GET endpoints.
 
@@ -178,6 +189,7 @@ class BlobResponse(BaseModel):
     mime_type: str
     file_size: int
     storage_url: str | None = None
+    download_url: str | None = None  # Presigned URL, short TTL
     width: int | None = None
     height: int | None = None
     blob_index: int = 0

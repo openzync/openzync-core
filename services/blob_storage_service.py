@@ -171,6 +171,45 @@ class BlobStorageService:
             blobs=blob_dicts,
         )
 
+    # ── Delete ────────────────────────────────────────────────────────────────
+
+    async def delete_blobs(
+        self,
+        blob_records: Sequence[EpisodeBlob],
+        storage_config: dict[str, Any],
+    ) -> None:
+        """Delete blobs from S3 storage.
+
+        Best-effort: logs failures but does not raise. Callers should
+        commit the DB deletion regardless of S3 result — lifecycle
+        policies provide the safety net for orphaned objects.
+
+        Args:
+            blob_records: List of EpisodeBlob ORM instances to delete.
+            storage_config: Org storage config dict from
+                ``OrgConfigBase.to_blob_storage_config()``.
+        """
+        if not blob_records:
+            return
+
+        config = BlobStorageConfig.from_org_config(storage_config)
+        storage = BlobStorage(config)
+
+        for blob in blob_records:
+            try:
+                await storage.delete(blob.storage_key)
+                logger.info(
+                    "blob_storage_service.delete_success",
+                    blob_id=str(blob.id),
+                    key=blob.storage_key,
+                )
+            except S3StorageError:
+                logger.warning(
+                    "blob_storage_service.delete_failed",
+                    blob_id=str(blob.id),
+                    key=blob.storage_key,
+                )
+
     # ── Validation ──────────────────────────────────────────────────────────
 
     @staticmethod
@@ -195,26 +234,31 @@ class BlobStorageService:
     # ── Presigned URL ───────────────────────────────────────────────────────
 
     @staticmethod
-    async def get_presigned_url(
-        storage_config: dict[str, Any],
+    async def generate_download_url(
         storage_key: str,
+        storage_config: dict[str, Any],
+        expires_in: int = 300,
     ) -> str | None:
         """Generate a presigned download URL for a blob.
 
-        Never raises on failure — returns ``None`` so callers can degrade
-        gracefully (e.g., serve a "temporarily unavailable" placeholder).
+        Returns ``None`` if URL generation fails (caller should serve a
+        temporary-unavailable placeholder).
 
         Args:
-            storage_config: Org blob storage config dict.
-            storage_key: The S3 object key.
+            storage_key: S3 object key.
+            storage_config: Org storage config dict.
+            expires_in: URL TTL in seconds (default 5 minutes).
 
         Returns:
-            A presigned URL string, or ``None`` if generation fails.
+            Presigned URL string, or ``None`` on failure.
         """
         try:
             config = BlobStorageConfig.from_org_config(storage_config)
             storage = BlobStorage(config)
-            return await storage.get_presigned_url(storage_key)
+            return await storage.get_presigned_url(storage_key, expires_in=expires_in)
         except S3StorageError:
-            logger.warning("blob_storage_service.presigned_url_failed", key=storage_key)
+            logger.warning(
+                "blob_storage_service.download_url_failed",
+                key=storage_key,
+            )
             return None

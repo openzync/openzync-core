@@ -5,6 +5,7 @@ the worker scheduler.
 """
 
 from workers.tasks.classify_dialog import classify_dialog
+from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 from workers.tasks.compute_observations import compute_observations
 from workers.tasks.embed_episode import embed_episode
 from workers.tasks.embed_fact import embed_fact
@@ -20,6 +21,7 @@ from workers.tasks.summarise_community import summarise_community
 
 __all__ = [
     "classify_dialog",
+    "cleanup_orphan_blobs",
     "extract_blob_text",
     "compute_observations",
     "embed_episode",

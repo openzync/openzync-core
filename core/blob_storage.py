@@ -229,13 +229,13 @@ class BlobStorage:
     async def get_presigned_url(
         self,
         key: str,
-        expires_in: int = 3600,
+        expires_in: int = 300,
     ) -> str:
         """Generate a presigned download URL for a blob.
 
         Args:
             key: S3 object key.
-            expires_in: URL expiry in seconds (default 1 hour).
+            expires_in: URL expiry in seconds (default 5 minutes).
 
         Returns:
             A presigned HTTPS URL for temporary direct access.

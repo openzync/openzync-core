@@ -8,7 +8,6 @@ metadata, storage location, and any text extracted from the file.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 
 from sqlalchemy import (
     BigInteger,
@@ -21,12 +20,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy.sql import func
 
-from models.base import Base
+from models.base import Base, TimestampMixin
 
 
-class EpisodeBlob(Base):
+class EpisodeBlob(TimestampMixin, Base):
     """Binary file attachment linked to an episode (message).
 
     Each row represents one uploaded file.  The actual bytes are stored
@@ -52,7 +50,7 @@ class EpisodeBlob(Base):
             OCR output. Populated by the ``extract_blob_text`` worker.
         blob_index: Positional index within the episode's blobs array
             (0-based).  Unique per episode.
-        created_at / updated_at: Standard timestamps.
+        created_at / updated_at: Timezone-aware timestamps from TimestampMixin.
     """
 
     __tablename__ = "episode_blobs"
@@ -112,27 +110,7 @@ class EpisodeBlob(Base):
     # ── Position within message ─────────────────────────────────────────
     blob_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-    # ══════════════════════════════════════════════════════════════════════
-    # ⚠️ Timestamps use inline `type_=func.now().type` rather than the
-    # existing `TimestampMixin` from models/base.py.  This works but the
-    # mixin also sets `TIMESTAMP(timezone=True)`, so this column will be
-    # a plain `TIMESTAMP` without timezone in PostgreSQL.  If timezone-aware
-    # timestamps are needed (recommended), switch to TimestampMixin or use
-    # `TIMESTAMP(timezone=True)` explicitly.
-    # ── Timestamps ──────────────────────────────────────────────────────
-    created_at: Mapped[datetime] = mapped_column(
-        # ponytail: server_default is fine; no application-side default needed
-        # since we always let PostgreSQL set it on INSERT.
-        type_=func.now().type,  # type: ignore[arg-type]
-        server_default=func.now(),
-        nullable=False,
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        type_=func.now().type,  # type: ignore[arg-type]
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-    )
+    # ── Timestamps from TimestampMixin (TIMESTAMP(timezone=True)) ──────
 
     def __repr__(self) -> str:
         return (

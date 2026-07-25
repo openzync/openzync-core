@@ -210,22 +210,30 @@ class EpisodeBlobRepository:
     async def update_extracted_text(
         self, blob_id: UUID, extracted_text: str
     ) -> EpisodeBlob | None:
-        """Update the ``extracted_text`` field after worker processing.
+        """Update the extracted_text field after worker processing.
+
+        Uses a targeted UPDATE with ``synchronize_session="fetch"`` to
+        avoid the overhead of a separate SELECT round-trip.
 
         Args:
             blob_id: The blob UUID.
             extracted_text: Text extracted from the file.
 
         Returns:
-            Updated ``EpisodeBlob`` instance or ``None`` if not found.
+            Updated EpisodeBlob instance or None if not found.
         """
-        blob = await self.get_by_id(blob_id)
-        if blob is None:
-            return None
-        blob.extracted_text = extracted_text
+        from sqlalchemy import update as sa_update
+
+        stmt = (
+            sa_update(EpisodeBlob)
+            .where(EpisodeBlob.id == blob_id)
+            .values(extracted_text=extracted_text)
+            .returning(EpisodeBlob)
+            .execution_options(synchronize_session="fetch")
+        )
+        result = await self._db.execute(stmt)
         await self._db.flush()
-        await self._db.refresh(blob)
-        return blob
+        return result.scalar_one_or_none()
 
     # ── Count / Delete ───────────────────────────────────────────────────────
 
@@ -248,17 +256,50 @@ class EpisodeBlobRepository:
         )
         return result.scalar_one()
 
-    async def delete_by_episode(self, episode_id: UUID) -> int:
-        """Delete all blobs attached to an episode.
+    async def get_orphaned_blobs(
+        self,
+        organization_id: UUID,
+        limit: int = 100,
+    ) -> list[EpisodeBlob]:
+        """Find blobs whose episodes are soft-deleted.
 
-        Loads them first to trigger ORM cascade-aware delete (important if
-        S3 key cleanup is added later).  Returns the count of deleted rows.
+        Used by the cleanup worker to identify orphaned S3 objects.
+
+        Args:
+            organization_id: Tenant isolation UUID.
+            limit: Maximum blobs to return (batch size).
+
+        Returns:
+            List of EpisodeBlob instances with soft-deleted episodes.
+        """
+        from sqlalchemy import join
+
+        from models.episode import Episode
+
+        result = await self._db.execute(
+            select(EpisodeBlob)
+            .select_from(
+                join(EpisodeBlob, Episode,
+                     EpisodeBlob.episode_id == Episode.id)
+            )
+            .where(
+                EpisodeBlob.organization_id == organization_id,
+                Episode.is_deleted == True,
+            )
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    async def delete_by_episode(self, episode_id: UUID) -> list[EpisodeBlob]:
+        """Delete all blob records for an episode and return the deleted records.
+
+        Returns the list so callers can clean up S3 keys.
 
         Args:
             episode_id: The episode UUID.
 
         Returns:
-            Number of deleted rows.
+            List of deleted EpisodeBlob instances (with storage_key for S3 cleanup).
         """
         result = await self._db.execute(
             select(EpisodeBlob).where(EpisodeBlob.episode_id == episode_id)
@@ -267,4 +308,24 @@ class EpisodeBlobRepository:
         for blob in blobs:
             await self._db.delete(blob)
         await self._db.flush()
-        return len(blobs)
+        return blobs
+
+    async def delete_by_ids(
+        self, blob_ids: list[UUID]
+    ) -> list[EpisodeBlob]:
+        """Delete blob records by ID and return them.
+
+        Args:
+            blob_ids: List of blob UUIDs to delete.
+
+        Returns:
+            List of deleted EpisodeBlob instances.
+        """
+        result = await self._db.execute(
+            select(EpisodeBlob).where(EpisodeBlob.id.in_(blob_ids))
+        )
+        blobs = list(result.scalars().all())
+        for blob in blobs:
+            await self._db.delete(blob)
+        await self._db.flush()
+        return blobs

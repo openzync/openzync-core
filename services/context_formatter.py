@@ -197,7 +197,7 @@ def _clean_episodes(
     Returns:
         Cleaned episode dicts safe for JSON serialisation.
     """
-    allowed_keys = {"id", "role", "content", "created_at"}
+    allowed_keys = {"id", "role", "content", "created_at", "blobs"}
     return [
         {k: v for k, v in ep.items() if k in allowed_keys}
         for ep in episodes

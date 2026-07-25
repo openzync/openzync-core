@@ -193,6 +193,14 @@ class OrgConfigBase(BaseModel):
         description="Max upload size per blob in MB (default 50). Overrides the system default.",
     )
 
+    # ── Image Extraction ─────────────────────────────────────────────────
+    image_extraction: str | None = Field(
+        default=None,
+        description="Image text extraction method: 'ocr' (Tesseract), "
+        "'vision' (LLM vision API), 'none' (store only, no extraction). "
+        "Default 'none'.",
+    )
+
     # ── Helpers for downstream callers ───────────────────────────────────────
 
     def to_llm_config_dict(self) -> dict[str, str | float | int]:
@@ -315,6 +323,7 @@ class UpdateOrgConfigRequest(BaseModel):
     s3_secret_access_key: str | None = None
     s3_bucket_name: str | None = None
     max_blob_size_mb: int | None = Field(default=None, ge=1, le=500)
+    image_extraction: str | None = None
 
 
 class OrgConfigResponse(BaseModel):

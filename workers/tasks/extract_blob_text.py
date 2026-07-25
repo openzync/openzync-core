@@ -25,6 +25,7 @@ Bitmask:
 
 from __future__ import annotations
 
+import asyncio
 import io
 from uuid import UUID
 
@@ -107,10 +108,48 @@ def _extract_text_plain(data: bytes) -> str | None:
         return None
 
 
+async def _extract_image_ocr(data: bytes) -> str | None:
+    """Extract text from an image using Tesseract OCR.
+
+    Offloads the synchronous ``pytesseract`` call to a thread pool via
+    ``asyncio.to_thread()`` so the event loop is not blocked during CPU-bound
+    OCR processing.
+
+    Args:
+        data: Raw image bytes (PNG, JPEG, WebP, TIFF, BMP, etc.).
+
+    Returns:
+        Extracted text, or ``None`` if OCR fails or dependencies are
+        unavailable.
+    """
+    try:
+        import pytesseract
+        from PIL import Image
+
+        image = Image.open(io.BytesIO(data))
+        text = await asyncio.to_thread(
+            pytesseract.image_to_string,
+            image,
+            lang="eng",
+            config="--psm 3",  # Automatic page segmentation
+        )
+        result = text.strip()
+        return result if result else None
+    except ImportError:
+        logger.warning(
+            "extract_blob_text.ocr_not_available",
+            extra={"detail": "Install pytesseract and Pillow for OCR support."},
+        )
+        return None
+    except Exception:
+        logger.exception("extract_blob_text.ocr_failed")
+        return None
+
+
 # ── MIME type dispatch ───────────────────────────────────────────────────────
 
 
-def _dispatch_extraction(mime_type: str, data: bytes) -> str | None:
+async def _dispatch_extraction(mime_type: str, data: bytes) -> str | None:
     """Route blob content to the right text extractor based on MIME type.
 
     Args:
@@ -135,9 +174,7 @@ def _dispatch_extraction(mime_type: str, data: bytes) -> str | None:
         return _extract_docx(data)
 
     if mime_type.startswith("image/"):
-        # ponytail: image OCR/vision extraction deferred to phase 2.
-        # Images are stored and retrievable but no text extraction yet.
-        return None
+        return await _extract_image_ocr(data)
 
     # Unknown type — try magic-based detection, then skip
     try:
@@ -145,7 +182,7 @@ def _dispatch_extraction(mime_type: str, data: bytes) -> str | None:
 
         detected = magic.from_buffer(data, mime=True)
         if detected and detected != mime_type:
-            return _dispatch_extraction(detected, data)
+            return await _dispatch_extraction(detected, data)
     except ImportError:
         pass
     except Exception:
@@ -319,7 +356,7 @@ async def extract_blob_text(
                 raise
 
             # ── Extract text based on MIME type ─────────────────────────
-            extracted_text = _dispatch_extraction(mime_type, data)
+            extracted_text = await _dispatch_extraction(mime_type, data)
 
             if extracted_text:
                 await blob_repo.update_extracted_text(
