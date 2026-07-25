@@ -293,7 +293,7 @@ async def delete_prompt_template_override(
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_org_id),
     _user_id: str = Depends(get_dashboard_user),
-) -> None:
+) -> Response:
     """Delete all org-specific versions of a prompt template.
 
     After deletion the organisation no longer has a copy of this
@@ -323,6 +323,7 @@ async def delete_prompt_template_override(
         )
 
     await repo.delete_for_org(org_id=uuid.UUID(org_id), name=name)
+    return Response(status_code=204)
 
 
 # ── ``POST /prompts/{name}/promote/{version}`` removed (Option A) ──────────

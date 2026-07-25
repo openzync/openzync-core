@@ -17,6 +17,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from starlette.responses import Response
 
 from core.exceptions import NotFoundError
 from dependencies.project_auth import require_project_membership
@@ -162,7 +163,7 @@ async def delete_graph_node(
     request: Request,
     node_id: UUID,
     service: GraphService = Depends(get_graph_service),
-) -> None:
+) -> Response:
     """Delete an entity node from the knowledge graph."""
     org_id = UUID(request.state.org_id)
     project_id = UUID(request.path_params["project_id"])
@@ -177,6 +178,7 @@ async def delete_graph_node(
             message=f"Entity {node_id} not found in the knowledge graph.",
             detail={"entity_id": str(node_id), "org_id": str(org_id)},
         )
+    return Response(status_code=204)
 
 
 # ── GET /edges — List relationship edges ────────────────────────────────────────

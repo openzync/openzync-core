@@ -16,6 +16,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
+from starlette.responses import Response
 
 from dependencies.project_auth import require_project_membership
 from dependencies.request import get_current_org_id, get_project_id
@@ -277,7 +278,7 @@ async def delete_session(
     _: None = Depends(require_project_membership),
     org_id: UUID = Depends(get_current_org_id),
     project_id: UUID = Depends(get_project_id),
-) -> None:
+) -> Response:
     """Delete (soft-delete) a session.
 
     Sets ``is_deleted = True`` and unlinks episodes from the session.
@@ -288,3 +289,4 @@ async def delete_session(
         session_id=session_id,
         project_id=project_id,
     )
+    return Response(status_code=204)

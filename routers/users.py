@@ -14,6 +14,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from starlette.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import RateLimitError, ValidationError
@@ -166,7 +167,7 @@ async def delete_user(
     user_id: UUID,
     service: UserService = Depends(get_user_service),
     org_id: str = Depends(require_org_id),
-) -> None:
+) -> Response:
     """Delete a user and all associated data.
 
     This is a two-phase process:
@@ -180,6 +181,7 @@ async def delete_user(
     grace period, it will be treated as a new user.
     """
     await service.delete_user(organization_id=UUID(org_id), user_id=user_id)
+    return Response(status_code=204)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -290,6 +292,7 @@ async def delete_user_summary_instructions(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
     org_id: str = Depends(require_org_id),
-) -> None:
+) -> Response:
     """Clear all summary instructions for a user."""
     await service.delete_instructions(org_id=UUID(org_id), user_id=user_id)
+    return Response(status_code=204)

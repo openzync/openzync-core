@@ -107,3 +107,45 @@ class TestProjectIdGuard:
 
         result = await get_project_id(request)
         assert result == UUID("550e8400-e29b-41d4-a716-446655440000")
+
+
+class TestDeleteSessionResponse:
+    """``delete_session`` must return a ``Response`` with empty body and 204.
+
+    Returning ``None`` with ``status_code=204`` causes FastAPI to wrap it in
+    ``JSONResponse(None)`` → ``body=b'null'`` (4 bytes).  Since
+    ``Content-Length`` is skipped for 204 by Starlette, uvicorn expects 0
+    bytes but gets 4 → ``RuntimeError``.
+
+    The fix is to return ``Response(status_code=204)`` directly, which
+    produces ``body=b""`` — matching uvicorn's expectation.
+    """
+
+    @pytest.mark.unit
+    async def test_delete_session_returns_empty_response(self) -> None:
+        """Verify delete_session returns Response with empty body and no Content-Length."""
+        from routers.sessions import delete_session
+        from starlette.responses import Response
+        from unittest.mock import AsyncMock
+        from uuid import UUID
+
+        session_id = UUID("00000000-0000-0000-0000-000000000003")
+        service = AsyncMock()
+        org_id = UUID("00000000-0000-0000-0000-000000000001")
+        project_id = UUID("00000000-0000-0000-0000-000000000002")
+
+        result = await delete_session(
+            session_id=session_id,
+            service=service,
+            _=None,
+            org_id=org_id,
+            project_id=project_id,
+        )
+
+        assert isinstance(result, Response), "Must return a Response object"
+        assert result.status_code == 204
+        assert result.body == b"", f"Body must be empty, got {result.body!r}"
+        # Content-Length must NOT be set for 204 — Starlette skips it.
+        assert dict(result.headers).get("content-length") is None, (
+            "Content-Length must NOT be set for 204 responses"
+        )
