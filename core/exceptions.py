@@ -13,8 +13,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import structlog
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
+
+logger = structlog.get_logger(__name__)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -404,7 +407,7 @@ def _to_problem_json(request: Request, exc: AppError) -> JSONResponse:
 
     https://www.rfc-editor.org/rfc/rfc7807
     """
-    return JSONResponse(
+    response = JSONResponse(
         status_code=exc.status_code,
         content={
             "type": f"https://errors.openzync.tech/{exc.code}",
@@ -415,6 +418,14 @@ def _to_problem_json(request: Request, exc: AppError) -> JSONResponse:
             **exc.detail,
         },
     )
+    logger.debug(
+        "error_response.generated",
+        status=exc.status_code,
+        body_len=len(response.body),
+        code=exc.code,
+        path=str(request.url.path),
+    )
+    return response
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -459,14 +470,14 @@ def register_exception_handlers(app: FastAPI) -> None:
     for exc_type, _status in handlers.items():
         # FastAPI expects a callable with signature (request, exc) -> response.
         # We capture exc_type by using it as a default argument in the closure.
-        def _handler(
+        async def _handler(
             request: Request,
             exc: AppError,
             _exc_type: type[AppError] = exc_type,  # type: ignore[assignment]
         ) -> JSONResponse:
             if not isinstance(exc, _exc_type):
                 # If a subclass matched, fall through to the base handler.
-                return _handler(request, exc, AppError)
+                return await _handler(request, exc, AppError)
             return _to_problem_json(request, exc)
 
         app.add_exception_handler(exc_type, _handler)  # type: ignore[arg-type]
