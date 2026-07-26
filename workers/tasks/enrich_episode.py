@@ -153,7 +153,7 @@ async def enrich_episode(
             )
 
             episode_repo = EpisodeRepository(db)
-            episode = await episode_repo.get_by_id(uuid.UUID(episode_id))
+            episode = await episode_repo.get_by_id_for_update(uuid.UUID(episode_id))
             if episode is None:
                 raise EpisodeNotFoundError(
                     message=f"Episode {episode_id} not found for enrichment.",

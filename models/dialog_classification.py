@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Float, ForeignKey, Text, func
+from sqlalchemy import Float, ForeignKey, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,6 +36,10 @@ class DialogClassification(TimestampMixin, Base):
     """
 
     __tablename__ = "dialog_classifications"
+
+    __table_args__ = (
+        UniqueConstraint("organization_id", "episode_id", name="uq_dialog_classifications_org_episode"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True,

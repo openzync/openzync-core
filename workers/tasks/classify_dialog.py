@@ -381,6 +381,7 @@ async def process_classification_output(
                 (:org_id, :episode_id, :project_id, :intent,
                  :emotion, :valence, :arousal, :confidence,
                  CAST(:raw AS jsonb), now(), now())
+            ON CONFLICT (organization_id, episode_id) DO NOTHING
         """),
         {
             "org_id": uuid.UUID(org_id),
