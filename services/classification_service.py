@@ -61,8 +61,27 @@ class ClassificationService:
             raise NotFoundError(f"Session '{session_id}' not found")
 
         classifications = await self._repo.get_by_session(org_id, session_id)
+        if not classifications:
+            return []
+
+        # Batch-fetch episode content to avoid N+1
+        episode_ids = [c.episode_id for c in classifications]
+        episode_map = await self._episode_repo.get_content_batch(episode_ids, org_id=org_id)
+
         return [
-            ClassificationResponse.model_validate(c) for c in classifications
+            ClassificationResponse(
+                id=c.id,
+                episode_id=c.episode_id,
+                intent=c.intent,
+                emotion=c.emotion,
+                valence=c.valence,
+                arousal=c.arousal,
+                confidence=c.confidence,
+                created_at=c.created_at,
+                message=(entry := episode_map.get(c.episode_id, ("", "")))[0],
+                role=entry[1],
+            )
+            for c in classifications
         ]
 
     async def get_classification_for_episode(
@@ -77,12 +96,28 @@ class ClassificationService:
             episode_id: The episode UUID.
 
         Returns:
-            A ``ClassificationResponse`` or ``None`` if not yet classified.
+            A ``ClassificationResponse`` with ``message`` and ``role``
+            populated, or ``None`` if not yet classified.
         """
         classification = await self._repo.get_by_episode(org_id, episode_id)
         if classification is None:
             return None
-        return ClassificationResponse.model_validate(classification)
+
+        episode_map = await self._episode_repo.get_content_batch([episode_id], org_id=org_id)
+        content, role = episode_map.get(episode_id, ("", ""))
+
+        return ClassificationResponse(
+            id=classification.id,
+            episode_id=classification.episode_id,
+            intent=classification.intent,
+            emotion=classification.emotion,
+            valence=classification.valence,
+            arousal=classification.arousal,
+            confidence=classification.confidence,
+            created_at=classification.created_at,
+            message=content,
+            role=role,
+        )
 
     async def count_classifications_for_session(
         self,

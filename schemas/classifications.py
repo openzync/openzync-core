@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 
 class ClassificationResponse(BaseModel):
@@ -13,9 +13,10 @@ class ClassificationResponse(BaseModel):
 
     Returned by the classification query endpoint.  Excludes the ``raw`` LLM
     output field — that is available via direct DB access if needed.
-    """
 
-    model_config = ConfigDict(from_attributes=True)
+    The ``message`` and ``role`` fields are populated by the service layer
+    via a batch query — they are not ORM-mapped attributes.
+    """
 
     id: UUID
     episode_id: UUID
@@ -25,6 +26,8 @@ class ClassificationResponse(BaseModel):
     arousal: str | None = None
     confidence: float
     created_at: datetime
+    message: str = ""       # Full episode.content text (populated by service layer)
+    role: str = ""           # user/assistant/system/tool (populated by service layer)
 
 
 class ClassificationListResponse(BaseModel):
