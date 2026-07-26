@@ -75,10 +75,16 @@ class ObservationResponse(BaseModel):
         default=None, description="Arbitrary JSONB metadata.",
     )
     created_at: datetime = Field(
-        ..., description="Row creation timestamp (UTC).",
+        ..., description="Row creation timestamp (UTC)."
     )
     updated_at: datetime = Field(
-        ..., description="Row last-update timestamp (UTC).",
+        ..., description="Row last-update timestamp (UTC)."
+    )
+    subject_entity_name: str | None = Field(
+        default=None, description="Resolved name of the subject entity.",
+    )
+    related_entity_name: str | None = Field(
+        default=None, description="Resolved name of the related entity (null for entity-level observations).",
     )
 
     model_config = ConfigDict(from_attributes=True)

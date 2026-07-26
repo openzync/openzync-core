@@ -2,7 +2,8 @@
 
 Observations are computed by the ``compute_observations`` background worker
 and stored via the graph backend.  This service provides the read path only
-— no create, update, or delete operations.
+— no create, update, or delete operations.  Entity IDs are resolved to
+human-readable names via ``GraphBackend.resolve_entity_names()``.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ class ObservationQueryService:
     """Read-only service for retrieving observations via the graph backend.
 
     Wraps ``GraphBackend.get_observations()`` with schema conversion to
-    ``ObservationListResponse``.
+    ``ObservationListResponse`` and batch-resolves entity ID → name.
 
     Args:
         graph_backend: A resolved ``GraphBackend`` instance for the
@@ -51,7 +52,7 @@ class ObservationQueryService:
 
         Returns:
             An ``ObservationListResponse`` with the current page of
-            observations.
+            observations and resolved entity names.
 
         Raises:
             GraphBackendUnavailableError: If the graph backend is unreachable.
@@ -64,6 +65,35 @@ class ObservationQueryService:
             limit=limit,
             cursor=cursor,
         )
+
+        # ── Batch-resolve entity IDs to human-readable names ──────────────
+        entity_ids: set[UUID] = set()
+        for item in result["items"]:
+            entity_ids.add(UUID(item["subject_entity_id"]))
+            if item.get("related_entity_id"):
+                entity_ids.add(UUID(item["related_entity_id"]))
+        entity_ids.discard(None)  # type: ignore[arg-type]
+
+        name_map: dict[str, dict] = {}
+        if entity_ids:
+            try:
+                name_map = await self._graph_backend.resolve_entity_names(
+                    org_id, project_id, list(entity_ids)
+                )
+            except Exception:
+                # Non-critical — observations returned without names
+                name_map = {}
+
+        for item in result["items"]:
+            item["subject_entity_name"] = (
+                name_map.get(str(item["subject_entity_id"]), {}).get("name")
+            )
+            related_id = item.get("related_entity_id")
+            item["related_entity_name"] = (
+                name_map.get(str(related_id), {}).get("name")
+                if related_id else None
+            )
+
         items = [
             ObservationResponse.model_validate(item) for item in result["items"]
         ]
