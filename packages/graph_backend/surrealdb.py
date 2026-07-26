@@ -320,6 +320,8 @@ class SurrealGraphBackend(GraphBackend):
         """
         return {
             "id": cls._record_id_to_str(row.get("id")),
+            "organization_id": str(row.get("organization_id", "")),
+            "project_id": str(row.get("project_id", "")),
             "subject_entity_id": row.get("subject_entity_id", ""),
             "related_entity_id": row.get("related_entity_id") or None,
             "observation_type": row.get("observation_type", ""),
