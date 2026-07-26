@@ -71,6 +71,10 @@ class SessionResponse(BaseModel):
         default=0,
         description="Number of messages in this session pending enrichment completion.",
     )
+    observation_count: int = Field(
+        default=0,
+        description="Total number of observations in this project (computed by graph-topology analysis).",
+    )
     closed_at: datetime | None = Field(
         default=None,
         description="Timestamp when the session was closed. Null if open.",

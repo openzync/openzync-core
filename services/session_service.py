@@ -136,6 +136,7 @@ class SessionService:
             raise NotFoundError(f"Session {session_id} not found")
 
         stats = await self._repo.get_stats(session_id)
+        observation_count = await self._repo.get_observation_count(org_id, project_id) if project_id else 0
 
         return SessionResponse.model_validate(
             session_to_dict(
@@ -143,6 +144,7 @@ class SessionService:
                 message_count=stats["message_count"],
                 fact_count=stats["fact_count"],
                 pending_enrichment_count=stats.get("pending_enrichment_count", 0),
+                observation_count=observation_count,
             )
         )
 
@@ -172,12 +174,14 @@ class SessionService:
             )
 
         stats = await self._repo.get_stats(session.id)
+        observation_count = await self._repo.get_observation_count(org_id, project_id)
 
         return SessionResponse.model_validate(
             session_to_dict(
                 session,
                 message_count=stats["message_count"],
                 fact_count=stats["fact_count"],
+                observation_count=observation_count,
             )
         )
 
