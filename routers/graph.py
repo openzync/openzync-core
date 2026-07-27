@@ -19,6 +19,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from starlette.responses import Response
 
+from core.audit import audit_action
 from core.exceptions import NotFoundError
 from dependencies.project_auth import require_project_membership
 from dependencies.services import get_graph_service
@@ -159,6 +160,7 @@ async def get_graph_node(
         404: {"description": "Entity not found."},
     },
 )
+@audit_action("graph.node.delete", "graph_entity", "Graph node deleted")
 async def delete_graph_node(
     request: Request,
     node_id: UUID,

@@ -17,6 +17,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from starlette.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.audit import audit_action
+
 from core.exceptions import RateLimitError, ValidationError
 from dependencies.auth import require_org_id
 from dependencies.db import get_db
@@ -54,6 +56,7 @@ async def get_user_service(
 
 
 @router.post("", response_model=UserResponse, status_code=201)
+@audit_action("user.create", "user", "User created")
 async def create_user(
     body: CreateUserRequest,
     org_id: str = Depends(require_org_id),
@@ -133,6 +136,7 @@ async def get_user(
 
 
 @router.patch("/{user_id}", response_model=UserResponse)
+@audit_action("user.update", "user", "User updated")
 async def update_user(
     user_id: UUID,
     body: UpdateUserRequest,
@@ -163,6 +167,7 @@ async def update_user(
 
 
 @router.delete("/{user_id}", status_code=204)
+@audit_action("user.delete", "user", "User deleted")
 async def delete_user(
     user_id: UUID,
     service: UserService = Depends(get_user_service),
@@ -228,6 +233,7 @@ async def get_user_summary(
         429: {"description": "Rate limited — try again in 5 minutes."},
     },
 )
+@audit_action("user.summary.generate", "user", "Summary generated")
 async def trigger_user_summary(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
@@ -269,6 +275,7 @@ async def list_user_summary_instructions(
     response_model=CustomInstructionsResponse,
     status_code=201,
 )
+@audit_action("user.summary.update", "user", "Summary instructions updated")
 async def set_user_summary_instructions(
     user_id: UUID,
     body: SetCustomInstructionsRequest,
@@ -288,6 +295,7 @@ async def set_user_summary_instructions(
 
 
 @router.delete("/{user_id}/summary-instructions", status_code=204)
+@audit_action("user.summary.delete", "user", "Summary instructions deleted")
 async def delete_user_summary_instructions(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),

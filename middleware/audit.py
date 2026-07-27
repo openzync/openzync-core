@@ -26,6 +26,7 @@ from uuid import UUID
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from core.audit import get_audit_metadata
 from core.config import get_settings
 from core.exceptions import DatabaseUnavailableError
 from services.pii_service import PIIDetector, PIIRedactor
@@ -128,81 +129,35 @@ EXEMPT_PATHS: frozenset = frozenset({
     "/favicon.ico",
 })
 
-# ── Action mapping: (method, known_path_prefix) → (action, resource_type) ────
+def _resolve_action(
+    method: str,
+    path: str,
+    scope: Scope,
+) -> tuple[str, str, str | None]:
+    """Resolve audit (action, resource_type, display_name) from route metadata.
 
-ROUTE_ACTIONS: dict[tuple[str, str], tuple[str, str]] = {
-    # Auth
-    ("POST", "/v1/auth/signup"): ("auth.signup", "user"),
-    ("POST", "/v1/auth/login"): ("auth.login", "session"),
-    ("POST", "/v1/auth/refresh"): ("auth.refresh", "token"),
-    ("PATCH", "/v1/auth/me"): ("auth.profile.update", "user"),
-    # Admin
-    ("POST", "/admin/organizations"): ("organization.create", "organization"),
-    ("POST", "/v1/admin/schemas"): ("schema.create", "schema"),
-    ("PUT", "/v1/admin/schemas/"): ("schema.update", "schema"),
-    ("DELETE", "/v1/admin/schemas/"): ("schema.delete", "schema"),
-    ("POST", "/v1/admin/api-keys"): ("api_key.create", "api_key"),
-    ("DELETE", "/v1/admin/api-keys/"): ("api_key.revoke", "api_key"),
-    # Users
-    ("POST", "/v1/users"): ("user.create", "user"),
-    ("PATCH", "/v1/users/"): ("user.update", "user"),
-    ("DELETE", "/v1/users/"): ("user.delete", "user"),
-    # Sessions
-    ("POST", "/v1/users/"): ("session.create", "session"),
-    # session.create and user.* share the same prefix — must check longer path first
-    ("DELETE", "/v1/users/"): ("session.delete", "session"),
-    # Memory
-    ("POST", "/v1/users/"): ("memory.ingest", "episode"),
-    ("DELETE", "/v1/users/"): ("memory.wipe", "memory"),
-    # Facts
-    ("POST", "/v1/users/"): ("fact.create", "fact"),
-    # Graph
-    ("DELETE", "/v1/users/"): ("graph.node.delete", "graph_entity"),
-}
-
-# Longer paths must be checked first to avoid false matches
-_PREFIX_ORDERED: list[tuple[str, tuple[str, str]]] = []
-
-
-def _resolve_action(method: str, path: str) -> tuple[str, str]:
-    """Resolve a route to ``(action, resource_type)``.
-
-    Tries exact matches first, then prefix matches ordered by prefix
-    length (longest first) to avoid ``/v1/users/`` matching a
-    ``/v1/users/{id}/memory`` path incorrectly.
-
-    Falls back to ``http.{method}`` / ``{resource}`` for unknown paths.
+    Tries to match the request against registered FastAPI routes.  If the
+    matched route's endpoint has audit metadata (via ``@audit_action``
+    decorator), uses that.  Falls back to ``http.{method}``.
     """
-    # Exact match
-    key = (method, path)
-    if key in ROUTE_ACTIONS:
-        return ROUTE_ACTIONS[key]
+    app = scope.get("app")
+    if app is not None and hasattr(app, "routes"):
+        for route in app.routes:
+            if not hasattr(route, "endpoint"):
+                continue
+            if hasattr(route, "methods") and method not in route.methods:
+                continue
+            route_path: str | None = getattr(route, "path", None)
+            if route_path is not None:
+                match = route.path_regex.match(path) if hasattr(route, "path_regex") else None
+                if match is not None:
+                    meta = get_audit_metadata(route.endpoint)
+                    if meta is not None:
+                        return (meta["action"], meta["resource"], meta["display"])
 
-    # Prefix match (sorted longest-first)
-    for prefix, result in _PREFIX_ORDERED:
-        if path.startswith(prefix):
-            return result
-
-    # Fallback — extract resource from first path segment
-    parts = path.strip("/").split("/")
-    resource = parts[-1] if parts else "unknown"
-    action = f"http.{method.lower()}"
-    return action, resource
-
-
-# Build prefix-ordered list once at module load
-def _build_prefix_list() -> None:
-    seen: set[str] = set()
-    items: list[tuple[str, tuple[str, str]]] = []
-    for (meth, prefix), result in ROUTE_ACTIONS.items():
-        if prefix not in seen:
-            items.append((prefix, result))
-            seen.add(prefix)
-    items.sort(key=lambda x: len(x[0]), reverse=True)
-    _PREFIX_ORDERED.extend(items)
-
-
-_build_prefix_list()
+    # Fallback — no route matched or no metadata found
+    parts = path.strip("/").split("/") if path.strip("/") else ["unknown"]
+    return (f"http.{method.lower()}", parts[-1], None)
 
 
 # ── Middleware ─────────────────────────────────────────────────────────────────
@@ -273,8 +228,8 @@ class AuditMiddleware:
         auth_type: str | None = state.get("auth_type", None)
         request_id: str | None = state.get("request_id", None)
 
-        # ── Resolve action / resource type ─────────────────────────────────
-        action, resource_type = _resolve_action(method, path)
+        # ── Resolve action / resource type / display_name ──────────────────
+        action, resource_type, display_name = _resolve_action(method, path, scope)
 
         # ── Extract resource_id from path ──────────────────────────────────
         matches = _UUID_PATTERN.findall(path)
@@ -306,6 +261,7 @@ class AuditMiddleware:
             "status_code": status_code,
             "request_id": request_id,
             "user_agent": headers.get(b"user-agent", b"").decode(),
+            "display_name": display_name,
         }
 
         # Resolve audit_log_response_body: per-org config → env default.

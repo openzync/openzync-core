@@ -18,6 +18,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from starlette.responses import Response
 
+from core.audit import audit_action
+
 from dependencies.project_auth import require_project_membership
 from dependencies.request import get_current_org_id, get_project_id
 from dependencies.services import get_fact_service, get_session_service
@@ -56,6 +58,7 @@ router = APIRouter(
         },
     },
 )
+@audit_action("session.create", "session", "Session created")
 async def create_session(
     body: CreateSessionRequest,
     service: SessionService = Depends(get_session_service),
@@ -272,6 +275,7 @@ async def get_session_facts(
         404: {"description": "Session not found."},
     },
 )
+@audit_action("session.delete", "session", "Session deleted")
 async def delete_session(
     session_id: UUID,
     service: SessionService = Depends(get_session_service),

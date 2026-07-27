@@ -55,6 +55,7 @@ from routers import (
     classifications,
     context,
     facts,
+    global_search,
     graph,
     health,
     memory,
@@ -257,6 +258,7 @@ def create_app() -> FastAPI:
     app.include_router(context.router)
     app.include_router(search.router)
     app.include_router(graph.router)
+    app.include_router(global_search.router)
     app.include_router(facts.router)
     app.include_router(projects.router)
     app.include_router(project_api_keys.router)

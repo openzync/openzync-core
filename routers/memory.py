@@ -21,6 +21,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, Response, UploadFile, status
 
+from core.audit import audit_action
 from dependencies.auth import get_current_user_id
 from dependencies.project_auth import require_project_membership
 from dependencies.services import get_memory_service
@@ -54,6 +55,7 @@ router = APIRouter(
         422: {"description": "Validation error (e.g., empty messages list, invalid blob refs)."},
     },
 )
+@audit_action("memory.ingest", "episode", "Messages ingested")
 async def ingest_messages(
     request: Request,
     response: Response,
@@ -162,6 +164,7 @@ async def ingest_messages(
         403: {"description": "Not a member of this project."},
     },
 )
+@audit_action("memory.wipe", "memory", "Memory wiped")
 async def delete_project_memory(
     request: Request,
     service: MemoryService = Depends(get_memory_service),

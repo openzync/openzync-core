@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.audit_log import AuditLog
@@ -72,6 +72,7 @@ class AuditLogRepository:
         resource_type: str | None = None,
         resource_id: str | None = None,
         status_code: int | None = None,
+        exclude_prefix: str | None = None,
         created_after: str | None = None,
         created_before: str | None = None,
         limit: int = 50,
@@ -87,6 +88,7 @@ class AuditLogRepository:
             resource_type: Exact-match filter on resource_type.
             resource_id: Exact-match filter on resource_id.
             status_code: Exact-match filter on details->>status_code.
+            exclude_prefix: Comma-separated action prefixes to exclude.
             created_after: ISO 8601 timestamp — include entries after this.
             created_before: ISO 8601 timestamp — include entries before this.
             limit: Max entries per page.
@@ -112,6 +114,16 @@ class AuditLogRepository:
             conditions.append(AuditLog.resource_id == resource_id)
         if status_code is not None:
             conditions.append(AuditLog.details["status_code"].as_integer() == status_code)
+        if exclude_prefix:
+            prefixes = [p.strip() for p in exclude_prefix.split(",") if p.strip()]
+            if prefixes:
+                conditions.append(
+                    not_(
+                        or_(
+                            *[AuditLog.action.startswith(p) for p in prefixes]
+                        )
+                    )
+                )
         if created_after is not None:
             conditions.append(AuditLog.created_at >= func.cast(created_after, func.now().type))
         if created_before is not None:

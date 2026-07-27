@@ -13,6 +13,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.audit import audit_action
 from dependencies.db import get_db
 from repositories.organization_repository import OrganizationRepository
 from schemas.organizations import CreateOrgRequest, CreateOrgResponse
@@ -26,6 +27,7 @@ router = APIRouter(prefix="/admin", tags=["Admin"])
     status_code=201,
     response_model=CreateOrgResponse,
 )
+@audit_action("organization.create", "organization", "Organization created")
 async def create_organization(
     payload: CreateOrgRequest,
     db: AsyncSession = Depends(get_db),

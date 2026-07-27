@@ -16,6 +16,7 @@ import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.audit import audit_action
 from core.redis import get_redis
 from dependencies.auth import get_current_user_id, require_org_id
 from dependencies.db import get_db
@@ -90,6 +91,7 @@ async def list_api_keys(
         "owner access (JWT dashboard session)."
     ),
 )
+@audit_action("api_key.create", "api_key", "API key created")
 async def create_api_key(
     project_id: UUID,
     payload: CreateApiKeyRequest,
@@ -142,6 +144,7 @@ async def create_api_key(
         "access (JWT dashboard session)."
     ),
 )
+@audit_action("api_key.revoke", "api_key", "API key revoked")
 async def revoke_api_key(
     project_id: UUID,
     key_id: UUID,

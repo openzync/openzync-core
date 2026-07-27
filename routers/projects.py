@@ -12,6 +12,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Query, Request, status
 
+from core.audit import audit_action
 from core.exceptions import NotFoundError, ValidationError
 from dependencies.db import get_db
 from dependencies.project_auth import require_project_membership, require_project_owner
@@ -41,6 +42,7 @@ async def _get_project_service(db: AsyncSession = Depends(get_db)) -> ProjectSer
 
 
 @router.post("", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
+@audit_action("project.create", "project", "Project created")
 async def create_project(
     request: Request,
     payload: CreateProjectRequest,
@@ -121,6 +123,7 @@ async def get_project(
     response_model=ProjectResponse,
     dependencies=[Depends(require_project_owner)],
 )
+@audit_action("project.update", "project", "Project updated")
 async def update_project(
     payload: UpdateProjectRequest,
     project_id: UUID = Path(...),
@@ -146,6 +149,7 @@ async def update_project(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_project_owner)],
 )
+@audit_action("project.delete", "project", "Project deleted")
 async def archive_project(
     project_id: UUID = Path(...),
     request: Request = None,
@@ -170,6 +174,7 @@ async def archive_project(
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_project_owner)],
 )
+@audit_action("project.member.add", "project_member", "Member added")
 async def add_member(
     payload: AddMemberRequest,
     project_id: UUID = Path(...),
@@ -206,6 +211,7 @@ async def list_members(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(require_project_owner)],
 )
+@audit_action("project.member.remove", "project_member", "Member removed")
 async def remove_member(
     project_id: UUID = Path(...),
     user_id: UUID = Path(...),
@@ -226,6 +232,7 @@ async def remove_member(
     response_model=ProjectMemberResponse,
     dependencies=[Depends(require_project_owner)],
 )
+@audit_action("project.member.update", "project_member", "Member role updated")
 async def update_member_role(
     role: str = Query(..., pattern="^(owner|member)$"),
     project_id: UUID = Path(...),
