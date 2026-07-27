@@ -15,10 +15,12 @@ class HealthResponse(BaseModel):
     Attributes:
         status: Always ``"ok"`` when the service process is alive.
         service: Service name identifier (``"openzync-api"``).
+        version: Application version from ``importlib.metadata``.
     """
 
     status: str
     service: str = "openzync-api"
+    version: str
 
 
 class ReadinessResponse(BaseModel):

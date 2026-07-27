@@ -89,7 +89,7 @@ class QuickActionsService:
         # 4. Always show
         actions.append({
             "label": "View Analytics",
-            "href": "/analytics",
+            "href": "/overview",
             "icon": "bar-chart-3",
             "description": "Usage trends and metrics",
         })
