@@ -148,7 +148,7 @@ def create_app() -> FastAPI:
 
         # ── Shutdown (reverse order of initialisation) ────────────────────
         if getattr(app.state, "falkordb_client", None) is not None:
-            await app.state.falkordb_client.aclose()
+            await app.state.falkordb_client.connection.aclose()
         if getattr(app.state, "openbao_client", None) is not None:
             await app.state.openbao_client.__aexit__(None, None, None)
         await app.state.surreal_connection_pool.close_all()

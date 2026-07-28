@@ -652,7 +652,7 @@ async def main() -> NoReturn:
         # Shutdown graph backends (reverse order of initialisation)
         if falkordb_client is not None:
             try:
-                await falkordb_client.aclose()
+                await falkordb_client.connection.aclose()
                 logger.debug("worker.falkordb_client_closed")
             except Exception:
                 logger.warning("worker.falkordb_close_failed", exc_info=True)
