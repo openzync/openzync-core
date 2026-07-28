@@ -88,6 +88,7 @@ class AuditLogService:
         resource_type: str | None = None,
         resource_id: str | None = None,
         status_code: int | None = None,
+        exclude_prefix: str | None = None,
         created_after: str | None = None,
         created_before: str | None = None,
         limit: int = 50,
@@ -103,6 +104,7 @@ class AuditLogService:
             resource_type: Exact-match filter on resource type.
             resource_id: Exact-match filter on resource ID.
             status_code: Filter by HTTP status code.
+            exclude_prefix: Comma-separated action prefixes to exclude.
             created_after: ISO 8601 — include entries after this.
             created_before: ISO 8601 — include entries before this.
             limit: Max entries per page.
@@ -119,6 +121,7 @@ class AuditLogService:
             resource_type=resource_type,
             resource_id=resource_id,
             status_code=status_code,
+            exclude_prefix=exclude_prefix,
             created_after=created_after,
             created_before=created_before,
             limit=limit,

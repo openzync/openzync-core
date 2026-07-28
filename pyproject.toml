@@ -24,6 +24,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "aioboto3>=13.0.0",
     "aiohttp>=3.9.0",
     "aiosmtplib>=3.0.0",
     "alembic>=1.13.0",
@@ -39,12 +40,18 @@ dependencies = [
     "networkx>=3.2.0",
     "orjson>=3.11.0",
     "pgvector>=0.2.0",
+    "Pillow>=10.0.0",
     "prometheus-client>=0.19.0,<1",
     "pybreaker>=1.0.1",
+    "pytesseract>=0.3.13",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.2.0",
     "pyjwt>=2.8.0",
+    "PyMuPDF>=1.24.0",
     "PyYAML>=6.0",
+    "python-docx>=1.1.0",
+    "python-magic>=0.4.27",
+    "python-multipart>=0.0.9",
     "redis[hiredis]>=5.0.0",
     "FalkorDB==1.2.0",
     "surrealdb==2.0.0",

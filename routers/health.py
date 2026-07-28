@@ -7,10 +7,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from core._version import __version__
+from schemas.health import HealthResponse
 
 router = APIRouter()
 
@@ -18,15 +19,15 @@ router = APIRouter()
 # ── Liveness ────────────────────────────────────────────────────────────────
 
 
-@router.get("/health")
-async def health() -> dict[str, str]:
+@router.get("/health", response_model=HealthResponse)
+async def health() -> HealthResponse:
     """Liveness probe.
 
     Returns a simple 200 response when the service process is running.
     Does **not** check downstream dependencies — that is the job of
     ``/ready``.
     """
-    return {"status": "ok", "service": "openzync-api", "version": __version__}
+    return HealthResponse(status="ok", service="openzync-api", version=__version__)
 
 
 # ── Readiness (check all dependencies) ──────────────────────────────────────

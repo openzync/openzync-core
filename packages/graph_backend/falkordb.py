@@ -124,6 +124,11 @@ _O_CONFIDENCE = 4
 _O_RELATED_ID = 5
 _O_METADATA = 6
 _O_CREATED = 7
+_O_VALID_FROM = 8
+_O_VALID_TO = 9
+_O_UPDATED = 10
+_O_ORG_ID = 11
+_O_PROJECT_ID = 12
 
 
 # ── Backend Implementation ─────────────────────────────────────────────────
@@ -338,7 +343,12 @@ class FalkorGraphBackend(GraphBackend):
         """
         return {
             "id": str(row[_O_ID]) if row[_O_ID] else "",
+            "organization_id": str(row[_O_ORG_ID]) if len(row) > _O_ORG_ID and row[_O_ORG_ID] else "",
+            "project_id": str(row[_O_PROJECT_ID]) if len(row) > _O_PROJECT_ID and row[_O_PROJECT_ID] else "",
             "subject_entity_id": str(row[_O_SUBJECT_ID]) if row[_O_SUBJECT_ID] else "",
+            "related_entity_id": (
+                str(row[_O_RELATED_ID]) if len(row) > _O_RELATED_ID and row[_O_RELATED_ID] else None
+            ),
             "observation_type": str(row[_O_TYPE]) if row[_O_TYPE] else "",
             "content": str(row[_O_CONTENT]) if row[_O_CONTENT] else "",
             "confidence": (
@@ -346,8 +356,19 @@ class FalkorGraphBackend(GraphBackend):
                 if len(row) > _O_CONFIDENCE and row[_O_CONFIDENCE] is not None
                 else 0.0
             ),
-            "related_entity_id": (
-                str(row[_O_RELATED_ID]) if len(row) > _O_RELATED_ID and row[_O_RELATED_ID] else None
+            "supporting_fact_ids": [],
+            "supporting_relationship_ids": [],
+            "valid_from": (
+                row[_O_VALID_FROM].isoformat()
+                if len(row) > _O_VALID_FROM
+                and hasattr(row[_O_VALID_FROM], "isoformat")
+                else str(row[_O_VALID_FROM]) if len(row) > _O_VALID_FROM and row[_O_VALID_FROM] else None
+            ),
+            "valid_to": (
+                row[_O_VALID_TO].isoformat()
+                if len(row) > _O_VALID_TO
+                and hasattr(row[_O_VALID_TO], "isoformat")
+                else str(row[_O_VALID_TO]) if len(row) > _O_VALID_TO and row[_O_VALID_TO] else None
             ),
             "observation_metadata": (
                 FalkorGraphBackend._parse_json_field(row[_O_METADATA])
@@ -359,6 +380,12 @@ class FalkorGraphBackend(GraphBackend):
                 if len(row) > _O_CREATED
                 and hasattr(row[_O_CREATED], "isoformat")
                 else str(row[_O_CREATED]) if len(row) > _O_CREATED and row[_O_CREATED] else None
+            ),
+            "updated_at": (
+                row[_O_UPDATED].isoformat()
+                if len(row) > _O_UPDATED
+                and hasattr(row[_O_UPDATED], "isoformat")
+                else str(row[_O_UPDATED]) if len(row) > _O_UPDATED and row[_O_UPDATED] else None
             ),
         }
 
@@ -2421,7 +2448,9 @@ class FalkorGraphBackend(GraphBackend):
                     o.updated_at = $now
                 RETURN o.id, o.subject_entity_id, o.observation_type,
                        o.content, o.confidence, o.related_entity_id,
-                       o.observation_metadata, o.created_at
+                       o.observation_metadata, o.created_at,
+                       o.valid_from, o.valid_to, o.updated_at,
+                       o.organization_id, o.project_id
                 """,
                 {
                     "subject_id": str(subject_entity_id),
@@ -2532,7 +2561,9 @@ class FalkorGraphBackend(GraphBackend):
                   AND {type_filter}
                 RETURN o.id, o.subject_entity_id, o.observation_type,
                        o.content, o.confidence, o.related_entity_id,
-                       o.observation_metadata, o.created_at
+                       o.observation_metadata, o.created_at,
+                       o.valid_from, o.valid_to, o.updated_at,
+                       o.organization_id, o.project_id
                 ORDER BY o.created_at DESC
                 LIMIT {limit + 1}
                 """,

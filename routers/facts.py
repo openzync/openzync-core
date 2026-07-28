@@ -18,6 +18,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 
+from core.audit import audit_action
 from dependencies.auth import get_current_user_id
 from dependencies.project_auth import require_project_membership
 from dependencies.services import get_fact_service
@@ -50,6 +51,7 @@ router = APIRouter(
             "invalid triple format)."},
     },
 )
+@audit_action("fact.create", "fact", "Fact created")
 async def ingest_facts(
     request: Request,
     payload: FactBatchRequest,

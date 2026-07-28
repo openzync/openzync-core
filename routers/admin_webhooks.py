@@ -8,7 +8,9 @@ from __future__ import annotations
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
+from starlette.responses import Response
 
+from core.audit import audit_action
 from dependencies.auth import get_dashboard_user, require_org_id
 from dependencies.services import get_webhook_service
 from schemas.webhook import (
@@ -79,6 +81,7 @@ async def get_webhook(
 
 
 @router.post("", status_code=201)
+@audit_action("webhook.create", "webhook", "Webhook created")
 async def create_webhook(
     body: CreateWebhookRequest,
     service: WebhookService = Depends(get_webhook_service),
@@ -108,6 +111,7 @@ async def create_webhook(
 
 
 @router.patch("/{endpoint_id}")
+@audit_action("webhook.update", "webhook", "Webhook updated")
 async def update_webhook(
     endpoint_id: uuid.UUID,
     body: UpdateWebhookRequest,
@@ -132,13 +136,15 @@ async def update_webhook(
 
 
 @router.delete("/{endpoint_id}", status_code=204)
+@audit_action("webhook.delete", "webhook", "Webhook deleted")
 async def delete_webhook(
     endpoint_id: uuid.UUID,
     service: WebhookService = Depends(get_webhook_service),
     org_id: str = Depends(require_org_id),
     _user_id: str = Depends(get_dashboard_user),
-) -> None:
+) -> Response:
     """Delete a webhook endpoint."""
     deleted = await service.delete_endpoint(endpoint_id, uuid.UUID(org_id))
     if not deleted:
         raise HTTPException(status_code=404, detail="Webhook endpoint not found")
+    return Response(status_code=204)

@@ -26,6 +26,7 @@ def session_to_dict(
     message_count: int = 0,
     fact_count: int = 0,
     pending_enrichment_count: int = 0,
+    observation_count: int = 0,
 ) -> dict[str, Any]:
     """Convert a Session ORM model to a flat dict for schema construction.
 
@@ -36,6 +37,7 @@ def session_to_dict(
         message_count: Total number of messages in the session.
         fact_count: Total number of extracted facts.
         pending_enrichment_count: Number of messages pending enrichment.
+        observation_count: Total number of observations in the project.
     """
     return {
         "id": session.id,
@@ -50,6 +52,7 @@ def session_to_dict(
         "message_count": message_count,
         "fact_count": fact_count,
         "pending_enrichment_count": pending_enrichment_count,
+        "observation_count": observation_count,
     }
 
 

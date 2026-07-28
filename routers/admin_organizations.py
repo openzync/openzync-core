@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from starlette.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.audit import audit_action
 from dependencies.auth import get_dashboard_user, require_org_id
 from dependencies.db import get_db
 from repositories.prompt_template_repository import PromptTemplateRepository
@@ -94,6 +95,7 @@ async def list_system_prompts(
     response_model=PromptTemplateDetail,
     status_code=201,
 )
+@audit_action("prompt.import", "prompt", "Prompt imported")
 async def import_system_prompt(
     body: ImportPromptRequest,
     db: AsyncSession = Depends(get_db),
@@ -125,6 +127,7 @@ async def import_system_prompt(
     "/prompts/{name}/set-default",
     response_model=PromptTemplateDetail,
 )
+@audit_action("prompt.set_default", "prompt", "Default prompt set")
 async def set_prompt_type_default(
     name: str,
     db: AsyncSession = Depends(get_db),
@@ -212,6 +215,7 @@ async def list_prompt_template_versions(
     response_model=PromptTemplateDetail,
     status_code=201,
 )
+@audit_action("prompt.update", "prompt", "Prompt updated")
 async def set_prompt_template(
     name: str,
     body: SetPromptTemplateRequest,
@@ -256,6 +260,7 @@ async def set_prompt_template(
     "/prompts/{name}/rollback/{version}",
     response_model=PromptTemplateDetail,
 )
+@audit_action("prompt.rollback", "prompt", "Prompt rolled back")
 async def rollback_prompt_template(
     name: str,
     version: int,
@@ -288,12 +293,13 @@ async def rollback_prompt_template(
     status_code=204,
     response_model=None,
 )
+@audit_action("prompt.delete", "prompt", "Prompt deleted")
 async def delete_prompt_template_override(
     name: str,
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_org_id),
     _user_id: str = Depends(get_dashboard_user),
-) -> None:
+) -> Response:
     """Delete all org-specific versions of a prompt template.
 
     After deletion the organisation no longer has a copy of this
@@ -323,6 +329,7 @@ async def delete_prompt_template_override(
         )
 
     await repo.delete_for_org(org_id=uuid.UUID(org_id), name=name)
+    return Response(status_code=204)
 
 
 # ── ``POST /prompts/{name}/promote/{version}`` removed (Option A) ──────────
@@ -368,6 +375,7 @@ async def list_custom_instructions(
     response_model=CustomInstructionsResponse,
     status_code=201,
 )
+@audit_action("instruction.update", "instruction", "Instructions updated")
 async def set_custom_instructions(
     body: SetCustomInstructionsRequest,
     db: AsyncSession = Depends(get_db),
@@ -400,6 +408,7 @@ async def set_custom_instructions(
     "/custom-instructions",
     status_code=204,
 )
+@audit_action("instruction.delete", "instruction", "Instructions deleted")
 async def clear_custom_instructions(
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_org_id),

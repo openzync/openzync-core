@@ -55,10 +55,12 @@ from routers import (
     classifications,
     context,
     facts,
+    global_search,
     graph,
     health,
     memory,
     metrics,
+    observations,
     project_api_keys,
     projects,
     search,
@@ -251,10 +253,12 @@ def create_app() -> FastAPI:
     app.include_router(sessions.router)
     app.include_router(classifications.router)
     app.include_router(structured_extractions.router)
+    app.include_router(observations.router)
     app.include_router(memory.router)
     app.include_router(context.router)
     app.include_router(search.router)
     app.include_router(graph.router)
+    app.include_router(global_search.router)
     app.include_router(facts.router)
     app.include_router(projects.router)
     app.include_router(project_api_keys.router)

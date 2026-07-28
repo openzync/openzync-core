@@ -319,6 +319,16 @@ class Settings(BaseModel):
         description="Rate-limit window in seconds.",
     )
 
+    # ── Blob / File Upload Limits ────────────────────────────────────────
+    MAX_BLOBS_PER_MESSAGE: int = Field(
+        default=10,
+        description="Maximum number of blobs that can be attached to a single message.",
+    )
+    MAX_BLOBS_PER_REQUEST: int = Field(
+        default=50,
+        description="Maximum total blobs across all messages in one request.",
+    )
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Singleton accessors

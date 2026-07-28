@@ -36,11 +36,13 @@ from dependencies.org_config import get_org_config
 if TYPE_CHECKING:
     from core.graph_backend import GraphBackendDispatcher
     from schemas.organization_config import OrgConfigBase
+from packages.graph_backend.interface import GraphBackend
 from core.config import get_settings
 from core.email import EmailConfig
 from core.exceptions import GraphBackendUnavailableError
 from middleware.auth_throttle import AuthThrottle
 from repositories.auth_repository import AuthRepository
+from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
 from repositories.organization_repository import OrganizationRepository
@@ -199,6 +201,7 @@ async def get_memory_service(
         fact_repo=FactRepository(db),
         org_repo=OrganizationRepository(db),
         webhook_service=webhook,
+        blob_repo=EpisodeBlobRepository(db),
     )
 
 
@@ -299,6 +302,61 @@ async def get_quick_actions_service(
         project_repo=ProjectRepository(db),
         user_repo=UserRepository(db),
         org_repo=OrganizationRepository(db),
+    )
+
+
+# ── Graph Backend (read-only) ────────────────────────────────────────────
+
+
+async def get_graph_backend_for_project(
+    request: Request,
+    org_config: OrgConfigBase = Depends(get_org_config),
+    db: AsyncSession = Depends(get_db),
+) -> GraphBackend:
+    """Dependency that resolves and returns a project-scoped graph backend.
+
+    This is a lighter alternative to ``get_graph_service`` for read-only
+    queries that only need the backend (not the full ``GraphService``).
+    The backend is resolved from the org configuration and returned
+    directly — no service wrapping.
+
+    Args:
+        request: Incoming HTTP request (for ``app.state`` access).
+        org_config: The resolved org configuration including backend type.
+        db: Async DB session (required by some backends).
+
+    Returns:
+        A ``GraphBackend`` instance configured for the current org.
+
+    Raises:
+        GraphBackendUnavailableError: If the selected backend is
+            unreachable (e.g. SurrealDB connection fails).
+    """
+    dispatcher: GraphBackendDispatcher = request.app.state.graph_backend_dispatcher
+
+    surreal = None
+    org_id = UUID(request.state.org_id)
+    if org_config.graph_backend == "surrealdb":
+        pool = request.app.state.surreal_connection_pool
+        if pool is not None:
+            try:
+                surreal = await pool.get_or_create(org_id, org_config)
+            except Exception as exc:
+                logger.error(
+                    "graph_backend.surreal_connection_failed",
+                    extra={
+                        "org_id": str(org_id),
+                        "backend": "surrealdb",
+                        "error": str(exc),
+                    },
+                )
+                raise GraphBackendUnavailableError(
+                    f"SurrealDB connection failed for org {org_id}: {exc}"
+                ) from exc
+
+    falkordb_client = getattr(request.app.state, "falkordb_client", None)
+    return dispatcher.resolve_and_create(
+        org_config, db, surreal=surreal, falkordb_client=falkordb_client,
     )
 
 

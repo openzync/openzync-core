@@ -15,6 +15,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.audit import audit_action
 from dependencies.auth import require_org_id, require_scope
 from dependencies.db import get_db
 from repositories.extraction_schema_repository import (
@@ -46,6 +47,7 @@ def _get_schema_service(
     response_model=ExtractionSchemaResponse,
     status_code=status.HTTP_201_CREATED,
 )
+@audit_action("schema.create", "schema", "Schema created")
 async def create_schema(
     payload: CreateExtractionSchemaRequest,
     service: SchemaService = Depends(_get_schema_service),
@@ -116,6 +118,7 @@ async def get_schema(
     "/{schema_id}",
     response_model=ExtractionSchemaResponse,
 )
+@audit_action("schema.update", "schema", "Schema updated")
 async def update_schema(
     schema_id: UUID,
     payload: UpdateExtractionSchemaRequest,
@@ -138,6 +141,7 @@ async def update_schema(
     "/{schema_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
+@audit_action("schema.delete", "schema", "Schema deleted")
 async def delete_schema(
     schema_id: UUID,
     service: SchemaService = Depends(_get_schema_service),

@@ -23,6 +23,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 
+from core.audit import audit_action
 from dependencies.auth import get_dashboard_user
 from dependencies.services import get_auth_service, get_auth_throttle
 from middleware.auth_throttle import AuthThrottle
@@ -80,6 +81,7 @@ def _client_ip(request: Request) -> str:
         "with the code to complete signup and receive JWT tokens."
     ),
 )
+@audit_action("auth.signup", "user", "User signed up")
 async def signup(
     payload: SignupRequest,
     request: Request,
@@ -111,6 +113,7 @@ async def signup(
         "token and refresh token pair.  Rate-limited to prevent brute-force."
     ),
 )
+@audit_action("auth.verify_email", "user", "Email verified")
 async def verify_email(
     payload: VerifyEmailRequest,
     request: Request,
@@ -142,6 +145,7 @@ async def verify_email(
         "at most 5 sends per hour."
     ),
 )
+@audit_action("auth.resend_otp", "user", "OTP resent")
 async def resend_otp(
     payload: SendOtpRequest,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
@@ -169,6 +173,7 @@ async def resend_otp(
         "Requires an existing user account."
     ),
 )
+@audit_action("auth.otp_send", "session", "OTP sent")
 async def send_login_otp(
     payload: SendOtpRequest,
     request: Request,
@@ -202,6 +207,7 @@ async def send_login_otp(
         "brute-force OTP guessing."
     ),
 )
+@audit_action("auth.otp_verify", "session", "OTP verified")
 async def verify_login_otp(
     payload: VerifyOtpRequest,
     request: Request,
@@ -234,6 +240,7 @@ async def verify_login_otp(
         "at most 3 requests per email per hour."
     ),
 )
+@audit_action("auth.forgot_password", "user", "Password reset requested")
 async def forgot_password(
     payload: SendOtpRequest,
     request: Request,
@@ -266,6 +273,7 @@ async def forgot_password(
         "Rate-limited to prevent brute-force OTP guessing."
     ),
 )
+@audit_action("auth.reset_password", "user", "Password reset")
 async def reset_password(
     payload: ResetPasswordRequest,
     request: Request,
@@ -300,6 +308,7 @@ async def reset_password(
         "The user's email must be verified before login is allowed."
     ),
 )
+@audit_action("auth.login", "session", "User logged in")
 async def login(
     payload: LoginRequest,
     request: Request,
@@ -332,6 +341,7 @@ async def login(
         "a JWT access token and refresh token pair."
     ),
 )
+@audit_action("auth.mfa_verify", "user", "MFA verified")
 async def mfa_verify(
     payload: MfaVerifyRequest,
     request: Request,
@@ -364,6 +374,7 @@ async def mfa_verify(
         "Requires JWT authentication."
     ),
 )
+@audit_action("auth.mfa_enable", "user", "MFA enabled")
 async def mfa_enable(
     payload: MfaEnableRequest,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
@@ -394,6 +405,7 @@ async def mfa_enable(
         "Requires JWT authentication."
     ),
 )
+@audit_action("auth.mfa_disable", "user", "MFA disabled")
 async def mfa_disable(
     payload: MfaDisableRequest,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
@@ -422,6 +434,7 @@ async def mfa_disable(
         "Refresh tokens are valid for 7 days by default."
     ),
 )
+@audit_action("auth.refresh", "token", "Token refreshed")
 async def refresh(
     payload: RefreshRequest,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
@@ -474,6 +487,7 @@ async def get_profile(
         "``new_password``."
     ),
 )
+@audit_action("auth.profile.update", "user", "Profile updated")
 async def update_profile(
     payload: UpdateProfileRequest,
     service: AuthService = Depends(get_auth_service),  # noqa: B008

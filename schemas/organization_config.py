@@ -10,6 +10,8 @@ Key pattern:
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -161,6 +163,44 @@ class OrgConfigBase(BaseModel):
         description="Cohere API key for the Cohere Rerank backend.",
     )
 
+    # ── Blob Storage (S3-compatible) ────────────────────────────────────
+    blob_storage_backend: str | None = Field(
+        default=None,
+        description="Blob storage backend (s3, none). Defaults to 's3' when endpoint is configured.",
+    )
+    s3_endpoint_url: str | None = Field(
+        default=None,
+        description="S3-compatible endpoint URL (e.g. http://minio:9000).",
+    )
+    s3_region: str | None = Field(
+        default=None,
+        description="S3 region (use 'auto' for MinIO).",
+    )
+    s3_access_key_id: str | None = Field(
+        default=None,
+        description="S3 access key ID.",
+    )
+    s3_secret_access_key: str | None = Field(
+        default=None,
+        description="S3 secret access key.",
+    )
+    s3_bucket_name: str | None = Field(
+        default=None,
+        description="S3 bucket for blob storage.",
+    )
+    max_blob_size_mb: int | None = Field(
+        default=None, ge=1, le=500,
+        description="Max upload size per blob in MB (default 50). Overrides the system default.",
+    )
+
+    # ── Image Extraction ─────────────────────────────────────────────────
+    image_extraction: str | None = Field(
+        default=None,
+        description="Image text extraction method: 'ocr' (Tesseract), "
+        "'vision' (LLM vision API), 'none' (store only, no extraction). "
+        "Default 'none'.",
+    )
+
     # ── Helpers for downstream callers ───────────────────────────────────────
 
     def to_llm_config_dict(self) -> dict[str, str | float | int]:
@@ -212,6 +252,29 @@ class OrgConfigBase(BaseModel):
             d["embedding_dim"] = self.embedding_dim
         return d
 
+    def to_blob_storage_config(self) -> dict[str, Any]:
+        """Return blob storage config as a flat dict with sensible defaults.
+
+        Only non-``None`` fields override defaults.  Used by
+        :class:`BlobStorageConfig` to instantiate a backend.
+        """
+        config: dict[str, Any] = {}
+        if self.blob_storage_backend is not None:
+            config["backend"] = self.blob_storage_backend
+        if self.s3_endpoint_url is not None:
+            config["endpoint_url"] = self.s3_endpoint_url
+        if self.s3_region is not None:
+            config["region"] = self.s3_region
+        if self.s3_access_key_id is not None:
+            config["access_key_id"] = self.s3_access_key_id
+        if self.s3_secret_access_key is not None:
+            config["secret_access_key"] = self.s3_secret_access_key
+        if self.s3_bucket_name is not None:
+            config["bucket_name"] = self.s3_bucket_name
+        if self.max_blob_size_mb is not None:
+            config["max_blob_size_mb"] = self.max_blob_size_mb
+        return config
+
 
 # ── API request / response ─────────────────────────────────────────────────
 
@@ -253,6 +316,14 @@ class UpdateOrgConfigRequest(BaseModel):
     reranker_top_k: int | None = Field(default=None, ge=10, le=200)
     reranker_top_n: int | None = Field(default=None, ge=1, le=100)
     cohere_api_key: str | None = None
+    blob_storage_backend: str | None = None
+    s3_endpoint_url: str | None = None
+    s3_region: str | None = None
+    s3_access_key_id: str | None = None
+    s3_secret_access_key: str | None = None
+    s3_bucket_name: str | None = None
+    max_blob_size_mb: int | None = Field(default=None, ge=1, le=500)
+    image_extraction: str | None = None
 
 
 class OrgConfigResponse(BaseModel):

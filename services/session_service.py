@@ -136,6 +136,7 @@ class SessionService:
             raise NotFoundError(f"Session {session_id} not found")
 
         stats = await self._repo.get_stats(session_id)
+        observation_count = await self._repo.get_observation_count(org_id, project_id) if project_id else 0
 
         return SessionResponse.model_validate(
             session_to_dict(
@@ -143,6 +144,7 @@ class SessionService:
                 message_count=stats["message_count"],
                 fact_count=stats["fact_count"],
                 pending_enrichment_count=stats.get("pending_enrichment_count", 0),
+                observation_count=observation_count,
             )
         )
 
@@ -172,12 +174,14 @@ class SessionService:
             )
 
         stats = await self._repo.get_stats(session.id)
+        observation_count = await self._repo.get_observation_count(org_id, project_id)
 
         return SessionResponse.model_validate(
             session_to_dict(
                 session,
                 message_count=stats["message_count"],
                 fact_count=stats["fact_count"],
+                observation_count=observation_count,
             )
         )
 
@@ -311,10 +315,42 @@ class SessionService:
             cursor=cursor,
         )
 
-        items = [
-            MessageResponse.model_validate(episode_to_dict(m))
-            for m in messages
-        ]
+        # Load blob attachments for each episode and build an episode→blobs map.
+        # ponytail: per-episode query (N+1 within page). Batch via
+        # EpisodeBlobRepository.get_by_episode_ids() if page sizes grow >100.
+        episode_blob_map: dict[UUID, list[dict]] = {}
+        try:
+            from repositories.episode_blob_repository import EpisodeBlobRepository
+
+            blob_repo = EpisodeBlobRepository(self._db)
+            for ep in messages:
+                blobs = await blob_repo.get_by_episode(ep.id)
+                if blobs:
+                    episode_blob_map[ep.id] = [
+                        {
+                            "id": b.id,
+                            "file_name": b.file_name,
+                            "mime_type": b.mime_type,
+                            "file_size": b.file_size,
+                            "download_url": None,
+                        }
+                        for b in blobs
+                    ]
+        except Exception:
+            logger.warning(
+                "get_messages.blob_load_failed",
+                extra={"session_id": str(session_id)},
+                exc_info=True,
+            )
+            # Non-critical — messages returned without blobs
+
+        items = []
+        for m in messages:
+            msg_dict = episode_to_dict(m)
+            blobs = episode_blob_map.get(m.id)
+            if blobs is not None:
+                msg_dict["blobs"] = blobs
+            items.append(MessageResponse.model_validate(msg_dict))
 
         return PaginatedResponse[MessageResponse](
             data=items,

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import orjson
@@ -39,9 +39,14 @@ from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
 from repositories.organization_repository import OrganizationRepository
 from repositories.session_repository import SessionRepository
+from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.user_repository import UserRepository
 from schemas.memory import IngestMemoryResponse, Message
 from services.webhook_service import WebhookService
+
+# Import for type hints only; blob uploads are processed before passing to
+# the worker, and UploadFile isn't available in the worker context.
+from fastapi import UploadFile  # noqa: TCH002 — used in method signature
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +120,7 @@ class MemoryService:
         fact_repo: FactRepository | None = None,
         webhook_service: WebhookService | None = None,
         org_repo: OrganizationRepository | None = None,
+        blob_repo: EpisodeBlobRepository | None = None,
     ) -> None:
         self._db = db
         self._redis = redis_client
@@ -126,6 +132,7 @@ class MemoryService:
         self._user_repo = user_repo or UserRepository(db)
         self._fact_repo = fact_repo or FactRepository(db)
         self._org_repo = org_repo or OrganizationRepository(db)
+        self._blob_repo = blob_repo or EpisodeBlobRepository(db)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Public API
@@ -138,6 +145,7 @@ class MemoryService:
         created_by: UUID,
         session_external_id: str | None,
         messages: list[Message],
+        uploaded_blobs: list[UploadFile] | None = None,
         idempotency_key: str | None = None,
     ) -> IngestMemoryResponse:
         """Ingest messages into a project's memory.
@@ -150,11 +158,12 @@ class MemoryService:
         5. Build episode dicts from validated messages.
         6. PII detection & redaction (if enabled in org quotas).
         7. Batch-insert episodes into PostgreSQL.
-        8. Enqueue ARQ enrichment tasks (link_entities_to_episode, extract_entities,
-           extract_facts, embed_episode).
-        9. Cache idempotency key and content hash for future dedup.
-        10. Invalidate context cache for this project.
-        11. Return 202 ``IngestMemoryResponse``.
+        8. Upload blobs to S3 and persist blob records.
+        9. Enqueue ARQ enrichment tasks (link_entities_to_episode, extract_entities,
+           extract_facts, embed_episode) + blob text extraction tasks.
+        10. Cache idempotency key and content hash for future dedup.
+        11. Invalidate context cache for this project.
+        12. Return 202 ``IngestMemoryResponse``.
 
         Args:
             org_id: The authenticated organization UUID.
@@ -163,11 +172,14 @@ class MemoryService:
             session_external_id: Optional session external ID.
                 Auto-creates ``__default__`` if omitted.
             messages: List of validated message objects.
+            uploaded_blobs: Optional list of uploaded files from a multipart
+                request. Indexed by ``BlobMetadata.blob_id`` in each message.
             idempotency_key: Optional ``Idempotency-Key`` header value
                 for request-level deduplication.
 
         Returns:
-            An ``IngestMemoryResponse`` with job_id and episode count.
+            An ``IngestMemoryResponse`` with job_id, episode_count,
+            and blob_count.
         """
         # ── Step 1: Idempotency check ────────────────────────────────────
         if idempotency_key is not None:
@@ -278,7 +290,21 @@ class MemoryService:
             },
         )
 
-        # ── Commit so workers can see episodes before tasks hit Redis ────
+        # ── Step 7b: Upload blobs and persist blob records ───────────────
+        blob_count = 0
+        blob_records: list[Any] = []
+        if uploaded_blobs:
+            blob_count, blob_records = await self._process_blobs(
+                org_id=org_id,
+                project_id=project_id,
+                session_id=session_id,
+                created_by=created_by,
+                episodes=episodes,
+                messages=messages,
+                uploaded_blobs=uploaded_blobs,
+            )
+
+        # ── Commit so workers can see episodes + blobs before tasks ─────
         await self._db.commit()
 
         # ── Step 8: Generate job_id and enqueue ARQ tasks ────────────────
@@ -300,10 +326,19 @@ class MemoryService:
             episodes=episode_dicts,
         )
 
+        # ── Step 8b: Enqueue blob text extraction tasks ──────────────────
+        if blob_records:
+            await self._enqueue_blob_extraction_tasks(
+                blob_records=blob_records,
+                org_id=org_id,
+                project_id=project_id,
+            )
+
         # ── Step 9: Cache idempotency key and content hash ───────────────
         response = IngestMemoryResponse(
             job_id=job_id,
             episode_count=len(episodes),
+            blob_count=blob_count,
             status="accepted",
             message="Messages accepted for processing",
         )
@@ -524,6 +559,10 @@ class MemoryService:
                         "role": m.role,
                         "content": m.content,
                         "metadata": m.metadata,
+                        "blobs": [
+                            {"blob_id": b.blob_id, "file_name": b.file_name, "mime_type": b.mime_type}
+                            for b in m.blobs
+                        ],
                     }
                     for m in messages
                 ],
@@ -664,6 +703,180 @@ class MemoryService:
                 },
             )
             raise  # Propagate so ARQ retry mechanism handles it
+
+    # ── Blob Processing ───────────────────────────────────────────────────────
+
+    async def _process_blobs(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        session_id: UUID,
+        created_by: UUID,
+        episodes: list[Any],  # Episode ORM models
+        messages: list[Message],
+        uploaded_blobs: list[UploadFile],
+    ) -> tuple[int, list[Any]]:
+        """Upload blobs to S3 and persist their metadata in the DB.
+
+        Iterates messages alongside their corresponding episode IDs,
+        collects blob metadata per episode, and delegates to
+        ``BlobStorageService.upload_blobs`` for each batch.
+
+        Args:
+            org_id: Organization UUID.
+            project_id: Project UUID.
+            session_id: Session UUID.
+            created_by: User UUID who uploaded the blobs.
+            episodes: List of ``Episode`` ORM models returned by
+                ``batch_create``, ordered by message index.
+            messages: The original validated message objects (same order
+                as ``episodes``).
+            uploaded_blobs: The ``UploadFile`` objects from the multipart
+                request.
+
+        Returns:
+            Tuple of ``(blob_count, blob_records)`` where ``blob_records``
+            is the list of ``EpisodeBlob`` ORM instances created.
+        """
+        # Build per-episode blob metadata from messages that have blobs.
+        # Pass BlobMetadata instances directly (typed schema, not raw dicts).
+        ep_blob_metas: list[tuple[UUID, list[Any]]] = []
+        for msg_idx, msg in enumerate(messages):
+            if not msg.blobs:
+                continue
+            episode_id = episodes[msg_idx].id
+            ep_blob_metas.append((episode_id, list(msg.blobs)))
+
+        if not ep_blob_metas:
+            return 0, []
+
+        # Resolve per-org storage config from OpenBao (matches the
+        # pattern in extract_blob_text.py and enrich_episode.py).
+        from core.config import BootstrapSettings
+        from core.openbao import OpenBaoClient
+        from core.org_config import get_org_config
+
+        storage_config: dict[str, Any] = {
+            "backend": "s3",
+            "endpoint_url": "http://minio:9000",
+            "region": "auto",
+            "access_key_id": "",
+            "secret_access_key": "",
+            "bucket_name": "openzync-blobs",
+            "max_blob_size_mb": 50,
+        }
+        try:
+            bootstrap = BootstrapSettings()
+            async with OpenBaoClient(
+                bootstrap.OPENBAO_ADDR,
+                bootstrap.OPENBAO_ROLE_ID,
+                bootstrap.OPENBAO_SECRET_ID,
+                timeout=10.0,
+            ) as _tmp_bao:
+                org_cfg = await get_org_config(
+                    org_id, redis=None, bao_client=_tmp_bao,
+                )
+                org_storage = org_cfg.to_blob_storage_config()
+                if org_storage:
+                    storage_config.update(org_storage)
+        except Exception:
+            logger.warning(
+                "memory.org_storage_config_fetch_failed",
+                extra={"org_id": str(org_id)},
+                exc_info=True,
+            )
+            # Falls back to defaults — works for MinIO in dev
+
+        from services.blob_storage_service import BlobStorageService
+
+        blob_svc = BlobStorageService(self._db, self._blob_repo)
+        blob_records: list[Any] = []
+
+        for episode_id, metas in ep_blob_metas:
+            records = await blob_svc.upload_blobs(
+                org_id=org_id,
+                project_id=project_id,
+                episode_id=episode_id,
+                session_id=session_id,
+                created_by=created_by,
+                uploaded_files=uploaded_blobs,
+                blob_metadatas=metas,
+                storage_config=storage_config,
+            )
+            blob_records.extend(records)
+
+        blob_count = len(blob_records)
+        logger.info(
+            "memory.blobs_uploaded",
+            extra={
+                "blob_count": blob_count,
+                "org_id": str(org_id),
+                "project_id": str(project_id),
+            },
+        )
+        return blob_count, blob_records
+
+    # ── Blob Extraction Task Enqueue ─────────────────────────────────────────
+
+    async def _enqueue_blob_extraction_tasks(
+        self,
+        blob_records: list[Any],
+        org_id: UUID,
+        project_id: UUID,
+    ) -> None:
+        """Enqueue ARQ ``extract_blob_text`` tasks for each uploaded blob.
+
+        Runs AFTER the DB commit so workers can query the blob records.
+        Blob text extraction is non-critical — if ARQ is unavailable the
+        blobs are already safe in S3 and DB, and a reconciliation worker
+        can catch up later.
+
+        Args:
+            blob_records: List of ``EpisodeBlob`` ORM instances returned
+                by ``_process_blobs``.
+            org_id: Organization UUID.
+            project_id: Project UUID.
+        """
+        trace_id = structlog.contextvars.get_contextvars().get(
+            "request_id", str(uuid4())
+        )
+        try:
+            arq_pool = get_arq()
+            low_qname = _arq_queue_name("low")
+            for blob in blob_records:
+                await arq_pool.enqueue(
+                    "extract_blob_text",
+                    queue_name=low_qname,
+                    blob_id=str(blob.id),
+                    org_id=str(org_id),
+                    project_id=str(project_id),
+                    episode_id=str(blob.episode_id),
+                    storage_key=blob.storage_key,
+                    mime_type=blob.mime_type,
+                    file_name=blob.file_name,
+                    trace_id=trace_id,
+                )
+            logger.info(
+                "memory.blob_extraction_tasks_enqueued",
+                extra={
+                    "blob_count": len(blob_records),
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                },
+            )
+        except Exception:
+            logger.critical(
+                "memory.blob_extraction_enqueue_failed",
+                extra={
+                    "blob_count": len(blob_records),
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "error": (
+                        "ARQ pool unavailable — blob text extraction not enqueued. "
+                        "Blobs are safe in S3 and DB; reconciliation needed."
+                    ),
+                },
+            )
 
     # ── Context Cache Invalidation ───────────────────────────────────────────
 

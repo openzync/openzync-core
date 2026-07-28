@@ -19,6 +19,10 @@ class AuditLogResponse(BaseModel):
     resource_type: str = Field(..., description="Type of resource affected")
     resource_id: str | None = Field(None, description="Identifier of the affected resource")
     details: dict = Field(default_factory=dict, description="Action-specific JSON payload")
+    display_name: str | None = Field(
+        None,
+        description="Human-readable action label (from route metadata)",
+    )
     ip_address: str | None = Field(None, description="Source IP address")
     status_code: int | None = Field(None, description="HTTP response status code")
     method: str | None = Field(None, description="HTTP method")

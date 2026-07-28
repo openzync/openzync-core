@@ -1774,7 +1774,8 @@ class PostgresGraphBackend(GraphBackend):
                         valid_to = EXCLUDED.valid_to,
                         observation_metadata = EXCLUDED.observation_metadata,
                         updated_at = NOW()
-                    RETURNING id, subject_entity_id, related_entity_id,
+                    RETURNING id, organization_id, project_id,
+                              subject_entity_id, related_entity_id,
                               observation_type, content, confidence,
                               supporting_fact_ids, supporting_relationship_ids,
                               valid_from, valid_to, observation_metadata,
@@ -1873,7 +1874,8 @@ class PostgresGraphBackend(GraphBackend):
         try:
             result = await self._db.execute(
                 text(f"""
-                    SELECT o.id, o.subject_entity_id, o.related_entity_id,
+                    SELECT o.id, o.organization_id, o.project_id,
+                           o.subject_entity_id, o.related_entity_id,
                            o.observation_type, o.content, o.confidence,
                            o.supporting_fact_ids, o.supporting_relationship_ids,
                            o.valid_from, o.valid_to, o.observation_metadata,
@@ -2113,6 +2115,8 @@ class PostgresGraphBackend(GraphBackend):
         """Convert a DB row to an observation dict matching ``GraphBackend`` spec."""
         return {
             "id": str(row.id),
+            "organization_id": str(row.organization_id),
+            "project_id": str(row.project_id),
             "subject_entity_id": str(row.subject_entity_id),
             "related_entity_id": (
                 str(row.related_entity_id) if row.related_entity_id else None
@@ -2135,4 +2139,5 @@ class PostgresGraphBackend(GraphBackend):
                 if row.observation_metadata else {}
             ),
             "created_at": row.created_at.isoformat() if row.created_at else None,
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         }

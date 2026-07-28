@@ -117,6 +117,7 @@ async def enrich_episode(
     from workers.tasks.extract_entities import process_entities_output
     from workers.tasks.extract_facts import process_facts_output
     from workers.tasks.extract_structured import process_structured_output
+    from repositories.episode_blob_repository import EpisodeBlobRepository
 
     metadata = metadata or {}
 
@@ -152,7 +153,7 @@ async def enrich_episode(
             )
 
             episode_repo = EpisodeRepository(db)
-            episode = await episode_repo.get_by_id(uuid.UUID(episode_id))
+            episode = await episode_repo.get_by_id_for_update(uuid.UUID(episode_id))
             if episode is None:
                 raise EpisodeNotFoundError(
                     message=f"Episode {episode_id} not found for enrichment.",
@@ -188,6 +189,40 @@ async def enrich_episode(
             except Exception:
                 log.exception("enrich_episode.prompt_render_failed")
                 raise
+
+            blob_count: int = 0
+            # ── 3b. Append blob extracted text to prompt (best-effort) ──
+            try:
+                blob_repo = EpisodeBlobRepository(db)
+                blobs = await blob_repo.get_by_episode(uuid.UUID(episode_id))
+                blob_texts = [b for b in blobs if b.extracted_text]
+                if blob_texts:
+                    blob_parts: list[str] = [
+                        "\n\n## ATTACHED FILE CONTENTS\n"
+                    ]
+                    for b in blob_texts:
+                        blob_parts.append(
+                            f"### {b.file_name} ({b.mime_type})\n"
+                            f"{b.extracted_text}\n"
+                        )
+                    prompt += "".join(blob_parts)
+                    blob_count = len(blob_texts)
+                    log.info(
+                        "enrich_episode.blob_text_appended",
+                        extra={
+                            "blob_count": blob_count,
+                            "total_blobs": len(blobs),
+                        },
+                    )
+            except Exception:
+                # Non-critical: blob text is optional context.
+                # If loading blob records or extracted_text hasn't been
+                # populated yet, enrichment proceeds with just the
+                # conversation text.
+                log.warning(
+                    "enrich_episode.blob_text_fetch_failed",
+                    exc_info=True,
+                )
 
             # ── 4. Fetch per-organization config ────────────────────────
             llm_config_dict: dict | None = None
@@ -248,6 +283,7 @@ async def enrich_episode(
                 relationship_count=len(parsed.relationships),
                 fact_count=len(parsed.facts),
                 structured_count=len(parsed.structured_extractions),
+                blob_count=blob_count,
             )
 
             # ── 6b. Resolve graph backend (shared across sections) ──────

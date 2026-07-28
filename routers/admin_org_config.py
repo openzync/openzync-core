@@ -16,6 +16,7 @@ from uuid import UUID
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from core.audit import audit_action
 from dependencies.auth import require_org_id, require_scope
 from schemas.organization_config import (
     OrgConfigBase,
@@ -111,6 +112,7 @@ async def get_org_config(
     "",
     response_model=OrgConfigBase,
 )
+@audit_action("config.update", "config", "Configuration updated")
 async def update_org_config(
     body: UpdateOrgConfigRequest,
     _org_id: str = Depends(require_scope("admin:write")),
@@ -137,6 +139,7 @@ async def update_org_config(
     "",
     response_model=OrgConfigBase,
 )
+@audit_action("config.update", "config", "Configuration updated")
 async def replace_org_config(
     body: UpdateOrgConfigRequest,
     _org_id: str = Depends(require_scope("admin:write")),

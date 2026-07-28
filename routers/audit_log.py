@@ -42,6 +42,10 @@ async def list_audit_logs(
     resource_type: str | None = Query(None, description="Filter by resource type"),
     resource_id: str | None = Query(None, description="Filter by resource ID"),
     status_code: int | None = Query(None, description="Filter by HTTP status code"),
+    exclude_prefix: str | None = Query(
+        None,
+        description="Comma-separated action prefixes to exclude (e.g. 'http.,auth.')",
+    ),
     created_after: str | None = Query(None, description="Include entries after this ISO 8601 timestamp"),
     created_before: str | None = Query(None, description="Include entries before this ISO 8601 timestamp"),
     limit: int = Query(default=50, ge=1, le=500, description="Max entries per page"),
@@ -59,6 +63,7 @@ async def list_audit_logs(
         resource_type: Optional resource type filter.
         resource_id: Optional resource ID filter.
         status_code: Optional HTTP status code filter.
+        exclude_prefix: Comma-separated action prefixes to exclude.
         created_after: Optional start date filter.
         created_before: Optional end date filter.
         limit: Page size.
@@ -78,6 +83,7 @@ async def list_audit_logs(
         resource_type=resource_type,
         resource_id=resource_id,
         status_code=status_code,
+        exclude_prefix=exclude_prefix,
         created_after=created_after,
         created_before=created_before,
         limit=limit,
@@ -94,6 +100,7 @@ async def list_audit_logs(
             resource_type=e.resource_type,
             resource_id=e.resource_id,
             details=e.details or {},
+            display_name=e.details.get("display_name") if e.details else None,
             ip_address=e.ip_address,
             status_code=e.details.get("status_code") if e.details else None,
             method=e.details.get("method") if e.details else None,

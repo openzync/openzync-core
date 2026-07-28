@@ -118,6 +118,8 @@ def _make_mock_obs_row(**overrides: Any) -> MockRow:
     """Create a mock DB row representing a graph_observation."""
     defaults: dict[str, Any] = {
         "id": uuid4(),
+        "organization_id": ORG_ID,
+        "project_id": PROJ_ID,
         "subject_entity_id": ENTITY_ID,
         "related_entity_id": None,
         "observation_type": "co_occurrence",
@@ -1713,6 +1715,8 @@ class TestUpsertObservation:
                     {"status": "OK", "result": []},
                     {"status": "OK", "result": [{
                         "id": str(uuid4()),
+                        "organization_id": str(ORG_ID),
+                        "project_id": str(PROJ_ID),
                         "subject_entity_id": str(ENTITY_ID),
                         "observation_type": "co_occurrence",
                         "content": "test",
@@ -1724,13 +1728,17 @@ class TestUpsertObservation:
                         "valid_to": None,
                         "observation_metadata": {},
                         "created_at": NOW.isoformat(),
+                        "updated_at": NOW.isoformat(),
                     }],
                 }],
                 "time": "1ms",
             }
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
-            row = (str(uuid4()), str(ENTITY_ID), "co_occurrence", "test", 0.95, None, "{}", NOW.isoformat())
+            row = (
+                str(uuid4()), str(ENTITY_ID), "co_occurrence", "test", 0.95, None, "{}", NOW.isoformat(),
+                None, None, NOW.isoformat(), str(ORG_ID), str(PROJ_ID),
+            )
             graph.query.return_value = MagicMock(result_set=[row])
 
         result = await backend.upsert_observation(

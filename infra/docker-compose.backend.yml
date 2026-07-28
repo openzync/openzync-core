@@ -410,6 +410,87 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
+  # ── MinIO (S3-compatible object storage) — OPTIONAL ─────────────────────────
+  # Required for blob/file attachment support.  Without this service, blob
+  # upload endpoints will fail when the org config points here.
+  # Uses the local-db profile (same as Postgres) since it's a dev dependency.
+  minio:
+    profiles: [local-db]
+    image: minio/minio:latest
+    container_name: openzync-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minioadmin}"
+    volumes:
+      - minio-blob-data:/data
+    # mc ready won't work — mc isn't in the minio image. Use the live endpoint.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/minio/health/live > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ── MinIO init (one-shot — create bucket + versioning + lifecycle) ─────────
+  minio-init:
+    profiles: [local-db]
+    image: minio/mc:latest
+    container_name: openzync-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        sleep 3
+        mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-minioadmin}
+
+        # Create bucket (idempotent)
+        mc mb --ignore-existing local/openzync-blobs
+
+        # Enable bucket versioning — protects against accidental overwrites
+        # and provides a recovery window for deleted objects.
+        mc version enable local/openzync-blobs
+
+        # Set lifecycle policy:
+        #   - Expire objects after 90 days (safety net for orphaned blobs)
+        #   - Abort incomplete multipart uploads after 1 day
+        #   - Remove non-current versions after 30 days
+        mc ilm import local/openzync-blobs <<EOF
+        {
+          "Rules": [
+            {
+              "ID": "auto-cleanup",
+              "Status": "Enabled",
+              "Expiration": { "Days": 90 }
+            },
+            {
+              "ID": "abort-incomplete-uploads",
+              "Status": "Enabled",
+              "AbortIncompleteMultipartUpload": { "DaysAfterInitiation": 1 }
+            },
+            {
+              "ID": "noncurrent-version-cleanup",
+              "Status": "Enabled",
+              "NoncurrentVersionExpiration": { "NoncurrentDays": 30 }
+            }
+          ]
+        }
+        EOF
+
+        echo "MinIO bucket 'openzync-blobs' ready with versioning and lifecycle."
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minioadmin}"
+    logging: *default-logging
+    restart: "no"
+
   # ── Ollama (local LLM inference) — OPTIONAL ──────────────────────────────
   ollama:
     profiles: [llm]
@@ -486,6 +567,7 @@ networks:
     name: openzync_network
 
 volumes:
+  minio-blob-data: {}
   redis-data: {}
   ollama-data: {}
   grafana-data: {}

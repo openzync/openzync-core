@@ -15,12 +15,15 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Query
+from starlette.responses import Response
 
-from core.exceptions import NotFoundError
-from dependencies.auth import get_current_user_id
+from core.audit import audit_action
+
 from dependencies.project_auth import require_project_membership
+from dependencies.request import get_current_org_id, get_project_id
 from dependencies.services import get_fact_service, get_session_service
+from dependencies.auth import get_current_user_id
 from schemas.common import PaginatedResponse
 from schemas.facts import FactResponse
 from schemas.sessions import (
@@ -55,12 +58,14 @@ router = APIRouter(
         },
     },
 )
+@audit_action("session.create", "session", "Session created")
 async def create_session(
-    request: Request,
     body: CreateSessionRequest,
     service: SessionService = Depends(get_session_service),
     _: None = Depends(require_project_membership),
     created_by: UUID = Depends(get_current_user_id),
+    org_id: UUID = Depends(get_current_org_id),
+    project_id: UUID = Depends(get_project_id),
 ) -> SessionResponse:
     """Create a new session within a project.
 
@@ -68,8 +73,6 @@ async def create_session(
     project.  Returns 409 if a session with this ``external_id`` already
     exists.
     """
-    org_id = UUID(request.state.org_id)
-    project_id = UUID(request.path_params["project_id"])
     return await service.create_session(
         organization_id=org_id,
         project_id=project_id,
@@ -93,9 +96,10 @@ async def create_session(
     },
 )
 async def list_sessions(
-    request: Request,
     service: SessionService = Depends(get_session_service),
     _: None = Depends(require_project_membership),
+    org_id: UUID = Depends(get_current_org_id),
+    project_id: UUID = Depends(get_project_id),
     limit: int = Query(
         default=50,
         ge=1,
@@ -117,8 +121,6 @@ async def list_sessions(
     By default excludes the ``__default__`` auto-created session and
     closed sessions.  Set ``include_closed=true`` to include them.
     """
-    org_id = UUID(request.state.org_id)
-    project_id = UUID(request.path_params["project_id"])
     return await service.list_sessions(
         org_id=org_id,
         project_id=project_id,
@@ -142,17 +144,16 @@ async def list_sessions(
     },
 )
 async def get_session(
-    request: Request,
     session_id: UUID,
     service: SessionService = Depends(get_session_service),
     _: None = Depends(require_project_membership),
+    org_id: UUID = Depends(get_current_org_id),
+    project_id: UUID = Depends(get_project_id),
 ) -> SessionResponse:
     """Get session details including aggregate statistics.
 
     Returns message count, fact count, and session metadata.
     """
-    org_id = UUID(request.state.org_id)
-    project_id = UUID(request.path_params["project_id"])
     return await service.get_session(
         org_id=org_id,
         session_id=session_id,
@@ -174,10 +175,11 @@ async def get_session(
     },
 )
 async def get_session_messages(
-    request: Request,
     session_id: UUID,
     service: SessionService = Depends(get_session_service),
     _: None = Depends(require_project_membership),
+    org_id: UUID = Depends(get_current_org_id),
+    project_id: UUID = Depends(get_project_id),
     limit: int = Query(
         default=100,
         ge=1,
@@ -195,8 +197,6 @@ async def get_session_messages(
     Messages are ordered by ``sequence_number`` for deterministic
     ordering (not by ``created_at``, which can have ties).
     """
-    org_id = UUID(request.state.org_id)
-    project_id = UUID(request.path_params["project_id"])
     return await service.get_messages(
         org_id=org_id,
         session_id=session_id,
@@ -220,11 +220,12 @@ async def get_session_messages(
     },
 )
 async def get_session_facts(
-    request: Request,
     session_id: UUID,
     service: SessionService = Depends(get_session_service),
     fact_service: FactService = Depends(get_fact_service),
     _: None = Depends(require_project_membership),
+    org_id: UUID = Depends(get_current_org_id),
+    project_id: UUID = Depends(get_project_id),
     limit: int = Query(
         default=50,
         ge=1,
@@ -241,9 +242,6 @@ async def get_session_facts(
     Returns facts extracted from messages in this session, ordered by
     creation time (newest first).  Only non-invalidated facts are included.
     """
-    org_id = UUID(request.state.org_id)
-    project_id = UUID(request.path_params["project_id"])
-
     # Verify the session exists before fetching facts.
     # NotFoundError propagates to global exception handler → 404.
     await service.get_session(org_id, session_id, project_id=project_id)
@@ -277,21 +275,22 @@ async def get_session_facts(
         404: {"description": "Session not found."},
     },
 )
+@audit_action("session.delete", "session", "Session deleted")
 async def delete_session(
-    request: Request,
     session_id: UUID,
     service: SessionService = Depends(get_session_service),
     _: None = Depends(require_project_membership),
-) -> None:
+    org_id: UUID = Depends(get_current_org_id),
+    project_id: UUID = Depends(get_project_id),
+) -> Response:
     """Delete (soft-delete) a session.
 
     Sets ``is_deleted = True`` and unlinks episodes from the session.
     Episodes are preserved as orphaned history for audit purposes.
     """
-    org_id = UUID(request.state.org_id)
-    project_id = UUID(request.path_params["project_id"])
     await service.delete_session(
         org_id=org_id,
         session_id=session_id,
         project_id=project_id,
     )
+    return Response(status_code=204)

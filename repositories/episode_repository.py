@@ -270,6 +270,33 @@ class EpisodeRepository:
         )
         return result.scalar() or 0
 
+    # ── Batch Content Fetch ─────────────────────────────────────────────────
+
+    async def get_content_batch(
+        self, episode_ids: list[UUID], org_id: UUID | None = None
+    ) -> dict[UUID, tuple[str, str]]:
+        """Fetch ``(content, role)`` for a batch of episode IDs.
+
+        Args:
+            episode_ids: List of episode UUIDs to fetch content for.
+            org_id: Optional tenant UUID for defense-in-depth filtering.
+
+        Returns:
+            Dict mapping ``{episode_id: (content, role)}``.
+            Soft-deleted episodes are excluded from the result.
+        """
+        if not episode_ids:
+            return {}
+
+        query = select(Episode.id, Episode.content, Episode.role).where(
+            Episode.id.in_(episode_ids), Episode.is_deleted.is_(False)
+        )
+        if org_id is not None:
+            query = query.where(Episode.organization_id == org_id)
+
+        result = await self._db.execute(query)
+        return {row.id: (row.content, row.role) for row in result.all()}
+
     # ── Get by ID ────────────────────────────────────────────────────────────
 
     async def get_by_id(self, episode_id: UUID) -> Episode | None:

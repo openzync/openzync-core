@@ -339,3 +339,46 @@ class TestComputeObservations:
         from workers.tasks.compute_observations import compute_observations
 
         assert hasattr(compute_observations, "__wrapped__")
+
+
+class TestEnrichEpisode:
+    """enrich_episode raises EpisodeNotFoundError when episode is missing.
+
+    Follows the same pattern as ``classify_dialog`` and ``extract_structured``
+    — the episode lookup is through ``EpisodeRepository.get_by_id_for_update``,
+    and the ``@with_retry`` decorator catches the exception to retry.
+    """
+
+    @pytest.mark.asyncio
+    async def test_raises_on_missing_episode(
+        self, ctx: dict, mock_db: AsyncMock
+    ) -> None:
+        """Repository returns None → EpisodeNotFoundError is raised."""
+        mock_repo = AsyncMock()
+        mock_repo.get_by_id_for_update.return_value = None
+
+        with patch("asyncio.sleep", AsyncMock()):
+            with patch(
+                "repositories.episode_repository.EpisodeRepository",
+                return_value=mock_repo,
+            ):
+                from workers.tasks.enrich_episode import enrich_episode
+
+                with pytest.raises(EpisodeNotFoundError) as exc_info:
+                    await enrich_episode(
+                        ctx=ctx,
+                        episode_id=_EPISODE_ID,
+                        org_id=_ORG_ID,
+                        project_id=_PROJECT_ID,
+                        content=_CONTENT,
+                    )
+
+        assert exc_info.value.code == "episode_not_found"
+        assert exc_info.value.status_code == 404
+        assert _EPISODE_ID in exc_info.value.message
+
+    def test_has_with_retry_decorator(self) -> None:
+        """Function is wrapped by @with_retry."""
+        from workers.tasks.enrich_episode import enrich_episode
+
+        assert hasattr(enrich_episode, "__wrapped__")

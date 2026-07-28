@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.episode import Episode
 from models.fact import Fact
+from models.graph_observation import GraphObservation
 from models.project import Project
 from models.session import Session
 
@@ -546,6 +547,28 @@ class SessionRepository:
             "last_message_at": row.last_message_at,
             "pending_enrichment_count": row.pending_enrichment_count or 0,
         }
+
+    async def get_observation_count(
+        self, org_id: UUID, project_id: UUID
+    ) -> int:
+        """Return the total number of observations for a project.
+
+        Observations are computed by the ``compute_observations`` worker
+        and are project-wide (not session-scoped).
+
+        Args:
+            org_id: The organization UUID for tenant isolation.
+            project_id: The project UUID.
+
+        Returns:
+            Total observation count (0 if none or table is empty).
+        """
+        stmt = select(func.count()).select_from(GraphObservation).where(
+            GraphObservation.organization_id == org_id,
+            GraphObservation.project_id == project_id,
+        )
+        result = await self._db.execute(stmt)
+        return result.scalar() or 0
 
     async def batch_get_stats(
         self, session_ids: list[UUID], organization_id: UUID

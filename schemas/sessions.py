@@ -71,6 +71,10 @@ class SessionResponse(BaseModel):
         default=0,
         description="Number of messages in this session pending enrichment completion.",
     )
+    observation_count: int = Field(
+        default=0,
+        description="Total number of observations in this project (computed by graph-topology analysis).",
+    )
     closed_at: datetime | None = Field(
         default=None,
         description="Timestamp when the session was closed. Null if open.",
@@ -116,6 +120,27 @@ class SessionListResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MessageBlobResponse(BaseModel):
+    """A blob attachment referenced in a message response.
+
+    Contains file metadata and an optional presigned download URL with
+    a short TTL. The URL is populated only when a storage config is
+    available; the frontend must handle ``null`` download_url gracefully
+    (e.g. show a placeholder or fall back to a direct API fetch).
+    """
+
+    id: UUID = Field(..., description="Blob UUID.")
+    file_name: str = Field(..., description="Original filename.")
+    mime_type: str = Field(..., description="MIME type.")
+    file_size: int = Field(..., description="Size in bytes.")
+    download_url: str | None = Field(
+        default=None,
+        description="Presigned download URL (short TTL). Null when storage config is unavailable.",
+    )
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class MessageResponse(BaseModel):
     """A single message (episode) within a session.
 
@@ -141,6 +166,10 @@ class MessageResponse(BaseModel):
     )
     created_at: datetime = Field(
         ..., description="Message creation timestamp (UTC)."
+    )
+    blobs: list[MessageBlobResponse] = Field(
+        default_factory=list,
+        description="Blob attachments for this message (images, PDFs, etc.).",
     )
 
     model_config = ConfigDict(from_attributes=True)
