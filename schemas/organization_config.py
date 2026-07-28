@@ -14,6 +14,23 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+# ── System-managed field sets ──────────────────────────────────────────────
+# These fields are overridden at the system level (via OpenBao / env vars)
+# and cannot be set through org_config when the corresponding system
+# setting is active.
+
+SYSTEM_MANAGED_SURREALDB_FIELDS: frozenset[str] = frozenset({
+    "surrealdb_url",
+    "surrealdb_user",
+    "surrealdb_pass",
+    "surrealdb_namespace",
+    "surrealdb_database",
+})
+
+SYSTEM_MANAGED_FALKORDB_FIELDS: frozenset[str] = frozenset({
+    "falkordb_url",
+})
+
 
 # ── DB shape (stored in organizations.config JSONB) ──────────────────────────
 
@@ -105,7 +122,7 @@ class OrgConfigBase(BaseModel):
         description="Maximum BFS traversal depth for the graph backend.",
     )
 
-    # ── SurrealDB (per-org connection details) ─────────────────────────────
+    # ── SurrealDB (per-org connection) ─────────────────────────────
     surrealdb_url: str | None = Field(
         default=None,
         description="SurrealDB WebSocket connection URL (e.g. ws://surrealdb:8000/rpc).",
@@ -126,6 +143,15 @@ class OrgConfigBase(BaseModel):
         default=None,
         description="SurrealDB database within the namespace.",
     )
+
+    # ── FalkorDB (per-org connection details) ────────────────────────────
+    falkordb_url: str | None = Field(
+        default=None,
+        description="FalkorDB connection URL for per-org configuration "
+        "(e.g. redis://falkordb:6379).  Only used when system-level "
+        "FALKORDB_URL is not set.",
+    )
+
     # ── Behaviour ──────────────────────────────────────────────────────────
     context_cache_ttl: int | None = Field(
         default=None,
@@ -309,6 +335,7 @@ class UpdateOrgConfigRequest(BaseModel):
     surrealdb_pass: str | None = None
     surrealdb_namespace: str | None = None
     surrealdb_database: str | None = None
+    falkordb_url: str | None = None
     context_cache_ttl: int | None = Field(default=None, ge=1)
     audit_log_response_body: bool | None = None
     reranker_backend: str | None = None
@@ -329,10 +356,15 @@ class UpdateOrgConfigRequest(BaseModel):
 class OrgConfigResponse(BaseModel):
     """Response for config GET endpoints.
 
-    Returns the raw stored config.  There is no env-merged ``effective``
-    layer — the stored config is the source of truth.
+    Returns the raw stored config along with metadata about which
+    fields are managed at the system level.
     """
 
     stored: OrgConfigBase = Field(
         description="Raw config stored in the DB — only explicitly set fields.",
+    )
+    system_managed_fields: list[str] = Field(
+        default=[],
+        description="List of field names that are configured at the system level "
+        "and cannot be modified via this API.",
     )

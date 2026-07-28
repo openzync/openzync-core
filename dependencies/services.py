@@ -36,11 +36,11 @@ from dependencies.org_config import get_org_config
 if TYPE_CHECKING:
     from core.graph_backend import GraphBackendDispatcher
     from schemas.organization_config import OrgConfigBase
-from packages.graph_backend.interface import GraphBackend
 from core.config import get_settings
 from core.email import EmailConfig
 from core.exceptions import GraphBackendUnavailableError
 from middleware.auth_throttle import AuthThrottle
+from packages.graph_backend.interface import GraphBackend
 from repositories.auth_repository import AuthRepository
 from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.episode_repository import EpisodeRepository
@@ -232,7 +232,11 @@ async def get_graph_service(
         pool = request.app.state.surreal_connection_pool
         if pool is not None:
             try:
-                surreal = await pool.get_or_create(org_id, org_config)
+                settings = get_settings()
+                surreal = await pool.get_or_create(
+                    org_id, org_config,
+                    system_url=settings.SURREALDB_URL,
+                )
             except Exception as exc:
                 logger.error(
                     "graph_service.surreal_connection_failed",
@@ -248,7 +252,31 @@ async def get_graph_service(
                 ) from exc
 
     # Read the FalkorDB client from app state (may be None if not configured).
+    # If not configured at system level, try per-org config.
     falkordb_client = getattr(request.app.state, "falkordb_client", None)
+    if falkordb_client is None and org_config.falkordb_url:
+        try:
+            from falkordb.asyncio import FalkorDB
+            from redis.asyncio import (
+                BlockingConnectionPool as AsyncBlockingConnectionPool,
+            )
+
+            pool = AsyncBlockingConnectionPool.from_url(
+                org_config.falkordb_url,
+                max_connections=5,
+                socket_timeout=10,
+                socket_keepalive=True,
+                decode_responses=True,
+            )
+            falkordb_client = FalkorDB(connection_pool=pool)
+        except Exception as exc:
+            logger.error(
+                "graph_service.falkordb_per_org_failed",
+                extra={"org_id": str(org_id), "error": str(exc)},
+            )
+            raise GraphBackendUnavailableError(
+                f"FalkorDB connection failed for org {org_id}: {exc}"
+            ) from exc
 
     graph_backend = dispatcher.resolve_and_create(
         org_config, db, surreal=surreal, falkordb_client=falkordb_client,
@@ -340,7 +368,12 @@ async def get_graph_backend_for_project(
         pool = request.app.state.surreal_connection_pool
         if pool is not None:
             try:
-                surreal = await pool.get_or_create(org_id, org_config)
+                from core.config import get_settings
+
+                surreal = await pool.get_or_create(
+                    org_id, org_config,
+                    system_url=get_settings().SURREALDB_URL,
+                )
             except Exception as exc:
                 logger.error(
                     "graph_backend.surreal_connection_failed",
@@ -355,6 +388,30 @@ async def get_graph_backend_for_project(
                 ) from exc
 
     falkordb_client = getattr(request.app.state, "falkordb_client", None)
+    if falkordb_client is None and org_config.falkordb_url:
+        try:
+            from falkordb.asyncio import FalkorDB
+            from redis.asyncio import (
+                BlockingConnectionPool as AsyncBlockingConnectionPool,
+            )
+
+            pool = AsyncBlockingConnectionPool.from_url(
+                org_config.falkordb_url,
+                max_connections=5,
+                socket_timeout=10,
+                socket_keepalive=True,
+                decode_responses=True,
+            )
+            falkordb_client = FalkorDB(connection_pool=pool)
+        except Exception as exc:
+            logger.error(
+                "graph_backend.falkordb_per_org_failed",
+                extra={"org_id": str(org_id), "error": str(exc)},
+            )
+            raise GraphBackendUnavailableError(
+                f"FalkorDB connection failed for org {org_id}: {exc}"
+            ) from exc
+
     return dispatcher.resolve_and_create(
         org_config, db, surreal=surreal, falkordb_client=falkordb_client,
     )

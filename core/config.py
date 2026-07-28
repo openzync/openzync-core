@@ -205,11 +205,12 @@ class Settings(BaseModel):
     )
 
     # ── FalkorDB (graph backend) ──────────────────────────────────────────
-    FALKORDB_URL: str = Field(
-        default="redis://localhost:6379",
+    FALKORDB_URL: str | None = Field(
+        default=None,
         description=(
             "FalkorDB connection URL (Redis RESP protocol).  "
-            "Defaults to localhost:6379."
+            "When set at system level, orgs share a single FalkorDB instance.  "
+            "When None (default), per-org falkordb_url from org_config may be used."
         ),
     )
     FALKORDB_MAX_CONNECTIONS: int = Field(
@@ -222,6 +223,18 @@ class Settings(BaseModel):
         default=30,
         ge=1,
         description="Socket timeout in seconds for FalkorDB connections.",
+    )
+
+    # ── SurrealDB (graph backend — optional system-level) ─────────────────
+    SURREALDB_URL: str | None = Field(
+        default=None,
+        description=(
+            "System-level SurrealDB WebSocket connection URL "
+            "(e.g. ws://surrealdb:8000/rpc).  "
+            "When set, all orgs use this server and namespace is auto-derived "
+            "from org identity.  When None (default), per-org surrealdb_* "
+            "fields from org_config are used."
+        ),
     )
 
     # ── Prompt Caching ────────────────────────────────────────────────────
