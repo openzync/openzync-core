@@ -18,7 +18,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from core.openbao import OpenBaoClient, SYSTEM_KEY_MAPPING
+from core.openbao import SYSTEM_KEY_MAPPING, OpenBaoClient
 
 
 def get_queue_name(env: str, queue_type: str) -> str:
@@ -170,11 +170,12 @@ class WorkerSettings(BaseModel):
     )
 
     # ── FalkorDB (graph backend) ─────────────────────────────────────────────
-    FALKORDB_URL: str = Field(
-        default="redis://localhost:6379",
+    FALKORDB_URL: str | None = Field(
+        default=None,
         description=(
-            "FalkorDB connection URL (Redis RESP protocol). "
-            "Defaults to localhost:6379."
+            "FalkorDB connection URL (Redis RESP protocol).  "
+            "When set at system level, orgs share a single FalkorDB instance.  "
+            "When None (default), per-org falkordb_url from org_config may be used."
         ),
     )
     FALKORDB_MAX_CONNECTIONS: int = Field(
@@ -187,6 +188,18 @@ class WorkerSettings(BaseModel):
         default=10,
         ge=1,
         description="Socket timeout in seconds for FalkorDB connections.",
+    )
+
+    # ── SurrealDB (graph backend — optional system-level) ────────────────────
+    SURREALDB_URL: str | None = Field(
+        default=None,
+        description=(
+            "System-level SurrealDB WebSocket connection URL "
+            "(e.g. ws://surrealdb:8000/rpc).  "
+            "When set, all orgs use this server and namespace is auto-derived "
+            "from org identity.  When None (default), per-org surrealdb_* "
+            "fields from org_config are used."
+        ),
     )
 
     # ── Community Detection ──────────────────────────────────────────────────
@@ -242,6 +255,7 @@ class WorkerSettings(BaseModel):
             "OZ_FALKORDB_URL",
             "OZ_FALKORDB_MAX_CONNECTIONS",
             "OZ_FALKORDB_SOCKET_TIMEOUT",
+            "OZ_SURREALDB_URL",
             "OZ_MAX_WORKERS",
         })
         # Canary: fail fast if SYSTEM_KEY_MAPPING drifts from worker keys

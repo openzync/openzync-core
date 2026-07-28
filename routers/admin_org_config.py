@@ -17,8 +17,11 @@ import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from core.audit import audit_action
+from core.config import get_settings
 from dependencies.auth import require_org_id, require_scope
 from schemas.organization_config import (
+    SYSTEM_MANAGED_FALKORDB_FIELDS,
+    SYSTEM_MANAGED_SURREALDB_FIELDS,
     OrgConfigBase,
     OrgConfigResponse,
     UpdateOrgConfigRequest,
@@ -32,6 +35,21 @@ router = APIRouter(
 
 #: Path to the onboarding defaults YAML file (relative to project root).
 DEFAULTS_PATH = Path(__file__).parent.parent / "config" / "defaults" / "org_config.yaml"
+
+
+def _get_system_managed_fields() -> list[str]:
+    """Return field names that are locked at the system level.
+
+    Checks the global Settings instance.  When a backend's URL is set at
+    the system level, all corresponding per-org config fields are blocked.
+    """
+    settings = get_settings()
+    fields: list[str] = []
+    if settings.SURREALDB_URL:
+        fields.extend(SYSTEM_MANAGED_SURREALDB_FIELDS)
+    if settings.FALKORDB_URL:
+        fields.extend(SYSTEM_MANAGED_FALKORDB_FIELDS)
+    return fields
 
 
 # ── Dependency factory ────────────────────────────────────────────────────────
@@ -100,7 +118,9 @@ async def get_org_config(
     Returns only the fields explicitly set in the DB.  Unset fields are
     ``null`` — there is no env-var fallback.
     """
-    return await service.get_config_response(UUID(_org_id))
+    response = await service.get_config_response(UUID(_org_id))
+    response.system_managed_fields = _get_system_managed_fields()
+    return response
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -127,6 +147,22 @@ async def update_org_config(
     Requires an API key with ``admin:write`` scope or a JWT dashboard
     session.
     """
+    # ── Reject system-managed fields ─────────────────────────────────
+    system_managed = _get_system_managed_fields()
+    if system_managed:
+        overridden = {
+            f for f in system_managed
+            if f in body.model_dump(exclude_unset=True)
+        }
+        if overridden:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "These fields are configured at the system level "
+                    "and cannot be modified: "
+                    f"{', '.join(sorted(overridden))}."
+                ),
+            )
     return await service.update_config(UUID(_org_id), body)
 
 
@@ -157,4 +193,20 @@ async def replace_org_config(
     Requires an API key with ``admin:write`` scope or a JWT dashboard
     session.
     """
+    # ── Reject system-managed fields ─────────────────────────────────
+    system_managed = _get_system_managed_fields()
+    if system_managed:
+        overridden = {
+            f for f in system_managed
+            if f in body.model_dump(exclude_unset=True)
+        }
+        if overridden:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "These fields are configured at the system level "
+                    "and cannot be modified: "
+                    f"{', '.join(sorted(overridden))}."
+                ),
+            )
     return await service.update_config(UUID(_org_id), body)

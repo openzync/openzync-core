@@ -77,6 +77,7 @@ class SurrealConnectionPool:
         self,
         org_id: UUID,
         org_config: OrgConfigBase,
+        system_url: str | None = None,
     ) -> AsyncSurreal:
         """Return a cached ``AsyncSurreal`` for this org, or create one.
 
@@ -86,6 +87,10 @@ class SurrealConnectionPool:
                 connection details (``surrealdb_url``, ``surrealdb_user``,
                 ``surrealdb_pass``, ``surrealdb_namespace``,
                 ``surrealdb_database``).
+            system_url: Optional system-level SurrealDB URL override. When
+                provided, this URL is used instead of
+                ``org_config.surrealdb_url``, and namespace/database are
+                derived from the org config defaults.
 
         Returns:
             An ``AsyncSurreal`` instance.
@@ -100,12 +105,24 @@ class SurrealConnectionPool:
             conn["last_used"] = time.monotonic()
             return conn["surreal"]
 
-        # ── No URL configured = SurrealDB not available for this org ──────
-        url = org_config.surrealdb_url
-        if not url:
-            raise GraphBackendUnavailableError(
-                f"Failed to connect to SurrealDB for organization {org_id}."
-            )
+        # ── Determine connection parameters ────────────────────────────
+        if system_url:
+            url = system_url
+            username = org_config.surrealdb_user or DEFAULT_SURREALDB_USER
+            password = org_config.surrealdb_pass or DEFAULT_SURREALDB_PASS
+            namespace = org_config.surrealdb_namespace or DEFAULT_SURREALDB_NAMESPACE
+            database = org_config.surrealdb_database or DEFAULT_SURREALDB_DATABASE
+        else:
+            # ── No URL configured = SurrealDB not available for this org ──
+            url = org_config.surrealdb_url
+            if not url:
+                raise GraphBackendUnavailableError(
+                    f"Failed to connect to SurrealDB for organization {org_id}."
+                )
+            username = org_config.surrealdb_user or DEFAULT_SURREALDB_USER
+            password = org_config.surrealdb_pass or DEFAULT_SURREALDB_PASS
+            namespace = org_config.surrealdb_namespace or DEFAULT_SURREALDB_NAMESPACE
+            database = org_config.surrealdb_database or DEFAULT_SURREALDB_DATABASE
 
         # ── Per-org lock to prevent duplicate connections ─────────────────
         if org_id not in self._locks:
@@ -121,19 +138,10 @@ class SurrealConnectionPool:
                 surreal = AsyncSurreal(url)
                 await surreal.connect()
                 await surreal.signin({
-                    "username": (
-                        org_config.surrealdb_user or DEFAULT_SURREALDB_USER
-                    ),
-                    "password": (
-                        org_config.surrealdb_pass or DEFAULT_SURREALDB_PASS
-                    ),
+                    "username": username,
+                    "password": password,
                 })
-                await surreal.use(
-                    org_config.surrealdb_namespace
-                    or DEFAULT_SURREALDB_NAMESPACE,
-                    org_config.surrealdb_database
-                    or DEFAULT_SURREALDB_DATABASE,
-                )
+                await surreal.use(namespace, database)
                 self._pool[org_id] = {
                     "surreal": surreal,
                     "last_used": time.monotonic(),

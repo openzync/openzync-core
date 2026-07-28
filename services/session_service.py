@@ -316,7 +316,7 @@ class SessionService:
         )
 
         # Load blob attachments for each episode and build an episode→blobs map.
-        # ponytail: per-episode query (N+1 within page). Batch via
+        # per-episode query (N+1 within page). Batch via
         # EpisodeBlobRepository.get_by_episode_ids() if page sizes grow >100.
         episode_blob_map: dict[UUID, list[dict]] = {}
         try:
