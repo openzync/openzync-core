@@ -252,12 +252,25 @@ jobs:
 
             # ── Deploy backend: pull → migrate → restart ───────────────────
             docker compose --env-file .env -f infra/docker-compose.backend.yml pull
+
+            # Run migrations via docker compose run. This creates an
+            # infra-api-run-* container tracked by compose as the "api"
+            # service. We remove it below before up -d, otherwise compose
+            # skips creating the real service container.
             docker compose --env-file .env -f infra/docker-compose.backend.yml run --rm --no-deps api alembic upgrade head || true
 
-            # Force-recreate api and worker — removes stale containers (including
-            # infra-api-run-* from the migration step above, plus any orphaned
-            # containers with matching names) and creates fresh ones from the
-            # newly pulled images.
+            # ── CRITICAL: Remove all compose-tracked containers for api/worker ──
+            # docker compose run creates infra-api-run-* containers that compose
+            # tracks as the "api" service. If not removed, compose up -d sees the
+            # api service as already covered and skips recreating openzync-api.
+            docker compose --env-file .env -f infra/docker-compose.backend.yml rm -f -s api worker 2>/dev/null || true
+            docker rm -f \
+              openzync-api openzync-worker \
+              $(docker ps -a -q --filter "name=infra-api-run") \
+              $(docker ps -a -q --filter "name=infra-worker-run") \
+              2>/dev/null || true
+
+            # Force-recreate api and worker from the newly pulled images.
             docker compose --env-file .env -f infra/docker-compose.backend.yml up -d --force-recreate --no-deps api worker
 
             # Ensure remaining services are running and clean orphans.
