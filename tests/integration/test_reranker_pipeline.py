@@ -49,8 +49,29 @@ def mock_db_session() -> AsyncMock:
     The individual search methods on ``HybridRetriever`` are mocked
     separately, so the session just needs to be a valid ``AsyncSession``
     for instantiation.
+
+    The ``execute`` → ``scalars`` → ``all`` chain is configured so that
+    ``EpisodeBlobRepository`` methods (called during context assembly
+    for episodes with results) don't raise ``AttributeError`` on the
+    mock coroutine chain.
     """
-    return AsyncMock(spec=AsyncSession)
+    from unittest.mock import MagicMock
+
+    mock = AsyncMock(spec=AsyncSession)
+
+    # Wire the execute → scalars → all chain so blob-lookup calls
+    # like ``await session.execute(...).scalars().all()`` work.
+    # ``scalars()`` is synchronous in SQLAlchemy (not async), so the
+    # result wrapper uses ``MagicMock`` (not ``AsyncMock``).
+    mock_scalars = MagicMock()
+    mock_scalars.all.return_value = []
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value = mock_scalars
+
+    mock.execute.return_value = mock_result
+
+    return mock
 
 
 @pytest.fixture

@@ -15,7 +15,7 @@
 #   make docker-down      # Stop infrastructure containers
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: dev install lint test test-all migrate migrate-new docker-up docker-down docs-install docs-build docs-watch docs-clean docs-apidoc clean
+.PHONY: dev install lint test test-all test-coverage test-coverage-ci test-coverage-report test-coverage-html migrate migrate-new docker-up docker-down docs-install docs-build docs-watch docs-clean docs-apidoc clean
 
 # ── Variables ─────────────────────────────────────────────────────────────────
 
@@ -52,8 +52,28 @@ test:
 test-all:
 	pytest tests/ -v $(ARGS)
 
-test-coverage:
-	pytest tests/unit/ -v --cov=core --cov=middleware --cov=dependencies --cov-report=term --cov-report=html
+test-coverage:  ## Run ALL unit tests with coverage across all source directories
+	pytest tests/unit/ -v \
+		--cov=core --cov=routers --cov=services --cov=repositories \
+		--cov=middleware --cov=dependencies --cov=workers --cov=packages \
+		--cov=schemas --cov=utils \
+		--cov-report=term --cov-report=html \
+		--cov-fail-under=74 $(ARGS)
+
+test-coverage-ci:  ## CI coverage job (unit + integration combined)
+	pytest tests/unit/ tests/integration/ -v --timeout=60 \
+		--cov=core --cov=routers --cov=services --cov=repositories \
+		--cov=middleware --cov=dependencies --cov=workers --cov=packages \
+		--cov=schemas --cov=utils \
+		--cov-report=term --cov-report=xml \
+		--cov-fail-under=75 $(ARGS)
+		# Note: integration tests may have lower coverage due to testcontainers overhead
+
+test-coverage-report:  ## Show coverage report (no run)
+	coverage report
+
+test-coverage-html:  ## Open HTML coverage report
+	coverage html && open htmlcov/index.html
 
 test-integration:
 	pytest tests/integration/ -v --timeout=60 $(ARGS)

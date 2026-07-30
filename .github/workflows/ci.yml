@@ -69,7 +69,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
       - run: pip install -e ".[dev]"
-      - run: pytest tests/unit/ -v --timeout=30 --cov=core --cov=middleware --cov=dependencies --cov-report=term --cov-report=xml
+      - run: pytest tests/unit/ -v --timeout=30 --cov=core --cov=routers --cov=services --cov=repositories --cov=middleware --cov=dependencies --cov=workers --cov=packages --cov=schemas --cov=utils --cov-report=term --cov-report=xml --cov-fail-under=74
       - uses: codecov/codecov-action@v4
         with:
           file: ./coverage.xml
@@ -117,7 +117,11 @@ jobs:
       - run: alembic upgrade head
       - run: |
           pytest tests/integration/ -v --timeout=60 \
-            --cov=services --cov-report=term \
+            --cov=core --cov=routers --cov=services --cov=repositories \
+            --cov=middleware --cov=dependencies --cov=workers --cov=packages \
+            --cov=schemas --cov=utils \
+            --cov-report=term --cov-report=xml \
+            --cov-fail-under=75 \
             --ignore=tests/integration/test_enrichment_pipeline.py
       - uses: codecov/codecov-action@v4
         with:

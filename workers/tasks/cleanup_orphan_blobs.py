@@ -121,6 +121,7 @@ async def cleanup_orphan_blobs(
                 else:
                     from core.config import BootstrapSettings
                     from core.openbao import OpenBaoClient
+                    from core.org_config import get_org_config
 
                     bootstrap = BootstrapSettings()
                     async with OpenBaoClient(

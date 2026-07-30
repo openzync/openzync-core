@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class CreateSessionRequest(BaseModel):
@@ -54,7 +54,7 @@ class SessionResponse(BaseModel):
     external_id: str = Field(..., description="Caller-defined session identifier.")
     metadata: dict[str, Any] = Field(
         default_factory=dict,
-        validation_alias="metadata_",
+        validation_alias=AliasChoices("metadata_", "metadata"),
         description="Session metadata JSON.",
     )
     is_active: bool = Field(
@@ -155,7 +155,7 @@ class MessageResponse(BaseModel):
     content: str = Field(..., description="Message body text.")
     metadata: dict[str, Any] = Field(
         default_factory=dict,
-        validation_alias="metadata_",
+        validation_alias=AliasChoices("metadata_", "metadata"),
         description="Per-message metadata JSON.",
     )
     token_count: int = Field(

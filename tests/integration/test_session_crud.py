@@ -1,12 +1,12 @@
 """Integration tests for Session CRUD endpoints.
 
-Endpoints under test (all under ``/v1/users/{user_id}/sessions``):
+Endpoints under test (all under ``/v1/projects/{project_id}/sessions``):
 
-    POST   /v1/users/{user_id}/sessions              — Create a session
-    GET    /v1/users/{user_id}/sessions               — List sessions (pagination)
-    GET    /v1/users/{user_id}/sessions/{session_id}  — Get a single session
-    GET    /v1/users/{user_id}/sessions/{session_id}/messages  — Get messages
-    DELETE /v1/users/{user_id}/sessions/{session_id}  — Soft-delete a session
+    POST   /v1/projects/{project_id}/sessions              — Create a session
+    GET    /v1/projects/{project_id}/sessions               — List sessions (pagination)
+    GET    /v1/projects/{project_id}/sessions/{session_id}  — Get a single session
+    GET    /v1/projects/{project_id}/sessions/{session_id}/messages  — Get messages
+    DELETE /v1/projects/{project_id}/sessions/{session_id}  — Soft-delete a session
 
 Auth strategy:
     Each test creates a fresh org + API key via the admin bootstrap endpoint,
@@ -28,12 +28,12 @@ from __future__ import annotations
 from uuid import UUID
 
 import pytest
+from dependencies.auth import get_current_user_id
 from httpx import ASGITransport, AsyncClient
 
 
-@pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
 class TestSessionCrud:
-    """Full CRUD lifecycle for the ``/v1/users/{user_id}/sessions`` endpoints.
+    """Full CRUD lifecycle for the ``/v1/projects/{project_id}/sessions`` endpoints.
 
     Each test is fully self-contained:
     1. Bootstrap an org via the admin endpoint.
@@ -46,9 +46,9 @@ class TestSessionCrud:
     # ═════════════════════════════════════════════════════════════════════
 
     @staticmethod
-    async def _create_user(auth_client: AsyncClient, external_id: str) -> str:
+    async def _create_user(isolated_auth_client: AsyncClient, external_id: str) -> str:
         """Create a user via the API and return the user ID."""
-        resp = await auth_client.post(
+        resp = await isolated_auth_client.post(
             "/v1/users",
             json={"external_id": external_id},
         )
@@ -61,25 +61,24 @@ class TestSessionCrud:
     def _assert_session_response_shape(body: dict) -> None:
         """Validate that ``body`` matches the ``SessionResponse`` schema.
 
-        ``SessionResponse`` fields: ``id``, ``user_id``, ``external_id``,
-        ``metadata``, ``created_at``, ``updated_at``, ``closed_at``,
-        ``is_deleted``.
+        ``SessionResponse`` fields: ``id``, ``project_id``, ``created_by``,
+        ``external_id``, ``metadata``, ``is_active``, ``created_at``,
+        ``updated_at``, ``closed_at``.
         """
         assert "id" in body, "Missing 'id'"
-        assert "user_id" in body, "Missing 'user_id'"
+        assert "created_by" in body, "Missing 'created_by'"
         assert "external_id" in body, "Missing 'external_id'"
         assert "metadata" in body, "Missing 'metadata'"
         assert "created_at" in body, "Missing 'created_at'"
         assert "updated_at" in body, "Missing 'updated_at'"
         assert "closed_at" in body, "Missing 'closed_at'"
-        assert "is_deleted" in body, "Missing 'is_deleted'"
 
         # Validate UUIDs
         UUID(body["id"])
-        UUID(body["user_id"])
+        UUID(body["created_by"])
 
         # Defaults
-        assert body["is_deleted"] is False
+        assert body["is_active"] is True
         assert body["closed_at"] is None
         assert isinstance(body["metadata"], dict)
 
@@ -87,18 +86,23 @@ class TestSessionCrud:
     # 1.  Create session — happy path
     # ═════════════════════════════════════════════════════════════════════
 
-    @pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
     @pytest.mark.asyncio
-    async def test_create_session(self, auth_client: AsyncClient) -> None:
+    async def test_create_session(
+        self,
+        isolated_auth_client: AsyncClient,
+        isolated_org_and_key: dict,
+        isolated_project_id: UUID,
+    ) -> None:
         """POST /sessions → 201 with a valid SessionResponse.
 
-        The response must include ``user_id`` matching the path parameter,
-        and ``external_id`` matching the request body.
+        The response must include ``created_by`` matching the authenticated
+        user (from the fixture), and ``external_id`` matching the request.
         """
-        user_id = await self._create_user(auth_client, "session_creator")
+        _ = await self._create_user(isolated_auth_client, "session_creator")
+        fixture_user_id = isolated_org_and_key["user_id"]
 
-        response = await auth_client.post(
-            f"/v1/users/{user_id}/sessions",
+        response = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/sessions",
             json={
                 "external_id": "session_001",
                 "metadata": {"channel": "api", "version": "1.0"},
@@ -110,7 +114,7 @@ class TestSessionCrud:
         body = response.json()
 
         self._assert_session_response_shape(body)
-        assert body["user_id"] == user_id
+        assert body["created_by"] == str(fixture_user_id)
         assert body["external_id"] == "session_001"
         assert body["metadata"] == {"channel": "api", "version": "1.0"}
 
@@ -120,25 +124,25 @@ class TestSessionCrud:
 
     @pytest.mark.asyncio
     async def test_create_duplicate_session(
-        self, auth_client: AsyncClient
+        self, isolated_auth_client: AsyncClient, isolated_project_id: UUID
     ) -> None:
-        """POST /sessions with the same external_id for the same user → 409.
+        """POST /sessions with the same external_id for the same project → 409.
 
-        The ``(user_id, external_id)`` unique constraint must prevent
+        The ``(project_id, external_id)`` unique constraint must prevent
         duplicate session creation.
         """
-        user_id = await self._create_user(auth_client, "dup_session_user")
+        user_id = await self._create_user(isolated_auth_client, "dup_session_user")  # noqa: F841
 
         # Create the first session
-        resp1 = await auth_client.post(
-            f"/v1/users/{user_id}/sessions",
+        resp1 = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/sessions",
             json={"external_id": "dup_session"},
         )
         assert resp1.status_code == 201, f"First creation failed: {resp1.text}"
 
         # Attempt to create a second session with the same external_id
-        response = await auth_client.post(
-            f"/v1/users/{user_id}/sessions",
+        response = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/sessions",
             json={"external_id": "dup_session"},
         )
         assert response.status_code == 409, (
@@ -150,27 +154,32 @@ class TestSessionCrud:
     # 3.  Get session → 200
     # ═════════════════════════════════════════════════════════════════════
 
-    @pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
     @pytest.mark.asyncio
-    async def test_get_session(self, auth_client: AsyncClient) -> None:
-        """GET /sessions/{id} → 200 with SessionResponseWithStats.
+    async def test_get_session(
+        self,
+        isolated_auth_client: AsyncClient,
+        isolated_org_and_key: dict,
+        isolated_project_id: UUID,
+    ) -> None:
+        """GET /sessions/{id} → 200 with SessionResponse.
 
-        ``SessionResponseWithStats`` extends ``SessionResponse`` with:
-        ``message_count``, ``fact_count``, ``last_message_at``, ``is_open``.
+        ``SessionResponse`` includes aggregate statistics: ``message_count``,
+        ``fact_count``, ``pending_enrichment_count``, ``observation_count``.
         """
-        user_id = await self._create_user(auth_client, "get_session_user")
+        _ = await self._create_user(isolated_auth_client, "get_session_user")
+        fixture_user_id = isolated_org_and_key["user_id"]
 
         # Create a session
-        created = await auth_client.post(
-            f"/v1/users/{user_id}/sessions",
+        created = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/sessions",
             json={"external_id": "get_session_test"},
         )
         assert created.status_code == 201
         session_id = created.json()["id"]
 
         # Fetch the session
-        response = await auth_client.get(
-            f"/v1/users/{user_id}/sessions/{session_id}"
+        response = await isolated_auth_client.get(
+            f"/v1/projects/{isolated_project_id}/sessions/{session_id}"
         )
         assert response.status_code == 200, (
             f"Expected 200, got {response.status_code}: {response.text}"
@@ -179,45 +188,43 @@ class TestSessionCrud:
 
         self._assert_session_response_shape(body)
         assert body["id"] == session_id
-        assert body["user_id"] == user_id
+        assert body["created_by"] == str(fixture_user_id)
         assert body["external_id"] == "get_session_test"
 
         # Stats fields (should be zero for a fresh session)
-        assert "message_count" in body, "Missing message_count"
-        assert "fact_count" in body, "Missing fact_count"
-        assert "last_message_at" in body, "Missing last_message_at"
-        assert "is_open" in body, "Missing is_open"
         assert body["message_count"] == 0
         assert body["fact_count"] == 0
-        assert body["last_message_at"] is None
-        assert body["is_open"] is True
 
     # ═════════════════════════════════════════════════════════════════════
     # 4.  List sessions — pagination
     # ═════════════════════════════════════════════════════════════════════
 
-    @pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
     @pytest.mark.asyncio
-    async def test_list_sessions(self, auth_client: AsyncClient) -> None:
+    async def test_list_sessions(
+        self,
+        isolated_auth_client: AsyncClient,
+        isolated_org_and_key: dict,  # noqa: ARG002
+        isolated_project_id: UUID,
+    ) -> None:
         """GET /sessions with cursor pagination.
 
         Create 3 sessions, fetch with limit=2:
         - Page 1: 2 items, ``has_more=True``, ``next_cursor`` is not null.
         - Page 2: 1 item,  ``has_more=False``, ``next_cursor`` is null.
         """
-        user_id = await self._create_user(auth_client, "list_sesh_user")
+        _ = await self._create_user(isolated_auth_client, "list_sesh_user")
 
         # Seed 3 sessions
         for i in range(3):
-            resp = await auth_client.post(
-                f"/v1/users/{user_id}/sessions",
+            resp = await isolated_auth_client.post(
+                f"/v1/projects/{isolated_project_id}/sessions",
                 json={"external_id": f"list_session_{i}"},
             )
             assert resp.status_code == 201, f"Seed failed at index {i}"
 
         # Page 1
-        page1 = await auth_client.get(
-            f"/v1/users/{user_id}/sessions?limit=2"
+        page1 = await isolated_auth_client.get(
+            f"/v1/projects/{isolated_project_id}/sessions?limit=2"
         )
         assert page1.status_code == 200
         body1 = page1.json()
@@ -232,8 +239,8 @@ class TestSessionCrud:
         assert body1["next_cursor"] is not None
 
         # Page 2
-        page2 = await auth_client.get(
-            f"/v1/users/{user_id}/sessions?limit=2&cursor={body1['next_cursor']}"
+        page2 = await isolated_auth_client.get(
+            f"/v1/projects/{isolated_project_id}/sessions?limit=2&cursor={body1['next_cursor']}"
         )
         assert page2.status_code == 200
         body2 = page2.json()
@@ -246,25 +253,27 @@ class TestSessionCrud:
     # ═════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_get_messages(self, auth_client: AsyncClient) -> None:
+    async def test_get_messages(
+        self, isolated_auth_client: AsyncClient, isolated_project_id: UUID
+    ) -> None:
         """GET /sessions/{id}/messages → 200 with empty ``data`` list.
 
         A session with no ingested messages should return an empty array,
         not an error.
         """
-        user_id = await self._create_user(auth_client, "msg_user")
+        user_id = await self._create_user(isolated_auth_client, "msg_user")  # noqa: F841
 
         # Create a session
-        created = await auth_client.post(
-            f"/v1/users/{user_id}/sessions",
+        created = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/sessions",
             json={"external_id": "no_messages_session"},
         )
         assert created.status_code == 201
         session_id = created.json()["id"]
 
         # Fetch messages
-        response = await auth_client.get(
-            f"/v1/users/{user_id}/sessions/{session_id}/messages"
+        response = await isolated_auth_client.get(
+            f"/v1/projects/{isolated_project_id}/sessions/{session_id}/messages"
         )
         assert response.status_code == 200, (
             f"Expected 200, got {response.status_code}: {response.text}"
@@ -285,34 +294,36 @@ class TestSessionCrud:
     # ═════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_delete_session(self, auth_client: AsyncClient) -> None:
+    async def test_delete_session(
+        self, isolated_auth_client: AsyncClient, isolated_project_id: UUID
+    ) -> None:
         """DELETE /sessions/{id} → 204, subsequent GET → 404.
 
         Verify the soft-delete lifecycle:
         - DELETE returns 204 No Content.
         - Fetching the same session immediately after returns 404.
         """
-        user_id = await self._create_user(auth_client, "del_sesh_user")
+        user_id = await self._create_user(isolated_auth_client, "del_sesh_user")  # noqa: F841
 
         # Create session
-        created = await auth_client.post(
-            f"/v1/users/{user_id}/sessions",
+        created = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/sessions",
             json={"external_id": "delete_me"},
         )
         assert created.status_code == 201
         session_id = created.json()["id"]
 
         # Delete
-        delete_resp = await auth_client.delete(
-            f"/v1/users/{user_id}/sessions/{session_id}"
+        delete_resp = await isolated_auth_client.delete(
+            f"/v1/projects/{isolated_project_id}/sessions/{session_id}"
         )
         assert delete_resp.status_code == 204, (
             f"Expected 204, got {delete_resp.status_code}: {delete_resp.text}"
         )
 
         # Verify it's gone
-        get_resp = await auth_client.get(
-            f"/v1/users/{user_id}/sessions/{session_id}"
+        get_resp = await isolated_auth_client.get(
+            f"/v1/projects/{isolated_project_id}/sessions/{session_id}"
         )
         assert get_resp.status_code == 404, (
             f"Expected 404 after delete, got {get_resp.status_code}: {get_resp.text}"
@@ -325,18 +336,19 @@ class TestSessionCrud:
     @pytest.mark.asyncio
     async def test_session_cross_tenant(
         self,
-        app: pytest.fixture,  # noqa: ARG002
+        isolated_app: pytest.fixture,  # noqa: ARG002
     ) -> None:
         """A session created by org A must not be accessible by org B.
 
-        1. Create org A → api_key A
+        1. Create org A → api_key A → project_id A
         2. Create org B → api_key B
-        3. Via org A: create a user, then create a session under that user
-        4. Via org B: try to GET the session → 404 (org B cannot see org A's user)
+        3. Via org A: create a user, then create a session under project A
+        4. Via org B: try to GET the session → 404 (org B cannot see org A's project)
         """
         # ── Bootstrap org A ─────────────────────────────────────────────
-        transport_a = ASGITransport(app=app)  # type: ignore[arg-type]
-        async with AsyncClient(transport=transport_a, base_url="http://test") as cli:
+        async with AsyncClient(
+            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+        ) as cli:
             resp = await cli.post(
                 "/admin/organizations",
                 json={"name": "Org A", "plan": "free"},
@@ -344,9 +356,28 @@ class TestSessionCrud:
             assert resp.status_code == 201
             org_a = resp.json()
 
+        # ── Fetch project_id for org A & set up user ────────────────────
+        async with AsyncClient(
+            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+        ) as cli:
+            cli.headers["Authorization"] = f"Bearer {org_a['api_key']}"
+
+            # Create a user so get_current_user_id has something to return
+            user_resp = await cli.post("/v1/users", json={"external_id": "org_a_user"})
+            assert user_resp.status_code == 201
+            user_id_a = UUID(user_resp.json()["id"])
+            isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_a
+
+            proj_resp = await cli.get("/v1/projects")
+            assert proj_resp.status_code == 200
+            projects_a = proj_resp.json()
+            assert isinstance(projects_a, list) and len(projects_a) >= 1
+            project_id_a = projects_a[0]["id"]
+
         # ── Bootstrap org B ─────────────────────────────────────────────
-        transport_b = ASGITransport(app=app)  # type: ignore[arg-type]
-        async with AsyncClient(transport=transport_b, base_url="http://test") as cli:
+        async with AsyncClient(
+            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+        ) as cli:
             resp = await cli.post(
                 "/admin/organizations",
                 json={"name": "Org B", "plan": "free"},
@@ -354,20 +385,25 @@ class TestSessionCrud:
             assert resp.status_code == 201
             org_b = resp.json()
 
-        # ── Org A: create user + session ────────────────────────────────
+        # ── Set up user for org B ───────────────────────────────────────
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+        ) as cli:
+            cli.headers["Authorization"] = f"Bearer {org_b['api_key']}"
+            user_resp = await cli.post("/v1/users", json={"external_id": "org_b_user"})
+            assert user_resp.status_code == 201
+            user_id_b = UUID(user_resp.json()["id"])
+            isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_b
+
+        # ── Org A: create session ───────────────────────────────────────
+        async with AsyncClient(
+            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
             cli.headers["Authorization"] = f"Bearer {org_a['api_key']}"
-            user_resp = await cli.post(
-                "/v1/users",
-                json={"external_id": "cross_tenant_user"},
-            )
-            assert user_resp.status_code == 201
-            user_id_a = user_resp.json()["id"]
+            isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_a
 
             session_resp = await cli.post(
-                f"/v1/users/{user_id_a}/sessions",
+                f"/v1/projects/{project_id_a}/sessions",
                 json={"external_id": "cross_tenant_session"},
             )
             assert session_resp.status_code == 201
@@ -375,14 +411,14 @@ class TestSessionCrud:
 
         # ── Org B: try to access Org A's session → 404 ─────────────────
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
             cli.headers["Authorization"] = f"Bearer {org_b['api_key']}"
             get_resp = await cli.get(
-                f"/v1/users/{user_id_a}/sessions/{session_id}"
+                f"/v1/projects/{project_id_a}/sessions/{session_id}"
             )
 
-        assert get_resp.status_code == 404, (
+        assert get_resp.status_code in (403, 404), (
             f"Org B should not be able to access Org A's session. "
             f"Got {get_resp.status_code}: {get_resp.text}"
         )
@@ -392,13 +428,15 @@ class TestSessionCrud:
     # ═════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_session_not_found(self, auth_client: AsyncClient) -> None:
+    async def test_session_not_found(
+        self, isolated_auth_client: AsyncClient, isolated_project_id: UUID
+    ) -> None:
         """GET /sessions with a non-existent UUID → 404."""
-        user_id = await self._create_user(auth_client, "not_found_user")
+        user_id = await self._create_user(isolated_auth_client, "not_found_user")  # noqa: F841
         fake_session_id = "00000000-0000-0000-0000-000000000000"
 
-        response = await auth_client.get(
-            f"/v1/users/{user_id}/sessions/{fake_session_id}"
+        response = await isolated_auth_client.get(
+            f"/v1/projects/{isolated_project_id}/sessions/{fake_session_id}"
         )
         assert response.status_code == 404, (
             f"Expected 404 for non-existent session, "

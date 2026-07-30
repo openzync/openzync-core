@@ -66,10 +66,12 @@ test-unit:
   stage: test-unit
   script:
     - pip install -e ".[dev]"
-    - pytest tests/unit/ -v --timeout=30
-      --cov=core --cov=middleware --cov=dependencies
+    - pytest tests/unit/ -v --timeout=30 -n auto
+      --cov=core --cov=routers --cov=services --cov=repositories
+      --cov=middleware --cov=dependencies --cov=workers --cov=packages
+      --cov=schemas --cov=utils
       --cov-report=term --cov-report=xml:coverage.xml
-      -n auto
+      --cov-fail-under=75
   coverage: '/TOTAL\s+\d+\s+\d+\s+(\d+)%/'
   artifacts:
     reports:
@@ -107,7 +109,11 @@ test-integration:
   script:
     - alembic upgrade head
     - pytest tests/integration/ -v --timeout=60
-      --cov=services --cov-report=term
+      --cov=core --cov=routers --cov=services --cov=repositories
+      --cov=middleware --cov=dependencies --cov=workers --cov=packages
+      --cov=schemas --cov=utils
+      --cov-report=term --cov-report=xml:coverage.xml
+      --cov-fail-under=74
   needs: ["test-unit"]
 
 # ═══════════════════════════════════════════════════════════════════════════════
