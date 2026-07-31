@@ -18,10 +18,58 @@ Auth strategy:
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 import pytest
 from httpx import AsyncClient
+
+
+@pytest.fixture(autouse=True)
+async def _wire_graph_backend(isolated_app: Any) -> Any:
+    """Attach the graph-backend dispatcher to the isolated app.
+
+    ``graph_backend_dispatcher`` is normally set by the FastAPI lifespan,
+    which the ``isolated_app`` fixture does not run.  Without it every
+    ``/search`` request raises ``AttributeError`` on
+    ``app.state.graph_backend_dispatcher``.  ``init_dispatcher()`` only
+    registers backend classes — no I/O.
+    """
+    from core.graph_backend import init_dispatcher
+
+    isolated_app.state.graph_backend_dispatcher = init_dispatcher()
+    return isolated_app
+
+
+@dataclass
+class _FakeEmbedResponse:
+    embeddings: list[list[float]] | None = None
+
+
+class _FakeEmbedBackend:
+    async def embed(self, texts, model=None) -> _FakeEmbedResponse:
+        return _FakeEmbedResponse(
+            embeddings=[[0.0] * 1536 for _ in texts]
+        )
+
+
+async def _fake_resolve_backend(provider=None, org_config=None) -> _FakeEmbedBackend:
+    return _FakeEmbedBackend()
+
+
+@pytest.fixture(autouse=True)
+def _fake_embedding_backend(monkeypatch) -> None:
+    """Stub the embedding backend for the vector search leg.
+
+    ``HybridRetriever._embed_query`` imports ``core.llm.resolve_backend``
+    at call time; in the test environment no embedding backend is
+    configured, so resolution raises and the whole search 503s.  The fake
+    returns a 1536-dim zero vector per text — matching the
+    ``episodes.embedding`` ``vector(1536)`` column so the pgvector ``<=>``
+    operator works.
+    """
+    monkeypatch.setattr("core.llm.resolve_backend", _fake_resolve_backend)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -29,11 +77,9 @@ from httpx import AsyncClient
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
 class TestSearchFacts:
     """Tests for search returning facts."""
 
-    @pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
     @pytest.mark.asyncio
     async def test_search_returns_facts_by_bm25(
         self,
@@ -59,10 +105,7 @@ class TestSearchFacts:
             },
         )
 
-        # Search — facts may take a moment to be indexed (GIN is sync)
-        import asyncio
-        await asyncio.sleep(0.5)
-
+        # Search — facts persist synchronously, GIN updates are commit-sync
         resp = await isolated_auth_client.get(
             f"/v1/projects/{isolated_project_id}/search",
             params={"query": "hiking", "types": "facts"},
@@ -118,7 +161,6 @@ class TestSearchFacts:
         )
         assert resp.status_code == 422
 
-    @pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
     @pytest.mark.asyncio
     async def test_search_returns_facts_and_episodes_default(
         self,
@@ -155,9 +197,6 @@ class TestSearchFacts:
                 ],
             },
         )
-
-        import asyncio
-        await asyncio.sleep(0.5)
 
         # Search without types (defaults to episodes,facts)
         resp = await isolated_auth_client.get(

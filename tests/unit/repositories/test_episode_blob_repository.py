@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
@@ -12,6 +13,8 @@ from repositories.episode_blob_repository import EpisodeBlobRepository
 
 
 pytestmark = pytest.mark.unit
+
+FIXED_NOW = datetime(2025, 1, 1, tzinfo=timezone.utc)
 
 
 class TestEpisodeBlobRepository:
@@ -115,6 +118,8 @@ class TestEpisodeBlobRepository:
                 "height": None,
                 "extracted_text": None,
                 "blob_index": 0,
+                "created_at": FIXED_NOW,
+                "updated_at": FIXED_NOW,
             }),
             MagicMock(_mapping={
                 "id": uuid4(),
@@ -133,6 +138,8 @@ class TestEpisodeBlobRepository:
                 "height": None,
                 "extracted_text": None,
                 "blob_index": 1,
+                "created_at": FIXED_NOW,
+                "updated_at": FIXED_NOW,
             }),
         ]
 
@@ -147,6 +154,9 @@ class TestEpisodeBlobRepository:
 
         assert len(result) == 2
         mock_db.execute.assert_awaited_once()
+        # RETURNING now maps created_at/updated_at onto returned ORM objects
+        assert result[0].created_at == FIXED_NOW
+        assert result[0].updated_at == FIXED_NOW
 
     # ── get_by_episode ─────────────────────────────────────────────────────────
 

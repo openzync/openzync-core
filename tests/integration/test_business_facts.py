@@ -2,29 +2,34 @@
 
 Endpoints under test:
 
-    POST /v1/users/{user_id}/facts  — Ingest a batch of fact triples
+    POST /v1/projects/{project_id}/facts  — Ingest a batch of fact triples
 
 Covers:
     1.  Happy path: 10 fact triples → 202 Accepted
     2.  Empty facts list → 422 (via Pydantic min_length on list)
     3.  Over 500 facts → 422 (via Pydantic max_length on list)
-    4.  Invalid triple (missing subject) → Could succeed (validation is permissive)
-    5.  Duplicate content payload → content-dedup (same job_id)
-    6.  Missing auth header → 401
-    7.  User not found → 404
+    4.  Missing auth header → 401
+    5.  Project not found → 403 (API key scoping)
+    6.  Duplicate content payload → content-dedup (same job_id)
+    7.  Session association → 202 when the session exists
     8.  GET /search returns ingested facts via BM25
 
 Auth strategy:
     Each test creates a fresh org via the admin bootstrap fixture and
-    uses ``auth_client`` (pre-authenticated) for all authenticated calls.
+    uses ``isolated_auth_client`` (pre-authenticated, project-scoped) for
+    all authenticated calls.
 """
 
 from __future__ import annotations
 
 import uuid as uuid_lib
+from typing import Any
+from uuid import UUID
 
 import pytest
 from httpx import AsyncClient
+
+from tests.integration.conftest import asgi_transport
 
 
 def _assert_fact_response_shape(body: dict, expected_count: int) -> None:
@@ -45,14 +50,21 @@ def _assert_fact_response_shape(body: dict, expected_count: int) -> None:
     assert isinstance(body["message"], str) and len(body["message"]) > 0
 
 
+@pytest.fixture
+async def anon_client(isolated_app: Any) -> AsyncClient:
+    """Return an unauthenticated HTTP client — for the 401 test."""
+    transport = asgi_transport(isolated_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Tests
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
 class TestBusinessFacts:
-    """Tests for ``POST /v1/users/{user_id}/facts``."""
+    """Tests for ``POST /v1/projects/{project_id}/facts``."""
 
     # ═════════════════════════════════════════════════════════════════════════
     # 1.  Happy path — 202 Accepted
@@ -61,18 +73,18 @@ class TestBusinessFacts:
     @pytest.mark.asyncio
     async def test_ingest_facts_returns_202(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
     ) -> None:
         """POST /facts with 10 valid triples → 202 + FactBatchResponse."""
-        user_resp = await auth_client.post(
+        user_resp = await isolated_auth_client.post(
             "/v1/users",
             json={"external_id": "facts_happy_user"},
         )
         assert user_resp.status_code == 201
-        user_id = user_resp.json()["id"]
 
-        resp = await auth_client.post(
-            f"/v1/users/{user_id}/facts",
+        resp = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/facts",
             json={
                 "facts": [
                     {"subject": "Alice", "predicate": "likes", "object": "hiking"},
@@ -99,18 +111,18 @@ class TestBusinessFacts:
     @pytest.mark.asyncio
     async def test_ingest_facts_empty_list_returns_422(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
     ) -> None:
         """POST /facts with empty facts list → 422."""
-        user_resp = await auth_client.post(
+        user_resp = await isolated_auth_client.post(
             "/v1/users",
             json={"external_id": "facts_empty_user"},
         )
         assert user_resp.status_code == 201
-        user_id = user_resp.json()["id"]
 
-        resp = await auth_client.post(
-            f"/v1/users/{user_id}/facts",
+        resp = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/facts",
             json={"facts": []},
         )
         assert resp.status_code == 422, f"Expected 422, got {resp.status_code}"
@@ -122,22 +134,22 @@ class TestBusinessFacts:
     @pytest.mark.asyncio
     async def test_ingest_facts_over_limit_returns_422(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
     ) -> None:
         """POST /facts with 501 triples → 422."""
-        user_resp = await auth_client.post(
+        user_resp = await isolated_auth_client.post(
             "/v1/users",
             json={"external_id": "facts_over_limit_user"},
         )
         assert user_resp.status_code == 201
-        user_id = user_resp.json()["id"]
 
         facts = [
             {"subject": f"Entity{i}", "predicate": "likes", "object": "testing"}
             for i in range(501)
         ]
-        resp = await auth_client.post(
-            f"/v1/users/{user_id}/facts",
+        resp = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/facts",
             json={"facts": facts},
         )
         assert resp.status_code == 422, f"Expected 422, got {resp.status_code}"
@@ -149,39 +161,50 @@ class TestBusinessFacts:
     @pytest.mark.asyncio
     async def test_ingest_facts_requires_auth(
         self,
-        anon_client: pytest.fixture,  # noqa: ARG002
+        anon_client: AsyncClient,
     ) -> None:
         """POST /facts without auth → 401."""
-        resp = await anon_client.post(  # type: ignore[union-attr]
-            "/v1/users/00000000-0000-0000-0000-000000000001/facts",
+        resp = await anon_client.post(
+            "/v1/projects/00000000-0000-0000-0000-000000000000/facts",
             json={
                 "facts": [
                     {"subject": "Alice", "predicate": "likes", "object": "hiking"},
                 ],
             },
         )
-        assert resp.status_code == 401
+        assert resp.status_code == 401, (
+            f"Expected 401 without auth, got {resp.status_code}: {resp.text}"
+        )
 
     # ═════════════════════════════════════════════════════════════════════════
-    # 5.  User not found → 404
+    # 5.  Project not found → 403 (API key scoping)
     # ═════════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_ingest_facts_user_not_found_returns_404(
+    async def test_ingest_facts_project_not_found_returns_403(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,  # noqa: ARG002 — unused, using fake project UUID
     ) -> None:
-        """POST /facts for non-existent user → 404."""
-        fake_user_id = "00000000-0000-0000-0000-000000000001"
-        resp = await auth_client.post(
-            f"/v1/users/{fake_user_id}/facts",
+        """POST /facts for a non-existent project → 403.
+
+        ``require_project_membership`` checks the API key's project scope
+        before checking whether the project exists, so the response is
+        403, not 404.
+        """
+        fake_project_id = "00000000-0000-0000-0000-000000000000"
+        resp = await isolated_auth_client.post(
+            f"/v1/projects/{fake_project_id}/facts",
             json={
                 "facts": [
                     {"subject": "Alice", "predicate": "likes", "object": "hiking"},
                 ],
             },
         )
-        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+        assert resp.status_code == 403, (
+            f"Expected 403 for non-existent project (key scoping), "
+            f"got {resp.status_code}: {resp.text}"
+        )
 
     # ═════════════════════════════════════════════════════════════════════════
     # 6.  Content dedup — same payload → same job_id
@@ -190,15 +213,15 @@ class TestBusinessFacts:
     @pytest.mark.asyncio
     async def test_ingest_facts_dedup_returns_same_job_id(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
     ) -> None:
         """POST /facts with identical payload twice → same job_id."""
-        user_resp = await auth_client.post(
+        user_resp = await isolated_auth_client.post(
             "/v1/users",
             json={"external_id": "facts_dedup_user"},
         )
         assert user_resp.status_code == 201
-        user_id = user_resp.json()["id"]
 
         payload = {
             "facts": [
@@ -207,16 +230,16 @@ class TestBusinessFacts:
         }
 
         # First call
-        resp1 = await auth_client.post(
-            f"/v1/users/{user_id}/facts",
+        resp1 = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/facts",
             json=payload,
         )
         assert resp1.status_code == 202
         job_id_1 = resp1.json()["job_id"]
 
         # Second call (identical)
-        resp2 = await auth_client.post(
-            f"/v1/users/{user_id}/facts",
+        resp2 = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/facts",
             json=payload,
         )
         assert resp2.status_code == 202
@@ -233,38 +256,29 @@ class TestBusinessFacts:
     @pytest.mark.asyncio
     async def test_ingest_facts_with_session(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
     ) -> None:
         """POST /facts with valid session_id → 202."""
         # Create user
-        user_resp = await auth_client.post(
+        user_resp = await isolated_auth_client.post(
             "/v1/users",
             json={"external_id": "facts_session_user"},
         )
         assert user_resp.status_code == 201
-        user_id = user_resp.json()["id"]
 
-        # Create a session
-        session_resp = await auth_client.post(
-            "/v1/users",
-            json={"external_id": "facts_session_user_alt"},
+        # Create a session under the project
+        session_resp = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/sessions",
+            json={"external_id": "facts_session"},
         )
         assert session_resp.status_code == 201
-        # Use the existing __default__ session
-        sessions_resp = await auth_client.get(
-            f"/v1/users/{user_id}/sessions",
-        )
-        session_id = None
-        if sessions_resp.status_code == 200:
-            sessions = sessions_resp.json().get("data", [])
-            if sessions:
-                session_id = sessions[0].get("external_id")
 
-        # Ingest facts with session
-        resp = await auth_client.post(
-            f"/v1/users/{user_id}/facts",
+        # Ingest facts with the session's external_id
+        resp = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/facts",
             json={
-                "session_id": session_id or "test_session_1",
+                "session_id": "facts_session",
                 "facts": [
                     {"subject": "SessionFact", "predicate": "belongs_to", "object": "session"},
                 ],

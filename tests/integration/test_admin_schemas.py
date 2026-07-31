@@ -15,6 +15,12 @@ Covers:
     4. Cross-tenant isolation
     5. Schema type validation
     6. Soft delete
+
+Auth strategy:
+    Each test uses the per-test isolation fixtures (``isolated_app`` +
+    ``isolated_auth_client``), so no state leaks between tests.  The admin
+    bootstrap API key carries ``read``/``write``/``admin`` scopes, so
+    ``require_scope("admin")`` passes on every CRUD endpoint.
 """
 
 from __future__ import annotations
@@ -49,7 +55,6 @@ def _assert_schema_response_shape(body: dict) -> None:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
 class TestAdminSchemasCRUD:
     """CRUD tests for the Admin Schemas API."""
 
@@ -60,10 +65,10 @@ class TestAdminSchemasCRUD:
     @pytest.mark.asyncio
     async def test_create_schema_returns_201(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
     ) -> None:
         """POST /v1/admin/schemas with valid payload → 201 + schema."""
-        response = await auth_client.post(
+        response = await isolated_auth_client.post(
             "/v1/admin/schemas",
             json={
                 "name": "test_intent_labels",
@@ -88,10 +93,10 @@ class TestAdminSchemasCRUD:
     @pytest.mark.asyncio
     async def test_create_and_get_schema(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
     ) -> None:
         """POST → 201, then GET by ID → 200 with same data."""
-        create_resp = await auth_client.post(
+        create_resp = await isolated_auth_client.post(
             "/v1/admin/schemas",
             json={
                 "name": "get_test_schema",
@@ -105,7 +110,7 @@ class TestAdminSchemasCRUD:
         assert create_resp.status_code == 201
         schema_id = create_resp.json()["id"]
 
-        get_resp = await auth_client.get(
+        get_resp = await isolated_auth_client.get(
             f"/v1/admin/schemas/{schema_id}"
         )
         assert get_resp.status_code == 200
@@ -116,11 +121,11 @@ class TestAdminSchemasCRUD:
     @pytest.mark.asyncio
     async def test_list_schemas(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
     ) -> None:
         """GET /v1/admin/schemas — returns list with total."""
         # Create two schemas
-        await auth_client.post(
+        await isolated_auth_client.post(
             "/v1/admin/schemas",
             json={
                 "name": "list_schema_a",
@@ -128,7 +133,7 @@ class TestAdminSchemasCRUD:
                 "json_schema": {"intent": ["a"]},
             },
         )
-        await auth_client.post(
+        await isolated_auth_client.post(
             "/v1/admin/schemas",
             json={
                 "name": "list_schema_b",
@@ -137,7 +142,7 @@ class TestAdminSchemasCRUD:
             },
         )
 
-        list_resp = await auth_client.get("/v1/admin/schemas")
+        list_resp = await isolated_auth_client.get("/v1/admin/schemas")
         assert list_resp.status_code == 200
         body = list_resp.json()
         assert "data" in body
@@ -147,10 +152,10 @@ class TestAdminSchemasCRUD:
     @pytest.mark.asyncio
     async def test_list_schemas_filtered_by_type(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
     ) -> None:
         """GET /v1/admin/schemas?type=classification — filtered."""
-        list_resp = await auth_client.get(
+        list_resp = await isolated_auth_client.get(
             "/v1/admin/schemas",
             params={"type": "classification"},
         )
@@ -162,10 +167,10 @@ class TestAdminSchemasCRUD:
     @pytest.mark.asyncio
     async def test_update_schema(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
     ) -> None:
         """PUT /v1/admin/schemas/{id} with new name → 200 + updated."""
-        create_resp = await auth_client.post(
+        create_resp = await isolated_auth_client.post(
             "/v1/admin/schemas",
             json={
                 "name": "update_me",
@@ -176,7 +181,7 @@ class TestAdminSchemasCRUD:
         assert create_resp.status_code == 201
         schema_id = create_resp.json()["id"]
 
-        update_resp = await auth_client.put(
+        update_resp = await isolated_auth_client.put(
             f"/v1/admin/schemas/{schema_id}",
             json={"name": "updated_name"},
         )
@@ -189,10 +194,10 @@ class TestAdminSchemasCRUD:
     @pytest.mark.asyncio
     async def test_soft_delete_schema(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
     ) -> None:
         """DELETE /v1/admin/schemas/{id} → 204 + is_active=false."""
-        create_resp = await auth_client.post(
+        create_resp = await isolated_auth_client.post(
             "/v1/admin/schemas",
             json={
                 "name": "delete_me",
@@ -203,13 +208,13 @@ class TestAdminSchemasCRUD:
         assert create_resp.status_code == 201
         schema_id = create_resp.json()["id"]
 
-        delete_resp = await auth_client.delete(
+        delete_resp = await isolated_auth_client.delete(
             f"/v1/admin/schemas/{schema_id}"
         )
         assert delete_resp.status_code == 204
 
         # Verify soft-deleted
-        get_resp = await auth_client.get(
+        get_resp = await isolated_auth_client.get(
             f"/v1/admin/schemas/{schema_id}"
         )
         assert get_resp.status_code == 200
@@ -222,17 +227,19 @@ class TestAdminSchemasCRUD:
     @pytest.mark.asyncio
     async def test_create_schema_without_admin_scope_returns_403(
         self,
-        async_client: AsyncClient,  # no auth at all
+        isolated_app: Any,
     ) -> None:
-        """POST without admin scope → 403."""
-        response = await async_client.post(
-            "/v1/admin/schemas",
-            json={
-                "name": "no_auth_schema",
-                "type": "structured",
-                "json_schema": {"type": "object"},
-            },
-        )
+        """POST without auth → 401 (no admin scope is never reached)."""
+        transport = ASGITransport(app=isolated_app)
+        async with AsyncClient(transport=transport, base_url="http://test") as cli:
+            response = await cli.post(
+                "/v1/admin/schemas",
+                json={
+                    "name": "no_auth_schema",
+                    "type": "structured",
+                    "json_schema": {"type": "object"},
+                },
+            )
         # No auth at all → 401 (not 403 which requires being authenticated but lacking scope)
         assert response.status_code == 401 or response.status_code == 403, (
             f"Expected 401/403, got {response.status_code}: {response.text}"
@@ -245,11 +252,11 @@ class TestAdminSchemasCRUD:
     @pytest.mark.asyncio
     async def test_create_duplicate_schema_name_returns_409(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
     ) -> None:
         """POST with existing name → 409 Conflict."""
         name = "dup_schema"
-        await auth_client.post(
+        await isolated_auth_client.post(
             "/v1/admin/schemas",
             json={
                 "name": name,
@@ -257,7 +264,7 @@ class TestAdminSchemasCRUD:
                 "json_schema": {"intent": ["test"]},
             },
         )
-        response = await auth_client.post(
+        response = await isolated_auth_client.post(
             "/v1/admin/schemas",
             json={
                 "name": name,
@@ -277,10 +284,10 @@ class TestAdminSchemasCRUD:
     @pytest.mark.asyncio
     async def test_create_invalid_classification_schema_returns_422(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
     ) -> None:
         """POST with invalid classification json_schema structure → 422."""
-        response = await auth_client.post(
+        response = await isolated_auth_client.post(
             "/v1/admin/schemas",
             json={
                 "name": "bad_class_schema",
@@ -300,11 +307,11 @@ class TestAdminSchemasCRUD:
     @pytest.mark.asyncio
     async def test_cross_tenant_isolation(
         self,
-        app: Any,
+        isolated_app: Any,
     ) -> None:
         """Schema created by Org A must not be visible to Org B."""
         # Bootstrap Org A and Org B
-        transport = ASGITransport(app=app)
+        transport = ASGITransport(app=isolated_app)
         async with AsyncClient(transport=transport, base_url="http://test") as cli:
             resp_a = await cli.post(
                 "/admin/organizations",

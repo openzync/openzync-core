@@ -20,10 +20,18 @@ from uuid import UUID
 import pytest
 from httpx import AsyncClient
 
+from dependencies.auth import get_current_user_id
 from tests.integration.conftest import asgi_transport
 
 
-@pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
+@pytest.fixture
+async def anon_client(isolated_app: Any) -> AsyncClient:
+    """Return an unauthenticated HTTP client — for the 401 test."""
+    transport = asgi_transport(isolated_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client
+
+
 class TestClassificationEndpoint:
     """Tests for the classification query endpoint."""
 
@@ -65,12 +73,11 @@ class TestClassificationEndpoint:
     @pytest.mark.asyncio
     async def test_classifications_require_auth(
         self,
-        async_client: AsyncClient,
-        isolated_project_id: UUID,
+        anon_client: AsyncClient,
     ) -> None:
-        """GET classifications without auth → 403/401."""
-        resp = await async_client.get(
-            f"/v1/projects/{isolated_project_id}/"
+        """GET classifications without auth → 401/403."""
+        resp = await anon_client.get(
+            "/v1/projects/00000000-0000-0000-0000-000000000000/"
             "sessions/00000000-0000-0000-0000-000000000000/"
             "classifications"
         )
@@ -137,6 +144,10 @@ class TestClassificationEndpoint:
                 json={"external_id": "class_cross_user"},
             )
             assert user_resp.status_code == 201
+            user_id_a = UUID(user_resp.json()["id"])
+            # Session creation requires a resolvable current user — the
+            # isolated_app fixture does not override get_current_user_id.
+            isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_a
 
             session_resp = await cli.post(
                 f"/v1/projects/{project_id_a}/sessions",
@@ -145,14 +156,15 @@ class TestClassificationEndpoint:
             assert session_resp.status_code == 201
             session_id_a = session_resp.json()["id"]
 
-        # Org B: try to access Org A's classifications → should 404 (RLS)
+        # Org B: try to access Org A's classifications → 403
+        # (require_project_membership raises 403 for API-key scope mismatch
+        # before any RLS query is hit — 404 is unreachable.)
         async with AsyncClient(transport=transport, base_url="http://test") as cli:
             cli.headers["Authorization"] = f"Bearer {org_b['api_key']}"
             resp = await cli.get(
                 f"/v1/projects/{project_id_a}/sessions/{session_id_a}/classifications"
             )
-            # require_project_membership rejects Org B from Org A's project → 404
-            assert resp.status_code == 404, (
-                f"Expected 404 for cross-tenant access, "
+            assert resp.status_code == 403, (
+                f"Expected 403 for cross-tenant access, "
                 f"got {resp.status_code}: {resp.text}"
             )

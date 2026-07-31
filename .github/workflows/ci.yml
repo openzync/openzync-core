@@ -4,7 +4,7 @@
 # Stages:
 #   lint            → ruff, mypy
 #   test-unit       → pytest with coverage
-#   test-integration → pytest with Postgres + Redis (testcontainers)
+#   test-integration → combined unit + integration coverage (Postgres + Redis testcontainers)
 #   build           → Docker image (tags only) pushed to ghcr.io
 #   deploy          → SSH into VPS, pull images, migrate, restart backend (tags only)
 #   sdk-publish     → PyPI (tags only)
@@ -76,7 +76,7 @@ jobs:
           fail_ci_if_error: false
 
   # ═════════════════════════════════════════════════════════════════════════════
-  # INTEGRATION TESTS
+  # COMBINED UNIT + INTEGRATION TESTS  (coverage gate on combined run)
   # ═════════════════════════════════════════════════════════════════════════════
   test-integration:
     runs-on: ubuntu-latest
@@ -116,7 +116,7 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: alembic upgrade head
       - run: |
-          pytest tests/integration/ -v --timeout=60 \
+          pytest tests/unit/ tests/integration/ -v --timeout=60 \
             --cov=core --cov=routers --cov=services --cov=repositories \
             --cov=middleware --cov=dependencies --cov=workers --cov=packages \
             --cov=schemas --cov=utils \
