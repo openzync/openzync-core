@@ -18,6 +18,7 @@ import structlog
 from core.arq import get_arq
 from core.config import get_settings
 from repositories.fact_repository import FactRepository
+from services.worker.worker_settings import get_queue_name
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +207,7 @@ async def _enqueue_embedding_tasks(
     """
     try:
         arq_pool = get_arq()
-        qname = _arq_queue_name("high")
+        qname = get_queue_name(get_settings().ENVIRONMENT, "high")
 
         for fact_id in fact_ids:
             await arq_pool.enqueue(
@@ -236,16 +237,3 @@ async def _enqueue_embedding_tasks(
             },
         )
         raise  # Propagate so ARQ retry mechanism handles it
-
-
-def _arq_queue_name(queue_type: str) -> str:
-    """Build the full ARQ queue name matching the worker's config.
-
-    Args:
-        queue_type: Queue type suffix (e.g. ``"high"``, ``"low"``).
-
-    Returns:
-        Fully qualified queue name for the current environment.
-    """
-    env = get_settings().ENVIRONMENT
-    return f"OpenZync:{env}:queue:{queue_type}"

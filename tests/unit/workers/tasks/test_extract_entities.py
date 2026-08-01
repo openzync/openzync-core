@@ -6,8 +6,6 @@ from uuid import uuid4
 
 import pytest
 
-from core.exceptions import GraphBackendUnavailableError
-
 _EPISODE_ID = str(uuid4())
 _ORG_ID = str(uuid4())
 _PROJECT_ID = str(uuid4())
@@ -267,8 +265,8 @@ class TestExtractEntities:
                 )
 
     @pytest.mark.asyncio
-    async def test_graph_backend_unavailable(self) -> None:
-        """Graph backend returns None → handled gracefully."""
+    async def test_graph_backend_disabled_skips_persistence(self) -> None:
+        """Graph backend resolves to ``None`` (graph disabled) → skips gracefully."""
         llm_resp = self._make_llm_response()
 
         with (
@@ -303,13 +301,15 @@ class TestExtractEntities:
             db = self._make_db()
             from workers.tasks.extract_entities import extract_entities
 
-            with pytest.raises(GraphBackendUnavailableError):
-                await extract_entities(
-                    ctx=self._ctx(db),
-                    episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
-                    project_id=_PROJECT_ID,
-                    content=_CONTENT,
-                )
+            # No exception — graph persistence is skipped for disabled orgs.
+            await extract_entities(
+                ctx=self._ctx(db),
+                episode_id=_EPISODE_ID,
+                org_id=_ORG_ID,
+                project_id=_PROJECT_ID,
+                content=_CONTENT,
+            )
 
-            mock_llm.chat.assert_called()
+            mock_llm.chat.assert_called_once()
+            mock_ent_repo.upsert_entity.assert_not_called()
+            mock_ep_repo.apply_enrichment_bits.assert_not_called()

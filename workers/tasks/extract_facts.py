@@ -159,7 +159,6 @@ async def extract_facts(
                 ctx if isinstance(ctx, dict) else {},
                 uuid.UUID(org_id),
                 resolve_db,
-                fallback_to_postgres=True,
             )
         except Exception:
             logger.warning("fact_extraction.backend_resolve_failed", exc_info=True)

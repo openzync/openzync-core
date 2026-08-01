@@ -78,6 +78,7 @@ class TestComputeObservations:
 
         with (
             patch("workers.tasks.compute_observations.with_retry", lambda **kw: lambda f: f),
+            patch("workers.backend.resolve_graph_backend", return_value=AsyncMock()),
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
         ):
             mock_repo = AsyncMock()
@@ -97,6 +98,7 @@ class TestComputeObservations:
         """Missing episode raises EpisodeNotFoundError."""
         with (
             patch("workers.tasks.compute_observations.with_retry", lambda **kw: lambda f: f),
+            patch("workers.backend.resolve_graph_backend", return_value=AsyncMock()),
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
         ):
             mock_repo = AsyncMock()
@@ -140,9 +142,34 @@ class TestComputeObservations:
             mock_repo.apply_enrichment_bits.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_graph_disabled_skips(self) -> None:
+        """Graph backend resolves to ``None`` (graph disabled) → no-op."""
+        with (
+            patch("workers.tasks.compute_observations.with_retry", lambda **kw: lambda f: f),
+            patch("workers.backend.resolve_graph_backend", return_value=None),
+            patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
+            patch("services.observation_service.ObservationService") as mock_svc_cls,
+        ):
+            mock_repo = AsyncMock()
+            mock_repo_cls.return_value = mock_repo
+
+            db = self._make_db()
+            from workers.tasks.compute_observations import compute_observations
+
+            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, org_id=_ORG_ID, project_id=_PROJECT_ID)
+
+            # ObservationService never constructed — _assert_backend would raise on None.
+            mock_svc_cls.assert_not_called()
+            mock_repo.get_by_id.assert_not_called()
+            mock_repo.apply_enrichment_bits.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_db_error_propagates(self) -> None:
         """Database errors are not silently swallowed."""
-        with patch("workers.tasks.compute_observations.with_retry", lambda **kw: lambda f: f):
+        with (
+            patch("workers.tasks.compute_observations.with_retry", lambda **kw: lambda f: f),
+            patch("workers.backend.resolve_graph_backend", return_value=AsyncMock()),
+        ):
             db = AsyncMock()
             db.__aenter__.return_value = db
             db.__aexit__.return_value = None
