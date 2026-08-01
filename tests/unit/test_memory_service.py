@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -10,16 +10,32 @@ from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.events import EventType
-from core.exceptions import NotFoundError
-from schemas.memory import BlobMetadata, IngestMemoryResponse, Message
-from services.memory_service import (
-    CONTENT_HASH_PREFIX,
-    IDEMPOTENCY_PREFIX,
-    IDEMPOTENCY_TTL,
-    MemoryService,
-    _arq_queue_name,
+from core.exceptions import ConflictError, NotFoundError
+from schemas.memory import IngestMemoryResponse, Message
+from services.idempotency_service import (
+    IdempotencyResult,
+    IdempotencyService,
+    IdempotencyStatus,
 )
+from services.memory_service import MemoryService
 from services.webhook_service import WebhookService
+
+
+def _mock_idempotency_service() -> AsyncMock:
+    """Build a mock IdempotencyService with benign defaults.
+
+    Defaults: key check returns NEW, content hash check returns None —
+    every ingest proceeds down the happy path unless a test overrides.
+    ``compute_content_hash`` is a sync mock (it is a staticmethod in the
+    real service) so it returns a string, not an unawaited coroutine.
+    """
+    idem = AsyncMock()
+    idem.check_idempotency_key.return_value = IdempotencyResult(
+        status=IdempotencyStatus.NEW
+    )
+    idem.check_content_hash.return_value = None
+    idem.compute_content_hash = MagicMock(return_value="abc123")
+    return idem
 
 
 @pytest.mark.unit
@@ -50,6 +66,7 @@ class TestMemoryService:
             session_repo=mock_session_repo,
             user_repo=mock_user_repo,
             fact_repo=mock_fact_repo,
+            idempotency_service=_mock_idempotency_service(),
         )
 
     def _sample_messages(self, count: int = 2) -> list[Message]:
@@ -66,16 +83,18 @@ class TestMemoryService:
             id=uuid4(), external_id="__default__",
         )
 
-        with patch.object(service, "_enqueue_arq_tasks"):
-            with patch.object(service, "_invalidate_context_cache"):
-                with patch.object(service, "_get_org_pii_config", return_value={}):
-                    result = await service.ingest(
-                        org_id=self.ORG_ID,
-                        project_id=self.PROJECT_ID,
-                        created_by=self.USER_ID,
-                        session_external_id=None,
-                        messages=self._sample_messages(),
-                    )
+        with (
+            patch.object(service, "_enqueue_arq_tasks"),
+            patch.object(service, "_invalidate_context_cache"),
+            patch.object(service, "_get_org_pii_config", return_value={}),
+        ):
+            result = await service.ingest(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
+                session_external_id=None,
+                messages=self._sample_messages(),
+            )
         assert result.status == "accepted"
 
     @pytest.mark.asyncio
@@ -91,16 +110,18 @@ class TestMemoryService:
             id=uuid4(), external_id="__default__",
         )
 
-        with patch.object(service, "_enqueue_arq_tasks"):
-            with patch.object(service, "_invalidate_context_cache"):
-                with patch.object(service, "_get_org_pii_config", return_value={}):
-                    result = await service.ingest(
-                        org_id=self.ORG_ID,
-                        project_id=self.PROJECT_ID,
-                        created_by=self.USER_ID,
-                        session_external_id="test",
-                        messages=self._sample_messages(),
-                    )
+        with (
+            patch.object(service, "_enqueue_arq_tasks"),
+            patch.object(service, "_invalidate_context_cache"),
+            patch.object(service, "_get_org_pii_config", return_value={}),
+        ):
+            result = await service.ingest(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
+                session_external_id="test",
+                messages=self._sample_messages(),
+            )
         assert result.status == "accepted"
         service._user_repo.get_by_uuid.assert_not_called()
 
@@ -117,18 +138,38 @@ class TestMemoryService:
         assert episodes == 5
         assert facts == 3
 
-    @pytest.mark.asyncio
-    async def test_compute_content_hash_is_deterministic(
-        self, service: MemoryService,
-    ) -> None:
-        """Same inputs produce the same hash."""
-        h1 = service._compute_content_hash(
-            str(self.PROJECT_ID), "session_1", self._sample_messages(),
+    def test_compute_content_hash_is_deterministic(self) -> None:
+        """Same inputs produce the same hash; metadata/blobs participate."""
+        msgs = [
+            {
+                "role": "user",
+                "content": "Message 0",
+                "metadata": {"k": "v"},
+                "blobs": [],
+            },
+            {"role": "assistant", "content": "Message 1"},
+        ]
+        h1 = IdempotencyService.compute_content_hash(
+            str(self.ORG_ID), str(self.USER_ID), "session_1", msgs,
         )
-        h2 = service._compute_content_hash(
-            str(self.PROJECT_ID), "session_1", self._sample_messages(),
+        h2 = IdempotencyService.compute_content_hash(
+            str(self.ORG_ID), str(self.USER_ID), "session_1", msgs,
         )
         assert h1 == h2
+
+        msgs_with_other_meta = [
+            {
+                "role": "user",
+                "content": "Message 0",
+                "metadata": {"k": "other"},
+                "blobs": [],
+            },
+            {"role": "assistant", "content": "Message 1"},
+        ]
+        h3 = IdempotencyService.compute_content_hash(
+            str(self.ORG_ID), str(self.USER_ID), "session_1", msgs_with_other_meta,
+        )
+        assert h3 != h1  # different metadata → different hash
 
     @pytest.mark.asyncio
     async def test_commit_before_enqueue(self, service: MemoryService) -> None:
@@ -166,17 +207,17 @@ class TestMemoryService:
                 call_order.append("enqueue")
             mock_enqueue.side_effect = _tracked_enqueue
 
-            with patch.object(service, "_invalidate_context_cache"):
-                with patch.object(service, "_get_org_pii_config", return_value={}):
-                    with patch.object(service, "_cache_content_hash"):
-                        with patch.object(service, "_cache_idempotency"):
-                            result = await service.ingest(
-                                org_id=self.ORG_ID,
-                                project_id=self.PROJECT_ID,
-                                created_by=self.USER_ID,
-                                session_external_id=None,
-                                messages=self._sample_messages(),
-                            )
+            with (
+                patch.object(service, "_invalidate_context_cache"),
+                patch.object(service, "_get_org_pii_config", return_value={}),
+            ):
+                result = await service.ingest(
+                    org_id=self.ORG_ID,
+                    project_id=self.PROJECT_ID,
+                    created_by=self.USER_ID,
+                    session_external_id=None,
+                    messages=self._sample_messages(),
+                )
 
         assert result.status == "accepted"
         assert call_order == ["commit", "enqueue"], (
@@ -186,18 +227,22 @@ class TestMemoryService:
         mock_enqueue.assert_awaited_once()
 
     # ------------------------------------------------------------------
-    # NEW: Idempotency replay — cached response returned without pipeline
+    # Idempotency replay — cached response returned without pipeline
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
     async def test_ingest_idempotency_replay(self, service: MemoryService) -> None:
-        """Ingest returns cached response when idempotency_key exists in Redis."""
+        """Ingest returns cached response when key check reports REPLAY."""
         cached = IngestMemoryResponse(
             job_id="replayed-job", episode_count=2, blob_count=0,
             status="accepted", message="Replayed",
         )
-        with patch.object(service, "_check_idempotency", return_value=cached), \
-             patch.object(service, "_enqueue_arq_tasks") as mock_enqueue, \
+        service._idem.check_idempotency_key.return_value = IdempotencyResult(
+            status=IdempotencyStatus.REPLAY,
+            response_data=cached.model_dump(),
+        )
+
+        with patch.object(service, "_enqueue_arq_tasks") as mock_enqueue, \
              patch.object(service, "_invalidate_context_cache") as mock_invalidate:
             result = await service.ingest(
                 org_id=self.ORG_ID,
@@ -208,11 +253,32 @@ class TestMemoryService:
                 idempotency_key="dup-key",
             )
         assert result == cached
+        service._idem.check_idempotency_key.assert_awaited_once_with(
+            "dup-key", ""
+        )
         mock_enqueue.assert_not_called()
         mock_invalidate.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_ingest_idempotency_conflict(self, service: MemoryService) -> None:
+        """Ingest raises ConflictError when key was used with a different body."""
+        service._idem.check_idempotency_key.return_value = IdempotencyResult(
+            status=IdempotencyStatus.CONFLICT,
+        )
+
+        with pytest.raises(ConflictError):
+            await service.ingest(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
+                session_external_id=None,
+                messages=self._sample_messages(),
+                idempotency_key="dup-key",
+                body_hash="other-hash",
+            )
+
     # ------------------------------------------------------------------
-    # NEW: Content-level dedup hit
+    # Content-level dedup hit
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
@@ -222,9 +288,9 @@ class TestMemoryService:
             id=uuid4(), external_id="__default__",
         )
         existing_job_id = "existing-job-123"
-        with patch.object(service, "_compute_content_hash", return_value="deadbeef"), \
-             patch.object(service, "_check_content_dedup", return_value=existing_job_id), \
-             patch.object(service, "_enqueue_arq_tasks") as mock_enqueue:
+        service._idem.check_content_hash.return_value = existing_job_id
+
+        with patch.object(service, "_enqueue_arq_tasks") as mock_enqueue:
             result = await service.ingest(
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
@@ -234,10 +300,11 @@ class TestMemoryService:
             )
         assert result.job_id == existing_job_id
         assert result.status == "accepted"
+        service._idem.check_content_hash.assert_awaited_once()
         mock_enqueue.assert_not_called()
 
     # ------------------------------------------------------------------
-    # NEW: PII redaction during ingest
+    # PII redaction during ingest
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
@@ -252,11 +319,12 @@ class TestMemoryService:
             ("Message 1", [], False),
         ]
 
-        with patch.object(service, "_enqueue_arq_tasks"), \
-             patch.object(service, "_invalidate_context_cache"), \
-             patch.object(service, "_get_org_pii_config", return_value={"mode": "mask"}), \
-             patch.object(service, "_cache_content_hash"), \
-             patch("services.pii_service.PIIService", return_value=mock_pii):
+        with (
+            patch.object(service, "_enqueue_arq_tasks"),
+            patch.object(service, "_invalidate_context_cache"),
+            patch.object(service, "_get_org_pii_config", return_value={"mode": "mask"}),
+            patch("services.pii_service.PIIService", return_value=mock_pii),
+        ):
             result = await service.ingest(
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
@@ -268,7 +336,7 @@ class TestMemoryService:
         assert mock_pii.process_message.call_count == 2
 
     # ------------------------------------------------------------------
-    # NEW: Webhook events emission
+    # Webhook events emission
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
@@ -283,8 +351,7 @@ class TestMemoryService:
 
         with patch.object(service, "_enqueue_arq_tasks"), \
              patch.object(service, "_invalidate_context_cache"), \
-             patch.object(service, "_get_org_pii_config", return_value={}), \
-             patch.object(service, "_cache_content_hash"):
+             patch.object(service, "_get_org_pii_config", return_value={}):
             result = await service.ingest(
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
@@ -306,7 +373,7 @@ class TestMemoryService:
         )
 
     # ------------------------------------------------------------------
-    # NEW: Blob processing during ingest
+    # Blob processing during ingest
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
@@ -322,12 +389,15 @@ class TestMemoryService:
         mock_blob_record.file_name = "test.txt"
         mock_blob_record.episode_id = uuid4()
 
-        with patch.object(service, "_enqueue_arq_tasks"), \
-             patch.object(service, "_invalidate_context_cache"), \
-             patch.object(service, "_get_org_pii_config", return_value={}), \
-             patch.object(service, "_cache_content_hash"), \
-             patch.object(service, "_process_blobs", return_value=(1, [mock_blob_record])), \
-             patch.object(service, "_enqueue_blob_extraction_tasks"):
+        with (
+            patch.object(service, "_enqueue_arq_tasks"),
+            patch.object(service, "_invalidate_context_cache"),
+            patch.object(service, "_get_org_pii_config", return_value={}),
+            patch.object(
+                service, "_process_blobs", return_value=(1, [mock_blob_record])
+            ),
+            patch.object(service, "_enqueue_blob_extraction_tasks"),
+        ):
             result = await service.ingest(
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
@@ -340,7 +410,7 @@ class TestMemoryService:
         assert result.blob_count == 1
 
     # ------------------------------------------------------------------
-    # NEW: Ingest without idempotency key
+    # Ingest without idempotency key
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
@@ -351,8 +421,7 @@ class TestMemoryService:
         )
         with patch.object(service, "_enqueue_arq_tasks"), \
              patch.object(service, "_invalidate_context_cache"), \
-             patch.object(service, "_get_org_pii_config", return_value={}), \
-             patch.object(service, "_cache_content_hash"):
+             patch.object(service, "_get_org_pii_config", return_value={}):
             result = await service.ingest(
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
@@ -361,14 +430,13 @@ class TestMemoryService:
                 messages=self._sample_messages(),
             )
         assert result.status == "accepted"
-        # Verify _check_idempotency was never called (key was None)
-        # The default mock_redis.get.return_value is None, but since the
-        # idempotency_key is None the code never reaches the check.
-        # We assert this indirectly by verifying the happy-path response.
+        # key is None → idempotency check must be skipped entirely
+        service._idem.check_idempotency_key.assert_not_called()
+        service._idem.store_idempotency_key.assert_not_called()
         assert result.job_id is not None
 
     # ------------------------------------------------------------------
-    # NEW: Blob extraction tasks are enqueued after blob processing
+    # Blob extraction tasks are enqueued after blob processing
     # ------------------------------------------------------------------
 
     @pytest.mark.asyncio
@@ -382,12 +450,17 @@ class TestMemoryService:
         mock_blob = MagicMock()
         mock_blob.id = uuid4()
 
-        with patch.object(service, "_enqueue_arq_tasks"), \
-             patch.object(service, "_invalidate_context_cache"), \
-             patch.object(service, "_get_org_pii_config", return_value={}), \
-             patch.object(service, "_cache_content_hash"), \
-             patch.object(service, "_process_blobs", return_value=(2, [mock_blob, mock_blob])), \
-             patch.object(service, "_enqueue_blob_extraction_tasks") as mock_extract:
+        with (
+            patch.object(service, "_enqueue_arq_tasks"),
+            patch.object(service, "_invalidate_context_cache"),
+            patch.object(service, "_get_org_pii_config", return_value={}),
+            patch.object(
+                service,
+                "_process_blobs",
+                return_value=(2, [mock_blob, mock_blob]),
+            ),
+            patch.object(service, "_enqueue_blob_extraction_tasks") as mock_extract,
+        ):
             result = await service.ingest(
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
@@ -432,72 +505,7 @@ class TestMemoryServiceInternal:
             user_repo=mock_user_repo,
             fact_repo=mock_fact_repo,
             org_repo=mock_org_repo,
-        )
-
-    # ── _check_idempotency ───────────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_check_idempotency_hit(self, service: MemoryService) -> None:
-        """_check_idempotency returns IngestMemoryResponse when Redis has data."""
-        cached_json = (
-            '{"job_id":"abc","episode_count":2,"blob_count":0,'
-            '"status":"accepted","message":"cached"}'
-        )
-        service._redis.get.return_value = cached_json
-        result = await service._check_idempotency("test-key")
-        assert result is not None
-        assert result.job_id == "abc"
-        service._redis.get.assert_awaited_once_with(f"{IDEMPOTENCY_PREFIX}test-key")
-
-    @pytest.mark.asyncio
-    async def test_check_idempotency_miss(self, service: MemoryService) -> None:
-        """_check_idempotency returns None when Redis has no data."""
-        result = await service._check_idempotency("unknown-key")
-        assert result is None
-        service._redis.get.assert_awaited_once_with(f"{IDEMPOTENCY_PREFIX}unknown-key")
-
-    # ── _cache_idempotency ───────────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_cache_idempotency(self, service: MemoryService) -> None:
-        """_cache_idempotency stores response in Redis with correct prefix and TTL."""
-        response = IngestMemoryResponse(
-            job_id="abc", episode_count=2, blob_count=0, status="accepted",
-        )
-        await service._cache_idempotency("test-key", response)
-        service._redis.setex.assert_awaited_once_with(
-            f"{IDEMPOTENCY_PREFIX}test-key",
-            IDEMPOTENCY_TTL,
-            response.model_dump_json(),
-        )
-
-    # ── _check_content_dedup ─────────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_check_content_dedup_hit(self, service: MemoryService) -> None:
-        """_check_content_dedup returns job_id when content hash exists in Redis."""
-        service._redis.get.return_value = "existing-job-id"
-        result = await service._check_content_dedup("somehash")
-        assert result == "existing-job-id"
-        service._redis.get.assert_awaited_once_with(f"{CONTENT_HASH_PREFIX}somehash")
-
-    @pytest.mark.asyncio
-    async def test_check_content_dedup_miss(self, service: MemoryService) -> None:
-        """_check_content_dedup returns None when content hash is not in Redis."""
-        result = await service._check_content_dedup("unknownhash")
-        assert result is None
-        service._redis.get.assert_awaited_once_with(f"{CONTENT_HASH_PREFIX}unknownhash")
-
-    # ── _cache_content_hash ──────────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_cache_content_hash(self, service: MemoryService) -> None:
-        """_cache_content_hash stores hash-to-job_id mapping in Redis."""
-        await service._cache_content_hash("abc123", "job-456")
-        service._redis.setex.assert_awaited_once_with(
-            f"{CONTENT_HASH_PREFIX}abc123",
-            IDEMPOTENCY_TTL,
-            "job-456",
+            idempotency_service=_mock_idempotency_service(),
         )
 
     # ── _get_org_pii_config ──────────────────────────────────────────
@@ -537,56 +545,6 @@ class TestMemoryServiceInternal:
         service._redis.scan.assert_awaited_once()
         service._redis.delete.assert_not_called()
 
-    # ── _compute_content_hash ────────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_compute_content_hash_with_blobs(
-        self, service: MemoryService,
-    ) -> None:
-        """_compute_content_hash includes blob metadata in the hash."""
-        msgs_with_blobs = [
-            Message(
-                role="user", content="with blob",
-                blobs=[
-                    BlobMetadata(blob_id=0, file_name="doc.pdf", mime_type="application/pdf"),
-                ],
-            ),
-            Message(
-                role="assistant", content="response",
-                blobs=[],
-            ),
-        ]
-        h = service._compute_content_hash(
-            str(self.PROJECT_ID), "session-1", msgs_with_blobs,
-        )
-        assert isinstance(h, str)
-        assert len(h) == 64  # SHA-256 hex digest
-
-    @pytest.mark.asyncio
-    async def test_compute_content_hash_different_inputs(
-        self, service: MemoryService,
-    ) -> None:
-        """_compute_content_hash produces different hashes for different inputs."""
-        msgs1 = [Message(role="user", content="Hello")]
-        msgs2 = [Message(role="user", content="World")]
-        h1 = service._compute_content_hash("proj", "sess", msgs1)
-        h2 = service._compute_content_hash("proj", "sess", msgs2)
-        assert h1 != h2
-
-
-# ── Module-level helpers ──────────────────────────────────────────────────────
-
-class TestMemoryServiceHelpers:
-    """Tests for module-level helper functions."""
-
-    def test_arq_queue_name(self) -> None:
-        """_arq_queue_name returns qualified queue name for current env."""
-        name = _arq_queue_name("high")
-        assert name.startswith("OpenZync:")
-        assert name.endswith(":queue:high")
-
-
-# ── Infrastructure methods ────────────────────────────────────────────────────
 
 @pytest.mark.unit
 class TestMemoryServiceInfrastructure:
@@ -620,6 +578,7 @@ class TestMemoryServiceInfrastructure:
             user_repo=mock_user_repo,
             fact_repo=mock_fact_repo,
             org_repo=mock_org_repo,
+            idempotency_service=_mock_idempotency_service(),
         )
 
     @pytest.mark.asyncio
@@ -636,7 +595,12 @@ class TestMemoryServiceInfrastructure:
                 session_id=str(uuid4()),
                 episodes=[
                     {"id": uuid4(), "content": "Hello", "role": "user", "metadata": {}},
-                    {"id": uuid4(), "content": "World", "role": "assistant", "metadata": {}},
+                    {
+                        "id": uuid4(),
+                        "content": "World",
+                        "role": "assistant",
+                        "metadata": {},
+                    },
                 ],
             )
 
@@ -647,15 +611,27 @@ class TestMemoryServiceInfrastructure:
         self, service: MemoryService,
     ) -> None:
         """_enqueue_arq_tasks re-raises when ARQ pool is unavailable."""
-        with patch("services.memory_service.get_arq", side_effect=ConnectionError("ARQ down")):
-            with pytest.raises(ConnectionError):
-                await service._enqueue_arq_tasks(
-                    job_id="job-2",
-                    org_id=str(self.ORG_ID),
-                    project_id=str(self.PROJECT_ID),
-                    session_id=str(uuid4()),
-                    episodes=[{"id": uuid4(), "content": "Test", "role": "user", "metadata": {}}],
-                )
+        with (
+            patch(
+                "services.memory_service.get_arq",
+                side_effect=ConnectionError("ARQ down"),
+            ),
+            pytest.raises(ConnectionError),
+        ):
+            await service._enqueue_arq_tasks(
+                job_id="job-2",
+                org_id=str(self.ORG_ID),
+                project_id=str(self.PROJECT_ID),
+                session_id=str(uuid4()),
+                episodes=[
+                    {
+                        "id": uuid4(),
+                        "content": "Test",
+                        "role": "user",
+                        "metadata": {},
+                    }
+                ],
+            )
 
     @pytest.mark.asyncio
     async def test_enqueue_blob_extraction_tasks(
@@ -702,7 +678,7 @@ class TestMemoryServiceInfrastructure:
     async def test_ingest_with_idempotency_key(
         self, service: MemoryService,
     ) -> None:
-        """ingest writes idempotency key response when key is supplied."""
+        """Happy path with key: stores idempotency entry and content hash."""
         service._session_repo.get_or_create_default.return_value = MagicMock(
             id=uuid4(), external_id="__default__",
         )
@@ -710,28 +686,30 @@ class TestMemoryServiceInfrastructure:
             MagicMock(id=uuid4(), content="msg"),
         ]
 
-        with patch.object(service, "_enqueue_arq_tasks"):
-            with patch.object(service, "_invalidate_context_cache"):
-                with patch.object(service, "_get_org_pii_config", return_value={}):
-                    with patch.object(
-                        service, "_compute_content_hash", return_value="abc123"
-                    ):
-                        with patch.object(
-                            service, "_check_idempotency", return_value=None,
-                        ):
-                            result = await service.ingest(
-                                org_id=self.ORG_ID,
-                                project_id=self.PROJECT_ID,
-                                created_by=self.USER_ID,
-                                session_external_id=None,
-                                idempotency_key="my-key",
-                                messages=[Message(role="user", content="Test")],
-                            )
+        with (
+            patch.object(service, "_enqueue_arq_tasks"),
+            patch.object(service, "_invalidate_context_cache"),
+            patch.object(service, "_get_org_pii_config", return_value={}),
+        ):
+            result = await service.ingest(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
+                session_external_id=None,
+                idempotency_key="my-key",
+                messages=[Message(role="user", content="Test")],
+            )
 
-        service._redis.setex.assert_any_call(
-            f"{IDEMPOTENCY_PREFIX}my-key", IDEMPOTENCY_TTL, ANY,
-        )
         assert result.status == "accepted"
+        # Step 1: key check ran (NEW → proceed)
+        service._idem.check_idempotency_key.assert_awaited_once_with("my-key", "")
+        # Step 9: response cached under the key, content hash stored with payload
+        service._idem.store_idempotency_key.assert_awaited_once_with(
+            "my-key", "", ANY,
+        )
+        service._idem.store_content_hash.assert_awaited_once()
+        _args, kwargs = service._idem.store_content_hash.call_args
+        assert kwargs["payload"] == result.job_id
 
     @pytest.mark.asyncio
     async def test_resolve_session_with_uuid_fallback(

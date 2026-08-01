@@ -13,15 +13,17 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import orjson
 import logging
 import time
 import uuid
 from collections.abc import Mapping
 
+import orjson
+
 from core.arq import get_arq
 from core.config import get_settings
 from repositories.webhook_repository import WebhookRepository
+from services.worker.worker_settings import get_queue_name
 
 logger = logging.getLogger("openzync.webhooks")
 
@@ -182,11 +184,9 @@ class WebhookService:
             logger.error("Webhook emit failed — ARQ not available: %s", exc)
             raise
 
-        queue_name = _arq_queue_name("low")
+        queue_name = get_queue_name(get_settings().ENVIRONMENT, ARQ_WEBHOOK_QUEUE)
         async def _enqueue_one(ep: object) -> None:
             """Enqueue a single webhook delivery."""
-            from models.webhook import WebhookEndpoint as WE
-
             signature = sign_payload(signing_secret, body_bytes)
             await arq_pool.enqueue(
                 "deliver_webhook",
@@ -240,16 +240,3 @@ class WebhookService:
             "created_at": endpoint.created_at.isoformat() if endpoint.created_at else None,
             "updated_at": endpoint.updated_at.isoformat() if endpoint.updated_at else None,
         }
-
-
-def _arq_queue_name(queue_type: str) -> str:
-    """Build the fully qualified ARQ queue name.
-
-    Args:
-        queue_type: Queue type (``"high"`` or ``"low"``).
-
-    Returns:
-        Fully qualified queue name for the current environment.
-    """
-    env = get_settings().ENVIRONMENT
-    return f"OpenZync:{env}:queue:{queue_type}"

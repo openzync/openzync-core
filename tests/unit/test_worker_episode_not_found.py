@@ -316,19 +316,29 @@ class TestComputeObservations:
         mock_repo.get_by_id.return_value = None
 
         with patch("asyncio.sleep", AsyncMock()):
+            # Patch the resolver: compute_observations lazily imports it, and
+            # on the dispatcher-less mock ctx it now RAISES
+            # GraphBackendUnavailableError (no silent Postgres fallback),
+            # which would mask the episode-not-found path below.
             with patch(
-                "repositories.episode_repository.EpisodeRepository",
-                return_value=mock_repo,
+                "workers.backend.resolve_graph_backend",
+                return_value=AsyncMock(),
             ):
-                from workers.tasks.compute_observations import compute_observations
-
-                with pytest.raises(EpisodeNotFoundError) as exc_info:
-                    await compute_observations(
-                        ctx=ctx,
-                        episode_id=_EPISODE_ID,
-                        org_id=_ORG_ID,
-                        project_id=_PROJECT_ID,
+                with patch(
+                    "repositories.episode_repository.EpisodeRepository",
+                    return_value=mock_repo,
+                ):
+                    from workers.tasks.compute_observations import (
+                        compute_observations,
                     )
+
+                    with pytest.raises(EpisodeNotFoundError) as exc_info:
+                        await compute_observations(
+                            ctx=ctx,
+                            episode_id=_EPISODE_ID,
+                            org_id=_ORG_ID,
+                            project_id=_PROJECT_ID,
+                        )
 
         assert exc_info.value.code == "episode_not_found"
         assert exc_info.value.status_code == 404

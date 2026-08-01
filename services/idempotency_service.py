@@ -29,8 +29,13 @@ Usage
         await service.store_idempotency_key(key, body_hash, response_data)
 
     # Content-level
-    if await service.check_content_hash(org_id, user_id, session_id, messages):
-        return  # duplicate content, skip
+    existing = await service.check_content_hash(org_id, user_id, session_id, messages)
+    if existing:
+        return  # duplicate content — replay existing payload (e.g. job_id)
+    ...
+    await service.store_content_hash(
+        org_id, user_id, session_id, messages, payload=job_id
+    )
 
     # Worker-level
     if await service.check_and_mark_worker(db, episode_id, ENRICHMENT_ENTITIES):
@@ -42,12 +47,11 @@ from __future__ import annotations
 import hashlib
 import logging
 from datetime import datetime, timezone
-
-import orjson
 from enum import Enum
 from typing import Any
 from uuid import UUID  # noqa: TCH003 — used in type hints for callers
 
+import orjson
 from redis import asyncio as aioredis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -281,9 +285,11 @@ class IdempotencyService:
     ) -> str:
         """Compute a deterministic SHA-256 hash for content dedup.
 
-        The hash is based **only** on ``(org_id, user_id, session_id, role,
-        content)`` — metadata is excluded so that two semantically identical
-        payloads with different metadata still deduplicate.
+        The hash is based on ``(org_id, user_id, session_id, role,
+        content)``.  ``metadata`` and ``blobs`` are included in each
+        message's canonical form when those keys are present in the
+        message dict, so identical payloads that differ only in absence
+        vs presence of metadata/blobs do not collide.
 
         Args:
             org_id: Organisation UUID string.
@@ -304,8 +310,8 @@ class IdempotencyService:
                     {
                         "role": m.get("role"),
                         "content": m.get("content"),
-                        # NOTE: metadata is intentionally excluded —
-                        # see OQ-1 in the idempotency design doc.
+                        **({"metadata": m["metadata"]} if "metadata" in m else {}),
+                        **({"blobs": m["blobs"]} if "blobs" in m else {}),
                     }
                     for m in messages
                 ],
@@ -320,11 +326,10 @@ class IdempotencyService:
         user_id: str,
         session_id: str,
         messages: list[dict[str, Any]],
-    ) -> bool:
+    ) -> str | None:
         """Check whether identical content has already been ingested.
 
-        Computes the SHA-256 hash and checks Redis.  If the hash exists,
-        the content is a duplicate.
+        Computes the SHA-256 hash and looks it up in Redis.
 
         Args:
             org_id: Organisation UUID string.
@@ -333,16 +338,16 @@ class IdempotencyService:
             messages: List of message dicts.
 
         Returns:
-            ``True`` if this content is a duplicate (already ingested),
-            ``False`` if it is new.
+            The stored payload (e.g. the original ``job_id``) if this
+            content was already ingested, ``None`` if it is new.
         """
         content_hash = self.compute_content_hash(
             org_id, user_id, session_id, messages
         )
         cache_key = self._content_prefix + content_hash
 
-        exists = await self._redis.exists(cache_key)
-        if exists:
+        cached: str | None = await self._redis.get(cache_key)
+        if cached is not None:
             logger.info(
                 "idempotency.content_dedup_hit",
                 extra={
@@ -352,9 +357,9 @@ class IdempotencyService:
                     "message_count": len(messages),
                 },
             )
-            return True
+            return cached
 
-        return False
+        return None
 
     async def store_content_hash(
         self,
@@ -362,18 +367,24 @@ class IdempotencyService:
         user_id: str,
         session_id: str,
         messages: list[dict[str, Any]],
+        *,
+        payload: str | None = None,
     ) -> str:
         """Store a content hash in Redis with TTL.
 
         Uses ``SETNX`` to atomically store only if absent, preventing
         a race where two concurrent ingestions of the same content both
-        pass ``check_content_hash``.
+        pass ``check_content_hash``.  When ``payload`` is given it is
+        stored as the Redis value (e.g. the ``job_id`` to replay);
+        otherwise the hash itself is stored.
 
         Args:
             org_id: Organisation UUID string.
             user_id: User UUID string.
             session_id: Session UUID string.
             messages: List of message dicts.
+            payload: Optional value to store instead of the hash — the
+                first caller's value wins (e.g. the first ``job_id``).
 
         Returns:
             The computed content hash hex string.
@@ -382,12 +393,13 @@ class IdempotencyService:
             org_id, user_id, session_id, messages
         )
         cache_key = self._content_prefix + content_hash
+        value = payload if payload is not None else content_hash
 
         # ⚠️ RACE CONDITION: SETNX ensures only the first caller stores
-        # the hash.  The second caller will see EXISTS=0, attempt SETNX,
-        # and get back 0 (key already set).  This is safe — no duplicate
-        # ingestion.
-        set_ok = await self._redis.set(cache_key, content_hash, nx=True, ex=self._content_ttl)
+        # the hash (with its payload — e.g. job_id).  The second caller
+        # will see GET=None, attempt SETNX, and get back 0 (key already
+        # set).  This is safe — no duplicate ingestion.
+        set_ok = await self._redis.set(cache_key, value, nx=True, ex=self._content_ttl)
         if set_ok:
             logger.debug(
                 "idempotency.content_hash_stored",

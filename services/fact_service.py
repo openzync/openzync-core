@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
 import orjson
-
 import structlog
 
 if TYPE_CHECKING:
@@ -29,6 +28,7 @@ from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
 from schemas.facts import FactBatchResponse, FactTriple
 from services.webhook_service import WebhookService
+from services.worker.worker_settings import get_queue_name
 
 logger = logging.getLogger(__name__)
 
@@ -296,7 +296,7 @@ class FactService:
         )
         try:
             arq_pool = get_arq()
-            qname = self._arq_queue_name(ARQ_QUEUE)
+            qname = get_queue_name(get_settings().ENVIRONMENT, ARQ_QUEUE)
 
             for fact_id in fact_ids:
                 await arq_pool.enqueue(
@@ -357,16 +357,3 @@ class FactService:
             limit=limit,
             cursor=cursor,
         )
-
-    @staticmethod
-    def _arq_queue_name(queue_type: str) -> str:
-        """Build the full ARQ queue name matching the worker's config.
-
-        Args:
-            queue_type: Queue type suffix (e.g. ``"high"``, ``"low"``).
-
-        Returns:
-            Fully qualified queue name for the current environment.
-        """
-        env = get_settings().ENVIRONMENT
-        return f"OpenZync:{env}:queue:{queue_type}"

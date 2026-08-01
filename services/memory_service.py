@@ -15,12 +15,10 @@ expressions in this file.
 
 from __future__ import annotations
 
-import hashlib
 import logging
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-import orjson
 import structlog
 
 if TYPE_CHECKING:
@@ -29,24 +27,25 @@ if TYPE_CHECKING:
     from models.session import Session
     from models.user import User
 
+# Import for type hints only; blob uploads are processed before passing to
+# the worker, and UploadFile isn't available in the worker context.
+from fastapi import UploadFile  # noqa: TCH002 — used in method signature
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import get_arq
 from core.config import get_settings
 from core.events import EventType
-from core.exceptions import NotFoundError, ValidationError
+from core.exceptions import ConflictError, NotFoundError
+from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
 from repositories.organization_repository import OrganizationRepository
 from repositories.session_repository import SessionRepository
-from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.user_repository import UserRepository
 from schemas.memory import IngestMemoryResponse, Message
+from services.idempotency_service import IdempotencyService, IdempotencyStatus
 from services.webhook_service import WebhookService
-
-# Import for type hints only; blob uploads are processed before passing to
-# the worker, and UploadFile isn't available in the worker context.
-from fastapi import UploadFile  # noqa: TCH002 — used in method signature
+from services.worker.worker_settings import get_queue_name
 
 logger = logging.getLogger(__name__)
 
@@ -54,15 +53,6 @@ logger = logging.getLogger(__name__)
 # ╠ If you see a ``select()`` or ``where()``, it belongs in the repository.
 
 # ── Constants ────────────────────────────────────────────────────────────────
-
-IDEMPOTENCY_TTL = 172800  # 48 hours
-"""TTL for idempotency key and content-hash cache entries (seconds)."""
-
-CONTENT_HASH_PREFIX = "contenthash:"
-"""Redis key prefix for content-dedup hash entries."""
-
-IDEMPOTENCY_PREFIX = "idempotency:"
-"""Redis key prefix for idempotency-key cache entries."""
 
 CONTEXT_CACHE_PATTERN = "ctx:{org_id}:{project_id}:*"
 """Redis key pattern for context cache entries to invalidate."""
@@ -76,22 +66,6 @@ ARQ_TASKS = [
 
 ARQ_QUEUE = "high"
 """ARQ queue name for ingestion-related background tasks."""
-
-
-def _arq_queue_name(queue_type: str) -> str:
-    """Build the full ARQ queue name matching the worker's config.
-
-    Worker uses: ``get_queue_name(settings.ENVIRONMENT, queue_type)``
-    which produces: ``OpenZync:{env}:queue:{queue_type}``
-
-    Args:
-        queue_type: Queue type suffix (e.g. ``"high"``, ``"low"``).
-
-    Returns:
-        Fully qualified queue name for the current environment.
-    """
-    env = get_settings().ENVIRONMENT
-    return f"OpenZync:{env}:queue:{queue_type}"
 
 
 class MemoryService:
@@ -121,10 +95,12 @@ class MemoryService:
         webhook_service: WebhookService | None = None,
         org_repo: OrganizationRepository | None = None,
         blob_repo: EpisodeBlobRepository | None = None,
+        idempotency_service: IdempotencyService | None = None,
     ) -> None:
         self._db = db
         self._redis = redis_client
         self._webhook_service = webhook_service
+        self._idem = idempotency_service or IdempotencyService(redis_client)
 
         # Repositories (injected or auto-created)
         self._episode_repo = episode_repo or EpisodeRepository(db)
@@ -147,13 +123,15 @@ class MemoryService:
         messages: list[Message],
         uploaded_blobs: list[UploadFile] | None = None,
         idempotency_key: str | None = None,
+        body_hash: str | None = None,
     ) -> IngestMemoryResponse:
         """Ingest messages into a project's memory.
 
         Flow:
-        1. Idempotency check (Redis) — return cached response if duplicate.
+        1. Idempotency check (Redis) — return cached response if duplicate,
+           raise ``ConflictError`` if the key was used with a different body.
         2. Resolve or create the session (``__default__`` if omitted).
-        3. Compute content hash for content-level dedup.
+        3. Compute content hash for content-level dedup (via IdempotencyService).
         4. Get next sequence number for ordered insertion.
         5. Build episode dicts from validated messages.
         6. PII detection & redaction (if enabled in org quotas).
@@ -161,7 +139,7 @@ class MemoryService:
         8. Upload blobs to S3 and persist blob records.
         9. Enqueue ARQ enrichment tasks (link_entities_to_episode, extract_entities,
            extract_facts, embed_episode) + blob text extraction tasks.
-        10. Cache idempotency key and content hash for future dedup.
+        10. Store idempotency key and content hash (payload = job_id) for future dedup.
         11. Invalidate context cache for this project.
         12. Return 202 ``IngestMemoryResponse``.
 
@@ -176,15 +154,27 @@ class MemoryService:
                 request. Indexed by ``BlobMetadata.blob_id`` in each message.
             idempotency_key: Optional ``Idempotency-Key`` header value
                 for request-level deduplication.
+            body_hash: Optional SHA-256 digest of the canonical request body,
+                pre-computed by the router when ``idempotency_key`` is set.
+                Used to detect key reuse with a different payload.
 
         Returns:
             An ``IngestMemoryResponse`` with job_id, episode_count,
             and blob_count.
+
+        Raises:
+            ConflictError: If ``idempotency_key`` was already used with a
+                different request body.
         """
         # ── Step 1: Idempotency check ────────────────────────────────────
         if idempotency_key is not None:
-            cached = await self._check_idempotency(idempotency_key)
-            if cached is not None:
+            result = await self._idem.check_idempotency_key(
+                idempotency_key, body_hash or ""
+            )
+            if (
+                result.status == IdempotencyStatus.REPLAY
+                and result.response_data is not None
+            ):
                 logger.info(
                     "memory.idempotency_replay",
                     extra={
@@ -193,7 +183,11 @@ class MemoryService:
                         "project_id": str(project_id),
                     },
                 )
-                return cached
+                return IngestMemoryResponse(**result.response_data)
+            if result.status == IdempotencyStatus.CONFLICT:
+                raise ConflictError(
+                    "Idempotency-Key already used with a different request body"
+                )
 
         # ── Step 2: Resolve or create session ────────────────────────────
         session = await self._resolve_session(
@@ -214,12 +208,13 @@ class MemoryService:
         )
 
         # ── Step 3: Content-level dedup ──────────────────────────────────
-        content_hash = self._compute_content_hash(
-            project_id=str(project_id),
-            session_id=str(session_id),
-            messages=messages,
+        msgs = [m.model_dump() for m in messages]
+        content_hash = self._idem.compute_content_hash(
+            str(org_id), str(created_by), str(session_id), msgs
         )
-        existing_job_id = await self._check_content_dedup(content_hash)
+        existing_job_id = await self._idem.check_content_hash(
+            str(org_id), str(created_by), str(session_id), msgs
+        )
         if existing_job_id is not None:
             logger.info(
                 "memory.content_dedup_hit",
@@ -279,7 +274,6 @@ class MemoryService:
             user_id=created_by,
             messages=episode_dicts,
         )
-        episode_ids = [ep.id for ep in episodes]
         logger.info(
             "memory.episodes_created",
             extra={
@@ -334,7 +328,7 @@ class MemoryService:
                 project_id=project_id,
             )
 
-        # ── Step 9: Cache idempotency key and content hash ───────────────
+        # ── Step 9: Store idempotency key and content hash ──────────────
         response = IngestMemoryResponse(
             job_id=job_id,
             episode_count=len(episodes),
@@ -344,9 +338,13 @@ class MemoryService:
         )
 
         if idempotency_key is not None:
-            await self._cache_idempotency(idempotency_key, response)
+            await self._idem.store_idempotency_key(
+                idempotency_key, body_hash or "", response.model_dump()
+            )
 
-        await self._cache_content_hash(content_hash, job_id)
+        await self._idem.store_content_hash(
+            str(org_id), str(created_by), str(session_id), msgs, payload=job_id
+        )
 
         # ── Step 10: Invalidate context cache for this project ───────────
         await self._invalidate_context_cache(str(org_id), str(project_id))
@@ -497,104 +495,8 @@ class MemoryService:
             created_by=created_by,
         )
 
-    # ── Idempotency ──────────────────────────────────────────────────────────
-
-    async def _check_idempotency(self, key: str) -> IngestMemoryResponse | None:
-        """Check Redis for a cached response for this idempotency key.
-
-        Args:
-            key: The ``Idempotency-Key`` header value.
-
-        Returns:
-            The cached ``IngestMemoryResponse`` if found, or ``None``.
-        """
-        cached = await self._redis.get(f"{IDEMPOTENCY_PREFIX}{key}")
-        if cached is None:
-            return None
-        data = orjson.loads(cached.encode())
-        return IngestMemoryResponse(**data)
-
-    async def _cache_idempotency(
-        self, key: str, response: IngestMemoryResponse
-    ) -> None:
-        """Cache the response for this idempotency key.
-
-        Args:
-            key: The ``Idempotency-Key`` header value.
-            response: The response to cache.
-        """
-        await self._redis.setex(
-            f"{IDEMPOTENCY_PREFIX}{key}",
-            IDEMPOTENCY_TTL,
-            response.model_dump_json(),
-        )
-
-    # ── Content Dedup ────────────────────────────────────────────────────────
-
-    @staticmethod
-    def _compute_content_hash(
-        project_id: str,
-        session_id: str,
-        messages: list[Message],
-    ) -> str:
-        """Compute a SHA-256 hash of (project_id, session_id, messages).
-
-        Used for content-level deduplication: identical payloads from
-        different clients produce the same hash and return the same job_id.
-
-        Args:
-            project_id: The project's UUID string.
-            session_id: The session's UUID string.
-            messages: The message list to hash.
-
-        Returns:
-            A hex-encoded SHA-256 digest.
-        """
-        canonical = orjson.dumps(
-            {
-                "project_id": project_id,
-                "session_id": session_id,
-                "messages": [
-                    {
-                        "role": m.role,
-                        "content": m.content,
-                        "metadata": m.metadata,
-                        "blobs": [
-                            {"blob_id": b.blob_id, "file_name": b.file_name, "mime_type": b.mime_type}
-                            for b in m.blobs
-                        ],
-                    }
-                    for m in messages
-                ],
-            },
-            option=orjson.OPT_SORT_KEYS,
-        )
-        return hashlib.sha256(canonical).hexdigest()
-
-    async def _check_content_dedup(self, content_hash: str) -> str | None:
-        """Check if this exact content has been ingested before.
-
-        Args:
-            content_hash: The SHA-256 content hash.
-
-        Returns:
-            The existing ``job_id`` if found, or ``None``.
-        """
-        existing = await self._redis.get(f"{CONTENT_HASH_PREFIX}{content_hash}")
-        return existing if existing else None
-
-    async def _cache_content_hash(self, content_hash: str, job_id: str) -> None:
-        """Cache a content hash to prevent re-ingestion of identical content.
-
-        Args:
-            content_hash: The SHA-256 content hash.
-            job_id: The job ID to associate with this content.
-        """
-        await self._redis.setex(
-            f"{CONTENT_HASH_PREFIX}{content_hash}",
-            IDEMPOTENCY_TTL,
-            job_id,
-        )
+    # ── Idempotency & content dedup ──────────────────────────────────────────
+    # Delegated to IdempotencyService (self._idem) — see idempotency_service.py.
 
     # ── PII Config ────────────────────────────────────────────────────────────
 
@@ -649,7 +551,8 @@ class MemoryService:
         )
         try:
             arq_pool = get_arq()
-            qname = _arq_queue_name("high")
+            env = get_settings().ENVIRONMENT
+            qname = get_queue_name(env, "high")
             for episode in episodes:
                 ep_id = str(episode["id"])
                 content = episode["content"]
@@ -675,7 +578,7 @@ class MemoryService:
                 await arq_pool.enqueue("embed_episode", queue_name=qname, **common)
                 await arq_pool.enqueue(
                     "link_entities_to_episode",
-                    queue_name=_arq_queue_name("low"),
+                    queue_name=get_queue_name(env, "low"),
                     **common,
                     role=role,
                 )
@@ -842,7 +745,7 @@ class MemoryService:
         )
         try:
             arq_pool = get_arq()
-            low_qname = _arq_queue_name("low")
+            low_qname = get_queue_name(get_settings().ENVIRONMENT, "low")
             for blob in blob_records:
                 await arq_pool.enqueue(
                     "extract_blob_text",
