@@ -228,6 +228,107 @@ class TestFactRepository:
 
         assert len(result) == 1
 
+    async def test_batch_create_or_skip_honors_explicit_content(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
+        """M1 — explicit content is kept, never rebuilt from the SPO join."""
+        facts = [
+            {
+                "subject": "A",
+                "predicate": "is",
+                "object": "B",
+                "confidence": 0.9,
+                "content": "Custom statement",
+            },
+        ]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [self._mock_fact()]
+        mock_db.execute.return_value = mock_result
+
+        await repo.batch_create_or_skip(
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            user_id=self.USER_ID,
+            source_episode_id=self.EPISODE_ID,
+            facts=facts,
+        )
+
+        (_, rows) = mock_db.execute.await_args.args
+        assert rows[0]["content"] == "Custom statement"
+
+    async def test_batch_create_or_skip_defaults_content_to_spo_join(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
+        """M1 — missing content falls back to the ``subject predicate object`` join."""
+        facts = [
+            {"subject": "A", "predicate": "is", "object": "B", "confidence": 0.9},
+        ]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [self._mock_fact()]
+        mock_db.execute.return_value = mock_result
+
+        await repo.batch_create_or_skip(
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            user_id=self.USER_ID,
+            source_episode_id=self.EPISODE_ID,
+            facts=facts,
+        )
+
+        (_, rows) = mock_db.execute.await_args.args
+        assert rows[0]["content"] == "A is B"
+
+    async def test_batch_create_or_skip_honors_caller_valid_from(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
+        """M1 — caller-provided ``valid_from`` wins over the repo's own clock."""
+        caller_now = datetime(2026, 5, 1, 9, 30, tzinfo=timezone.utc)
+        facts = [
+            {
+                "subject": "A",
+                "predicate": "is",
+                "object": "B",
+                "confidence": 0.9,
+                "valid_from": caller_now,
+            },
+        ]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [self._mock_fact()]
+        mock_db.execute.return_value = mock_result
+
+        await repo.batch_create_or_skip(
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            user_id=self.USER_ID,
+            source_episode_id=self.EPISODE_ID,
+            facts=facts,
+        )
+
+        (_, rows) = mock_db.execute.await_args.args
+        assert rows[0]["valid_from"] == caller_now
+
+    async def test_batch_create_or_skip_defaults_valid_from_to_now(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
+        """M1 — without ``valid_from`` the repo stamps the current UTC instant."""
+        facts = [
+            {"subject": "A", "predicate": "is", "object": "B", "confidence": 0.9},
+        ]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [self._mock_fact()]
+        mock_db.execute.return_value = mock_result
+
+        await repo.batch_create_or_skip(
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            user_id=self.USER_ID,
+            source_episode_id=self.EPISODE_ID,
+            facts=facts,
+        )
+
+        (_, rows) = mock_db.execute.await_args.args
+        assert rows[0]["valid_from"].tzinfo == timezone.utc
+
     # ── get_all_active_for_project ─────────────────────────────────────────────
 
     async def test_get_all_active_for_project(

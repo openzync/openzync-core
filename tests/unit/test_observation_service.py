@@ -396,6 +396,28 @@ class TestDetectBehavioralPatterns:
         assert preds[1] == ("mentions", 3)
         assert preds[2] == ("references", 2)
 
+    async def test_predicate_query_applies_effective_at_predicate(
+        self,
+        service: ObservationService,
+        mock_repo: AsyncMock,
+        mock_db: AsyncMock,
+    ) -> None:
+        """The facts query excludes superseded rows (valid_to closed) via
+        the effective-at predicate — ``invalid_at IS NULL`` alone is not
+        enough after Phase 2 fact supersession."""
+        mock_db.execute.return_value.mappings.return_value.all.return_value = []
+        patterns = await service.detect_behavioral_patterns(PROJECT_ID, organization_id=ORG_ID)
+        assert patterns == []
+
+        stmt, params = mock_db.execute.call_args.args
+        sql = stmt.text
+        assert "(f.invalid_at IS NULL OR f.invalid_at > :effective_at)" in sql
+        assert "(f.valid_from IS NULL OR f.valid_from <= :effective_at)" in sql
+        assert "(f.valid_to IS NULL OR f.valid_to > :effective_at)" in sql
+        assert "AND f.invalid_at IS NULL\n" not in sql  # old leaky filter gone
+        effective_at = params["effective_at"]
+        assert effective_at.tzinfo is not None  # tz-aware now, not naive
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Description generation

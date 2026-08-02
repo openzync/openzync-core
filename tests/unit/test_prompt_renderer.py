@@ -1264,6 +1264,27 @@ class TestProviderFetchUserFacts:
             ],
         }
 
+    @pytest.mark.asyncio
+    async def test_query_applies_effective_at_predicate(
+        self, org_id: UUID, user_id: UUID,
+    ) -> None:
+        """The facts query applies the effective-at predicate so superseded
+        (valid_to closed) and retracted (invalid_at set) facts do not leak
+        into LLM extraction prompts."""
+        class _RecordingSession(FakeAsyncSession):
+            async def execute(self, query: Any, params: Any | None = None) -> MockResult:
+                self.executed_sql = str(query.text if hasattr(query, "text") else query)
+                return await super().execute(query, params)
+
+        session = _RecordingSession(
+            [("Subject1", "Predicate1", "Object1")],
+        )
+        await _fetch_user_facts(db=session, org_id=org_id, user_id=user_id)
+
+        assert "(f.invalid_at IS NULL OR f.invalid_at > :effective_at)" in session.executed_sql
+        assert "(f.valid_from IS NULL OR f.valid_from <= :effective_at)" in session.executed_sql
+        assert "(f.valid_to IS NULL OR f.valid_to > :effective_at)" in session.executed_sql
+
 
 @pytest.mark.unit
 class TestProviderFetchUserEntities:
