@@ -121,6 +121,74 @@ class TestExtractFacts:
             mock_fact_repo.batch_create_or_skip.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_graph_backend_disabled_skips_graph_ops(self) -> None:
+        """Graph backend disabled (resolve → None): facts persist, no graph ops.
+
+        When ``resolve_graph_backend`` returns ``None`` the persistence path
+        must still run — facts are written to PostgreSQL and the episode is
+        marked — while no relationship upserts are attempted against the
+        (absent) graph.
+        """
+        llm_resp = self._make_llm_response()
+
+        with (
+            patch("workers.tasks.extract_facts.render_prompt",
+                  return_value=("system", {})),
+            patch("workers.tasks.extract_facts.build_enrichment_prompt",
+                  return_value="prompt"),
+            patch("core.llm.resolve_backend") as mock_llm_cls,
+            patch("workers.backend.resolve_graph_backend", return_value=None),
+            patch("core.org_config.get_org_config") as mock_org_cfg,
+            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
+            patch("repositories.fact_repository.FactRepository") as mock_fact_repo_cls,
+            patch("repositories.entity_repository.EntityRepository") as mock_entity_repo_cls,
+            patch("core.config.settings") as _,
+        ):
+            mock_llm = AsyncMock()
+            mock_llm.chat.return_value = llm_resp
+            mock_llm_cls.return_value = mock_llm
+
+            mock_org_cfg.return_value = MagicMock()
+
+            episode = MagicMock()
+            episode.id = _EPISODE_ID
+            episode.enrichment_status = 0
+
+            mock_ep_repo = AsyncMock()
+            mock_ep_repo.get_by_id_for_update.return_value = episode
+            mock_ep_repo_cls.return_value = mock_ep_repo
+
+            mock_fact = MagicMock()
+            mock_fact.id = str(uuid4())
+            mock_fact.content = "Alice works_at Acme Corp"
+            mock_fact_repo = AsyncMock()
+            mock_fact_repo.batch_create_or_skip.return_value = [mock_fact]
+            mock_fact_repo_cls.return_value = mock_fact_repo
+
+            # No backend → no live entity lookup hits, so no relationship
+            # upsert can ever fire.
+            mock_entity_repo = AsyncMock()
+            mock_entity_repo.get_entity_by_name.return_value = None
+            mock_entity_repo_cls.return_value = mock_entity_repo
+
+            db = self._make_db()
+            from workers.tasks.extract_facts import extract_facts
+
+            await extract_facts(
+                ctx=self._ctx(db),
+                episode_id=_EPISODE_ID,
+                org_id=_ORG_ID,
+                project_id=_PROJECT_ID,
+                content=_CONTENT,
+                trace_id=_TRACE_ID,
+            )
+
+            # Facts still persist through the graph-disabled path.
+            mock_fact_repo.batch_create_or_skip.assert_called_once()
+            # And no graph relationship work is attempted.
+            mock_entity_repo.upsert_relationship.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_empty_facts(self) -> None:
         """No facts extracted → no bulk_create."""
         parsed = MagicMock()
