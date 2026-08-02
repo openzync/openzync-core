@@ -7,6 +7,7 @@ assembly endpoint.  Schemas must never import from ``models/``,
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -28,6 +29,7 @@ class ContextMetadata(BaseModel):
         assembly_time_ms: Wall-clock time for context assembly (ms).
         source_counts: Breakdown of items by source type.
         total_items: Total number of items included in the context.
+        as_of: Effective-at timestamp used for fact retrieval (None = now).
     """
 
     cache_hit: bool = Field(
@@ -45,6 +47,11 @@ class ContextMetadata(BaseModel):
     total_items: int = Field(
         default=0,
         description="Total number of items included in the context.",
+    )
+    as_of: datetime | None = Field(
+        default=None,
+        description="Effective-at timestamp used for fact retrieval (UTC). "
+        "None means the query ran against 'now'.",
     )
 
 

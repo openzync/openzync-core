@@ -86,9 +86,15 @@ class FactService:
         Flow:
         1. Compute content hash for batch-level dedup.
         2. Optional: resolve session if session_external_id provided.
-        3. Bulk-insert facts into PostgreSQL.
-        4. Enqueue ARQ embedding task for each fact.
+        3. Bulk-insert facts via the invalidation service (supersedes any
+           conflicting active facts — see ``FactInvalidationService``).
+        4. Enqueue ARQ embedding task for each inserted fact.
         5. Return 202 response with job_id.
+
+        Behavior change (ADR-005): conflicting batches no longer raise
+        409 — conflicts are resolved by supersession and the batch is
+        accepted (202).  ``superseded_count`` reports how many previously
+        active facts were replaced.
 
         Args:
             org_id: The authenticated organization UUID.
@@ -98,7 +104,8 @@ class FactService:
             session_external_id: Optional session external ID.
 
         Returns:
-            A ``FactBatchResponse`` with job_id and accepted_count.
+            A ``FactBatchResponse`` with job_id, accepted_count and
+            superseded_count.
         """
         # ── Step 1: Content-level dedup check ─────────────────────────────
         content_hash = self._compute_batch_hash(project_id, facts)
@@ -147,25 +154,42 @@ class FactService:
                 message="No facts to ingest",
             )
 
-        # ── Step 4: Bulk-insert facts ─────────────────────────────────────
-        fact_dicts: list[dict[str, Any]] = []
-        for f in facts:
-            fact_dicts.append({
+        # ── Step 4: Supersession-aware insert ─────────────────────────────
+        fact_dicts: list[dict[str, Any]] = [
+            {
                 "subject": f.subject,
                 "predicate": f.predicate,
                 "object": f.object,
                 "content": f.content or f"{f.subject} {f.predicate} {f.object}",
                 "confidence": f.confidence,
                 "source_episode_id": None,
-                "valid_from": None,
-            })
+            }
+            for f in facts
+        ]
 
-        created = await self._fact_repo.batch_create(
-            organization_id=org_id,
+        from services.cache_service import CacheService
+        from services.fact_invalidation_service import (
+            PURGE_ONLY_CACHE_TTL,
+            FactInvalidationService,
+        )
+
+        invalidation = FactInvalidationService(
+            db=self._db,
+            fact_repo=self._fact_repo,
+            webhook_service=self._webhook_service,
+            cache_service=(
+                CacheService(self._redis, default_ttl=PURGE_ONLY_CACHE_TTL)
+                if self._redis is not None
+                else None
+            ),
+        )
+        result = await invalidation.ingest_with_supersession(
+            org_id=org_id,
             project_id=project_id,
             user_id=created_by,
             facts=fact_dicts,
         )
+        created = result.created
 
         # ── Step 5: Generate job_id and enqueue embedding tasks ───────────
         job_id = str(uuid4())
@@ -200,6 +224,7 @@ class FactService:
             extra={
                 "job_id": job_id,
                 "count": len(created),
+                "superseded_count": result.superseded_count,
                 "project_id": str(project_id),
                 "org_id": str(org_id),
             },
@@ -210,6 +235,7 @@ class FactService:
             accepted_count=len(created),
             status="accepted",
             message=f"{len(created)} facts accepted for processing",
+            superseded_count=result.superseded_count,
         )
 
     # ── Internal helpers ────────────────────────────────────────────────────────

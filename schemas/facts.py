@@ -87,6 +87,9 @@ class FactBatchResponse(BaseModel):
     Attributes:
         job_id: UUID string identifying the async enrichment job.
         accepted_count: Number of facts accepted for processing.
+        superseded_count: Number of previously-active facts invalidated by
+            supersession (``valid_to`` set) because a conflicting fact in
+            this batch replaced them.  Zero when no conflicts occurred.
         status: Always ``"accepted"`` for synchronous acknowledgement.
         message: Human-readable status message.
     """
@@ -99,6 +102,12 @@ class FactBatchResponse(BaseModel):
         ...,
         ge=0,
         description="Number of facts accepted for processing.",
+    )
+    superseded_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of previously-active facts invalidated by "
+        "supersession in this batch.",
     )
     status: str = Field(
         default="accepted",
@@ -129,6 +138,15 @@ class FactResponse(BaseModel):
             resolved during extraction.
         object_entity_id: FK to ``graph_entities`` if the object was
             resolved during extraction.
+        valid_from: Temporal validity start (UTC). Facts are effective
+            from this instant onward; superseding facts set it to the
+            supersession time.
+        valid_to: Temporal validity end (UTC). Set to the supersession
+            time when a conflicting fact replaces this one; ``None``
+            while the fact is current.
+        invalid_at: Hard-retraction timestamp (UTC) from the GDPR/memory
+            wipe path; ``None`` unless the fact was explicitly
+            invalidated.
         created_at: Fact creation timestamp.
     """
 
@@ -158,6 +176,19 @@ class FactResponse(BaseModel):
     object_entity_id: UUID | None = Field(
         default=None,
         description="FK to graph_entities if the object was resolved to an entity.",
+    )
+    valid_from: datetime | None = Field(
+        None, description="Temporal validity start (UTC)."
+    )
+    valid_to: datetime | None = Field(
+        None,
+        description="Temporal validity end (UTC). Set when a conflicting "
+        "fact supersedes this one; None while current.",
+    )
+    invalid_at: datetime | None = Field(
+        None,
+        description="Hard-retraction timestamp (UTC) from the wipe path; "
+        "None unless explicitly invalidated.",
     )
     created_at: datetime = Field(
         ..., description="Fact creation timestamp (UTC)."

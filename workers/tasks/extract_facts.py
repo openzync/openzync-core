@@ -661,14 +661,35 @@ async def process_facts_output(
     if not resolved_facts:
         return []
 
-    # ── Batch-persist all new facts ─────────────────────────────────────────
-    new_facts = await fact_repo.batch_create_or_skip(
-        facts=resolved_facts,
-        user_id=uuid.UUID(user_id),
-        organization_id=uuid.UUID(org_id),
-        project_id=uuid.UUID(project_id),
-        source_episode_id=uuid.UUID(episode_id),
+    # ── Batch-persist all new facts via supersession ───────────────────────
+    # Conflicting active facts (same SPO identity) are superseded in the
+    # same transaction; identical-content facts are skipped so ARQ retries
+    # are idempotent.  Enrichment bit handling below is unchanged —
+    # supersession is a side effect, not episode state.
+    from services.cache_service import CacheService
+    from services.fact_invalidation_service import (
+        PURGE_ONLY_CACHE_TTL,
+        FactInvalidationService,
     )
+
+    invalidation = FactInvalidationService(
+        db=db,
+        fact_repo=fact_repo,
+        cache_service=(
+            CacheService(arq_redis, default_ttl=PURGE_ONLY_CACHE_TTL)
+            if arq_redis is not None
+            else None
+        ),
+    )
+    result = await invalidation.ingest_with_supersession(
+        org_id=uuid.UUID(org_id),
+        project_id=uuid.UUID(project_id),
+        user_id=uuid.UUID(user_id),
+        facts=resolved_facts,
+        source_episode_id=uuid.UUID(episode_id),
+        insert_mode="batch_create_or_skip",
+    )
+    new_facts = result.created
 
     # Build a lookup from content string → input fact dict to match returned
     # Fact ORM objects back to their original input for entity resolution
@@ -686,6 +707,7 @@ async def process_facts_output(
             "fact_extraction.duplicates_skipped",
             episode_id=episode_id,
             count=duplicates_count,
+            superseded_count=result.superseded_count,
         )
 
     # ── Post-insert per-fact processing ─────────────────────────────────────

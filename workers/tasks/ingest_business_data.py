@@ -149,13 +149,29 @@ async def ingest_business_data(
 
     try:
         async with session_factory() as db:
+            from services.cache_service import CacheService
+            from services.fact_invalidation_service import (
+                PURGE_ONLY_CACHE_TTL,
+                FactInvalidationService,
+            )
+
             repo = FactRepository(db)
-            created = await repo.batch_create(
-                organization_id=org_uuid,
+            invalidation = FactInvalidationService(
+                db=db,
+                fact_repo=repo,
+                cache_service=(
+                    CacheService(ctx.get("redis"), default_ttl=PURGE_ONLY_CACHE_TTL)
+                    if ctx.get("redis")
+                    else None
+                ),
+            )
+            result = await invalidation.ingest_with_supersession(
+                org_id=org_uuid,
                 project_id=UUID(project_id),
                 user_id=user_uuid,
                 facts=valid_facts,
             )
+            created = result.created
             await db.commit()
     finally:
         if _own_engine:
@@ -177,6 +193,7 @@ async def ingest_business_data(
             "project_id": project_id,
             "user_id": user_id,
             "accepted": len(created),
+            "superseded": result.superseded_count,
             "errors": len(errors),
         },
     )

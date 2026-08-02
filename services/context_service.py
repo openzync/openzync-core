@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -110,11 +111,15 @@ class ContextService:
         query: str,
         limit: int = 20,
         format: str = "text",  # noqa: A002
+        as_of: datetime | None = None,
     ) -> dict:
         """Assemble a context block for a project from a natural-language query.
 
         Full pipeline:
-        1. Build a cache key from (org_id, project_id, query) and check Redis.
+        1. Build a cache key from (org_id, project_id, query, as_of) and
+           check Redis — different effective-at timestamps get distinct
+           keys so a cached as-of result never poisons another timestamp's
+           30s cache window.
         2. On cache miss, run hybrid search across episodes, facts,
            entities, and communities.
         3. Format results as plain text or structured JSON.
@@ -127,12 +132,15 @@ class ContextService:
             query: A natural-language query describing the context needed.
             limit: Maximum items per source type (1–100).
             format: Output format — ``"text"`` (default) or ``"json"``.
+            as_of: Effective-at timestamp (UTC) for fact retrieval.  Facts
+                superseded before this instant are excluded.  ``None``
+                means "now".
 
         Returns:
             A dict with:
             - ``context``: The assembled context string.
             - ``metadata``: Dict with ``cache_hit``, ``assembly_time_ms``,
-              ``source_counts``, and ``total_items``.
+              ``source_counts``, ``total_items``, and ``as_of``.
         """
         start = time.monotonic()
 
@@ -145,6 +153,7 @@ class ContextService:
                 str(self._org_id),
                 str(project_id),
                 query,
+                as_of=as_of.isoformat() if as_of is not None else None,
             )
             cached = await self._cache.get(cache_key)
             if cached is not None:
@@ -157,6 +166,7 @@ class ContextService:
                     query=query[:200],
                     cache_hit=True,
                     format=format,
+                    as_of=as_of.isoformat() if as_of is not None else None,
                     assembly_time_ms=round(elapsed, 1),
                     source_counts={},
                     total_items=0,
@@ -177,13 +187,16 @@ class ContextService:
                         "assembly_time_ms": round(elapsed, 1),
                         "source_counts": {},
                         "total_items": 0,
+                        "as_of": as_of,
                     },
                 }
 
         # ═══════════════════════════════════════════════════════════════════
         # Step 2 — Run hybrid search
         # ═══════════════════════════════════════════════════════════════════
-        results = await self._retriever.hybrid_search(query, project_id, limit)
+        results = await self._retriever.hybrid_search(
+            query, project_id, limit, query_time=as_of
+        )
 
         # ═══════════════════════════════════════════════════════════════════
         # Step 2b — Load blobs for returned episodes and generate presigned
@@ -271,6 +284,7 @@ class ContextService:
             query=query[:200],
             cache_hit=False,
             format=format,
+            as_of=as_of.isoformat() if as_of is not None else None,
             assembly_time_ms=round(elapsed, 1),
             source_counts=results.get("source_counts", {}),
             total_items=results.get("total_items", 0),
@@ -292,5 +306,6 @@ class ContextService:
                 "assembly_time_ms": round(elapsed, 1),
                 "source_counts": results["source_counts"],
                 "total_items": results.get("total_items", 0),
+                "as_of": as_of,
             },
         }

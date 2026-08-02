@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -87,6 +88,7 @@ class HybridRetriever:
         query: str,
         project_id: UUID,
         limit: int = 20,
+        query_time: datetime | None = None,
     ) -> dict[str, Any]:
         """Run hybrid search across all sources and return RRF-merged results.
 
@@ -106,6 +108,12 @@ class HybridRetriever:
             query: The natural-language search query.
             project_id: Scoped user UUID.
             limit: Max items per source type before RRF merge.
+            query_time: Effective-at timestamp for fact retrieval (UTC).
+                Facts whose validity range contains this instant are
+                returned; ``None`` means "now" (resolved at call time).
+                Episodes are not temporally validatable and ignore this.
+                The graph-BFS leg is as-of-approximate by design and also
+                ignores it.
 
         Returns:
             A dict with:
@@ -121,6 +129,15 @@ class HybridRetriever:
                 graph BFS, or reranker) fails.
         """
         _search_start = time.monotonic()
+
+        # Facts are filtered by the effective-at predicate against a time.
+        # An explicit ``query_time`` (as-of) is threaded to the fact legs;
+        # ``None`` (default/now queries) is left unset so each leg resolves
+        # "now" at its own execution instant — plain queries must never
+        # leak superseded facts (valid_to <= now).
+        as_of_kwargs: dict[str, datetime] = (
+            {} if query_time is None else {"query_time": query_time}
+        )
 
         # ── Run all three retrieval legs concurrently ──────────────────────
         # Each leg returns a list of dicts with at minimum ``id`` and
@@ -149,7 +166,7 @@ class HybridRetriever:
 
         try:
             fact_vector_results = await self._vector_search_facts(
-                query, project_id, retrieval_limit
+                query, project_id, retrieval_limit, **as_of_kwargs
             )
         except Exception as exc:
             logger.error(
@@ -175,7 +192,9 @@ class HybridRetriever:
             raise SearchLegFailedError(leg_name="episode_bm25", original_error=str(exc)) from exc
 
         try:
-            fact_bm25_results = await self._bm25_search_facts(query, project_id, retrieval_limit)
+            fact_bm25_results = await self._bm25_search_facts(
+                query, project_id, retrieval_limit, **as_of_kwargs
+            )
         except Exception as exc:
             logger.error(
                 "hybrid_retriever.fact_bm25_failed",
@@ -397,16 +416,21 @@ class HybridRetriever:
         query: str,
         project_id: UUID,
         limit: int = 20,
+        query_time: datetime | None = None,
     ) -> list[dict[str, Any]]:
         """Semantic search over facts using pgvector cosine similarity.
 
         Same pattern as ``_vector_search_episodes`` but operates on the
-        ``facts.embedding`` column.
+        ``facts.embedding`` column.  Facts are filtered by the effective-at
+        predicate against ``query_time`` (``None`` → now) so superseded
+        (``valid_to`` set) and not-yet-valid (``valid_from`` future) rows
+        never leak into results.
 
         Args:
             query: Natural-language query text.
             project_id: Scoped user UUID.
             limit: Max results.
+            query_time: Effective-at instant for the validity predicate.
 
         Returns:
             A list of result dicts with ``id``, ``content``, ``subject``,
@@ -416,6 +440,7 @@ class HybridRetriever:
             SearchLegFailedError: If embedding generation fails.
         """
         query_embedding = await self._embed_query(query)
+        effective_time = query_time or datetime.now(timezone.utc)
 
         # Resolve embedding dimension from org config so the runtime
         # ``::vector(N)`` cast matches the model that produced the data.
@@ -453,7 +478,11 @@ class HybridRetriever:
             )
             .where(
                 Fact.project_id == project_id,
-                Fact.invalid_at.is_(None),
+                # Effective-at predicate — superseded facts (valid_to set)
+                # are excluded without conflating retraction (invalid_at).
+                Fact.invalid_at.is_(None) | (Fact.invalid_at > effective_time),
+                Fact.valid_from.is_(None) | (Fact.valid_from <= effective_time),
+                Fact.valid_to.is_(None) | (Fact.valid_to > effective_time),
                 Fact.embedding.isnot(None),
                 func.cardinality(Fact.embedding) > 0,
             )
@@ -517,19 +546,26 @@ class HybridRetriever:
         query: str,
         project_id: UUID,
         limit: int = 20,
+        query_time: datetime | None = None,
     ) -> list[dict[str, Any]]:
         """Keyword search over facts using PostgreSQL full-text search.
+
+        Facts are filtered by the effective-at predicate against
+        ``query_time`` (``None`` → now) — same supersession semantics as
+        the vector fact leg.
 
         Args:
             query: Keyword query string.
             project_id: Scoped user UUID.
             limit: Max results.
+            query_time: Effective-at instant for the validity predicate.
 
         Returns:
             A list of result dicts with ``id``, ``content``, ``subject``,
             ``predicate``, ``object``, ``score``, and ``confidence`` keys.
         """
         ts_query = func.plainto_tsquery("english", query)
+        effective_time = query_time or datetime.now(timezone.utc)
         stmt = (
             select(
                 Fact.id,
@@ -546,7 +582,9 @@ class HybridRetriever:
             )
             .where(
                 Fact.project_id == project_id,
-                Fact.invalid_at.is_(None),
+                Fact.invalid_at.is_(None) | (Fact.invalid_at > effective_time),
+                Fact.valid_from.is_(None) | (Fact.valid_from <= effective_time),
+                Fact.valid_to.is_(None) | (Fact.valid_to > effective_time),
                 func.to_tsvector("english", Fact.content).op("@@")(ts_query),
             )
             .order_by(text("score DESC"))
@@ -591,6 +629,12 @@ class HybridRetriever:
                 },
             )
             return []
+
+        # ponytail: graph BFS is as-of-approximate — backends return entity
+        # summaries without validity timestamps, so no temporal filtering is
+        # applied here. Facts (the only temporally-validated source) are
+        # filtered in the vector/BM25 legs; if graph facts become temporal,
+        # filter by as_of inside the backend traversal instead.
 
         # Run each backend's retrieve_graph in parallel — failure in any
         # backend propagates immediately (no silent degradation).
