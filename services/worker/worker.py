@@ -118,6 +118,8 @@ from workers.tasks.compute_observations import compute_observations
 from services.worker.tasks.deliver_webhook import deliver_webhook
 from workers.tasks.generate_user_summary import generate_user_summary
 from workers.tasks.reconcile_enrichment import reconcile_enrichment
+from workers.tasks.expire_graph_edges import expire_graph_edges
+from workers.tasks.reconcile_graph_edges import reconcile_graph_edges
 
 HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     enrich_episode,  # combined LLM enrichment — replaces classify_dialog, extract_entities, extract_facts, extract_structured
@@ -139,6 +141,8 @@ LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     deliver_webhook,
     generate_user_summary,
     reconcile_enrichment,
+    expire_graph_edges,
+    reconcile_graph_edges,
 ]
 """Tasks assigned to the low-priority queue (scheduled batch)."""
 
@@ -564,6 +568,12 @@ async def main() -> NoReturn:
             minute=set(range(0, 60, 5)),
             unique=True,
             job_id="enrichment_reconciliation",
+        ),
+        cron(
+            reconcile_graph_edges,
+            minute=set(range(0, 60, 5)),
+            unique=True,
+            job_id="graph_edge_reconciliation",
         ),
     ]
 

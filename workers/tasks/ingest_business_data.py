@@ -156,6 +156,14 @@ async def ingest_business_data(
             )
 
             repo = FactRepository(db)
+
+            # note: graph_sync is intentionally NOT wired here — this task
+            # can run with a partial worker ctx (no graph_backend_dispatcher),
+            # and resolving the backend would introduce a new failure mode.
+            # Edge expiry for this path is backfilled by the
+            # reconcile_graph_edges cron.  The extraction worker
+            # (process_facts_output) wires graph_sync because the backend is
+            # already resolved there.
             invalidation = FactInvalidationService(
                 db=db,
                 fact_repo=repo,

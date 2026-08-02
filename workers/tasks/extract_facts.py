@@ -671,6 +671,7 @@ async def process_facts_output(
         PURGE_ONLY_CACHE_TTL,
         FactInvalidationService,
     )
+    from services.graph_edge_sync_service import GraphEdgeSyncService
 
     invalidation = FactInvalidationService(
         db=db,
@@ -678,6 +679,11 @@ async def process_facts_output(
         cache_service=(
             CacheService(arq_redis, default_ttl=PURGE_ONLY_CACHE_TTL)
             if arq_redis is not None
+            else None
+        ),
+        graph_sync=(
+            GraphEdgeSyncService(backends=[graph_backend])
+            if graph_backend is not None
             else None
         ),
     )

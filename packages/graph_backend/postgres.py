@@ -33,7 +33,29 @@ logger = structlog.get_logger(__name__)
 MAX_TRAVERSAL_DEPTH: int = 5
 """Hard cap on BFS depth to prevent unbounded recursive queries."""
 
-BFS_CTE = """
+def _build_bfs_cte(*, temporal: bool) -> str:
+    """Return the recursive BFS CTE, optionally temporally filtered.
+
+    When ``temporal`` is ``True`` the edge JOIN also applies the
+    effective-at predicate (``valid_from``/``valid_to`` contain the bound
+    ``:as_of`` parameter) — the same semantics as ``get_relationships``.
+    The non-temporal variant preserves the historical behaviour (only
+    ``invalid_at IS NULL``).
+
+    Args:
+        temporal: ``True`` to require the ``:as_of`` bound parameter and
+            filter edges by their validity range.
+
+    Returns:
+        The SQL CTE string (not parameter-bound).
+    """
+    temporal_filter = ""
+    if temporal:
+        temporal_filter = (
+            "        AND (r.valid_from IS NULL OR r.valid_from <= :as_of)\n"
+            "        AND (r.valid_to IS NULL OR r.valid_to >= :as_of)\n"
+        )
+    return f"""\
 WITH RECURSIVE bfs AS (
     -- Anchor: start node
     SELECT ge.id, ge.name, ge.entity_type, ge.summary,
@@ -53,7 +75,7 @@ WITH RECURSIVE bfs AS (
         ON (r.source_id = bfs.id OR r.target_id = bfs.id)
         AND r.invalid_at IS NULL
         AND r.project_id = :project_id
-    JOIN graph_entities e
+{temporal_filter}    JOIN graph_entities e
         ON (e.id = CASE
             WHEN r.source_id = bfs.id THEN r.target_id
             ELSE r.source_id
@@ -588,6 +610,88 @@ class PostgresGraphBackend(GraphBackend):
                 },
             ) from exc
 
+    async def expire_relationships_matching(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        *,
+        source_id: UUID,
+        target_id: UUID,
+        relationship_type: str,
+        at_time: datetime,
+    ) -> int:
+        """Expire all active edges matching a fact-triple edge key.
+
+        Sets ``invalid_at = :at_time`` (NOT ``valid_to``) — the edge is
+        invalidated at the supersession instant rather than closed at its
+        validity end.  ``updated_at`` is bumped for change tracking.
+
+        Idempotent by construction: the ``invalid_at IS NULL`` predicate
+        means a replay matches zero rows (returns 0) instead of erroring,
+        which is what makes the ARQ ``expire_graph_edges`` task safe to
+        retry.
+
+        Args:
+            org_id: Tenant scope.
+            project_id: Project scope.
+            source_id: Edge source (fact subject entity).
+            target_id: Edge target (fact object entity).
+            relationship_type: Edge label (fact predicate).
+            at_time: The supersession instant — deterministic, never a
+                fresh clock read.
+
+        Returns:
+            Number of edges set invalid (0 on replay / no match).
+        """
+        try:
+            result = await self._db.execute(
+                text(
+                    """
+                    UPDATE graph_relationships
+                    SET invalid_at = :at_time, updated_at = now()
+                    WHERE source_id = :source_id
+                      AND target_id = :target_id
+                      AND relationship_type = :rel_type
+                      AND invalid_at IS NULL
+                      AND organization_id = :org_id
+                      AND project_id = :project_id
+                    """
+                ),
+                {
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "source_id": str(source_id),
+                    "target_id": str(target_id),
+                    "rel_type": relationship_type,
+                    "at_time": at_time,
+                },
+            )
+            return result.rowcount
+        except Exception as exc:
+            logger.error(
+                "pg_graph.expire_relationships_matching_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "source_id": str(source_id),
+                    "target_id": str(target_id),
+                    "relationship_type": relationship_type,
+                    "at_time": at_time.isoformat(),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=(
+                    f"Failed to expire relationships matching "
+                    f"({source_id}, {target_id}, {relationship_type}): {exc}"
+                ),
+                detail={
+                    "org_id": str(org_id),
+                    "source_id": str(source_id),
+                    "target_id": str(target_id),
+                },
+            ) from exc
+
     async def get_relationships(
         self,
         org_id: UUID,
@@ -668,6 +772,7 @@ class PostgresGraphBackend(GraphBackend):
         start_node_id: UUID,
         max_depth: int = 2,
         edge_types: list[str] | None = None,
+        at_time: datetime | None = None,
     ) -> list[dict]:
         """Traverse the graph outward from a starting node.
 
@@ -682,6 +787,10 @@ class PostgresGraphBackend(GraphBackend):
             max_depth: Maximum hops (capped at MAX_TRAVERSAL_DEPTH).
             edge_types: If provided, only follow edges with these types.
                 ``None`` = all types. Empty list = no edges (returns start).
+            at_time: When set, edges are additionally filtered by the
+                effective-at predicate — only edges whose validity range
+                contains this instant are followed.  ``None`` (default)
+                follows all non-invalidated edges regardless of validity.
 
         Returns:
             List of node dicts with ``depth`` field indicating hop count.
@@ -698,21 +807,25 @@ class PostgresGraphBackend(GraphBackend):
 
         max_depth = min(max_depth, self._max_depth)
         edge_types_null = edge_types is None
+        temporal = at_time is not None
 
         try:
             # Set statement timeout to prevent runaway queries
             await self._db.execute(text("SET LOCAL statement_timeout = '5s'"))
 
+            params: dict[str, object] = {
+                "org_id": str(org_id),
+                "project_id": str(project_id),
+                "start_id": str(start_node_id),
+                "max_depth": max_depth,
+                "edge_types": edge_types if edge_types is not None else [],
+                "edge_types_null": edge_types_null,
+            }
+            if temporal:
+                params["as_of"] = at_time
             result = await self._db.execute(
-                text(BFS_CTE),
-                {
-                    "org_id": str(org_id),
-                    "project_id": str(project_id),
-                    "start_id": str(start_node_id),
-                    "max_depth": max_depth,
-                    "edge_types": edge_types if edge_types is not None else [],
-                    "edge_types_null": edge_types_null,
-                },
+                text(_build_bfs_cte(temporal=temporal)),
+                params,
             )
             nodes = []
             for row in result.all():
@@ -896,6 +1009,7 @@ class PostgresGraphBackend(GraphBackend):
         match_limit: int = 5,
         max_depth: int = 2,
         max_results: int = 50,
+        as_of: datetime | None = None,
     ) -> list[dict]:
         """Search entities matching query, then BFS-traverse outward.
 
@@ -916,6 +1030,9 @@ class PostgresGraphBackend(GraphBackend):
             match_limit: Max entities to match before traversal.
             max_depth: Max BFS depth from each matched entity.
             max_results: Max total results to return.
+            as_of: Effective-at instant — edges whose validity range does
+                not contain this instant are not traversed.  ``None``
+                resolves to now (an as-of query at the call instant).
 
         Returns:
             Entity dicts with id, name, type, summary, and distance keys.
@@ -936,6 +1053,9 @@ class PostgresGraphBackend(GraphBackend):
             # Step 2: BFS traverse from each matched entity
             seen: set[str] = set()
             results: list[dict] = []
+            # as_of=None → now: a deterministic instant per call, matching
+            # the ``get_relationships`` as-of primitive's None semantics.
+            as_of_value = as_of or datetime.now(timezone.utc)
 
             for entity in matched_entities:
                 entity_id_str = entity.get("id", "")
@@ -964,6 +1084,7 @@ class PostgresGraphBackend(GraphBackend):
                         project_id=project_id,
                         start_node_id=entity_id,
                         max_depth=max_depth,
+                        at_time=as_of_value,
                     )
                 except Exception as exc:
                     logger.error(
@@ -1096,6 +1217,7 @@ class PostgresGraphBackend(GraphBackend):
             r.organization_id = :org_id
             AND r.project_id = :project_id
             AND (r.source_id = :eid OR r.target_id = :eid)
+            AND r.invalid_at IS NULL
         """
         params: dict[str, object] = {
             "org_id": str(org_id),

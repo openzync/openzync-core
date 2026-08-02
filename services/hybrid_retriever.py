@@ -108,12 +108,12 @@ class HybridRetriever:
             query: The natural-language search query.
             project_id: Scoped user UUID.
             limit: Max items per source type before RRF merge.
-            query_time: Effective-at timestamp for fact retrieval (UTC).
+            query_time: Effective-at timestamp for retrieval (UTC).
                 Facts whose validity range contains this instant are
                 returned; ``None`` means "now" (resolved at call time).
                 Episodes are not temporally validatable and ignore this.
-                The graph-BFS leg is as-of-approximate by design and also
-                ignores it.
+                The graph-BFS leg traverses edges effective at this
+                instant (as-of).
 
         Returns:
             A dict with:
@@ -206,7 +206,9 @@ class HybridRetriever:
 
         # Graph BFS via entity name search
         try:
-            entity_results = await self._graph_bfs_search(query, project_id)
+            entity_results = await self._graph_bfs_search(
+                query, project_id, query_time=query_time
+            )
         except SearchLegFailedError:
             raise
         except Exception as exc:
@@ -598,6 +600,7 @@ class HybridRetriever:
         self,
         query: str,
         project_id: UUID,
+        query_time: datetime | None = None,
     ) -> list[dict[str, Any]]:
         """BFS traversal from entities across all configured graph backends.
 
@@ -611,6 +614,10 @@ class HybridRetriever:
         Args:
             query: Natural-language query for entity matching.
             project_id: Scoped user UUID.
+            query_time: Effective-at instant for edge traversal.  Passed
+                as ``as_of`` to each backend's ``retrieve_graph`` — edges
+                whose validity range does not contain this instant are
+                not traversed.  ``None`` resolves to now in the backend.
 
         Returns:
             A list of entity dicts with ``id``, ``name``, ``type``,
@@ -630,20 +637,17 @@ class HybridRetriever:
             )
             return []
 
-        # ponytail: graph BFS is as-of-approximate — backends return entity
-        # summaries without validity timestamps, so no temporal filtering is
-        # applied here. Facts (the only temporally-validated source) are
-        # filtered in the vector/BM25 legs; if graph facts become temporal,
-        # filter by as_of inside the backend traversal instead.
-
-        # Run each backend's retrieve_graph in parallel — failure in any
-        # backend propagates immediately (no silent degradation).
+        # The graph BFS leg is now as-of-accurate: the same ``query_time``
+        # the fact legs filter on is threaded through as ``as_of`` so a
+        # historical query sees the graph exactly as it was at that
+        # instant, not the current topology.
         results = await asyncio.gather(
             *[
                 backend.retrieve_graph(
                     org_id=self._org_id,
                     project_id=project_id,
                     query=query,
+                    as_of=query_time,
                 )
                 for backend in self._graph_backends
             ],

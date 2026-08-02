@@ -28,14 +28,19 @@ import base64
 import re
 from collections import deque
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
 import orjson
 import structlog
 from surrealdb import AsyncSurreal, RecordID
-from surrealdb.errors import InternalError, SurrealError, parse_query_error
+from surrealdb.errors import (
+    InternalError,
+    NotFoundError as SurrealNotFoundError,
+    SurrealError,
+    parse_query_error,
+)
 
 from core.exceptions import ExternalServiceError, GraphBackendUnavailableError, NotFoundError
 from packages.graph_backend.interface import GraphBackend
@@ -836,6 +841,7 @@ class SurrealGraphBackend(GraphBackend):
         start_node_id: UUID,
         max_depth: int = 2,
         edge_types: list[str] | None = None,
+        as_of: datetime | None = None,
     ) -> list[dict]:
         """Traverse the graph outward from a starting node.
 
@@ -843,9 +849,14 @@ class SurrealGraphBackend(GraphBackend):
         deep recursion issues.  At each hop, native SurrealDB arrow syntax
         (``->{type}->entity``) is used for O(1) neighbour discovery.
 
+        Edges are filtered by effective-at validity: only edges with
+        ``invalid_at`` unset or after ``as_of``, and within their natural
+        ``[valid_from, valid_to]`` window at ``as_of``, are followed.
+
         Args:
             edge_types: ``None`` = all edge types; empty list = no edges
                 (returns just the start node); specific list = filter by type.
+            as_of: Effective-at timestamp (UTC).  ``None`` means now.
 
         Returns:
             List of node dicts with a ``depth`` key (0 = start node).
@@ -862,6 +873,10 @@ class SurrealGraphBackend(GraphBackend):
             return [start]
 
         max_depth = min(max_depth, self._max_depth)
+        # SurrealDB evaluates ``x > NULL`` as true — the comparison operand
+        # must always be a concrete timestamp, never a NULL bound parameter.
+        as_of = as_of or datetime.now(timezone.utc)
+        as_of_str = as_of.isoformat()
         visited: set[str] = set()
         queue: deque[tuple[str, int]] = deque()
         queue.append((str(start_node_id), 0))
@@ -881,25 +896,47 @@ class SurrealGraphBackend(GraphBackend):
             if depth >= max_depth:
                 continue
 
-            # Discover neighbours via native SurrealQL arrow syntax
+            # Discover neighbours via native SurrealQL arrow syntax.
+            # The square-bracket filter applies to the intermediate EDGE
+            # records before the next arrow is followed (SurrealQL graph-edge
+            # filter syntax), so expired / temporally-out-of-window edges are
+            # never traversed.
             try:
+                edge_filter = (
+                    "(invalid_at IS NONE OR invalid_at > $as_of) "
+                    "AND (valid_from IS NONE OR valid_from <= $as_of) "
+                    "AND (valid_to IS NONE OR valid_to >= $as_of)"
+                )
                 if edge_types is not None:
                     neighbour_ids: set[str] = set()
                     for et in edge_types:
                         safe_et = self._sanitize_edge_type(et)
                         et_result = await self._surreal.query(
-                            f"SELECT VALUE ->{safe_et}->entity.id FROM $current_id;",
-                            {"current_id": RecordID("entity", current_id)},
+                            f"SELECT VALUE ->{safe_et}[WHERE {edge_filter}]->entity.id FROM $current_id;",
+                            {"current_id": RecordID("entity", current_id), "as_of": as_of_str},
                         )
-                        for row in (et_result if et_result is not None else []):
+                        # SDK 2.0 returns a graph-traversal VALUE as a nested
+                        # array ([[RecordID, ...]]); older shapes were flat.
+                        # Handle both so the filter actually runs on real data.
+                        rows = (
+                            et_result[0]
+                            if et_result and isinstance(et_result[0], list)
+                            else et_result
+                        )
+                        for row in (rows if rows is not None else []):
                             neighbour_ids.add(self._record_id_to_str(row))
                 else:
                     et_result = await self._surreal.query(
-                        "SELECT VALUE ->?->entity.id FROM $current_id;",
-                        {"current_id": RecordID("entity", current_id)},
+                        f"SELECT VALUE ->?[WHERE {edge_filter}]->entity.id FROM $current_id;",
+                        {"current_id": RecordID("entity", current_id), "as_of": as_of_str},
                     )
                     neighbour_ids = set()
-                    for row in (et_result if et_result is not None else []):
+                    rows = (
+                        et_result[0]
+                        if et_result and isinstance(et_result[0], list)
+                        else et_result
+                    )
+                    for row in (rows if rows is not None else []):
                         neighbour_ids.add(self._record_id_to_str(row))
 
                 for nid in neighbour_ids:
@@ -1167,6 +1204,7 @@ class SurrealGraphBackend(GraphBackend):
         match_limit: int = 5,
         max_depth: int = 2,
         max_results: int = 50,
+        as_of: datetime | None = None,
     ) -> list[dict]:
         """Search entities matching query, then BFS-traverse outward.
 
@@ -1176,6 +1214,10 @@ class SurrealGraphBackend(GraphBackend):
           2. For each matched entity, BFS-traverse to depth ``max_depth``.
           3. Deduplicate by entity id, shape results with distance key.
           4. Sort by distance ascending and limit.
+
+        Args:
+            as_of: Effective-at timestamp (UTC) for edge filtering — only
+                edges valid at ``as_of`` are traversed.  ``None`` = now.
 
         Returns:
             Entity dicts with ``id``, ``name``, ``type``, ``summary``, and
@@ -1223,11 +1265,15 @@ class SurrealGraphBackend(GraphBackend):
                     continue
 
                 try:
+                    traverse_kwargs: dict[str, Any] = (
+                        {"as_of": as_of} if as_of is not None else {}
+                    )
                     related = await self.traverse(
                         org_id=org_id,
                         project_id=project_id,
                         start_node_id=eid,
                         max_depth=max_depth,
+                        **traverse_kwargs,
                     )
                 except Exception as exc:
                     logger.error(
@@ -2635,5 +2681,123 @@ class SurrealGraphBackend(GraphBackend):
                 detail={
                     "org_id": str(org_id),
                     "relationship_id": str(relationship_id),
+                },
+            ) from exc
+
+    async def expire_relationships_matching(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        *,
+        source_id: UUID,
+        target_id: UUID,
+        relationship_type: str,
+        at_time: datetime,
+    ) -> int:
+        """Set ``invalid_at = at_time`` on all active edges matching the triple.
+
+        Edges live in the per-type table named after ``relationship_type``
+        (sanitized like :meth:`create_relationship`), so this updates that
+        table directly — ``in``/``out`` are the edge's source/target
+        RecordIDs.  Only ``invalid_at`` is written; ``valid_to`` keeps its
+        natural expiry.  Idempotent: the ``invalid_at IS NONE`` predicate
+        means a replay matches zero records and returns 0.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            source_id: UUID of the edge source (fact subject entity).
+            target_id: UUID of the edge target (fact object entity).
+            relationship_type: Edge label — the edge table name.
+            at_time: Deterministic supersession instant (UTC), written to
+                ``invalid_at`` verbatim.
+
+        Returns:
+            Number of edges invalidated by this call (0 on replay).
+
+        Raises:
+            ValueError: If ``relationship_type`` contains unsafe characters.
+            ExternalServiceError: If the UPDATE fails for any other reason.
+        """
+        await self._ensure_schema()
+        self._require_connection()
+
+        safe_type = self._sanitize_edge_type(relationship_type)
+        params: dict[str, Any] = {
+            "org_id": str(org_id),
+            "project_id": str(project_id),
+            "source_id": RecordID("entity", str(source_id)),
+            "target_id": RecordID("entity", str(target_id)),
+            "at_time": at_time.isoformat(),
+        }
+
+        # `UPDATE` on a table that was never created raises the surrealdb
+        # NotFoundError — no edges of this type exist anywhere, so there is
+        # nothing to expire.  (Aliased as SurrealNotFoundError because the
+        # module-scope `NotFoundError` name is core.exceptions.NotFoundError.)
+        try:
+            result = await self._surreal.query(
+                f"""
+                UPDATE {safe_type}
+                SET invalid_at = $at_time, updated_at = time::now()
+                WHERE in = $source_id
+                  AND out = $target_id
+                  AND organization_id = $org_id
+                  AND project_id = $project_id
+                  AND invalid_at IS NONE
+                RETURN BEFORE;
+                """,
+                params,
+            )
+            updated = result if result is not None else []
+            expired = len(updated)
+
+            logger.info(
+                "surreal_graph.relationships_expired_matching",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "source_id": str(source_id),
+                    "target_id": str(target_id),
+                    "type": relationship_type,
+                    "count": expired,
+                },
+            )
+            return expired
+        except SurrealNotFoundError as exc:
+            # No edge table for this type has ever been created — zero edges
+            # can match the triple, which is the same result as a clean replay.
+            logger.info(
+                "surreal_graph.expire_relationships_matching.no_such_table",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "relationship_type": relationship_type,
+                    "error": str(exc),
+                },
+            )
+            return 0
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.expire_relationships_matching_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "source_id": str(source_id),
+                    "target_id": str(target_id),
+                    "relationship_type": relationship_type,
+                    "at_time": at_time.isoformat(),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=(
+                    f"Failed to expire relationships matching "
+                    f"({source_id}, {target_id}, {relationship_type}): {exc}"
+                ),
+                detail={
+                    "org_id": str(org_id),
+                    "source_id": str(source_id),
+                    "target_id": str(target_id),
                 },
             ) from exc

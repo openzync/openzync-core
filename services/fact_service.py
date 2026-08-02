@@ -182,6 +182,12 @@ class FactService:
                 if self._redis is not None
                 else None
             ),
+            # note: graph_sync not wired here — FactService has no
+            # dispatcher/org-config access in the request context.  The
+            # API ingestion path's edge expiry is backfilled by the
+            # reconcile_graph_edges cron; wire a resolved
+            # GraphEdgeSyncService here when org-config resolution is
+            # plumbed into FactService.
         )
         result = await invalidation.ingest_with_supersession(
             org_id=org_id,

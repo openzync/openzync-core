@@ -53,9 +53,12 @@ from core.events import EventType
 from middleware.metrics import facts_superseded_total
 from models.fact import Fact
 from repositories.fact_repository import FactRepository
+from services.graph_edge_sync_service import make_supersession_event
 
 if TYPE_CHECKING:
+    from packages.graph_backend.interface import GraphBackend
     from services.cache_service import CacheService
+    from services.graph_edge_sync_service import GraphEdgeSyncService, SupersessionEvent
     from services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
@@ -135,6 +138,10 @@ class FactInvalidationService:
             when provided (API path).
         cache_service: Optional — purges the project context-cache
             prefix when provided (API path).
+        graph_sync: Optional — synchronises edge expiry into the graph
+            backends post-commit per the D1 rule (see
+            :class:`GraphEdgeSyncService`).  ``None`` (default) disables
+            graph synchronisation.
     """
 
     def __init__(
@@ -144,11 +151,13 @@ class FactInvalidationService:
         *,
         webhook_service: WebhookService | None = None,
         cache_service: CacheService | None = None,
+        graph_sync: GraphEdgeSyncService | None = None,
     ) -> None:
         self._db = db
         self._fact_repo = fact_repo
         self._webhook_service = webhook_service
         self._cache_service = cache_service
+        self._graph_sync = graph_sync
         self._pending_effects: list[Callable[[], Awaitable[None]]] = []
         self._events_attached = False
 
@@ -275,14 +284,14 @@ class FactInvalidationService:
         superseded_count = 0
         closed_ids: set[UUID] = set()
         in_batch: dict[IdentityKey, list[Fact]] = defaultdict(list)
-        # (old_fact_id, new_fact_id, triple) — resolved at pairing time so
-        # repeated identities in one batch pair each old fact with the
-        # exact new fact that replaced it.
-        supersession_events: list[tuple[UUID, UUID, dict]] = []
+        # One event per old-fact → successor transition, carrying the edge
+        # key and the same-key re-assertion flag so the graph sync can
+        # apply the D1 rule post-commit (see ``SupersessionEvent``).
+        supersession_events: list[SupersessionEvent] = []
 
         # ── 2a. Batch-safe identities: supersede, then one bulk insert ────
         batch_rows: list[dict] = []
-        batch_entries_kept: list[tuple[dict, list[UUID]]] = []
+        batch_entries_kept: list[tuple[dict, list[Fact]]] = []
         for entry in batch_entries:
             conflicts = [
                 c
@@ -297,7 +306,7 @@ class FactInvalidationService:
                 closed_ids.add(c.id)
                 superseded_count += 1
             batch_rows.append(entry["row"])
-            batch_entries_kept.append((entry, [c.id for c in conflicts]))
+            batch_entries_kept.append((entry, conflicts))
 
         if batch_rows:
             created.extend(await self._insert_rows(
@@ -306,12 +315,14 @@ class FactInvalidationService:
         created_by_identity: dict[IdentityKey, list[Fact]] = defaultdict(list)
         for fact in created:
             created_by_identity[self._identity_of_fact(fact)].append(fact)
-        for entry, old_ids in batch_entries_kept:
+        for entry, old_facts in batch_entries_kept:
             new_rows = created_by_identity.get(entry["identity"], [])
             if not new_rows:  # row skipped by ON CONFLICT — nothing to pair
                 continue
-            for old_id in old_ids:
-                supersession_events.append((old_id, new_rows[0].id, entry["triple"]))
+            for old_fact in old_facts:
+                supersession_events.append(
+                    make_supersession_event(old_fact, new_rows[0], entry["triple"])
+                )
 
         # ── 2b. Repeated identities: sequential supersede + insert ────────
         for entry in sequential_entries:
@@ -327,10 +338,10 @@ class FactInvalidationService:
             if any(c.content == entry["row"]["content"] for c in conflicts):
                 skipped_count += 1
                 continue
-            old_ids: list[UUID] = []
+            old_facts: list[Fact] = []
             for c in conflicts:
                 await self._fact_repo.set_valid_to(c.id, now)
-                old_ids.append(c.id)
+                old_facts.append(c)
                 superseded_count += 1
                 if c in in_batch.get(identity, ()):
                     in_batch[identity].remove(c)
@@ -347,9 +358,9 @@ class FactInvalidationService:
             if inserted:
                 in_batch[identity].extend(inserted)
                 created.extend(inserted)
-                for old_id in old_ids:
+                for old_fact in old_facts:
                     supersession_events.append(
-                        (old_id, inserted[0].id, entry["triple"])
+                        make_supersession_event(old_fact, inserted[0], entry["triple"])
                     )
 
         # ── 3. Post-commit side effects (deferred to the real commit) ──────
@@ -371,16 +382,30 @@ class FactInvalidationService:
                     )
                 )
         if supersession_events and self._webhook_service is not None:
-            for old_id, new_id, triple in supersession_events:
+            for event in supersession_events:
+                if event.new_fact_id is None:
+                    continue  # retraction — no successor, nothing to webhook
                 self._queue_post_commit_effect(
                     self._make_webhook_effect(
                         org_id=org_id,
                         project_id=project_id,
-                        old_id=old_id,
-                        new_id=new_id,
-                        triple=triple,
+                        old_id=event.old_fact_id,
+                        new_id=event.new_fact_id,
+                        triple=event.triple,
                     )
                 )
+        # Edge expiry synchronisation — queued alongside the webhook/cache
+        # effects so it fires only after the caller's commit (a rolled-back
+        # transaction emits no edge expiries either).
+        if supersession_events and self._graph_sync is not None:
+            self._queue_post_commit_effect(
+                self._make_graph_sync_effect(
+                    org_id=org_id,
+                    project_id=project_id,
+                    events=supersession_events,
+                    at_time=now,
+                )
+            )
 
         logger.info(
             "fact_invalidation.ingested",
@@ -563,6 +588,110 @@ class FactInvalidationService:
                 )
             finally:
                 if fresh is not None:
+                    await fresh.close()
+
+        return _effect
+
+    def notify_retraction(
+        self,
+        *,
+        org_id: UUID,
+        project_id: UUID,
+        old_fact: object,
+        at_time: datetime,
+    ) -> None:
+        """Queue the graph edge-sync effect for a retracted fact.
+
+        Routes future ``invalid_at`` retraction paths through the same
+        post-commit effect as supersession.  A retracted fact has no
+        successor, so the D1 rule expires any edge it asserted
+        (case 1 — no successor re-asserts the fact).
+
+        Args:
+            org_id: Tenant scope.
+            project_id: Project scope.
+            old_fact: The retracted fact — entity ID attributes are read
+                for the edge key.
+            at_time: The retraction instant (deterministic, never a fresh
+                clock read).
+        """
+        if self._graph_sync is None:
+            return
+        events = [make_supersession_event(old_fact, None, {})]
+        self._queue_post_commit_effect(
+            self._make_graph_sync_effect(
+                org_id=org_id,
+                project_id=project_id,
+                events=events,
+                at_time=at_time,
+            )
+        )
+
+    def _make_graph_sync_effect(
+        self,
+        *,
+        org_id: UUID,
+        project_id: UUID,
+        events: list[SupersessionEvent],
+        at_time: datetime,
+    ) -> Callable[[], Awaitable[None]]:
+        """Build the post-commit graph edge-sync effect.
+
+        The effect runs once the caller's transaction has committed —
+        the after_commit queue already guarantees a rolled-back
+        transaction emits nothing.  Postgres backends bound to the
+        request session are rebuilt against a fresh session (by the time
+        this effect fires the request session is mid-teardown — the same
+        pattern as the webhook effect) and the expiry is committed in
+        that fresh session.  Failures propagate to
+        ``_run_pending_effects`` which logs them loudly; the fact commit
+        is already durable and unaffected.
+
+        Args:
+            org_id: Tenant scope.
+            project_id: Project scope.
+            events: Supersession transitions recorded during ingest.
+            at_time: The supersession instant (deterministic).
+        """
+        from packages.graph_backend.postgres import PostgresGraphBackend
+        from services.graph_edge_sync_service import GraphEdgeSyncService
+
+        async def _effect() -> None:
+            sync = self._graph_sync
+            if sync is None:
+                return
+            fresh_sessions: list[AsyncSession] = []
+            try:
+                rebuilt: list[GraphBackend] = []
+                for backend in sync.backends:
+                    if (
+                        isinstance(backend, PostgresGraphBackend)
+                        and getattr(backend, "_db", None) is self._db
+                    ):
+                        fresh = AsyncSession(
+                            bind=self._db.bind, expire_on_commit=False
+                        )
+                        fresh_sessions.append(fresh)
+                        rebuilt.append(
+                            PostgresGraphBackend(
+                                db=fresh,
+                                max_traversal_depth=backend._max_depth,
+                            )
+                        )
+                    else:
+                        rebuilt.append(backend)
+                await GraphEdgeSyncService(
+                    backends=rebuilt, arq_pool=sync.arq_pool
+                ).sync_supersessions(
+                    org_id=org_id,
+                    project_id=project_id,
+                    events=events,
+                    at_time=at_time,
+                )
+                for fresh in fresh_sessions:
+                    await fresh.commit()
+            finally:
+                for fresh in fresh_sessions:
                     await fresh.close()
 
         return _effect

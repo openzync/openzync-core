@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
@@ -29,6 +30,7 @@ from services.fact_invalidation_service import (
     FactInvalidationService,
     normalize_identity_term,
 )
+from services.graph_edge_sync_service import GraphEdgeSyncService
 
 pytestmark = pytest.mark.unit
 
@@ -614,3 +616,260 @@ class TestResultContract:
         assert result.inserted_count == 0
         assert result.superseded_count == 0
         assert result.skipped_count == 0
+
+
+class TestGraphEdgeSync:
+    """D1-rule edge expiry — the post-commit effect invokes the sync.
+
+    The graph_sync collaborator receives the supersession events with
+    edge keys; the post-commit effect computes the expire set and calls
+    ``expire_relationships_matching`` on Postgres backends (case 2) or
+    skips entirely (case 3 — successor re-asserts the same key).
+    """
+
+    SRC_ENTITY = UUID("00000000-0000-0000-0000-00000000aaaa")
+    TGT_ENTITY = UUID("00000000-0000-0000-0000-00000000bbbb")
+    OTHER_ENTITY = UUID("00000000-0000-0000-0000-00000000cccc")
+
+    def _make_backend(self) -> Any:
+        from unittest.mock import AsyncMock as _AsyncMock
+        from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
+
+        from packages.graph_backend.postgres import PostgresGraphBackend
+
+        backend = PostgresGraphBackend(db=_AsyncMock(spec=_AsyncSession))
+        backend.expire_relationships_matching = _AsyncMock(return_value=1)
+        return backend
+
+    def _service_with_sync(
+        self, mock_db: AsyncMock, mock_repo: AsyncMock, backend: Any
+    ) -> FactInvalidationService:
+        sync = GraphEdgeSyncService(backends=[backend])
+        return FactInvalidationService(
+            db=mock_db, fact_repo=mock_repo, graph_sync=sync
+        )
+
+    @pytest.mark.asyncio
+    async def test_same_key_successor_skips_expiry(
+        self, mock_db: AsyncMock, mock_repo: AsyncMock
+    ) -> None:
+        """Case 3 — successor re-asserts the same edge key: no expiry."""
+        candidate = _fact(
+            subject_entity_id=self.SRC_ENTITY,
+            object_entity_id=self.TGT_ENTITY,
+            predicate="works_at",
+        )
+        mock_repo.find_conflicting_active_for_update.return_value = [candidate]
+        mock_repo.batch_create.return_value = [
+            _fact(
+                id=FACT_2_ID,
+                subject_entity_id=self.SRC_ENTITY,
+                object_entity_id=self.TGT_ENTITY,
+                predicate="works_at",
+            )
+        ]
+        backend = self._make_backend()
+        service = self._service_with_sync(mock_db, mock_repo, backend)
+
+        await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[
+                _triple(
+                    subject_entity_id=str(self.SRC_ENTITY),
+                    predicate="works_at",
+                    object_entity_id=str(self.TGT_ENTITY),
+                )
+            ],
+            now=NOW,
+        )
+        # Pre-commit: nothing fired.
+        backend.expire_relationships_matching.assert_not_awaited()
+
+        await _commit(service, mock_db)
+
+        # Case 3 — the edge survives, no expiry call.
+        backend.expire_relationships_matching.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_literal_facts_never_expire(
+        self, mock_db: AsyncMock, mock_repo: AsyncMock
+    ) -> None:
+        """Literal subject/object — no edge key, no expiry even on supersession."""
+        candidate = _fact(content="Alice likes hiking")
+        mock_repo.find_conflicting_active_for_update.return_value = [candidate]
+        mock_repo.batch_create.return_value = [
+            _fact(id=FACT_2_ID, content="Alice loves hiking")
+        ]
+        backend = self._make_backend()
+        service = self._service_with_sync(mock_db, mock_repo, backend)
+
+        await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[_triple(content="Alice loves hiking")],
+            now=NOW,
+        )
+        await _commit(service, mock_db)
+        backend.expire_relationships_matching.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_identity_mismatch_does_not_supersede(
+        self, mock_db: AsyncMock, mock_repo: AsyncMock
+    ) -> None:
+        """Different edge keys at ingest are DIFFERENT identities — no event.
+
+        The supersession conflict identity is the triple key itself
+        (entity UUIDs when resolved): a fact asserting ``(SRC, pred,
+        OTHER)`` does not supersede ``(SRC, pred, TGT)``, so no
+        supersession event is recorded and nothing is expired.  The
+        D1-rule case 2 (successor asserting a different key) is handled
+        by the sync service for events that ARE recorded with differing
+        keys — see ``test_graph_edge_sync_service.py``.
+        """
+        candidate = _fact(
+            subject_entity_id=self.SRC_ENTITY,
+            object_entity_id=self.TGT_ENTITY,
+            predicate="works_at",
+        )
+        mock_repo.find_conflicting_active_for_update.return_value = [candidate]
+        mock_repo.batch_create.return_value = [
+            _fact(
+                id=FACT_2_ID,
+                subject_entity_id=self.SRC_ENTITY,
+                object_entity_id=self.OTHER_ENTITY,
+                predicate="works_at",
+            )
+        ]
+        backend = self._make_backend()
+        service = self._service_with_sync(mock_db, mock_repo, backend)
+
+        result = await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[
+                _triple(
+                    subject_entity_id=str(self.SRC_ENTITY),
+                    predicate="works_at",
+                    object_entity_id=str(self.OTHER_ENTITY),
+                )
+            ],
+            now=NOW,
+        )
+        assert result.superseded_count == 0
+        await _commit(service, mock_db)
+        backend.expire_relationships_matching.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_retraction_effect_expires_edge(
+        self, mock_db: AsyncMock, mock_repo: AsyncMock
+    ) -> None:
+        """notify_retraction routes the D1 case-1 expiry through the same effect."""
+        backend = self._make_backend()
+        service = self._service_with_sync(mock_db, mock_repo, backend)
+
+        old_fact = _fact(
+            subject_entity_id=self.SRC_ENTITY,
+            object_entity_id=self.TGT_ENTITY,
+            predicate="works_at",
+        )
+        service.notify_retraction(
+            org_id=ORG_ID, project_id=PROJECT_ID, old_fact=old_fact, at_time=NOW
+        )
+        backend.expire_relationships_matching.assert_not_awaited()
+
+        await _commit(service, mock_db)
+
+        backend.expire_relationships_matching.assert_awaited_once_with(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            source_id=self.SRC_ENTITY,
+            target_id=self.TGT_ENTITY,
+            relationship_type="works_at",
+            at_time=NOW,
+        )
+
+    @pytest.mark.asyncio
+    async def test_sync_effect_dropped_on_rollback(
+        self, mock_db: AsyncMock, mock_repo: AsyncMock
+    ) -> None:
+        """A rolled-back transaction must not fire edge expiries either."""
+        candidate = _fact(
+            subject_entity_id=self.SRC_ENTITY,
+            object_entity_id=self.TGT_ENTITY,
+            predicate="works_at",
+        )
+        mock_repo.find_conflicting_active_for_update.return_value = [candidate]
+        mock_repo.batch_create.return_value = [
+            _fact(
+                id=FACT_2_ID,
+                subject_entity_id=self.SRC_ENTITY,
+                object_entity_id=self.TGT_ENTITY,
+                predicate="works_at",
+            )
+        ]
+        backend = self._make_backend()
+        service = self._service_with_sync(mock_db, mock_repo, backend)
+
+        await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[
+                _triple(
+                    subject_entity_id=str(self.SRC_ENTITY),
+                    predicate="works_at",
+                    object_entity_id=str(self.TGT_ENTITY),
+                )
+            ],
+            now=NOW,
+        )
+        assert service._pending_effects, "sync effect must be queued"
+
+        service._on_after_rollback(mock_db.sync_session)
+        await _commit(service, mock_db)
+        backend.expire_relationships_matching.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_graph_sync_collaborator_is_noop(
+        self, mock_db: AsyncMock, mock_repo: AsyncMock
+    ) -> None:
+        """Without a graph_sync collaborator the effect is never queued."""
+        candidate = _fact(
+            subject_entity_id=self.SRC_ENTITY,
+            object_entity_id=self.TGT_ENTITY,
+            predicate="works_at",
+        )
+        mock_repo.find_conflicting_active_for_update.return_value = [candidate]
+        mock_repo.batch_create.return_value = [
+            _fact(
+                id=FACT_2_ID,
+                subject_entity_id=self.SRC_ENTITY,
+                object_entity_id=self.OTHER_ENTITY,
+                predicate="works_at",
+            )
+        ]
+        service = FactInvalidationService(db=mock_db, fact_repo=mock_repo)
+
+        await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[
+                _triple(
+                    subject_entity_id=str(self.SRC_ENTITY),
+                    predicate="works_at",
+                    object_entity_id=str(self.OTHER_ENTITY),
+                )
+            ],
+            now=NOW,
+        )
+        # Only the metric effect is queued — no graph sync effects.
+        assert not any(
+            "graph" in getattr(e, "__qualname__", "").lower()
+            for e in service._pending_effects
+        )
+        await _commit(service, mock_db)
