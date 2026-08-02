@@ -84,3 +84,34 @@ class TestContextService:
         meta = result["metadata"]
         assert "source_counts" in meta
         assert "assembly_time_ms" in meta
+
+    def _build_with_org_config(
+        self, org_config: OrgConfigBase | None,
+    ) -> ContextService:
+        """Construct a ContextService with a given (possibly None) org config."""
+        svc = ContextService(
+            db=AsyncMock(),
+            org_id=self.ORG_ID,
+            redis=AsyncMock(),
+            org_config=org_config,
+        )
+        # Swap in a mocked retriever so construction side effects don't matter.
+        svc._retriever = AsyncMock(spec=HybridRetriever)
+        return svc
+
+    def test_constructs_without_org_config(self) -> None:
+        """Bootstrap orgs with no config fall back to the default cache TTL."""
+        svc = self._build_with_org_config(None)
+        assert svc._cache is not None
+        assert svc._cache._default_ttl == 300
+
+    def test_constructs_with_null_context_cache_ttl(self) -> None:
+        """Orgs with a null context_cache_ttl fall back to the default TTL."""
+        svc = self._build_with_org_config(OrgConfigBase(context_cache_ttl=None))
+        assert svc._cache is not None
+        assert svc._cache._default_ttl == 300
+
+    def test_cache_service_still_rejects_none_ttl(self) -> None:
+        """The CacheService guard is intact — the caller must coalesce."""
+        with pytest.raises(ValueError):
+            CacheService(AsyncMock(), default_ttl=None)

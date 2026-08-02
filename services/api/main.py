@@ -237,7 +237,9 @@ def create_app() -> FastAPI:
     )
 
     # ── Routers ──────────────────────────────────────────────────────────
-    app.include_router(health.router, prefix="/v1", tags=["Health"])
+    # Health must live at ROOT (not /v1) — Helm/NGINX probes target /health
+    # and /ready; the /v1 prefix made them 404 on deployed instances.
+    app.include_router(health.router, tags=["Health"])
     app.include_router(admin.router)
     app.include_router(admin_metrics.router)
     app.include_router(admin_schemas.router)

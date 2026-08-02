@@ -145,17 +145,17 @@ echo "╚═══════════════════════�
 title "PHASE 1: Bootstrap & Health"
 
 step "1.1 — Health check"
-HTTP_CODE=$(curl_retry -o /tmp/e2e_health.json -w "%{http_code}" "$BASE_URL/v1/health")
-check_http 200 "$HTTP_CODE" "GET /v1/health"
+HTTP_CODE=$(curl_retry -o /tmp/e2e_health.json -w "%{http_code}" "$BASE_URL/health")
+check_http 200 "$HTTP_CODE" "GET /health"
 
 step "1.2 — Readiness check"
-HTTP_CODE=$(curl_retry -o /tmp/e2e_ready.json -w "%{http_code}" "$BASE_URL/v1/ready")
+HTTP_CODE=$(curl_retry -o /tmp/e2e_ready.json -w "%{http_code}" "$BASE_URL/ready")
 # 200 or 503 (degraded) are both acceptable
 if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "503" ]; then
-  ok "GET /v1/ready (HTTP $HTTP_CODE)"
+  ok "GET /ready (HTTP $HTTP_CODE)"
   PASS_COUNT=$((PASS_COUNT + 1))
 else
-  fail "GET /v1/ready — expected 200 or 503, got $HTTP_CODE"
+  fail "GET /ready — expected 200 or 503, got $HTTP_CODE"
 fi
 
 step "1.3 — Bootstrap organization"

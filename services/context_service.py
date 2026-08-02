@@ -37,6 +37,15 @@ from services.blob_storage_service import BlobStorageService
 
 logger = structlog.get_logger()
 
+DEFAULT_CONTEXT_CACHE_TTL: int = 300
+"""Fallback context-cache TTL for orgs that have not configured one.
+
+Matches ``context_cache_ttl: 300`` in ``config/defaults/org_config.yaml``.
+A fresh/bootstrap org has a ``None`` org config (or ``None``
+``context_cache_ttl``) — coalesce to this default instead of passing
+``None`` into ``CacheService`` (which rejects it with ``ValueError``).
+"""
+
 
 def _preview(items: list[dict[str, Any]], max_chars: int = 500) -> str | None:
     """Build a compact preview string for the top result in a list.
@@ -95,8 +104,13 @@ class ContextService:
             db, org_id, redis, graph_backends=graph_backends, org_config=org_config,
             reranker=reranker,
         )
+        cache_ttl = (
+            org_config.context_cache_ttl
+            if org_config is not None and org_config.context_cache_ttl is not None
+            else DEFAULT_CONTEXT_CACHE_TTL
+        )
         self._cache = (
-            CacheService(redis, default_ttl=org_config.context_cache_ttl if org_config else None)
+            CacheService(redis, default_ttl=cache_ttl)
             if redis
             else None
         )
@@ -273,7 +287,9 @@ class ContextService:
         # Step 4 — Cache result
         # ═══════════════════════════════════════════════════════════════════
         if self._cache is not None and cache_key is not None:
-            await self._cache.set(cache_key, context_str, ttl=30)
+            # Omit ttl — CacheService falls back to default_ttl, which was
+            # seeded from the org's configured context_cache_ttl at __init__.
+            await self._cache.set(cache_key, context_str)
 
         elapsed = (time.monotonic() - start) * 1000
         context_latency_seconds.labels(type="cold").observe(elapsed / 1000)

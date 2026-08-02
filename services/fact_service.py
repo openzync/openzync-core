@@ -249,6 +249,9 @@ class FactService:
 
         Used for content-level deduplication: identical fact batches from
         different clients produce the same hash and return the same job_id.
+        ``content`` is part of the fact identity — two batches with the same
+        subject/predicate/object but different content hash differently, so
+        newer content is never dropped by the dedup short-circuit.
 
         Args:
             project_id: The project's UUID.
@@ -267,6 +270,12 @@ class FactService:
                             "predicate": f.predicate,
                             "object": f.object,
                             "confidence": f.confidence,
+                            # Mirrors the content fallback used at ingest time
+                            # (ingest_facts Step 4) so the hash matches what
+                            # is actually persisted.
+                            "content": (
+                                f.content or f"{f.subject} {f.predicate} {f.object}"
+                            ).strip(),
                         }
                         for f in facts
                     ],

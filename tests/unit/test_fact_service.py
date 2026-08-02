@@ -124,3 +124,38 @@ class TestFactService:
         assert "not found" in exc_info.value.message
         service._session_repo.get_by_external_id.assert_awaited_once()
         service._fact_repo.batch_create.assert_not_awaited()
+
+    # ── _compute_batch_hash regression tests ─────────────────────────────
+    # Intentional change: content is now part of the batch identity. Two
+    # batches with the same SPO set but different content MUST hash
+    # differently, otherwise the Redis dedup short-circuit silently drops
+    # newer content before supersession can run.
+
+    def _hash(self, *triples: FactTriple) -> str:
+        return FactService._compute_batch_hash(self.PROJECT_ID, list(triples))
+
+    def test_batch_hash_identical_for_identical_batches(self) -> None:
+        """Same SPO + same content yields the same hash."""
+        facts = [
+            self._sample_triple(subject="Alice", predicate="likes", object="hiking"),
+            self._sample_triple(subject="Bob", predicate="works_at", object="AcmeCorp"),
+        ]
+        assert self._hash(*facts) == self._hash(*facts)
+
+    def test_batch_hash_differs_for_same_spo_different_content(self) -> None:
+        """Same SPO but different content must yield a different hash."""
+        base = self._sample_triple(subject="Alice", predicate="likes", object="hiking")
+        same_spo_different_content = self._sample_triple(
+            subject="Alice",
+            predicate="likes",
+            object="hiking",
+            content="Alice absolutely loves hiking every weekend",
+        )
+        assert self._hash(base) != self._hash(same_spo_different_content)
+
+    def test_batch_hash_ignores_surrounding_whitespace_in_content(self) -> None:
+        """Content is stripped before hashing — whitespace-only differences
+        are not part of the identity."""
+        trimmed = self._sample_triple(content="Python is great")
+        padded = self._sample_triple(content="   Python is great   ")
+        assert self._hash(trimmed) == self._hash(padded)
