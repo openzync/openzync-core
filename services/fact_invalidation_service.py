@@ -14,9 +14,17 @@ with a single supersession state machine:
 The service never commits — the caller's transaction (worker session or
 request-scoped session) is the single commit point, which is what makes
 the truncate + insert atomic.  Post-insert side effects (superseded
-webhook, context-cache purge) run when collaborators are provided; embed
-enqueueing stays with the callers, who already own per-path ``job_id`` /
+webhook, context-cache purge, metric) are queued and fire on the
+session's ``after_commit`` event — never before the caller's commit, so
+a rolled-back transaction emits no phantom events.  Embed enqueueing
+stays with the callers, who already own per-path ``job_id`` /
 ``trace_id`` semantics.
+
+Concurrency: writers take a PostgreSQL advisory xact lock per distinct
+conflict identity before the conflict scan (``lock_conflict_identities``
+in the repository).  ``FOR UPDATE`` cannot lock a row that does not
+exist yet; the advisory lock serializes the scan+insert so two
+concurrent writers for the same identity never coexist silently.
 
 Conflict identity: ``(subject_entity_id, predicate, object_entity_id)``
 when both entity IDs resolve, else normalized ``(subject, predicate,
@@ -27,15 +35,19 @@ punctuation).
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Literal
+from functools import partial
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
 from uuid import UUID
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 
 from core.events import EventType
 from middleware.metrics import facts_superseded_total
@@ -80,6 +92,15 @@ def normalize_identity_term(term: str | None) -> str:
 
 
 IdentityKey = tuple[UUID | str, str, UUID | str]
+
+
+async def _inc_superseded_total(count: int) -> None:
+    """Post-commit metric bump (async wrapper so it queues like the rest).
+
+    Args:
+        count: Number of superseded facts to add to the counter.
+    """
+    facts_superseded_total.inc(count)
 
 
 @dataclass(frozen=True)
@@ -128,6 +149,30 @@ class FactInvalidationService:
         self._fact_repo = fact_repo
         self._webhook_service = webhook_service
         self._cache_service = cache_service
+        self._pending_effects: list[Callable[[], Awaitable[None]]] = []
+        self._events_attached = False
+
+    @staticmethod
+    def _lock_key_for_identity(
+        org_id: UUID, project_id: UUID, identity: IdentityKey
+    ) -> str:
+        """Derive the advisory-lock key for one conflict identity.
+
+        Scoped by org + project so unrelated tenants never block each
+        other on the same triple text.  Identity components are stable by
+        construction (entity UUIDs, or already-normalized strings), so
+        every writer computes the identical key for the same triple.
+
+        Args:
+            org_id: Tenant scope.
+            project_id: Project scope.
+            identity: A conflict identity ``(subject, predicate, object)``.
+
+        Returns:
+            A stable lock key for ``pg_advisory_xact_lock(hashtext(...))``.
+        """
+        subject, predicate, obj = identity
+        return f"sup:{org_id}:{project_id}:{subject}:{predicate}:{obj}"
 
     # ── Public API ──────────────────────────────────────────────────────────────
 
@@ -191,6 +236,22 @@ class FactInvalidationService:
             seen.add(key)
             deduped.append(entry)
         entries = deduped
+
+        # ── 0. Serialize concurrent writers per conflict identity ─────────
+        # FOR UPDATE cannot lock a row that does not exist yet, so two
+        # writers whose scans both come up empty would both insert —
+        # silent coexistence.  An advisory xact lock keyed on the
+        # identity closes that gap: the loser blocks here, and its re-scan
+        # (after the winner commits) sees the winner's row and supersedes.
+        # Sorted acquisition keeps multi-identity batches deadlock-free.
+        lock_keys = sorted(
+            {
+                self._lock_key_for_identity(org_id, project_id, entry["identity"])
+                for entry in entries
+            }
+        )
+        if lock_keys:
+            await self._fact_repo.lock_conflict_identities(lock_keys)
 
         # ── 1. Conflict scan (one query, rows locked until caller commits) ──
         candidates = await self._fact_repo.find_conflicting_active_for_update(
@@ -291,25 +352,34 @@ class FactInvalidationService:
                         (old_id, inserted[0].id, entry["triple"])
                     )
 
-        # ── 3. Post-insert side effects (caller commits afterwards) ────────
+        # ── 3. Post-commit side effects (deferred to the real commit) ──────
+        # The caller owns the commit point, so firing here would emit
+        # phantom FACT_SUPERSEDED events, purge caches, and bump metrics
+        # for transactions the caller later rolls back.  Queue them and
+        # let the session's after_commit hook fire them once the
+        # transaction actually commits; after_rollback drops them.
         if superseded_count:
-            facts_superseded_total.inc(superseded_count)
+            self._queue_post_commit_effect(
+                partial(_inc_superseded_total, superseded_count)
+            )
             if self._cache_service is not None:
-                await self._cache_service.invalidate_project_context(
-                    str(org_id), str(project_id)
+                self._queue_post_commit_effect(
+                    partial(
+                        self._cache_service.invalidate_project_context,
+                        str(org_id),
+                        str(project_id),
+                    )
                 )
         if supersession_events and self._webhook_service is not None:
             for old_id, new_id, triple in supersession_events:
-                await self._webhook_service.emit(
-                    organization_id=org_id,
-                    event_type=EventType.FACT_SUPERSEDED,
-                    payload={
-                        "old_fact_id": str(old_id),
-                        "new_fact_id": str(new_id),
-                        "triple": triple,
-                        "project_id": str(project_id),
-                        "org_id": str(org_id),
-                    },
+                self._queue_post_commit_effect(
+                    self._make_webhook_effect(
+                        org_id=org_id,
+                        project_id=project_id,
+                        old_id=old_id,
+                        new_id=new_id,
+                        triple=triple,
+                    )
                 )
 
         logger.info(
@@ -417,3 +487,133 @@ class FactInvalidationService:
             user_id=user_id,
             facts=rows,
         )
+
+    # ── Post-commit side effects ─────────────────────────────────────────────
+
+    def _queue_post_commit_effect(self, effect: Callable[[], Awaitable[None]]) -> None:
+        """Queue an async effect to run only after the caller commits.
+
+        Attaches the session's one-shot commit hooks on first use; the
+        hooks drain the queue and stay attached (idempotent no-ops) for
+        the session's lifetime, so a reused session never double-fires.
+
+        Args:
+            effect: Zero-argument async callable to run post-commit.
+        """
+        self._pending_effects.append(effect)
+        self._attach_post_commit_events()
+
+    def _make_webhook_effect(
+        self,
+        *,
+        org_id: UUID,
+        project_id: UUID,
+        old_id: UUID,
+        new_id: UUID,
+        triple: dict[str, str],
+    ) -> Callable[[], Awaitable[None]]:
+        """Build the post-commit ``FACT_SUPERSEDED`` webhook effect.
+
+        The endpoint lookup inside ``WebhookService.emit`` runs on the
+        injected service's session.  By the time this effect fires, the
+        request session is mid-teardown (``close()`` races the checkout),
+        so a real service bound to that session is rebuilt against a
+        fresh session for the lookup.  Mocks (unit tests) pass through
+        untouched.
+
+        Args:
+            org_id: Tenant scope (webhook recipients).
+            project_id: Project scope (payload only).
+            old_id: Superseded fact ID (payload only).
+            new_id: Replacing fact ID (payload only).
+            triple: The SPO triple (payload only).
+
+        Returns:
+            An async effect that emits the webhook once the txn commits.
+        """
+        from repositories.webhook_repository import WebhookRepository
+        from services.webhook_service import WebhookService
+
+        payload = {
+            "old_fact_id": str(old_id),
+            "new_fact_id": str(new_id),
+            "triple": triple,
+            "project_id": str(project_id),
+            "org_id": str(org_id),
+        }
+
+        def _reuse() -> bool:
+            return (
+                isinstance(self._webhook_service, WebhookService)
+                and getattr(self._webhook_service, "_repo", None) is not None
+                and getattr(self._webhook_service._repo, "_db", None) is self._db
+            )
+
+        async def _effect() -> None:
+            fresh: AsyncSession | None = None
+            service = self._webhook_service
+            if _reuse():
+                fresh = AsyncSession(bind=self._db.bind, expire_on_commit=False)
+                service = WebhookService(repo=WebhookRepository(fresh))
+            try:
+                await service.emit(
+                    organization_id=org_id,
+                    event_type=EventType.FACT_SUPERSEDED,
+                    payload=payload,
+                )
+            finally:
+                if fresh is not None:
+                    await fresh.close()
+
+        return _effect
+
+    def _attach_post_commit_events(self) -> None:
+        """Attach ``after_commit``/``after_rollback`` hooks to the session.
+
+        Idempotent per service instance.  Listeners stay attached for the
+        session's lifetime (per-request / per-task here) and no-op when
+        the queue is empty — they must never be removed from inside the
+        handler itself, since the event dispatcher iterates the listener
+        list while dispatching.
+        """
+        if self._events_attached:
+            return
+        event.listen(self._db.sync_session, "after_commit", self._on_after_commit)
+        event.listen(self._db.sync_session, "after_rollback", self._on_after_rollback)
+        self._events_attached = True
+
+    def _on_after_commit(self, _session: Session) -> None:
+        """Sync event hook — schedule queued effects once the txn commits.
+
+        Runs inside ``await db.commit()`` where the event loop is active,
+        so the queued async work is dispatched as a task rather than
+        awaited here.  Failures inside that task are logged loudly — the
+        transaction is already committed, so there is nothing left to
+        roll back.  No-op when nothing is queued.
+        """
+        pending, self._pending_effects = self._pending_effects, []
+        if not pending:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            logger.error(
+                "fact_invalidation.post_commit_no_loop",
+                extra={"queued_effects": len(pending)},
+            )
+            return
+        loop.create_task(self._run_pending_effects(pending))
+
+    def _on_after_rollback(self, _session: Session) -> None:
+        """Sync event hook — drop queued effects, the txn was rolled back."""
+        self._pending_effects = []
+
+    async def _run_pending_effects(
+        self, pending: list[Callable[[], Awaitable[None]]]
+    ) -> None:
+        """Await queued post-commit effects, logging any failure loudly."""
+        for effect in pending:
+            try:
+                await effect()
+            except Exception:
+                logger.exception("fact_invalidation.post_commit_effect_failed")

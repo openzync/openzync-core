@@ -373,7 +373,9 @@ class TestAdvisoryLock:
             now=NOW,
         )
         keys = mock_repo.lock_conflict_identities.await_args.args[0]
-        assert keys == [f"sup:{ORG_ID}:{PROJECT_ID}:{subj_entity}:works_at:{obj_entity}"]
+        assert keys == [
+            f"sup:{ORG_ID}:{PROJECT_ID}:{subj_entity}:works_at:{obj_entity}"
+        ]
 
     @pytest.mark.asyncio
     async def test_in_batch_dedup_locks_identity_once(
@@ -524,10 +526,10 @@ class TestSupersededWebhook:
         webhook.emit.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_commit_hooks_attached_and_detached(
+    async def test_commit_hooks_attached_once_and_idempotent(
         self, mock_db: AsyncMock, mock_repo: AsyncMock
     ) -> None:
-        """The one-shot session hooks are attached on queue, removed after firing."""
+        """Hooks attach once; a commit with nothing queued is a no-op."""
         mock_repo.find_conflicting_active_for_update.return_value = [
             _fact(content="Alice likes hiking")
         ]
@@ -552,12 +554,10 @@ class TestSupersededWebhook:
 
         await _commit(service, mock_db)
 
-        assert not event.contains(
-            mock_db.sync_session, "after_commit", service._on_after_commit
-        )
-        assert not event.contains(
-            mock_db.sync_session, "after_rollback", service._on_after_rollback
-        )
+        # A later commit with nothing queued must not double-fire or raise.
+        service._on_after_commit(mock_db.sync_session)
+        await asyncio.sleep(0)
+        assert not service._pending_effects
 
     @pytest.mark.asyncio
     async def test_entity_id_identity_used_when_present(

@@ -224,7 +224,8 @@ class FactRepository:
             on_conflict: What to do when a row violates the temporal
                 exclusion constraint ``uq_facts_temporal_excl``.
                 ``"error"`` (default) — let the exclusion constraint raise
-                ``IntegrityError``, propagating to the global 409 handler.
+                ``IntegrityError``, which propagates to the caller (the
+                service/router layer maps it to an HTTP response).
                 ``"skip"`` — use ``ON CONFLICT DO NOTHING``; conflicting
                 rows are silently omitted from the result.
 
@@ -359,26 +360,30 @@ class FactRepository:
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
         now = datetime.now(timezone.utc)
-        rows = [
-            {
-                "user_id": user_id,
-                "organization_id": organization_id,
-                "project_id": project_id,
-                "content": f"{f['subject']} {f['predicate']} {f['object']}",
-                "subject": f["subject"],
-                "predicate": f["predicate"],
-                "object": f["object"],
-                "subject_type": f.get("subject_type", "literal"),
-                "object_type": f.get("object_type", "literal"),
-                "confidence": f["confidence"],
-                "source_episode_id": source_episode_id,
-                "valid_from": now,
-                "subject_entity_id": f.get("subject_entity_id"),
-                "object_entity_id": f.get("object_entity_id"),
-                "embedding": None,
-            }
-            for f in facts
-        ]
+        rows = []
+        for f in facts:
+            subject = f["subject"]
+            predicate = f["predicate"]
+            obj = f["object"]
+            rows.append(
+                {
+                    "user_id": user_id,
+                    "organization_id": organization_id,
+                    "project_id": project_id,
+                    "content": f.get("content") or f"{subject} {predicate} {obj}",
+                    "subject": subject,
+                    "predicate": predicate,
+                    "object": obj,
+                    "subject_type": f.get("subject_type", "literal"),
+                    "object_type": f.get("object_type", "literal"),
+                    "confidence": f["confidence"],
+                    "source_episode_id": source_episode_id,
+                    "valid_from": f.get("valid_from", now),
+                    "subject_entity_id": f.get("subject_entity_id"),
+                    "object_entity_id": f.get("object_entity_id"),
+                    "embedding": None,
+                }
+            )
 
         stmt = (
             pg_insert(Fact)
@@ -401,6 +406,31 @@ class FactRepository:
         return created
 
     # ── Supersession Primitives ──────────────────────────────────────────────
+
+    async def lock_conflict_identities(self, lock_keys: list[str]) -> None:
+        """Serialize concurrent writers per conflict identity via advisory locks.
+
+        ``SELECT ... FOR UPDATE`` cannot lock a row that does not exist
+        yet, so two concurrent writers whose scans both come up empty
+        would both insert — the silent coexistence supersession exists to
+        prevent.  A PostgreSQL advisory **xact** lock keyed on the
+        identity closes that gap: the loser blocks here and its re-scan
+        (after the winner commits) sees the winner's row and supersedes
+        it.  Xact locks auto-release on commit/rollback.
+
+        Callers must pass the keys in a deterministic (sorted) order so
+        concurrent writers acquire multi-key locks in the same global
+        order — unordered acquisition can deadlock.
+
+        Args:
+            lock_keys: One stable key per distinct conflict identity in
+                the batch, sorted by the caller.
+        """
+        for key in lock_keys:
+            await self._db.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
+                {"key": key},
+            )
 
     async def find_conflicting_active_for_update(
         self,
