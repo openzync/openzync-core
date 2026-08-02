@@ -254,7 +254,20 @@ async def extract_facts(
                 EntityRepository as _EntityRepo,
             )
 
-            entity_repo = _EntityRepo(db=db, graph_backend=backend)
+            # EntityRepository.__init__ raises when graph_backend is None —
+            # guard construction so graph-disabled orgs skip, not crash.
+            # process_facts_output accepts entity_repo=None and skips graph ops.
+            entity_repo = (
+                _EntityRepo(db=db, graph_backend=backend)
+                if backend is not None
+                else None
+            )
+            if entity_repo is None:
+                logger.info(
+                    "fact_extraction.graph_disabled_skipping",
+                    episode_id=episode_id,
+                    org_id=org_id,
+                )
             episode_repo = EpisodeRepository(db)
             arq_redis = ctx.get("redis") if isinstance(ctx, dict) else None
 

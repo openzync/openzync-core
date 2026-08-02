@@ -295,12 +295,25 @@ async def enrich_episode(
                     db,
                 )
             except GraphBackendUnavailableError:
-                log.warning("enrich_episode.graph_backend_unavailable")
+                # A CONFIGURED backend that can't be resolved is a broken
+                # backend, not a disabled one — abort the task so no
+                # enrichment bit gets set and reconcile/retry re-runs it.
+                # Swallowing here would mark entities done without persisting
+                # them (permanent silent data loss).
+                log.error(
+                    "enrich_episode.graph_backend_unavailable",
+                    org_id=org_id,
+                    episode_id=episode_id,
+                )
+                raise
             except Exception:
-                log.warning(
+                log.error(
                     "enrich_episode.graph_backend_resolve_failed",
+                    org_id=org_id,
+                    episode_id=episode_id,
                     exc_info=True,
                 )
+                raise
 
             # Build shared repos
             entity_repo = (

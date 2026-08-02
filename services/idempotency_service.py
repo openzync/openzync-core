@@ -395,10 +395,11 @@ class IdempotencyService:
         cache_key = self._content_prefix + content_hash
         value = payload if payload is not None else content_hash
 
-        # ⚠️ RACE CONDITION: SETNX ensures only the first caller stores
-        # the hash (with its payload — e.g. job_id).  The second caller
-        # will see GET=None, attempt SETNX, and get back 0 (key already
-        # set).  This is safe — no duplicate ingestion.
+        # ⚠️ TOCTOU: the check-then-set is not atomic — two concurrent
+        # identical requests can both pass check_content_hash and both
+        # ingest; SETNX only dedups the *store* (the first caller's payload
+        # wins the value), not the ingestion side effects.  A DB uniqueness
+        # column on the content hash would close the window.
         set_ok = await self._redis.set(cache_key, value, nx=True, ex=self._content_ttl)
         if set_ok:
             logger.debug(
