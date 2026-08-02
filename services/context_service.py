@@ -88,6 +88,7 @@ class ContextService:
         graph_backends: list | None = None,
         org_config: OrgConfigBase | None = None,
     ) -> None:
+        self._db = db
         reranker = RerankerFactory.create(org_config) if org_config else None
         self._retriever = HybridRetriever(
             db, org_id, redis, graph_backends=graph_backends, org_config=org_config,

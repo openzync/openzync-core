@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.episode import Episode
@@ -231,8 +231,10 @@ class SessionRepository:
             query = query.where(
                 or_(
                     Session.created_at < cursor_at,
-                    Session.created_at == cursor_at,
-                    Session.id > cursor_id,
+                    and_(
+                        Session.created_at == cursor_at,
+                        Session.id > cursor_id,
+                    ),
                 )
             )
 

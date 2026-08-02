@@ -17,7 +17,6 @@ keywords = ["agent", "memory", "graph", "ai", "RAG", "llm"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -194,9 +193,14 @@ markers = [
 source = ["openzync"]
 omit = [
     "tests/*",
+    "migrations/*",
     "scripts/*",
     "**/__init__.py",
     "**/conftest.py",
+    "**/_version.py",
+    "**/locustfile.py",
+    "streamlit_chat/*",
+    "services/api/*",        # App bootstrap (factory + ASGI entry) — covered by integration/e2e
 ]
 
 [tool.coverage.report]
@@ -207,4 +211,11 @@ exclude_lines = [
     "raise NotImplementedError",
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
+    "if t.TYPE_CHECKING:",
 ]
+fail_under = 74
+show_missing = true
+skip_covered = false
+
+[tool.coverage.html]
+directory = "htmlcov"

@@ -132,6 +132,8 @@ class EpisodeBlobRepository:
                     height=mapping["height"],
                     extracted_text=mapping["extracted_text"],
                     blob_index=mapping["blob_index"],
+                    created_at=mapping["created_at"],
+                    updated_at=mapping["updated_at"],
                 )
             )
         return episode_blobs

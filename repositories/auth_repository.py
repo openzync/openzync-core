@@ -14,7 +14,7 @@ Key patterns:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import select
@@ -199,7 +199,7 @@ class AuthRepository:
             select(RefreshToken).where(
                 RefreshToken.token_hash == token_hash,
                 RefreshToken.is_revoked.is_(False),
-                RefreshToken.expires_at > datetime.utcnow(),
+                RefreshToken.expires_at > datetime.now(timezone.utc),
             )
         )
         return result.scalar_one_or_none()
@@ -269,7 +269,7 @@ class AuthRepository:
             raise NotFoundError("Dashboard user not found.")
 
         user.is_email_verified = True
-        user.email_verified_at = datetime.utcnow()
+        user.email_verified_at = datetime.now(timezone.utc)
         await self._db.flush()
         await self._db.refresh(user)
         return user

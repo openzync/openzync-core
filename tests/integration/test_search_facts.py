@@ -2,7 +2,7 @@
 
 Endpoints under test:
 
-    GET /v1/users/{user_id}/search  — Hybrid search across user memory
+    GET /v1/projects/{project_id}/search  — Hybrid search across project memory
 
 Covers:
     1.  Search returns facts via BM25 after ingestion
@@ -12,13 +12,64 @@ Covers:
 
 Auth strategy:
     Each test creates a fresh org via the admin bootstrap fixture and
-    uses ``auth_client`` (pre-authenticated) for all authenticated calls.
+    uses ``isolated_auth_client`` (pre-authenticated) for all authenticated calls.
 """
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
+from typing import Any
+from uuid import UUID
+
 import pytest
 from httpx import AsyncClient
+
+
+@pytest.fixture(autouse=True)
+async def _wire_graph_backend(isolated_app: Any) -> Any:
+    """Attach the graph-backend dispatcher to the isolated app.
+
+    ``graph_backend_dispatcher`` is normally set by the FastAPI lifespan,
+    which the ``isolated_app`` fixture does not run.  Without it every
+    ``/search`` request raises ``AttributeError`` on
+    ``app.state.graph_backend_dispatcher``.  ``init_dispatcher()`` only
+    registers backend classes — no I/O.
+    """
+    from core.graph_backend import init_dispatcher
+
+    isolated_app.state.graph_backend_dispatcher = init_dispatcher()
+    return isolated_app
+
+
+@dataclass
+class _FakeEmbedResponse:
+    embeddings: list[list[float]] | None = None
+
+
+class _FakeEmbedBackend:
+    async def embed(self, texts, model=None) -> _FakeEmbedResponse:
+        return _FakeEmbedResponse(
+            embeddings=[[0.0] * 1536 for _ in texts]
+        )
+
+
+async def _fake_resolve_backend(provider=None, org_config=None) -> _FakeEmbedBackend:
+    return _FakeEmbedBackend()
+
+
+@pytest.fixture(autouse=True)
+def _fake_embedding_backend(monkeypatch) -> None:
+    """Stub the embedding backend for the vector search leg.
+
+    ``HybridRetriever._embed_query`` imports ``core.llm.resolve_backend``
+    at call time; in the test environment no embedding backend is
+    configured, so resolution raises and the whole search 503s.  The fake
+    returns a 1536-dim zero vector per text — matching the
+    ``episodes.embedding`` ``vector(1536)`` column so the pgvector ``<=>``
+    operator works.
+    """
+    monkeypatch.setattr("core.llm.resolve_backend", _fake_resolve_backend)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -26,28 +77,26 @@ from httpx import AsyncClient
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
 class TestSearchFacts:
     """Tests for search returning facts."""
 
-    @pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
     @pytest.mark.asyncio
     async def test_search_returns_facts_by_bm25(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
     ) -> None:
-        """POST /facts then GET /search?query=hiking → results contain fact."""
+        """POST /facts then GET /v1/projects/{project_id}/search?query=hiking → results contain fact."""
         # Create user
-        user_resp = await auth_client.post(
+        user_resp = await isolated_auth_client.post(
             "/v1/users",
             json={"external_id": "search_facts_user"},
         )
         assert user_resp.status_code == 201
-        user_id = user_resp.json()["id"]
 
-        # Ingest a fact
-        await auth_client.post(
-            f"/v1/users/{user_id}/facts",
+        # Ingest a fact — project-scoped
+        await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/facts",
             json={
                 "facts": [
                     {"subject": "Alice", "predicate": "likes", "object": "hiking"},
@@ -56,12 +105,9 @@ class TestSearchFacts:
             },
         )
 
-        # Search — facts may take a moment to be indexed (GIN is sync)
-        import asyncio
-        await asyncio.sleep(0.5)
-
-        resp = await auth_client.get(
-            f"/v1/users/{user_id}/search",
+        # Search — facts persist synchronously, GIN updates are commit-sync
+        resp = await isolated_auth_client.get(
+            f"/v1/projects/{isolated_project_id}/search",
             params={"query": "hiking", "types": "facts"},
         )
         assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
@@ -77,18 +123,18 @@ class TestSearchFacts:
     @pytest.mark.asyncio
     async def test_search_returns_empty_for_entities(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
     ) -> None:
         """GET /search?types=entities → empty (no graph backend)."""
-        user_resp = await auth_client.post(
+        user_resp = await isolated_auth_client.post(
             "/v1/users",
             json={"external_id": "search_entities_user"},
         )
         assert user_resp.status_code == 201
-        user_id = user_resp.json()["id"]
 
-        resp = await auth_client.get(
-            f"/v1/users/{user_id}/search",
+        resp = await isolated_auth_client.get(
+            f"/v1/projects/{isolated_project_id}/search",
             params={"query": "test", "types": "entities"},
         )
         assert resp.status_code == 200
@@ -100,48 +146,51 @@ class TestSearchFacts:
     @pytest.mark.asyncio
     async def test_search_requires_query(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
     ) -> None:
         """GET /search without query → 422."""
-        user_resp = await auth_client.post(
+        user_resp = await isolated_auth_client.post(
             "/v1/users",
             json={"external_id": "search_no_query_user"},
         )
         assert user_resp.status_code == 201
-        user_id = user_resp.json()["id"]
 
-        resp = await auth_client.get(
-            f"/v1/users/{user_id}/search",
+        resp = await isolated_auth_client.get(
+            f"/v1/projects/{isolated_project_id}/search",
         )
         assert resp.status_code == 422
 
-    @pytest.mark.skip(reason="Needs per-test DB isolation — see TODO")
     @pytest.mark.asyncio
     async def test_search_returns_facts_and_episodes_default(
         self,
-        auth_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
     ) -> None:
-        """GET /search?query=... returns facts and episodes by default."""
-        user_resp = await auth_client.post(
+        """GET /v1/projects/{project_id}/search?query=... returns facts and episodes by default."""
+        user_resp = await isolated_auth_client.post(
             "/v1/users",
             json={"external_id": "search_default_types_user"},
         )
         assert user_resp.status_code == 201
-        user_id = user_resp.json()["id"]
 
-        # Ingest an episode
-        await auth_client.post(
-            f"/v1/users/{user_id}/memory",
-            json={
-                "messages": [
-                    {"role": "user", "content": "I love mountain hiking in Colorado"},
-                ],
+        # Ingest an episode — project-scoped, multipart form-data
+        await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/memory",
+            data={
+                "data": json.dumps(
+                    {
+                        "messages": [
+                            {"role": "user", "content": "I love mountain hiking in Colorado"},
+                        ],
+                    }
+                ),
             },
         )
 
-        # Ingest a fact
-        await auth_client.post(
-            f"/v1/users/{user_id}/facts",
+        # Ingest a fact — project-scoped
+        await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/facts",
             json={
                 "facts": [
                     {"subject": "User", "predicate": "likes", "object": "hiking"},
@@ -149,12 +198,9 @@ class TestSearchFacts:
             },
         )
 
-        import asyncio
-        await asyncio.sleep(0.5)
-
         # Search without types (defaults to episodes,facts)
-        resp = await auth_client.get(
-            f"/v1/users/{user_id}/search",
+        resp = await isolated_auth_client.get(
+            f"/v1/projects/{isolated_project_id}/search",
             params={"query": "hiking"},
         )
         assert resp.status_code == 200

@@ -6,11 +6,20 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.events import EventType
 from core.exceptions import NotFoundError
-from schemas.memory import Message
-from services.memory_service import MemoryService
+from schemas.memory import BlobMetadata, IngestMemoryResponse, Message
+from services.memory_service import (
+    CONTENT_HASH_PREFIX,
+    IDEMPOTENCY_PREFIX,
+    IDEMPOTENCY_TTL,
+    MemoryService,
+    _arq_queue_name,
+)
+from services.webhook_service import WebhookService
 
 
 @pytest.mark.unit
@@ -175,3 +184,590 @@ class TestMemoryService:
         )
         service._db.commit.assert_awaited_once()
         mock_enqueue.assert_awaited_once()
+
+    # ------------------------------------------------------------------
+    # NEW: Idempotency replay — cached response returned without pipeline
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_ingest_idempotency_replay(self, service: MemoryService) -> None:
+        """Ingest returns cached response when idempotency_key exists in Redis."""
+        cached = IngestMemoryResponse(
+            job_id="replayed-job", episode_count=2, blob_count=0,
+            status="accepted", message="Replayed",
+        )
+        with patch.object(service, "_check_idempotency", return_value=cached), \
+             patch.object(service, "_enqueue_arq_tasks") as mock_enqueue, \
+             patch.object(service, "_invalidate_context_cache") as mock_invalidate:
+            result = await service.ingest(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
+                session_external_id=None,
+                messages=self._sample_messages(),
+                idempotency_key="dup-key",
+            )
+        assert result == cached
+        mock_enqueue.assert_not_called()
+        mock_invalidate.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # NEW: Content-level dedup hit
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_ingest_content_dedup_hit(self, service: MemoryService) -> None:
+        """Ingest returns existing job_id when content hash matches."""
+        service._session_repo.get_or_create_default.return_value = MagicMock(
+            id=uuid4(), external_id="__default__",
+        )
+        existing_job_id = "existing-job-123"
+        with patch.object(service, "_compute_content_hash", return_value="deadbeef"), \
+             patch.object(service, "_check_content_dedup", return_value=existing_job_id), \
+             patch.object(service, "_enqueue_arq_tasks") as mock_enqueue:
+            result = await service.ingest(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
+                session_external_id=None,
+                messages=self._sample_messages(),
+            )
+        assert result.job_id == existing_job_id
+        assert result.status == "accepted"
+        mock_enqueue.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # NEW: PII redaction during ingest
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_ingest_with_pii_redaction(self, service: MemoryService) -> None:
+        """Ingest redacts content when org has PII masking enabled."""
+        service._session_repo.get_or_create_default.return_value = MagicMock(
+            id=uuid4(), external_id="__default__",
+        )
+        mock_pii = AsyncMock()
+        mock_pii.process_message.side_effect = [
+            ("[REDACTED] Message 0", [], False),
+            ("Message 1", [], False),
+        ]
+
+        with patch.object(service, "_enqueue_arq_tasks"), \
+             patch.object(service, "_invalidate_context_cache"), \
+             patch.object(service, "_get_org_pii_config", return_value={"mode": "mask"}), \
+             patch.object(service, "_cache_content_hash"), \
+             patch("services.pii_service.PIIService", return_value=mock_pii):
+            result = await service.ingest(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
+                session_external_id=None,
+                messages=self._sample_messages(),
+            )
+        assert result.status == "accepted"
+        assert mock_pii.process_message.call_count == 2
+
+    # ------------------------------------------------------------------
+    # NEW: Webhook events emission
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_ingest_webhook_events(self, service: MemoryService) -> None:
+        """Ingest emits webhook events when webhook_service is configured."""
+        mock_webhook = AsyncMock(spec=WebhookService)
+        service._webhook_service = mock_webhook
+
+        service._session_repo.get_or_create_default.return_value = MagicMock(
+            id=uuid4(), external_id="__default__",
+        )
+
+        with patch.object(service, "_enqueue_arq_tasks"), \
+             patch.object(service, "_invalidate_context_cache"), \
+             patch.object(service, "_get_org_pii_config", return_value={}), \
+             patch.object(service, "_cache_content_hash"):
+            result = await service.ingest(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
+                session_external_id=None,
+                messages=self._sample_messages(),
+            )
+        assert result.status == "accepted"
+        assert mock_webhook.emit.await_count == 2
+        mock_webhook.emit.assert_any_await(
+            organization_id=self.ORG_ID,
+            event_type=EventType.INGEST_BATCH_COMPLETED,
+            payload=ANY,
+        )
+        mock_webhook.emit.assert_any_await(
+            organization_id=self.ORG_ID,
+            event_type=EventType.MESSAGE_ADDED,
+            payload=ANY,
+        )
+
+    # ------------------------------------------------------------------
+    # NEW: Blob processing during ingest
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_ingest_with_blob_processing(self, service: MemoryService) -> None:
+        """Ingest processes blobs when uploaded_blobs is provided."""
+        service._session_repo.get_or_create_default.return_value = MagicMock(
+            id=uuid4(), external_id="__default__",
+        )
+        mock_blob_record = MagicMock()
+        mock_blob_record.id = uuid4()
+        mock_blob_record.storage_key = "test/key"
+        mock_blob_record.mime_type = "text/plain"
+        mock_blob_record.file_name = "test.txt"
+        mock_blob_record.episode_id = uuid4()
+
+        with patch.object(service, "_enqueue_arq_tasks"), \
+             patch.object(service, "_invalidate_context_cache"), \
+             patch.object(service, "_get_org_pii_config", return_value={}), \
+             patch.object(service, "_cache_content_hash"), \
+             patch.object(service, "_process_blobs", return_value=(1, [mock_blob_record])), \
+             patch.object(service, "_enqueue_blob_extraction_tasks"):
+            result = await service.ingest(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
+                session_external_id=None,
+                messages=self._sample_messages(),
+                uploaded_blobs=[MagicMock(spec=UploadFile)],
+            )
+        assert result.status == "accepted"
+        assert result.blob_count == 1
+
+    # ------------------------------------------------------------------
+    # NEW: Ingest without idempotency key
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_ingest_without_idempotency_key(self, service: MemoryService) -> None:
+        """Ingest succeeds when idempotency_key is None (no Redis check)."""
+        service._session_repo.get_or_create_default.return_value = MagicMock(
+            id=uuid4(), external_id="__default__",
+        )
+        with patch.object(service, "_enqueue_arq_tasks"), \
+             patch.object(service, "_invalidate_context_cache"), \
+             patch.object(service, "_get_org_pii_config", return_value={}), \
+             patch.object(service, "_cache_content_hash"):
+            result = await service.ingest(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
+                session_external_id=None,
+                messages=self._sample_messages(),
+            )
+        assert result.status == "accepted"
+        # Verify _check_idempotency was never called (key was None)
+        # The default mock_redis.get.return_value is None, but since the
+        # idempotency_key is None the code never reaches the check.
+        # We assert this indirectly by verifying the happy-path response.
+        assert result.job_id is not None
+
+    # ------------------------------------------------------------------
+    # NEW: Blob extraction tasks are enqueued after blob processing
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_ingest_enqueues_blob_extraction_tasks(
+        self, service: MemoryService,
+    ) -> None:
+        """Ingest enqueues blob extraction tasks when blobs are processed."""
+        service._session_repo.get_or_create_default.return_value = MagicMock(
+            id=uuid4(), external_id="__default__",
+        )
+        mock_blob = MagicMock()
+        mock_blob.id = uuid4()
+
+        with patch.object(service, "_enqueue_arq_tasks"), \
+             patch.object(service, "_invalidate_context_cache"), \
+             patch.object(service, "_get_org_pii_config", return_value={}), \
+             patch.object(service, "_cache_content_hash"), \
+             patch.object(service, "_process_blobs", return_value=(2, [mock_blob, mock_blob])), \
+             patch.object(service, "_enqueue_blob_extraction_tasks") as mock_extract:
+            result = await service.ingest(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
+                session_external_id=None,
+                messages=self._sample_messages(),
+                uploaded_blobs=[MagicMock(spec=UploadFile)],
+            )
+        assert result.status == "accepted"
+        mock_extract.assert_awaited_once()
+
+
+@pytest.mark.unit
+class TestMemoryServiceInternal:
+    """Tests for MemoryService private/internal methods."""
+
+    ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+    PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
+    USER_ID = UUID("00000000-0000-0000-0000-000000000002")
+
+    @pytest.fixture
+    def service(self) -> MemoryService:
+        mock_db = AsyncMock(spec=AsyncSession)
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = None
+        mock_redis.set.return_value = True
+        mock_redis.setex.return_value = True
+        mock_redis.scan.return_value = (0, [])
+        mock_redis.delete.return_value = 0
+        mock_episode_repo = AsyncMock()
+        mock_episode_repo.batch_create.return_value = []
+        mock_session_repo = AsyncMock()
+        mock_user_repo = AsyncMock()
+        mock_fact_repo = AsyncMock()
+        mock_org_repo = AsyncMock()
+
+        return MemoryService(
+            db=mock_db,
+            redis_client=mock_redis,
+            episode_repo=mock_episode_repo,
+            session_repo=mock_session_repo,
+            user_repo=mock_user_repo,
+            fact_repo=mock_fact_repo,
+            org_repo=mock_org_repo,
+        )
+
+    # ── _check_idempotency ───────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_check_idempotency_hit(self, service: MemoryService) -> None:
+        """_check_idempotency returns IngestMemoryResponse when Redis has data."""
+        cached_json = (
+            '{"job_id":"abc","episode_count":2,"blob_count":0,'
+            '"status":"accepted","message":"cached"}'
+        )
+        service._redis.get.return_value = cached_json
+        result = await service._check_idempotency("test-key")
+        assert result is not None
+        assert result.job_id == "abc"
+        service._redis.get.assert_awaited_once_with(f"{IDEMPOTENCY_PREFIX}test-key")
+
+    @pytest.mark.asyncio
+    async def test_check_idempotency_miss(self, service: MemoryService) -> None:
+        """_check_idempotency returns None when Redis has no data."""
+        result = await service._check_idempotency("unknown-key")
+        assert result is None
+        service._redis.get.assert_awaited_once_with(f"{IDEMPOTENCY_PREFIX}unknown-key")
+
+    # ── _cache_idempotency ───────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_cache_idempotency(self, service: MemoryService) -> None:
+        """_cache_idempotency stores response in Redis with correct prefix and TTL."""
+        response = IngestMemoryResponse(
+            job_id="abc", episode_count=2, blob_count=0, status="accepted",
+        )
+        await service._cache_idempotency("test-key", response)
+        service._redis.setex.assert_awaited_once_with(
+            f"{IDEMPOTENCY_PREFIX}test-key",
+            IDEMPOTENCY_TTL,
+            response.model_dump_json(),
+        )
+
+    # ── _check_content_dedup ─────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_check_content_dedup_hit(self, service: MemoryService) -> None:
+        """_check_content_dedup returns job_id when content hash exists in Redis."""
+        service._redis.get.return_value = "existing-job-id"
+        result = await service._check_content_dedup("somehash")
+        assert result == "existing-job-id"
+        service._redis.get.assert_awaited_once_with(f"{CONTENT_HASH_PREFIX}somehash")
+
+    @pytest.mark.asyncio
+    async def test_check_content_dedup_miss(self, service: MemoryService) -> None:
+        """_check_content_dedup returns None when content hash is not in Redis."""
+        result = await service._check_content_dedup("unknownhash")
+        assert result is None
+        service._redis.get.assert_awaited_once_with(f"{CONTENT_HASH_PREFIX}unknownhash")
+
+    # ── _cache_content_hash ──────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_cache_content_hash(self, service: MemoryService) -> None:
+        """_cache_content_hash stores hash-to-job_id mapping in Redis."""
+        await service._cache_content_hash("abc123", "job-456")
+        service._redis.setex.assert_awaited_once_with(
+            f"{CONTENT_HASH_PREFIX}abc123",
+            IDEMPOTENCY_TTL,
+            "job-456",
+        )
+
+    # ── _get_org_pii_config ──────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_get_org_pii_config(self, service: MemoryService) -> None:
+        """_get_org_pii_config delegates to org_repo.get_pii_config."""
+        expected = {"mode": "mask", "patterns": ["email", "phone"]}
+        service._org_repo.get_pii_config.return_value = expected
+        result = await service._get_org_pii_config(self.ORG_ID)
+        assert result == expected
+        service._org_repo.get_pii_config.assert_awaited_once_with(self.ORG_ID)
+
+    # ── _invalidate_context_cache ────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_invalidate_context_cache_with_keys(
+        self, service: MemoryService,
+    ) -> None:
+        """_invalidate_context_cache scans and deletes matching Redis keys."""
+        service._redis.scan.return_value = (0, ["key1", "key2"])
+        service._redis.delete.return_value = 2
+        await service._invalidate_context_cache(
+            str(self.ORG_ID), str(self.PROJECT_ID),
+        )
+        service._redis.scan.assert_awaited_once()
+        service._redis.delete.assert_awaited_once_with("key1", "key2")
+
+    @pytest.mark.asyncio
+    async def test_invalidate_context_cache_empty(
+        self, service: MemoryService,
+    ) -> None:
+        """_invalidate_context_cache does nothing when no keys match."""
+        await service._invalidate_context_cache(
+            str(self.ORG_ID), str(self.PROJECT_ID),
+        )
+        service._redis.scan.assert_awaited_once()
+        service._redis.delete.assert_not_called()
+
+    # ── _compute_content_hash ────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_compute_content_hash_with_blobs(
+        self, service: MemoryService,
+    ) -> None:
+        """_compute_content_hash includes blob metadata in the hash."""
+        msgs_with_blobs = [
+            Message(
+                role="user", content="with blob",
+                blobs=[
+                    BlobMetadata(blob_id=0, file_name="doc.pdf", mime_type="application/pdf"),
+                ],
+            ),
+            Message(
+                role="assistant", content="response",
+                blobs=[],
+            ),
+        ]
+        h = service._compute_content_hash(
+            str(self.PROJECT_ID), "session-1", msgs_with_blobs,
+        )
+        assert isinstance(h, str)
+        assert len(h) == 64  # SHA-256 hex digest
+
+    @pytest.mark.asyncio
+    async def test_compute_content_hash_different_inputs(
+        self, service: MemoryService,
+    ) -> None:
+        """_compute_content_hash produces different hashes for different inputs."""
+        msgs1 = [Message(role="user", content="Hello")]
+        msgs2 = [Message(role="user", content="World")]
+        h1 = service._compute_content_hash("proj", "sess", msgs1)
+        h2 = service._compute_content_hash("proj", "sess", msgs2)
+        assert h1 != h2
+
+
+# ── Module-level helpers ──────────────────────────────────────────────────────
+
+class TestMemoryServiceHelpers:
+    """Tests for module-level helper functions."""
+
+    def test_arq_queue_name(self) -> None:
+        """_arq_queue_name returns qualified queue name for current env."""
+        name = _arq_queue_name("high")
+        assert name.startswith("OpenZync:")
+        assert name.endswith(":queue:high")
+
+
+# ── Infrastructure methods ────────────────────────────────────────────────────
+
+@pytest.mark.unit
+class TestMemoryServiceInfrastructure:
+    """Tests for infrastructure-heavy private methods with patched internals."""
+
+    ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+    PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
+    USER_ID = UUID("00000000-0000-0000-0000-000000000002")
+
+    @pytest.fixture
+    def service(self) -> MemoryService:
+        mock_db = AsyncMock(spec=AsyncSession)
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = None
+        mock_redis.set.return_value = True
+        mock_redis.setex.return_value = True
+        mock_redis.scan.return_value = (0, [])
+        mock_redis.delete.return_value = 0
+        mock_episode_repo = AsyncMock()
+        mock_episode_repo.batch_create.return_value = []
+        mock_session_repo = AsyncMock()
+        mock_user_repo = AsyncMock()
+        mock_fact_repo = AsyncMock()
+        mock_org_repo = AsyncMock()
+
+        return MemoryService(
+            db=mock_db,
+            redis_client=mock_redis,
+            episode_repo=mock_episode_repo,
+            session_repo=mock_session_repo,
+            user_repo=mock_user_repo,
+            fact_repo=mock_fact_repo,
+            org_repo=mock_org_repo,
+        )
+
+    @pytest.mark.asyncio
+    async def test_enqueue_arq_tasks(self, service: MemoryService) -> None:
+        """_enqueue_arq_tasks enqueues enrichment/embedding/linking for each episode."""
+        mock_pool = AsyncMock()
+        mock_pool.enqueue = AsyncMock()
+
+        with patch("services.memory_service.get_arq", return_value=mock_pool):
+            await service._enqueue_arq_tasks(
+                job_id="job-1",
+                org_id=str(self.ORG_ID),
+                project_id=str(self.PROJECT_ID),
+                session_id=str(uuid4()),
+                episodes=[
+                    {"id": uuid4(), "content": "Hello", "role": "user", "metadata": {}},
+                    {"id": uuid4(), "content": "World", "role": "assistant", "metadata": {}},
+                ],
+            )
+
+        assert mock_pool.enqueue.await_count == 6  # 3 tasks × 2 episodes
+
+    @pytest.mark.asyncio
+    async def test_enqueue_arq_tasks_pool_unavailable(
+        self, service: MemoryService,
+    ) -> None:
+        """_enqueue_arq_tasks re-raises when ARQ pool is unavailable."""
+        with patch("services.memory_service.get_arq", side_effect=ConnectionError("ARQ down")):
+            with pytest.raises(ConnectionError):
+                await service._enqueue_arq_tasks(
+                    job_id="job-2",
+                    org_id=str(self.ORG_ID),
+                    project_id=str(self.PROJECT_ID),
+                    session_id=str(uuid4()),
+                    episodes=[{"id": uuid4(), "content": "Test", "role": "user", "metadata": {}}],
+                )
+
+    @pytest.mark.asyncio
+    async def test_enqueue_blob_extraction_tasks(
+        self, service: MemoryService,
+    ) -> None:
+        """_enqueue_blob_extraction_tasks enqueues extraction for each blob."""
+        mock_pool = AsyncMock()
+        mock_pool.enqueue = AsyncMock()
+        blob = MagicMock()
+        blob.id = uuid4()
+        blob.episode_id = uuid4()
+        blob.storage_key = "blobs/doc.pdf"
+        blob.mime_type = "application/pdf"
+        blob.file_name = "doc.pdf"
+
+        with patch("services.memory_service.get_arq", return_value=mock_pool):
+            await service._enqueue_blob_extraction_tasks(
+                blob_records=[blob, blob],
+                org_id=str(self.ORG_ID),
+                project_id=str(self.PROJECT_ID),
+            )
+
+        assert mock_pool.enqueue.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_process_blobs_empty(self, service: MemoryService) -> None:
+        """_process_blobs returns early when no messages have blobs."""
+        count, records = await service._process_blobs(
+            org_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            session_id=uuid4(),
+            created_by=self.USER_ID,
+            episodes=[MagicMock(id=uuid4()), MagicMock(id=uuid4())],
+            messages=[
+                Message(role="user", content="No blobs here", blobs=[]),
+                Message(role="assistant", content="No blobs either"),
+            ],
+            uploaded_blobs=[],
+        )
+        assert count == 0
+        assert records == []
+
+    @pytest.mark.asyncio
+    async def test_ingest_with_idempotency_key(
+        self, service: MemoryService,
+    ) -> None:
+        """ingest writes idempotency key response when key is supplied."""
+        service._session_repo.get_or_create_default.return_value = MagicMock(
+            id=uuid4(), external_id="__default__",
+        )
+        service._episode_repo.batch_create.return_value = [
+            MagicMock(id=uuid4(), content="msg"),
+        ]
+
+        with patch.object(service, "_enqueue_arq_tasks"):
+            with patch.object(service, "_invalidate_context_cache"):
+                with patch.object(service, "_get_org_pii_config", return_value={}):
+                    with patch.object(
+                        service, "_compute_content_hash", return_value="abc123"
+                    ):
+                        with patch.object(
+                            service, "_check_idempotency", return_value=None,
+                        ):
+                            result = await service.ingest(
+                                org_id=self.ORG_ID,
+                                project_id=self.PROJECT_ID,
+                                created_by=self.USER_ID,
+                                session_external_id=None,
+                                idempotency_key="my-key",
+                                messages=[Message(role="user", content="Test")],
+                            )
+
+        service._redis.setex.assert_any_call(
+            f"{IDEMPOTENCY_PREFIX}my-key", IDEMPOTENCY_TTL, ANY,
+        )
+        assert result.status == "accepted"
+
+    @pytest.mark.asyncio
+    async def test_resolve_session_with_uuid_fallback(
+        self, service: MemoryService,
+    ) -> None:
+        """_resolve_session falls back to UUID lookup for valid UUID strings."""
+        session_id = uuid4()
+        mock_session = MagicMock(id=session_id, external_id="ext-1")
+        service._session_repo.get_by_external_id.return_value = None
+        service._session_repo.get_by_uuid.return_value = mock_session
+
+        result = await service._resolve_session(
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            session_external_id=str(session_id),
+            created_by=self.USER_ID,
+        )
+
+        assert result == mock_session
+        service._session_repo.get_by_uuid.assert_awaited_once_with(
+            org_id=self.ORG_ID, session_id=session_id, project_id=self.PROJECT_ID,
+        )
+
+    @pytest.mark.asyncio
+    async def test_resolve_session_uuid_not_found_raises(
+        self, service: MemoryService,
+    ) -> None:
+        """_resolve_session raises NotFoundError when session UUID lookup fails."""
+        session_id = uuid4()
+        service._session_repo.get_by_external_id.return_value = None
+        service._session_repo.get_by_uuid.return_value = None
+
+        with pytest.raises(NotFoundError, match="not found"):
+            await service._resolve_session(
+                organization_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                session_external_id=str(session_id),
+                created_by=self.USER_ID,
+            )

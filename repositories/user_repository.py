@@ -327,14 +327,18 @@ class UserRepository:
             query = query.where(User.is_deleted.is_(False))
 
         # Cursor pagination: composite WHERE clause
+        # Correct semantics: (created_at, id) > (cursor_at, cursor_id)
         if cursor is not None:
+            from sqlalchemy import and_
+
             cursor_at, cursor_id = self._decode_cursor(cursor)
-            # WHERE (created_at, id) > (cursor_at, cursor_id)
             query = query.where(
                 or_(
                     User.created_at > cursor_at,
-                    User.created_at == cursor_at,
-                    User.id > cursor_id,
+                    and_(
+                        User.created_at == cursor_at,
+                        User.id > cursor_id,
+                    ),
                 )
             )
 
