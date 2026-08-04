@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -202,7 +202,10 @@ class TestGetFactService:
                 fact_repo=mock_fact_repo,
                 session_repo=mock_sess_repo,
                 webhook_service=webhook,
+                graph_backend_resolver=ANY,
             )
+            resolver = mock_svc_cls.call_args.kwargs["graph_backend_resolver"]
+            assert callable(resolver)
             assert result == "fact_service"
 
     @pytest.mark.asyncio

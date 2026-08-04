@@ -26,11 +26,18 @@ in the repository).  ``FOR UPDATE`` cannot lock a row that does not
 exist yet; the advisory lock serializes the scan+insert so two
 concurrent writers for the same identity never coexist silently.
 
-Conflict identity: ``(subject_entity_id, predicate, object_entity_id)``
-when both entity IDs resolve, else normalized ``(subject, predicate,
-object)`` strings.  Normalization reuses the aggressive canonicalization
-from ``workers/tasks/extract_facts.py::_match_entity`` (lowercase, strip
-punctuation).
+Conflict matching is form-flexible (Phase 2 ADR): an incoming assertion
+supersedes every candidate where (a) both sides carry BOTH entity UUIDs
+and they are equal — the **entity match**, which preserves disambiguation
+of distinct same-named entities — or (b) the normalized ``(subject,
+predicate, object)`` strings are equal and at least one side lacks the
+fully-resolved entity form — the **name match**, the cross-form path that
+lets string (API) and entity (extraction) writers of the same triple
+supersede each other.  Advisory-lock keys and in-batch dedup key on the
+NAME form (never entity UUIDs) so cross-form writers of the same triple
+serialize and collapse.  Normalization reuses the aggressive
+canonicalization from ``workers/tasks/extract_facts.py::_match_entity``
+(lowercase, strip punctuation).
 """
 
 from __future__ import annotations
@@ -95,6 +102,7 @@ def normalize_identity_term(term: str | None) -> str:
 
 
 IdentityKey = tuple[UUID | str, str, UUID | str]
+NameIdentity = tuple[str, str, str]
 
 
 async def _inc_superseded_total(count: int) -> None:
@@ -163,24 +171,27 @@ class FactInvalidationService:
 
     @staticmethod
     def _lock_key_for_identity(
-        org_id: UUID, project_id: UUID, identity: IdentityKey
+        org_id: UUID, project_id: UUID, name_identity: NameIdentity
     ) -> str:
         """Derive the advisory-lock key for one conflict identity.
 
-        Scoped by org + project so unrelated tenants never block each
-        other on the same triple text.  Identity components are stable by
-        construction (entity UUIDs, or already-normalized strings), so
-        every writer computes the identical key for the same triple.
+        The key ALWAYS uses the normalized NAME form — never entity
+        UUIDs — so string-form and entity-form writers of the same
+        triple serialize on the same lock (a UUID-keyed lock would let
+        cross-form writers of one triple take different locks and
+        coexist).  Distinct same-named entities false-serialize —
+        acceptable, locks are brief and per-transaction.
 
         Args:
             org_id: Tenant scope.
             project_id: Project scope.
-            identity: A conflict identity ``(subject, predicate, object)``.
+            name_identity: The normalized ``(subject, predicate, object)``
+                name-form identity of the triple.
 
         Returns:
             A stable lock key for ``pg_advisory_xact_lock(hashtext(...))``.
         """
-        subject, predicate, obj = identity
+        subject, predicate, obj = name_identity
         return f"sup:{org_id}:{project_id}:{subject}:{predicate}:{obj}"
 
     # ── Public API ──────────────────────────────────────────────────────────────
@@ -231,14 +242,15 @@ class FactInvalidationService:
         skipped_count = 0
         entries = [self._prepare_entry(f, source_episode_id, now) for f in facts]
 
-        # In-batch dedup of identical (identity, content) — the identical-
-        # content skip applies within a batch too, not just against existing
-        # rows: the first occurrence inserts, later ones are skipped without
-        # a DB round trip.
-        seen: set[tuple[IdentityKey, str]] = set()
+        # In-batch dedup of identical (NAME identity, content) — the
+        # identical-content skip applies within a batch too, and across
+        # identity forms: entity + literal duplicates of one assertion
+        # collapse to the first occurrence (the first inserts, later ones
+        # skip without a DB round trip).
+        seen: set[tuple[NameIdentity, str]] = set()
         deduped: list[dict[str, Any]] = []
         for entry in entries:
-            key = (entry["identity"], entry["row"]["content"])
+            key = (entry["name_identity"], entry["row"]["content"])
             if key in seen:
                 skipped_count += 1
                 continue
@@ -249,13 +261,13 @@ class FactInvalidationService:
         # ── 0. Serialize concurrent writers per conflict identity ─────────
         # FOR UPDATE cannot lock a row that does not exist yet, so two
         # writers whose scans both come up empty would both insert —
-        # silent coexistence.  An advisory xact lock keyed on the
+        # silent coexistence.  An advisory xact lock keyed on the NAME
         # identity closes that gap: the loser blocks here, and its re-scan
         # (after the winner commits) sees the winner's row and supersedes.
         # Sorted acquisition keeps multi-identity batches deadlock-free.
         lock_keys = sorted(
             {
-                self._lock_key_for_identity(org_id, project_id, entry["identity"])
+                self._lock_key_for_identity(org_id, project_id, entry["name_identity"])
                 for entry in entries
             }
         )
@@ -263,41 +275,61 @@ class FactInvalidationService:
             await self._fact_repo.lock_conflict_identities(lock_keys)
 
         # ── 1. Conflict scan (one query, rows locked until caller commits) ──
+        # Entity-form entries emit BOTH their UUID key and their SPO-string
+        # key so the scan also returns literal (unresolved) candidates for
+        # the cross-form match — a resolved-only key would miss them.
         candidates = await self._fact_repo.find_conflicting_active_for_update(
             org_id=org_id,
             project_id=project_id,
-            match_keys=[e["match_key"] for e in entries],
+            match_keys=[k for e in entries for k in e["match_keys"]],
             now=now,
         )
-        candidates_by_identity: dict[IdentityKey, list[Fact]] = defaultdict(list)
+        # Candidates are bucketed by their NAME identity (not the
+        # form-sensitive one) so a string entry finds entity candidates and
+        # vice versa; ``_candidate_conflicts`` applies the precise rule.
+        candidates_by_identity: dict[NameIdentity, list[Fact]] = defaultdict(list)
         for candidate in candidates:
-            candidates_by_identity[self._identity_of_fact(candidate)].append(candidate)
+            candidates_by_identity[
+                self._name_identity_of_fact(candidate)
+            ].append(candidate)
 
         # Identities occurring once are batch-safe (one INSERT statement);
-        # repeated identities need sequential handling so the second
+        # repeated NAME identities need sequential handling so the second
         # occurrence supersedes the first inside the batch.
-        identity_counts = Counter(e["identity"] for e in entries)
-        batch_entries = [e for e in entries if identity_counts[e["identity"]] == 1]
-        sequential_entries = [e for e in entries if identity_counts[e["identity"]] > 1]
+        identity_counts = Counter(e["name_identity"] for e in entries)
+        batch_entries = [
+            e for e in entries if identity_counts[e["name_identity"]] == 1
+        ]
+        sequential_entries = [
+            e for e in entries if identity_counts[e["name_identity"]] > 1
+        ]
 
         created: list[Fact] = []
         superseded_count = 0
         closed_ids: set[UUID] = set()
-        in_batch: dict[IdentityKey, list[Fact]] = defaultdict(list)
+        in_batch: dict[NameIdentity, list[Fact]] = defaultdict(list)
         # One event per old-fact → successor transition, carrying the edge
         # key and the same-key re-assertion flag so the graph sync can
         # apply the D1 rule post-commit (see ``SupersessionEvent``).
         supersession_events: list[SupersessionEvent] = []
 
+        def _matching_conflicts(
+            entry: dict[str, Any], scope: list[Fact] | tuple[Fact, ...]
+        ) -> list[Fact]:
+            """Candidates in ``scope`` that the entry actually supersedes."""
+            return [
+                c
+                for c in scope
+                if c.id not in closed_ids and self._candidate_conflicts(entry, c)
+            ]
+
         # ── 2a. Batch-safe identities: supersede, then one bulk insert ────
         batch_rows: list[dict] = []
         batch_entries_kept: list[tuple[dict, list[Fact]]] = []
         for entry in batch_entries:
-            conflicts = [
-                c
-                for c in candidates_by_identity.get(entry["identity"], ())
-                if c.id not in closed_ids
-            ]
+            conflicts = _matching_conflicts(
+                entry, candidates_by_identity.get(entry["name_identity"], ())
+            )
             if any(c.content == entry["row"]["content"] for c in conflicts):
                 skipped_count += 1
                 continue  # identical content — idempotent skip, no truncation
@@ -312,11 +344,14 @@ class FactInvalidationService:
             created.extend(await self._insert_rows(
                 org_id, project_id, user_id, source_episode_id, batch_rows, insert_mode
             ))
-        created_by_identity: dict[IdentityKey, list[Fact]] = defaultdict(list)
+        # Pairing is NAME-based so cross-form supersessions still emit the
+        # supersession event — a literal successor of an entity fact must
+        # expire the old edge (D1 case 2), and vice versa.
+        created_by_identity: dict[NameIdentity, list[Fact]] = defaultdict(list)
         for fact in created:
-            created_by_identity[self._identity_of_fact(fact)].append(fact)
+            created_by_identity[self._name_identity_of_fact(fact)].append(fact)
         for entry, old_facts in batch_entries_kept:
-            new_rows = created_by_identity.get(entry["identity"], [])
+            new_rows = created_by_identity.get(entry["name_identity"], [])
             if not new_rows:  # row skipped by ON CONFLICT — nothing to pair
                 continue
             for old_fact in old_facts:
@@ -326,14 +361,11 @@ class FactInvalidationService:
 
         # ── 2b. Repeated identities: sequential supersede + insert ────────
         for entry in sequential_entries:
-            identity = entry["identity"]
-            conflicts = (
-                [
-                    c
-                    for c in candidates_by_identity.get(identity, ())
-                    if c.id not in closed_ids
-                ]
-                + list(in_batch.get(identity, ()))
+            name_identity = entry["name_identity"]
+            conflicts = _matching_conflicts(
+                entry,
+                list(candidates_by_identity.get(name_identity, ()))
+                + list(in_batch.get(name_identity, ())),
             )
             if any(c.content == entry["row"]["content"] for c in conflicts):
                 skipped_count += 1
@@ -343,8 +375,8 @@ class FactInvalidationService:
                 await self._fact_repo.set_valid_to(c.id, now)
                 old_facts.append(c)
                 superseded_count += 1
-                if c in in_batch.get(identity, ()):
-                    in_batch[identity].remove(c)
+                if c in in_batch.get(name_identity, ()):
+                    in_batch[name_identity].remove(c)
                 else:
                     closed_ids.add(c.id)
             inserted = await self._insert_rows(
@@ -356,7 +388,7 @@ class FactInvalidationService:
                 insert_mode,
             )
             if inserted:
-                in_batch[identity].extend(inserted)
+                in_batch[name_identity].extend(inserted)
                 created.extend(inserted)
                 for old_fact in old_facts:
                     supersession_events.append(
@@ -433,7 +465,7 @@ class FactInvalidationService:
         source_episode_id: UUID | None,
         now: datetime,
     ) -> dict[str, Any]:
-        """Normalize one input fact into a row + identity + match key."""
+        """Normalize one input fact into a row + name identity + scan keys."""
         subject = str(fact.get("subject") or "").strip()
         predicate = str(fact.get("predicate") or "").strip()
         obj = str(fact.get("object") or "").strip()
@@ -444,22 +476,27 @@ class FactInvalidationService:
         if isinstance(object_entity_id, str):
             object_entity_id = UUID(object_entity_id) if object_entity_id else None
 
-        identity: IdentityKey
-        match_key: tuple[UUID | str, str, UUID | str]
+        # The NAME form is the cross-form routing/dedup/lock key — every
+        # writer of the same triple computes the same identity regardless
+        # of whether it carries entity UUIDs.
+        name_identity: NameIdentity = (
+            normalize_identity_term(subject),
+            normalize_identity_term(predicate),
+            normalize_identity_term(obj),
+        )
+        # Scan keys: string-form entries scan by SPO text; entity-form
+        # entries scan by UUID FIRST (preserves same-form supersession when
+        # stored surface names drift from the raw text) AND by SPO text
+        # (returns literal candidates for the cross-form match).
+        match_keys: list[tuple[UUID | str, str, UUID | str]] = [
+            (subject, predicate, obj)
+        ]
         if subject_entity_id is not None and object_entity_id is not None:
-            identity = (subject_entity_id, predicate, object_entity_id)
-            match_key = (subject_entity_id, predicate, object_entity_id)
-        else:
-            identity = (
-                normalize_identity_term(subject),
-                normalize_identity_term(predicate),
-                normalize_identity_term(obj),
-            )
-            match_key = (subject, predicate, obj)
+            match_keys.insert(0, (subject_entity_id, predicate, object_entity_id))
 
         return {
-            "identity": identity,
-            "match_key": match_key,
+            "name_identity": name_identity,
+            "match_keys": match_keys,
             "triple": {"subject": subject, "predicate": predicate, "object": obj},
             "row": {
                 "subject": subject,
@@ -479,13 +516,97 @@ class FactInvalidationService:
 
     @staticmethod
     def _identity_of_fact(fact: Fact) -> IdentityKey:
-        """Compute the conflict identity of a stored fact row."""
+        """Compute the form-sensitive identity of a stored fact row.
+
+        ``(subject_entity_id, predicate, object_entity_id)`` when both
+        entity IDs resolve, else normalized ``(subject, predicate,
+        object)`` strings.  Used for candidate classification inside
+        :meth:`_candidate_conflicts` (entity form detected via the UUID
+        components).
+        """
         if fact.subject_entity_id is not None and fact.object_entity_id is not None:
             return (fact.subject_entity_id, fact.predicate, fact.object_entity_id)
         return (
             normalize_identity_term(fact.subject),
             normalize_identity_term(fact.predicate),
             normalize_identity_term(fact.object),
+        )
+
+    @staticmethod
+    def _name_identity_of_fact(fact: Fact) -> NameIdentity:
+        """Compute the NAME-form identity of a stored fact row.
+
+        Normalized SPO strings — the cross-form grouping key: entity and
+        literal rows of the same triple land in the same bucket so a
+        string entry finds entity candidates and vice versa.
+
+        Args:
+            fact: A stored fact row.
+
+        Returns:
+            The normalized ``(subject, predicate, object)`` tuple.
+        """
+        # str() coercion keeps the grouping hashable for non-ORM stand-ins
+        # (unit-test doubles); real Fact columns are NOT NULL strings, so
+        # this is a no-op in production.
+        def _term(value: object) -> str:
+            return normalize_identity_term(str(value) if value is not None else "")
+
+        return (
+            _term(fact.subject),
+            _term(fact.predicate),
+            _term(fact.object),
+        )
+
+    @classmethod
+    def _candidate_conflicts(cls, entry: dict[str, Any], candidate: Fact) -> bool:
+        """Decide whether an incoming entry supersedes a candidate fact.
+
+        Form-flexible matching (Phase 2 ADR intent):
+        * **entity match** — the entry carries BOTH subject+object entity
+          UUIDs, the candidate does too, they are equal, and predicates
+          are equal → conflict.  Two entity-linked facts with DIFFERENT
+          UUIDs are distinct entities even with identical names → no
+          conflict (no name fallback once both sides resolve).
+        * **name match** — normalized SPO strings are equal, applied
+          whenever at least one side lacks the fully-resolved entity
+          form → the cross-form path (string writer vs entity writer of
+          the same triple).
+
+        Args:
+            entry: A prepared entry dict (see :meth:`_prepare_entry`).
+            candidate: A stored fact row from the conflict scan.
+
+        Returns:
+            True when the entry must supersede the candidate.
+        """
+        row = entry["row"]
+        entry_resolved = (
+            row["subject_entity_id"] is not None
+            and row["object_entity_id"] is not None
+        )
+        if entry_resolved:
+            candidate_identity = cls._identity_of_fact(candidate)
+            candidate_resolved = (
+                isinstance(candidate_identity[0], UUID)
+                and isinstance(candidate_identity[2], UUID)
+            )
+            if candidate_resolved:
+                # Both resolved — entity match only.  Different UUIDs mean
+                # distinct entities, however similar their names.
+                return (
+                    row["subject_entity_id"] == candidate_identity[0]
+                    and row["predicate"] == candidate_identity[1]
+                    and row["object_entity_id"] == candidate_identity[2]
+                )
+        # At least one side lacks the entity form — name match.
+        return (
+            normalize_identity_term(row["subject"])
+            == normalize_identity_term(candidate.subject)
+            and normalize_identity_term(row["predicate"])
+            == normalize_identity_term(candidate.predicate)
+            and normalize_identity_term(row["object"])
+            == normalize_identity_term(candidate.object)
         )
 
     async def _insert_rows(

@@ -1,10 +1,14 @@
 """Unit tests for ingest_business_data task."""
 from __future__ import annotations
 
+from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+
+from core.exceptions import GraphBackendUnavailableError
 
 _ORG_ID = str(uuid4())
 _PROJECT_ID = str(uuid4())
@@ -223,3 +227,93 @@ class TestIngestBusinessData:
                 user_id=_USER_ID,
                 facts=[self._make_fact()],
             )
+
+    # ── Graph edge sync wiring (Phase 3) ─────────────────────────────────────
+
+    def _result(self) -> SimpleNamespace:
+        return SimpleNamespace(created=[], superseded_count=0)
+
+    @contextmanager
+    def _invalidation_harness(
+        self,
+        *,
+        backend: MagicMock | None = None,
+        resolve_error: Exception | None = None,
+    ):
+        """Patch the task's collaborators; yield (db, invalidation_cls, arq)."""
+        db = self._make_db()
+        # A MagicMock is callable, so return_value (not side_effect) is
+        # required for the success case; an Exception instance is not
+        # callable, so side_effect works for the failure case.
+        resolve = (
+            AsyncMock(side_effect=resolve_error)
+            if resolve_error is not None
+            else AsyncMock(return_value=backend)
+        )
+
+        with (
+            patch("workers.tasks.ingest_business_data.FactRepository"),
+            patch("workers.backend.resolve_graph_backend", new=resolve),
+            patch(
+                "services.fact_invalidation_service.FactInvalidationService"
+            ) as mock_inv_cls,
+            patch("workers.tasks.ingest_business_data.get_arq") as mock_arq,
+        ):
+            mock_inv_cls.return_value.ingest_with_supersession = AsyncMock(
+                return_value=self._result()
+            )
+            mock_arq.return_value = AsyncMock()
+            yield db, mock_inv_cls, mock_arq
+
+    @pytest.mark.asyncio
+    async def test_graph_sync_wired_when_ctx_resolvable(self) -> None:
+        """The worker ctx provides the graph collaborators → graph_sync wired.
+
+        Regression for the former "partial worker ctx" comment: the
+        worker context does carry ``graph_backend_dispatcher``, the
+        surreal pool and the falkordb client
+        (``services/worker/worker.py`` ``worker_ctx``), so the backend
+        IS resolvable in this task.
+        """
+        backend = MagicMock()
+
+        from workers.tasks.ingest_business_data import ingest_business_data
+
+        with self._invalidation_harness(backend=backend) as (db, mock_inv_cls, _):
+            result = await ingest_business_data(
+                ctx=self._ctx(db),
+                org_id=_ORG_ID,
+                project_id=_PROJECT_ID,
+                user_id=_USER_ID,
+                facts=[self._make_fact()],
+            )
+
+        assert result["status"] == "completed"
+        _, kwargs = mock_inv_cls.call_args
+        sync = kwargs["graph_sync"]
+        assert sync is not None
+        assert sync.backends == [backend]
+
+    @pytest.mark.asyncio
+    async def test_graph_sync_absent_on_resolve_failure(self) -> None:
+        """Backend resolution failure → ingest proceeds without graph_sync.
+
+        Facts are the source of truth; a sync failure must never fail
+        the ingest (reconcile_graph_edges is the safety net).
+        """
+        from workers.tasks.ingest_business_data import ingest_business_data
+
+        with self._invalidation_harness(
+            resolve_error=GraphBackendUnavailableError("worker misconfiguration")
+        ) as (db, mock_inv_cls, _):
+            result = await ingest_business_data(
+                ctx=self._ctx(db),
+                org_id=_ORG_ID,
+                project_id=_PROJECT_ID,
+                user_id=_USER_ID,
+                facts=[self._make_fact()],
+            )
+
+        assert result["status"] == "completed"
+        _, kwargs = mock_inv_cls.call_args
+        assert kwargs["graph_sync"] is None

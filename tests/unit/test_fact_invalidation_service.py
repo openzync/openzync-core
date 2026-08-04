@@ -284,6 +284,259 @@ class TestSupersessionLogic:
         mock_repo.set_valid_to.assert_awaited_once_with(FACT_1_ID, NOW)
 
 
+class TestFormFlexibleSupersession:
+    """Phase 2 ADR — form-flexible matching across identity forms.
+
+    A string-identity fact and an entity-resolved fact of the same SPO
+    names supersede each other (defect 1 + defect 3), while two distinct
+    entities that merely share a name never conflict (entity precedence).
+    """
+
+    SUBJ_ENTITY = UUID("00000000-0000-0000-0000-00000000aaaa")
+    OBJ_ENTITY = UUID("00000000-0000-0000-0000-00000000bbbb")
+    OTHER_SUBJ = UUID("00000000-0000-0000-0000-00000000cccc")
+    OTHER_OBJ = UUID("00000000-0000-0000-0000-00000000dddd")
+
+    @pytest.mark.asyncio
+    async def test_string_ingest_supersedes_entity_fact(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Headline fix — an API (string-identity) fact supersedes an
+        entity-linked fact with the same SPO names: latest assertion wins
+        across forms (defect 1)."""
+        candidate = _fact(
+            subject="Robbie",
+            predicate="wears",
+            object="Adidas",
+            content="Robbie wears Adidas",
+            subject_entity_id=self.SUBJ_ENTITY,
+            object_entity_id=self.OBJ_ENTITY,
+        )
+        mock_repo.find_conflicting_active_for_update.return_value = [candidate]
+        mock_repo.batch_create.return_value = [
+            _fact(id=FACT_2_ID, content="Robbie wears Adidas (confirmed)")
+        ]
+
+        result = await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[
+                _triple(
+                    subject="Robbie",
+                    predicate="wears",
+                    obj="Adidas",
+                    content="Robbie wears Adidas (confirmed)",
+                )
+            ],
+            now=NOW,
+        )
+
+        assert result.superseded_count == 1
+        assert result.inserted_count == 1
+        mock_repo.set_valid_to.assert_awaited_once_with(FACT_1_ID, NOW)
+
+    @pytest.mark.asyncio
+    async def test_entity_ingest_supersedes_literal_fact(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Worker flip-flop — an entity-resolved ingest supersedes a literal
+        fact with the same SPO names (defect 3, other direction)."""
+        candidate = _fact(
+            subject="Robbie", predicate="wears", object="Adidas"
+        )  # literal — no entity IDs
+        mock_repo.find_conflicting_active_for_update.return_value = [candidate]
+        mock_repo.batch_create.return_value = [
+            _fact(
+                id=FACT_2_ID,
+                subject_entity_id=self.SUBJ_ENTITY,
+                object_entity_id=self.OBJ_ENTITY,
+            )
+        ]
+
+        result = await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[
+                _triple(
+                    subject="Robbie",
+                    predicate="wears",
+                    obj="Adidas",
+                    subject_entity_id=str(self.SUBJ_ENTITY),
+                    object_entity_id=str(self.OBJ_ENTITY),
+                )
+            ],
+            now=NOW,
+        )
+
+        assert result.superseded_count == 1
+        mock_repo.set_valid_to.assert_awaited_once_with(FACT_1_ID, NOW)
+        # The entity-form entry must ALSO scan with its SPO-string key —
+        # a UUID-only match key would never return the literal candidate.
+        match_keys = mock_repo.find_conflicting_active_for_update.await_args.kwargs[
+            "match_keys"
+        ]
+        assert (self.SUBJ_ENTITY, "wears", self.OBJ_ENTITY) in match_keys
+        assert ("Robbie", "wears", "Adidas") in match_keys
+
+    @pytest.mark.asyncio
+    async def test_distinct_entities_same_name_do_not_supersede(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Entity precedence — both sides entity-linked with DIFFERENT UUIDs
+        are distinct entities: identical names do NOT create a conflict."""
+        candidate = _fact(
+            subject="Robbie",
+            predicate="wears",
+            object="Adidas",
+            subject_entity_id=self.SUBJ_ENTITY,
+            object_entity_id=self.OBJ_ENTITY,
+        )
+        mock_repo.find_conflicting_active_for_update.return_value = [candidate]
+        mock_repo.batch_create.return_value = [
+            _fact(
+                id=FACT_2_ID,
+                subject_entity_id=self.OTHER_SUBJ,
+                object_entity_id=self.OTHER_OBJ,
+            )
+        ]
+
+        result = await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[
+                _triple(
+                    subject="Robbie",
+                    predicate="wears",
+                    obj="Adidas",
+                    subject_entity_id=str(self.OTHER_SUBJ),
+                    object_entity_id=str(self.OTHER_OBJ),
+                )
+            ],
+            now=NOW,
+        )
+
+        assert result.superseded_count == 0
+        assert result.inserted_count == 1
+        mock_repo.set_valid_to.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_entity_and_literal_duplicates_collapse_in_batch(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Entity + literal duplicates of ONE assertion in a batch collapse
+        to a single row — not two coexisting rows (defect 3 observed)."""
+        mock_repo.batch_create.return_value = [
+            _fact(
+                id=FACT_2_ID,
+                subject_entity_id=self.SUBJ_ENTITY,
+                object_entity_id=self.OBJ_ENTITY,
+            )
+        ]
+
+        result = await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[
+                _triple(
+                    subject="Robbie",
+                    predicate="wears",
+                    obj="Adidas",
+                    subject_entity_id=str(self.SUBJ_ENTITY),
+                    object_entity_id=str(self.OBJ_ENTITY),
+                    content="Robbie wears Adidas",
+                ),
+                _triple(
+                    subject="Robbie",
+                    predicate="wears",
+                    obj="Adidas",
+                    content="Robbie wears Adidas",
+                ),
+            ],
+            now=NOW,
+        )
+
+        assert result.inserted_count == 1
+        assert result.skipped_count == 1
+        mock_repo.batch_create.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_lock_key_identical_across_identity_forms(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """A string entry and an entity entry of the SAME triple produce the
+        SAME advisory-lock key — cross-form writers serialize (defect 2)."""
+        mock_repo.batch_create.return_value = [
+            _fact(
+                id=FACT_2_ID,
+                subject_entity_id=self.SUBJ_ENTITY,
+                object_entity_id=self.OBJ_ENTITY,
+            )
+        ]
+
+        await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[
+                _triple(
+                    subject="Robbie",
+                    predicate="wears",
+                    obj="Adidas",
+                    subject_entity_id=str(self.SUBJ_ENTITY),
+                    object_entity_id=str(self.OBJ_ENTITY),
+                ),
+                _triple(
+                    subject="Robbie",
+                    predicate="wears",
+                    obj="Adidas",
+                    content="Robbie wears Adidas (raw)",
+                ),
+            ],
+            now=NOW,
+        )
+
+        keys = mock_repo.lock_conflict_identities.await_args.args[0]
+        assert keys == [f"sup:{ORG_ID}:{PROJECT_ID}:robbie:wears:adidas"]
+
+    @pytest.mark.asyncio
+    async def test_cross_form_punctuation_normalization(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Case/punctuation normalization holds ACROSS forms: a string entry
+        'Robbie! WEARS adidas' supersedes an entity fact stored 'Robbie'."""
+        candidate = _fact(
+            subject="Robbie",
+            predicate="wears",
+            object="Adidas",
+            subject_entity_id=self.SUBJ_ENTITY,
+            object_entity_id=self.OBJ_ENTITY,
+        )
+        mock_repo.find_conflicting_active_for_update.return_value = [candidate]
+        mock_repo.batch_create.return_value = [_fact(id=FACT_2_ID)]
+
+        result = await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[
+                _triple(
+                    subject="Robbie!",
+                    predicate="WEARS",
+                    obj="adidas",
+                    content="Robbie wears Adidas",
+                )
+            ],
+            now=NOW,
+        )
+
+        assert result.superseded_count == 1
+        mock_repo.set_valid_to.assert_awaited_once_with(FACT_1_ID, NOW)
+
+
 class TestAdvisoryLock:
     """B1 — concurrent same-SPO writers serialize on an advisory xact lock.
 
@@ -346,9 +599,17 @@ class TestAdvisoryLock:
         assert key.startswith(f"sup:{ORG_ID}:{PROJECT_ID}:")
 
     @pytest.mark.asyncio
-    async def test_lock_key_uses_entity_uuids_when_resolved(
+    async def test_lock_key_always_uses_name_form_not_entity_uuids(
         self, service: FactInvalidationService, mock_repo: AsyncMock
     ) -> None:
+        """Form-flexible fix — the advisory-lock key is the NAME form even
+        for entity-resolved entries, so string and entity writers of the
+        same triple serialize on the same lock.
+
+        INTENTIONAL CHANGE: the previous version of this test pinned the
+        form-sensitive key (``sup:...:<subject_uuid>:works_at:<object_uuid>``).
+        That let a string writer and an entity writer of one triple take
+        DIFFERENT locks — no cross-form serialization (defect 2)."""
         subj_entity = UUID("00000000-0000-0000-0000-00000000aaaa")
         obj_entity = UUID("00000000-0000-0000-0000-00000000bbbb")
         mock_repo.batch_create.return_value = [
@@ -375,9 +636,9 @@ class TestAdvisoryLock:
             now=NOW,
         )
         keys = mock_repo.lock_conflict_identities.await_args.args[0]
-        assert keys == [
-            f"sup:{ORG_ID}:{PROJECT_ID}:{subj_entity}:works_at:{obj_entity}"
-        ]
+        # normalize_identity_term strips punctuation — including the
+        # underscore in "works_at" — so the key is the canonical name form.
+        assert keys == [f"sup:{ORG_ID}:{PROJECT_ID}:alice:worksat:acme"]
 
     @pytest.mark.asyncio
     async def test_in_batch_dedup_locks_identity_once(

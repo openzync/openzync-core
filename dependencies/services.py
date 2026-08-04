@@ -24,6 +24,7 @@ Usage in a router::
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -35,6 +36,7 @@ from dependencies.org_config import get_org_config
 
 if TYPE_CHECKING:
     from core.graph_backend import GraphBackendDispatcher
+    from packages.graph_backend.interface import GraphBackend
     from schemas.organization_config import OrgConfigBase
 from core.config import get_settings
 from core.email import EmailConfig
@@ -161,7 +163,10 @@ async def get_fact_service(
     """Dependency that yields an initialised FactService.
 
     Reads the Redis client from ``request.app.state.redis`` (initialised
-    during the application lifespan).
+    during the application lifespan).  Also passes a lazy per-org graph
+    backend resolver so ``ingest_facts`` can wire graph edge expiry on
+    supersession; resolution failures are downgraded to warnings inside
+    the service and never fail the ingest.
     """
     redis_client = getattr(request.app.state, "redis", None)
     return FactService(
@@ -170,7 +175,50 @@ async def get_fact_service(
         fact_repo=FactRepository(db),
         session_repo=SessionRepository(db),
         webhook_service=webhook,
+        graph_backend_resolver=_make_graph_backend_resolver(request, db),
     )
+
+
+def _make_graph_backend_resolver(
+    request: Request, db: AsyncSession
+) -> Callable[[UUID], Awaitable[GraphBackend | None]]:
+    """Build a lazy per-org graph-backend resolver from ``request.app.state``.
+
+    Reuses ``workers.backend.resolve_graph_backend`` — the same
+    resolution used by the enrichment workers — so the API path and the
+    worker path share one implementation (dispatcher, per-org config via
+    OpenBao cache-first, SurrealDB pool only when configured, FalkorDB
+    client).  Resolution raises ``GraphBackendUnavailableError`` on
+    failure; ``FactService.ingest_facts`` catches it and proceeds without
+    graph sync (facts are the source of truth).
+
+    Args:
+        request: The HTTP request — ``app.state`` carries the graph
+            collaborators registered during the lifespan.
+        db: The request-scoped session (org-config queries and the
+            Postgres backend bind).
+
+    Returns:
+        An async callable ``(org_id) -> GraphBackend | None``.
+    """
+    from workers.backend import resolve_graph_backend
+
+    ctx: dict = {
+        "graph_backend_dispatcher": getattr(
+            request.app.state, "graph_backend_dispatcher", None
+        ),
+        "surreal_connection_pool": getattr(
+            request.app.state, "surreal_connection_pool", None
+        ),
+        "falkordb_client": getattr(request.app.state, "falkordb_client", None),
+        "openbao_client": getattr(request.app.state, "openbao_client", None),
+        "redis": getattr(request.app.state, "redis", None),
+    }
+
+    async def _resolve(org_id: UUID) -> GraphBackend | None:
+        return await resolve_graph_backend(ctx, org_id, db)
+
+    return _resolve
 
 
 # ── Memory ─────────────────────────────────────────────────────────────────────
