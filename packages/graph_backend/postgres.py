@@ -38,23 +38,35 @@ def _build_bfs_cte(*, temporal: bool) -> str:
 
     When ``temporal`` is ``True`` the edge JOIN also applies the
     effective-at predicate (``valid_from``/``valid_to`` contain the bound
-    ``:as_of`` parameter) — the same semantics as ``get_relationships``.
-    The non-temporal variant preserves the historical behaviour (only
-    ``invalid_at IS NULL``).
+    ``:as_of`` parameter) AND relaxes ``invalid_at`` to
+    ``(invalid_at IS NULL OR invalid_at > :as_of)`` — an edge invalidated
+    at T1 stays traversable at as_of < T1 (bitemporal semantics, matching
+    Surreal/Falkor and ``get_relationships``).  The non-temporal variant
+    preserves the historical behaviour (only ``invalid_at IS NULL``).
 
     Args:
         temporal: ``True`` to require the ``:as_of`` bound parameter and
-            filter edges by their validity range.
+            filter edges by their validity range and invalidation instant.
 
     Returns:
         The SQL CTE string (not parameter-bound).
     """
     temporal_filter = ""
     if temporal:
+        # Bitemporal: an edge invalidated at T1 remains traversable at
+        # as_of < T1 (``invalid_at > :as_of``), mirroring Surreal/Falkor
+        # and the ABC contract.  With ``as_of`` = now (retrieve_graph's
+        # None default), ``invalid_at > now`` ≡ ``invalid_at IS NULL``,
+        # so the default path is unchanged.
+        invalid_at_filter = (
+            "        AND (r.invalid_at IS NULL OR r.invalid_at > :as_of)\n"
+        )
         temporal_filter = (
             "        AND (r.valid_from IS NULL OR r.valid_from <= :as_of)\n"
             "        AND (r.valid_to IS NULL OR r.valid_to >= :as_of)\n"
         )
+    else:
+        invalid_at_filter = "        AND r.invalid_at IS NULL\n"
     return f"""\
 WITH RECURSIVE bfs AS (
     -- Anchor: start node
@@ -73,8 +85,7 @@ WITH RECURSIVE bfs AS (
     FROM bfs
     JOIN graph_relationships r
         ON (r.source_id = bfs.id OR r.target_id = bfs.id)
-        AND r.invalid_at IS NULL
-        AND r.project_id = :project_id
+{invalid_at_filter}        AND r.project_id = :project_id
 {temporal_filter}    JOIN graph_entities e
         ON (e.id = CASE
             WHEN r.source_id = bfs.id THEN r.target_id

@@ -267,6 +267,21 @@ def _get_backend_name(backend: Any) -> str:
     return name.lower()
 
 
+def _bfs_execute_calls(mock_db: MagicMock) -> list[tuple[str, dict]]:
+    """Return (sql, params) of every BFS-CTE execution on the mock session.
+
+    ``traverse`` also executes ``SET LOCAL statement_timeout`` first, so
+    only calls whose text contains the recursive CTE are captured.
+    """
+    calls: list[tuple[str, dict]] = []
+    for call in mock_db.execute.call_args_list:
+        args = call.args
+        if args and "WITH RECURSIVE bfs" in str(args[0]):
+            params = args[1] if len(args) > 1 else {}
+            calls.append((str(args[0]), params))
+    return calls
+
+
 def _mockrow_to_dict(row: Any) -> dict:
     """Convert a MockRow to a plain dict for SurrealDB (which uses .get())."""
     if row is None or isinstance(row, dict):
@@ -2175,10 +2190,7 @@ class TestRetrieveGraphAsOf:
         mock_surreal: AsyncMock,
         mock_falkordb_client: MagicMock,
     ) -> None:
-        """retrieve_graph(as_of=T2) → traverse receives as_of=T2."""
-        if _get_backend_name(backend) == "postgres":
-            pytest.skip("Postgres as_of threading is owned by Stream A")
-
+        """retrieve_graph(as_of=T2) → traverse receives the exact as_of."""
         backend.search_entities = AsyncMock(return_value=[
             {"id": str(ENTITY_ID), "name": "Match", "type": "Person", "summary": ""},
         ])
@@ -2188,13 +2200,23 @@ class TestRetrieveGraphAsOf:
             ORG_ID, PROJ_ID, "find", match_limit=5, max_depth=2, max_results=50, as_of=T2
         )
 
-        backend.traverse.assert_called_once_with(
-            org_id=ORG_ID,
-            project_id=PROJ_ID,
-            start_node_id=ENTITY_ID,
-            max_depth=2,
-            as_of=T2,
-        )
+        if _get_backend_name(backend) == "postgres":
+            # Postgres threads the instant through its ``at_time`` kwarg.
+            backend.traverse.assert_called_once_with(
+                org_id=ORG_ID,
+                project_id=PROJ_ID,
+                start_node_id=ENTITY_ID,
+                max_depth=2,
+                at_time=T2,
+            )
+        else:
+            backend.traverse.assert_called_once_with(
+                org_id=ORG_ID,
+                project_id=PROJ_ID,
+                start_node_id=ENTITY_ID,
+                max_depth=2,
+                as_of=T2,
+            )
 
     async def test_default_as_of_is_backward_compatible(
         self,
@@ -2203,11 +2225,8 @@ class TestRetrieveGraphAsOf:
         mock_surreal: AsyncMock,
         mock_falkordb_client: MagicMock,
     ) -> None:
-        """No as_of → traverse is called without the new kwarg (old callers
+        """No as_of → traversal without a caller-supplied instant (old callers
         keep working unchanged)."""
-        if _get_backend_name(backend) == "postgres":
-            pytest.skip("Postgres as_of threading is owned by Stream A")
-
         backend.search_entities = AsyncMock(return_value=[
             {"id": str(ENTITY_ID), "name": "Match", "type": "Person", "summary": ""},
         ])
@@ -2215,12 +2234,19 @@ class TestRetrieveGraphAsOf:
 
         await backend.retrieve_graph(ORG_ID, PROJ_ID, "find")
 
-        backend.traverse.assert_called_once_with(
-            org_id=ORG_ID,
-            project_id=PROJ_ID,
-            start_node_id=ENTITY_ID,
-            max_depth=2,
-        )
+        if _get_backend_name(backend) == "postgres":
+            # Postgres resolves None → now internally and always passes at_time.
+            kwargs = backend.traverse.call_args.kwargs
+            assert kwargs["max_depth"] == 2
+            assert isinstance(kwargs["at_time"], datetime)
+            assert "as_of" not in kwargs
+        else:
+            backend.traverse.assert_called_once_with(
+                org_id=ORG_ID,
+                project_id=PROJ_ID,
+                start_node_id=ENTITY_ID,
+                max_depth=2,
+            )
 
     async def test_traverse_filter_bounds_edge_validity_at_as_of(
         self,
@@ -2232,12 +2258,30 @@ class TestRetrieveGraphAsOf:
         """The emitted neighbour query filters edges by the effective-at
         window: invalid_at unset OR after as_of, and within
         [valid_from, valid_to].  Bound params carry the exact as_of."""
-        if _get_backend_name(backend) == "postgres":
-            pytest.skip("Postgres as_of threading is owned by Stream A")
-
         start_entity = {"id": str(ENTITY_ID), "name": "Start", "type": "Person", "summary": ""}
 
-        if _get_backend_name(backend) == "surrealdb":
+        if _get_backend_name(backend) == "postgres":
+            # Temporal: the BFS CTE relaxes invalid_at to the effective-at
+            # predicate — an edge invalidated at T1 stays traversable at
+            # as_of=T0 and is excluded at as_of=T2.
+            await backend.traverse(ORG_ID, PROJ_ID, ENTITY_ID, max_depth=1, at_time=T0)
+            temporal_sql, temporal_params = _bfs_execute_calls(mock_db)[-1]
+            assert "(r.invalid_at IS NULL OR r.invalid_at > :as_of)" in temporal_sql
+            assert "(r.valid_from IS NULL OR r.valid_from <= :as_of)" in temporal_sql
+            assert "(r.valid_to IS NULL OR r.valid_to >= :as_of)" in temporal_sql
+            assert temporal_params["as_of"] == T0
+
+            await backend.traverse(ORG_ID, PROJ_ID, ENTITY_ID, max_depth=1, at_time=T2)
+            _sql2, params2 = _bfs_execute_calls(mock_db)[-1]
+            assert params2["as_of"] == T2
+
+            # Non-temporal: historical hard-exclusion, no as_of bound.
+            await backend.traverse(ORG_ID, PROJ_ID, ENTITY_ID, max_depth=1)
+            plain_sql, _params3 = _bfs_execute_calls(mock_db)[-1]
+            assert "AND r.invalid_at IS NULL\n" in plain_sql
+            assert "r.invalid_at > :as_of" not in plain_sql
+            assert "valid_from" not in plain_sql
+        elif _get_backend_name(backend) == "surrealdb":
             backend.get_entity = AsyncMock(return_value=start_entity)
             mock_surreal.query.return_value = [RecordID("entity", str(NEIGHBOR_ID))]
 

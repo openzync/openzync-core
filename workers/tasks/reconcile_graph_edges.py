@@ -43,15 +43,17 @@ SELECT e.id, e.organization_id, e.project_id,
        e.source_id, e.target_id, e.relationship_type
 FROM graph_relationships e
 WHERE e.invalid_at IS NULL
-  AND NOT EXISTS (
-      SELECT 1
-      FROM facts f
-      WHERE f.invalid_at IS NULL
-        AND f.valid_to IS NULL
-        AND f.subject_entity_id = e.source_id
-        AND f.predicate = e.relationship_type
-        AND f.object_entity_id = e.target_id
-  )
+      AND NOT EXISTS (
+          SELECT 1
+          FROM facts f
+          WHERE f.invalid_at IS NULL
+            AND f.valid_to IS NULL
+            AND f.organization_id = e.organization_id
+            AND f.project_id = e.project_id
+            AND f.subject_entity_id = e.source_id
+            AND f.predicate = e.relationship_type
+            AND f.object_entity_id = e.target_id
+      )
 ORDER BY e.updated_at ASC
 LIMIT :limit
 """

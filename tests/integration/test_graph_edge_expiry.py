@@ -226,12 +226,12 @@ class TestCrossFormSupersessionExpiresEdge:
         # Edge gone from the active listing.
         assert await _edge_ids_for(engine, graph["src_id"]) == []
 
-        # Postgres hard-excludes invalidated edges at ANY as_of — once the
-        # supersession lands, traversal excludes the neighbour at both T0 and T1.
+        # Bitemporal exclusion: invalidated at T1, the edge is still
+        # traversable at an as-of before T1 and excluded only at/after T1.
         db = AsyncSession(engine, expire_on_commit=False)
         try:
             backend = PostgresGraphBackend(db=db)
-            after_t0 = await backend.traverse(
+            before_t1 = await backend.traverse(
                 ORG_ID, PROJECT_ID, graph["src_id"], max_depth=1,
                 at_time=T0 + timedelta(minutes=1),
             )
@@ -239,7 +239,9 @@ class TestCrossFormSupersessionExpiresEdge:
                 ORG_ID, PROJECT_ID, graph["src_id"], max_depth=1,
                 at_time=T1 + timedelta(minutes=1),
             )
-            assert str(graph["tgt_id"]) not in {n["id"] for n in after_t0}
+            assert str(graph["tgt_id"]) in {n["id"] for n in before_t1}, (
+                "as-of before the invalidation instant must still reach the neighbour"
+            )
             assert str(graph["tgt_id"]) not in {n["id"] for n in after_t1}
         finally:
             await db.close()
@@ -312,17 +314,25 @@ class TestCrossFormSupersessionExpiresEdge:
             lambda: _edge_invalid_at(engine, graph["src_id"], graph["tgt_id"], "wears")
         )
 
-        # Post-supersession: the invalidated edge is hard-excluded at ANY as_of.
+        # Post-supersession (invalid_at = T1): bitemporal — at an as-of
+        # before the invalidation instant the edge is still reachable at
+        # distance 1; excluded only at as_of >= T1.
         db = AsyncSession(engine, expire_on_commit=False)
         try:
             backend = PostgresGraphBackend(db=db)
             at_t0 = await backend.retrieve_graph(
                 ORG_ID, PROJECT_ID, query="AsOfSource", as_of=T0 + timedelta(minutes=1)
             )
+            at_t1 = await backend.retrieve_graph(
+                ORG_ID, PROJECT_ID, query="AsOfSource", as_of=T1
+            )
             at_t2 = await backend.retrieve_graph(
                 ORG_ID, PROJECT_ID, query="AsOfSource", as_of=T2
             )
-            assert all(n["distance"] == 0 for n in at_t0), at_t0
+            assert any(n["distance"] == 1 for n in at_t0), (
+                "as-of before the invalidation instant must still see the edge"
+            )
+            assert all(n["distance"] == 0 for n in at_t1), at_t1
             assert all(n["distance"] == 0 for n in at_t2), at_t2
         finally:
             await db.close()

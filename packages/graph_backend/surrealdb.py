@@ -1129,12 +1129,15 @@ class SurrealGraphBackend(GraphBackend):
         }
 
         try:
+            # Expired edges (invalid_at set) are omitted from the listing —
+            # the square-bracket filter applies to the intermediate edge
+            # records before the arrow resolves (same pattern as traverse).
             if predicate:
                 safe_pred = self._sanitize_edge_type(predicate)
                 result = await self._surreal.query(
                     f"""
                     SELECT *, meta::tb(id) AS edge_table_name
-                    FROM (SELECT VALUE ->{safe_pred} FROM $eid)
+                    FROM (SELECT VALUE ->{safe_pred}[WHERE invalid_at IS NONE] FROM $eid)
                     ORDER BY created_at DESC
                     LIMIT {limit + 1} START {offset};
                     """,
@@ -1144,7 +1147,7 @@ class SurrealGraphBackend(GraphBackend):
                 result = await self._surreal.query(
                     f"""
                     SELECT *, meta::tb(id) AS edge_table_name
-                    FROM (SELECT VALUE <->? FROM $eid)
+                    FROM (SELECT VALUE <->?[WHERE invalid_at IS NONE] FROM $eid)
                     ORDER BY created_at DESC
                     LIMIT {limit + 1} START {offset};
                     """,

@@ -10,9 +10,9 @@ OBSERVED SurrealQL of the Phase-3 surface:
   given (scenario 13 leg): ``(invalid_at IS NONE OR invalid_at > $as_of)``
   plus the natural ``[valid_from, valid_to]`` window.
 * ``retrieve_graph`` — threads ``as_of`` into ``traverse``.
-* ``list_entity_edges`` — DOES NOT filter ``invalid_at`` in the emitted
-  query (observed discrepancy vs the spec; asserted as-is so a fix breaks
-  this test loudly — do not silently pin the claimed behaviour).
+* ``list_entity_edges`` — omits expired edges via the ``[WHERE
+  invalid_at IS NONE]`` edge filter in BOTH arrow branches (predicate +
+  wildcard), matching Postgres/Falkor.
 
 The ``backend`` fixture carries ``_schema_ensured = True`` so no schema
 bootstrap calls hit the mocked client.
@@ -248,33 +248,45 @@ class TestSurrealTraverseEffectiveAt:
         assert any(p.get("as_of") == T2.isoformat() for _, p in neighbour_calls)
 
 
-class TestSurrealListEntityEdgesObserved:
-    """Scenario 14 (Surreal leg) — observed behaviour, not the claimed spec.
+class TestSurrealListEntityEdgesFiltersExpired:
+    """Scenario 14 (Surreal leg) — expired-edge omission in list_entity_edges.
 
-    The spec states ``list_entity_edges`` filters ``invalid_at IS NULL``
-    across all backends.  The Surreal implementation emits an arrow query
-    with NO ``invalid_at`` predicate (packages/graph_backend/surrealdb.py
-    ``list_entity_edges``).  Pin the observed SQL so a fix is deliberate,
-    and flag the discrepancy separately.
+    Both arrow branches (predicate + wildcard) carry the ``[WHERE
+    invalid_at IS NONE]`` edge filter, so an edge with ``invalid_at`` set
+    is excluded at the query boundary — the same square-bracket edge
+    filter pattern ``traverse`` uses.
     """
 
-    async def test_observed_no_invalid_at_filter(
-        self, backend: SurrealGraphBackend, mock_surreal: AsyncMock
-    ) -> None:
+    async def _captured_query(
+        self, backend: SurrealGraphBackend, mock_surreal: AsyncMock, **kwargs: Any
+    ) -> str:
         captured: list[str] = []
 
-        async def _side_effect(query: str, params: dict[str, Any] | None = None) -> list[Any]:
+        async def _side_effect(
+            query: str, params: dict[str, Any] | None = None
+        ) -> list[Any]:
             captured.append(query)
             return []
 
         mock_surreal.query.side_effect = _side_effect
 
-        await backend.list_entity_edges(ORG_ID, PROJ_ID, SRC_ID, predicate="reports_to")
+        await backend.list_entity_edges(ORG_ID, PROJ_ID, SRC_ID, **kwargs)
 
         assert captured, "list_entity_edges must emit a query"
-        query = captured[0]
-        assert "invalid_at" not in query, (
-            "OBSERVED DISCREPANCY: Surreal list_entity_edges currently emits no "
-            "invalid_at filter — expired edges are listed.  If this changed, "
-            "update this test and the discrepancy note."
+        return captured[0]
+
+    async def test_predicate_branch_omits_expired_edges(
+        self, backend: SurrealGraphBackend, mock_surreal: AsyncMock
+    ) -> None:
+        query = await self._captured_query(backend, mock_surreal, predicate="reports_to")
+        assert "->reports_to[WHERE invalid_at IS NONE]" in query, (
+            "predicate branch must filter invalid_at at the query boundary"
+        )
+
+    async def test_wildcard_branch_omits_expired_edges(
+        self, backend: SurrealGraphBackend, mock_surreal: AsyncMock
+    ) -> None:
+        query = await self._captured_query(backend, mock_surreal)
+        assert "<->?[WHERE invalid_at IS NONE]" in query, (
+            "wildcard branch must filter invalid_at at the query boundary"
         )

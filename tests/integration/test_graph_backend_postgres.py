@@ -796,13 +796,25 @@ class TestTraversal:
     async def test_retrieve_graph_as_of_excludes_expired_edge(
         self, backend: Any
     ) -> None:
-        """An edge expired via expire_relationships_matching is gone at ANY as_of."""
+        """An edge expired at ``now`` stays traversable at an as-of before
+        the invalidation instant and is excluded at/after it (bitemporal)."""
         src = await _create_test_entity(backend, name="ExpSourceAlpha")
         tgt = await _create_test_entity(backend, name="ZzzExpTargetOmega")
         src_id, tgt_id = UUID(src["id"]), UUID(tgt["id"])
-        await _create_test_relationship(backend, src_id, tgt_id, rel_type="mentions")
 
         now = datetime.now(timezone.utc)
+        # Edge created with a HISTORICAL valid_from so the as-of window sits
+        # between creation and the invalidation instant — with the default
+        # valid_from=now() the edge legitimately did not exist at a past as-of.
+        await backend.create_relationship(
+            org_id=ORG_ID,
+            project_id=PROJ_ID,
+            source_id=src_id,
+            target_id=tgt_id,
+            relationship_type="mentions",
+            valid_from=now - timedelta(days=2),
+        )
+
         count = await backend.expire_relationships_matching(
             ORG_ID, PROJ_ID,
             source_id=src_id, target_id=tgt_id,
@@ -810,13 +822,24 @@ class TestTraversal:
         )
         assert count == 1
 
-        # invalid_at is set → the edge is not traversed even at a past as-of.
-        result = await backend.retrieve_graph(
+        # invalid_at == now: excluded only at as_of >= now; a past as-of
+        # still traverses the edge (bitemporal, matches Surreal/Falkor).
+        before = await backend.retrieve_graph(
             ORG_ID, PROJ_ID, query="expsourcealpha",
             as_of=now - timedelta(days=1),
         )
-        traversed = {r["id"] for r in result if r.get("distance", 0) == 1}
-        assert str(tgt_id) not in traversed
+        before_traversed = {r["id"] for r in before if r.get("distance", 0) == 1}
+        assert str(tgt_id) in before_traversed, (
+            "as-of before the invalidation instant must still traverse the edge"
+        )
+
+        at_now = await backend.retrieve_graph(
+            ORG_ID, PROJ_ID, query="expsourcealpha", as_of=now,
+        )
+        at_now_traversed = {r["id"] for r in at_now if r.get("distance", 0) == 1}
+        assert str(tgt_id) not in at_now_traversed, (
+            "as-of at/after the invalidation instant must exclude the edge"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
