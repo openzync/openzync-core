@@ -110,6 +110,17 @@ async def ingest_messages(
     org_id = UUID(request.state.org_id)
     project_id = UUID(request.path_params["project_id"])
 
+    # Idempotency-Key is client-supplied — enforce the 255-char ceiling at
+    # the boundary so an oversized key is a 422, not a 500 propagated from
+    # IdempotencyService's internal ValueError (defense-in-depth).
+    if idempotency_key is not None and len(idempotency_key) > 255:
+        raise HTTPException(
+            # HTTP_422_UNPROCESSABLE_CONTENT: same status as the deprecated
+            # *_ENTITY alias — repo runs pytest with filterwarnings=error.
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Idempotency-Key must not exceed 255 characters",
+        )
+
     # Parse the JSON payload from the multipart form
     payload = IngestMemoryRequest.model_validate_json(data)
 
@@ -143,8 +154,10 @@ async def ingest_messages(
                 )
 
     # Canonical body hash — only needed when an Idempotency-Key is present.
-    # Pure hashing, no business logic: the service compares this against the
-    # stored hash on key replay.
+    # The RAW form string is hashed, not the validated model: Pydantic
+    # applies defaults, so two equivalent-but-differently-shaped bodies
+    # would hash differently after validation and break the 409 contract.
+    # The double JSON parse (validation + hashing) is intentional.
     body_hash = (
         IdempotencyService.hash_request_body(orjson.loads(data))
         if idempotency_key

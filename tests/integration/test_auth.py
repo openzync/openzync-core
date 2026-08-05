@@ -15,7 +15,7 @@ from httpx import ASGITransport, AsyncClient
 class TestAuthIntegration:
     """Validate auth middleware behaviour end-to-end."""
 
-    HEALTH_ENDPOINT = "/v1/health"
+    HEALTH_ENDPOINT = "/health"
     # /v1/users is a protected endpoint — requires valid API key.
     PROTECTED_ENDPOINT = "/v1/users"
 

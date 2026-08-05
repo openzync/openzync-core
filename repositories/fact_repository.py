@@ -20,13 +20,40 @@ from uuid import UUID
 from typing import Any, Literal
 
 from core.cursor import decode_cursor, encode_cursor
-from sqlalchemy import text, update
+from sqlalchemy import or_, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.fact import Fact
 
 logger = logging.getLogger(__name__)
+
+
+def _effective_at_clause(t: datetime):
+    """Build the bitemporal effective-at predicate for a point in time ``t``.
+
+    A fact is effective at ``t`` when it has not been hard-retracted
+    (``invalid_at``) before/at ``t`` and its valid range
+    ``[valid_from, valid_to)`` contains ``t``.  Supersession closes a
+    fact's range by setting ``valid_to = now``, so filtering only on
+    ``invalid_at IS NULL`` would let superseded facts leak into queries.
+
+    Args:
+        t: The point in time the query is evaluated at.
+
+    Returns:
+        A SQLAlchemy boolean expression for the ``WHERE`` clause.
+    """
+    return or_(
+        Fact.invalid_at.is_(None),
+        Fact.invalid_at > t,
+    ) & or_(
+        Fact.valid_from.is_(None),
+        Fact.valid_from <= t,
+    ) & or_(
+        Fact.valid_to.is_(None),
+        Fact.valid_to > t,
+    )
 
 
 class FactRepository:
@@ -373,6 +400,88 @@ class FactRepository:
 
         return created
 
+    # ── Supersession Primitives ──────────────────────────────────────────────
+
+    async def find_conflicting_active_for_update(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        match_keys: list[tuple[UUID | str, str, UUID | str]],
+        now: datetime,
+    ) -> list[Fact]:
+        """Lock and return active facts matching any conflict identity.
+
+        One query for the whole batch (no N+1).  A match key is a triple
+        ``(subject_key, predicate, object_key)`` where each key is either
+        an entity UUID (resolved identity) or a raw string.  String keys
+        are compared case-insensitively; entity UUID keys exactly.
+
+        Rows are locked with ``SELECT ... FOR UPDATE`` (held until the
+        caller commits) so concurrent ingestors serialise on the same
+        triple instead of silently coexisting.  Only facts effective at
+        ``now`` match — previously superseded or hard-retracted facts are
+        skipped.
+
+        Args:
+            org_id: Tenant scope for multi-tenant isolation.
+            project_id: Project scope.
+            match_keys: One identity per incoming fact (deduplicated by
+                the caller before calling).
+            now: Effective-at instant — conflicts are facts active at
+                ``now``.
+
+        Returns:
+            All matching active ``Fact`` rows, locked for update.
+        """
+        from sqlalchemy import and_, func, select
+
+        if not match_keys:
+            return []
+
+        key_conditions = []
+        for subject_key, predicate, object_key in match_keys:
+            key_conditions.append(
+                and_(
+                    Fact.subject_entity_id == subject_key
+                    if isinstance(subject_key, UUID)
+                    else func.lower(Fact.subject) == subject_key.lower(),
+                    Fact.predicate == predicate,
+                    Fact.object_entity_id == object_key
+                    if isinstance(object_key, UUID)
+                    else func.lower(Fact.object) == object_key.lower(),
+                )
+            )
+
+        stmt = (
+            select(Fact)
+            .where(Fact.organization_id == org_id)
+            .where(Fact.project_id == project_id)
+            .where(_effective_at_clause(now))
+            .where(or_(*key_conditions))
+            .with_for_update()
+        )
+        result = await self._db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def set_valid_to(self, fact_id: UUID, now: datetime) -> None:
+        """Close a fact's validity range by setting ``valid_to``.
+
+        Supersession primitive — does not touch ``invalid_at`` (a fact
+        replaced by a conflicting one is history, not a hard retraction).
+        ``updated_at`` is set explicitly so the ``onupdate`` hook fires on
+        the ORM ``update()``.
+
+        Args:
+            fact_id: The fact to close.
+            now: The instant the fact stopped being current.
+        """
+        await self._db.execute(
+            update(Fact)
+            .where(Fact.id == fact_id)
+            .values(valid_to=now, updated_at=now)
+        )
+        await self._db.flush()
+
     # ── Temporal Queries ───────────────────────────────────────────────────────
 
     async def get_all_active_for_project(
@@ -381,24 +490,29 @@ class FactRepository:
         *,
         organization_id: UUID | None = None,
     ) -> list[Fact]:
-        """Return all non-invalidated facts for a project.
+        """Return all facts effective at the current time for a project.
 
         Used by the temporal validation service to scan for cross-episode
         overlaps and invalid ranges.
+
+        Applies the effective-at predicate with ``t = now`` — superseded
+        facts (``valid_to`` closed) are excluded.
 
         Args:
             project_id: The project to fetch facts for.
             organization_id: Optional tenant filter for defense-in-depth.
 
         Returns:
-            List of active ``Fact`` ORM instances (``invalid_at IS NULL``).
+            List of active ``Fact`` ORM instances effective at now.
         """
+        from datetime import timezone
+
         from sqlalchemy import select
 
         stmt = (
             select(Fact)
             .where(Fact.project_id == project_id)
-            .where(Fact.invalid_at.is_(None))
+            .where(_effective_at_clause(datetime.now(timezone.utc)))
             .order_by(Fact.valid_from.asc().nullsfirst())
         )
         if organization_id is not None:
@@ -416,7 +530,7 @@ class FactRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> list[Fact]:
-        """Return non-invalidated facts valid at a specific point in time.
+        """Return facts effective at a specific point in time.
 
         Uses the btree index ``ix_fact_user_valid_range`` on
         ``(user_id, valid_from, valid_to)`` — **not** the GiST exclusion
@@ -425,11 +539,14 @@ class FactRepository:
         Query pattern::
 
             WHERE project_id = :project_id
-              AND invalid_at IS NULL
+              AND (invalid_at IS NULL OR invalid_at > :timestamp)
               AND (valid_from IS NULL OR valid_from <= :timestamp)
               AND (valid_to IS NULL OR valid_to > :timestamp)
             ORDER BY valid_from DESC NULLS LAST
             LIMIT :limit OFFSET :offset
+
+        As-of semantics: ``:t`` is the requested ``timestamp``, so a fact
+        superseded *after* that instant is still returned.
 
         Args:
             project_id: Project scope.
@@ -440,7 +557,7 @@ class FactRepository:
             offset: Number of results to skip (for pagination).
 
         Returns:
-            A list of ``Fact`` ORM instances valid at ``timestamp``.
+            A list of ``Fact`` ORM instances effective at ``timestamp``.
         """
         from sqlalchemy import select
 
@@ -449,13 +566,7 @@ class FactRepository:
         stmt = (
             select(Fact)
             .where(Fact.project_id == project_id)
-            .where(Fact.invalid_at.is_(None))
-            .where(
-                (Fact.valid_from.is_(None)) | (Fact.valid_from <= timestamp),
-            )
-            .where(
-                (Fact.valid_to.is_(None)) | (Fact.valid_to > timestamp),
-            )
+            .where(_effective_at_clause(timestamp))
             .order_by(Fact.valid_from.desc().nullslast())
             .limit(effective_limit)
             .offset(offset)
@@ -476,16 +587,20 @@ class FactRepository:
         limit: int = 50,
         offset: int = 0,
     ) -> list[Fact]:
-        """Return non-invalidated facts whose valid range overlaps ``[start, end)``.
+        """Return facts whose valid range overlaps ``[start, end)``.
 
         Btree-backed query (NOT GiST ``&&``)::
 
             WHERE project_id = :project_id
-              AND invalid_at IS NULL
+              AND (invalid_at IS NULL OR invalid_at > :start)
               AND (valid_from IS NULL OR valid_from < :end)
               AND (valid_to IS NULL OR valid_to > :start)
             ORDER BY valid_from ASC
             LIMIT :limit OFFSET :offset
+
+        The effective-at ``invalid_at`` bound uses ``:t = start`` so facts
+        superseded inside the range are still returned (they were valid
+        during part of it) while hard-retracted facts stay excluded.
 
         The GiST range-overlap index is intentionally deferred — add it
         only if profiling proves the btree plan is too slow at scale.
@@ -510,7 +625,9 @@ class FactRepository:
         stmt = (
             select(Fact)
             .where(Fact.project_id == project_id)
-            .where(Fact.invalid_at.is_(None))
+            .where(
+                or_(Fact.invalid_at.is_(None), Fact.invalid_at > start),
+            )
             .where(
                 (Fact.valid_from.is_(None)) | (Fact.valid_from < end),
             )
@@ -576,9 +693,12 @@ class FactRepository:
         Returns:
             Tuple of (list of fact dicts, next_cursor or None).
         """
-        from sqlalchemy import select, text as sql_text
+        from datetime import timezone
+
+        from sqlalchemy import text as sql_text
 
         effective_limit = min(limit, 200) + 1  # +1 to detect has_more
+        now = datetime.now(timezone.utc)
 
         # Decode cursor
         cursor_created: datetime | None = None
@@ -607,7 +727,9 @@ class FactRepository:
                   SELECT e.id FROM episodes e
                   WHERE e.session_id = :session_id AND e.is_deleted = false
               )
-              AND f.invalid_at IS NULL
+              AND (f.invalid_at IS NULL OR f.invalid_at > :effective_at)
+              AND (f.valid_from IS NULL OR f.valid_from <= :effective_at)
+              AND (f.valid_to IS NULL OR f.valid_to > :effective_at)
         """
 
         if cursor_id is not None:
@@ -627,6 +749,7 @@ class FactRepository:
                     "cursor_created": cursor_created,
                     "cursor_id": cursor_id,
                     "limit": effective_limit,
+                    "effective_at": now,
                 },
             )
         else:
@@ -643,6 +766,7 @@ class FactRepository:
                     "org_id": organization_id,
                     "session_id": session_id,
                     "limit": effective_limit,
+                    "effective_at": now,
                 },
             )
 
@@ -699,6 +823,9 @@ class FactRepository:
             ``predicate``, ``object``, ``confidence``, and ``score``.
         """
         effective_limit = min(limit, 200)
+        from datetime import timezone
+
+        now = datetime.now(timezone.utc)
         result = await self._db.execute(
             text(
                 """
@@ -707,11 +834,19 @@ class FactRepository:
                 FROM facts
                 WHERE project_id = :project_id
                   AND embedding IS NOT NULL
+                  AND (invalid_at IS NULL OR invalid_at > :effective_at)
+                  AND (valid_from IS NULL OR valid_from <= :effective_at)
+                  AND (valid_to IS NULL OR valid_to > :effective_at)
                 ORDER BY embedding <=> :embedding
                 LIMIT :limit
                 """
             ),
-            {"embedding": embedding, "project_id": project_id, "limit": effective_limit},
+            {
+                "embedding": embedding,
+                "project_id": project_id,
+                "limit": effective_limit,
+                "effective_at": now,
+            },
         )
         return [
             {
@@ -748,6 +883,9 @@ class FactRepository:
             ``predicate``, ``object``, ``confidence``, and ``score``.
         """
         effective_limit = min(limit, 200)
+        from datetime import timezone
+
+        now = datetime.now(timezone.utc)
         result = await self._db.execute(
             text(
                 """
@@ -761,11 +899,20 @@ class FactRepository:
                   AND organization_id = :org_id
                   AND to_tsvector('english', content)
                       @@ plainto_tsquery('english', :query)
+                  AND (invalid_at IS NULL OR invalid_at > :effective_at)
+                  AND (valid_from IS NULL OR valid_from <= :effective_at)
+                  AND (valid_to IS NULL OR valid_to > :effective_at)
                 ORDER BY score DESC
                 LIMIT :limit
                 """
             ),
-            {"query": query, "project_id": project_id, "org_id": org_id, "limit": effective_limit},
+            {
+                "query": query,
+                "project_id": project_id,
+                "org_id": org_id,
+                "limit": effective_limit,
+                "effective_at": now,
+            },
         )
         return [
             {

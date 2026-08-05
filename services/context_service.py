@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -35,6 +36,15 @@ from repositories.episode_blob_repository import EpisodeBlobRepository
 from services.blob_storage_service import BlobStorageService
 
 logger = structlog.get_logger()
+
+DEFAULT_CONTEXT_CACHE_TTL: int = 300
+"""Fallback context-cache TTL for orgs that have not configured one.
+
+Matches ``context_cache_ttl: 300`` in ``config/defaults/org_config.yaml``.
+A fresh/bootstrap org has a ``None`` org config (or ``None``
+``context_cache_ttl``) — coalesce to this default instead of passing
+``None`` into ``CacheService`` (which rejects it with ``ValueError``).
+"""
 
 
 def _preview(items: list[dict[str, Any]], max_chars: int = 500) -> str | None:
@@ -94,8 +104,13 @@ class ContextService:
             db, org_id, redis, graph_backends=graph_backends, org_config=org_config,
             reranker=reranker,
         )
+        cache_ttl = (
+            org_config.context_cache_ttl
+            if org_config is not None and org_config.context_cache_ttl is not None
+            else DEFAULT_CONTEXT_CACHE_TTL
+        )
         self._cache = (
-            CacheService(redis, default_ttl=org_config.context_cache_ttl if org_config else None)
+            CacheService(redis, default_ttl=cache_ttl)
             if redis
             else None
         )
@@ -110,11 +125,15 @@ class ContextService:
         query: str,
         limit: int = 20,
         format: str = "text",  # noqa: A002
+        as_of: datetime | None = None,
     ) -> dict:
         """Assemble a context block for a project from a natural-language query.
 
         Full pipeline:
-        1. Build a cache key from (org_id, project_id, query) and check Redis.
+        1. Build a cache key from (org_id, project_id, query, as_of) and
+           check Redis — different effective-at timestamps get distinct
+           keys so a cached as-of result never poisons another timestamp's
+           30s cache window.
         2. On cache miss, run hybrid search across episodes, facts,
            entities, and communities.
         3. Format results as plain text or structured JSON.
@@ -127,12 +146,15 @@ class ContextService:
             query: A natural-language query describing the context needed.
             limit: Maximum items per source type (1–100).
             format: Output format — ``"text"`` (default) or ``"json"``.
+            as_of: Effective-at timestamp (UTC) for fact retrieval.  Facts
+                superseded before this instant are excluded.  ``None``
+                means "now".
 
         Returns:
             A dict with:
             - ``context``: The assembled context string.
             - ``metadata``: Dict with ``cache_hit``, ``assembly_time_ms``,
-              ``source_counts``, and ``total_items``.
+              ``source_counts``, ``total_items``, and ``as_of``.
         """
         start = time.monotonic()
 
@@ -145,6 +167,7 @@ class ContextService:
                 str(self._org_id),
                 str(project_id),
                 query,
+                as_of=as_of.isoformat() if as_of is not None else None,
             )
             cached = await self._cache.get(cache_key)
             if cached is not None:
@@ -157,6 +180,7 @@ class ContextService:
                     query=query[:200],
                     cache_hit=True,
                     format=format,
+                    as_of=as_of.isoformat() if as_of is not None else None,
                     assembly_time_ms=round(elapsed, 1),
                     source_counts={},
                     total_items=0,
@@ -177,13 +201,16 @@ class ContextService:
                         "assembly_time_ms": round(elapsed, 1),
                         "source_counts": {},
                         "total_items": 0,
+                        "as_of": as_of,
                     },
                 }
 
         # ═══════════════════════════════════════════════════════════════════
         # Step 2 — Run hybrid search
         # ═══════════════════════════════════════════════════════════════════
-        results = await self._retriever.hybrid_search(query, project_id, limit)
+        results = await self._retriever.hybrid_search(
+            query, project_id, limit, query_time=as_of
+        )
 
         # ═══════════════════════════════════════════════════════════════════
         # Step 2b — Load blobs for returned episodes and generate presigned
@@ -260,7 +287,9 @@ class ContextService:
         # Step 4 — Cache result
         # ═══════════════════════════════════════════════════════════════════
         if self._cache is not None and cache_key is not None:
-            await self._cache.set(cache_key, context_str, ttl=30)
+            # Omit ttl — CacheService falls back to default_ttl, which was
+            # seeded from the org's configured context_cache_ttl at __init__.
+            await self._cache.set(cache_key, context_str)
 
         elapsed = (time.monotonic() - start) * 1000
         context_latency_seconds.labels(type="cold").observe(elapsed / 1000)
@@ -271,6 +300,7 @@ class ContextService:
             query=query[:200],
             cache_hit=False,
             format=format,
+            as_of=as_of.isoformat() if as_of is not None else None,
             assembly_time_ms=round(elapsed, 1),
             source_counts=results.get("source_counts", {}),
             total_items=results.get("total_items", 0),
@@ -292,5 +322,6 @@ class ContextService:
                 "assembly_time_ms": round(elapsed, 1),
                 "source_counts": results["source_counts"],
                 "total_items": results.get("total_items", 0),
+                "as_of": as_of,
             },
         }

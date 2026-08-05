@@ -12,7 +12,7 @@ Covers:
     4.  Missing auth header → 401
     5.  No session_id → auto-create __default__ session
     6.  Same Idempotency-Key header → replay (same 202)
-    7.  Same Idempotency-Key, different body → replay (same 202)
+    7.  Same Idempotency-Key, different body → 409 conflict (RFC 7807)
     8.  Identical content payload → content-dedup (same job_id)
     9.  DELETE wipes all episodes + facts → 204
 
@@ -25,6 +25,7 @@ Auth strategy:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any
@@ -61,6 +62,56 @@ def _assert_ingest_response_shape(body: dict, expected_episodes: int = 1) -> Non
         UUID(body["job_id"])
 
     assert isinstance(body["message"], str) and len(body["message"]) > 0
+
+
+async def _session_message_count(
+    client: AsyncClient,
+    project_id: UUID,
+    session_external_id: str,
+) -> int:
+    """Count messages (episodes) in a session looked up by external ID.
+
+    Returns 0 when the session is not yet visible or has no messages.
+    """
+    sessions_resp = await client.get(
+        f"/v1/projects/{project_id}/sessions?search={session_external_id}"
+    )
+    assert sessions_resp.status_code == 200, sessions_resp.text
+    sessions_data = sessions_resp.json().get("data", [])
+    matches = [
+        s for s in sessions_data if s["external_id"] == session_external_id
+    ]
+    if not matches:
+        return 0
+    msgs_resp = await client.get(
+        f"/v1/projects/{project_id}/sessions/{matches[0]['id']}/messages"
+    )
+    assert msgs_resp.status_code == 200, msgs_resp.text
+    return len(msgs_resp.json().get("data", []))
+
+
+async def _wait_for_session_message_count(
+    client: AsyncClient,
+    project_id: UUID,
+    session_external_id: str,
+    expected: int,
+    timeout_s: float = 5.0,
+) -> int:
+    """Poll the messages endpoint until ``expected`` messages are visible.
+
+    Ingestion commits before the 202 response, but reads go through a fresh
+    session per request — poll briefly so the count assertion is not racy.
+    """
+    deadline = time.monotonic() + timeout_s
+    last_count = 0
+    while time.monotonic() < deadline:
+        last_count = await _session_message_count(
+            client, project_id, session_external_id
+        )
+        if last_count >= expected:
+            return last_count
+        await asyncio.sleep(0.2)
+    return last_count
 
 
 @pytest.fixture
@@ -295,7 +346,7 @@ class TestMemoryIngestion:
         )
 
     # ═════════════════════════════════════════════════════════════════════════
-    # 7.  Idempotency key — same key, different payload → 202 replay
+    # 7.  Idempotency key — same key, different payload → 409 conflict
     # ═════════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
@@ -304,10 +355,11 @@ class TestMemoryIngestion:
         isolated_auth_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
-        """Same ``Idempotency-Key`` with different body → 202 (replay).
+        """Same ``Idempotency-Key`` with a different body → 409 conflict.
 
-        Reusing an idempotency key for a different request payload — the
-        endpoint returns the cached 202 response regardless.
+        Reusing an idempotency key for a different request payload is a
+        client error: the endpoint must return RFC 7807 ``Conflict`` and
+        must not create a new episode.
         """
         user_resp = await isolated_auth_client.post(
             "/v1/users",
@@ -324,7 +376,7 @@ class TestMemoryIngestion:
 
         idem_key = "idem-conflict-002"
 
-        # First request
+        # First request — accepted
         resp1 = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/memory",
             headers={"Idempotency-Key": idem_key},
@@ -338,7 +390,13 @@ class TestMemoryIngestion:
         )
         assert resp1.status_code == 202, f"First request failed: {resp1.text}"
 
-        # Second request — same key, WRONG body
+        # Wait for the first episode to become visible so the count check
+        # below is meaningful.
+        await _wait_for_session_message_count(
+            isolated_auth_client, isolated_project_id, "conflict_session", 1
+        )
+
+        # Second request — same key, DIFFERENT body → 409 conflict
         resp2 = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/memory",
             headers={"Idempotency-Key": idem_key},
@@ -350,11 +408,25 @@ class TestMemoryIngestion:
                 ],
             })},
         )
-        # ponytail: the API returns the cached 202 response for any replay
-        # with the same idempotency key, even when the body differs.
-        assert resp2.status_code == 202, (
-            f"Expected 202 (idempotent replay), "
+        assert resp2.status_code == 409, (
+            f"Expected 409 (idempotency key conflict), "
             f"got {resp2.status_code}: {resp2.text}"
+        )
+
+        # RFC 7807 problem-detail shape
+        body = resp2.json()
+        for field in ("type", "title", "status", "detail"):
+            assert field in body, f"RFC 7807 body missing '{field}': {body}"
+        assert body["status"] == 409
+        assert body["type"].endswith("/conflict")
+
+        # The conflicting request must not create a new episode
+        count_after = await _session_message_count(
+            isolated_auth_client, isolated_project_id, "conflict_session"
+        )
+        assert count_after == 1, (
+            f"Conflict request must not create a new episode; "
+            f"expected 1, got {count_after}"
         )
 
     # ═════════════════════════════════════════════════════════════════════════

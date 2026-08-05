@@ -9,7 +9,7 @@ Tests cover:
 - Missing ``db_engine`` creates its own engine
 - Missing ``db_session_factory`` creates from engine
 - Blob text appended on enrich episode
-- Graph backend unavailable continues without
+- Graph backend failure propagates (no silent entity loss)
 - Org config fetch failure proceeds without LLM config
 - LLM call failure propagates
 - ``enrich_episode`` decorated with ``@with_retry``
@@ -641,7 +641,7 @@ class TestEnrichEpisodeDecorator:
 
 @pytest.mark.unit
 class TestEnrichEpisodeGraphBackend:
-    """Behaviour when graph backend is unavailable."""
+    """Behaviour when graph backend is disabled (None) or broken (raises)."""
 
     @pytest.mark.asyncio
     async def test_continues_without_graph_backend(self) -> None:
@@ -699,8 +699,13 @@ class TestEnrichEpisodeGraphBackend:
             mock_ent.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_handles_graph_backend_unavailable_error(self) -> None:
-        """``GraphBackendUnavailableError`` is caught and logged."""
+    async def test_graph_backend_unavailable_raises(self) -> None:
+        """``GraphBackendUnavailableError`` propagates — no silent entity loss.
+
+        A configured-but-broken backend must abort the task: if the error were
+        swallowed, the ENTITIES bit would be set without persisting entities
+        and the episode would be permanently marked complete.
+        """
         from core.exceptions import GraphBackendUnavailableError
         from workers.tasks.enrich_episode import enrich_episode
 
@@ -713,6 +718,7 @@ class TestEnrichEpisodeGraphBackend:
             patch("core.org_config.get_org_config") as mock_org_config,
             patch("workers.backend.resolve_graph_backend") as mock_graph,
             patch("workers.tasks.classify_dialog.process_classification_output") as mock_cls,
+            patch("workers.tasks.extract_entities.process_entities_output") as mock_ent,
             patch("workers.tasks.extract_facts.process_facts_output") as mock_fct,
             patch("workers.tasks.extract_structured.process_structured_output") as mock_str,
             patch("repositories.episode_blob_repository.EpisodeBlobRepository"),
@@ -730,27 +736,33 @@ class TestEnrichEpisodeGraphBackend:
             mock_llm.chat.return_value = mock_response
             mock_resolve_backend.return_value = mock_llm
 
-            # Graph backend raises specific error
+            # Graph backend raises specific error (broken, not disabled)
             mock_graph.side_effect = GraphBackendUnavailableError("Graph down")
 
-            # Only classification succeeds (no entity_repo needed)
             mock_cls.return_value = None
             mock_fct.return_value = None
             mock_str.return_value = None
 
             ctx = _make_ctx(db=mock_db)
 
-            result = await enrich_episode(
-                ctx=ctx,
-                episode_id=_EPISODE_ID,
-                content=_CONTENT,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-                session_id=_SESSION_ID,
-                trace_id="trace-1",
-            )
+            with pytest.raises(GraphBackendUnavailableError):
+                await enrich_episode(
+                    ctx=ctx,
+                    episode_id=_EPISODE_ID,
+                    content=_CONTENT,
+                    org_id=_ORG_ID,
+                    project_id=_PROJECT_ID,
+                    session_id=_SESSION_ID,
+                    trace_id="trace-1",
+                )
 
-            assert result is None
+        # No section processor ran and nothing was committed — the ENTITIES
+        # bit is NOT set, so retry/reconcile will re-run the episode.
+        mock_cls.assert_not_called()
+        mock_ent.assert_not_called()
+        mock_fct.assert_not_called()
+        mock_str.assert_not_called()
+        mock_db.commit.assert_not_awaited()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

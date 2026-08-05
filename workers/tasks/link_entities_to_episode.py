@@ -114,13 +114,19 @@ async def link_entities_to_episode(
                 backend = await resolve_graph_backend(
                     ctx_dict, UUID(org_id), db,
                 )
-            except Exception:
-                logger.warning(
-                    "link_entities_to_episode.backend_resolution_failed",
+            except GraphBackendUnavailableError:
+                # A CONFIGURED backend that can't be resolved is a broken
+                # backend, not a disabled one — abort so ENRICHMENT_ENTITY_LINKS
+                # is not set and the episode can be re-linked on retry/reconcile.
+                # Only a genuine resolver None (graph disabled) skips below.
+                logger.error(
+                    "link_entities_to_episode.backend_unavailable",
                     org_id=org_id,
-                    exc_info=True,
+                    episode_id=episode_id,
                 )
-                backend = None
+                raise
+            # Any other exception from the resolver also propagates — no
+            # silent swallow that would set the link bit with 0 links.
 
             # Extract potential entity names from content (simple keyword split)
             words = set(

@@ -93,6 +93,13 @@ reranker_latency_seconds = Histogram(
     registry=METRICS_REGISTRY,
 )
 
+facts_superseded_total = Counter(
+    "openzync_facts_superseded_total",
+    "Total active facts closed by supersession (valid_to set) because a "
+    "conflicting newer fact replaced them.",
+    registry=METRICS_REGISTRY,
+)
+
 # ── ASGI middleware ──────────────────────────────────────────────────────────
 
 

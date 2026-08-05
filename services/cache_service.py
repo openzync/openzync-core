@@ -270,23 +270,32 @@ class CacheService:
         org_id: str,
         project_id: str,
         query: str,
+        as_of: str | None = None,
     ) -> str:
         """Build a namespaced cache key for context assembly results.
 
-        Key format: ``ctx:{org_id}:{project_id}:{query_hash}``
+        Key format: ``ctx:{org_id}:{project_id}[:{as_of}]:{query_hash}``
 
         The query is SHA-256 hashed to keep keys a bounded length
-        regardless of query length.
+        regardless of query length.  An optional ``as_of`` ISO timestamp
+        segment keeps effective-at results from poisoning the default
+        (now) cache and from colliding with other timestamps.  The
+        ``ctx:{org_id}:{project_id}:`` prefix is preserved so project-wide
+        invalidation via ``ctx:{org_id}:{project_id}:*`` keeps working.
 
         Args:
             org_id: The organization UUID string.
             project_id: The project UUID string.
             query: The natural-language query string.
+            as_of: ISO-8601 effective-at timestamp; ``None`` omits the
+                segment (plain "now" queries keep the legacy key shape).
 
         Returns:
             A namespaced Redis key string.
         """
         query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
+        if as_of is not None:
+            return f"ctx:{org_id}:{project_id}:{as_of}:{query_hash}"
         return f"ctx:{org_id}:{project_id}:{query_hash}"
 
     @staticmethod

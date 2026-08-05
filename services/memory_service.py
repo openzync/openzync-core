@@ -178,7 +178,7 @@ class MemoryService:
                 logger.info(
                     "memory.idempotency_replay",
                     extra={
-                        "idempotency_key": idempotency_key,
+                        "idempotency_key": idempotency_key[:16] + "...",
                         "org_id": str(org_id),
                         "project_id": str(project_id),
                     },
@@ -219,7 +219,7 @@ class MemoryService:
             logger.info(
                 "memory.content_dedup_hit",
                 extra={
-                    "content_hash": content_hash,
+                    "content_hash": content_hash[:16] + "...",
                     "existing_job_id": existing_job_id,
                     "project_id": str(project_id),
                 },

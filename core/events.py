@@ -46,6 +46,7 @@ class EventType(str):
     GRAPH_EDGE_CREATED: ClassVar[str] = "graph.edge.created"
     FACT_EXTRACTED: ClassVar[str] = "fact.extracted"
     FACT_DELETED: ClassVar[str] = "fact.deleted"
+    FACT_SUPERSEDED: ClassVar[str] = "fact.superseded"
     CLASSIFICATION_CREATED: ClassVar[str] = "classification.created"
     EXTRACTION_CREATED: ClassVar[str] = "extraction.created"
     USER_CREATED: ClassVar[str] = "user.created"
@@ -76,6 +77,7 @@ EVENT_REGISTRY: list[EventMeta] = [
     EventMeta(EventType.GRAPH_EDGE_CREATED, "Graph Edge Created", "Graph", "Fired when a relationship edge is created between entities"),
     EventMeta(EventType.FACT_EXTRACTED, "Fact Extracted", "Fact", "Fired when a fact (triple) is extracted"),
     EventMeta(EventType.FACT_DELETED, "Fact Deleted", "Fact", "Fired when a fact is deleted"),
+    EventMeta(EventType.FACT_SUPERSEDED, "Fact Superseded", "Fact", "Fired when a conflicting newer fact invalidates an existing active fact (valid_to set)"),
     EventMeta(EventType.CLASSIFICATION_CREATED, "Classification Created", "Classification", "Fired when a dialog classification is created"),
     EventMeta(EventType.EXTRACTION_CREATED, "Extraction Created", "Extraction", "Fired when a structured extraction is created"),
     EventMeta(EventType.USER_CREATED, "User Created", "User", "Fired when a new user is created"),

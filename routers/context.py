@@ -15,6 +15,7 @@ No business logic. No database queries.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -71,6 +72,12 @@ async def get_context(
         description='Output format — "text" for plain-text or "json" '
         "for structured JSON.",
     ),
+    as_of: datetime | None = Query(
+        default=None,
+        description="Effective-at timestamp (ISO-8601, UTC) for fact "
+        "retrieval. Facts superseded before this instant are excluded. "
+        "Defaults to now.",
+    ),
     db: AsyncSession = Depends(get_db),
     _: None = Depends(require_project_membership),
     org_config: OrgConfigBase = Depends(get_org_config),
@@ -98,6 +105,7 @@ async def get_context(
         query: A natural-language query describing the context needed.
         limit: Maximum items per source type.
         format: Output format (``"text"`` or ``"json"``).
+        as_of: Effective-at timestamp for fact retrieval (None = now).
         db: An async SQLAlchemy session (injected).
         org_config: Org-level configuration (injected).
 
@@ -107,6 +115,11 @@ async def get_context(
     """
     org_id = UUID(request.state.org_id)
     project_id = UUID(request.path_params["project_id"])
+
+    # Normalize a naive ISO-8601 input (no offset) to UTC-aware so the
+    # validity comparison against tz-aware DB timestamps is well-defined.
+    if as_of is not None and as_of.tzinfo is None:
+        as_of = as_of.replace(tzinfo=timezone.utc)
 
     # ── Assemble context ────────────────────────────────────────────────
     redis = getattr(request.app.state, "redis", None) if request else None
@@ -144,6 +157,7 @@ async def get_context(
         query=query,
         limit=limit,
         format=format,
+        as_of=as_of,
     )
 
     # Set X-Cache header for observability

@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from core.exceptions import EpisodeNotFoundError
+from core.exceptions import EpisodeNotFoundError, GraphBackendUnavailableError
 
 _EPISODE_ID = str(uuid4())
 _ORG_ID = str(uuid4())
@@ -131,7 +131,7 @@ class TestLinkEntitiesToEpisode:
 
     @pytest.mark.asyncio
     async def test_backend_unavailable(self) -> None:
-        """Graph backend unavailable → still completes (non-critical)."""
+        """Graph backend disabled (None) → completes with 0 links, bit set."""
         with (
             patch("workers.tasks.link_entities_to_episode.with_retry", lambda **kw: lambda f: f),
             patch("workers.tasks.link_entities_to_episode.resolve_graph_backend", return_value=None),
@@ -154,6 +154,42 @@ class TestLinkEntitiesToEpisode:
             )
 
             mock_repo.apply_enrichment_bits.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_graph_backend_error_propagates(self) -> None:
+        """Broken backend (raises) → propagates, link bit NOT set.
+
+        A configured-but-broken backend must abort the task: swallowing it
+        would set ENRICHMENT_ENTITY_LINKS with 0 links and permanently mark
+        the episode as linked.
+        """
+        with (
+            patch("workers.tasks.link_entities_to_episode.with_retry", lambda **kw: lambda f: f),
+            patch(
+                "workers.tasks.link_entities_to_episode.resolve_graph_backend",
+                side_effect=GraphBackendUnavailableError("Graph down"),
+            ),
+            patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
+            patch("services.worker.worker_settings.settings", MagicMock(AUTO_RUN_COMMUNITY_DETECTION=False)),
+            patch("asyncio.sleep", AsyncMock()),
+        ):
+            mock_repo = AsyncMock()
+            mock_repo_cls.return_value = mock_repo
+
+            from workers.tasks.link_entities_to_episode import link_entities_to_episode
+
+            with pytest.raises(GraphBackendUnavailableError):
+                await link_entities_to_episode(
+                    ctx=self._mock_ctx(),
+                    episode_id=_EPISODE_ID,
+                    org_id=_ORG_ID,
+                    project_id=_PROJECT_ID,
+                    content=_CONTENT,
+                    role=_ROLE,
+                )
+
+            # Bit 3 never set — retry/reconcile will re-attempt linking.
+            mock_repo.apply_enrichment_bits.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_db_error_propagates(self) -> None:
