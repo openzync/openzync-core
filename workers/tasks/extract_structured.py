@@ -146,7 +146,6 @@ async def extract_structured(
                 backend = await resolve_graph_backend(
                     ctx if isinstance(ctx, dict) else {},
                     uuid.UUID(org_id), db,
-                    fallback_to_postgres=True,
                 )
             except Exception:
                 logger.warning(

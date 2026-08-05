@@ -1,5 +1,10 @@
 """Worker-level graph backend resolution — resolves per-org backend for enrichment tasks.
 
+No silent Postgres fallback: a backend name that is configured but cannot be
+resolved raises ``GraphBackendUnavailableError`` so the misconfiguration is
+visible and alertable.  ``None`` is only returned when graph is explicitly
+disabled (no org config, or ``graph_backend`` is ``"none"``/empty).
+
 Usage:
 
     from workers.backend import resolve_graph_backend
@@ -8,7 +13,7 @@ Usage:
         async with db_session_factory() as db:
             backend = await resolve_graph_backend(ctx, org_id, db)
             if backend is None:
-                # Graph disabled for this org — skip or use Postgres fallback
+                # Graph explicitly disabled for this org — skip graph work
                 ...
             await backend.link_entity_to_episode(...)
 """
@@ -23,7 +28,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import GraphBackendUnavailableError
 from packages.graph_backend.interface import GraphBackend
-from packages.graph_backend.postgres import PostgresGraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +36,6 @@ async def resolve_graph_backend(
     ctx: dict[str, Any],
     org_id: UUID,
     db: AsyncSession,
-    *,
-    fallback_to_postgres: bool = True,
 ) -> GraphBackend | None:
     """Resolve the per-organization graph backend inside an ARQ worker.
 
@@ -43,36 +45,42 @@ async def resolve_graph_backend(
     Resolution order:
     1. Read ``org_config.graph_backend`` (cache-first via ``core.org_config``,
        DB-authoritative).
-    2. If the backend name is ``"none"`` or resolution fails:
-       returns ``PostgresGraphBackend`` when *fallback_to_postgres* is
-       ``True`` (default), otherwise returns ``None``.
+    2. No ``graph_backend_dispatcher`` in ctx → worker misconfiguration,
+       raises ``GraphBackendUnavailableError``.
+    3. No org config → graph disabled, returns ``None``.
+    4. Backend name is ``"none"``/empty → graph disabled, returns ``None``.
+    5. If SurrealDB is configured, acquire a connection from the shared pool.
+    6. Delegate to ``dispatcher.resolve_and_create()`` — any resolution
+       failure or a ``None`` result for a configured backend raises
+       ``GraphBackendUnavailableError``.  No silent Postgres fallback.
 
     Args:
         ctx: ARQ worker context dict — must contain
             ``graph_backend_dispatcher`` and may contain
             ``surreal_connection_pool`` and ``falkordb_client``.
         org_id: The organization UUID to resolve the backend for.
-        db: An async SQLAlchemy session (for Postgres backend and org config
-            queries).
-        fallback_to_postgres: If ``True`` (default), returns a
-            ``PostgresGraphBackend`` when no backend is configured or
-            resolution fails. If ``False``, returns ``None``.
+        db: An async SQLAlchemy session (for org config queries).
 
     Returns:
-        An initialized ``GraphBackend`` instance, ``None`` if graph is
-        disabled and no fallback.
+        An initialized ``GraphBackend`` instance, or ``None`` when graph is
+        explicitly disabled for the org (no org config, or backend name is
+        ``"none"``/empty).
 
     Raises:
-        GraphBackendUnavailableError: If resolution fails and fallback is
-            disabled.
+        GraphBackendUnavailableError: If ``graph_backend_dispatcher`` is
+            missing from ctx (worker misconfiguration), the dispatcher fails
+            to resolve a configured backend, or a configured backend name
+            resolves to ``None``.
     """
     dispatcher = ctx.get("graph_backend_dispatcher")
     if dispatcher is None:
-        logger.warning(
-            "worker.no_graph_dispatcher.using_postgres_fallback",
+        logger.error(
+            "worker.no_graph_dispatcher",
             extra={"org_id": str(org_id)},
         )
-        return PostgresGraphBackend(db) if fallback_to_postgres else None  # type: ignore[abstract]
+        raise GraphBackendUnavailableError(
+            f"Worker context missing 'graph_backend_dispatcher' for org {org_id}"
+        )
 
     # Fetch per-org config (cache-first via Redis, DB-authoritative)
     org_config = await _resolve_org_config(ctx, org_id, db)
@@ -82,7 +90,7 @@ async def resolve_graph_backend(
             "worker.graph_disabled.no_org_config",
             extra={"org_id": str(org_id)},
         )
-        return PostgresGraphBackend(db) if fallback_to_postgres else None  # type: ignore[abstract]
+        return None
 
     backend_name = org_config.graph_backend
     if not backend_name or backend_name == "none":
@@ -90,7 +98,7 @@ async def resolve_graph_backend(
             "worker.graph_disabled.config",
             extra={"org_id": str(org_id), "backend": backend_name},
         )
-        return PostgresGraphBackend(db) if fallback_to_postgres else None  # type: ignore[abstract]
+        return None
 
     # Get SurrealDB connection — only when the org explicitly configures
     # SurrealDB.  For postgres or none backends the pool is never touched,
@@ -134,12 +142,6 @@ async def resolve_graph_backend(
                 "error": str(exc),
             },
         )
-        if fallback_to_postgres:
-            logger.warning(
-                "worker.falling_back_to_postgres",
-                extra={"org_id": str(org_id)},
-            )
-            return PostgresGraphBackend(db)  # type: ignore[abstract]
         raise GraphBackendUnavailableError(
             f"Failed to resolve graph backend '{backend_name}' for org {org_id}"
         ) from exc
@@ -151,11 +153,15 @@ async def resolve_graph_backend(
         )
         return backend
 
-    logger.warning(
+    # A backend name WAS configured but resolve_and_create returned None —
+    # treat as a resolution failure, not a silent downgrade.
+    logger.error(
         "worker.backend_resolved_to_none",
         extra={"org_id": str(org_id), "backend": backend_name},
     )
-    return PostgresGraphBackend(db) if fallback_to_postgres else None  # type: ignore[abstract]
+    raise GraphBackendUnavailableError(
+        f"Graph backend '{backend_name}' resolved to None for org {org_id}"
+    )
 
 
 async def _resolve_org_config(

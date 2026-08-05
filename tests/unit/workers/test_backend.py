@@ -2,7 +2,9 @@
 
 Tests cover:
 
-- ``resolve_graph_backend()`` — all resolution paths, fallback logic, error handling.
+- ``resolve_graph_backend()`` — all resolution paths: raise on failure
+  (missing dispatcher, dispatcher error, None result for a configured
+  backend), None on explicitly-disabled graph (no org config, ``"none"``).
 - ``_resolve_org_config()`` — primary path (with/without ``bao_client``),
   ImportError/Exception fallthrough, DB fallback, and full failure.
 """
@@ -26,9 +28,11 @@ from core.exceptions import GraphBackendUnavailableError
 class TestResolveGraphBackend:
     """Decision-branch coverage for ``resolve_graph_backend``.
 
-    Every test patches ``PostgresGraphBackend`` (used as the fallback and
-    default return value) and ``_resolve_org_config`` so we control the
-    resolution outcome precisely.
+    Contract: ``None`` is returned only when graph is explicitly disabled
+    (no org config, or backend name ``"none"``/empty).  A configured
+    backend that cannot be resolved — missing dispatcher, dispatcher
+    failure, or a ``None`` resolution result — raises
+    ``GraphBackendUnavailableError``.  There is no Postgres fallback.
     """
 
     ORG_ID: UUID = uuid4()
@@ -37,12 +41,6 @@ class TestResolveGraphBackend:
     def mock_db(self) -> MagicMock:
         """A mock ``AsyncSession`` — never called directly in these tests."""
         return MagicMock()
-
-    @pytest.fixture
-    def mock_postgres_backend(self) -> MagicMock:
-        """Patch ``PostgresGraphBackend`` so we never need a real session."""
-        with patch("workers.backend.PostgresGraphBackend") as mock:
-            yield mock
 
     @pytest.fixture
     def mock_org_config(self) -> MagicMock:
@@ -67,83 +65,45 @@ class TestResolveGraphBackend:
 
     # ── No dispatcher ─────────────────────────────────────────────────────
 
-    async def test_no_dispatcher_falls_back_to_postgres(
+    async def test_no_dispatcher_raises(
         self,
         mock_db: MagicMock,
-        mock_postgres_backend: MagicMock,
     ) -> None:
-        """No ``graph_backend_dispatcher`` in ctx → returns PostgresGraphBackend."""
+        """No ``graph_backend_dispatcher`` in ctx → raises (worker misconfig)."""
         from workers.backend import resolve_graph_backend
 
         ctx: dict = {}
-        result = await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
-
-        mock_postgres_backend.assert_called_once_with(mock_db)
-        assert result is mock_postgres_backend.return_value
-
-    async def test_no_dispatcher_returns_none_when_fallback_disabled(
-        self,
-        mock_db: MagicMock,
-        mock_postgres_backend: MagicMock,
-    ) -> None:
-        """No dispatcher + ``fallback_to_postgres=False`` → returns ``None``."""
-        from workers.backend import resolve_graph_backend
-
-        ctx: dict = {}
-        result = await resolve_graph_backend(
-            ctx, self.ORG_ID, mock_db, fallback_to_postgres=False,
-        )
-
-        mock_postgres_backend.assert_not_called()
-        assert result is None
+        with pytest.raises(
+            GraphBackendUnavailableError, match="graph_backend_dispatcher",
+        ):
+            await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
 
     # ── Org config is None ────────────────────────────────────────────────
 
-    async def test_org_config_none_falls_back_to_postgres(
+    async def test_org_config_none_returns_none(
         self,
         mock_db: MagicMock,
-        mock_postgres_backend: MagicMock,
         mock_dispatcher: MagicMock,
     ) -> None:
-        """Org config resolves to ``None`` → returns PostgresGraphBackend."""
+        """Org config resolves to ``None`` → graph disabled, returns ``None``."""
         with patch("workers.backend._resolve_org_config", AsyncMock(return_value=None)):
             from workers.backend import resolve_graph_backend
 
             ctx = {"graph_backend_dispatcher": mock_dispatcher}
             result = await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
 
-        mock_postgres_backend.assert_called_once_with(mock_db)
-        assert result is mock_postgres_backend.return_value
-
-    async def test_org_config_none_returns_none_when_fallback_disabled(
-        self,
-        mock_db: MagicMock,
-        mock_postgres_backend: MagicMock,
-        mock_dispatcher: MagicMock,
-    ) -> None:
-        """Org config ``None`` + fallback disabled → returns ``None``."""
-        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=None)):
-            from workers.backend import resolve_graph_backend
-
-            ctx = {"graph_backend_dispatcher": mock_dispatcher}
-            result = await resolve_graph_backend(
-                ctx, self.ORG_ID, mock_db, fallback_to_postgres=False,
-            )
-
-        mock_postgres_backend.assert_not_called()
         assert result is None
 
     # ── Backend name is empty / "none" / None ─────────────────────────────
 
     @pytest.mark.parametrize("backend_name", [None, "", "none"])
-    async def test_disabled_backend_falls_back_to_postgres(
+    async def test_disabled_backend_returns_none(
         self,
         backend_name: str | None,
         mock_db: MagicMock,
-        mock_postgres_backend: MagicMock,
         mock_dispatcher: MagicMock,
     ) -> None:
-        """Backend name is ``None``/ ``""`` / ``"none"`` → falls back."""
+        """Backend name is ``None`` / ``""`` / ``"none"`` → returns ``None``."""
         cfg = MagicMock()
         cfg.graph_backend = backend_name
 
@@ -153,30 +113,6 @@ class TestResolveGraphBackend:
             ctx = {"graph_backend_dispatcher": mock_dispatcher}
             result = await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
 
-        mock_postgres_backend.assert_called_once_with(mock_db)
-        assert result is mock_postgres_backend.return_value
-
-    @pytest.mark.parametrize("backend_name", [None, "", "none"])
-    async def test_disabled_backend_returns_none_when_fallback_disabled(
-        self,
-        backend_name: str | None,
-        mock_db: MagicMock,
-        mock_postgres_backend: MagicMock,
-        mock_dispatcher: MagicMock,
-    ) -> None:
-        """Disabled backend + fallback disabled → returns ``None``."""
-        cfg = MagicMock()
-        cfg.graph_backend = backend_name
-
-        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=cfg)):
-            from workers.backend import resolve_graph_backend
-
-            ctx = {"graph_backend_dispatcher": mock_dispatcher}
-            result = await resolve_graph_backend(
-                ctx, self.ORG_ID, mock_db, fallback_to_postgres=False,
-            )
-
-        mock_postgres_backend.assert_not_called()
         assert result is None
 
     # ── Successful resolution ─────────────────────────────────────────────
@@ -326,33 +262,13 @@ class TestResolveGraphBackend:
 
     # ── Dispatcher resolution failure ─────────────────────────────────────
 
-    async def test_dispatcher_fails_with_fallback(
+    async def test_dispatcher_fails_raises(
         self,
         mock_db: MagicMock,
-        mock_postgres_backend: MagicMock,
         mock_org_config: MagicMock,
         mock_dispatcher: MagicMock,
     ) -> None:
-        """Dispatcher raises → falls back to PostgresGraphBackend."""
-        mock_dispatcher.resolve_and_create.side_effect = ValueError("unexpected")
-
-        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=mock_org_config)):
-            from workers.backend import resolve_graph_backend
-
-            ctx = {"graph_backend_dispatcher": mock_dispatcher}
-            result = await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
-
-        mock_postgres_backend.assert_called_once_with(mock_db)
-        assert result is mock_postgres_backend.return_value
-
-    async def test_dispatcher_fails_no_fallback(
-        self,
-        mock_db: MagicMock,
-        mock_postgres_backend: MagicMock,
-        mock_org_config: MagicMock,
-        mock_dispatcher: MagicMock,
-    ) -> None:
-        """Dispatcher raises + fallback disabled → raises ``GraphBackendUnavailableError``."""
+        """Dispatcher raises → ``GraphBackendUnavailableError`` (no fallback)."""
         mock_dispatcher.resolve_and_create.side_effect = ValueError("kaboom")
 
         with patch("workers.backend._resolve_org_config", AsyncMock(return_value=mock_org_config)):
@@ -363,53 +279,28 @@ class TestResolveGraphBackend:
                 GraphBackendUnavailableError,
                 match="Failed to resolve graph backend",
             ):
-                await resolve_graph_backend(
-                    ctx, self.ORG_ID, mock_db, fallback_to_postgres=False,
-                )
-
-        mock_postgres_backend.assert_not_called()
+                await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
 
     # ── Dispatcher resolves to None ───────────────────────────────────────
 
-    async def test_dispatcher_resolves_to_none_with_fallback(
+    async def test_dispatcher_resolves_to_none_raises(
         self,
         mock_db: MagicMock,
-        mock_postgres_backend: MagicMock,
         mock_org_config: MagicMock,
         mock_dispatcher: MagicMock,
     ) -> None:
-        """Dispatcher returns ``None`` (backend name not recognised) → falls back."""
+        """Dispatcher returns ``None`` for a configured backend → raises."""
         mock_dispatcher.resolve_and_create.return_value = None
 
         with patch("workers.backend._resolve_org_config", AsyncMock(return_value=mock_org_config)):
             from workers.backend import resolve_graph_backend
 
             ctx = {"graph_backend_dispatcher": mock_dispatcher}
-            result = await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
-
-        mock_postgres_backend.assert_called_once_with(mock_db)
-        assert result is mock_postgres_backend.return_value
-
-    async def test_dispatcher_resolves_to_none_no_fallback(
-        self,
-        mock_db: MagicMock,
-        mock_postgres_backend: MagicMock,
-        mock_org_config: MagicMock,
-        mock_dispatcher: MagicMock,
-    ) -> None:
-        """Dispatcher returns ``None`` + fallback disabled → returns ``None``."""
-        mock_dispatcher.resolve_and_create.return_value = None
-
-        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=mock_org_config)):
-            from workers.backend import resolve_graph_backend
-
-            ctx = {"graph_backend_dispatcher": mock_dispatcher}
-            result = await resolve_graph_backend(
-                ctx, self.ORG_ID, mock_db, fallback_to_postgres=False,
-            )
-
-        mock_postgres_backend.assert_not_called()
-        assert result is None
+            with pytest.raises(
+                GraphBackendUnavailableError,
+                match="resolved to None",
+            ):
+                await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -19,13 +19,26 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Request, Response, UploadFile, status
+import orjson
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 
 from core.audit import audit_action
 from dependencies.auth import get_current_user_id
 from dependencies.project_auth import require_project_membership
 from dependencies.services import get_memory_service
 from schemas.memory import IngestMemoryRequest, IngestMemoryResponse
+from services.idempotency_service import IdempotencyService
 from services.memory_service import MemoryService
 
 router = APIRouter(
@@ -129,6 +142,15 @@ async def ingest_messages(
                     detail=f"Uploaded file blob_{i} is not referenced by any message",
                 )
 
+    # Canonical body hash — only needed when an Idempotency-Key is present.
+    # Pure hashing, no business logic: the service compares this against the
+    # stored hash on key replay.
+    body_hash = (
+        IdempotencyService.hash_request_body(orjson.loads(data))
+        if idempotency_key
+        else None
+    )
+
     result = await service.ingest(
         org_id=org_id,
         project_id=project_id,
@@ -137,6 +159,7 @@ async def ingest_messages(
         messages=payload.messages,
         uploaded_blobs=blobs,
         idempotency_key=idempotency_key,
+        body_hash=body_hash,
     )
 
     # Set Location header for job status tracking

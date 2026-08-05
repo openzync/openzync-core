@@ -293,7 +293,6 @@ async def enrich_episode(
                     ctx if isinstance(ctx, dict) else {},
                     uuid.UUID(org_id),
                     db,
-                    fallback_to_postgres=True,
                 )
             except GraphBackendUnavailableError:
                 log.warning("enrich_episode.graph_backend_unavailable")

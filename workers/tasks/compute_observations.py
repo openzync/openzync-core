@@ -114,6 +114,16 @@ async def compute_observations(
             # ── 1. Resolve graph backend + instantiate service ──────────────
             episode_repo = EpisodeRepository(db)
             backend = await resolve_graph_backend(ctx, UUID(org_id), db)  # type: ignore[arg-type]
+            if backend is None:
+                # Graph explicitly disabled for this org — skip the pass.
+                # ObservationService._assert_backend() would raise on None.
+                logger.info(
+                    "compute_observations.graph_disabled_skipping",
+                    episode_id=episode_id,
+                    org_id=org_id,
+                    project_id=project_id,
+                )
+                return
             service = ObservationService(
                 graph_backend=backend,
                 db=db,

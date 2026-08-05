@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 
 import structlog
 
-from core.exceptions import EpisodeNotFoundError, GraphBackendUnavailableError
+from core.exceptions import EpisodeNotFoundError
 
 # note: Import prompt_renderer at module level — it is a local
 # Jinja2 utility with no heavy dependencies, so eager import is safe
@@ -157,7 +157,6 @@ async def extract_entities(
                 ctx if isinstance(ctx, dict) else {},
                 uuid.UUID(org_id),
                 resolve_db,
-                fallback_to_postgres=True,
             )
         except Exception:
             logger.warning("entity_extraction.backend_resolve_failed", exc_info=True)
@@ -245,10 +244,14 @@ async def extract_entities(
                 _db,
             )
             if backend is None:
-                raise GraphBackendUnavailableError(
-                    "Graph backend unavailable for entity extraction.",
-                    detail={"org_id": org_id},
+                # Graph explicitly disabled for this org ("none" / no config)
+                # — skip graph persistence, the episode is still enriched.
+                logger.info(
+                    "entity_extraction.graph_disabled_skipping",
+                    episode_id=episode_id,
+                    org_id=org_id,
                 )
+                return
             entity_repo = EntityRepository(db=_db, graph_backend=backend)
             episode_repo = EpisodeRepository(_db)
 
