@@ -391,10 +391,11 @@ class TestGetGraphService:
             mock_pool.get_or_create.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_surrealdb_pool_none_skips(
+    async def test_surrealdb_pool_none_fails_loud(
         self, mock_dispatcher: MagicMock, mock_org_config: MagicMock
     ) -> None:
-        """graph_backend=surrealdb but pool is None → skips (no crash)."""
+        """graph_backend=surrealdb but pool is None → fail loud (no doomed backend)."""
+        from core.exceptions import GraphBackendUnavailableError
         from dependencies.services import get_graph_service
 
         mock_org_config = MagicMock()
@@ -412,11 +413,17 @@ class TestGetGraphService:
         with (
             patch("dependencies.services.UserRepository"),
             patch("dependencies.services.FactRepository"),
-            patch("dependencies.services.GraphService") as mock_svc_cls,
+            patch("dependencies.services.GraphService"),
         ):
-            mock_svc_cls.return_value = "graph_service"
-            result = await get_graph_service(request, mock_org_config, db, webhook)
-            assert result == "graph_service"
+            # A configured-but-unreachable backend is a broken backend, not a
+            # disabled one — constructing GraphService with a doomed
+            # SurrealGraphBackend(surreal=None) would 500 on every query.
+            with pytest.raises(
+                GraphBackendUnavailableError, match="no connection is available"
+            ):
+                await get_graph_service(request, mock_org_config, db, webhook)
+
+            mock_dispatcher.resolve_and_create.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_falkordb_per_org_config(
@@ -604,8 +611,9 @@ class TestGetGraphBackendForProject:
             mock_pool.get_or_create.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_surrealdb_pool_none_skips(self) -> None:
-        """SurrealDB backend but pool is None → no pool call."""
+    async def test_surrealdb_pool_none_fails_loud(self) -> None:
+        """SurrealDB backend but pool is None → fail loud, dispatcher not called."""
+        from core.exceptions import GraphBackendUnavailableError
         from dependencies.services import get_graph_backend_for_project
 
         dispatcher = MagicMock()
@@ -622,5 +630,11 @@ class TestGetGraphBackendForProject:
 
         db = AsyncMock(spec=AsyncSession)
 
-        result = await get_graph_backend_for_project(request, org_config, db)
-        assert result == "backend"
+        # A configured-but-unreachable backend must fail loud (503) so the
+        # caller never gets a backend that 500s on every query.
+        with pytest.raises(
+            GraphBackendUnavailableError, match="no connection is available"
+        ):
+            await get_graph_backend_for_project(request, org_config, db)
+
+        dispatcher.resolve_and_create.assert_not_called()

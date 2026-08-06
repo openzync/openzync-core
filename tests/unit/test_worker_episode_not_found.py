@@ -6,11 +6,17 @@ PostgreSQL, instead of returning silently.  The ``@with_retry`` decorator
 catches this exception and retries, giving the committing transaction time
 to complete.
 
-Each worker uses a slightly different code path for the episode lookup:
-- ``classify_dialog`` / ``extract_structured`` / ``compute_observations``
-  call ``EpisodeRepository.get_by_id_for_update()`` or ``.get_by_id()``.
-- ``extract_entities`` / ``extract_facts`` run a raw ``select(Episode.user_id)``.
+The retired standalone LLM task entry-points (``classify_dialog``,
+``extract_entities``, ``extract_facts``, ``extract_structured``) are no
+longer registered or enqueued — their episode-not-found behaviour is
+covered by ``TestEnrichEpisode`` below, which tests the single
+``enrich_episode`` path that replaced them.
+
+Each remaining worker uses a slightly different code path for the episode
+lookup:
+- ``enrich_episode`` calls ``EpisodeRepository.get_by_id_for_update()``.
 - ``link_entities_to_episode`` runs a raw ``select(Episode)``.
+- ``compute_observations`` calls ``EpisodeRepository.get_by_id()``.
 
 Important mocking notes:
   SQLAlchemy ``Result.scalar_one_or_none()`` and ``Result.all()`` are **sync**
@@ -110,156 +116,6 @@ class TestEpisodeNotFoundError:
 # Each test verifies that:
 #   1. The worker raises EpisodeNotFoundError when the episode lookup returns None
 #   2. The @with_retry decorator is present (via __wrapped__ attribute)
-
-
-class TestClassifyDialog:
-    """classify_dialog raises EpisodeNotFoundError when episode is missing."""
-
-    @pytest.mark.asyncio
-    async def test_raises_on_missing_episode(
-        self, ctx: dict, mock_db: AsyncMock
-    ) -> None:
-        """Repository returns None → EpisodeNotFoundError is raised."""
-        mock_repo = AsyncMock()
-        mock_repo.get_by_id_for_update.return_value = None
-
-        with patch("asyncio.sleep", AsyncMock()):  # suppress retry back-off
-            with patch(
-                "repositories.episode_repository.EpisodeRepository",
-                return_value=mock_repo,
-            ):
-                from workers.tasks.classify_dialog import classify_dialog
-
-                with pytest.raises(EpisodeNotFoundError) as exc_info:
-                    await classify_dialog(
-                        ctx=ctx,
-                        episode_id=_EPISODE_ID,
-                        org_id=_ORG_ID,
-                        project_id=_PROJECT_ID,
-                        content=_CONTENT,
-                    )
-
-        assert exc_info.value.code == "episode_not_found"
-        assert exc_info.value.status_code == 404
-        assert _EPISODE_ID in exc_info.value.message
-
-    def test_has_with_retry_decorator(self) -> None:
-        """Function is wrapped by @with_retry."""
-        from workers.tasks.classify_dialog import classify_dialog
-
-        assert hasattr(classify_dialog, "__wrapped__")
-
-
-class TestExtractEntities:
-    """extract_entities raises EpisodeNotFoundError when episode is missing.
-
-    Episode lookup is via a raw ``select(Episode.user_id)`` — the mock DB
-    session's ``execute()`` returns a ``MagicMock`` whose
-    ``scalar_one_or_none()`` returns ``None``.
-    """
-
-    @pytest.mark.asyncio
-    async def test_raises_on_missing_episode(
-        self, ctx: dict,
-    ) -> None:
-        """Raw user_id select returns None → EpisodeNotFoundError is raised."""
-
-        with patch("asyncio.sleep", AsyncMock()):
-            from workers.tasks.extract_entities import extract_entities
-
-            with pytest.raises(EpisodeNotFoundError) as exc_info:
-                await extract_entities(
-                    ctx=ctx,
-                    episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
-                    project_id=_PROJECT_ID,
-                    content=_CONTENT,
-                )
-
-        assert exc_info.value.code == "episode_not_found"
-        assert exc_info.value.status_code == 404
-        assert _EPISODE_ID in exc_info.value.message
-
-    def test_has_with_retry_decorator(self) -> None:
-        """Function is wrapped by @with_retry."""
-        from workers.tasks.extract_entities import extract_entities
-
-        assert hasattr(extract_entities, "__wrapped__")
-
-
-class TestExtractStructured:
-    """extract_structured raises EpisodeNotFoundError when episode is missing."""
-
-    @pytest.mark.asyncio
-    async def test_raises_on_missing_episode(
-        self, ctx: dict, mock_db: AsyncMock
-    ) -> None:
-        """Repository returns None → EpisodeNotFoundError is raised."""
-        mock_repo = AsyncMock()
-        mock_repo.get_by_id_for_update.return_value = None
-
-        with patch("asyncio.sleep", AsyncMock()):
-            with patch(
-                "repositories.episode_repository.EpisodeRepository",
-                return_value=mock_repo,
-            ):
-                from workers.tasks.extract_structured import extract_structured
-
-                with pytest.raises(EpisodeNotFoundError) as exc_info:
-                    await extract_structured(
-                        ctx=ctx,
-                        episode_id=_EPISODE_ID,
-                        org_id=_ORG_ID,
-                        project_id=_PROJECT_ID,
-                        session_id=_SESSION_ID,
-                        content=_CONTENT,
-                    )
-
-        assert exc_info.value.code == "episode_not_found"
-        assert exc_info.value.status_code == 404
-        assert _EPISODE_ID in exc_info.value.message
-
-    def test_has_with_retry_decorator(self) -> None:
-        """Function is wrapped by @with_retry."""
-        from workers.tasks.extract_structured import extract_structured
-
-        assert hasattr(extract_structured, "__wrapped__")
-
-
-class TestExtractFacts:
-    """extract_facts raises EpisodeNotFoundError when episode is missing.
-
-    Episode lookup is via a raw ``select(Episode.user_id)`` — same pattern
-    as ``extract_entities``.
-    """
-
-    @pytest.mark.asyncio
-    async def test_raises_on_missing_episode(
-        self, ctx: dict,
-    ) -> None:
-        """Raw user_id select returns None → EpisodeNotFoundError is raised."""
-
-        with patch("asyncio.sleep", AsyncMock()):
-            from workers.tasks.extract_facts import extract_facts
-
-            with pytest.raises(EpisodeNotFoundError) as exc_info:
-                await extract_facts(
-                    ctx=ctx,
-                    episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
-                    project_id=_PROJECT_ID,
-                    content=_CONTENT,
-                )
-
-        assert exc_info.value.code == "episode_not_found"
-        assert exc_info.value.status_code == 404
-        assert _EPISODE_ID in exc_info.value.message
-
-    def test_has_with_retry_decorator(self) -> None:
-        """Function is wrapped by @with_retry."""
-        from workers.tasks.extract_facts import extract_facts
-
-        assert hasattr(extract_facts, "__wrapped__")
 
 
 class TestLinkEntitiesToEpisode:

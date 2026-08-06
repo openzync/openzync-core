@@ -1,244 +1,208 @@
-"""Unit tests for classify_dialog task."""
+"""Unit tests for the dialog-classification post-processing helper.
+
+The standalone ``classify_dialog`` ARQ task was retired in favour of the
+combined ``enrich_episode`` worker (which calls ``process_classification_output``
+as its classification section).  These tests exercise the helper directly —
+label validation, value clamping, and the enrichment bit.  The caller-owned
+orchestration (LLM call, idempotency, episode not found) is covered by
+``test_enrich_episode.py``; the INSERT SQL structure is covered by
+``test_process_classification_output.py``.
+"""
+
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from unittest.mock import AsyncMock
+from uuid import UUID, uuid4
 
 import pytest
+
+from schemas.llm_outputs import ClassificationOutput
+from workers.tasks.classify_dialog import process_classification_output
 
 _EPISODE_ID = str(uuid4())
 _ORG_ID = str(uuid4())
 _PROJECT_ID = str(uuid4())
-_CONTENT = "Hello, how can I help you today?"
-_TRACE_ID = "trace-003"
 
 
 @pytest.mark.unit
-class TestClassifyDialog:
-    """classify_dialog task tests."""
+class TestProcessClassificationOutput:
+    """process_classification_output label validation and persistence."""
 
-    def _make_db(self) -> AsyncMock:
-        db = AsyncMock()
-        db.__aenter__.return_value = db
-        db.__aexit__.return_value = None
-        # Prevent .scalars().all() chains from returning coroutines
-        db.execute.return_value = MagicMock()
-        return db
+    @pytest.fixture
+    def mock_db(self) -> AsyncMock:
+        """Return a mock async DB session with ``execute`` + ``flush``."""
+        m = AsyncMock()
+        m.execute = AsyncMock()
+        m.flush = AsyncMock()
+        return m
 
-    def _factory(self, db: AsyncMock) -> MagicMock:
-        f = MagicMock()
-        f.return_value = db
-        return f
-
-    def _ctx(self, db: AsyncMock) -> dict:
+    @pytest.fixture
+    def validation_sets(self) -> dict[str, set[str]]:
+        """Label sets that accept the values in *valid_output*."""
         return {
-            "db_engine": MagicMock(),
-            "db_session_factory": self._factory(db),
-            "openbao_client": MagicMock(),
+            "intent_set": {"greeting"},
+            "emotion_set": {"positive"},
         }
 
-    def _make_llm_response(
+    def _valid_output(self) -> ClassificationOutput:
+        return ClassificationOutput(
+            intent="greeting",
+            emotion="positive",
+            valence="positive",
+            arousal="medium",
+            confidence=0.95,
+        )
+
+    @pytest.mark.asyncio
+    async def test_valid_labels_persisted(
         self,
-        intent: str = "greeting",
-        emotion: str = "positive",
-        valence: str = "positive",
-        arousal: str = "medium",
-        confidence: float = 0.95,
-    ) -> MagicMock:
-        """Create a mock LLM response with classification fields.
+        mock_db: AsyncMock,
+        validation_sets: dict[str, set[str]],
+    ) -> None:
+        """Known intent/emotion/valence/arousal are persisted as-is."""
+        await process_classification_output(
+            db=mock_db,
+            org_id=_ORG_ID,
+            episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID,
+            parsed=self._valid_output(),
+            validation_sets=validation_sets,
+        )
 
-        The task accesses ``parsed.intent``, ``parsed.emotion``,
-        ``parsed.valence``, ``parsed.arousal``, ``parsed.confidence``,
-        and ``parsed.model_dump()`` directly, so we set them as mock
-        attributes.
-        """
-        parsed = MagicMock()
-        parsed.intent = intent
-        parsed.emotion = emotion
-        parsed.valence = valence
-        parsed.arousal = arousal
-        parsed.confidence = confidence
-        parsed.model_dump.return_value = {
-            "intent": intent,
-            "emotion": emotion,
-            "valence": valence,
-            "arousal": arousal,
-            "confidence": confidence,
-        }
-        resp = MagicMock()
-        resp.validated_data = parsed
-        return resp
+        params = mock_db.execute.await_args.args[1]
+        assert params["intent"] == "greeting"
+        assert params["emotion"] == "positive"
+        assert params["valence"] == "positive"
+        assert params["arousal"] == "medium"
+        assert params["confidence"] == 0.95
 
     @pytest.mark.asyncio
-    async def test_success(self) -> None:
-        """Dialog classified and persisted successfully."""
-        llm_resp = self._make_llm_response()
+    async def test_unknown_category_is_dropped(
+        self,
+        mock_db: AsyncMock,
+        validation_sets: dict[str, set[str]],
+    ) -> None:
+        """Intent outside the org's taxonomy is not persisted (validated)."""
+        parsed = self._valid_output().model_copy(update={"intent": "unknown_category_xyz"})
 
-        with (
-            patch("workers.tasks.classify_dialog.render_prompt",
-                  return_value=("system", {"schemas": []})),
-            patch("workers.tasks.classify_dialog.build_enrichment_prompt",
-                  return_value="prompt"),
-            patch("core.llm.resolve_backend") as mock_llm_cls,
-            patch("core.org_config.get_org_config") as mock_org_cfg,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-        ):
-            mock_llm = AsyncMock()
-            mock_llm.chat.return_value = llm_resp
-            mock_llm_cls.return_value = mock_llm
+        await process_classification_output(
+            db=mock_db,
+            org_id=_ORG_ID,
+            episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID,
+            parsed=parsed,
+            validation_sets=validation_sets,
+        )
 
-            mock_org_cfg.return_value = MagicMock()
-
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 0
-            episode.categories = None
-
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
-
-            db = self._make_db()
-            from workers.tasks.classify_dialog import classify_dialog
-
-            await classify_dialog(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-                content=_CONTENT,
-                trace_id=_TRACE_ID,
-            )
-
-            mock_llm.chat.assert_called_once()
-            mock_ep_repo.apply_enrichment_bits.assert_called_once()
+        params = mock_db.execute.await_args.args[1]
+        assert params["intent"] is None
 
     @pytest.mark.asyncio
-    async def test_already_classified(self) -> None:
-        """Episode already classified → skip."""
-        with (
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-        ):
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 1 << 4  # ENRICHMENT_CLASSIFICATION bit
-            episode.categories = ["existing"]
+    async def test_unknown_emotion_is_dropped(
+        self,
+        mock_db: AsyncMock,
+        validation_sets: dict[str, set[str]],
+    ) -> None:
+        """Emotion outside the org's taxonomy is not persisted."""
+        parsed = self._valid_output().model_copy(update={"emotion": "not-a-real-emotion"})
 
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
+        await process_classification_output(
+            db=mock_db,
+            org_id=_ORG_ID,
+            episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID,
+            parsed=parsed,
+            validation_sets=validation_sets,
+        )
 
-            db = self._make_db()
-            from workers.tasks.classify_dialog import classify_dialog
-
-            await classify_dialog(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-                content=_CONTENT,
-            )
-
-            mock_ep_repo.apply_enrichment_bits.assert_not_called()
+        params = mock_db.execute.await_args.args[1]
+        assert params["emotion"] is None
 
     @pytest.mark.asyncio
-    async def test_unknown_category(self) -> None:
-        """Categories outside known taxonomy are stored as-is (validated by caller)."""
-        llm_resp = self._make_llm_response(intent="unknown_category_xyz")
+    async def test_invalid_valence_and_arousal_dropped(
+        self,
+        mock_db: AsyncMock,
+        validation_sets: dict[str, set[str]],
+    ) -> None:
+        """Valence/arousal outside the fixed taxonomy are not persisted."""
+        parsed = self._valid_output().model_copy(
+            update={"valence": "euphoric", "arousal": "extreme"}
+        )
 
-        with (
-            patch("workers.tasks.classify_dialog.render_prompt",
-                  return_value=("system", {"schemas": []})),
-            patch("workers.tasks.classify_dialog.build_enrichment_prompt",
-                  return_value="prompt"),
-            patch("core.llm.resolve_backend") as mock_llm_cls,
-            patch("core.org_config.get_org_config") as mock_org_cfg,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-        ):
-            mock_llm = AsyncMock()
-            mock_llm.chat.return_value = llm_resp
-            mock_llm_cls.return_value = mock_llm
+        await process_classification_output(
+            db=mock_db,
+            org_id=_ORG_ID,
+            episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID,
+            parsed=parsed,
+            validation_sets=validation_sets,
+        )
 
-            mock_org_cfg.return_value = MagicMock()
-
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 0
-            episode.categories = None
-
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
-
-            db = self._make_db()
-            from workers.tasks.classify_dialog import classify_dialog
-
-            await classify_dialog(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-                content=_CONTENT,
-            )
-
-            mock_llm.chat.assert_called_once()
+        params = mock_db.execute.await_args.args[1]
+        assert params["valence"] is None
+        assert params["arousal"] is None
 
     @pytest.mark.asyncio
-    async def test_episode_not_found(self) -> None:
-        """Missing episode raises exception."""
-        with (
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-        ):
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = None
-            mock_ep_repo_cls.return_value = mock_ep_repo
+    async def test_confidence_clamped_to_unit_range(
+        self,
+        mock_db: AsyncMock,
+        validation_sets: dict[str, set[str]],
+    ) -> None:
+        """Out-of-range confidence is clamped to [0.0, 1.0]."""
+        parsed = self._valid_output().model_copy(update={"confidence": 1.7})
 
-            db = self._make_db()
-            from workers.tasks.classify_dialog import classify_dialog
+        await process_classification_output(
+            db=mock_db,
+            org_id=_ORG_ID,
+            episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID,
+            parsed=parsed,
+            validation_sets=validation_sets,
+        )
 
-            with pytest.raises(Exception):
-                await classify_dialog(
-                    ctx=self._ctx(db),
-                    episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
-                    project_id=_PROJECT_ID,
-                    content=_CONTENT,
-                )
+        params = mock_db.execute.await_args.args[1]
+        assert params["confidence"] == 1.0
 
     @pytest.mark.asyncio
-    async def test_llm_error(self) -> None:
-        """LLM call failure propagates."""
-        with (
-            patch("workers.tasks.classify_dialog.render_prompt",
-                  return_value=("system", {"schemas": []})),
-            patch("workers.tasks.classify_dialog.build_enrichment_prompt",
-                  return_value="prompt"),
-            patch("core.llm.resolve_backend") as mock_llm_cls,
-            patch("core.org_config.get_org_config") as mock_org_cfg,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-        ):
-            mock_llm = AsyncMock()
-            mock_llm.chat.side_effect = Exception("LLM error")
-            mock_llm_cls.return_value = mock_llm
+    async def test_enrichment_bit_set_when_repo_provided(
+        self,
+        mock_db: AsyncMock,
+        validation_sets: dict[str, set[str]],
+    ) -> None:
+        """The ENRICHMENT_CLASSIFICATION bit is applied + flushed."""
+        from workers.tasks.base import ENRICHMENT_CLASSIFICATION
 
-            mock_org_cfg.return_value = MagicMock()
+        episode_repo = AsyncMock()
 
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 0
+        await process_classification_output(
+            db=mock_db,
+            org_id=_ORG_ID,
+            episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID,
+            parsed=self._valid_output(),
+            validation_sets=validation_sets,
+            episode_repo=episode_repo,
+        )
 
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
+        episode_repo.apply_enrichment_bits.assert_awaited_once_with(
+            UUID(_EPISODE_ID), ENRICHMENT_CLASSIFICATION
+        )
+        mock_db.flush.assert_awaited_once()
 
-            db = self._make_db()
-            from workers.tasks.classify_dialog import classify_dialog
+    @pytest.mark.asyncio
+    async def test_no_repo_skips_enrichment_bit(
+        self,
+        mock_db: AsyncMock,
+        validation_sets: dict[str, set[str]],
+    ) -> None:
+        """Without an episode_repo, no enrichment bit is set."""
+        await process_classification_output(
+            db=mock_db,
+            org_id=_ORG_ID,
+            episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID,
+            parsed=self._valid_output(),
+            validation_sets=validation_sets,
+        )
 
-            with pytest.raises(Exception, match="LLM error"):
-                await classify_dialog(
-                    ctx=self._ctx(db),
-                    episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
-                    project_id=_PROJECT_ID,
-                    content=_CONTENT,
-                )
+        mock_db.flush.assert_awaited_once()

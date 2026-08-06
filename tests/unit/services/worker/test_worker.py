@@ -549,13 +549,14 @@ class TestTaskRegistry:
         from services.worker.worker import HIGH_QUEUE_TASKS
 
         names = {t.__name__ for t in HIGH_QUEUE_TASKS}
+        # The 4 standalone LLM entry-points (classify_dialog, extract_entities,
+        # extract_facts, extract_structured) were retired in favour of the
+        # single enrich_episode pass.
         assert "enrich_episode" in names
-        assert "classify_dialog" in names
-        assert "extract_entities" in names
         assert "embed_episode" in names
-        assert "extract_facts" in names
         assert "embed_fact" in names
-        assert "extract_structured" in names
+        assert not ({"classify_dialog", "extract_entities",
+                     "extract_facts", "extract_structured"} & names)
 
     def test_low_queue_has_expected_tasks(self) -> None:
         """Low-priority queue contains batch / scheduled tasks."""

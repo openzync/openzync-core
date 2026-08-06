@@ -171,7 +171,7 @@ class TestResolveGraphBackend:
         mock_db: MagicMock,
         mock_dispatcher: MagicMock,
     ) -> None:
-        """SurrealDB configured but no ``surreal_connection_pool`` in ctx → surreal is ``None``."""
+        """SurrealDB configured but no pool in ctx → fails loud (no fallback)."""
         cfg = MagicMock()
         cfg.graph_backend = "surrealdb"
 
@@ -179,15 +179,13 @@ class TestResolveGraphBackend:
             from workers.backend import resolve_graph_backend
 
             ctx = {"graph_backend_dispatcher": mock_dispatcher}
-            result = await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
+            with pytest.raises(
+                GraphBackendUnavailableError,
+                match="no connection is available",
+            ):
+                await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
 
-        mock_dispatcher.resolve_and_create.assert_called_once_with(
-            org_config=cfg,
-            db=mock_db,
-            surreal=None,
-            falkordb_client=None,
-        )
-        assert result is mock_dispatcher.resolve_and_create.return_value
+        mock_dispatcher.resolve_and_create.assert_not_called()
 
     async def test_falkordb_client_passed_through(
         self,
@@ -268,7 +266,7 @@ class TestResolveGraphBackend:
         mock_org_config: MagicMock,
         mock_dispatcher: MagicMock,
     ) -> None:
-        """Dispatcher raises → ``GraphBackendUnavailableError`` (no fallback)."""
+        """Dispatcher raises ``ValueError`` → ``GraphBackendUnavailableError`` (unknown backend)."""
         mock_dispatcher.resolve_and_create.side_effect = ValueError("kaboom")
 
         with patch("workers.backend._resolve_org_config", AsyncMock(return_value=mock_org_config)):
@@ -277,7 +275,7 @@ class TestResolveGraphBackend:
             ctx = {"graph_backend_dispatcher": mock_dispatcher}
             with pytest.raises(
                 GraphBackendUnavailableError,
-                match="Failed to resolve graph backend",
+                match=r"Unknown graph backend 'postgres'.*kaboom",
             ):
                 await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
 

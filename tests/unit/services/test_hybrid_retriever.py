@@ -30,9 +30,16 @@ class TestHybridRetriever:
         return {"id": item_id, "score": score, **extra}
 
     def _make_service(self) -> tuple[HybridRetriever, AsyncMock]:
-        """Create a HybridRetriever with mocked DB session."""
+        """Create a HybridRetriever with mocked DB session and single-embed leg.
+
+        The merged retriever embeds the query exactly once in
+        ``hybrid_search`` and shares the vector across both vector legs, so
+        orchestration tests stub ``_embed_query`` instead of hitting the
+        real LLM backend.
+        """
         mock_db = AsyncMock()
         service = HybridRetriever(db=mock_db, org_id=self.ORG_ID)
+        service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
         return service, mock_db
 
     # ── _rrf_merge — static method, pure logic, no mocking needed ────────────
@@ -143,6 +150,30 @@ class TestHybridRetriever:
         service._bm25_search_episodes.assert_awaited_once()
         service._bm25_search_facts.assert_awaited_once()
         service._graph_bfs_search.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_hybrid_search_embeds_query_exactly_once(self) -> None:
+        """Single-embed: the query is embedded ONCE and shared by both vector legs."""
+        service, _mock_db = self._make_service()
+
+        service._vector_search_episodes = AsyncMock(return_value=[])
+        service._vector_search_facts = AsyncMock(return_value=[])
+        service._bm25_search_episodes = AsyncMock(return_value=[])
+        service._bm25_search_facts = AsyncMock(return_value=[])
+        service._graph_bfs_search = AsyncMock(return_value=[])
+
+        result = await service.hybrid_search("test query", self.PROJECT_ID, limit=20)
+
+        # Exactly one embed call for the whole search — both vector legs
+        # receive the same precomputed vector.
+        service._embed_query.assert_awaited_once_with("test query")
+        embedding = service._embed_query.return_value
+        service._vector_search_episodes.assert_awaited_once_with(
+            embedding, self.PROJECT_ID, 20,
+        )
+        service._vector_search_facts.assert_awaited_once_with(
+            embedding, self.PROJECT_ID, 20,
+        )
 
     @pytest.mark.asyncio
     async def test_hybrid_search_episode_vector_leg_failure(self) -> None:
@@ -316,6 +347,7 @@ class TestHybridRetriever:
             org_id=self.ORG_ID,
             reranker=mock_reranker,
         )
+        service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
 
         service._vector_search_episodes = AsyncMock(return_value=[])
         service._vector_search_facts = AsyncMock(return_value=[])
@@ -352,6 +384,7 @@ class TestHybridRetriever:
             reranker=mock_reranker,
             org_config=mock_org_config,
         )
+        service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
 
         service._vector_search_episodes = AsyncMock(return_value=[])
         service._vector_search_facts = AsyncMock(return_value=[])
@@ -364,11 +397,14 @@ class TestHybridRetriever:
 
         # With reranker_top_k=75 and limit=5, retrieval_limit = max(5, 75) = 75
         expected_limit = 75
+        # Single-embed: both vector legs receive the SAME precomputed vector
+        # (the ``_embed_query`` stub's return value), not the query string.
+        embedding = [0.1, 0.2, 0.3]
         service._vector_search_episodes.assert_awaited_once_with(
-            "query", self.PROJECT_ID, expected_limit,
+            embedding, self.PROJECT_ID, expected_limit,
         )
         service._vector_search_facts.assert_awaited_once_with(
-            "query", self.PROJECT_ID, expected_limit,
+            embedding, self.PROJECT_ID, expected_limit,
         )
         service._bm25_search_episodes.assert_awaited_once_with(
             "query", self.PROJECT_ID, expected_limit,
@@ -390,6 +426,7 @@ class TestHybridRetriever:
             org_id=self.ORG_ID,
             reranker=mock_reranker,
         )
+        service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
 
         service._vector_search_episodes = AsyncMock(return_value=[self._make_item("a", 0.9)])
         service._vector_search_facts = AsyncMock(return_value=[])
@@ -415,6 +452,7 @@ class TestHybridRetriever:
             org_id=self.ORG_ID,
             reranker=mock_reranker,
         )
+        service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
 
         service._vector_search_episodes = AsyncMock(return_value=[self._make_item("a", 0.9)])
         service._vector_search_facts = AsyncMock(return_value=[])
@@ -559,21 +597,23 @@ class TestVectorSearch:
 
     @pytest.mark.asyncio
     async def test_vector_search_episodes_success(self) -> None:
-        """Episode vector search returns results from ``_execute_ranked_query``."""
+        """Episode vector search returns results from ``_execute_ranked_query``.
+
+        The query embedding is a precomputed parameter now — the leg no
+        longer embeds internally (single-embed lives in ``hybrid_search``).
+        """
         service, _ = self._make_service()
         mock_results = [
             {"id": "ep1", "score": 0.95, "content": "test episode", "role": "assistant"},
         ]
 
-        service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
         service._execute_ranked_query = AsyncMock(return_value=mock_results)
 
         results = await service._vector_search_episodes(
-            "query", self.PROJECT_ID, limit=20,
+            [0.1, 0.2, 0.3], self.PROJECT_ID, limit=20,
         )
 
         assert results == mock_results
-        service._embed_query.assert_awaited_once_with("query")
         service._execute_ranked_query.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -584,15 +624,13 @@ class TestVectorSearch:
             {"id": "f1", "score": 0.92, "content": "test fact", "subject": "S", "predicate": "P"},
         ]
 
-        service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
         service._execute_ranked_query = AsyncMock(return_value=mock_results)
 
         results = await service._vector_search_facts(
-            "query", self.PROJECT_ID, limit=20,
+            [0.1, 0.2, 0.3], self.PROJECT_ID, limit=20,
         )
 
         assert results == mock_results
-        service._embed_query.assert_awaited_once_with("query")
         service._execute_ranked_query.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -600,11 +638,10 @@ class TestVectorSearch:
         """Episode vector search returns empty list when no matches found."""
         service, _ = self._make_service()
 
-        service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
         service._execute_ranked_query = AsyncMock(return_value=[])
 
         results = await service._vector_search_episodes(
-            "query", self.PROJECT_ID, limit=20,
+            [0.1, 0.2, 0.3], self.PROJECT_ID, limit=20,
         )
 
         assert results == []
@@ -614,11 +651,10 @@ class TestVectorSearch:
         """Fact vector search returns empty list when no matches found."""
         service, _ = self._make_service()
 
-        service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
         service._execute_ranked_query = AsyncMock(return_value=[])
 
         results = await service._vector_search_facts(
-            "query", self.PROJECT_ID, limit=20,
+            [0.1, 0.2, 0.3], self.PROJECT_ID, limit=20,
         )
 
         assert results == []

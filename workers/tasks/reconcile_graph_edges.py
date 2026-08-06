@@ -152,5 +152,5 @@ async def reconcile_graph_edges(ctx: dict[str, Any]) -> str:
             )
 
     summary = f"Enqueued {enqueued} edge expiries (from {len(stale_edges)} stale)"
-    logger.info("reconcile_graph_edges.completed", summary=summary)
+    logger.info("reconcile_graph_edges.completed", extra={"summary": summary})
     return summary

@@ -1,315 +1,288 @@
-"""Unit tests for extract_entities task."""
+"""Unit tests for the entity-extraction post-processing helper.
+
+The standalone ``extract_entities`` ARQ task was retired in favour of the
+combined ``enrich_episode`` worker (which calls ``process_entities_output``
+as its entities section).  These tests exercise the helper directly —
+pronoun filtering, type validation, upsert + link + enrichment bit.  The
+caller-owned orchestration (LLM call, idempotency, episode not found,
+graph-backend-unavailable propagation) is covered by ``test_enrich_episode.py``.
+"""
+
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from unittest.mock import AsyncMock, MagicMock
+from uuid import UUID, uuid4
 
 import pytest
+
+from schemas.llm_outputs import EntityExtractionOutput
+from workers.tasks.extract_entities import process_entities_output
 
 _EPISODE_ID = str(uuid4())
 _ORG_ID = str(uuid4())
 _PROJECT_ID = str(uuid4())
 _ENT_1_ID = str(uuid4())
-_CONTENT = "Alice and Bob discussed the quarterly report."
-_TRACE_ID = "trace-001"
 
 
 @pytest.mark.unit
-class TestExtractEntities:
-    """extract_entities task tests."""
+class TestProcessEntitiesOutput:
+    """process_entities_output filtering and persistence."""
 
-    def _make_db(self) -> AsyncMock:
-        db = AsyncMock()
-        db.__aenter__.return_value = db
-        db.__aexit__.return_value = None
-        return db
+    @pytest.fixture
+    def graph_backend(self) -> MagicMock:
+        gb = MagicMock()
+        gb.link_entity_to_episode = AsyncMock()
+        return gb
 
-    def _factory(self, db: AsyncMock) -> MagicMock:
-        f = MagicMock()
-        f.return_value = db
-        return f
+    @pytest.fixture
+    def entity_repo(self) -> MagicMock:
+        repo = MagicMock()
+        repo.upsert_entity = AsyncMock(return_value={"id": _ENT_1_ID})
+        repo.upsert_relationship = AsyncMock(return_value={"id": str(uuid4())})
+        return repo
 
-    def _ctx(self, db: AsyncMock) -> dict:
-        return {
-            "db_engine": MagicMock(),
-            "db_session_factory": self._factory(db),
-            "openbao_client": MagicMock(),
-        }
+    @pytest.fixture
+    def episode_repo(self) -> MagicMock:
+        repo = MagicMock()
+        repo.apply_enrichment_bits = AsyncMock()
+        return repo
 
-    def _make_entity(self, name: str, type: str = "person",
-                     mentions: list[str] | None = None) -> MagicMock:
-        """Create a mock EntityOutput with a ``.model_dump()`` that returns a dict."""
-        e = MagicMock()
-        e.model_dump.return_value = {
-            "name": name,
-            "type": type,
-            "summary": f"{name} ({type})",
-            "mentions": mentions or [name],
-        }
-        return e
+    @pytest.fixture
+    def db(self) -> AsyncMock:
+        m = AsyncMock()
+        m.flush = AsyncMock()
+        return m
 
-    def _make_llm_response(self, entities: list[MagicMock] | None = None) -> MagicMock:
-        """Create a mock LLM response with accessible entities/relationships.
-
-        The task iterates ``parsed.entities`` and calls ``.model_dump()`` on
-        each item to convert EntityOutput → dict.  We set up ``model_dump``
-        on each mock entity so the dict contains usable name/type/mentions.
-        """
-        if entities is None:
-            entities = [self._make_entity("Alice"), self._make_entity("Bob")]
-
-        parsed = MagicMock()
-        parsed.entities = entities
-        parsed.relationships = []
-        resp = MagicMock()
-        resp.validated_data = parsed
-        return resp
+    def _parsed(self, entities: list[dict], relationships: list[dict] | None = None) -> EntityExtractionOutput:
+        return EntityExtractionOutput(
+            entities=entities,
+            relationships=relationships or [],
+        )
 
     @pytest.mark.asyncio
-    async def test_success(self) -> None:
-        """Entities extracted and persisted successfully."""
-        llm_resp = self._make_llm_response()
+    async def test_entities_upserted_linked_and_bits_set(
+        self,
+        db: AsyncMock,
+        graph_backend: MagicMock,
+        entity_repo: MagicMock,
+        episode_repo: MagicMock,
+    ) -> None:
+        """Happy path: upsert, link to episode, enrichment bit + flush."""
+        parsed = self._parsed(
+            entities=[
+                {"name": "Alice", "type": "Person", "summary": "Alice (Person)"},
+                {"name": "Bob", "type": "Person", "summary": "Bob (Person)"},
+            ],
+            relationships=[
+                {"subject": "Alice", "predicate": "knows", "object": "Bob"},
+            ],
+        )
 
-        with (
-            patch("workers.tasks.base.with_retry", lambda **kw: lambda f: f),
-            patch("workers.tasks.extract_entities.render_prompt",
-                  return_value=("system", {})),
-            patch("workers.tasks.extract_entities.build_enrichment_prompt",
-                  return_value="prompt"),
-            patch("core.llm.resolve_backend") as mock_llm_cls,
-            patch("workers.tasks.extract_entities.resolve_graph_backend", return_value=AsyncMock()),
-            patch("core.org_config.get_org_config") as mock_org_cfg,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-            patch("repositories.entity_repository.EntityRepository") as mock_ent_repo_cls,
-        ):
-            mock_llm = AsyncMock()
-            mock_llm.chat.return_value = llm_resp
-            mock_llm_cls.return_value = mock_llm
+        name_map = await process_entities_output(
+            db=db,
+            graph_backend=graph_backend,
+            entity_repo=entity_repo,
+            episode_repo=episode_repo,
+            org_id=_ORG_ID,
+            episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID,
+            parsed=parsed,
+            entity_types=["Person"],
+        )
 
-            mock_org_cfg.return_value = MagicMock()
-
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 0
-
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
-
-            mock_ent_repo = AsyncMock()
-            mock_ent_repo.upsert_entity.return_value = {"id": _ENT_1_ID}
-            mock_ent_repo_cls.return_value = mock_ent_repo
-
-            db = self._make_db()
-            from workers.tasks.extract_entities import extract_entities
-
-            await extract_entities(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-                content=_CONTENT,
-                trace_id=_TRACE_ID,
-            )
-
-            mock_llm.chat.assert_called_once()
-            assert mock_ent_repo.upsert_entity.call_count >= 1
-            mock_ep_repo.apply_enrichment_bits.assert_called_once()
+        assert entity_repo.upsert_entity.await_count == 2
+        assert entity_repo.upsert_relationship.await_count == 1
+        assert graph_backend.link_entity_to_episode.await_count == 2
+        episode_repo.apply_enrichment_bits.assert_awaited_once_with(
+            UUID(_EPISODE_ID),
+            __import__("workers.tasks.base", fromlist=["ENRICHMENT_ENTITIES"]).ENRICHMENT_ENTITIES,
+        )
+        db.flush.assert_awaited_once()
+        # Returned map keys both names → their UUIDs
+        assert set(name_map) == {"Alice", "Bob"}
+        assert name_map["Alice"] == _ENT_1_ID
 
     @pytest.mark.asyncio
-    async def test_empty_entities(self) -> None:
-        """No entities extracted → still handles gracefully."""
-        parsed = MagicMock()
-        parsed.entities = []
-        parsed.relationships = []
-        llm_resp = MagicMock()
-        llm_resp.validated_data = parsed
+    async def test_pronouns_filtered(
+        self,
+        db: AsyncMock,
+        graph_backend: MagicMock,
+        entity_repo: MagicMock,
+        episode_repo: MagicMock,
+    ) -> None:
+        """Pronoun-like entities are filtered out, real ones persisted."""
+        parsed = self._parsed(
+            entities=[
+                {"name": "Alice", "type": "Person", "summary": "Alice (Person)"},
+                {"name": "I", "type": "pronoun", "summary": "I (pronoun)"},
+            ],
+        )
 
-        with (
-            patch("workers.tasks.base.with_retry", lambda **kw: lambda f: f),
-            patch("workers.tasks.extract_entities.render_prompt",
-                  return_value=("system", {})),
-            patch("workers.tasks.extract_entities.build_enrichment_prompt",
-                  return_value="prompt"),
-            patch("workers.tasks.extract_entities.render_prompt",
-                  return_value=("system", {})),
-            patch("workers.tasks.extract_entities.build_enrichment_prompt",
-                  return_value="prompt"),
-            patch("core.llm.resolve_backend") as mock_llm_cls,
-            patch("workers.tasks.extract_entities.resolve_graph_backend", return_value=AsyncMock()),
-            patch("core.org_config.get_org_config") as mock_org_cfg,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-            patch("repositories.entity_repository.EntityRepository") as mock_ent_repo_cls,
-        ):
-            mock_llm = AsyncMock()
-            mock_llm.chat.return_value = llm_resp
-            mock_llm_cls.return_value = mock_llm
+        await process_entities_output(
+            db=db,
+            graph_backend=graph_backend,
+            entity_repo=entity_repo,
+            episode_repo=episode_repo,
+            org_id=_ORG_ID,
+            episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID,
+            parsed=parsed,
+            entity_types=["Person"],
+        )
 
-            mock_org_cfg.return_value = MagicMock()
-
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 0
-
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
-
-            mock_ent_repo = AsyncMock()
-            mock_ent_repo_cls.return_value = mock_ent_repo
-
-            db = self._make_db()
-            from workers.tasks.extract_entities import extract_entities
-
-            await extract_entities(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-                content=_CONTENT,
-            )
-
-            mock_llm.chat.assert_called_once()
-            mock_ent_repo.upsert_entity.assert_not_called()
+        assert entity_repo.upsert_entity.await_count == 1
+        name = entity_repo.upsert_entity.await_args.kwargs["name"]
+        assert name == "Alice"
 
     @pytest.mark.asyncio
-    async def test_pronouns_filtered(self) -> None:
-        """Pronoun-like entities are filtered out."""
-        llm_resp = self._make_llm_response([
-            self._make_entity("Alice"),
-            self._make_entity("I", type="pronoun"),
-        ])
+    async def test_pronoun_relationship_skipped(
+        self,
+        db: AsyncMock,
+        graph_backend: MagicMock,
+        entity_repo: MagicMock,
+        episode_repo: MagicMock,
+    ) -> None:
+        """Relationships referencing pronouns are not persisted."""
+        parsed = self._parsed(
+            entities=[
+                {"name": "Alice", "type": "Person", "summary": "Alice (Person)"},
+            ],
+            relationships=[
+                {"subject": "I", "predicate": "works_with", "object": "Alice"},
+            ],
+        )
 
-        with (
-            patch("workers.tasks.base.with_retry", lambda **kw: lambda f: f),
-            patch("workers.tasks.extract_entities.render_prompt",
-                  return_value=("system", {})),
-            patch("workers.tasks.extract_entities.build_enrichment_prompt",
-                  return_value="prompt"),
-            patch("core.llm.resolve_backend") as mock_llm_cls,
-            patch("workers.tasks.extract_entities.resolve_graph_backend", return_value=AsyncMock()),
-            patch("core.org_config.get_org_config") as mock_org_cfg,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-            patch("repositories.entity_repository.EntityRepository") as mock_ent_repo_cls,
-        ):
-            mock_llm = AsyncMock()
-            mock_llm.chat.return_value = llm_resp
-            mock_llm_cls.return_value = mock_llm
+        await process_entities_output(
+            db=db,
+            graph_backend=graph_backend,
+            entity_repo=entity_repo,
+            episode_repo=episode_repo,
+            org_id=_ORG_ID,
+            episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID,
+            parsed=parsed,
+            entity_types=["Person"],
+        )
 
-            mock_org_cfg.return_value = MagicMock()
-
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 0
-
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
-
-            mock_ent_repo = AsyncMock()
-            mock_ent_repo.upsert_entity.return_value = {"id": _ENT_1_ID}
-            mock_ent_repo_cls.return_value = mock_ent_repo
-
-            db = self._make_db()
-            from workers.tasks.extract_entities import extract_entities
-
-            await extract_entities(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-                content=_CONTENT,
-            )
-
-            mock_ent_repo.upsert_entity.assert_called_once()
-            assert mock_ent_repo.upsert_entity.call_args[1]["name"] == "Alice"
+        assert entity_repo.upsert_relationship.await_count == 0
 
     @pytest.mark.asyncio
-    async def test_llm_error(self) -> None:
-        """LLM call failure propagates."""
-        with (
-            patch("workers.tasks.base.with_retry", lambda **kw: lambda f: f),
-            patch("workers.tasks.extract_entities.render_prompt",
-                  return_value=("system", {})),
-            patch("workers.tasks.extract_entities.build_enrichment_prompt",
-                  return_value="prompt"),
-            patch("core.llm.resolve_backend") as mock_llm_cls,
-            patch("workers.tasks.extract_entities.resolve_graph_backend", return_value=AsyncMock()),
-            patch("core.org_config.get_org_config") as mock_org_cfg,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-        ):
-            mock_llm = AsyncMock()
-            mock_llm.chat.side_effect = Exception("LLM error")
-            mock_llm_cls.return_value = mock_llm
+    async def test_empty_entities_no_upsert(
+        self,
+        db: AsyncMock,
+        graph_backend: MagicMock,
+        entity_repo: MagicMock,
+        episode_repo: MagicMock,
+    ) -> None:
+        """No entities extracted → no upserts, bit still set."""
+        parsed = self._parsed(entities=[])
 
-            mock_org_cfg.return_value = MagicMock()
+        result = await process_entities_output(
+            db=db,
+            graph_backend=graph_backend,
+            entity_repo=entity_repo,
+            episode_repo=episode_repo,
+            org_id=_ORG_ID,
+            episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID,
+            parsed=parsed,
+            entity_types=["Person"],
+        )
 
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 0
-
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
-
-            db = self._make_db()
-            from workers.tasks.extract_entities import extract_entities
-
-            with pytest.raises(Exception, match="LLM error"):
-                await extract_entities(
-                    ctx=self._ctx(db),
-                    episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
-                    project_id=_PROJECT_ID,
-                    content=_CONTENT,
-                )
+        assert result == {}
+        entity_repo.upsert_entity.assert_not_awaited()
+        episode_repo.apply_enrichment_bits.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_graph_backend_disabled_skips_persistence(self) -> None:
-        """Graph backend resolves to ``None`` (graph disabled) → skips gracefully."""
-        llm_resp = self._make_llm_response()
+    async def test_entity_without_name_skipped(
+        self,
+        db: AsyncMock,
+        graph_backend: MagicMock,
+        entity_repo: MagicMock,
+        episode_repo: MagicMock,
+    ) -> None:
+        """Entities with blank names are dropped before upsert."""
+        parsed = self._parsed(
+            entities=[
+                {"name": "  ", "type": "Person", "summary": None},
+                {"name": "Alice", "type": "Person", "summary": None},
+            ],
+        )
 
-        with (
-            patch("workers.tasks.base.with_retry", lambda **kw: lambda f: f),
-            patch("workers.tasks.extract_entities.render_prompt",
-                  return_value=("system", {})),
-            patch("workers.tasks.extract_entities.build_enrichment_prompt",
-                  return_value="prompt"),
-            patch("core.llm.resolve_backend") as mock_llm_cls,
-            patch("workers.tasks.extract_entities.resolve_graph_backend", return_value=None),
-            patch("core.org_config.get_org_config") as mock_org_cfg,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-            patch("repositories.entity_repository.EntityRepository") as mock_ent_repo_cls,
-        ):
-            mock_llm = AsyncMock()
-            mock_llm.chat.return_value = llm_resp
-            mock_llm_cls.return_value = mock_llm
+        await process_entities_output(
+            db=db,
+            graph_backend=graph_backend,
+            entity_repo=entity_repo,
+            episode_repo=episode_repo,
+            org_id=_ORG_ID,
+            episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID,
+            parsed=parsed,
+            entity_types=["Person"],
+        )
 
-            mock_org_cfg.return_value = MagicMock()
+        assert entity_repo.upsert_entity.await_count == 1
+        assert entity_repo.upsert_entity.await_args.kwargs["name"] == "Alice"
 
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 0
+    @pytest.mark.asyncio
+    async def test_invalid_type_reassigned_to_custom(
+        self,
+        db: AsyncMock,
+        graph_backend: MagicMock,
+        entity_repo: MagicMock,
+        episode_repo: MagicMock,
+    ) -> None:
+        """Entity types outside the allowed ontology become ``Custom``."""
+        parsed = self._parsed(
+            entities=[
+                {"name": "Widget", "type": "NotInOntology", "summary": None},
+            ],
+        )
 
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
+        await process_entities_output(
+            db=db,
+            graph_backend=graph_backend,
+            entity_repo=entity_repo,
+            episode_repo=episode_repo,
+            org_id=_ORG_ID,
+            episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID,
+            parsed=parsed,
+            entity_types=["Person"],
+        )
 
-            mock_ent_repo = AsyncMock()
-            mock_ent_repo_cls.return_value = mock_ent_repo
+        kwargs = entity_repo.upsert_entity.await_args.kwargs
+        assert kwargs["entity_type"] == "Custom"
 
-            db = self._make_db()
-            from workers.tasks.extract_entities import extract_entities
+    @pytest.mark.asyncio
+    async def test_relationship_entity_recovery(
+        self,
+        db: AsyncMock,
+        graph_backend: MagicMock,
+        entity_repo: MagicMock,
+        episode_repo: MagicMock,
+    ) -> None:
+        """Relationship names not declared as entities are auto-created."""
+        parsed = self._parsed(
+            entities=[],
+            relationships=[
+                {"subject": "Alice", "predicate": "works_at", "object": "Acme Corp"},
+            ],
+        )
 
-            # No exception — graph persistence is skipped for disabled orgs.
-            await extract_entities(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-                content=_CONTENT,
-            )
+        await process_entities_output(
+            db=db,
+            graph_backend=graph_backend,
+            entity_repo=entity_repo,
+            episode_repo=episode_repo,
+            org_id=_ORG_ID,
+            episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID,
+            parsed=parsed,
+            entity_types=["Person"],
+        )
 
-            mock_llm.chat.assert_called_once()
-            mock_ent_repo.upsert_entity.assert_not_called()
-            mock_ep_repo.apply_enrichment_bits.assert_not_called()
+        # Both relationship endpoints auto-created as Custom entities,
+        # then the relationship is upserted.
+        assert entity_repo.upsert_entity.await_count == 2
+        assert entity_repo.upsert_relationship.await_count == 1

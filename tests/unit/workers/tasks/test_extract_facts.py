@@ -1,410 +1,335 @@
-"""Unit tests for extract_facts task."""
+"""Unit tests for the fact-extraction post-processing helpers.
+
+The standalone ``extract_facts`` ARQ task was retired in favour of the
+combined ``enrich_episode`` worker (which calls ``process_facts_output``
+as its facts section).  These tests exercise ``_filter_facts`` (pure) and
+``process_facts_output`` directly.  Entity-resolution matching is covered by
+``test_fact_entity_resolution.py``; the caller-owned orchestration (LLM call,
+idempotency, episode not found) is covered by ``test_enrich_episode.py``.
+"""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
+
+from schemas.llm_outputs import FactExtractionOutput
+from services.fact_invalidation_service import FactIngestionResult
+from workers.tasks.extract_facts import _filter_facts, process_facts_output
 
 _EPISODE_ID = str(uuid4())
 _ORG_ID = str(uuid4())
 _PROJECT_ID = str(uuid4())
-_CONTENT = "Alice works at Acme Corp in San Francisco."
+_SESSION_ID = str(uuid4())
+_USER_ID = str(uuid4())
 _TRACE_ID = "trace-002"
 
 
-@pytest.mark.unit
-class TestExtractFacts:
-    """extract_facts task tests."""
+# ── _filter_facts (pure) ───────────────────────────────────────────────────────
 
-    def _make_db(self) -> AsyncMock:
-        db = AsyncMock()
-        db.__aenter__.return_value = db
-        db.__aexit__.return_value = None
-        # Prevent .scalars().all() chains from returning coroutines
-        result = MagicMock()
-        result.scalar_one_or_none.return_value = str(uuid4())
-        db.execute.return_value = result
-        return db
 
-    def _factory(self, db: AsyncMock) -> MagicMock:
-        f = MagicMock()
-        f.return_value = db
-        return f
+class TestFilterFacts:
+    """_filter_facts confidence and triple-completeness filtering."""
 
-    def _ctx(self, db: AsyncMock) -> dict:
-        return {
-            "db_engine": MagicMock(),
-            "db_session_factory": self._factory(db),
-            "openbao_client": MagicMock(),
-        }
-
-    @staticmethod
-    def _make_llm_response(facts: list[dict] | None = None) -> MagicMock:
-        """Create a mock LLM response with parsed facts.
-
-        The task iterates ``parsed.facts`` and calls ``fact.model_dump()`` on
-        each element, so we build a list of MagicMock objects with
-        model_dump set up.
-        """
-        fact_dicts = facts or [
-            {
-                "subject": "Alice",
-                "predicate": "works_at",
-                "object": "Acme Corp",
-                "confidence": 0.95,
-            },
-        ]
-        fact_mocks = []
-        for fd in fact_dicts:
-            fm = MagicMock()
-            fm.model_dump.return_value = fd
-            fact_mocks.append(fm)
-
-        parsed = MagicMock()
-        parsed.facts = fact_mocks
-        resp = MagicMock()
-        resp.validated_data = parsed
-        return resp
-
-    @pytest.mark.asyncio
-    async def test_success(self) -> None:
-        """Facts extracted and persisted successfully."""
-        llm_resp = self._make_llm_response()
-
-        with (
-            patch("workers.tasks.extract_facts.render_prompt",
-                  return_value=("system", {})),
-            patch("workers.tasks.extract_facts.build_enrichment_prompt",
-                  return_value="prompt"),
-            patch("core.llm.resolve_backend") as mock_llm_cls,
-            patch("workers.backend.resolve_graph_backend", return_value=AsyncMock()),
-            patch("core.org_config.get_org_config") as mock_org_cfg,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-            patch("repositories.fact_repository.FactRepository") as mock_fact_repo_cls,
-            patch("core.config.settings") as _,
-        ):
-            mock_llm = AsyncMock()
-            mock_llm.chat.return_value = llm_resp
-            mock_llm_cls.return_value = mock_llm
-
-            mock_org_cfg.return_value = MagicMock()
-
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 0
-
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
-
-            mock_fact = MagicMock()
-            mock_fact.id = str(uuid4())
-            mock_fact.content = "Alice works_at Acme Corp"
-            mock_fact_repo = AsyncMock()
-            mock_fact_repo.batch_create_or_skip.return_value = [mock_fact]
-            mock_fact_repo_cls.return_value = mock_fact_repo
-
-            db = self._make_db()
-            from workers.tasks.extract_facts import extract_facts
-
-            await extract_facts(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-                content=_CONTENT,
-                trace_id=_TRACE_ID,
-            )
-
-            mock_llm.chat.assert_called_once()
-            mock_fact_repo.batch_create_or_skip.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_graph_backend_disabled_skips_graph_ops(self) -> None:
-        """Graph backend disabled (resolve → None): facts persist, no graph ops.
-
-        When ``resolve_graph_backend`` returns ``None`` the persistence path
-        must still run — facts are written to PostgreSQL and the episode is
-        marked — while no relationship upserts are attempted against the
-        (absent) graph.
-        """
-        llm_resp = self._make_llm_response()
-
-        with (
-            patch("workers.tasks.extract_facts.render_prompt",
-                  return_value=("system", {})),
-            patch("workers.tasks.extract_facts.build_enrichment_prompt",
-                  return_value="prompt"),
-            patch("core.llm.resolve_backend") as mock_llm_cls,
-            patch("workers.backend.resolve_graph_backend", return_value=None),
-            patch("core.org_config.get_org_config") as mock_org_cfg,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-            patch("repositories.fact_repository.FactRepository") as mock_fact_repo_cls,
-            patch("repositories.entity_repository.EntityRepository") as mock_entity_repo_cls,
-            patch("core.config.settings") as _,
-        ):
-            mock_llm = AsyncMock()
-            mock_llm.chat.return_value = llm_resp
-            mock_llm_cls.return_value = mock_llm
-
-            mock_org_cfg.return_value = MagicMock()
-
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 0
-
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
-
-            mock_fact = MagicMock()
-            mock_fact.id = str(uuid4())
-            mock_fact.content = "Alice works_at Acme Corp"
-            mock_fact_repo = AsyncMock()
-            mock_fact_repo.batch_create_or_skip.return_value = [mock_fact]
-            mock_fact_repo_cls.return_value = mock_fact_repo
-
-            # No backend → no live entity lookup hits, so no relationship
-            # upsert can ever fire.
-            mock_entity_repo = AsyncMock()
-            mock_entity_repo.get_entity_by_name.return_value = None
-            mock_entity_repo_cls.return_value = mock_entity_repo
-
-            db = self._make_db()
-            from workers.tasks.extract_facts import extract_facts
-
-            await extract_facts(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-                content=_CONTENT,
-                trace_id=_TRACE_ID,
-            )
-
-            # Facts still persist through the graph-disabled path.
-            mock_fact_repo.batch_create_or_skip.assert_called_once()
-            # And no graph relationship work is attempted.
-            mock_entity_repo.upsert_relationship.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_empty_facts(self) -> None:
-        """No facts extracted → no bulk_create."""
-        parsed = MagicMock()
-        parsed.facts = []
-        llm_resp = MagicMock()
-        llm_resp.validated_data = parsed
-
-        with (
-            patch("workers.tasks.extract_facts.render_prompt",
-                  return_value=("system", {})),
-            patch("workers.tasks.extract_facts.build_enrichment_prompt",
-                  return_value="prompt"),
-            patch("core.llm.resolve_backend") as mock_llm_cls,
-            patch("workers.backend.resolve_graph_backend", return_value=AsyncMock()),
-            patch("core.org_config.get_org_config") as mock_org_cfg,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-            patch("repositories.fact_repository.FactRepository") as mock_fact_repo_cls,
-            patch("core.config.settings") as _,
-        ):
-            mock_llm = AsyncMock()
-            mock_llm.chat.return_value = llm_resp
-            mock_llm_cls.return_value = mock_llm
-
-            mock_org_cfg.return_value = MagicMock()
-
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 0
-
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
-
-            mock_fact_repo = AsyncMock()
-            mock_fact_repo_cls.return_value = mock_fact_repo
-
-            db = self._make_db()
-            from workers.tasks.extract_facts import extract_facts
-
-            await extract_facts(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-                content=_CONTENT,
-            )
-
-            mock_llm.chat.assert_called_once()
-            mock_fact_repo.batch_create_or_skip.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_low_confidence_filtered(self) -> None:
-        """Low-confidence facts are filtered out."""
-        llm_resp = self._make_llm_response([
+    def test_low_confidence_filtered(self) -> None:
+        """Facts below the confidence threshold are dropped."""
+        facts = [
             {"subject": "Alice", "predicate": "works_at", "object": "Acme Corp", "confidence": 0.95},
-            {"subject": "Bob", "predicate": "might_work_at", "object": "Unknown", "confidence": 0.3},
-        ])
+            {"subject": "Bob", "predicate": "might_work_at", "object": "Unknown", "confidence": 0.2},
+        ]
+        valid = _filter_facts(facts)
+        assert len(valid) == 1
+        assert valid[0]["subject"] == "Alice"
 
-        with (
-            patch("workers.tasks.extract_facts.render_prompt",
-                  return_value=("system", {})),
-            patch("workers.tasks.extract_facts.build_enrichment_prompt",
-                  return_value="prompt"),
-            patch("core.llm.resolve_backend") as mock_llm_cls,
-            patch("workers.backend.resolve_graph_backend", return_value=AsyncMock()),
-            patch("core.org_config.get_org_config") as mock_org_cfg,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-            patch("repositories.fact_repository.FactRepository") as mock_fact_repo_cls,
-            patch("core.config.settings") as _,
-        ):
-            mock_llm = AsyncMock()
-            mock_llm.chat.return_value = llm_resp
-            mock_llm_cls.return_value = mock_llm
-
-            mock_org_cfg.return_value = MagicMock()
-
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 0
-
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
-
-            mock_fact_repo = AsyncMock()
-            mock_fact_repo_cls.return_value = mock_fact_repo
-
-            db = self._make_db()
-            from workers.tasks.extract_facts import extract_facts
-
-            await extract_facts(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-                content=_CONTENT,
-            )
-
-            mock_fact_repo.batch_create_or_skip.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_llm_error(self) -> None:
-        """LLM call failure propagates."""
-        with (
-            patch("workers.tasks.extract_facts.render_prompt",
-                  return_value=("system", {})),
-            patch("workers.tasks.extract_facts.build_enrichment_prompt",
-                  return_value="prompt"),
-            patch("core.llm.resolve_backend") as mock_llm_cls,
-            patch("workers.backend.resolve_graph_backend", return_value=AsyncMock()),
-            patch("core.org_config.get_org_config") as mock_org_cfg,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-            patch("core.config.settings") as _,
-        ):
-            mock_llm = AsyncMock()
-            mock_llm.chat.side_effect = Exception("LLM error")
-            mock_llm_cls.return_value = mock_llm
-
-            mock_org_cfg.return_value = MagicMock()
-
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 0
-
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
-
-            db = self._make_db()
-            from workers.tasks.extract_facts import extract_facts
-
-            with pytest.raises(Exception, match="LLM error"):
-                await extract_facts(
-                    ctx=self._ctx(db),
-                    episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
-                    project_id=_PROJECT_ID,
-                    content=_CONTENT,
-                )
-
-    @pytest.mark.asyncio
-    async def test_episode_not_found(self) -> None:
-        """Missing episode raises exception."""
-        with (
-            patch("core.org_config.get_org_config") as mock_org_cfg,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-            patch("core.config.settings") as _,
-        ):
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = None
-            mock_ep_repo_cls.return_value = mock_ep_repo
-
-            mock_org_cfg.return_value = MagicMock()
-
-            db = self._make_db()
-            from workers.tasks.extract_facts import extract_facts
-
-            with pytest.raises(Exception):
-                await extract_facts(
-                    ctx=self._ctx(db),
-                    episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
-                    project_id=_PROJECT_ID,
-                    content=_CONTENT,
-                )
-
-    @pytest.mark.asyncio
-    async def test_incomplete_triple_filtered(self) -> None:
-        """Facts missing subject/predicate/object are filtered out."""
-        llm_resp = self._make_llm_response([
+    def test_incomplete_triple_filtered(self) -> None:
+        """Facts missing subject/predicate/object are dropped."""
+        facts = [
             {"subject": "Alice", "predicate": "works_at", "object": "Acme Corp", "confidence": 0.95},
             {"subject": "", "predicate": "is", "object": "Unknown", "confidence": 0.8},
-        ])
+            {"subject": "Bob", "predicate": "  ", "object": "Acme Corp", "confidence": 0.9},
+        ]
+        valid = _filter_facts(facts)
+        assert len(valid) == 1
+        assert valid[0]["subject"] == "Alice"
 
-        with (
-            patch("workers.tasks.extract_facts.render_prompt",
-                  return_value=("system", {})),
-            patch("workers.tasks.extract_facts.build_enrichment_prompt",
-                  return_value="prompt"),
-            patch("core.llm.resolve_backend") as mock_llm_cls,
-            patch("workers.backend.resolve_graph_backend", return_value=AsyncMock()),
-            patch("core.org_config.get_org_config") as mock_org_cfg,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
-            patch("repositories.fact_repository.FactRepository") as mock_fact_repo_cls,
-            patch("core.config.settings") as _,
-        ):
-            mock_llm = AsyncMock()
-            mock_llm.chat.return_value = llm_resp
-            mock_llm_cls.return_value = mock_llm
+    def test_missing_confidence_defaults_to_half(self) -> None:
+        """Facts without a confidence field default to 0.5 (kept)."""
+        facts = [{"subject": "Alice", "predicate": "works_at", "object": "Acme Corp"}]
+        valid = _filter_facts(facts)
+        assert len(valid) == 1
+        assert valid[0]["confidence"] == 0.5
 
-            mock_org_cfg.return_value = MagicMock()
+    def test_empty_list_returns_empty(self) -> None:
+        """No facts in → no facts out."""
+        assert _filter_facts([]) == []
 
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 0
 
-            mock_ep_repo = AsyncMock()
-            mock_ep_repo.get_by_id_for_update.return_value = episode
-            mock_ep_repo_cls.return_value = mock_ep_repo
+# ── process_facts_output ───────────────────────────────────────────────────────
 
-            mock_fact = MagicMock()
-            mock_fact.id = str(uuid4())
-            mock_fact.content = "Alice works_at Acme Corp"
-            mock_fact_repo = AsyncMock()
-            mock_fact_repo.batch_create_or_skip.return_value = [mock_fact]
-            mock_fact_repo_cls.return_value = mock_fact_repo
 
-            db = self._make_db()
-            from workers.tasks.extract_facts import extract_facts
+@pytest.mark.unit
+class TestProcessFactsOutput:
+    """process_facts_output persistence via fact supersession."""
 
-            await extract_facts(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
+    @pytest.fixture
+    def fact_repo(self) -> MagicMock:
+        return MagicMock()
+
+    @pytest.fixture
+    def episode_repo(self) -> MagicMock:
+        repo = MagicMock()
+        repo.apply_enrichment_bits = AsyncMock()
+        return repo
+
+    @pytest.fixture
+    def db(self) -> AsyncMock:
+        m = AsyncMock()
+        m.flush = AsyncMock()
+        return m
+
+    def _parsed(self, facts: list[dict] | None = None) -> FactExtractionOutput:
+        return FactExtractionOutput(facts=facts or [])
+
+    def _persisted_fact(self) -> MagicMock:
+        fact = MagicMock()
+        fact.id = uuid4()
+        fact.content = "Alice works_at Acme Corp"
+        return fact
+
+    @pytest.mark.asyncio
+    async def test_empty_facts_no_persistence(
+        self,
+        db: AsyncMock,
+        fact_repo: MagicMock,
+        episode_repo: MagicMock,
+    ) -> None:
+        """No facts extracted → nothing persisted, no invalidation run."""
+        with patch(
+            "services.fact_invalidation_service.FactInvalidationService"
+        ) as mock_inval_cls:
+            result = await process_facts_output(
+                db=db,
+                graph_backend=MagicMock(),
+                entity_repo=MagicMock(),
+                fact_repo=fact_repo,
+                episode_repo=episode_repo,
                 org_id=_ORG_ID,
+                episode_id=_EPISODE_ID,
                 project_id=_PROJECT_ID,
-                content=_CONTENT,
+                session_id=_SESSION_ID,
+                user_id=_USER_ID,
+                trace_id=_TRACE_ID,
+                parsed=self._parsed([]),
+                known_entities=[],
+                existing_facts=[],
             )
 
-            mock_fact_repo.batch_create_or_skip.assert_called_once()
+        assert result == []
+        mock_inval_cls.assert_not_called()
+        episode_repo.apply_enrichment_bits.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_all_facts_filtered_no_persistence(
+        self,
+        db: AsyncMock,
+        fact_repo: MagicMock,
+        episode_repo: MagicMock,
+    ) -> None:
+        """Only sub-threshold facts → nothing persisted."""
+        with patch(
+            "services.fact_invalidation_service.FactInvalidationService"
+        ) as mock_inval_cls:
+            result = await process_facts_output(
+                db=db,
+                graph_backend=MagicMock(),
+                entity_repo=MagicMock(),
+                fact_repo=fact_repo,
+                episode_repo=episode_repo,
+                org_id=_ORG_ID,
+                episode_id=_EPISODE_ID,
+                project_id=_PROJECT_ID,
+                session_id=_SESSION_ID,
+                user_id=_USER_ID,
+                trace_id=_TRACE_ID,
+                parsed=self._parsed([
+                    {"subject": "Bob", "predicate": "might_work_at",
+                     "object": "Unknown", "confidence": 0.1},
+                ]),
+                known_entities=[],
+                existing_facts=[],
+            )
+
+        assert result == []
+        mock_inval_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_success_persists_via_supersession(
+        self,
+        db: AsyncMock,
+        fact_repo: MagicMock,
+        episode_repo: MagicMock,
+    ) -> None:
+        """Valid facts flow through supersession, bit set, ids returned."""
+        persisted = self._persisted_fact()
+
+        with (
+            patch("services.fact_invalidation_service.FactInvalidationService") as mock_inval_cls,
+            patch("services.graph_edge_sync_service.GraphEdgeSyncService"),
+            patch("services.cache_service.CacheService"),
+        ):
+            mock_inval = MagicMock()
+            mock_inval.ingest_with_supersession = AsyncMock(
+                return_value=FactIngestionResult(created=[persisted], superseded_count=0)
+            )
+            mock_inval_cls.return_value = mock_inval
+
+            entity_repo = MagicMock()
+            entity_repo.upsert_relationship = AsyncMock(return_value={"id": str(uuid4())})
+            entity_repo.get_entity_by_name = AsyncMock(return_value=None)
+
+            result = await process_facts_output(
+                db=db,
+                graph_backend=MagicMock(),
+                entity_repo=entity_repo,
+                fact_repo=fact_repo,
+                episode_repo=episode_repo,
+                org_id=_ORG_ID,
+                episode_id=_EPISODE_ID,
+                project_id=_PROJECT_ID,
+                session_id=_SESSION_ID,
+                user_id=_USER_ID,
+                trace_id=_TRACE_ID,
+                parsed=self._parsed([
+                    {"subject": "Alice", "predicate": "works_at",
+                     "object": "Acme Corp", "confidence": 0.95,
+                     "subject_type": "literal", "object_type": "literal"},
+                ]),
+                known_entities=[],
+                existing_facts=[],
+            )
+
+        assert result == [str(persisted.id)]
+        mock_inval.ingest_with_supersession.assert_awaited_once()
+        episode_repo.apply_enrichment_bits.assert_awaited_once_with(
+            UUID(_EPISODE_ID),
+            __import__("workers.tasks.base", fromlist=["ENRICHMENT_FACTS"]).ENRICHMENT_FACTS,
+        )
+        db.flush.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_graph_disabled_facts_still_persist(
+        self,
+        db: AsyncMock,
+        fact_repo: MagicMock,
+        episode_repo: MagicMock,
+    ) -> None:
+        """graph_backend=None → facts persist in PG, no graph ops."""
+        persisted = self._persisted_fact()
+
+        with (
+            patch("services.fact_invalidation_service.FactInvalidationService") as mock_inval_cls,
+            patch("services.graph_edge_sync_service.GraphEdgeSyncService") as mock_sync_cls,
+            patch("services.cache_service.CacheService"),
+        ):
+            mock_inval = MagicMock()
+            mock_inval.ingest_with_supersession = AsyncMock(
+                return_value=FactIngestionResult(created=[persisted], superseded_count=0)
+            )
+            mock_inval_cls.return_value = mock_inval
+
+            result = await process_facts_output(
+                db=db,
+                graph_backend=None,
+                entity_repo=None,
+                fact_repo=fact_repo,
+                episode_repo=episode_repo,
+                org_id=_ORG_ID,
+                episode_id=_EPISODE_ID,
+                project_id=_PROJECT_ID,
+                session_id=_SESSION_ID,
+                user_id=_USER_ID,
+                trace_id=_TRACE_ID,
+                parsed=self._parsed([
+                    {"subject": "Alice", "predicate": "works_at",
+                     "object": "Acme Corp", "confidence": 0.95,
+                     "subject_type": "literal", "object_type": "literal"},
+                ]),
+                known_entities=[],
+                existing_facts=[],
+            )
+
+        assert result == [str(persisted.id)]
+        # Supersession ingest runs (Postgres persistence is the primary path).
+        mock_inval.ingest_with_supersession.assert_awaited_once()
+        # No graph sync service is constructed for a disabled backend.
+        mock_sync_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_embed_fact_enqueued_when_redis_provided(
+        self,
+        db: AsyncMock,
+        fact_repo: MagicMock,
+        episode_repo: MagicMock,
+    ) -> None:
+        """arq_redis present → one embed_fact job per persisted fact."""
+        persisted = self._persisted_fact()
+
+        with (
+            patch("services.fact_invalidation_service.FactInvalidationService") as mock_inval_cls,
+            patch("services.graph_edge_sync_service.GraphEdgeSyncService"),
+            patch("services.cache_service.CacheService"),
+            patch("services.worker.worker_settings.get_queue_name",
+                  return_value="OpenZync:test:queue:high"),
+        ):
+            mock_inval = MagicMock()
+            mock_inval.ingest_with_supersession = AsyncMock(
+                return_value=FactIngestionResult(created=[persisted], superseded_count=0)
+            )
+            mock_inval_cls.return_value = mock_inval
+
+            arq_redis = AsyncMock()
+
+            entity_repo = MagicMock()
+            entity_repo.get_entity_by_name = AsyncMock(return_value=None)
+            entity_repo.upsert_relationship = AsyncMock(return_value={"id": str(uuid4())})
+
+            # Seed the WorkerSettings singleton so the lazy ``w_settings.ENV``
+            # read inside ``process_facts_output`` succeeds (same pattern as
+            # ``_seed_worker_settings`` in test_worker.py).
+            import services.worker.worker_settings as _ws
+            from services.worker.worker_settings import WorkerSettings
+
+            _ws._settings = WorkerSettings(
+                DATABASE_URL="postgresql+asyncpg://localhost:5432/test",
+                REDIS_URL="redis://localhost:6379/0",
+                ENV="test",
+            )
+
+            await process_facts_output(
+                db=db,
+                graph_backend=MagicMock(),
+                entity_repo=entity_repo,
+                fact_repo=fact_repo,
+                episode_repo=episode_repo,
+                org_id=_ORG_ID,
+                episode_id=_EPISODE_ID,
+                project_id=_PROJECT_ID,
+                session_id=_SESSION_ID,
+                user_id=_USER_ID,
+                trace_id=_TRACE_ID,
+                parsed=self._parsed([
+                    {"subject": "Alice", "predicate": "works_at",
+                     "object": "Acme Corp", "confidence": 0.95,
+                     "subject_type": "literal", "object_type": "literal"},
+                ]),
+                known_entities=[],
+                existing_facts=[],
+                arq_redis=arq_redis,
+            )
+
+        arq_redis.enqueue_job.assert_awaited_once()
+        job_args = arq_redis.enqueue_job.await_args
+        assert job_args.args[0] == "embed_fact"
+        assert job_args.kwargs["fact_id"] == str(persisted.id)
