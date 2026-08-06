@@ -72,6 +72,9 @@ generated/
 graphify-out/
 .plan/
 
+# ── Dev OpenBao bootstrap state (seal key, root token, secrets) ───────────────
+.openbao-dev/
+
 # ── Benchmarks ─────────────────────────────────────────────────────────────────
 # LongMemEval / LoCoMo datasets are downloaded, not committed
 tests/benchmarks/data/
