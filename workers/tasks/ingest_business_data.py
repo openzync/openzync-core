@@ -156,6 +156,7 @@ async def ingest_business_data(
             )
 
             repo = FactRepository(db)
+
             invalidation = FactInvalidationService(
                 db=db,
                 fact_repo=repo,
@@ -164,6 +165,7 @@ async def ingest_business_data(
                     if ctx.get("redis")
                     else None
                 ),
+                graph_sync=await _resolve_graph_sync(ctx, org_uuid, db),
             )
             result = await invalidation.ingest_with_supersession(
                 org_id=org_uuid,
@@ -204,6 +206,43 @@ async def ingest_business_data(
         "errors": errors,
         "detail": f"{len(created)} facts ingested, {len(errors)} errors",
     }
+
+
+async def _resolve_graph_sync(
+    ctx: dict, org_id: UUID, db: AsyncSession
+) -> GraphEdgeSyncService | None:
+    """Resolve the org's graph backend from the worker ctx and build the sync.
+
+    The worker context carries the graph collaborators (dispatcher,
+    surreal pool, falkordb client — see ``services/worker/worker.py``
+    ``worker_ctx``), so the backend IS resolvable in this task, the same
+    way ``extract_facts`` resolves it.  Resolution failure is non-fatal:
+    the ingest proceeds without graph sync and the
+    ``reconcile_graph_edges`` cron backfills edge expiry.
+
+    Args:
+        ctx: ARQ worker context dict.
+        org_id: The organization UUID.
+        db: The task's DB session (org-config queries + Postgres backend).
+
+    Returns:
+        A :class:`GraphEdgeSyncService` bound to the resolved backend, or
+        ``None`` when the graph is disabled or resolution failed.
+    """
+    from services.graph_edge_sync_service import GraphEdgeSyncService
+    from workers.backend import resolve_graph_backend
+
+    try:
+        backend = await resolve_graph_backend(ctx, org_id, db)
+    except Exception as exc:
+        logger.warning(
+            "ingest_business_data.graph_backend_resolve_failed",
+            extra={"org_id": str(org_id), "error": str(exc)},
+        )
+        return None
+    if backend is None:
+        return None
+    return GraphEdgeSyncService(backends=[backend])
 
 
 async def _enqueue_embedding_tasks(

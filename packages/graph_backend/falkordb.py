@@ -1125,6 +1125,108 @@ class FalkorGraphBackend(GraphBackend):
                 },
             ) from exc
 
+    async def expire_relationships_matching(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        *,
+        source_id: UUID,
+        target_id: UUID,
+        relationship_type: str,
+        at_time: datetime,
+    ) -> int:
+        """Set ``invalid_at = at_time`` on all active edges matching the triple.
+
+        FalkorDB edges carry dynamic properties — ``source_id``/``target_id``
+        are stored explicitly (internal node IDs are ints, not our UUIDs) and
+        the type is the relationship label.  Only ``invalid_at`` is written;
+        ``valid_to`` keeps its natural expiry.  Idempotent: the
+        ``r.invalid_at IS NULL`` predicate means a replay matches zero edges
+        and returns 0.
+
+        Args:
+            org_id: Tenant scope (derives the isolated graph key).
+            project_id: Project scope (derives the isolated graph key).
+            source_id: UUID of the edge source (fact subject entity).
+            target_id: UUID of the edge target (fact object entity).
+            relationship_type: Edge label (sanitized like
+                :meth:`create_relationship`).
+            at_time: Deterministic supersession instant (UTC), written to
+                ``invalid_at`` verbatim.
+
+        Returns:
+            Number of edges invalidated by this call (0 on replay).
+
+        Raises:
+            ValueError: If ``relationship_type`` contains unsafe characters.
+            ExternalServiceError: If the query fails.
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            raise ExternalServiceError(
+                message="FalkorDB not connected",
+                detail={"reason": "client is None"},
+            )
+
+        safe_type = self._sanitize_edge_type(relationship_type)
+        at_time_str = at_time.isoformat()
+
+        try:
+            result = await graph.query(
+                f"""
+                MATCH ()-[r]->()
+                WHERE r.source_id = $source_id
+                  AND r.target_id = $target_id
+                  AND type(r) = '{safe_type}'
+                  AND r.invalid_at IS NULL
+                SET r.invalid_at = $at_time
+                RETURN count(r) AS updated
+                """,
+                {
+                    "source_id": str(source_id),
+                    "target_id": str(target_id),
+                    "at_time": at_time_str,
+                },
+            )
+            expired = result.result_set[0][0] if result.result_set else 0
+
+            logger.info(
+                "falkordb_graph.relationships_expired_matching",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "source_id": str(source_id),
+                    "target_id": str(target_id),
+                    "type": relationship_type,
+                    "count": expired,
+                },
+            )
+            return expired
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.expire_relationships_matching_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "source_id": str(source_id),
+                    "target_id": str(target_id),
+                    "relationship_type": relationship_type,
+                    "at_time": at_time.isoformat(),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=(
+                    f"Failed to expire relationships matching "
+                    f"({source_id}, {target_id}, {relationship_type}): {exc}"
+                ),
+                detail={
+                    "org_id": str(org_id),
+                    "source_id": str(source_id),
+                    "target_id": str(target_id),
+                },
+            ) from exc
+
     # ── Traversal (iterative BFS with exact depth tracking) ────────────────
 
     async def traverse(
@@ -1134,6 +1236,7 @@ class FalkorGraphBackend(GraphBackend):
         start_node_id: UUID,
         max_depth: int = 2,
         edge_types: list[str] | None = None,
+        as_of: datetime | None = None,
     ) -> list[dict]:
         """Traverse the graph outward from a starting node.
 
@@ -1142,9 +1245,13 @@ class FalkorGraphBackend(GraphBackend):
         single Cypher query (exploiting per-tenant graph isolation for
         speed).
 
+        Edges are filtered by effective-at validity: only edges with
+        ``invalid_at`` unset or after ``as_of``, and within their natural
+        ``[valid_from, valid_to]`` window at ``as_of``, are followed.
+
         Traversal strategy:
         - ``edge_types is None``: all relationship types followed (``[r]``).
-        - Single-element list: native ``algo.bfs()`` via GraphBLAS.
+        - Single-element list: Cypher path with the type literal.
         - Multi-element list: Cypher variable-length path
           (``:type1|type2*1..n``).
         - Empty list: returns just the start node.
@@ -1156,6 +1263,7 @@ class FalkorGraphBackend(GraphBackend):
             max_depth: Maximum hops (capped at MAX_TRAVERSAL_DEPTH).
             edge_types: ``None`` = all types; ``[]`` = no edges
                 (returns just start node); specific list = filter by type.
+            as_of: Effective-at timestamp (UTC).  ``None`` means now.
 
         Returns:
             List of node dicts with ``depth`` key (0 = start node).
@@ -1173,6 +1281,11 @@ class FalkorGraphBackend(GraphBackend):
             return [start]
 
         max_depth = min(max_depth, self._max_depth)
+        # RedisGraph treats NULL comparisons as no-ops — always pass a
+        # concrete timestamp so the invalid_at/valid_from/valid_to bounds
+        # actually filter.
+        as_of = as_of or datetime.now(timezone.utc)
+        as_of_str = as_of.isoformat()
         visited: set[str] = set()
         queue: deque[tuple[str, int]] = deque()
         queue.append((str(start_node_id), 0))
@@ -1195,17 +1308,25 @@ class FalkorGraphBackend(GraphBackend):
 
             # Discover neighbours in a single round-trip
             try:
+                # Effective-at edge filter: traversable at as_of iff not
+                # invalidated at/before as_of AND inside natural window.
+                temporal_clause = (
+                    "(r.invalid_at IS NULL OR r.invalid_at > $as_of) "
+                    "AND (r.valid_from IS NULL OR r.valid_from <= $as_of) "
+                    "AND (r.valid_to IS NULL OR r.valid_to >= $as_of)"
+                )
                 if edge_types is not None and len(edge_types) == 1:
-                    # Single type -> algo.bfs for C-level GraphBLAS speed
+                    # Single type -> Cypher path.  (Previously algo.bfs via
+                    # GraphBLAS, which cannot filter on edge properties —
+                    # expired edges would still be traversed.)
                     safe_type = self._sanitize_edge_type(edge_types[0])
                     result = await graph.query(
                         f"""
-                        MATCH (n:Entity {{id: $eid}})
-                        CALL algo.bfs(n, 1, '{safe_type}') YIELD nodes
-                        UNWIND nodes AS node
-                        RETURN DISTINCT node.id
+                        MATCH (n:Entity {{id: $eid}})-[r:{safe_type}]-(neighbour:Entity)
+                        WHERE {temporal_clause}
+                        RETURN DISTINCT neighbour.id
                         """,
-                        {"eid": current_id},
+                        {"eid": current_id, "as_of": as_of_str},
                     )
                 elif edge_types is not None and len(edge_types) > 1:
                     # Multi-type -> Cypher variable-length path (single hop)
@@ -1215,18 +1336,20 @@ class FalkorGraphBackend(GraphBackend):
                     result = await graph.query(
                         f"""
                         MATCH (n:Entity {{id: $eid}})-[r:{safe_types}]-(neighbour:Entity)
+                        WHERE {temporal_clause}
                         RETURN DISTINCT neighbour.id
                         """,
-                        {"eid": current_id},
+                        {"eid": current_id, "as_of": as_of_str},
                     )
                 else:
                     # All types -> wildcard
                     result = await graph.query(
-                        """
-                        MATCH (n:Entity {id: $eid})-[r]-(neighbour:Entity)
+                        f"""
+                        MATCH (n:Entity {{id: $eid}})-[r]-(neighbour:Entity)
+                        WHERE {temporal_clause}
                         RETURN DISTINCT neighbour.id
                         """,
-                        {"eid": current_id},
+                        {"eid": current_id, "as_of": as_of_str},
                     )
 
                 for row in result.result_set:
@@ -1486,6 +1609,7 @@ class FalkorGraphBackend(GraphBackend):
         match_limit: int = 5,
         max_depth: int = 2,
         max_results: int = 50,
+        as_of: datetime | None = None,
     ) -> list[dict]:
         """Search entities matching query, then BFS-traverse outward.
 
@@ -1494,6 +1618,10 @@ class FalkorGraphBackend(GraphBackend):
         2. For each matched entity, BFS-traverse to depth ``max_depth``.
         3. Deduplicate by entity id.
         4. Sort by distance ascending and limit.
+
+        Args:
+            as_of: Effective-at timestamp (UTC) for edge filtering — only
+                edges valid at ``as_of`` are traversed.  ``None`` = now.
 
         Returns:
             Entity dicts with ``id``, ``name``, ``type``, ``summary``, and
@@ -1541,11 +1669,15 @@ class FalkorGraphBackend(GraphBackend):
                     continue
 
                 try:
+                    traverse_kwargs: dict[str, Any] = (
+                        {"as_of": as_of} if as_of is not None else {}
+                    )
                     related = await self.traverse(
                         org_id=org_id,
                         project_id=project_id,
                         start_node_id=eid,
                         max_depth=max_depth,
+                        **traverse_kwargs,
                     )
                 except Exception as exc:
                     logger.error(

@@ -17,6 +17,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from surrealdb import RecordID
+
 from core.exceptions import ExternalServiceError, NotFoundError
 
 # ── Deterministic test IDs ─────────────────────────────────────────────────────
@@ -28,8 +30,15 @@ TARGET_ID = UUID("00000000-0000-0000-0000-000000000004")
 EPISODE_ID = UUID("00000000-0000-0000-0000-000000000005")
 SESSION_ID = UUID("00000000-0000-0000-0000-000000000006")
 REL_ID = UUID("00000000-0000-0000-0000-000000000010")
+NEIGHBOR_ID = UUID("00000000-0000-0000-0000-000000000011")
 
 NOW = datetime.now(timezone.utc)
+
+# Effective-at timestamps for Phase 3 temporal tests: T1 = the supersession
+# instant written to ``invalid_at``; T0 < T1 < T2.
+T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
+T1 = datetime(2026, 6, 1, tzinfo=timezone.utc)
+T2 = datetime(2026, 12, 1, tzinfo=timezone.utc)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -256,6 +265,21 @@ def _get_backend_name(backend: Any) -> str:
     if "Falkor" in name:
         return "falkordb"
     return name.lower()
+
+
+def _bfs_execute_calls(mock_db: MagicMock) -> list[tuple[str, dict]]:
+    """Return (sql, params) of every BFS-CTE execution on the mock session.
+
+    ``traverse`` also executes ``SET LOCAL statement_timeout`` first, so
+    only calls whose text contains the recursive CTE are captured.
+    """
+    calls: list[tuple[str, dict]] = []
+    for call in mock_db.execute.call_args_list:
+        args = call.args
+        if args and "WITH RECURSIVE bfs" in str(args[0]):
+            params = args[1] if len(args) > 1 else {}
+            calls.append((str(args[0]), params))
+    return calls
 
 
 def _mockrow_to_dict(row: Any) -> dict:
@@ -1964,3 +1988,327 @@ class TestExpireRelationship:
 
         with pytest.raises(ExternalServiceError):
             await backend.expire_relationship(ORG_ID, PROJ_ID, REL_ID)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 3 — expire_relationships_matching (Surreal + Falkor; Postgres is owned
+# by Stream A and is skipped here).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.unit
+class TestExpireRelationshipsMatching:
+    """Contract: expire_relationships_matching writes ``invalid_at = at_time``
+    on the triple-keyed active edges, returns the count, is idempotent on
+    replay, and canonicalizes ``relationship_type`` like ``create_relationship``.
+    """
+
+    async def test_sets_invalid_at_at_exactly_at_time(
+        self,
+        backend: Any,
+        mock_db: MagicMock,
+        mock_surreal: AsyncMock,
+        mock_falkordb_client: MagicMock,
+    ) -> None:
+        """The edge UPDATE binds ``at_time`` verbatim — never a fresh clock read."""
+        if _get_backend_name(backend) == "postgres":
+            pytest.skip("Postgres implementation is owned by Stream A")
+
+        if _get_backend_name(backend) == "surrealdb":
+            mock_surreal.query.return_value = [
+                {"id": RecordID("knows", "edge1")},
+                {"id": RecordID("knows", "edge2")},
+            ]
+        else:  # falkordb
+            graph = mock_falkordb_client.select_graph.return_value
+            graph.query.return_value = MagicMock(result_set=[(2,)])
+
+        result = await backend.expire_relationships_matching(
+            ORG_ID,
+            PROJ_ID,
+            source_id=ENTITY_ID,
+            target_id=TARGET_ID,
+            relationship_type="knows",
+            at_time=T1,
+        )
+
+        assert result == 2
+
+        if _get_backend_name(backend) == "surrealdb":
+            query, params = mock_surreal.query.call_args[0]
+            # SurrealDB stores edges in the per-type table named after the
+            # sanitized relationship_type; only invalid_at is written.
+            assert "UPDATE knows" in query
+            assert "SET invalid_at = $at_time" in query
+            assert "invalid_at IS NONE" in query
+            assert "valid_to" not in query  # natural expiry is never touched
+            assert params["at_time"] == T1.isoformat()
+        else:
+            graph = mock_falkordb_client.select_graph.return_value
+            query, params = graph.query.call_args[0]
+            assert "type(r) = 'knows'" in query
+            assert "r.invalid_at IS NULL" in query
+            assert "SET r.invalid_at = $at_time" in query
+            assert params["at_time"] == T1.isoformat()
+
+    async def test_idempotent_replay_returns_zero(
+        self,
+        backend: Any,
+        mock_db: MagicMock,
+        mock_surreal: AsyncMock,
+        mock_falkordb_client: MagicMock,
+    ) -> None:
+        """First call expires N edges; a replay (invalid_at no longer NULL)
+        matches zero and returns 0."""
+        if _get_backend_name(backend) == "postgres":
+            pytest.skip("Postgres implementation is owned by Stream A")
+
+        if _get_backend_name(backend) == "surrealdb":
+            mock_surreal.query.side_effect = [
+                [{"id": RecordID("knows", "edge1")}, {"id": RecordID("knows", "edge2")}],
+                [],
+            ]
+        else:  # falkordb
+            graph = mock_falkordb_client.select_graph.return_value
+            graph.query.side_effect = [
+                MagicMock(result_set=[(2,)]),
+                MagicMock(result_set=[(0,)]),
+            ]
+
+        first = await backend.expire_relationships_matching(
+            ORG_ID,
+            PROJ_ID,
+            source_id=ENTITY_ID,
+            target_id=TARGET_ID,
+            relationship_type="knows",
+            at_time=T1,
+        )
+        replay = await backend.expire_relationships_matching(
+            ORG_ID,
+            PROJ_ID,
+            source_id=ENTITY_ID,
+            target_id=TARGET_ID,
+            relationship_type="knows",
+            at_time=T1,
+        )
+
+        assert first == 2
+        assert replay == 0
+
+    async def test_canonicalizes_relationship_type_like_create(
+        self,
+        backend: Any,
+        mock_db: MagicMock,
+        mock_surreal: AsyncMock,
+        mock_falkordb_client: MagicMock,
+    ) -> None:
+        """Unsafe relationship_type raises ValueError — same guard as the
+        create path, so canonicalization is symmetric."""
+        if _get_backend_name(backend) == "postgres":
+            pytest.skip("Postgres implementation is owned by Stream A")
+
+        with pytest.raises(ValueError):
+            await backend.expire_relationships_matching(
+                ORG_ID,
+                PROJ_ID,
+                source_id=ENTITY_ID,
+                target_id=TARGET_ID,
+                relationship_type="mentions-with-hyphen",
+                at_time=T1,
+            )
+
+    async def test_surrealdb_missing_edge_table_returns_zero(
+        self,
+        backend: Any,
+        mock_surreal: AsyncMock,
+    ) -> None:
+        """No edge table of this type has ever been created → 0 edges expired
+        (the NotFoundError is a clean-replay equivalent, not a failure)."""
+        if _get_backend_name(backend) != "surrealdb":
+            pytest.skip("SurrealDB-specific table-existence behaviour")
+
+        from surrealdb.errors import NotFoundError as SurrealNotFoundError
+
+        mock_surreal.query.side_effect = SurrealNotFoundError(
+            "NOT_FOUND", "The table 'ghost' does not exist"
+        )
+
+        result = await backend.expire_relationships_matching(
+            ORG_ID,
+            PROJ_ID,
+            source_id=ENTITY_ID,
+            target_id=TARGET_ID,
+            relationship_type="ghost",
+            at_time=T1,
+        )
+        assert result == 0
+
+    async def test_raises_external_service_error(
+        self,
+        backend: Any,
+        mock_db: MagicMock,
+        mock_surreal: AsyncMock,
+        mock_falkordb_client: MagicMock,
+    ) -> None:
+        """Store failure → ExternalServiceError (never a silent 0)."""
+        if _get_backend_name(backend) == "postgres":
+            pytest.skip("Postgres implementation is owned by Stream A")
+
+        if _get_backend_name(backend) == "surrealdb":
+            mock_surreal.query.side_effect = RuntimeError("surreal down")
+        else:
+            graph = mock_falkordb_client.select_graph.return_value
+            graph.query.side_effect = RuntimeError("falkordb down")
+
+        with pytest.raises(ExternalServiceError):
+            await backend.expire_relationships_matching(
+                ORG_ID,
+                PROJ_ID,
+                source_id=ENTITY_ID,
+                target_id=TARGET_ID,
+                relationship_type="knows",
+                at_time=T1,
+            )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Phase 3 — retrieve_graph(as_of) / traverse(as_of) effective-at edge filtering
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.unit
+class TestRetrieveGraphAsOf:
+    """Contract: retrieve_graph(as_of) threads the effective-at filter into
+    traversal.  An edge expired at T1 is traversable at as_of=T0 (T1 > T0) but
+    excluded at as_of=T2 — the emitted filter must encode that, and the bound
+    timestamp must be the exact ``as_of`` value, never a fresh clock read."""
+
+    async def test_threads_as_of_into_traverse(
+        self,
+        backend: Any,
+        mock_db: MagicMock,
+        mock_surreal: AsyncMock,
+        mock_falkordb_client: MagicMock,
+    ) -> None:
+        """retrieve_graph(as_of=T2) → traverse receives the exact as_of."""
+        backend.search_entities = AsyncMock(return_value=[
+            {"id": str(ENTITY_ID), "name": "Match", "type": "Person", "summary": ""},
+        ])
+        backend.traverse = AsyncMock(return_value=[])
+
+        await backend.retrieve_graph(
+            ORG_ID, PROJ_ID, "find", match_limit=5, max_depth=2, max_results=50, as_of=T2
+        )
+
+        if _get_backend_name(backend) == "postgres":
+            # Postgres threads the instant through its ``at_time`` kwarg.
+            backend.traverse.assert_called_once_with(
+                org_id=ORG_ID,
+                project_id=PROJ_ID,
+                start_node_id=ENTITY_ID,
+                max_depth=2,
+                at_time=T2,
+            )
+        else:
+            backend.traverse.assert_called_once_with(
+                org_id=ORG_ID,
+                project_id=PROJ_ID,
+                start_node_id=ENTITY_ID,
+                max_depth=2,
+                as_of=T2,
+            )
+
+    async def test_default_as_of_is_backward_compatible(
+        self,
+        backend: Any,
+        mock_db: MagicMock,
+        mock_surreal: AsyncMock,
+        mock_falkordb_client: MagicMock,
+    ) -> None:
+        """No as_of → traversal without a caller-supplied instant (old callers
+        keep working unchanged)."""
+        backend.search_entities = AsyncMock(return_value=[
+            {"id": str(ENTITY_ID), "name": "Match", "type": "Person", "summary": ""},
+        ])
+        backend.traverse = AsyncMock(return_value=[])
+
+        await backend.retrieve_graph(ORG_ID, PROJ_ID, "find")
+
+        if _get_backend_name(backend) == "postgres":
+            # Postgres resolves None → now internally and always passes at_time.
+            kwargs = backend.traverse.call_args.kwargs
+            assert kwargs["max_depth"] == 2
+            assert isinstance(kwargs["at_time"], datetime)
+            assert "as_of" not in kwargs
+        else:
+            backend.traverse.assert_called_once_with(
+                org_id=ORG_ID,
+                project_id=PROJ_ID,
+                start_node_id=ENTITY_ID,
+                max_depth=2,
+            )
+
+    async def test_traverse_filter_bounds_edge_validity_at_as_of(
+        self,
+        backend: Any,
+        mock_db: MagicMock,
+        mock_surreal: AsyncMock,
+        mock_falkordb_client: MagicMock,
+    ) -> None:
+        """The emitted neighbour query filters edges by the effective-at
+        window: invalid_at unset OR after as_of, and within
+        [valid_from, valid_to].  Bound params carry the exact as_of."""
+        start_entity = {"id": str(ENTITY_ID), "name": "Start", "type": "Person", "summary": ""}
+
+        if _get_backend_name(backend) == "postgres":
+            # Temporal: the BFS CTE relaxes invalid_at to the effective-at
+            # predicate — an edge invalidated at T1 stays traversable at
+            # as_of=T0 and is excluded at as_of=T2.
+            await backend.traverse(ORG_ID, PROJ_ID, ENTITY_ID, max_depth=1, at_time=T0)
+            temporal_sql, temporal_params = _bfs_execute_calls(mock_db)[-1]
+            assert "(r.invalid_at IS NULL OR r.invalid_at > :as_of)" in temporal_sql
+            assert "(r.valid_from IS NULL OR r.valid_from <= :as_of)" in temporal_sql
+            assert "(r.valid_to IS NULL OR r.valid_to >= :as_of)" in temporal_sql
+            assert temporal_params["as_of"] == T0
+
+            await backend.traverse(ORG_ID, PROJ_ID, ENTITY_ID, max_depth=1, at_time=T2)
+            _sql2, params2 = _bfs_execute_calls(mock_db)[-1]
+            assert params2["as_of"] == T2
+
+            # Non-temporal: historical hard-exclusion, no as_of bound.
+            await backend.traverse(ORG_ID, PROJ_ID, ENTITY_ID, max_depth=1)
+            plain_sql, _params3 = _bfs_execute_calls(mock_db)[-1]
+            assert "AND r.invalid_at IS NULL\n" in plain_sql
+            assert "r.invalid_at > :as_of" not in plain_sql
+            assert "valid_from" not in plain_sql
+        elif _get_backend_name(backend) == "surrealdb":
+            backend.get_entity = AsyncMock(return_value=start_entity)
+            mock_surreal.query.return_value = [RecordID("entity", str(NEIGHBOR_ID))]
+
+            await backend.traverse(ORG_ID, PROJ_ID, ENTITY_ID, max_depth=1, as_of=T0)
+            query, params = mock_surreal.query.call_args[0]
+            # Wildcard arrow with the edge-level square-bracket filter.
+            assert "->?[" in query
+            assert "invalid_at IS NONE OR invalid_at > $as_of" in query
+            assert "(valid_from IS NONE OR valid_from <= $as_of)" in query
+            assert "(valid_to IS NONE OR valid_to >= $as_of)" in query
+            assert params["as_of"] == T0.isoformat()
+
+            await backend.traverse(ORG_ID, PROJ_ID, ENTITY_ID, max_depth=1, as_of=T2)
+            _query, params2 = mock_surreal.query.call_args[0]
+            assert params2["as_of"] == T2.isoformat()
+        else:
+            backend.get_entity = AsyncMock(return_value=start_entity)
+            graph = mock_falkordb_client.select_graph.return_value
+            graph.query.return_value = MagicMock(result_set=[(str(NEIGHBOR_ID),)])
+
+            await backend.traverse(ORG_ID, PROJ_ID, ENTITY_ID, max_depth=1, as_of=T0)
+            query, params = graph.query.call_args[0]
+            assert "r.invalid_at IS NULL OR r.invalid_at > $as_of" in query
+            assert "r.valid_from IS NULL OR r.valid_from <= $as_of" in query
+            assert "r.valid_to IS NULL OR r.valid_to >= $as_of" in query
+            assert params["as_of"] == T0.isoformat()
+
+            await backend.traverse(ORG_ID, PROJ_ID, ENTITY_ID, max_depth=1, as_of=T2)
+            _query, params2 = graph.query.call_args[0]
+            assert params2["as_of"] == T2.isoformat()

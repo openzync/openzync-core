@@ -830,7 +830,7 @@ class TestFalkorGraphBackendTraversal:
         setup_traverse: Callable[..., None],
         mock_graph: AsyncMock,
     ) -> None:
-        """Single edge type: uses algo.bfs() path."""
+        """Single edge type: Cypher path with temporal edge filter."""
         setup_traverse(
             entities={
                 str(ENTITY_ID): make_entity_row(entity_id=ENTITY_ID, name="Start"),
@@ -848,8 +848,11 @@ class TestFalkorGraphBackendTraversal:
         )
 
         query = mock_graph.query.call_args_list[1][0][0]  # second query = neighbor discovery
-        assert "algo.bfs" in query
-        assert "likes" in query
+        assert ":likes]" in query
+        assert "invalid_at" in query
+        assert "valid_from" in query
+        assert "valid_to" in query
+        assert "algo.bfs" not in query  # GraphBLAS BFS cannot filter edge properties
 
     @staticmethod
     async def test_traverse_with_multi_edge_types(

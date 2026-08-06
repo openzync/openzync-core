@@ -44,7 +44,8 @@ router = APIRouter(
     description="Assemble a context block for a project from a natural-language "
     "query.  The context is assembled from recent episodes, extracted facts, "
     "and knowledge-graph entities via hybrid search (vector + BM25 + RRF). "
-    "Results are cached in Redis for 30 seconds.",
+    "Results are cached in Redis — TTL from the per-org "
+    "`context_cache_ttl` config (default 300 seconds).",
     responses={
         200: {"description": "Context block assembled successfully."},
         401: {"description": "Missing or invalid authentication."},
@@ -96,8 +97,9 @@ async def get_context(
     Results are formatted either as plain text (with section headers,
     source labels, and provenance metadata) or as a structured JSON
     object (with typed arrays per source category).  The formatted
-    result is cached in Redis for 30 seconds — subsequent identical
-    queries return instantaneously.
+    result is cached in Redis — TTL from the org's `context_cache_ttl`
+    config (default 300 seconds) — so subsequent identical queries
+    return instantaneously.
 
     Args:
         request: The FastAPI request object — used to access

@@ -600,9 +600,13 @@ class TestSurrealGraphBackendTraversal:
             edge_types=["likes"],
         )
 
-        # Should have queried the "likes" edge table via ->likes->entity.id
+        # Should have queried the "likes" edge table via ->likes[...]->entity.id
+        # with the effective-at edge filter applied.
         query = backend._surreal.query.call_args[0][0]
-        assert "->likes->entity.id" in query
+        assert "->likes[" in query
+        assert "invalid_at" in query
+        assert "valid_from" in query
+        assert "valid_to" in query
 
     @staticmethod
     async def test_traverse_empty_edge_types(

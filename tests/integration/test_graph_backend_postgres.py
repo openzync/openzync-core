@@ -15,7 +15,7 @@ Tests the full Postgres graph backend pipeline with real DB tables:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncGenerator
 from uuid import UUID, uuid4
 
@@ -356,6 +356,81 @@ class TestRelationships:
         result = await backend.expire_relationship(ORG_ID, PROJ_ID, uuid4())
         assert result is False
 
+    async def test_expire_relationships_matching(self, backend: Any) -> None:
+        """expire_relationships_matching sets invalid_at for the exact triple."""
+        src = await _create_test_entity(backend, name="MatchSrc")
+        tgt = await _create_test_entity(backend, name="MatchTgt")
+        src_id, tgt_id = UUID(src["id"]), UUID(tgt["id"])
+        await _create_test_relationship(backend, src_id, tgt_id, rel_type="works_at")
+
+        at_time = datetime.now(timezone.utc) - timedelta(minutes=1)
+        count = await backend.expire_relationships_matching(
+            ORG_ID, PROJ_ID,
+            source_id=src_id, target_id=tgt_id,
+            relationship_type="works_at", at_time=at_time,
+        )
+        assert count == 1
+
+        # The edge is now invisible to incident-edge listing.
+        result = await backend.list_entity_edges(ORG_ID, PROJ_ID, src_id)
+        assert result["items"] == []
+
+    async def test_expire_relationships_matching_idempotent_replay(
+        self, backend: Any
+    ) -> None:
+        """Replaying the same triple after expiry matches zero rows (count 0)."""
+        src = await _create_test_entity(backend, name="ReplaySrc")
+        tgt = await _create_test_entity(backend, name="ReplayTgt")
+        src_id, tgt_id = UUID(src["id"]), UUID(tgt["id"])
+        await _create_test_relationship(backend, src_id, tgt_id, rel_type="works_at")
+
+        at_time = datetime.now(timezone.utc)
+        first = await backend.expire_relationships_matching(
+            ORG_ID, PROJ_ID,
+            source_id=src_id, target_id=tgt_id,
+            relationship_type="works_at", at_time=at_time,
+        )
+        assert first == 1
+        # Idempotent replay — WHERE invalid_at IS NULL no longer matches.
+        second = await backend.expire_relationships_matching(
+            ORG_ID, PROJ_ID,
+            source_id=src_id, target_id=tgt_id,
+            relationship_type="works_at", at_time=at_time,
+        )
+        assert second == 0
+
+    async def test_expire_relationships_matching_no_match(self, backend: Any) -> None:
+        """A triple that never existed matches nothing (count 0, no error)."""
+        count = await backend.expire_relationships_matching(
+            ORG_ID, PROJ_ID,
+            source_id=uuid4(), target_id=uuid4(),
+            relationship_type="nonexistent", at_time=datetime.now(timezone.utc),
+        )
+        assert count == 0
+
+    async def test_expire_relationships_matching_ignores_expired_only(
+        self, backend: Any
+    ) -> None:
+        """Only the matching ACTIVE edge is expired — other triples untouched."""
+        src = await _create_test_entity(backend, name="SelSrc")
+        tgt = await _create_test_entity(backend, name="SelTgt")
+        other = await _create_test_entity(backend, name="SelOther")
+        src_id, tgt_id = UUID(src["id"]), UUID(tgt["id"])
+        other_id = UUID(other["id"])
+        await _create_test_relationship(backend, src_id, tgt_id, rel_type="works_at")
+        await _create_test_relationship(backend, src_id, other_id, rel_type="works_at")
+
+        count = await backend.expire_relationships_matching(
+            ORG_ID, PROJ_ID,
+            source_id=src_id, target_id=tgt_id,
+            relationship_type="works_at", at_time=datetime.now(timezone.utc),
+        )
+        assert count == 1
+        # The other edge (src → other) is still active.
+        edges = await backend.list_entity_edges(ORG_ID, PROJ_ID, src_id)
+        assert len(edges["items"]) == 1
+        assert edges["items"][0]["target_id"] == str(other_id)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Entity-Episode Linking
@@ -501,6 +576,34 @@ class TestPaginatedListing:
         assert len(result["items"]) == 1
         assert result["items"][0]["type"] == "likes"
 
+    async def test_list_entity_edges_excludes_expired(self, backend: Any) -> None:
+        """Intentional change: expired edges (invalid_at set) are no longer listed.
+
+        Previously the incident-edge listing leaked expired edges; Phase 3
+        adds ``AND r.invalid_at IS NULL`` so the listing matches the
+        traversal/retrieval semantics.
+        """
+        src = await _create_test_entity(backend, name="EdgeExpSrc")
+        tgt = await _create_test_entity(backend, name="EdgeExpTgt")
+        src_id, tgt_id = UUID(src["id"]), UUID(tgt["id"])
+        await _create_test_relationship(backend, src_id, tgt_id, rel_type="likes")
+
+        # Active edge is listed.
+        active = await backend.list_entity_edges(ORG_ID, PROJ_ID, src_id)
+        assert len(active["items"]) == 1
+
+        count = await backend.expire_relationships_matching(
+            ORG_ID, PROJ_ID,
+            source_id=src_id, target_id=tgt_id,
+            relationship_type="likes", at_time=datetime.now(timezone.utc),
+        )
+        assert count == 1
+
+        # Expired edge is excluded from the incident-edge listing.
+        result = await backend.list_entity_edges(ORG_ID, PROJ_ID, src_id)
+        assert result["items"] == []
+        assert result["has_more"] is False
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Merge Entities
@@ -637,6 +740,106 @@ class TestTraversal:
             ORG_ID, PROJ_ID, query="graphsearch",
         )
         assert isinstance(result, list)
+
+    async def test_retrieve_graph_as_of(self, backend: Any) -> None:
+        """Edges whose validity range excludes as_of are not traversed.
+
+        Edge ``AsOfSourceAlpha → ZzzTargetOmega`` is valid from ``t0`` to
+        ``t1`` (exclusive end).  At ``t0`` (inside the range) the edge is
+        followed and the target is reachable at distance 1; at ``t2``
+        (after ``t1``) the edge is superseded and the target is only
+        reachable via traversal — which the as-of filter blocks.
+
+        Names are chosen to share no trigrams so the search leg matches
+        ONLY the source (a fuzzy match on the target would surface it at
+        distance 0, bypassing the edge filter entirely).
+        """
+        src = await _create_test_entity(backend, name="AsOfSourceAlpha")
+        tgt = await _create_test_entity(backend, name="ZzzTargetOmega")
+        src_id, tgt_id = UUID(src["id"]), UUID(tgt["id"])
+
+        now = datetime.now(timezone.utc)
+        t0 = now - timedelta(days=2)
+        t1 = now - timedelta(days=1)  # edge validity ends here
+        t2 = now  # query as-of — after t1
+
+        await backend.create_relationship(
+            org_id=ORG_ID,
+            project_id=PROJ_ID,
+            source_id=src_id,
+            target_id=tgt_id,
+            relationship_type="mentions",
+            valid_from=t0,
+            valid_to=t1,
+        )
+
+        # At t0 the edge is effective → target reachable at distance 1.
+        at_t0 = await backend.retrieve_graph(
+            ORG_ID, PROJ_ID, query="asofsourcealpha", as_of=t0,
+        )
+        t0_targets = {
+            r["id"] for r in at_t0 if r.get("distance", 0) == 1
+        }
+        assert str(tgt_id) in t0_targets, "edge valid at t0 must be traversed"
+
+        # At t2 the edge's validity has ended → target not traversable.
+        at_t2 = await backend.retrieve_graph(
+            ORG_ID, PROJ_ID, query="asofsourcealpha", as_of=t2,
+        )
+        t2_targets = {
+            r["id"] for r in at_t2 if r.get("distance", 0) == 1
+        }
+        assert str(tgt_id) not in t2_targets, "superseded edge must not be traversed"
+        t2_ids = {r["id"] for r in at_t2}
+        assert str(src_id) in t2_ids, "the matched source itself is still returned"
+
+    async def test_retrieve_graph_as_of_excludes_expired_edge(
+        self, backend: Any
+    ) -> None:
+        """An edge expired at ``now`` stays traversable at an as-of before
+        the invalidation instant and is excluded at/after it (bitemporal)."""
+        src = await _create_test_entity(backend, name="ExpSourceAlpha")
+        tgt = await _create_test_entity(backend, name="ZzzExpTargetOmega")
+        src_id, tgt_id = UUID(src["id"]), UUID(tgt["id"])
+
+        now = datetime.now(timezone.utc)
+        # Edge created with a HISTORICAL valid_from so the as-of window sits
+        # between creation and the invalidation instant — with the default
+        # valid_from=now() the edge legitimately did not exist at a past as-of.
+        await backend.create_relationship(
+            org_id=ORG_ID,
+            project_id=PROJ_ID,
+            source_id=src_id,
+            target_id=tgt_id,
+            relationship_type="mentions",
+            valid_from=now - timedelta(days=2),
+        )
+
+        count = await backend.expire_relationships_matching(
+            ORG_ID, PROJ_ID,
+            source_id=src_id, target_id=tgt_id,
+            relationship_type="mentions", at_time=now,
+        )
+        assert count == 1
+
+        # invalid_at == now: excluded only at as_of >= now; a past as-of
+        # still traverses the edge (bitemporal, matches Surreal/Falkor).
+        before = await backend.retrieve_graph(
+            ORG_ID, PROJ_ID, query="expsourcealpha",
+            as_of=now - timedelta(days=1),
+        )
+        before_traversed = {r["id"] for r in before if r.get("distance", 0) == 1}
+        assert str(tgt_id) in before_traversed, (
+            "as-of before the invalidation instant must still traverse the edge"
+        )
+
+        at_now = await backend.retrieve_graph(
+            ORG_ID, PROJ_ID, query="expsourcealpha", as_of=now,
+        )
+        at_now_traversed = {r["id"] for r in at_now if r.get("distance", 0) == 1}
+        assert str(tgt_id) not in at_now_traversed, (
+            "as-of at/after the invalidation instant must exclude the edge"
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

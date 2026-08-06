@@ -1,7 +1,7 @@
 """Health-check endpoints for liveness and readiness probes.
 
-- ``GET /v1/health`` — lightweight liveness check (always returns 200).
-- ``GET /v1/ready`` — readiness check that validates connectivity to
+- ``GET /health`` — lightweight liveness check (always returns 200).
+- ``GET /ready`` — readiness check that validates connectivity to
   PostgreSQL and Redis.
 """
 

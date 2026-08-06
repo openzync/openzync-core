@@ -656,6 +656,8 @@ async def _fetch_user_facts(
     if user_id is None:
         return {"facts": []}
 
+    from datetime import datetime, timezone  # noqa: PLC0415 — lazy import
+
     from sqlalchemy import text  # noqa: PLC0415 — lazy import
 
     result = await db.execute(
@@ -664,10 +666,17 @@ async def _fetch_user_facts(
             JOIN episodes e ON f.source_episode_id = e.id
             JOIN sessions s ON e.session_id = s.id
             WHERE s.user_id = :user_id AND s.organization_id = :org_id
+              AND (f.invalid_at IS NULL OR f.invalid_at > :effective_at)
+              AND (f.valid_from IS NULL OR f.valid_from <= :effective_at)
+              AND (f.valid_to IS NULL OR f.valid_to > :effective_at)
             ORDER BY f.created_at DESC
             LIMIT 100
         """),
-        {"user_id": user_id, "org_id": org_id},
+        {
+            "user_id": user_id,
+            "org_id": org_id,
+            "effective_at": datetime.now(timezone.utc),
+        },
     )
     facts = [
         {"subject": r[0], "predicate": r[1], "object": r[2]} for r in result.fetchall()

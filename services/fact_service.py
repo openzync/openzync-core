@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -16,6 +17,8 @@ import structlog
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
+
+    from packages.graph_backend.interface import GraphBackend
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,6 +56,13 @@ class FactService:
         fact_repo: Repository for fact CRUD.
         user_repo: Repository for user CRUD.
         session_repo: Repository for session CRUD.
+        webhook_service: Optional webhook emitter.
+        graph_backend_resolver: Optional async callable resolving the
+            org's graph backend (``None`` when graph is disabled).  The
+            resolved backend powers graph edge expiry on supersession —
+            see :class:`GraphEdgeSyncService`.  Resolution failures must
+            be surfaced as raises here; ``ingest_facts`` downgrades them
+            to a warning so a sync failure never fails a fact commit.
     """
 
     def __init__(
@@ -63,10 +73,14 @@ class FactService:
         user_repo: UserRepository | None = None,
         session_repo: SessionRepository | None = None,
         webhook_service: WebhookService | None = None,
+        graph_backend_resolver: (
+            Callable[[UUID], Awaitable[GraphBackend | None]] | None
+        ) = None,
     ) -> None:
         self._db = db
         self._redis = redis_client
         self._webhook_service = webhook_service
+        self._graph_backend_resolver = graph_backend_resolver
         self._fact_repo = fact_repo or FactRepository(db)
         self._user_repo = user_repo or UserRepository(db)
         self._session_repo = session_repo or SessionRepository(db)
@@ -182,6 +196,7 @@ class FactService:
                 if self._redis is not None
                 else None
             ),
+            graph_sync=await self._resolve_graph_sync(org_id, project_id),
         )
         result = await invalidation.ingest_with_supersession(
             org_id=org_id,
@@ -239,6 +254,46 @@ class FactService:
         )
 
     # ── Internal helpers ────────────────────────────────────────────────────────
+
+    async def _resolve_graph_sync(
+        self, org_id: UUID, project_id: UUID
+    ) -> GraphEdgeSyncService | None:
+        """Resolve the org's graph backend and build the edge-sync service.
+
+        Runs lazily, only when an ingest is actually about to supersede.
+        A resolution failure (no org config, dispatcher error, external
+        service down) NEVER fails the ingest — it is logged as a warning
+        and the sync is dropped; the ``reconcile_graph_edges`` cron is
+        the documented safety net.  Facts are the source of truth; a sync
+        failure must not lose or 500 a fact commit.
+
+        Args:
+            org_id: The organization UUID.
+            project_id: The project UUID (log context).
+
+        Returns:
+            A :class:`GraphEdgeSyncService` bound to the resolved backend,
+            or ``None`` when the graph is disabled or resolution failed.
+        """
+        if self._graph_backend_resolver is None:
+            return None
+        try:
+            backend = await self._graph_backend_resolver(org_id)
+        except Exception as exc:
+            logger.warning(
+                "fact_service.graph_backend_resolve_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "error": str(exc),
+                },
+            )
+            return None
+        if backend is None:
+            return None
+        from services.graph_edge_sync_service import GraphEdgeSyncService
+
+        return GraphEdgeSyncService(backends=[backend])
 
     @staticmethod
     def _compute_batch_hash(

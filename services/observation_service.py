@@ -901,12 +901,17 @@ class ObservationService:
                 FROM facts f
                 WHERE f.project_id = :project_id
                   AND f.subject_entity_id IS NOT NULL
-                  AND f.invalid_at IS NULL
+                  AND (f.invalid_at IS NULL OR f.invalid_at > :effective_at)
+                  AND (f.valid_from IS NULL OR f.valid_from <= :effective_at)
+                  AND (f.valid_to IS NULL OR f.valid_to > :effective_at)
                 GROUP BY f.subject_entity_id, f.predicate
                 HAVING COUNT(*) >= 2
                 ORDER BY entity_id, predicate_count DESC
             """),
-            {"project_id": project_id},
+            {
+                "project_id": project_id,
+                "effective_at": datetime.now(timezone.utc),
+            },
         )
         rows = result.mappings().all()
 

@@ -295,6 +295,7 @@ class GraphBackend(ABC):
         match_limit: int = 5,
         max_depth: int = 2,
         max_results: int = 50,
+        as_of: datetime | None = None,
     ) -> list[dict[str, Any]]:
         """Search entities matching query, then BFS-traverse outward.
 
@@ -308,6 +309,11 @@ class GraphBackend(ABC):
             match_limit: Max entities to match before traversal.
             max_depth: Max BFS depth from each matched entity.
             max_results: Max total results to return.
+            as_of: Effective-at timestamp (UTC) for edge filtering.  Only
+                edges valid at ``as_of`` are traversed — edges invalidated at
+                or before ``as_of`` (``invalid_at <= as_of``) and edges
+                outside their natural ``[valid_from, valid_to]`` window are
+                excluded.  ``None`` means now (current snapshot).
 
         Returns:
             Entity dicts with id, name, type, summary, and distance keys.
@@ -752,5 +758,44 @@ class GraphBackend(ABC):
         Returns:
             ``True`` if the relationship was expired, ``False`` if it did
             not exist or was already expired.
+        """
+        ...
+
+    @abstractmethod
+    async def expire_relationships_matching(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        *,
+        source_id: UUID,
+        target_id: UUID,
+        relationship_type: str,
+        at_time: datetime,
+    ) -> int:
+        """Set ``invalid_at = at_time`` on all active edges matching the triple.
+
+        Synchronizes edge invalidation into the graph backend when a fact is
+        superseded: every edge keyed by ``(source_id, target_id,
+        relationship_type)`` that is still active (``invalid_at IS NULL``) in
+        the org+project gets ``invalid_at`` set to ``at_time`` — and only that
+        field.  ``valid_to`` is never touched (it remains the natural expiry).
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            source_id: UUID of the source entity of the edges to expire.
+            target_id: UUID of the target entity of the edges to expire.
+            relationship_type: Edge label to match (canonicalized the same
+                way as :meth:`create_relationship`).
+            at_time: Deterministic supersession timestamp (UTC) to write to
+                ``invalid_at``.  Not ``time::now()`` — callers pass the fact
+                supersession ``now`` so edge and fact invalidation agree.
+
+        Returns:
+            Number of edges invalidated by this call.
+
+        Raises:
+            ValueError: If ``relationship_type`` contains unsafe characters.
+            ExternalServiceError: If the backend fails to expire the edges.
         """
         ...

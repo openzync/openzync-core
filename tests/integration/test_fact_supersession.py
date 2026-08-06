@@ -877,6 +877,188 @@ class TestOrgScoping:
         assert [f.content for f in b_rows] == ["Shared owns Asset v2"]
 
 
+class TestFormFlexibleSupersession:
+    """Phase 2 ADR — form-flexible matching against real PostgreSQL.
+
+    A string-identity fact and an entity-resolved fact of the same SPO
+    names supersede each other across identity forms (defects 1 + 3),
+    while two distinct entities that merely share a name never conflict
+    (entity precedence).
+    """
+
+    async def _seed_entity(
+        self,
+        engine,
+        entity_id: UUID,
+        name: str,
+        org_id: UUID = ORG_ID,
+        project_id: UUID = PROJECT_ID,
+    ) -> None:
+        async with AsyncSession(engine) as db:
+            await db.execute(
+                sa_text(
+                    "INSERT INTO graph_entities "
+                    "(id, organization_id, project_id, name, entity_type) "
+                    "VALUES (:eid, :org_id, :pid, :name, 'person') "
+                    "ON CONFLICT (id) DO NOTHING"
+                ),
+                {"eid": entity_id, "org_id": org_id, "pid": project_id, "name": name},
+            )
+            await db.commit()
+
+    def _entity_triple(
+        self, subj_entity: UUID, obj_entity: UUID, content: str
+    ) -> dict[str, Any]:
+        return {
+            "subject": "Robbie",
+            "predicate": "wears",
+            "object": "Adidas",
+            "content": content,
+            "confidence": 0.95,
+            "subject_entity_id": str(subj_entity),
+            "object_entity_id": str(obj_entity),
+        }
+
+    async def test_string_ingest_supersedes_entity_fact(
+        self, engine, db_session
+    ) -> None:
+        """Headline fix — an API (string) fact supersedes the extracted
+        entity-linked fact with the same SPO names (defect 1)."""
+        user_id = _new_uuid()
+        subj_entity, obj_entity = _new_uuid(), _new_uuid()
+        async with AsyncSession(engine) as db:
+            await _seed_user(db, user_id)
+            await db.commit()
+        await self._seed_entity(engine, subj_entity, "Robbie")
+        await self._seed_entity(engine, obj_entity, "Adidas")
+
+        r1 = await _ingest(
+            engine,
+            facts=[self._entity_triple(subj_entity, obj_entity, "Robbie wears Adidas")],
+            user_id=user_id,
+            now=T0,
+        )
+        assert r1.inserted_count == 1
+
+        r2 = await _ingest(
+            engine,
+            facts=[
+                _triple(
+                    subject="Robbie",
+                    predicate="wears",
+                    obj="Adidas",
+                    content="Robbie definitely wears Adidas",
+                )
+            ],
+            user_id=user_id,
+            now=T1,
+        )
+        assert r2.superseded_count == 1, (
+            "A string-identity ingest must supersede the entity-linked fact "
+            "with the same SPO names — latest assertion wins across forms"
+        )
+
+        current = await _facts_at(engine, T1 + timedelta(minutes=1))
+        assert [f.content for f in current] == ["Robbie definitely wears Adidas"]
+
+    async def test_entity_precedence_distinct_same_named_entities(
+        self, engine, db_session
+    ) -> None:
+        """Entity precedence — two entity-linked facts with identical SPO
+        TEXT but different UUIDs are distinct entities: no supersession.
+
+        ``uq_graph_entities_org_name`` forbids two canonical entities named
+        alike in one org, so the fixture creates the two entities under
+        different canonical names while both FACTS record identical surface
+        text — exactly the disambiguation case the entity match protects
+        (distinct same-named entities must never supersede each other).
+        """
+        user_id = _new_uuid()
+        rob_a, rob_b = _new_uuid(), _new_uuid()
+        adidas_a, adidas_b = _new_uuid(), _new_uuid()
+        async with AsyncSession(engine) as db:
+            await _seed_user(db, user_id)
+            await db.commit()
+        for eid, name in (
+            (rob_a, "Robbie"),
+            (rob_b, "Robbie II"),
+            (adidas_a, "Adidas"),
+            (adidas_b, "Adidas II"),
+        ):
+            await self._seed_entity(engine, eid, name)
+
+        r1 = await _ingest(
+            engine,
+            facts=[self._entity_triple(rob_a, adidas_a, "Robbie wears Adidas (a)")],
+            user_id=user_id,
+            now=T0,
+        )
+        assert r1.inserted_count == 1
+
+        r2 = await _ingest(
+            engine,
+            facts=[self._entity_triple(rob_b, adidas_b, "Robbie wears Adidas (b)")],
+            user_id=user_id,
+            now=T1,
+        )
+        assert r2.superseded_count == 0, (
+            "Distinct entity UUIDs with identical SPO text must NOT supersede "
+            "each other — entity match is UUID equality, not name equality"
+        )
+
+        current = await _facts_at(engine, T1 + timedelta(minutes=1))
+        assert {f.content for f in current} == {
+            "Robbie wears Adidas (a)",
+            "Robbie wears Adidas (b)",
+        }
+
+    async def test_entity_ingest_supersedes_literal_fact(
+        self, engine, db_session
+    ) -> None:
+        """Worker flip-flop — an entity-resolved ingest supersedes the literal
+        fact with the same SPO names (defect 3, other direction)."""
+        user_id = _new_uuid()
+        subj_entity, obj_entity = _new_uuid(), _new_uuid()
+        async with AsyncSession(engine) as db:
+            await _seed_user(db, user_id)
+            await db.commit()
+        await self._seed_entity(engine, subj_entity, "Robbie")
+        await self._seed_entity(engine, obj_entity, "Adidas")
+
+        r1 = await _ingest(
+            engine,
+            facts=[
+                _triple(
+                    subject="Robbie",
+                    predicate="wears",
+                    obj="Adidas",
+                    content="Robbie wears Adidas",
+                )
+            ],
+            user_id=user_id,
+            now=T0,
+        )
+        assert r1.inserted_count == 1
+
+        r2 = await _ingest(
+            engine,
+            facts=[
+                self._entity_triple(
+                    subj_entity, obj_entity, "Robbie wears Adidas (resolved)"
+                )
+            ],
+            user_id=user_id,
+            now=T1,
+        )
+        assert r2.superseded_count == 1, (
+            "An entity-resolved ingest must supersede the literal fact with "
+            "the same SPO names"
+        )
+
+        current = await _facts_at(engine, T1 + timedelta(minutes=1))
+        assert [f.content for f in current] == ["Robbie wears Adidas (resolved)"]
+
+
 class TestContextCachePurge:
     """Supersession purges the project's context-cache prefix."""
 
