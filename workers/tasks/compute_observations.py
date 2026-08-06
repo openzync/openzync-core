@@ -17,8 +17,10 @@ Architecture:
 Idempotency:
     Two layers:
     1. Per-episode bit 6 check (inside this worker).
-    2. Per-project dedup at enqueue time (30s window in
-       ``link_entities_to_episode``).
+    2. Per-project no-TTL pending marker
+       (``observations:pending:{org_id}:{project_id}``), set by
+       ``link_entities_to_episode`` on enqueue and deleted by this worker at
+       the start of each run — one full-scan run clears the need.
 """
 
 from __future__ import annotations
@@ -46,15 +48,18 @@ async def compute_observations(
     to ``graph_observations``.
 
     Pipeline:
-        1. Check bit 6 — skip if already set (idempotent).
-        2. Bootstrap DB engine from worker context.
-        3. Instantiate ``ObservationService``.
-        4. Run all detection algorithms (co-occurrence, temporal gaps,
+        1. Set RLS context (``app.org_id``) for org-scoped DB work.
+        2. Clear the per-project pending-observations marker.
+        3. Resolve the graph backend — skip cleanly if disabled for the org.
+        4. Check bit 6 — skip if already set (idempotent).
+        5. Bootstrap DB engine from worker context.
+        6. Instantiate ``ObservationService``.
+        7. Run all detection algorithms (co-occurrence, temporal gaps,
            behavioral patterns).
-        5. Optionally call LLM to generate ``content`` field.
-        6. Persist observations via ``backend.upsert_observation()``.
-        7. Set ``episodes.enrichment_status`` bit 6.
-        8. Commit.
+        8. Optionally call LLM to generate ``content`` field.
+        9. Persist observations via ``backend.upsert_observation()``.
+        10. Set ``episodes.enrichment_status`` bit 6.
+        11. Commit.
 
     Args:
         ctx: ARQ worker context (provides ``db_engine``, ``redis``).
@@ -74,6 +79,8 @@ async def compute_observations(
     # imports lightweight so the worker process starts quickly.
     # ═══════════════════════════════════════════════════════════════════════════
     from uuid import UUID
+
+    from sqlalchemy import text
 
     from core.config import settings
     from core.db import get_async_session
@@ -111,17 +118,42 @@ async def compute_observations(
 
     try:
         async with session_factory() as db:
-            # ── 1. Resolve graph backend + instantiate service ──────────────
-            episode_repo = EpisodeRepository(db)
-            backend = await resolve_graph_backend(ctx, UUID(org_id), db)  # type: ignore[arg-type]
-            if backend is None:
-                # Graph explicitly disabled for this org — skip the pass.
-                # ObservationService._assert_backend() would raise on None.
-                logger.info(
-                    "compute_observations.graph_disabled_skipping",
-                    episode_id=episode_id,
+            # ── 1. Set RLS context ──────────────────────────────────────────
+            # All DB work below is org-scoped via the ``app.org_id`` GUC —
+            # without it the RLS policies filter out the project's rows and
+            # the full scan silently finds nothing.
+            await db.execute(
+                text("SELECT set_config('app.org_id', :org_id, true)"),
+                {"org_id": org_id},
+            )
+
+            # ── 2. Clear the pending-observations marker ────────────────────
+            # One full-scan run clears the need for everything ingested before
+            # it; episodes ingested after this point set a fresh marker via
+            # ``link_entities_to_episode`` and trigger a new run.
+            marker_key = f"observations:pending:{org_id}:{project_id}"
+            redis = ctx.get("redis") if isinstance(ctx, dict) else None
+            if redis is not None:
+                await redis.delete(marker_key)
+            else:
+                logger.warning(
+                    "compute_observations.redis_marker_not_cleared",
                     org_id=org_id,
                     project_id=project_id,
+                )
+
+            # ── 3. Resolve graph backend + instantiate service ──────────────
+            episode_repo = EpisodeRepository(db)
+            ctx_dict: dict = ctx if isinstance(ctx, dict) else {}
+            backend = await resolve_graph_backend(ctx_dict, UUID(org_id), db)
+            if backend is None:
+                # Graph disabled for this org — skip cleanly. Bit 6 is not
+                # set, so a later run can still pick this episode up.
+                logger.info(
+                    "compute_observations.graph_disabled_skipping",
+                    org_id=org_id,
+                    project_id=project_id,
+                    episode_id=episode_id,
                 )
                 return
             service = ObservationService(
@@ -129,7 +161,7 @@ async def compute_observations(
                 db=db,
             )
 
-            # ── 2. Idempotency check: skip if bit 6 already set ──────────────
+            # ── 4. Idempotency check: skip if bit 6 already set ──────────────
             episode = await episode_repo.get_by_id(UUID(episode_id))
             if episode is None:
                 logger.warning(
@@ -149,7 +181,7 @@ async def compute_observations(
                 )
                 return
 
-            # ── 3. Run project-wide pattern detection ─────────────────────────
+            # ── 5. Run project-wide pattern detection ─────────────────────────
             # The service runs a full project scan, not just per-episode.
             # ON CONFLICT DO UPDATE prevents duplicate observations.
             pid = UUID(project_id)
@@ -169,7 +201,7 @@ async def compute_observations(
                 llm_backend=llm_backend,
             )
 
-            # ── 4. Set enrichment_status bit 6 ──────────────────────────────
+            # ── 6. Set enrichment_status bit 6 ──────────────────────────────
             await episode_repo.apply_enrichment_bits(
                 UUID(episode_id), ENRICHMENT_OBSERVATIONS
             )

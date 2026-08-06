@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import sys
 from typing import Any, Callable, TypeVar
 from uuid import UUID
 
@@ -178,7 +179,9 @@ class CacheService:
 
         Stampede protection uses a separate lock key (``{key}:lock``)
         to ensure only one process recomputes the value when the cache
-        is cold or expired.
+        is cold or expired.  The lock is released only if this call
+        acquired it — never after the lock's TTL expires and another
+        process takes it over.
 
         Args:
             key: The full Redis cache key.
@@ -205,16 +208,18 @@ class CacheService:
             return cached  # type: ignore[return-value]
 
         # ── Stampede protection ──────────────────────────────────────────
+        acquired = False
+        lock_key: str | None = None
         if enable_stampede_protection and self._redis is not None:
             lock_key = f"{key}:lock"
             try:
                 from redis.asyncio import Redis as AsyncRedis
 
                 r: AsyncRedis = self._redis  # type: ignore[assignment]
-                acquired = await r.set(lock_key, "1", nx=True, ex=STAMPEDE_LOCK_TTL)
-                if acquired:
-                    pass  # Lock set atomically with TTL
-                else:
+                acquired = bool(
+                    await r.set(lock_key, "1", nx=True, ex=STAMPEDE_LOCK_TTL)
+                )
+                if not acquired:
                     # Another process is computing — wait briefly and
                     # retry the cache read.
                     import asyncio
@@ -234,34 +239,42 @@ class CacheService:
                     f"Stampede lock acquisition failed for key '{key}'."
                 ) from exc
 
-        # ── Compute and cache ────────────────────────────────────────────
-        value = compute_fn()
-        effective_ttl = ttl if ttl is not None else self._default_ttl
+        try:
+            # ── Compute and cache ────────────────────────────────────────
+            value = compute_fn()
+            effective_ttl = ttl if ttl is not None else self._default_ttl
 
-        if isinstance(value, str):
-            await self.set(key, value, ttl=effective_ttl)
-        else:
-            # Serialise non-string types to JSON for caching.
-            await self.set(key, orjson.dumps(value), ttl=effective_ttl)
+            if isinstance(value, str):
+                await self.set(key, value, ttl=effective_ttl)
+            else:
+                # Serialise non-string types to JSON for caching.
+                await self.set(key, orjson.dumps(value), ttl=effective_ttl)
+            return value
+        finally:
+            # Release the stampede lock only if THIS call acquired it.
+            # If our lock expired (10s TTL) and another process took it
+            # over in the meantime, deleting the key would break their
+            # stampede protection — never touch a lock we don't own.
+            if acquired and lock_key is not None:
+                inflight_exc = sys.exc_info()[0]
+                try:
+                    from redis.asyncio import Redis as AsyncRedis
 
-        # Release the stampede lock if we acquired it
-        if enable_stampede_protection and self._redis is not None:
-            try:
-                from redis.asyncio import Redis as AsyncRedis
-
-                r: AsyncRedis = self._redis  # type: ignore[assignment]
-                await r.delete(lock_key)
-            except Exception as exc:
-                logger.error(
-                    "cache.stampede_unlock_failed",
-                    extra={"key": key},
-                    exc_info=True,
-                )
-                raise CacheUnavailableError(
-                    f"Stampede lock release failed for key '{key}'."
-                ) from exc
-
-        return value
+                    r: AsyncRedis = self._redis  # type: ignore[assignment]
+                    await r.delete(lock_key)
+                except Exception as exc:
+                    logger.error(
+                        "cache.stampede_unlock_failed",
+                        extra={"key": key},
+                        exc_info=True,
+                    )
+                    # If compute_fn raised, do not mask it with an unlock
+                    # failure — the original exception propagates and the
+                    # lock auto-frees via its TTL.
+                    if inflight_exc is None:
+                        raise CacheUnavailableError(
+                            f"Stampede lock release failed for key '{key}'."
+                        ) from exc
 
     # ── Key Builders ───────────────────────────────────────────────────────────
 

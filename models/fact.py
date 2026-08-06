@@ -49,6 +49,9 @@ class Fact(TimestampMixin, Base):
         invalid_at: Timestamp when this fact was invalidated/retracted.
         embedding: pgvector embedding placeholder (migrated to
             ``vector(1536)`` via Alembic).
+        embedded_at: Timestamp of the last embedding attempt. Set on success
+            and on permanent failure (dimension mismatch); ``NULL`` means the
+            fact was never attempted and is eligible for reconcile repair.
     """
 
     __tablename__ = "facts"
@@ -126,6 +129,9 @@ class Fact(TimestampMixin, Base):
     # migration will alter this column when pgvector is available.
     embedding: Mapped[list[float] | None] = mapped_column(
         ARRAY(Float), nullable=True, default=None,
+    )
+    embedded_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True,
     )
 
     __table_args__ = (

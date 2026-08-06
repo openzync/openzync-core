@@ -299,6 +299,15 @@ async def get_graph_service(
                     f"with graph_backend='surrealdb': {exc}"
                 ) from exc
 
+    # SurrealDB configured but no pool / no connection → fail loud rather
+    # than constructing a doomed SurrealGraphBackend(surreal=None).
+    if org_config.graph_backend == "surrealdb" and surreal is None:
+        raise GraphBackendUnavailableError(
+            f"SurrealDB configured for org {org_id} (graph_backend="
+            f"'surrealdb') but no connection is available — the "
+            "surreal_connection_pool is missing or unreachable."
+        )
+
     # Read the FalkorDB client from app state (may be None if not configured).
     # If not configured at system level, try per-org config.
     falkordb_client = getattr(request.app.state, "falkordb_client", None)
@@ -326,9 +335,34 @@ async def get_graph_service(
                 f"FalkorDB connection failed for org {org_id}: {exc}"
             ) from exc
 
-    graph_backend = dispatcher.resolve_and_create(
-        org_config, db, surreal=surreal, falkordb_client=falkordb_client,
-    )
+    # FalkorDB configured but no client anywhere → fail loud (same rationale).
+    if org_config.graph_backend == "falkordb" and falkordb_client is None:
+        raise GraphBackendUnavailableError(
+            f"FalkorDB configured for org {org_id} (graph_backend="
+            f"'falkordb') but no client is available — neither a system-level "
+            "FALKORDB_URL nor a per-org falkordb_url."
+        )
+
+    try:
+        graph_backend = dispatcher.resolve_and_create(
+            org_config, db, surreal=surreal, falkordb_client=falkordb_client,
+        )
+    except GraphBackendUnavailableError:
+        raise
+    except ValueError as exc:
+        # Unknown backend name in a configured org — misconfiguration, not
+        # disabled.  Surface as 503 (ServiceUnavailable) rather than 500.
+        logger.error(
+            "graph_service.unknown_backend",
+            extra={
+                "org_id": str(org_id),
+                "backend": org_config.graph_backend,
+            },
+        )
+        raise GraphBackendUnavailableError(
+            f"Unknown graph backend '{org_config.graph_backend}' for org "
+            f"{org_id}: {exc}"
+        ) from exc
 
     return GraphService(
         graph_backend=graph_backend,
@@ -460,9 +494,40 @@ async def get_graph_backend_for_project(
                 f"FalkorDB connection failed for org {org_id}: {exc}"
             ) from exc
 
-    return dispatcher.resolve_and_create(
-        org_config, db, surreal=surreal, falkordb_client=falkordb_client,
-    )
+    # Configured-but-unavailable guards — mirror get_graph_service so the
+    # read-only path never constructs a doomed backend or 500s on an
+    # unknown backend name.
+    if org_config.graph_backend == "surrealdb" and surreal is None:
+        raise GraphBackendUnavailableError(
+            f"SurrealDB configured for org {org_id} (graph_backend="
+            f"'surrealdb') but no connection is available — the "
+            "surreal_connection_pool is missing or unreachable."
+        )
+    if org_config.graph_backend == "falkordb" and falkordb_client is None:
+        raise GraphBackendUnavailableError(
+            f"FalkorDB configured for org {org_id} (graph_backend="
+            f"'falkordb') but no client is available — neither a system-level "
+            "FALKORDB_URL nor a per-org falkordb_url."
+        )
+
+    try:
+        return dispatcher.resolve_and_create(
+            org_config, db, surreal=surreal, falkordb_client=falkordb_client,
+        )
+    except GraphBackendUnavailableError:
+        raise
+    except ValueError as exc:
+        logger.error(
+            "graph_backend.unknown_backend",
+            extra={
+                "org_id": str(org_id),
+                "backend": org_config.graph_backend,
+            },
+        )
+        raise GraphBackendUnavailableError(
+            f"Unknown graph backend '{org_config.graph_backend}' for org "
+            f"{org_id}: {exc}"
+        ) from exc
 
 
 

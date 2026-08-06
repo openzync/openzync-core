@@ -1,12 +1,9 @@
-"""Structured extraction worker — ARQ task that extracts structured data from episodes.
+"""Structured-extraction helpers for the combined enrichment worker.
 
-Runs after an episode is committed to PostgreSQL.  Uses an LLM to extract
-structured data conforming to the organization's configured JSON Schemas
-(``extraction_schemas`` where ``type='structured'``).
-
-Bitmask:
-    Sets ``episodes.enrichment_status`` bit 5 (``ENRICHMENT_STRUCTURED_EXTRACTION``)
-    on success or after a permanent failure.
+Exports ``process_structured_output``, which the combined ``enrich_episode``
+worker calls to persist LLM-extracted structured data against the
+organization's configured JSON Schemas.  The standalone ``extract_structured``
+ARQ task was retired in favour of ``enrich_episode``.
 """
 
 from __future__ import annotations
@@ -18,9 +15,7 @@ import orjson
 import structlog
 from sqlalchemy import text
 
-from core.exceptions import EpisodeNotFoundError
-from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
-from workers.tasks.base import ENRICHMENT_STRUCTURED_EXTRACTION, with_retry
+from workers.tasks.base import ENRICHMENT_STRUCTURED_EXTRACTION
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,238 +23,6 @@ if TYPE_CHECKING:
     from repositories.episode_repository import EpisodeRepository
 
 logger = structlog.get_logger()
-
-
-@with_retry(max_retries=3, base_delay_s=2.0)
-async def extract_structured(
-    ctx: object,
-    episode_id: str,
-    org_id: str,
-    project_id: str,
-    session_id: str,
-    content: str,
-    trace_id: str = "",
-    metadata: dict | None = None,
-) -> None:
-    """Extract structured data from a dialog turn and persist the result.
-
-    Pipeline:
-        1. Create a temporary DB engine + session.
-        2. Set ``app.org_id`` for RLS compliance.
-        3. Check ``enrichment_status`` — skip if bit 5 is already set.
-        4. Fetch organization's structured schemas (``type='structured'``).
-        5. If no schemas configured, set the bit and return (nothing to extract).
-        6. Resolve prompt template from DB (fall back to filesystem).
-        7. Fetch custom instructions for the ``extraction`` scope.
-        8. Render the ``extract_structured_v1.jinja2`` prompt (with DB
-           template + custom instructions).
-        9. Call the LLM backend (temperature 0.0, max_tokens configurable).
-        10. Parse the keyed JSON response — each key is a schema name.
-        11. For each matched schema, validate output against the JSON Schema.
-        12. Insert one ``StructuredExtraction`` row per valid schema.
-        13. Update ``enrichment_status`` bit 5.
-
-    Args:
-        ctx: ARQ worker context (unused — required by ARQ contract).
-        episode_id: UUID of the source episode (string, from ARQ).
-        org_id: UUID of the owning organization.
-        project_id: UUID of the project for project scoping.
-        session_id: UUID of the session (for FK to structured_extractions).
-        content: The message text to extract data from.
-        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
-        metadata: Optional metadata dict forwarded from the enrichment pipeline.
-
-    Raises:
-        Exception: Re-raises the last LLM or DB error after retry exhaustion.
-    """
-    if trace_id:
-        structlog.contextvars.bind_contextvars(trace_id=trace_id)
-
-    # Lazy imports — ARQ workers run in a separate process.
-    from core.config import settings
-    from core.db import get_async_session
-    from core.llm import resolve_backend
-    from core.org_config import get_org_config
-    from repositories.episode_repository import EpisodeRepository
-    from schemas.llm_outputs import StructuredExtractionOutput
-    from services.worker.worker_settings import settings as worker_settings
-    from workers.backend import resolve_graph_backend
-
-    logger.info(
-        "structured_extraction.started",
-        episode_id=episode_id,
-        org_id=org_id,
-        project_id=project_id,
-        session_id=session_id,
-        content_length=len(content),
-        trace_id=trace_id,
-    )
-
-    # Use the shared engine from worker context.
-    engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
-    if engine is None:
-        from core.db import init_db_engine
-
-        engine = init_db_engine(
-            str(settings.DATABASE_URL), pool_size=2, max_overflow=1
-        )
-        _own_engine = True
-    else:
-        _own_engine = False
-    session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
-    if session_factory is None:
-        session_factory = get_async_session(engine)
-
-    try:
-        async with session_factory() as db:
-            # ── 2. Set RLS context ─────────────────────────────────────────
-            await db.execute(
-                text("SELECT set_config('app.org_id', :org_id, true)"),
-                {"org_id": org_id},
-            )
-
-            # ── 3. Idempotency check — skip if already extracted ──────────
-            episode_repo = EpisodeRepository(db)
-            episode = await episode_repo.get_by_id_for_update(uuid.UUID(episode_id))
-            if episode is None:
-                logger.warning(
-                    "structured_extraction.episode_not_found",
-                    episode_id=episode_id,
-                )
-                raise EpisodeNotFoundError(
-                    message=(
-                        f"Episode {episode_id} not found for structured extraction."
-                    ),
-                    detail={"episode_id": episode_id},
-                )
-            user_id: str = str(episode.user_id)
-            if episode.enrichment_status & ENRICHMENT_STRUCTURED_EXTRACTION:
-                logger.info(
-                    "structured_extraction.skipped_already_done",
-                    episode_id=episode_id,
-                )
-                return
-
-            # ── Resolve graph backend for session entity fetching ─────────────
-            backend: Any = None
-            try:
-                backend = await resolve_graph_backend(
-                    ctx if isinstance(ctx, dict) else {},
-                    uuid.UUID(org_id), db,
-                )
-            except Exception:
-                logger.warning(
-                    "structured_extraction.backend_resolve_failed", exc_info=True,
-                )
-
-            # ── 4. Render prompt (system instructions) with auto-injected context ──
-            system_prompt, prompt_ctx = await render_prompt(
-                "structured_extraction",
-                org_id=org_id,
-                episode_id=episode_id,
-                session_id=session_id,
-                user_id=user_id,
-                project_id=project_id,
-                graph_backend=backend,
-                db_session_factory=session_factory,
-                return_context=True,
-                metadata=metadata or {},
-            )
-            prompt = build_enrichment_prompt(system_prompt, prompt_ctx)
-
-            schemas: list[dict] = prompt_ctx.get("schemas", [])
-            if not schemas:
-                logger.info(
-                    "structured_extraction.no_schemas",
-                    episode_id=episode_id,
-                )
-                # No schemas configured — set the enrichment bit and return.
-                await episode_repo.apply_enrichment_bits(
-                    uuid.UUID(episode_id), ENRICHMENT_STRUCTURED_EXTRACTION
-                )
-                await db.commit()
-                return
-
-            max_tokens = worker_settings.STRUCTURED_EXTRACTION_MAX_TOKENS
-
-            # ── 7b. Fetch per-organization config ──────────────────────────
-            bao_client = ctx.get("openbao_client") if isinstance(ctx, dict) else None
-            if bao_client is not None:
-                org_cfg = await get_org_config(
-                    uuid.UUID(org_id), redis=None, bao_client=bao_client
-                )
-            else:
-                from core.config import BootstrapSettings
-                from core.openbao import OpenBaoClient
-
-                bootstrap = BootstrapSettings()
-                async with OpenBaoClient(
-                    bootstrap.OPENBAO_ADDR,
-                    bootstrap.OPENBAO_ROLE_ID,
-                    bootstrap.OPENBAO_SECRET_ID,
-                    timeout=10.0,
-                ) as _tmp_bao:
-                    org_cfg = await get_org_config(
-                        uuid.UUID(org_id), redis=None, bao_client=_tmp_bao
-                    )
-            llm_config_dict = org_cfg.to_llm_config_dict()
-
-            # ── 8-9. Call LLM with structured-output validation ─────────────
-            try:
-                llm = await resolve_backend(org_config=llm_config_dict)
-                response = await llm.chat(
-                    [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are a structured data extraction system."
-                            ),
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    response_model=StructuredExtractionOutput,
-                    temperature=0.0,
-                    max_tokens=max_tokens,
-                )
-            except Exception as exc:
-                logger.error(
-                    "structured_extraction.llm_failed",
-                    episode_id=episode_id,
-                    error=str(exc),
-                )
-                raise  # Let @with_retry handle transient failures
-
-            # ── 10. Validate & insert per schema ───────────────────────────
-            raw_dict: dict[str, Any] = response.validated_data.model_dump()
-
-            await process_structured_output(
-                db=db,
-                org_id=org_id,
-                episode_id=episode_id,
-                project_id=project_id,
-                session_id=session_id,
-                parsed=raw_dict,
-                schemas=schemas,
-                episode_repo=episode_repo,
-            )
-
-            await db.commit()
-
-            logger.info(
-                "structured_extraction.completed",
-                episode_id=episode_id,
-            )
-
-    except Exception:
-        logger.error(
-            "structured_extraction.failed",
-            episode_id=episode_id,
-            org_id=org_id,
-        )
-        raise
-    finally:
-        if _own_engine:
-            await engine.dispose()
 
 
 # ── Private helpers ────────────────────────────────────────────────────────────
@@ -415,3 +178,5 @@ async def process_structured_output(
         )
 
     await db.flush()
+
+

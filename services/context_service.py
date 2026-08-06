@@ -47,6 +47,7 @@ A fresh/bootstrap org has a ``None`` org config (or ``None``
 """
 
 
+
 def _preview(items: list[dict[str, Any]], max_chars: int = 500) -> str | None:
     """Build a compact preview string for the top result in a list.
 
@@ -114,6 +115,7 @@ class ContextService:
             if redis
             else None
         )
+        self._db = db
         self._org_id = org_id
         self._org_config = org_config
 

@@ -287,6 +287,11 @@ async def enrich_episode(
             )
 
             # ── 6b. Resolve graph backend (shared across sections) ──────
+            # No Postgres fallback here: a disabled org ("none" / no config)
+            # resolves to None → entities section skips persistence but still
+            # sets the bit; a configured-but-unavailable backend raises and
+            # fails the task via ARQ retry so the bit is never set without
+            # entities actually being persisted.
             graph_backend = None
             try:
                 graph_backend = await resolve_graph_backend(
@@ -386,8 +391,13 @@ async def enrich_episode(
                                         {"name": ename, "id": eid}
                                     )
                         else:
-                            log.warning(
-                                "enrich_episode.no_graph_backend_entities"
+                            # Graph disabled for this org — nothing was
+                            # persisted to a graph.  The bit is still set so
+                            # the episode is not re-enriched; entities can be
+                            # back-filled later once a backend exists.
+                            log.info(
+                                "enrich_episode.graph_disabled_entities_skipped",
+                                entity_count=len(parsed.entities),
                             )
                     set_bits |= ENRICHMENT_ENTITIES
                     log.info("enrich_episode.entities_done")

@@ -19,10 +19,9 @@ Usage::
     # Per-request (SurrealDB):
     backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
 
-    The default backend is ``"surrealdb"`` (set in
-:class:`~schemas.organization_config.OrgConfigBase`).
-If the graph is intentionally disabled,
-set ``graph_backend`` to ``"none"`` in the per-org config.
+    The default backend is ``"postgres"`` (set in
+:class:`~schemas.organization_config.OrgConfigBase`); ``"none"``
+disables the graph entirely in the per-org config.
 
 To add a new backend in the future:
 

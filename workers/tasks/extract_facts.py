@@ -1,30 +1,20 @@
-"""Fact extraction worker — zero-shot fact extraction from conversation turns.
+"""Fact extraction helpers for the combined enrichment worker.
 
-Runs as an ARQ background task after an episode has been committed to
-PostgreSQL.  Uses an LLM to extract subject-predicate-object triples,
-filters them by confidence and quality heuristics, resolves pronouns
-against previously extracted entities, and persists the results in the
-``facts`` table.
-
-Key improvement over v1: receives ``session_id`` to fetch:
-- Previously extracted entities for pronoun resolution.
-- Recent conversation turns for coreference context.
-
-Bitmask:
-    Sets ``episodes.enrichment_status`` bit 2 (``ENRICHMENT_FACTS``)
-    on success.
+Exports ``process_facts_output`` (plus quality/filter/entity-resolution
+helpers), which the combined ``enrich_episode`` worker calls to persist
+LLM-extracted fact triples.  The standalone ``extract_facts`` ARQ task was
+retired in favour of ``enrich_episode``.
 """
 
 from __future__ import annotations
 
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import structlog
 
-from core.exceptions import EpisodeNotFoundError, GraphBackendUnavailableError
-from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
-from workers.tasks.base import ENRICHMENT_FACTS, with_retry
+from core.exceptions import GraphBackendUnavailableError
+from workers.tasks.base import ENRICHMENT_FACTS
 
 if TYPE_CHECKING:
     from arq.connections import ArqRedis
@@ -40,274 +30,6 @@ logger = structlog.get_logger()
 
 # ── Quality-heuristic constants ───────────────────────────────────────────────
 _CONFIDENCE_THRESHOLD: float = 0.3
-
-
-# ── Public ARQ task (decorated with retry) ────────────────────────────────────
-
-
-@with_retry(max_retries=3, base_delay_s=2.0)
-async def extract_facts(
-    ctx: object,
-    episode_id: str,
-    org_id: str,
-    project_id: str,
-    content: str,
-    session_id: str | None = None,
-    trace_id: str = "",
-    metadata: dict | None = None,
-) -> None:
-    """Extract zero-shot factual statements from a message and persist them.
-
-    This function is designed as an ARQ task — the ``ctx`` parameter provides
-    a shared DB engine from the worker process (``ctx["db_engine"]``).
-    When ``ctx`` is absent (direct invocation), a short-lived engine is
-    created as a fallback.
-
-    Pipeline:
-        0. Fetch known entities + recent history from session (if session_id).
-        1. Render the ``extract_facts_v4.jinja2`` prompt with conversation,
-           known entities, existing facts, and recent history (or
-           ``extract_facts_v3.jinja2`` for first extraction when no facts exist yet).
-        2. Call the LLM backend (via ``resolve_backend()``, temperature 0.1).
-        3. Parse the JSON response (handles markdown fence wrapping).
-        4. Filter triples by confidence (>= 0.3) and quality heuristics.
-        5. Resolve subject/object to entity IDs from known entities.
-        6. Persist valid facts via ``FactRepository``.
-        7. Update ``episodes.enrichment_status`` bit 2.
-
-    Args:
-        ctx: ARQ worker context (unused — required by ARQ contract).
-        episode_id: UUID of the source episode (string, from ARQ).
-        org_id: UUID of the owning organization.
-        project_id: UUID of the project for project scoping.
-        content: The message text to extract facts from.
-        session_id: UUID of the session (passed from MemoryService).
-            Used to fetch previously extracted entities and recent
-            conversation turns for pronoun resolution.
-        trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
-        metadata: Optional metadata dict forwarded from the enrichment pipeline.
-
-    Raises:
-        Exception: Re-raises the last LLM or DB error after retry exhaustion
-            (``on_exhaustion="raise"`` default behaviour).
-    """
-    if trace_id:
-        structlog.contextvars.bind_contextvars(trace_id=trace_id)
-
-    # Lazy imports to keep the module importable without the full async
-    # stack at definition time — ARQ workers run in a separate process.
-    from core.config import settings
-    from core.db import get_async_session
-    from core.llm import resolve_backend
-    from core.org_config import get_org_config
-    from repositories.episode_repository import EpisodeRepository
-    from repositories.fact_repository import FactRepository
-    from schemas.llm_outputs import FactExtractionOutput
-    from workers.backend import resolve_graph_backend
-
-    logger.info(
-        "fact_extraction.started",
-        episode_id=episode_id,
-        org_id=org_id,
-        project_id=project_id,
-        session_id=session_id,
-        content_length=len(content),
-        trace_id=trace_id,
-    )
-
-    # Use the shared engine from worker context.
-    engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
-    if engine is None:
-        from core.db import init_db_engine
-
-        engine = init_db_engine(str(settings.DATABASE_URL), pool_size=2, max_overflow=1)
-        _own_engine = True
-    else:
-        _own_engine = False
-    session_factory = ctx.get("db_session_factory") if isinstance(ctx, dict) else None
-    if session_factory is None:
-        session_factory = get_async_session(engine)
-
-    # ── 0. Resolve user_id from episode record ──────────────────────────────
-    # user_id is stored on the episode at creation time (from the API key's
-    # created_by via the auth middleware).  The worker resolves it from the
-    # episode rather than receiving it as an ARQ parameter.
-    from sqlalchemy import select
-
-    from models.episode import Episode
-
-    backend: Any = None
-    async with session_factory() as resolve_db:
-        result = await resolve_db.execute(
-            select(Episode.user_id).where(Episode.id == episode_id)
-        )
-        user_id_row = result.scalar_one_or_none()
-        if user_id_row is None:
-            logger.warning(
-                "fact_extraction.episode_not_found",
-                episode_id=episode_id,
-            )
-            raise EpisodeNotFoundError(
-                message=f"Episode {episode_id} not found for fact extraction.",
-                detail={"episode_id": episode_id},
-            )
-        user_id: str = str(user_id_row)
-
-        # ── Resolve graph backend (same session, avoids extra connection) ──
-        try:
-            backend = await resolve_graph_backend(
-                ctx if isinstance(ctx, dict) else {},
-                uuid.UUID(org_id),
-                resolve_db,
-            )
-        except Exception:
-            logger.warning("fact_extraction.backend_resolve_failed", exc_info=True)
-
-    # ── 1. Render prompt (system instructions) with auto-injected context ──
-    system_prompt, prompt_context = await render_prompt(
-        "fact_extraction",
-        org_id=org_id,
-        episode_id=episode_id,
-        session_id=session_id,
-        user_id=user_id,
-        project_id=project_id,
-        graph_backend=backend,
-        db_session_factory=session_factory,
-        return_context=True,
-        metadata=metadata or {},
-    )
-
-    known_entities: list[dict] = prompt_context.get("known_entities", [])
-    existing_facts: list[dict] = prompt_context.get("existing_facts", [])
-
-    # ── 1b. Build full prompt with context sections ────────────────────────
-    prompt = build_enrichment_prompt(system_prompt, prompt_context)
-
-    # ── 1b. Fetch per-organization config ─────────────────────────────────
-    llm_config_dict: dict | None = None
-    try:
-        bao_client = ctx.get("openbao_client") if isinstance(ctx, dict) else None
-        if bao_client is not None:
-            org_cfg = await get_org_config(
-                uuid.UUID(org_id), redis=None, bao_client=bao_client
-            )
-        else:
-            from core.config import BootstrapSettings
-            from core.openbao import OpenBaoClient
-
-            bootstrap = BootstrapSettings()
-            async with OpenBaoClient(
-                bootstrap.OPENBAO_ADDR,
-                bootstrap.OPENBAO_ROLE_ID,
-                bootstrap.OPENBAO_SECRET_ID,
-                timeout=10.0,
-            ) as _tmp_bao:
-                org_cfg = await get_org_config(
-                    uuid.UUID(org_id), redis=None, bao_client=_tmp_bao
-                )
-        llm_config_dict = org_cfg.to_llm_config_dict()
-    except Exception:
-        logger.warning(
-            "fact_extraction.org_config_fetch_failed",
-            org_id=org_id,
-            exc_info=True,
-        )
-
-    # ── 2-3. Call LLM with structured-output validation ───────────────────────
-    try:
-        llm = await resolve_backend(org_config=llm_config_dict)
-        response = await llm.chat(
-            [
-                {
-                    "role": "system",
-                    "content": ("You are a fact extraction system."),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            response_model=FactExtractionOutput,
-            temperature=0.1,
-        )
-    except Exception as exc:
-        logger.error(
-            "fact_extraction.llm_failed",
-            episode_id=episode_id,
-            error=str(exc),
-        )
-        raise  # Let the @with_retry decorator handle transient failures
-
-    parsed = response.validated_data  # FactExtractionOutput instance
-
-    # ── 4. Filter, resolve entities, persist, and set enrichment bit ─────────
-    # Uses the shared engine from worker ctx (set earlier in this function).
-    persisted_ids: list[str] = []
-    try:
-        async with session_factory() as db:
-            # Resolve graph backend for this org's persistence session.
-            backend = await resolve_graph_backend(
-                ctx,
-                uuid.UUID(org_id),
-                db,
-            )
-
-            repo = FactRepository(db)
-            from repositories.entity_repository import (
-                EntityRepository as _EntityRepo,
-            )
-
-            # EntityRepository.__init__ raises when graph_backend is None —
-            # guard construction so graph-disabled orgs skip, not crash.
-            # process_facts_output accepts entity_repo=None and skips graph ops.
-            entity_repo = (
-                _EntityRepo(db=db, graph_backend=backend)
-                if backend is not None
-                else None
-            )
-            if entity_repo is None:
-                logger.info(
-                    "fact_extraction.graph_disabled_skipping",
-                    episode_id=episode_id,
-                    org_id=org_id,
-                )
-            episode_repo = EpisodeRepository(db)
-            arq_redis = ctx.get("redis") if isinstance(ctx, dict) else None
-
-            persisted_ids = await process_facts_output(
-                db=db,
-                graph_backend=backend,
-                entity_repo=entity_repo,
-                fact_repo=repo,
-                episode_repo=episode_repo,
-                org_id=org_id,
-                episode_id=episode_id,
-                project_id=project_id,
-                session_id=session_id or "",
-                user_id=user_id,
-                trace_id=trace_id,
-                parsed=parsed,
-                known_entities=known_entities,
-                existing_facts=existing_facts,
-                arq_redis=arq_redis,
-            )
-
-            await db.commit()
-    finally:
-        if _own_engine:
-            await engine.dispose()
-
-    # ── Logging ──────────────────────────────────────────────────────────────
-    if persisted_ids:
-        logger.info(
-            "fact_extraction.completed",
-            episode_id=episode_id,
-            project_id=project_id,
-            facts=len(persisted_ids),
-        )
-    else:
-        logger.info(
-            "fact_extraction.no_facts",
-            episode_id=episode_id,
-            project_id=project_id,
-        )
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────
@@ -857,3 +579,5 @@ async def process_facts_output(
             # Non-blocking — fact extraction already committed via flush.
 
     return persisted_ids
+
+

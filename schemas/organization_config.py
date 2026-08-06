@@ -108,8 +108,10 @@ class OrgConfigBase(BaseModel):
 
     # ── Graph ──────────────────────────────────────────────────────────────
     graph_backend: str | None = Field(
-        default="surrealdb",
-        description="Graph backend (surrealdb, postgres, none).",
+        default="postgres",
+        description="Graph backend (postgres, surrealdb, none). Defaults to "
+        "postgres — the only backend present in the default stack. "
+        "'none' disables the graph.",
     )
     graph_search_type: str | None = Field(
         default=None,

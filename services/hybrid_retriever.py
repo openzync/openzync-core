@@ -92,15 +92,17 @@ class HybridRetriever:
     ) -> dict[str, Any]:
         """Run hybrid search across all sources and return RRF-merged results.
 
-        Orchestrates five retrieval legs concurrently:
+        Orchestrates five retrieval legs sequentially:
 
         - Episodes (vector + BM25)
         - Facts (vector + BM25)
         - Graph entities (BFS from entities matching the query)
 
-        All legs run concurrently.  If any single leg fails, the entire
-        search fails with a ``SearchLegFailedError`` — no silent partial
-        results are returned.
+        The query is embedded exactly once and the resulting vector is
+        shared by both vector legs (episodes and facts).  All legs run
+        sequentially.  If any single leg fails, the entire search fails
+        with a ``SearchLegFailedError`` — no silent partial results are
+        returned.
 
         Results are grouped by type in the return dict with source counts.
 
@@ -139,7 +141,12 @@ class HybridRetriever:
             {} if query_time is None else {"query_time": query_time}
         )
 
-        # ── Run all three retrieval legs concurrently ──────────────────────
+        # ── Embed the query once; both vector legs reuse this vector ──────
+        # Embedding failure propagates as SearchLegFailedError(leg="embedding")
+        # before any leg-level try/except can re-wrap it.
+        query_embedding = await self._embed_query(query)
+
+        # ── Run all three retrieval legs sequentially ─────────────────────
         # Each leg returns a list of dicts with at minimum ``id`` and
         # ``score`` keys for RRF merging.
         episode_vector_results: list[dict[str, Any]] = []
@@ -153,7 +160,7 @@ class HybridRetriever:
         # Vector search for episodes and facts
         try:
             episode_vector_results = await self._vector_search_episodes(
-                query, project_id, retrieval_limit
+                query_embedding, project_id, retrieval_limit
             )
         except Exception as exc:
             logger.error(
@@ -166,7 +173,7 @@ class HybridRetriever:
 
         try:
             fact_vector_results = await self._vector_search_facts(
-                query, project_id, retrieval_limit, **as_of_kwargs
+                query_embedding, project_id, retrieval_limit, **as_of_kwargs
             )
         except Exception as exc:
             logger.error(
@@ -341,33 +348,29 @@ class HybridRetriever:
 
     async def _vector_search_episodes(
         self,
-        query: str,
+        query_embedding: list[float],
         project_id: UUID,
         limit: int = 20,
     ) -> list[dict[str, Any]]:
         """Semantic search over episodes using pgvector cosine similarity.
 
-        Generates an embedding for the query, then finds the nearest
-        neighbours in ``episodes.embedding`` using the ``<=>`` (cosine
-        distance) operator.
+        Finds the nearest neighbours in ``episodes.embedding`` using the
+        ``<=>`` (cosine distance) operator, against the precomputed query
+        embedding.  The embedding is generated once upstream in
+        ``hybrid_search`` and shared across both vector legs.
 
         The ``embedding`` column is ``vector(768)`` — cast via
         :class:`pgvector.sqlalchemy.Vector` at query time.
 
         Args:
-            query: Natural-language query text.
+            query_embedding: Precomputed embedding vector for the query.
             project_id: Scoped user UUID.
             limit: Max results.
 
         Returns:
             A list of result dicts with ``id``, ``content``, ``role``,
             ``score``, and ``created_at`` keys.
-
-        Raises:
-            SearchLegFailedError: If embedding generation fails.
         """
-        query_embedding = await self._embed_query(query)
-
         dim: int = (
             self._org_config.embedding_dim
             if self._org_config and self._org_config.embedding_dim
@@ -415,7 +418,7 @@ class HybridRetriever:
 
     async def _vector_search_facts(
         self,
-        query: str,
+        query_embedding: list[float],
         project_id: UUID,
         limit: int = 20,
         query_time: datetime | None = None,
@@ -423,13 +426,14 @@ class HybridRetriever:
         """Semantic search over facts using pgvector cosine similarity.
 
         Same pattern as ``_vector_search_episodes`` but operates on the
-        ``facts.embedding`` column.  Facts are filtered by the effective-at
-        predicate against ``query_time`` (``None`` → now) so superseded
-        (``valid_to`` set) and not-yet-valid (``valid_from`` future) rows
-        never leak into results.
+        ``facts.embedding`` column, against the precomputed query embedding
+        shared from ``hybrid_search``.  Facts are filtered by the
+        effective-at predicate against ``query_time`` (``None`` → now) so
+        superseded (``valid_to`` set) and not-yet-valid (``valid_from``
+        future) rows never leak into results.
 
         Args:
-            query: Natural-language query text.
+            query_embedding: Precomputed embedding vector for the query.
             project_id: Scoped user UUID.
             limit: Max results.
             query_time: Effective-at instant for the validity predicate.
@@ -437,11 +441,7 @@ class HybridRetriever:
         Returns:
             A list of result dicts with ``id``, ``content``, ``subject``,
             ``predicate``, ``object``, ``score``, and ``confidence`` keys.
-
-        Raises:
-            SearchLegFailedError: If embedding generation fails.
         """
-        query_embedding = await self._embed_query(query)
         effective_time = query_time or datetime.now(timezone.utc)
 
         # Resolve embedding dimension from org config so the runtime

@@ -103,13 +103,9 @@ logger: structlog.stdlib.BoundLogger = structlog.get_logger("OpenZync.worker")
 # Task registry
 # ═════════════════════════════════════════════════════════════════════════════
 
-from workers.tasks.classify_dialog import classify_dialog
 from workers.tasks.embed_episode import embed_episode
 from workers.tasks.embed_fact import embed_fact
 from workers.tasks.enrich_episode import enrich_episode
-from workers.tasks.extract_entities import extract_entities
-from workers.tasks.extract_facts import extract_facts
-from workers.tasks.extract_structured import extract_structured
 from services.worker.tasks.audit_log import write_audit_log
 from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
 from workers.tasks.summarise_community import summarise_community
@@ -122,13 +118,9 @@ from workers.tasks.expire_graph_edges import expire_graph_edges
 from workers.tasks.reconcile_graph_edges import reconcile_graph_edges
 
 HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
-    enrich_episode,  # combined LLM enrichment — replaces classify_dialog, extract_entities, extract_facts, extract_structured
-    classify_dialog,
-    extract_entities,
+    enrich_episode,  # combined LLM enrichment — classify/entities/facts/structured
     embed_episode,
-    extract_facts,
     embed_fact,
-    extract_structured,
 ]
 """Tasks assigned to the high-priority queue (real-time ingestion)."""
 

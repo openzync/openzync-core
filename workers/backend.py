@@ -106,7 +106,7 @@ async def resolve_graph_backend(
     # SurrealDB is down.  If SurrealDB is configured but unreachable the
     # error is raised loudly — no silent fallback to Postgres.
     surreal = None
-    if org_config.graph_backend == "surrealdb":
+    if backend_name == "surrealdb":
         surreal_pool = ctx.get("surreal_connection_pool")
         if surreal_pool is not None:
             try:
@@ -123,8 +123,29 @@ async def resolve_graph_backend(
                     f"with graph_backend='surrealdb': {exc}"
                 ) from exc
 
+    # SurrealDB configured but no pool / no connection → fail loud.  Do not
+    # construct a doomed SurrealGraphBackend(surreal=None) — every op would
+    # fail at runtime inside callers that may swallow the error.
+    if backend_name == "surrealdb" and surreal is None:
+        raise GraphBackendUnavailableError(
+            f"SurrealDB configured for org {org_id} (graph_backend="
+            f"'surrealdb') but no connection is available — the "
+            "surreal_connection_pool is missing or unreachable. "
+            "Refusing to fall back to Postgres."
+        )
+
     # Get FalkorDB client (may be None)
     falkordb_client = ctx.get("falkordb_client")
+
+    # FalkorDB configured but no client → fail loud.  Same reasoning as
+    # SurrealDB: a FalkorGraphBackend(client=None) constructs successfully
+    # and only fails per-op, which callers may swallow.
+    if backend_name == "falkordb" and falkordb_client is None:
+        raise GraphBackendUnavailableError(
+            f"FalkorDB configured for org {org_id} (graph_backend="
+            f"'falkordb') but no client is available in the worker "
+            "context. Refusing to fall back to Postgres."
+        )
 
     try:
         backend: GraphBackend | None = dispatcher.resolve_and_create(
@@ -133,6 +154,23 @@ async def resolve_graph_backend(
             surreal=surreal,
             falkordb_client=falkordb_client,
         )
+    except GraphBackendUnavailableError:
+        logger.error(
+            "worker.backend_unavailable",
+            extra={"org_id": str(org_id), "backend": backend_name},
+            exc_info=True,
+        )
+        raise
+    except ValueError as exc:
+        # Unknown backend name from a configured org — misconfiguration,
+        # not "disabled".  Fail loud instead of silently using Postgres.
+        logger.error(
+            "worker.backend_unknown",
+            extra={"org_id": str(org_id), "backend": backend_name},
+        )
+        raise GraphBackendUnavailableError(
+            f"Unknown graph backend '{backend_name}' for org {org_id}: {exc}"
+        ) from exc
     except Exception as exc:
         logger.error(
             "worker.backend_resolution_failed",
@@ -146,22 +184,23 @@ async def resolve_graph_backend(
             f"Failed to resolve graph backend '{backend_name}' for org {org_id}"
         ) from exc
 
-    if backend is not None:
-        logger.info(
-            "worker.graph_backend_resolved",
+    if backend is None:
+        # Unreachable for a configured backend (dispatcher either creates an
+        # instance or raises) — fail loud rather than silently degrading.
+        logger.error(
+            "worker.backend_resolved_to_none",
             extra={"org_id": str(org_id), "backend": backend_name},
         )
-        return backend
+        raise GraphBackendUnavailableError(
+            f"Graph backend '{backend_name}' for org {org_id} resolved to "
+            "None but graph is configured — refusing to fall back to Postgres."
+        )
 
-    # A backend name WAS configured but resolve_and_create returned None —
-    # treat as a resolution failure, not a silent downgrade.
-    logger.error(
-        "worker.backend_resolved_to_none",
+    logger.info(
+        "worker.graph_backend_resolved",
         extra={"org_id": str(org_id), "backend": backend_name},
     )
-    raise GraphBackendUnavailableError(
-        f"Graph backend '{backend_name}' resolved to None for org {org_id}"
-    )
+    return backend
 
 
 async def _resolve_org_config(

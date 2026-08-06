@@ -115,12 +115,20 @@ async def link_entities_to_episode(
                     ctx_dict, UUID(org_id), db,
                 )
             except GraphBackendUnavailableError:
-                # A CONFIGURED backend that can't be resolved is a broken
-                # backend, not a disabled one — abort so ENRICHMENT_ENTITY_LINKS
-                # is not set and the episode can be re-linked on retry/reconcile.
-                # Only a genuine resolver None (graph disabled) skips below.
-                logger.error(
+                # Backend is explicitly configured but unreachable — this is
+                # NOT the "disabled" case. Re-raise so ARQ retries; swallowing
+                # here silently drops entity links for this episode.
+                logger.warning(
                     "link_entities_to_episode.backend_unavailable",
+                    org_id=org_id,
+                    exc_info=True,
+                )
+                raise
+            except Exception:
+                # Unexpected resolver errors must surface too — re-raise so
+                # ARQ retries rather than silently unlinking the episode.
+                logger.warning(
+                    "link_entities_to_episode.backend_resolution_failed",
                     org_id=org_id,
                     episode_id=episode_id,
                 )
@@ -204,8 +212,13 @@ async def link_entities_to_episode(
                 if arq_redis is not None:
                     from services.worker.worker_settings import settings as w_settings
 
-                    dedup_key = f"observations:pending:{project_id}"
-                    if not await arq_redis.get(dedup_key):
+                    # No-TTL pending marker, keyed per (org, project).
+                    # compute_observations deletes it when its full project
+                    # scan runs; episodes ingested after that set a fresh
+                    # marker. The old 30s TTL was the bug: episodes ingested
+                    # inside the TTL window never re-triggered the scan.
+                    marker_key = f"observations:pending:{org_id}:{project_id}"
+                    if not await arq_redis.get(marker_key):
                         await arq_redis.enqueue_job(
                             "compute_observations",
                             episode_id=episode_id,
@@ -214,7 +227,9 @@ async def link_entities_to_episode(
                             trace_id=trace_id,
                             _queue_name=w_settings.low_queue_full,
                         )
-                        await arq_redis.set(dedup_key, "1", ex=30)
+                        # Set only after a successful enqueue — a stale marker
+                        # after a failed enqueue would block future triggers.
+                        await arq_redis.set(marker_key, "1")
                         logger.info(
                             "link_entities_to_episode.scheduled_observations",
                             episode_id=episode_id,

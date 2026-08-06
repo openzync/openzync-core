@@ -67,6 +67,7 @@ class TestMemoryService:
             user_repo=mock_user_repo,
             fact_repo=mock_fact_repo,
             idempotency_service=_mock_idempotency_service(),
+            dedup_repo=AsyncMock(),
         )
 
     def _sample_messages(self, count: int = 2) -> list[Message]:
@@ -300,6 +301,9 @@ class TestMemoryService:
             )
         assert result.job_id == existing_job_id
         assert result.status == "accepted"
+        # Redis fast-path pre-check short-circuits before the ingest_dedup
+        # claim — the DB claim must not be reached on a hash hit.
+        service._dedup_repo.insert_or_none.assert_not_awaited()
         service._idem.check_content_hash.assert_awaited_once()
         mock_enqueue.assert_not_called()
 
@@ -434,6 +438,9 @@ class TestMemoryService:
         service._idem.check_idempotency_key.assert_not_called()
         service._idem.store_idempotency_key.assert_not_called()
         assert result.job_id is not None
+        # DB claim (Step 4) is the authoritative dedup arbiter — the claim
+        # must be awaited on every accepted ingest.
+        service._dedup_repo.insert_or_none.assert_awaited_once()
 
     # ------------------------------------------------------------------
     # Blob extraction tasks are enqueued after blob processing
@@ -506,9 +513,8 @@ class TestMemoryServiceInternal:
             fact_repo=mock_fact_repo,
             org_repo=mock_org_repo,
             idempotency_service=_mock_idempotency_service(),
+            dedup_repo=AsyncMock(),
         )
-
-    # ── _get_org_pii_config ──────────────────────────────────────────
 
     @pytest.mark.asyncio
     async def test_get_org_pii_config(self, service: MemoryService) -> None:
@@ -579,6 +585,7 @@ class TestMemoryServiceInfrastructure:
             fact_repo=mock_fact_repo,
             org_repo=mock_org_repo,
             idempotency_service=_mock_idempotency_service(),
+            dedup_repo=AsyncMock(),
         )
 
     @pytest.mark.asyncio

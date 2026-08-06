@@ -160,6 +160,29 @@ async def embed_fact(
             got=len(embedding),
             expected=_embedding_dim,
         )
+        # Permanent failure — the configured model can never produce the
+        # expected dimension.  Retire the fact (embedded_at set, embedding
+        # stays NULL) so reconcile_enrichment stops re-enqueueing it, then
+        # raise.  Transient failures (LLM/network) are NOT retired — they
+        # stay retryable via with_retry.
+        try:
+            async with session_factory() as db:
+                await db.execute(
+                    text(
+                        "UPDATE facts SET embedded_at = now() WHERE id = :id"
+                    ),
+                    {"id": fact_id},
+                )
+                await db.commit()
+        finally:
+            if _own_engine:
+                await engine.dispose()
+        logger.error(
+            "embed_fact.dimension_mismatch_retired",
+            fact_id=fact_id,
+            got=len(embedding),
+            expected=_embedding_dim,
+        )
         raise ValueError(
             f"Embedding dimension mismatch: got {len(embedding)}, "
             f"expected {_embedding_dim}"
@@ -169,7 +192,10 @@ async def embed_fact(
     try:
         async with session_factory() as db:
             await db.execute(
-                text("UPDATE facts SET embedding = :embedding WHERE id = :id"),
+                text(
+                    "UPDATE facts SET embedding = :embedding, "
+                    "embedded_at = now() WHERE id = :id"
+                ),
                 {"embedding": embedding, "id": fact_id},
             )
             await db.commit()

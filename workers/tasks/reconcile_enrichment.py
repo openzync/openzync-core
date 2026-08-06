@@ -6,6 +6,11 @@ more than 10 minutes ago (skipping episodes still in-flight).  For each stale
 episode, checks which enrichment bits are missing and re-enqueues only the
 missing tasks on the high-priority queue.
 
+Also runs a separate fact-embedding repair pass: facts with no embedding and
+no ``embedded_at`` timestamp (never attempted, not retracted) are re-enqueued
+for ``embed_fact``.  Facts whose embedding permanently failed are retired by
+``embed_fact`` (``embedded_at`` set) and are excluded.
+
 This is the safety net for worker crashes, job timeouts, or any scenario where
 enrichment tasks are dropped without completion.  Without this, a worker crash
 leaves episodes un-enriched until an operator manually intervenes.
@@ -14,7 +19,7 @@ leaves episodes un-enriched until an operator manually intervenes.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -27,6 +32,9 @@ from workers.tasks.base import (
     ENRICHMENT_FACTS,
     ENRICHMENT_STRUCTURED_EXTRACTION,
 )
+
+if TYPE_CHECKING:
+    from schemas.organization_config import OrgConfigBase
 
 # Combined LLM enrichment bits — one task replaces 4 individual LLM calls
 LLM_ENRICHMENT_BITS: int = (
@@ -81,6 +89,169 @@ _LLM_TASK_DETAILS: tuple[str, set[str], str] = (
     },
     "high",
 )
+
+
+async def _resolve_fact_org_config(
+    ctx: dict[str, Any],
+    org_id: str,
+) -> OrgConfigBase | None:
+    """Resolve the per-org config for the fact-embedding repair pass.
+
+    Mirrors the org-config resolution pattern used by the worker tasks
+    (``ctx["openbao_client"]`` when present, otherwise a short-lived client
+    from bootstrap settings) and reuses the shared Redis cache via
+    ``core.org_config.get_org_config``.  Returns ``None`` when the config
+    cannot be fetched so the caller skips the org this tick — the facts stay
+    eligible and are retried on the next run.
+
+    Args:
+        ctx: ARQ worker context dict (may contain ``openbao_client``/``redis``).
+        org_id: The organization UUID as a string.
+
+    Returns:
+        An ``OrgConfigBase`` or ``None`` when resolution failed.
+    """
+    import uuid
+
+    from core.config import BootstrapSettings
+    from core.openbao import OpenBaoClient
+    from core.org_config import get_org_config
+
+    bao_client = ctx.get("openbao_client")
+    try:
+        if bao_client is not None:
+            return await get_org_config(
+                uuid.UUID(org_id),
+                redis=ctx.get("redis"),
+                bao_client=bao_client,
+            )
+        bootstrap = BootstrapSettings()
+        async with OpenBaoClient(
+            bootstrap.OPENBAO_ADDR,
+            bootstrap.OPENBAO_ROLE_ID,
+            bootstrap.OPENBAO_SECRET_ID,
+            timeout=10.0,
+        ) as tmp_bao:
+            return await get_org_config(
+                uuid.UUID(org_id),
+                redis=ctx.get("redis"),
+                bao_client=tmp_bao,
+            )
+    except Exception:
+        logger.warning(
+            "reconcile_enrichment.fact_org_config_fetch_failed",
+            org_id=org_id,
+            exc_info=True,
+        )
+        return None
+
+
+async def _repair_missing_fact_embeddings(
+    ctx: dict[str, Any],
+    session_factory: Any,
+    arq_redis: Any,
+    high_queue_name: str,
+) -> int:
+    """Enqueue ``embed_fact`` for facts whose embedding never ran.
+
+    Fact embedding state is tracked by ``facts.embedded_at``: facts are
+    eligible for repair only when never attempted (``embedding IS NULL AND
+    embedded_at IS NULL``) and not retracted (``invalid_at IS NULL``).  Facts
+    retired by ``embed_fact`` (dimension mismatch) have ``embedded_at`` set
+    and are excluded.  Orgs without ``embedding_backend``/``embedding_dim``
+    configured are skipped so a misconfigured org does not churn the queue
+    every tick.
+
+    Args:
+        ctx: ARQ worker context dict used for org-config resolution.
+        session_factory: ARQ ctx async session factory.
+        arq_redis: ARQ Redis client used to enqueue jobs.
+        high_queue_name: Name of the high-priority queue.
+
+    Returns:
+        Number of ``embed_fact`` jobs enqueued.
+    """
+    from sqlalchemy import select
+
+    from models.fact import Fact
+
+    rows: list[dict[str, Any]] = []
+    async with session_factory() as db:
+        result = await db.execute(
+            select(
+                Fact.id,
+                Fact.content,
+                Fact.organization_id,
+                Fact.project_id,
+            )
+            .where(
+                Fact.embedding.is_(None),
+                Fact.embedded_at.is_(None),
+                Fact.invalid_at.is_(None),
+            )
+            .order_by(Fact.created_at.asc())
+            .limit(RECONCILE_BATCH_SIZE)
+        )
+        for row in result.all():
+            rows.append({
+                "id": str(row.id),
+                "content": row.content,
+                "org_id": str(row.organization_id),
+                "project_id": str(row.project_id),
+            })
+
+    if not rows:
+        return 0
+
+    logger.info(
+        "reconcile_enrichment.found_unembedded_facts",
+        count=len(rows),
+    )
+
+    # Resolve org config once per org, not once per fact.
+    by_org: dict[str, list[dict[str, Any]]] = {}
+    for fact_row in rows:
+        by_org.setdefault(fact_row["org_id"], []).append(fact_row)
+
+    enqueued: int = 0
+    for org_id, org_facts in by_org.items():
+        org_cfg = await _resolve_fact_org_config(ctx, org_id)
+        if (
+            org_cfg is None
+            or org_cfg.embedding_backend is None
+            or org_cfg.embedding_dim is None
+        ):
+            logger.info(
+                "reconcile_enrichment.fact_embedding_skipped_misconfigured",
+                org_id=org_id,
+                facts=len(org_facts),
+            )
+            continue
+
+        for fact_row in org_facts:
+            task_kwargs = {
+                "fact_id": fact_row["id"],
+                "org_id": org_id,
+                "project_id": fact_row["project_id"],
+                "content": fact_row["content"],
+                "trace_id": f"reconcile_{fact_row['id'][:8]}",
+            }
+            try:
+                await arq_redis.enqueue_job(
+                    "embed_fact",
+                    **task_kwargs,
+                    _queue_name=high_queue_name,
+                )
+                enqueued += 1
+            except Exception as exc:
+                logger.warning(
+                    "reconcile_enrichment.enqueue_failed",
+                    task="embed_fact",
+                    fact_id=fact_row["id"],
+                    error=str(exc),
+                )
+
+    return enqueued
 
 
 async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
@@ -141,6 +312,16 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
             f"(threshold {BACKLOG_SKIP_THRESHOLD})"
         )
 
+    # ── Fact-embedding repair pass ──────────────────────────────────────
+    # Separate from the episode pass below — facts with a NULL embedding
+    # cannot be expressed as an episode enrichment bit.
+    fact_embedding_enqueued = await _repair_missing_fact_embeddings(
+        ctx,
+        session_factory,
+        arq_redis,
+        high_queue_name,
+    )
+
     # ── Query stale episodes ─────────────────────────────────────────────
     from sqlalchemy import select
 
@@ -182,6 +363,8 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
 
     if not stale_episodes:
         logger.debug("reconcile_enrichment.nothing_stale")
+        if fact_embedding_enqueued:
+            return f"Re-enqueued {fact_embedding_enqueued} fact embedding tasks"
         return "No stale episodes found"
 
     logger.info(
@@ -267,5 +450,7 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
         f"Re-enqueued {total_enqueued} enrichment tasks "
         f"across {episodes_touched} episodes"
     )
+    if fact_embedding_enqueued:
+        summary += f", plus {fact_embedding_enqueued} fact embedding tasks"
     logger.info("reconcile_enrichment.completed", summary=summary)
     return summary

@@ -4,9 +4,11 @@ This is the primary entry point for persisting agent memory. The service:
 
 1. Resolves or creates users and sessions
 2. Validates and persists messages as episodes in PostgreSQL
-3. Enqueues ARQ worker tasks for async enrichment (entity extraction,
-   embedding, fact extraction, graph sync)
-4. Manages idempotency and content-level deduplication via Redis
+3. Enqueues ARQ worker tasks for async enrichment (enrich_episode,
+   embed_episode, link_entities_to_episode)
+4. Manages idempotency (Redis) and content-level deduplication via an
+   atomic claim on the ``ingest_dedup`` table, with Redis as a fast-path
+   pre-check only
 5. Supports full memory wipe (soft-delete all episodes + facts)
 
 Separation: service orchestrates, repositories query. No SQLAlchemy
@@ -23,6 +25,7 @@ import structlog
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     from models.session import Session
     from models.user import User
@@ -39,6 +42,7 @@ from core.exceptions import ConflictError, NotFoundError
 from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
+from repositories.ingest_dedup_repository import IngestDedupRepository
 from repositories.organization_repository import OrganizationRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
@@ -58,7 +62,9 @@ CONTEXT_CACHE_PATTERN = "ctx:{org_id}:{project_id}:*"
 """Redis key pattern for context cache entries to invalidate."""
 
 ARQ_TASKS = [
-    "enrich_episode",  # replaces classify_dialog, extract_entities, extract_facts, extract_structured
+    # Replaces classify_dialog, extract_entities, extract_facts,
+    # and extract_structured.
+    "enrich_episode",
     "link_entities_to_episode",
     "embed_episode",
 ]
@@ -96,6 +102,7 @@ class MemoryService:
         org_repo: OrganizationRepository | None = None,
         blob_repo: EpisodeBlobRepository | None = None,
         idempotency_service: IdempotencyService | None = None,
+        dedup_repo: IngestDedupRepository | None = None,
     ) -> None:
         self._db = db
         self._redis = redis_client
@@ -109,6 +116,7 @@ class MemoryService:
         self._fact_repo = fact_repo or FactRepository(db)
         self._org_repo = org_repo or OrganizationRepository(db)
         self._blob_repo = blob_repo or EpisodeBlobRepository(db)
+        self._dedup_repo = dedup_repo or IngestDedupRepository(db)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Public API
@@ -132,16 +140,21 @@ class MemoryService:
            raise ``ConflictError`` if the key was used with a different body.
         2. Resolve or create the session (``__default__`` if omitted).
         3. Compute content hash for content-level dedup (via IdempotencyService).
-        4. Get next sequence number for ordered insertion.
-        5. Build episode dicts from validated messages.
-        6. PII detection & redaction (if enabled in org quotas).
-        7. Batch-insert episodes into PostgreSQL.
-        8. Upload blobs to S3 and persist blob records.
-        9. Enqueue ARQ enrichment tasks (link_entities_to_episode, extract_entities,
-           extract_facts, embed_episode) + blob text extraction tasks.
-        10. Store idempotency key and content hash (payload = job_id) for future dedup.
-        11. Invalidate context cache for this project.
-        12. Return 202 ``IngestMemoryResponse``.
+        4. Redis fast-path pre-check for dedup (fast-path ONLY — the
+           authoritative arbiter is the ingest_dedup claim in step 5).
+        5. Atomically claim the batch in ``ingest_dedup`` (DB-level dedup,
+           TOCTOU-safe — the claim shares the caller's transaction).
+        6. Get next sequence number for ordered insertion.
+        7. Build episode dicts from validated messages.
+        8. PII detection & redaction (if enabled in org quotas).
+        9. Batch-insert episodes into PostgreSQL.
+        10. Upload blobs to S3 and persist blob records.
+        11. Enqueue ARQ enrichment tasks (enrich_episode, embed_episode,
+            link_entities_to_episode) + blob text extraction tasks.
+        12. Store idempotency key and content hash (payload = job_id)
+            for future dedup.
+        13. Invalidate context cache for this project.
+        14. Return 202 ``IngestMemoryResponse``.
 
         Args:
             org_id: The authenticated organization UUID.
@@ -212,6 +225,9 @@ class MemoryService:
         content_hash = self._idem.compute_content_hash(
             str(org_id), str(created_by), str(session_id), msgs
         )
+        # Redis fast-path pre-check ONLY — never relied on for correctness.
+        # The authoritative dedup arbiter is the ingest_dedup claim below,
+        # which serializes concurrent identical submissions in the DB.
         existing_job_id = await self._idem.check_content_hash(
             str(org_id), str(created_by), str(session_id), msgs
         )
@@ -231,10 +247,43 @@ class MemoryService:
                 message="Content already ingested; returning existing job_id",
             )
 
-        # ── Step 4: Get next sequence number ──────────────────────────────
+        # ── Step 4: Claim the batch (TOCTOU-safe dedup) ──────────────────
+        # job_id is generated before the claim so the accepted ingest can be
+        # referenced by both the dedup row and the ARQ enrichment tasks.
+        # The claim shares the caller's transaction: it commits atomically
+        # with the episodes below, and a concurrent identical submission
+        # that loses the claim returns a duplicate response instead.
+        job_id = uuid4()
+        if not await self._dedup_repo.insert_or_none(
+            project_id=project_id,
+            session_id=session_id,
+            content_hash=content_hash,
+            job_id=job_id,
+        ):
+            prior_job_id = await self._dedup_repo.get_job_id(
+                project_id=project_id,
+                session_id=session_id,
+                content_hash=content_hash,
+            )
+            logger.info(
+                "memory.content_dedup_hit",
+                extra={
+                    "content_hash": content_hash,
+                    "existing_job_id": str(prior_job_id) if prior_job_id else None,
+                    "project_id": str(project_id),
+                },
+            )
+            return IngestMemoryResponse(
+                job_id=str(prior_job_id) if prior_job_id else None,
+                episode_count=len(messages),
+                status="accepted",
+                message="Content already ingested; returning existing job_id",
+            )
+
+        # ── Step 5: Get next sequence number ──────────────────────────────
         start_seq = await self._episode_repo.get_next_sequence(session_id)
 
-        # ── Step 5: Build episode dicts ───────────────────────────────────
+        # ── Step 6: Build episode dicts ───────────────────────────────────
         episode_dicts = [
             {
                 "role": msg.role,
@@ -246,7 +295,7 @@ class MemoryService:
             for i, msg in enumerate(messages)
         ]
 
-        # ── Step 6: PII detection & redaction ─────────────────────────────
+        # ── Step 7: PII detection & redaction ─────────────────────────────
         pii_config_raw = await self._get_org_pii_config(org_id)
         pii_mode = (
             pii_config_raw.get("mode", "off")
@@ -266,7 +315,7 @@ class MemoryService:
                 if redacted != content:
                     msg_dict["content"] = redacted
 
-        # ── Step 7: Batch-insert episodes ────────────────────────────────
+        # ── Step 8: Batch-insert episodes ────────────────────────────────
         episodes = await self._episode_repo.batch_create(
             organization_id=org_id,
             session_id=session_id,
@@ -284,7 +333,7 @@ class MemoryService:
             },
         )
 
-        # ── Step 7b: Upload blobs and persist blob records ───────────────
+        # ── Step 9: Upload blobs and persist blob records ────────────────
         blob_count = 0
         blob_records: list[Any] = []
         if uploaded_blobs:
@@ -301,8 +350,7 @@ class MemoryService:
         # ── Commit so workers can see episodes + blobs before tasks ─────
         await self._db.commit()
 
-        # ── Step 8: Generate job_id and enqueue ARQ tasks ────────────────
-        job_id = str(uuid4())
+        # ── Step 10: Enqueue ARQ tasks with the claimed job_id ───────────
         episode_dicts = [
             {
                 "id": ep.id,
@@ -313,14 +361,14 @@ class MemoryService:
             for ep in episodes
         ]
         await self._enqueue_arq_tasks(
-            job_id=job_id,
+            job_id=str(job_id),
             org_id=str(org_id),
             project_id=str(project_id),
             session_id=str(session_id),
             episodes=episode_dicts,
         )
 
-        # ── Step 8b: Enqueue blob text extraction tasks ──────────────────
+        # ── Step 10b: Enqueue blob text extraction tasks ─────────────────
         if blob_records:
             await self._enqueue_blob_extraction_tasks(
                 blob_records=blob_records,
@@ -330,7 +378,7 @@ class MemoryService:
 
         # ── Step 9: Store idempotency key and content hash ──────────────
         response = IngestMemoryResponse(
-            job_id=job_id,
+            job_id=str(job_id),
             episode_count=len(episodes),
             blob_count=blob_count,
             status="accepted",
@@ -343,20 +391,20 @@ class MemoryService:
             )
 
         await self._idem.store_content_hash(
-            str(org_id), str(created_by), str(session_id), msgs, payload=job_id
+            str(org_id), str(created_by), str(session_id), msgs, payload=str(job_id)
         )
 
-        # ── Step 10: Invalidate context cache for this project ───────────
+        # ── Step 12: Invalidate context cache for this project ───────────
         await self._invalidate_context_cache(str(org_id), str(project_id))
 
-        # ── Step 11: Emit webhook events ─────────────────────────────────
+        # ── Step 13: Emit webhook events ─────────────────────────────────
         if self._webhook_service:
             event_payload = {
                 "org_id": str(org_id),
                 "project_id": str(project_id),
                 "session_id": str(session_id),
                 "episode_count": len(episodes),
-                "job_id": job_id,
+                "job_id": str(job_id),
             }
             await self._webhook_service.emit(
                 organization_id=org_id,
@@ -500,6 +548,8 @@ class MemoryService:
 
     # ── PII Config ────────────────────────────────────────────────────────────
 
+    # ── PII Config ────────────────────────────────────────────────────────────
+
     async def _get_org_pii_config(self, org_id: UUID) -> dict:
         """Fetch PII configuration for an org from their quotas JSONB.
 
@@ -528,15 +578,17 @@ class MemoryService:
     ) -> None:
         """Enqueue ARQ background tasks for episode enrichment.
 
-        Tasks are enqueued on the ``high`` priority queue:
-        - ``link_entities_to_episode``: Links extracted entities to the episode.
-        - ``extract_entities``: LLM-based entity + relationship extraction.
-        - ``extract_facts``: LLM-based zero-shot fact extraction.
-        - ``embed_episode``: Generates embeddings via the configured API.
+        One job per task per episode is enqueued:
+        - ``enrich_episode`` (high queue): combined LLM enrichment —
+          replaces the legacy ``extract_entities`` / ``extract_facts`` /
+          ``classify_dialog`` workers.
+        - ``embed_episode`` (high queue): generates embeddings via the
+          configured API.
+        - ``link_entities_to_episode`` (low queue): links extracted entities
+          to the episode.
 
-        One job per task per episode is enqueued. If the ARQ pool is
-        unavailable (Redis down), episodes are safe in PostgreSQL and will
-        be picked up by a reconciliation worker.
+        If the ARQ pool is unavailable (Redis down), episodes are safe in
+        PostgreSQL and will be picked up by a reconciliation worker.
 
         Args:
             job_id: The composite job ID for this ingestion.

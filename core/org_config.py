@@ -93,7 +93,7 @@ async def get_org_config(
     # 2. Fetch from OpenBao
     raw = await bao_client.read_org_config(org_id)
     # When no config has been stored yet, raw is {} and **raw would apply
-    # Pydantic defaults (e.g. graph_backend → "surrealdb") even though the
+    # Pydantic defaults (e.g. graph_backend → "postgres") even though the
     # field was never explicitly set.  We want *every* field to be None
     # when OpenBao has no record, so escalate all fields explicitly.
     if not raw:

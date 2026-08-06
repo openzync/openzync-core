@@ -58,6 +58,9 @@
 #   --profile llm            (Ollama)
 #   --profile observability  (Prometheus + Grafana + Alloy)
 #   --profile local-db       (Postgres + init + migrate + write-db to OpenBao)
+#   --profile alt-graph      (SurrealDB + FalkorDB graph backends — optional;
+#                             system-level URLs flow to api/worker via the
+#                             OpenBao system secret, see "Optional env vars")
 #
 # Required env vars (no defaults — compose will refuse to start if absent):
 #   BAO_STATIC_SEAL_KEY      64-char hex (openssl rand -hex 32)
@@ -78,8 +81,15 @@
 #   OZ_FALKORDB_URL=redis://redis:6379
 #   OZ_FALKORDB_MAX_CONNECTIONS=20
 #   OZ_FALKORDB_SOCKET_TIMEOUT=30
+#   OZ_SURREALDB_URL=          (empty default; key absent from the system
+#                              secret while unset, so the gate stays off)
 #   OZ_RATE_LIMIT_IP_MAX=10
 #   OZ_RATE_LIMIT_WINDOW_SEC=60
+#
+# With --profile alt-graph, point the graph backends at the local services:
+#   OZ_SURREALDB_URL=ws://surrealdb:8000/rpc \
+#   OZ_FALKORDB_URL=redis://falkordb:6379 \
+#     docker compose --profile alt-graph up -d
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ── Logging defaults ─────────────────────────────────────────────────────────
@@ -155,6 +165,10 @@ services:
       OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-redis://redis:6379}"
       OZ_FALKORDB_MAX_CONNECTIONS: "${OZ_FALKORDB_MAX_CONNECTIONS:-20}"
       OZ_FALKORDB_SOCKET_TIMEOUT: "${OZ_FALKORDB_SOCKET_TIMEOUT:-30}"
+      # SurrealDB system URL — empty by default so the key is skipped by
+      # init_openbao.sh (see KEY_MAPPING) and the org-config gate stays off.
+      # Set with --profile alt-graph: OZ_SURREALDB_URL=ws://surrealdb:8000/rpc
+      OZ_SURREALDB_URL: "${OZ_SURREALDB_URL:-}"
       OZ_RATE_LIMIT_IP_MAX: "${OZ_RATE_LIMIT_IP_MAX:-10}"
       OZ_RATE_LIMIT_WINDOW_SEC: "${OZ_RATE_LIMIT_WINDOW_SEC:-60}"
       OZ_HOSTS_ALLOWED: "${OZ_HOSTS_ALLOWED:-localhost:8000}"
@@ -327,6 +341,11 @@ services:
       # OZ_* vars come from /run/secrets/system.env (rendered by the Agent).
       OZ_OPENBAO_ADDR: "http://openbao:8200"
       UVICORN_WORKERS: "1"
+      # Graph-backend system URLs (alt-graph profile). The runtime value
+      # comes from the OpenBao system secret (sourced from system.env by the
+      # entrypoint AFTER container env), which wins over these parity entries.
+      OZ_SURREALDB_URL: "${OZ_SURREALDB_URL:-}"
+      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-}"
     depends_on:
       openbao-agent-api:
         condition: service_healthy
@@ -380,6 +399,10 @@ services:
     container_name: openzync-worker
     environment:
       OZ_OPENBAO_ADDR: "http://openbao:8200"
+      # Parity entries only — authoritative values come from the OpenBao
+      # system secret via the worker sidecar (sourced after container env).
+      OZ_SURREALDB_URL: "${OZ_SURREALDB_URL:-}"
+      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-}"
     depends_on:
       openbao-agent-worker:
         condition: service_healthy
@@ -551,6 +574,48 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
+  # ── SurrealDB (graph backend — record/memory model) — OPTIONAL ──────────────
+  # Activate with --profile alt-graph. Wire the app to it via
+  #   OZ_SURREALDB_URL=ws://surrealdb:8000/rpc
+  # Host port 8001 — 8000 on the host is the api's publish port.
+  # In-memory storage (per task spec); for persistence use
+  # `start file://data` (v2) / `surrealkv://data` (v3) + a named volume.
+  surrealdb:
+    profiles: [alt-graph]
+    image: surrealdb/surrealdb:v3.2.3
+    container_name: openzync-surrealdb
+    command: start --log trace --user ${SURREALDB_USER:-root} --pass ${SURREALDB_PASS:-root}
+    ports: ["127.0.0.1:8001:8000"]
+    healthcheck:
+      test: ["CMD", "surreal", "is-ready", "--conn", "http://localhost:8000"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+    restart: unless-stopped
+
+  # ── FalkorDB (graph backend — property-graph over RESP) — OPTIONAL ──────────
+  # Activate with --profile alt-graph. Wire the app to it via
+  #   OZ_FALKORDB_URL=redis://falkordb:6379
+  # Host port 6380 — the stack's redis already owns host 6379 (the CI
+  # workflow also publishes falkordb on 6380).
+  falkordb:
+    profiles: [alt-graph]
+    image: falkordb/falkordb:v4.20.1-alpine
+    container_name: openzync-falkordb
+    ports: ["127.0.0.1:6380:6379"]
+    environment:
+      REDIS_ARGS: "--appendonly yes"
+    volumes:
+      - falkordb-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "PING"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+    restart: unless-stopped
+
 # ── Named volumes ────────────────────────────────────────────────────────────
 # openbao-data:        Raft storage + seal
 # openbao-init-data:   Shared bootstrap artefacts (unseal keys, root token,
@@ -576,5 +641,6 @@ volumes:
   openbao-data: {}
   openbao-init-data: {}
   postgres-data: {}
+  falkordb-data: {}
   api-secrets: {}
   worker-secrets: {}
