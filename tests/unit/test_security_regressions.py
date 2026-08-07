@@ -29,7 +29,7 @@ from core.exceptions import AuthenticationError
 from middleware.rate_limit import RateLimitMiddleware
 from repositories.auth_repository import AuthRepository
 from schemas.auth import VerifyEmailRequest
-from schemas.email import VerifyOtpRequest
+from schemas.email import ResetPasswordRequest, VerifyOtpRequest
 from services.auth_service import AuthService
 
 
@@ -91,8 +91,8 @@ async def test_h4a_ready_bypasses_when_redis_down() -> None:
 class TestH5EnumerationClosed:
     """H5 residual closed: consume flows no longer leak account existence.
 
-    ``verify_email`` and ``passwordless_login`` raise the same
-    ``AuthenticationError`` for an unknown email as for a wrong OTP — a
+    ``verify_email``, ``passwordless_login`` and ``reset_password`` raise the
+    same ``AuthenticationError`` for an unknown email as for a wrong OTP — a
     missing account means no OTP was ever issued for it, so the two cases
     are indistinguishable.  If someone reintroduces ``NotFoundError`` here,
     these tests fail.
@@ -132,4 +132,21 @@ class TestH5EnumerationClosed:
         ):
             await service.passwordless_login(
                 VerifyOtpRequest(email="nobody@acme.com", otp="123456")
+            )
+
+    @pytest.mark.asyncio
+    async def test_reset_password_unknown_account_raises_auth_error(
+        self, service: AuthService
+    ) -> None:
+        """reset_password is indistinguishable for unknown accounts."""
+        service._repo.find_user_by_email.return_value = None
+        with pytest.raises(
+            AuthenticationError, match="Invalid or expired reset code"
+        ):
+            await service.reset_password(
+                ResetPasswordRequest(
+                    email="nobody@acme.com",
+                    otp="123456",
+                    new_password="NewStrong1",  # noqa: S106 test-only dummy
+                )
             )

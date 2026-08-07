@@ -526,14 +526,14 @@ class TestAuthService:
         service: AuthService,
         mock_repo: AsyncMock,
     ) -> None:
-        """Non-existent user raises NotFoundError."""
+        """Non-existent user raises the generic AuthenticationError."""
         mock_repo.find_user_by_email.return_value = None
 
         payload = ResetPasswordRequest(
             email="nobody@acme.com", otp="123456", new_password="NewStrong1"
         )
 
-        with pytest.raises(NotFoundError, match="not found"):
+        with pytest.raises(AuthenticationError, match="Invalid or expired reset code"):
             await service.reset_password(payload)
 
     @pytest.mark.asyncio

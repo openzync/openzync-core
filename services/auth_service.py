@@ -342,13 +342,18 @@ class AuthService:
             An ``OtpResponse`` confirming the password was changed.
 
         Raises:
-            NotFoundError: If the user does not exist.
-            AuthenticationError: If the OTP is invalid or expired.
+            AuthenticationError: If the OTP is invalid or expired — raised
+                for unknown emails too, so the response is indistinguishable
+                from a wrong code against an existing account (anti
+                account-enumeration).
             ValidationError: If the new password is too weak.
         """
         user = await self._repo.find_user_by_email(payload.email)
         if user is None:
-            raise NotFoundError("Dashboard user not found.")
+            raise AuthenticationError(
+                "Invalid or expired reset code. "
+                "Please request a new code.",
+            )
 
         # Verify OTP
         verified = await self._otp_service.verify(
