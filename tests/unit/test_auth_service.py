@@ -415,12 +415,14 @@ class TestAuthService:
         service: AuthService,
         mock_repo: AsyncMock,
     ) -> None:
-        """Non-existent user raises NotFoundError."""
+        """Non-existent user raises AuthenticationError (anti-enumeration)."""
         mock_repo.find_user_by_email.return_value = None
 
         payload = VerifyEmailRequest(email="nobody@acme.com", otp="123456")
 
-        with pytest.raises(NotFoundError, match="not found"):
+        with pytest.raises(
+            AuthenticationError, match="Invalid or expired verification code"
+        ):
             await service.verify_email(payload)
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -627,12 +629,14 @@ class TestAuthService:
         service: AuthService,
         mock_repo: AsyncMock,
     ) -> None:
-        """Missing user raises NotFoundError."""
+        """Missing user raises AuthenticationError (anti-enumeration)."""
         mock_repo.find_user_by_email.return_value = None
 
         payload = VerifyOtpRequest(email="nobody@acme.com", otp="123456")
 
-        with pytest.raises(NotFoundError, match="not found"):
+        with pytest.raises(
+            AuthenticationError, match="Invalid or expired login code"
+        ):
             await service.passwordless_login(payload)
 
     @pytest.mark.asyncio

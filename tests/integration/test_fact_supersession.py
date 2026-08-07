@@ -734,8 +734,12 @@ class TestSearchExcludesSuperseded:
             retriever._embed_query = AsyncMock(return_value=vec)
 
             # Token present in both facts; only the current one returns.
+            # Pin query_time just past the supersession boundary (T1): the
+            # default-now path would make this test pass only while the
+            # wall clock is after T1 (time-dependent on fixed-seeded facts).
+            as_of = T1 + timedelta(minutes=1)
             vector_hits = await retriever._vector_search_facts(
-                "cobalt", PROJECT_ID, limit=50
+                vec, PROJECT_ID, limit=50, query_time=as_of
             )
             vector_ids = {str(h["id"]) for h in vector_hits}
             assert str(new_id) in vector_ids
@@ -744,7 +748,7 @@ class TestSearchExcludesSuperseded:
             )
 
             bm25_hits = await retriever._bm25_search_facts(
-                "cobalt mining output", PROJECT_ID, limit=50
+                "cobalt mining output", PROJECT_ID, limit=50, query_time=as_of
             )
             bm25_ids = {str(h["id"]) for h in bm25_hits}
             assert str(new_id) in bm25_ids

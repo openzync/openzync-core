@@ -202,12 +202,17 @@ class AuthService:
             A ``TokenResponse`` with access and refresh tokens.
 
         Raises:
-            AuthenticationError: If the OTP is invalid or expired.
-            NotFoundError: If the user does not exist.
+            AuthenticationError: If the OTP is invalid or expired — or the
+                email has no account (indistinguishable, anti-enumeration).
         """
         user = await self._repo.find_user_by_email(payload.email)
         if user is None:
-            raise NotFoundError("Dashboard user not found.")
+            # No account → no OTP was ever issued for it.  Raise the exact
+            # wrong-code error so missing vs existing emails are indistinguishable.
+            raise AuthenticationError(
+                "Invalid or expired verification code. "
+                "Please request a new code."
+            )
 
         # Always verify the OTP — even for already-verified users.
         # This prevents an unauthenticated attacker who knows a verified
@@ -434,12 +439,17 @@ class AuthService:
             A ``TokenResponse`` with access and refresh tokens.
 
         Raises:
-            NotFoundError: If the user does not exist.
-            AuthenticationError: If the OTP is invalid or expired.
+            AuthenticationError: If the OTP is invalid or expired — or the
+                email has no account (indistinguishable, anti-enumeration).
         """
         user = await self._repo.find_user_by_email(payload.email)
         if user is None:
-            raise NotFoundError("Dashboard user not found.")
+            # No account → no OTP was ever issued for it.  Raise the exact
+            # wrong-code error so missing vs existing emails are indistinguishable.
+            raise AuthenticationError(
+                "Invalid or expired login code. "
+                "Please request a new code."
+            )
 
         verified = await self._otp_service.verify(
             email=payload.email,

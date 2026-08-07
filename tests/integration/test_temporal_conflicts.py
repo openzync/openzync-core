@@ -21,7 +21,7 @@ Requires testcontainers PostgreSQL with graph_relationships table.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from uuid import UUID
 
 import pytest
@@ -571,10 +571,17 @@ class TestTemporalQueries:
             ],
         )
 
-        # Invalidate fact D
+        # Invalidate fact D at a fixed instant inside its valid range
+        # (2024-01-01..2024-06-30) and before every query bound below
+        # (2024-05-01 at_time, 2024-02-01 in_range start).  A run-time
+        # ``now()`` retraction is *after* those query times, so
+        # ``invalid_at > :t`` keeps QD effective and the exclusion
+        # assertions hold only while the wall clock predates the retraction.
         await db.execute(
-            sa_text("UPDATE facts SET invalid_at = now(), updated_at = now() WHERE id = :fid"),
-            {"fid": created[3].id},
+            sa_text(
+                "UPDATE facts SET invalid_at = :ts, updated_at = :ts WHERE id = :fid"
+            ),
+            {"fid": created[3].id, "ts": datetime(2024, 1, 15, tzinfo=UTC)},
         )
         await db.flush()
 

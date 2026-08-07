@@ -6,8 +6,9 @@ These tests close coverage gaps the fix's own suites left open:
    but the fix only asserted the ``/health`` bypass. Here we assert ``/ready``
    also survives a Redis outage while ordinary paths 503.
 2. ``H5`` enumeration residual: ``verify_email`` and ``passwordless_login``
-   still distinguish missing accounts (``NotFoundError``). This test pins the
-   current behavior so the residual stays visible and tracked.
+   used to leak missing accounts via ``NotFoundError``. Both flows now raise
+   the same ``AuthenticationError`` as a wrong OTP, so the residual is closed;
+   these tests pin the closed behavior.
 
 All other findings (H2 rotation, H4d lockout, C2 bootstrap gate, C3 webhook
 secrets, H3 idempotency) are covered by the fix's own suites — see
@@ -24,7 +25,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 import core.config as cfg
-from core.exceptions import NotFoundError
+from core.exceptions import AuthenticationError
 from middleware.rate_limit import RateLimitMiddleware
 from repositories.auth_repository import AuthRepository
 from schemas.auth import VerifyEmailRequest
@@ -87,16 +88,14 @@ async def test_h4a_ready_bypasses_when_redis_down() -> None:
 
 
 @pytest.mark.unit
-class TestH5ResidualEnumeration:
-    """H5 residual: two flows still leak account existence.
+class TestH5EnumerationClosed:
+    """H5 residual closed: consume flows no longer leak account existence.
 
-    The H5 fix made signup/forgot_password/resend_otp/login-otp-send
-    indistinguishable for existing vs missing emails, but ``verify_email`` and
-    ``passwordless_login`` still raise ``NotFoundError`` for unknown accounts.
-
-    TODO(SEC-xxx): fold these two flows into the generic-response pattern —
-    ticket opened to track the residual; do NOT change service code until the
-    follow-up lands (existing tests in test_auth_service.py already pin this).
+    ``verify_email`` and ``passwordless_login`` raise the same
+    ``AuthenticationError`` for an unknown email as for a wrong OTP — a
+    missing account means no OTP was ever issued for it, so the two cases
+    are indistinguishable.  If someone reintroduces ``NotFoundError`` here,
+    these tests fail.
     """
 
     @pytest.fixture
@@ -110,23 +109,27 @@ class TestH5ResidualEnumeration:
         )
 
     @pytest.mark.asyncio
-    async def test_verify_email_still_404s_unknown_account(
+    async def test_verify_email_unknown_account_raises_auth_error(
         self, service: AuthService
     ) -> None:
-        """verify_email leaks a missing account via NotFoundError."""
+        """verify_email is indistinguishable for unknown accounts."""
         service._repo.find_user_by_email.return_value = None
-        with pytest.raises(NotFoundError, match="Dashboard user not found"):
+        with pytest.raises(
+            AuthenticationError, match="Invalid or expired verification code"
+        ):
             await service.verify_email(
                 VerifyEmailRequest(email="nobody@acme.com", otp="123456")
             )
 
     @pytest.mark.asyncio
-    async def test_passwordless_login_still_404s_unknown_account(
+    async def test_passwordless_login_unknown_account_raises_auth_error(
         self, service: AuthService
     ) -> None:
-        """passwordless_login leaks a missing account via NotFoundError."""
+        """passwordless_login is indistinguishable for unknown accounts."""
         service._repo.find_user_by_email.return_value = None
-        with pytest.raises(NotFoundError, match="Dashboard user not found"):
+        with pytest.raises(
+            AuthenticationError, match="Invalid or expired login code"
+        ):
             await service.passwordless_login(
                 VerifyOtpRequest(email="nobody@acme.com", otp="123456")
             )
