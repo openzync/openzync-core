@@ -226,7 +226,9 @@ class AuthThrottle:
 
         Protects the ``/v1/auth/reset-password`` endpoint from brute-force
         OTP guessing.  Limits: 10 attempts per email per 15 min, 20 per IP
-        per 15 min.
+        per 15 min.  Keys are normalized (email lowercased + stripped, IP
+        stripped) so case-variant emails share one counter and cannot
+        bypass the limit.
 
         Args:
             email: The email being reset.
@@ -235,12 +237,12 @@ class AuthThrottle:
         Raises:
             RateLimitError: If the rate limit is exceeded.
         """
-        email_key = f"auth:throttle:reset:email:{email}"
+        email_key = f"auth:throttle:reset:email:{self._normalize_email(email)}"
         email_attempts = await self._redis.incr(email_key)
         if email_attempts == 1:
             await self._redis.expire(email_key, 900)  # 15 min window
 
-        ip_key = f"auth:throttle:reset:ip:{ip}"
+        ip_key = f"auth:throttle:reset:ip:{self._normalize_ip(ip)}"
         ip_attempts = await self._redis.incr(ip_key)
         if ip_attempts == 1:
             await self._redis.expire(ip_key, 900)  # 15 min window
@@ -255,6 +257,23 @@ class AuthThrottle:
                 "Too many reset attempts from this IP address. "
                 "Try again later."
             )
+
+    async def record_reset_success(self, email: str, ip: str) -> None:
+        """Decrement password-reset counters after a successful reset.
+
+        Compensates the increments from :meth:`check_reset_attempt` so
+        failed attempts from an attacker do not permanently lock out the
+        account owner.  Call exactly once per successful reset.  Counters
+        are floored at zero — never decremented below.
+
+        Args:
+            email: The email address used for the successful reset.
+            ip: The client IP address.
+        """
+        email_key = f"auth:throttle:reset:email:{self._normalize_email(email)}"
+        ip_key = f"auth:throttle:reset:ip:{self._normalize_ip(ip)}"
+        await self._decrement_if_positive(email_key)
+        await self._decrement_if_positive(ip_key)
 
     async def check_passwordless_send(self, email: str, ip: str) -> None:
         """Check and increment passwordless-login OTP send counters.

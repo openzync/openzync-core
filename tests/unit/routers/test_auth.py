@@ -395,6 +395,36 @@ async def test_reset_password_success() -> None:
     assert resp.status_code == 200
     assert resp.json()["message"] == "Password has been reset"
     mocks["auth_throttle"].check_reset_attempt.assert_awaited_once()
+    # Success clears the reset attempt counters (H4d).
+    mocks["auth_throttle"].record_reset_success.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reset_password_failure_no_decrement() -> None:
+    """POST /v1/auth/reset-password with a bad OTP must NOT clear counters —
+    the service raises before the success decrement runs."""
+    from core.exceptions import AuthenticationError, register_exception_handlers
+
+    app, mocks = _create_app()
+    register_exception_handlers(app)
+    mocks["auth_service"].reset_password.side_effect = AuthenticationError(
+        "Invalid or expired reset code. Please request a new code."
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/auth/reset-password",
+            json={
+                "email": "admin@acme.com",
+                "otp": "000000",
+                "new_password": "new-secure-p@ssword-456",
+            },
+        )
+
+    assert resp.status_code == 401
+    mocks["auth_throttle"].check_reset_attempt.assert_awaited_once()
+    mocks["auth_throttle"].record_reset_success.assert_not_awaited()
 
 
 @pytest.mark.asyncio

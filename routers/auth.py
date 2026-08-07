@@ -293,7 +293,12 @@ async def reset_password(
         Confirmation message and forces re-login.
     """
     await throttle.check_reset_attempt(payload.email, _client_ip(request))
-    return await service.reset_password(payload)
+    result = await service.reset_password(payload)
+    # A successful reset clears the attempt counters so failed tries from
+    # an attacker never permanently lock out the account owner.  Failed
+    # attempts raise before this line and do not decrement.
+    await throttle.record_reset_success(payload.email, _client_ip(request))
+    return result
 
 
 @router.post(
