@@ -24,6 +24,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from redis.asyncio import BlockingConnectionPool
 
 from core.arq import close_arq, init_arq
 from core.config import get_settings
@@ -32,7 +33,6 @@ from core.exceptions import register_exception_handlers
 from core.graph_backend import init_dispatcher
 from core.logging import setup_logging
 from core.redis import close_redis, init_redis
-from redis.asyncio import BlockingConnectionPool
 from middleware.audit import AuditMiddleware
 from middleware.auth import AuthMiddleware
 from middleware.logging import LoggingMiddleware
@@ -68,7 +68,6 @@ from routers import (
     structured_extractions,
     users,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -180,19 +179,16 @@ def create_app() -> FastAPI:
     # (outermost → innermost).  Registration order is the reverse.
     #
     # Runtime order (outermost → innermost):
-    #   0. MetricsMiddleware   — RED metrics (wraps everything including 404)
+    #   0. MetricsMiddleware    — RED metrics (wraps everything including 404)
     #   1. CORSMiddleware       — intercept OPTIONS preflight immediately
     #   2. LoggingMiddleware    — log request/response lifecycle
     #   3. TracingMiddleware    — OpenTelemetry span management
-    #   4. RateLimitMiddleware  — per-IP / per-token sliding window
-    #   5. AuthMiddleware       — extract/validate JWT & API key
+    #   4. AuthMiddleware       — extract/validate JWT & API key, set org_id
+    #   5. RateLimitMiddleware  — per-IP / per-org sliding window
     #   6. AuditMiddleware      — record request to audit_logs (post-response)
     #   7. GZipMiddleware       — compress responses >= 1 KB
     #   8. TrustedHostMiddleware — prevent host-header attacks
     #   9. RequestIDMiddleware   — assign request_id (innermost, closest to router)
-
-    # Runtime 0 (outermost) — Metrics: captures EVERY request including 404s.
-    app.add_middleware(MetricsMiddleware)
 
     # Runtime 9 (innermost) — Request ID: spans every downstream component.
     app.add_middleware(RequestIDMiddleware)
@@ -211,14 +207,16 @@ def create_app() -> FastAPI:
     # Runtime 7 — GZip compression
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-    # Runtime 5 — Auth: extract/validate JWT & API key, set request state.
-    app.add_middleware(AuthMiddleware)
-
     # Runtime 6 — Audit: record request to audit_logs (post-response, never blocks).
     app.add_middleware(AuditMiddleware)
 
-    # Runtime 4 — Rate limiting
+    # Runtime 5 — Rate limiting: registered BEFORE Auth so it runs AFTER Auth,
+    # giving it access to scope["state"]["org_id"] set by AuthMiddleware.
+    # (Registered later = executes earlier; see LIFO note above.)
     app.add_middleware(RateLimitMiddleware)
+
+    # Runtime 4 — Auth: extract/validate JWT & API key, set request state.
+    app.add_middleware(AuthMiddleware)
 
     # Runtime 3 — Tracing
     app.add_middleware(TracingMiddleware)
@@ -226,8 +224,8 @@ def create_app() -> FastAPI:
     # Runtime 2 — Structured logging
     app.add_middleware(LoggingMiddleware)
 
-    # Runtime 1 (outermost after Metrics) — CORS: intercepts OPTIONS preflight
-    # BEFORE AuthMiddleware rejects them.
+    # Runtime 1 — CORS: intercepts OPTIONS preflight BEFORE AuthMiddleware
+    # rejects them.
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.CORS_ORIGINS.split(","),
@@ -235,6 +233,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Runtime 0 (outermost) — Metrics: registered LAST so it wraps everything
+    # including the 404 handler for unknown routes (see MetricsMiddleware).
+    app.add_middleware(MetricsMiddleware)
 
     # ── Routers ──────────────────────────────────────────────────────────
     # Health must live at ROOT (not /v1) — Helm/NGINX probes target /health

@@ -44,6 +44,19 @@ class TestWebhookEndpointModel:
         assert ep.last_delivery_at is None
 
     @pytest.mark.unit
+    def test_signing_secret_nullable(self) -> None:
+        """signing_secret defaults to None until generated (legacy rows migrate)."""
+        ep = WebhookEndpoint(
+            organization_id=uuid.uuid4(),
+            name="Test",
+            url="https://example.com/hook",
+            events="[]",
+        )
+        assert ep.signing_secret is None
+        col = WebhookEndpoint.__table__.columns["signing_secret"]
+        assert col.nullable is True
+
+    @pytest.mark.unit
     def test_table_name(self) -> None:
         """Table name is webhook_endpoints."""
         assert WebhookEndpoint.__tablename__ == "webhook_endpoints"

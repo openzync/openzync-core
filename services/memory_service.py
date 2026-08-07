@@ -182,7 +182,7 @@ class MemoryService:
         # ── Step 1: Idempotency check ────────────────────────────────────
         if idempotency_key is not None:
             result = await self._idem.check_idempotency_key(
-                idempotency_key, body_hash or ""
+                idempotency_key, body_hash or "", str(org_id)
             )
             if (
                 result.status == IdempotencyStatus.REPLAY
@@ -387,7 +387,7 @@ class MemoryService:
 
         if idempotency_key is not None:
             await self._idem.store_idempotency_key(
-                idempotency_key, body_hash or "", response.model_dump()
+                idempotency_key, body_hash or "", response.model_dump(), str(org_id)
             )
 
         await self._idem.store_content_hash(

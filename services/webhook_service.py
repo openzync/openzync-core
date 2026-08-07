@@ -5,7 +5,14 @@ This service handles two concerns:
 1. **Endpoint management** — CRUD for webhook endpoints (DB only).
 2. **Event emission** — ``emit()`` fans out to all subscribed endpoints
    by enqueuing ARQ ``deliver_webhook`` jobs.  Delivery is async with
-   HMAC-SHA256 signing, retries, and delivery logging.
+   per-endpoint HMAC-SHA256 signing, retries, and delivery logging.
+
+Each endpoint carries its **own** signing secret, stored on the endpoint
+row and returned exactly once at create/rotate time.  Signing with the
+endpoint's own secret means one tenant can never forge signatures that
+another tenant's consumers trust.  The legacy global
+``WEBHOOK_SIGNING_SECRET`` config field is **deprecated** for signing —
+kept for backward-compat reads, no longer used here.
 """
 
 from __future__ import annotations
@@ -14,6 +21,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import secrets
 import time
 import uuid
 from collections.abc import Mapping
@@ -22,6 +30,7 @@ import orjson
 
 from core.arq import get_arq
 from core.config import get_settings
+from models.webhook import WebhookEndpoint
 from repositories.webhook_repository import WebhookRepository
 from services.worker.worker_settings import get_queue_name
 
@@ -89,21 +98,56 @@ class WebhookService:
         url: str,
         events: list[str] | None = None,
     ) -> tuple[dict, str]:
-        """Create a webhook endpoint.
+        """Create a webhook endpoint with a fresh per-endpoint signing secret.
 
-        Returns a tuple of ``(endpoint_dict, global_signing_secret)``.
-        The global ``WEBHOOK_SIGNING_SECRET`` is returned so the consumer
-        can verify HMAC-SHA256 signatures.  All endpoints share the same
-        secret — rotate via environment variable to cycle all consumers.
+        The secret is generated once and returned so the consumer can
+        verify HMAC-SHA256 signatures.  It is never returned again —
+        subsequent reads (``list_endpoints``/``get_endpoint``/``update_endpoint``)
+        do not expose it.  Rotate via :meth:`rotate_endpoint_secret`.
+
+        Args:
+            organization_id: The owning organization's UUID.
+            name: Human-readable endpoint label.
+            url: HTTPS endpoint URL that receives POST deliveries.
+            events: Subscribed event types; empty/None subscribes to all.
+
+        Returns:
+            A tuple of ``(endpoint_dict, one_time_signing_secret)``.
         """
+        signing_secret = secrets.token_urlsafe(43)
         endpoint = await self._repo.create(
             organization_id=organization_id,
             name=name,
             url=url,
             events=events,
+            signing_secret=signing_secret,
         )
+        # ponytail: per-org secret stored in DB; upgrade to Transit-at-rest
+        # encryption with core.transit WEBHOOK_SECRET_KEY when TransitManager is wired
+        return self._serialize(endpoint), signing_secret
 
-        return self._serialize(endpoint), get_settings().WEBHOOK_SIGNING_SECRET
+    async def rotate_endpoint_secret(
+        self,
+        endpoint_id: uuid.UUID,
+        organization_id: uuid.UUID,
+    ) -> str | None:
+        """Rotate an endpoint's signing secret, returning the new value once.
+
+        Args:
+            endpoint_id: The endpoint whose secret should be rotated.
+            organization_id: The owning organization (ownership check).
+
+        Returns:
+            The new signing secret, or ``None`` if the endpoint does not
+            exist or belongs to a different organization.
+        """
+        endpoint = await self._repo.get_by_id(endpoint_id)
+        if not endpoint or endpoint.organization_id != organization_id:
+            return None
+
+        new_secret = secrets.token_urlsafe(43)
+        await self._repo.update(endpoint_id, signing_secret=new_secret)
+        return new_secret
 
     async def update_endpoint(
         self,
@@ -176,7 +220,6 @@ class WebhookService:
         payload = payload if payload is not None else {}
         body_bytes = orjson.dumps({"type": event_type, "payload": payload})
         body = body_bytes.decode()
-        signing_secret = get_settings().WEBHOOK_SIGNING_SECRET
 
         try:
             arq_pool = get_arq()
@@ -185,8 +228,29 @@ class WebhookService:
             raise
 
         queue_name = get_queue_name(get_settings().ENVIRONMENT, ARQ_WEBHOOK_QUEUE)
-        async def _enqueue_one(ep: object) -> None:
-            """Enqueue a single webhook delivery."""
+
+        async def _enqueue_one(ep: WebhookEndpoint) -> None:
+            """Enqueue a single delivery, signed with the endpoint's own secret."""
+            signing_secret = ep.signing_secret
+            if not signing_secret:
+                # Legacy row migrated with a NULL secret — backfill one now so
+                # we never fall back to a shared/global secret. Single
+                # conditional UPDATE (WHERE signing_secret IS NULL) so two
+                # concurrent emitters cannot race and write different secrets —
+                # the loser re-reads the winner's secret instead of overwriting.
+                signing_secret = secrets.token_urlsafe(43)
+                if await self._repo.set_signing_secret_if_null(
+                    ep.id, signing_secret=signing_secret,
+                ) == 0:
+                    refreshed = await self._repo.get_by_id(ep.id)
+                    if refreshed is None or not refreshed.signing_secret:
+                        logger.warning(
+                            "webhook.secret_backfill_conflict",
+                            extra={"endpoint_id": str(ep.id)},
+                        )
+                        return  # endpoint deleted mid-emit — nothing to deliver
+                    signing_secret = refreshed.signing_secret
+
             signature = sign_payload(signing_secret, body_bytes)
             await arq_pool.enqueue(
                 "deliver_webhook",
@@ -210,11 +274,13 @@ class WebhookService:
     # ── Serialization ────────────────────────────────────────────────────────
 
     @staticmethod
-    def _serialize(endpoint: object) -> dict:
-        """Convert a WebhookEndpoint ORM model to a dict for API responses."""
-        from models.webhook import WebhookEndpoint as WE
+    def _serialize(endpoint: WebhookEndpoint) -> dict:
+        """Convert a WebhookEndpoint ORM model to a dict for API responses.
 
-        if not isinstance(endpoint, WE):
+        Never includes ``signing_secret`` — the secret is shown exactly
+        once at create/rotate time and is not retrievable afterwards.
+        """
+        if not isinstance(endpoint, WebhookEndpoint):
             raise TypeError(f"Expected WebhookEndpoint, got {type(endpoint).__name__}")
         try:
             events_list = orjson.loads(endpoint.events.encode()) if endpoint.events else []

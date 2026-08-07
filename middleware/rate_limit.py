@@ -14,16 +14,16 @@ Two tiers of rate limiting are enforced:
 All responses include RFC 7807 body on 429.
 
 Fail-closed: if Redis is unreachable the request is rejected with HTTP 503
-via :class:`RateLimitUnavailableError`.
+and an RFC 7807 body, mirroring the semantics of
+:class:`RateLimitUnavailableError` (which the org-quota path raises).
 """
 
 from __future__ import annotations
 
-import orjson
 import logging
 import time
-from typing import Any
 
+import orjson
 import redis.asyncio as aioredis
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -49,6 +49,7 @@ FALLBACK_ORG_WINDOW: int = 60
 """Window in seconds for org-based requests."""
 
 RFC_7807_TYPE = "https://errors.openzync.tech/rate_limit_exceeded"
+RFC_7807_TYPE_UNAVAILABLE = "https://errors.openzync.tech/rate_limit_unavailable"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -59,8 +60,8 @@ RFC_7807_TYPE = "https://errors.openzync.tech/rate_limit_exceeded"
 def _get_client_ip(scope: Scope) -> str:
     """Extract the originating client IP from the ASGI scope.
 
-    Respects ``X-Forwarded-For`` when behind a reverse proxy, falling back
-    to the direct client address.
+    Only the direct ASGI peer address is used; ``X-Forwarded-For`` is not
+    trusted.
 
     Args:
         scope: The ASGI connection scope.
@@ -68,10 +69,6 @@ def _get_client_ip(scope: Scope) -> str:
     Returns:
         The client IP address as a string.
     """
-    headers = dict(scope.get("headers") or [])
-    forwarded = headers.get(b"x-forwarded-for", b"").decode()
-    if forwarded:
-        return forwarded.split(",")[0].strip()
     client = scope.get("client")
     if client is not None:
         return client[0]
@@ -176,6 +173,37 @@ class RateLimitMiddleware:
         self.app = app
         self._bypass_paths: set[str] = self.BYPASS_PATHS
 
+    async def _respond_503(self, send: Send, path: str) -> None:
+        """Reject the request with an RFC 7807 503 (fail-closed).
+
+        Built inline — the middleware is raw ASGI and must not depend on the
+        app's exception handlers.
+
+        Args:
+            send: The ASGI send callable.
+            path: The request path, used as the ``instance`` field.
+        """
+        body = orjson.dumps({
+            "type": RFC_7807_TYPE_UNAVAILABLE,
+            "title": "Service Unavailable",
+            "status": 503,
+            "detail": "Rate limiting is unavailable — request rejected (fail-closed).",
+            "instance": path,
+        })
+        headers = [
+            (b"content-type", b"application/problem+json"),
+            (b"content-length", str(len(body)).encode()),
+        ]
+        await send({
+            "type": "http.response.start",
+            "status": 503,
+            "headers": headers,
+        })
+        await send({
+            "type": "http.response.body",
+            "body": body,
+        })
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
@@ -205,41 +233,43 @@ class RateLimitMiddleware:
             redis = getattr(_app.state, "redis", None) if _app is not None else None
 
         if redis is None:
-            logger.warning("rate_limit.redis_not_configured")
-            await self.app(scope, receive, send)
+            logger.error("rate_limit.redis_not_configured")
+            await self._respond_503(send, path)
             return
 
         try:
             await redis.ping()
-        except Exception as exc:
-            logger.warning("rate_limit.redis_unreachable", exc_info=True)
-            await self.app(scope, receive, send)
+        except Exception:
+            logger.error("rate_limit.redis_unreachable", exc_info=True)
+            await self._respond_503(send, path)
             return
 
         # ── Determine rate-limit key and parameters ─────────────────────
+        # Fail-closed: any Redis error below (org-quota read, window check)
+        # rejects the request with 503 instead of passing it through.
         state = scope.get("state") or {}
         org_id: str | None = state.get("org_id", None)
 
-        if org_id:
-            max_req, window = await _get_org_rate_limit(redis, org_id)
-            rate_key = f"rate:api:{org_id}"
-        else:
-            client_ip = _get_client_ip(scope)
-            max_req = get_settings().RATE_LIMIT_IP_MAX
-            window = get_settings().RATE_LIMIT_WINDOW_SEC
-            rate_key = f"rate:auth:{client_ip}"
-
-        # ── Check sliding window ────────────────────────────────────────
         try:
+            if org_id:
+                max_req, window = await _get_org_rate_limit(redis, org_id)
+                rate_key = f"rate:api:{org_id}"
+            else:
+                client_ip = _get_client_ip(scope)
+                max_req = get_settings().RATE_LIMIT_IP_MAX
+                window = get_settings().RATE_LIMIT_WINDOW_SEC
+                rate_key = f"rate:auth:{client_ip}"
+
+            # ── Check sliding window ────────────────────────────────────
             is_allowed, remaining, reset_time = await _check_rate_limit(
                 redis=redis,
                 key=rate_key,
                 max_requests=max_req,
                 window_seconds=window,
             )
-        except Exception as exc:
-            logger.warning("rate_limit.check_failed", exc_info=True)
-            await self.app(scope, receive, send)
+        except Exception:
+            logger.error("rate_limit.check_failed", exc_info=True)
+            await self._respond_503(send, path)
             return
 
         retry_after = max(1, reset_time - int(time.time()))

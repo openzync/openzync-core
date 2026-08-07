@@ -153,19 +153,26 @@ class TestRateLimitMiddleware:
                 assert resp.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_no_redis_fail_open(self) -> None:
-        """When Redis is not available, request passes through."""
+    async def test_no_redis_fail_closed(self) -> None:
+        """When Redis is not configured, request is rejected with 503 (fail-closed)."""
         settings = self._create_prod_settings()
         with patch("middleware.rate_limit.get_settings", return_value=settings):
             app = self._create_app(mock_redis=None)
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as c:
                 resp = await c.get("/test")
-                assert resp.status_code == 200
+                assert resp.status_code == 503, (
+                    f"Expected 503, got {resp.status_code}: {resp.text}"
+                )
+                body = resp.json()
+                assert body["type"] == "https://errors.openzync.tech/rate_limit_unavailable"
+                assert body["title"] == "Service Unavailable"
+                assert body["status"] == 503
+                assert body["instance"] == "/test"
 
     @pytest.mark.asyncio
-    async def test_redis_ping_fails_fail_open(self) -> None:
-        """When Redis ping fails, request passes through (fail-open)."""
+    async def test_redis_ping_fails_fail_closed(self) -> None:
+        """When Redis ping fails, request is rejected with 503 (fail-closed)."""
         settings = self._create_prod_settings()
         bad_redis = AsyncMock(spec=Redis)
         bad_redis.ping = AsyncMock(side_effect=ConnectionError("redis down"))
@@ -174,17 +181,50 @@ class TestRateLimitMiddleware:
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as c:
                 resp = await c.get("/test")
-                assert resp.status_code == 200
+                assert resp.status_code == 503
 
     @pytest.mark.asyncio
-    async def test_rate_limit_check_fails_fail_open(self) -> None:
-        """When rate limit check raises, request passes through."""
+    async def test_rate_limit_check_fails_fail_closed(self) -> None:
+        """When the window check raises, request is rejected with 503 (fail-closed)."""
         settings = self._create_prod_settings()
         mock_redis = self._make_mock_redis()
-        mock_redis.ping = AsyncMock(side_effect=Exception("ping fail"))
+        mock_redis.pipeline.return_value.execute = AsyncMock(
+            side_effect=ConnectionError("redis down mid-check")
+        )
         with patch("middleware.rate_limit.get_settings", return_value=settings):
             app = self._create_app(mock_redis=mock_redis)
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as c:
                 resp = await c.get("/test")
-                assert resp.status_code == 200
+                assert resp.status_code == 503, (
+                    f"Expected 503, got {resp.status_code}: {resp.text}"
+                )
+
+    @pytest.mark.asyncio
+    async def test_org_quota_read_fails_fail_closed(self) -> None:
+        """Org-quota read failure rejects the request with 503 (fail-closed)."""
+        settings = self._create_prod_settings()
+        mock_redis = self._make_mock_redis()
+        with (
+            patch(
+                "middleware.rate_limit.get_settings",
+                return_value=settings,
+            ),
+            patch(
+                "middleware.rate_limit._get_org_rate_limit",
+                side_effect=ConnectionError("redis down"),
+            ),
+        ):
+            app = self._create_app(mock_redis=mock_redis)
+
+            # Set scope["state"]["org_id"] the way AuthMiddleware would.
+            @app.middleware("http")
+            async def _fake_auth(request, call_next):
+                request.state.org_id = "org-123"
+                return await call_next(request)
+
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as c:
+                resp = await c.get("/test")
+                assert resp.status_code == 503
+

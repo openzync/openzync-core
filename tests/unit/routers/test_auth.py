@@ -233,6 +233,33 @@ async def test_login_success() -> None:
     assert body["access_token"] == "at_abc123"
     assert body["requires_mfa"] is False
     mocks["auth_throttle"].check_login_attempt.assert_awaited_once()
+    # Password-only success clears the attempt counters (H4d).
+    mocks["auth_throttle"].record_login_success.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_login_success_mfa_no_decrement() -> None:
+    """POST /v1/auth/login with MFA enabled must NOT clear counters yet —
+    success only counts once the MFA OTP verifies."""
+    app, mocks = _create_app()
+    mocks["auth_service"].login.return_value = LoginResponse(
+        access_token=None,
+        refresh_token=None,
+        expires_in=None,
+        token_type=None,
+        requires_mfa=True,
+        mfa_session_token="mfa_session_xyz",
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/auth/login",
+            json={"email": "admin@acme.com", "password": "secure-p@ssword-123"},
+        )
+
+    assert resp.status_code == 200
+    mocks["auth_throttle"].record_login_success.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -413,6 +440,8 @@ async def test_mfa_verify_success() -> None:
     assert resp.status_code == 200
     assert resp.json()["access_token"] == "at_abc123"
     mocks["auth_throttle"].check_mfa_verify.assert_awaited_once()
+    # Full login succeeds only once MFA verifies — clear login counters (H4d).
+    mocks["auth_throttle"].record_login_success.assert_awaited_once()
 
 
 @pytest.mark.asyncio

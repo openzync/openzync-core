@@ -244,16 +244,107 @@ class TestAuthThrottle:
         await throttle.check_login_attempt("user@example.com", "10.0.0.1")
         # Succeeds — counter at 1, no error
 
+    # ── H4d — successful logins clear failed-attempt counters ──────────────
+
     @pytest.mark.asyncio
-    async def test_successful_auth_does_not_reset_counter(self, throttle: AuthThrottle) -> None:
-        """AuthThrottle has no 'success' reset — the caller must manage this.
-        
-        The throttle only increments on failure checks. Successful auth
-        is handled at the application level by the caller.
-        """
-        # This is a design note test: AuthThrottle doesn't have a reset method.
+    async def test_five_failed_logins_lock_out(
+        self, mock_redis: AsyncMock, throttle: AuthThrottle
+    ) -> None:
+        """Five failed attempts pass; the sixth is rejected (limit is 5)."""
+        counts = {"email": 0, "ip": 0}
+
+        async def mock_incr(key: str) -> int:
+            if "email" in key:
+                counts["email"] += 1
+                return counts["email"]
+            counts["ip"] += 1
+            return counts["ip"]
+
+        mock_redis.incr = AsyncMock(side_effect=mock_incr)
+
+        for _ in range(5):
+            await throttle.check_login_attempt("user@example.com", "10.0.0.1")
+
+        with pytest.raises(RateLimitError, match="this account"):
+            await throttle.check_login_attempt("user@example.com", "10.0.0.1")
+
+    @pytest.mark.asyncio
+    async def test_record_login_success_decrements_and_unlocks(
+        self, mock_redis: AsyncMock, throttle: AuthThrottle
+    ) -> None:
+        """A successful login decrements both counters and unblocks the
+        next attempt."""
+        counts = {"email": 0, "ip": 0}
+
+        async def mock_incr(key: str) -> int:
+            if "email" in key:
+                counts["email"] += 1
+                return counts["email"]
+            counts["ip"] += 1
+            return counts["ip"]
+
+        mock_redis.incr = AsyncMock(side_effect=mock_incr)
+        for _ in range(5):
+            await throttle.check_login_attempt("user@example.com", "10.0.0.1")
+        with pytest.raises(RateLimitError):
+            await throttle.check_login_attempt("user@example.com", "10.0.0.1")
+
+        # Successful login decrements the counters the failures incremented.
+        mock_redis.get = AsyncMock(return_value="5")
+        mock_redis.decr = AsyncMock(return_value=4)
+        await throttle.record_login_success("user@example.com", "10.0.0.1")
+        assert mock_redis.decr.await_count == 2
+        keys = [c.args[0] for c in mock_redis.decr.await_args_list]
+        assert any("email" in k for k in keys)
+        assert any("ip" in k for k in keys)
+
+        # Next attempt allowed — counter back at 4 (one below the limit).
+        counts["email"] = 4
+        counts["ip"] = 4
+        await throttle.check_login_attempt("user@example.com", "10.0.0.1")
+
+    @pytest.mark.asyncio
+    async def test_record_login_success_floors_at_zero(
+        self, mock_redis: AsyncMock, throttle: AuthThrottle
+    ) -> None:
+        """record_login_success never decrements a counter below zero."""
+        mock_redis.get = AsyncMock(return_value="0")
+        mock_redis.decr = AsyncMock(return_value=0)
+        await throttle.record_login_success("user@example.com", "10.0.0.1")
+        mock_redis.decr.assert_not_awaited()
+
+        mock_redis.get = AsyncMock(return_value=None)  # key never set
+        await throttle.record_login_success("user@example.com", "10.0.0.1")
+        mock_redis.decr.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_case_variant_emails_share_counter(
+        self, mock_redis: AsyncMock, throttle: AuthThrottle
+    ) -> None:
+        """Email keys are normalized — case variants share one counter."""
+        keys: list[str] = []
+
+        async def mock_incr(key: str) -> int:
+            keys.append(key)
+            return 1
+
+        mock_redis.incr = AsyncMock(side_effect=mock_incr)
+
+        await throttle.check_login_attempt("User@Example.com", "10.0.0.1")
+        await throttle.check_login_attempt("user@example.com", "10.0.0.1")
+
+        email_keys = [k for k in keys if "email" in k]
+        assert len(email_keys) == 2
+        assert email_keys[0] == email_keys[1]
+
+    @pytest.mark.asyncio
+    async def test_successful_login_reset_method_exists(
+        self, throttle: AuthThrottle
+    ) -> None:
+        """AuthThrottle exposes record_login_success — the compensating
+        decrement for check_login_attempt (H4d)."""
+        assert callable(throttle.record_login_success)
         assert not hasattr(throttle, "reset")
-        assert not hasattr(throttle, "record_success")
 
     # ── Different IPs not affected ──────────────────────────────────────────────
 

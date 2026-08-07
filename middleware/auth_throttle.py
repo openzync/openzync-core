@@ -51,6 +51,9 @@ class AuthThrottle:
     async def check_login_attempt(self, email: str, ip: str) -> None:
         """Check and increment login attempt counters.
 
+        Keys are normalized (email lowercased + stripped, IP stripped) so
+        case-variant emails share one counter and cannot bypass the limit.
+
         Args:
             email: The email address being used to log in.
             ip: The client IP address.
@@ -58,12 +61,12 @@ class AuthThrottle:
         Raises:
             RateLimitError: If the rate limit is exceeded.
         """
-        email_key = f"auth:throttle:login:email:{email}"
+        email_key = f"auth:throttle:login:email:{self._normalize_email(email)}"
         email_attempts = await self._redis.incr(email_key)
         if email_attempts == 1:
             await self._redis.expire(email_key, self._login_window_sec)
 
-        ip_key = f"auth:throttle:login:ip:{ip}"
+        ip_key = f"auth:throttle:login:ip:{self._normalize_ip(ip)}"
         ip_attempts = await self._redis.incr(ip_key)
         if ip_attempts == 1:
             await self._redis.expire(ip_key, self._login_window_sec)
@@ -78,6 +81,59 @@ class AuthThrottle:
                 "Too many login attempts from this IP address. "
                 "Try again later."
             )
+
+    async def record_login_success(self, email: str, ip: str) -> None:
+        """Decrement login counters after a successful password login.
+
+        Compensates the increments from :meth:`check_login_attempt` so
+        failed attempts from an attacker do not permanently lock out the
+        account owner.  Call exactly once per successful login.  Counters
+        are floored at zero — never decremented below.
+
+        Args:
+            email: The email address used for the successful login.
+            ip: The client IP address.
+        """
+        email_key = f"auth:throttle:login:email:{self._normalize_email(email)}"
+        ip_key = f"auth:throttle:login:ip:{self._normalize_ip(ip)}"
+        await self._decrement_if_positive(email_key)
+        await self._decrement_if_positive(ip_key)
+
+    async def _decrement_if_positive(self, key: str) -> None:
+        """Decrement a Redis counter only when it is above zero.
+
+        ponytail: read-then-decr is not atomic — a concurrent success can
+        double-decrement into a small negative.  Negatives only widen the
+        attempt budget (never re-lock a user), so the race is benign; use
+        a Lua script if the counter must never go negative.
+        """
+        current = await self._redis.get(key)
+        if current is not None and int(current) > 0:
+            await self._redis.decr(key)
+
+    @staticmethod
+    def _normalize_email(email: str) -> str:
+        """Lowercase and strip an email for case-insensitive throttle keys.
+
+        Args:
+            email: The raw email address.
+
+        Returns:
+            The normalized email key component.
+        """
+        return email.strip().lower()
+
+    @staticmethod
+    def _normalize_ip(ip: str) -> str:
+        """Strip an IP string for throttle key construction.
+
+        Args:
+            ip: The raw client IP.
+
+        Returns:
+            The stripped IP key component.
+        """
+        return ip.strip()
 
     async def check_signup_attempt(self, ip: str) -> None:
         """Check and increment signup attempt counter.

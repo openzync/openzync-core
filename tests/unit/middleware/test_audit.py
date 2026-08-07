@@ -254,3 +254,81 @@ class TestAuditMiddleware:
             assert "resource_type" in call_kwargs
             assert "ip_address" in call_kwargs
             assert "trace_id" in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_webhook_secret_response_body_never_captured(self) -> None:
+        """Webhook secret-bearing responses never get their body audit-captured.
+
+        POST /v1/admin/webhooks returns the one-time signing secret — it must
+        not be persisted to audit_logs even when the org enables body capture.
+        The audit event itself is still enqueued.
+        """
+        mock_pool = AsyncMock()
+        mock_pool.enqueue = AsyncMock(return_value=None)
+
+        app = self._create_app(mock_arq_pool=mock_pool)
+        middleware = AuditMiddleware(app)
+
+        scope: dict[str, Any] = {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/admin/webhooks",
+            "headers": [(b"host", b"example.com")],
+            "query_string": b"",
+            "client": ["10.0.0.1", 54321],
+            "state": {"org_id": "org-001", "auth_type": "api_key"},
+        }
+        app.state.arq_pool = mock_pool
+        scope["app"] = app
+
+        secret = "whsec_super_secret_never_persist"  # noqa: S105
+        with patch(
+            "middleware.audit._resolve_audit_body_capture", return_value=True,
+        ):
+            await middleware._enqueue_audit(
+                scope, "POST", "/v1/admin/webhooks", 201,
+                [f'{{"id": 1, "secret": "{secret}"}}'.encode()],
+            )
+
+        assert mock_pool.enqueue.called  # event still audited
+        details = orjson.loads(mock_pool.enqueue.call_args.kwargs["details"])
+        assert "response_body" not in details
+        assert secret not in orjson.dumps(details).decode()
+
+    @pytest.mark.asyncio
+    async def test_response_body_captured_for_non_webhook_route(self) -> None:
+        """Body capture still works for ordinary routes (control).
+
+        Proves the webhook exclusion is route-specific and does not disable
+        capture for other endpoints.
+        """
+        mock_pool = AsyncMock()
+        mock_pool.enqueue = AsyncMock(return_value=None)
+
+        app = self._create_app(mock_arq_pool=mock_pool)
+        middleware = AuditMiddleware(app)
+
+        scope: dict[str, Any] = {
+            "type": "http",
+            "method": "POST",
+            "path": "/data",
+            "headers": [(b"host", b"example.com")],
+            "query_string": b"",
+            "client": ["10.0.0.1", 54321],
+            "state": {"org_id": "org-001", "auth_type": "api_key"},
+        }
+        app.state.arq_pool = mock_pool
+        scope["app"] = app
+
+        with (
+            patch("middleware.audit._resolve_audit_body_capture", return_value=True),
+            # PII detection loads spaCy NER which is not installed in unit-test
+            # environments — no PII present in this body, so skip detection.
+            patch("middleware.audit._pii_detector.detect", return_value=[]),
+        ):
+            await middleware._enqueue_audit(
+                scope, "POST", "/data", 200, [b'{"id": 1}'],
+            )
+
+        details = orjson.loads(mock_pool.enqueue.call_args.kwargs["details"])
+        assert details["response_body"] == '{"id": 1}'

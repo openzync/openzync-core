@@ -42,6 +42,7 @@ class WebhookRepository:
         name: str,
         url: str,
         events: list[str] | None = None,
+        signing_secret: str | None = None,
     ) -> WebhookEndpoint:
         """Create a new webhook endpoint."""
         endpoint = WebhookEndpoint(
@@ -49,6 +50,7 @@ class WebhookRepository:
             name=name,
             url=url,
             events=orjson.dumps(events if events is not None else []),
+            signing_secret=signing_secret,
         )
         self._db.add(endpoint)
         await self._db.flush()
@@ -70,7 +72,7 @@ class WebhookRepository:
         if "events" in kwargs:
             events_val = kwargs["events"]
             update_data["events"] = orjson.dumps(events_val) if isinstance(events_val, list) else events_val
-        for key in ("name", "url", "is_active", "last_delivery_at"):
+        for key in ("name", "url", "is_active", "last_delivery_at", "signing_secret"):
             if key in kwargs:
                 update_data[key] = kwargs[key]
 
@@ -93,6 +95,37 @@ class WebhookRepository:
         await self._db.delete(endpoint)
         await self._db.flush()
         return True
+
+    async def set_signing_secret_if_null(
+        self,
+        endpoint_id: uuid.UUID,
+        signing_secret: str,
+    ) -> int:
+        """Atomically set ``signing_secret`` only where it is currently NULL.
+
+        A single conditional UPDATE (``WHERE signing_secret IS NULL``) so
+        two concurrent callers cannot write different secrets to the same
+        row — the loser sees ``rowcount == 0`` and must re-read the
+        winner's value instead of overwriting it.
+
+        Args:
+            endpoint_id: The endpoint to backfill.
+            signing_secret: The new secret to write.
+
+        Returns:
+            The number of rows updated: ``1`` if the secret was written,
+            ``0`` if the row already had a secret (or no longer exists).
+        """
+        result = await self._db.execute(
+            update(WebhookEndpoint)
+            .where(
+                WebhookEndpoint.id == endpoint_id,
+                WebhookEndpoint.signing_secret.is_(None),
+            )
+            .values(signing_secret=signing_secret)
+        )
+        await self._db.flush()
+        return result.rowcount
 
     async def get_active_endpoints_for_event(
         self,

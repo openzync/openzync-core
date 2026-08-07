@@ -246,6 +246,38 @@ class TestWebhookRepository:
         assert result is False
         mock_db.delete.assert_not_called()
 
+    # ── set_signing_secret_if_null ──────────────────────────────────────────────
+
+    async def test_set_signing_secret_if_null_sets_where_null(
+        self, repo: WebhookRepository, mock_db: AsyncMock
+    ) -> None:
+        """Returns rowcount 1 when the NULL signing_secret was written."""
+        mock_result = MagicMock()
+        mock_result.rowcount = 1
+        mock_db.execute.return_value = mock_result
+
+        result = await repo.set_signing_secret_if_null(
+            endpoint_id=self.ENDPOINT_ID, signing_secret="whsec_new",  # noqa: S106
+        )
+
+        assert result == 1
+        mock_db.flush.assert_awaited_once()
+
+    async def test_set_signing_secret_if_null_noop_where_set(
+        self, repo: WebhookRepository, mock_db: AsyncMock
+    ) -> None:
+        """Returns rowcount 0 (no-op) when the row already has a secret."""
+        mock_result = MagicMock()
+        mock_result.rowcount = 0
+        mock_db.execute.return_value = mock_result
+
+        result = await repo.set_signing_secret_if_null(
+            endpoint_id=self.ENDPOINT_ID, signing_secret="whsec_new",  # noqa: S106
+        )
+
+        assert result == 0
+        mock_db.flush.assert_awaited_once()
+
     # ── get_active_endpoints_for_event ─────────────────────────────────────────
 
     async def test_get_active_endpoints_for_event(

@@ -129,6 +129,16 @@ EXEMPT_PATHS: frozenset = frozenset({
     "/favicon.ico",
 })
 
+# Routes whose responses carry the one-time webhook signing secret
+# (``routers/admin_webhooks.py`` POST "/v1/admin/webhooks" → create, and any
+# future rotate route added there).  SECURITY: the raw secret must never be
+# persisted to audit_logs — it is shown exactly once to the caller, so these
+# responses skip response-body capture while the audit event itself (action,
+# actor, status) is still logged.  Add any new secret-bearing route here.
+WEBHOOK_SECRET_RESPONSE_ROUTES: frozenset[tuple[str, str]] = frozenset({
+    ("POST", "/v1/admin/webhooks"),
+})
+
 def _resolve_action(
     method: str,
     path: str,
@@ -266,6 +276,11 @@ class AuditMiddleware:
 
         # Resolve audit_log_response_body: per-org config → env default.
         _capture_body = await _resolve_audit_body_capture(org_id, scope)
+        if (method, path) in WEBHOOK_SECRET_RESPONSE_ROUTES:
+            # SECURITY: never persist the one-time webhook signing secret —
+            # it is returned exactly once to the caller (see the constant's
+            # comment for the routes this covers).
+            _capture_body = False
         if _capture_body and body_chunks:
             try:
                 raw_text = b"".join(body_chunks).decode("utf-8", errors="replace")[:10_000]

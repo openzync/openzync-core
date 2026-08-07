@@ -304,6 +304,102 @@ class TestAuthRepository:
         mock_db.execute.assert_awaited_once()
         mock_db.flush.assert_awaited_once()
 
+    # ── revoke_refresh_token_if_current ────────────────────────────────────────
+
+    async def test_revoke_refresh_token_if_current_claims(
+        self, repo: AuthRepository, mock_db: AsyncMock
+    ) -> None:
+        """A token matching the conditional UPDATE is claimed (rowcount 1)."""
+        mock_db.execute.return_value = MagicMock(rowcount=1)
+
+        result = await repo.revoke_refresh_token_if_current("abc123")
+
+        assert result is True
+        mock_db.flush.assert_awaited_once()
+
+    async def test_revoke_refresh_token_if_current_not_claimed(
+        self, repo: AuthRepository, mock_db: AsyncMock
+    ) -> None:
+        """An already-revoked/expired/missing token matches zero rows."""
+        mock_db.execute.return_value = MagicMock(rowcount=0)
+
+        result = await repo.revoke_refresh_token_if_current("abc123")
+
+        assert result is False
+
+    # ── get_refresh_token_by_hash / by_id ──────────────────────────────────────
+
+    async def test_get_refresh_token_by_hash_includes_revoked(
+        self, repo: AuthRepository, mock_db: AsyncMock
+    ) -> None:
+        """get_refresh_token_by_hash finds revoked tokens (reuse detection)."""
+        token = self._mock_token(is_revoked=True)
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = token
+        mock_db.execute.return_value = mock_result
+
+        result = await repo.get_refresh_token_by_hash("abc123")
+
+        assert result == token
+
+    async def test_get_refresh_token_by_id_found(
+        self, repo: AuthRepository, mock_db: AsyncMock
+    ) -> None:
+        """get_refresh_token_by_id returns the token regardless of state."""
+        token = self._mock_token()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = token
+        mock_db.execute.return_value = mock_result
+
+        result = await repo.get_refresh_token_by_id(self.TOKEN_ID)
+
+        assert result == token
+
+    # ── set_refresh_token_rotated_by / revoke_refresh_token_ids ───────────────
+
+    async def test_set_refresh_token_rotated_by(
+        self, repo: AuthRepository, mock_db: AsyncMock
+    ) -> None:
+        """set_refresh_token_rotated_by records the successor via UPDATE."""
+        successor_id = uuid4()
+        mock_db.execute.return_value = MagicMock(rowcount=1)
+
+        await repo.set_refresh_token_rotated_by(
+            self.TOKEN_ID, successor_id
+        )
+
+        mock_db.execute.assert_awaited_once()
+        mock_db.flush.assert_awaited_once()
+
+    async def test_revoke_refresh_token_ids(
+        self, repo: AuthRepository, mock_db: AsyncMock
+    ) -> None:
+        """revoke_refresh_token_ids revokes the family in one statement."""
+        mock_db.execute.return_value = MagicMock(rowcount=3)
+
+        count = await repo.revoke_refresh_token_ids(
+            [uuid4(), uuid4(), uuid4()]
+        )
+
+        assert count == 3
+        mock_db.flush.assert_awaited_once()
+
+    async def test_revoke_refresh_token_ids_empty(
+        self, repo: AuthRepository, mock_db: AsyncMock
+    ) -> None:
+        """Empty id list short-circuits without a DB call."""
+        count = await repo.revoke_refresh_token_ids([])
+
+        assert count == 0
+        mock_db.execute.assert_not_awaited()
+
+    async def test_rollback(
+        self, repo: AuthRepository, mock_db: AsyncMock
+    ) -> None:
+        """rollback delegates to the session (post-IntegrityError recovery)."""
+        await repo.rollback()
+        mock_db.rollback.assert_awaited_once()
+
     # ── mark_email_verified ────────────────────────────────────────────────────
 
     async def test_mark_email_verified(

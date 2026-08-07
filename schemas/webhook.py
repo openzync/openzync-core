@@ -53,8 +53,9 @@ class UpdateWebhookRequest(BaseModel):
 class WebhookSecretResponse(BaseModel):
     """Response returned once after creating a webhook endpoint.
 
-    The ``secret`` field is the raw signing secret and is never persisted
-    in plaintext — the client must save it immediately.
+    The ``secret`` field is the endpoint's **own** raw signing secret,
+    generated per endpoint and shown exactly once — the client must save
+    it immediately.  It is never returned by subsequent reads.
     """
 
     id: UUID
@@ -62,9 +63,10 @@ class WebhookSecretResponse(BaseModel):
     url: str
     secret: str
     message: str = (
-        "This is the global webhook signing secret. "
-        "Use it to verify HMAC-SHA256 signatures on all received webhooks. "
-        "Rotate via the OZ_WEBHOOK_SIGNING_SECRET environment variable."
+        "This is this endpoint's own webhook signing secret. "
+        "Use it to verify HMAC-SHA256 signatures on webhooks received for "
+        "this endpoint. It is shown only once — store it immediately. "
+        "Rotate via the API if it is ever compromised."
     )
 
 

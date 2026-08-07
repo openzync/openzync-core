@@ -18,15 +18,14 @@ Fixtures provided:
 
 from __future__ import annotations
 
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 from uuid import UUID
 
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
-
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -49,9 +48,9 @@ def asgi_transport(app: Any) -> ASGITransport:
 
 from core.db import get_async_session
 from tests.conftest import (
+    _ensure_testcontainers_env,
     _start_postgres_container,
     _start_redis_container,
-    _ensure_testcontainers_env,
 )
 
 # Module-level container registry.
@@ -104,7 +103,6 @@ async def engine():
 
     # ── Step 3: Seed bootstrap data ──────────────────────────────────────
     # Many integration tests assume a well-known organization UUID exists.
-    from models.organization import Organization
     from sqlalchemy import text
 
     async with async_engine.connect() as conn:
@@ -200,8 +198,8 @@ async def app(engine, redis_client) -> Any:
     )
     set_settings(settings)
 
-    from services.api.main import create_app
     from dependencies.db import get_db
+    from services.api.main import create_app
 
     app = create_app()
     session_factory = get_async_session(engine)
@@ -312,11 +310,10 @@ async def db_session(engine) -> AsyncGenerator[None, None]:
     # ── Teardown: flush all state ───────────────────────────────────────
     # 1. Truncate all DB tables (via ORM metadata).
     # 2. Flush Redis (rate-limit counters, auth-miss counters, caches).
-    from models.base import Base
+    from sqlalchemy import text as _sql
 
     import models  # noqa: F401 — register models on Base.metadata
-
-    from sqlalchemy import text as _sql
+    from models.base import Base
 
     async with engine.connect() as conn:
         await conn.execute(_sql("SET session_replication_role = 'replica'"))

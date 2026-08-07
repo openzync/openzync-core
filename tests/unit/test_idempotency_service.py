@@ -32,7 +32,9 @@ class TestIdempotencyService:
         mock_redis.get.return_value = None
         service = IdempotencyService(redis=mock_redis)
 
-        result = await service.check_idempotency_key("new-key", "hash123")
+        result = await service.check_idempotency_key(
+            "new-key", "hash123", self.ORG_ID
+        )
         assert result.status == IdempotencyStatus.NEW
         assert result.response_data is None
 
@@ -50,7 +52,9 @@ class TestIdempotencyService:
         mock_redis.get.return_value = cached
         service = IdempotencyService(redis=mock_redis)
 
-        result = await service.check_idempotency_key("existing-key", "hash123")
+        result = await service.check_idempotency_key(
+            "existing-key", "hash123", self.ORG_ID
+        )
         assert result.status == IdempotencyStatus.REPLAY
         assert result.response_data is not None
 
@@ -69,7 +73,7 @@ class TestIdempotencyService:
         service = IdempotencyService(redis=mock_redis)
 
         result = await service.check_idempotency_key(
-            "existing-key", "different-hash"
+            "existing-key", "different-hash", self.ORG_ID
         )
         assert result.status == IdempotencyStatus.CONFLICT
 
@@ -80,9 +84,87 @@ class TestIdempotencyService:
         service = IdempotencyService(redis=mock_redis)
 
         await service.store_idempotency_key(
-            "new-key", "hash123", {"job_id": "job-456"}
+            "new-key", "hash123", {"job_id": "job-456"}, self.ORG_ID
         )
         mock_redis.setex.assert_awaited_once()
+
+    # ── Tenant (org) namespacing ─────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_cache_key_includes_org_id(self, mock_redis: AsyncMock) -> None:
+        """Stored cache key is namespaced by org: ...idempotency:{org}:{key}."""
+        captured: dict = {}
+
+        async def _fake_setex(key: str, ttl: int, value: bytes) -> None:
+            captured["key"] = key
+
+        mock_redis.setex.side_effect = _fake_setex
+        service = IdempotencyService(redis=mock_redis)
+
+        await service.store_idempotency_key(
+            "my-key", "hash123", {"job_id": "job-1"}, self.ORG_ID
+        )
+        assert captured["key"] == f"{service._idem_prefix}{self.ORG_ID}:my-key"
+
+    @pytest.mark.asyncio
+    async def test_same_key_different_orgs_both_new(
+        self, mock_redis: AsyncMock
+    ) -> None:
+        """Same key from two different orgs never collides (no cross-tenant replay)."""
+        store: dict[str, bytes] = {}
+
+        async def _fake_get(key: str) -> str | None:
+            val = store.get(key)
+            return val.decode() if val is not None else None
+
+        async def _fake_setex(key: str, ttl: int, value: bytes) -> None:
+            store[key] = value
+
+        mock_redis.get.side_effect = _fake_get
+        mock_redis.setex.side_effect = _fake_setex
+        service = IdempotencyService(redis=mock_redis)
+
+        other_org = UUID("00000000-0000-0000-0000-000000000099")
+
+        # Org A stores the key first.
+        result_a = await service.check_idempotency_key(
+            "shared-key", "hash123", self.ORG_ID
+        )
+        assert result_a.status == IdempotencyStatus.NEW
+        await service.store_idempotency_key(
+            "shared-key", "hash123", {"job_id": "job-a"}, self.ORG_ID
+        )
+
+        # Org B with the same key + same body must NOT see Org A's replay.
+        result_b = await service.check_idempotency_key(
+            "shared-key", "hash123", other_org
+        )
+        assert result_b.status == IdempotencyStatus.NEW
+        assert result_b.response_data is None
+
+        # Same key, same org → REPLAY (tenant-scoped replay still works).
+        result_a_again = await service.check_idempotency_key(
+            "shared-key", "hash123", self.ORG_ID
+        )
+        assert result_a_again.status == IdempotencyStatus.REPLAY
+        assert result_a_again.response_data == {"job_id": "job-a"}
+
+    @pytest.mark.asyncio
+    async def test_org_id_accepts_uuid_or_str(self, mock_redis: AsyncMock) -> None:
+        """org_id may be passed as UUID or str — both normalize to the same key."""
+        keys: list[str] = []
+
+        async def _fake_get(key: str) -> str | None:
+            keys.append(key)
+            return None
+
+        mock_redis.get.side_effect = _fake_get
+        service = IdempotencyService(redis=mock_redis)
+
+        await service.check_idempotency_key("k", "h", self.ORG_ID)
+        await service.check_idempotency_key("k", "h", str(self.ORG_ID))
+
+        assert keys[0] == keys[1]
 
     @pytest.mark.asyncio
     async def test_check_content_hash_detects_duplicate(

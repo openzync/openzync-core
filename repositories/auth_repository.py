@@ -14,10 +14,10 @@ Key patterns:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.organization import Organization
@@ -199,10 +199,116 @@ class AuthRepository:
             select(RefreshToken).where(
                 RefreshToken.token_hash == token_hash,
                 RefreshToken.is_revoked.is_(False),
-                RefreshToken.expires_at > datetime.now(timezone.utc),
+                # expires_at is TIMESTAMP WITHOUT TIME ZONE — naive UTC.
+                RefreshToken.expires_at > datetime.now(UTC).replace(tzinfo=None),
             )
         )
         return result.scalar_one_or_none()
+
+    async def get_refresh_token_by_hash(
+        self, token_hash: str
+    ) -> RefreshToken | None:
+        """Look up a refresh token by hash, including revoked tokens.
+
+        Used for reuse detection and family-revocation walks — the caller
+        needs to see tokens that are already revoked.
+
+        Args:
+            token_hash: SHA-256 hex digest of the raw token.
+
+        Returns:
+            The RefreshToken (revoked or not) or ``None``.
+        """
+        result = await self._db.execute(
+            select(RefreshToken).where(RefreshToken.token_hash == token_hash)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_refresh_token_by_id(
+        self, token_id: uuid.UUID
+    ) -> RefreshToken | None:
+        """Look up a refresh token by primary key (any revocation state).
+
+        Args:
+            token_id: UUID of the refresh token record.
+
+        Returns:
+            The RefreshToken or ``None``.
+        """
+        result = await self._db.execute(
+            select(RefreshToken).where(RefreshToken.id == token_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def revoke_refresh_token_if_current(self, token_hash: str) -> bool:
+        """Atomically claim a refresh token by revoking it in place.
+
+        A single conditional UPDATE ensures exactly one concurrent caller
+        wins: the loser's UPDATE matches zero rows and returns ``False``.
+        This is the race-free replacement for the old read-then-revoke
+        sequence used during rotation.
+
+        Args:
+            token_hash: SHA-256 hex digest of the raw token.
+
+        Returns:
+            ``True`` if this caller claimed (revoked) the token.
+        """
+        result = await self._db.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.token_hash == token_hash,
+                RefreshToken.is_revoked.is_(False),
+                # expires_at is TIMESTAMP WITHOUT TIME ZONE — naive UTC.
+                RefreshToken.expires_at > datetime.now(UTC).replace(tzinfo=None),
+            )
+            .values(is_revoked=True)
+        )
+        await self._db.flush()
+        return result.rowcount == 1  # type: ignore[attr-defined,no-any-return]
+
+    async def set_refresh_token_rotated_by(
+        self,
+        token_id: uuid.UUID,
+        rotated_by: uuid.UUID,
+    ) -> None:
+        """Record the successor of an already-claimed refresh token.
+
+        Args:
+            token_id: UUID of the token being rotated away (already
+                revoked by the atomic claim).
+            rotated_by: UUID of the replacement token.
+        """
+        await self._db.execute(
+            update(RefreshToken)
+            .where(RefreshToken.id == token_id)
+            .values(rotated_by=rotated_by)
+        )
+        await self._db.flush()
+
+    async def revoke_refresh_token_ids(
+        self, token_ids: list[uuid.UUID]
+    ) -> int:
+        """Revoke a set of refresh tokens in one statement (family walk).
+
+        Args:
+            token_ids: UUIDs of tokens to revoke.
+
+        Returns:
+            Number of rows updated.
+        """
+        if not token_ids:
+            return 0
+        result = await self._db.execute(
+            update(RefreshToken)
+            .where(
+                RefreshToken.id.in_(token_ids),
+                RefreshToken.is_revoked.is_(False),
+            )
+            .values(is_revoked=True)
+        )
+        await self._db.flush()
+        return result.rowcount or 0  # type: ignore[attr-defined]
 
     async def revoke_refresh_token(
         self,
@@ -235,8 +341,6 @@ class AuthRepository:
         Args:
             user_id: The user's UUID.
         """
-        from sqlalchemy import update
-
         stmt = (
             update(RefreshToken)
             .where(
@@ -333,6 +437,25 @@ class AuthRepository:
         service layer, avoiding access to the private ``_db`` attribute.
         """
         await self._db.flush()
+
+    async def rollback(self) -> None:
+        """Roll back the current transaction.
+
+        Required after an ``IntegrityError`` (e.g. a concurrent duplicate
+        signup) before the session can be used again — the transaction is
+        aborted until a rollback.
+        """
+        await self._db.rollback()
+
+    async def commit(self) -> None:
+        """Commit the current transaction.
+
+        Used on paths that persist a security action (e.g. refresh-token
+        family revocation) before raising an error — the request-scoped
+        session dependency would otherwise roll the action back together
+        with the error.
+        """
+        await self._db.commit()
 
     async def refresh(self, instance: Any) -> None:
         """Refresh an ORM instance from the database.

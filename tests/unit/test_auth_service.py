@@ -177,12 +177,13 @@ class TestAuthService:
         )
 
     @pytest.mark.asyncio
-    async def test_signup_existing_user_raises_conflict(
+    async def test_signup_existing_user_returns_generic_success(
         self,
         service: AuthService,
         mock_repo: AsyncMock,
     ) -> None:
-        """Signup raises ConflictError when email is already taken."""
+        """Signup for an existing email returns the SAME generic success
+        (anti-enumeration) instead of a 409, and creates nothing."""
         mock_repo.find_user_by_email.return_value = self._make_mock_user()
 
         payload = SignupRequest(
@@ -191,18 +192,20 @@ class TestAuthService:
             organization_name="Acme Corp",
         )
 
-        with pytest.raises(ConflictError, match="already registered"):
-            await service.signup(payload)
+        result = await service.signup(payload)
 
+        assert "Verification code sent" in result.message
+        assert result.email == "admin@acme.com"
         mock_repo.create_organization.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_signup_integrity_error_raises_conflict(
+    async def test_signup_integrity_error_returns_generic_success(
         self,
         service: AuthService,
         mock_repo: AsyncMock,
     ) -> None:
-        """Signup raises ConflictError when IntegrityError is caught."""
+        """Concurrent duplicate signup (IntegrityError) also returns the
+        generic success, rolls back the aborted transaction."""
         mock_repo.find_user_by_email.return_value = None
         mock_repo.create_organization.side_effect = IntegrityError(
             "mock", "mock", "mock"
@@ -214,8 +217,93 @@ class TestAuthService:
             organization_name="Acme Corp",
         )
 
-        with pytest.raises(ConflictError, match="already registered"):
-            await service.signup(payload)
+        result = await service.signup(payload)
+
+        assert "Verification code sent" in result.message
+        mock_repo.rollback.assert_awaited_once()
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # H5 — anti-enumeration: identical responses for existing vs missing
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @pytest.mark.asyncio
+    async def test_signup_identical_for_existing_and_new(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """Signup returns an identical response for existing and new emails."""
+        mock_repo.find_user_by_email.return_value = None
+        mock_repo.create_organization.return_value = MagicMock(
+            id=self.ORG_ID, name="Acme Corp", plan="free"
+        )
+        mock_repo.seed_prompts_for_org.return_value = 3
+        mock_repo.create_dashboard_user.return_value = self._make_mock_user()
+
+        payload = SignupRequest(
+            email="admin@acme.com",
+            password="StrongPass1",
+            organization_name="Acme Corp",
+        )
+        fresh = await service.signup(payload)
+
+        mock_repo.find_user_by_email.return_value = self._make_mock_user()
+        existing = await service.signup(payload)
+
+        assert existing.message == fresh.message
+        assert existing.email == fresh.email
+        assert existing.model_dump() == fresh.model_dump()
+
+    @pytest.mark.parametrize(
+        ("flow", "expected_fragment"),
+        [
+            ("forgot_password", "a password reset code has been sent"),
+            ("generate_login_otp", "a login code has been sent"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_otp_send_flows_identical_for_missing_and_existing(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+        flow: str,
+        expected_fragment: str,
+    ) -> None:
+        """forgot_password and login/otp/send return identical messages for
+        missing vs existing emails."""
+        mock_repo.find_user_by_email.return_value = None
+        missing = await getattr(service, flow)("missing@acme.com")
+
+        mock_repo.find_user_by_email.return_value = self._make_mock_user()
+        existing = await getattr(service, flow)("admin@acme.com")
+
+        assert expected_fragment in missing.message
+        assert missing.message == existing.message
+        assert missing.model_dump() == existing.model_dump()
+
+    @pytest.mark.asyncio
+    async def test_resend_verification_identical_for_missing_and_existing(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """resend-otp returns an identical response for missing vs existing
+        emails (both verified and unverified) for the same submitted email."""
+        mock_repo.find_user_by_email.return_value = None
+        missing = await service.resend_verification("admin@acme.com")
+
+        mock_repo.find_user_by_email.return_value = self._make_mock_user(
+            is_email_verified=True
+        )
+        verified = await service.resend_verification("admin@acme.com")
+
+        mock_repo.find_user_by_email.return_value = self._make_mock_user(
+            is_email_verified=False
+        )
+        unverified = await service.resend_verification("admin@acme.com")
+
+        assert missing.model_dump() == verified.model_dump()
+        assert missing.model_dump() == unverified.model_dump()
 
     # ═══════════════════════════════════════════════════════════════════════
     # verify_email()
@@ -345,7 +433,7 @@ class TestAuthService:
         service: AuthService,
         mock_repo: AsyncMock,
     ) -> None:
-        """Already-verified email returns a skip message without sending OTP."""
+        """Verified email returns the generic message without sending OTP."""
         mock_repo.find_user_by_email.return_value = self._make_mock_user(
             is_email_verified=True
         )
@@ -353,7 +441,7 @@ class TestAuthService:
 
         result = await service.resend_verification("admin@acme.com")
 
-        assert "already verified" in result.message
+        assert "verification code has been sent" in result.message
         service._otp_service.generate_and_send.assert_not_awaited()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
@@ -363,14 +451,14 @@ class TestAuthService:
         mock_repo: AsyncMock,
         mock_otp: AsyncMock,
     ) -> None:
-        """Unverified email resends OTP."""
+        """Unverified email resends OTP but returns the generic message."""
         mock_repo.find_user_by_email.return_value = self._make_mock_user(
             is_email_verified=False
         )
 
         result = await service.resend_verification("admin@acme.com")
 
-        assert "resent" in result.message
+        assert "verification code has been sent" in result.message
         mock_otp.generate_and_send.assert_awaited_once_with(
             email="admin@acme.com", purpose="signup"
         )
@@ -385,11 +473,13 @@ class TestAuthService:
         service: AuthService,
         mock_repo: AsyncMock,
     ) -> None:
-        """Missing user raises ValidationError."""
+        """Missing user returns the generic confirmation (anti-enumeration)."""
         mock_repo.find_user_by_email.return_value = None
 
-        with pytest.raises(ValidationError, match="No account found"):
-            await service.forgot_password("nobody@acme.com")
+        result = await service.forgot_password("nobody@acme.com")
+
+        assert "a password reset code has been sent" in result.message
+        service._otp_service.generate_and_send.assert_not_awaited()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     async def test_forgot_password_no_password_hash(
@@ -397,13 +487,15 @@ class TestAuthService:
         service: AuthService,
         mock_repo: AsyncMock,
     ) -> None:
-        """User with password_hash=None raises ValidationError."""
+        """Passwordless-only user returns the generic confirmation."""
         mock_repo.find_user_by_email.return_value = self._make_mock_user(
             password_hash=None
         )
 
-        with pytest.raises(ValidationError, match="No account found"):
-            await service.forgot_password("otp@acme.com")
+        result = await service.forgot_password("otp@acme.com")
+
+        assert "a password reset code has been sent" in result.message
+        service._otp_service.generate_and_send.assert_not_awaited()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     async def test_forgot_password_happy_path(
@@ -500,11 +592,13 @@ class TestAuthService:
         service: AuthService,
         mock_repo: AsyncMock,
     ) -> None:
-        """Missing user raises NotFoundError."""
+        """Missing user returns the generic confirmation (anti-enumeration)."""
         mock_repo.find_user_by_email.return_value = None
 
-        with pytest.raises(NotFoundError, match="No account found"):
-            await service.generate_login_otp("nobody@acme.com")
+        result = await service.generate_login_otp("nobody@acme.com")
+
+        assert "a login code has been sent" in result.message
+        service._otp_service.generate_and_send.assert_not_awaited()  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     async def test_generate_login_otp_happy_path(
@@ -513,12 +607,12 @@ class TestAuthService:
         mock_repo: AsyncMock,
         mock_otp: AsyncMock,
     ) -> None:
-        """Sends login OTP and returns confirmation."""
+        """Sends login OTP and returns the generic confirmation."""
         mock_repo.find_user_by_email.return_value = self._make_mock_user()
 
         result = await service.generate_login_otp("admin@acme.com")
 
-        assert "Login code sent" in result.message
+        assert "a login code has been sent" in result.message
         mock_otp.generate_and_send.assert_awaited_once_with(
             email="admin@acme.com", purpose="passwordless_login"
         )
@@ -986,8 +1080,9 @@ class TestAuthService:
         service: AuthService,
         mock_repo: AsyncMock,
     ) -> None:
-        """Invalid or expired refresh token raises AuthenticationError."""
-        mock_repo.find_refresh_token.return_value = None
+        """Unknown token fails the atomic claim and raises AuthenticationError."""
+        mock_repo.revoke_refresh_token_if_current.return_value = False
+        mock_repo.get_refresh_token_by_hash.return_value = None
 
         with pytest.raises(AuthenticationError, match="invalid or has expired"):
             await service.refresh("bad-token")
@@ -1003,7 +1098,8 @@ class TestAuthService:
         mock_stored.id = uuid4()
         mock_stored.user_id = str(self.USER_ID)
         mock_stored.organization_id = self.ORG_ID
-        mock_repo.find_refresh_token.return_value = mock_stored
+        mock_repo.revoke_refresh_token_if_current.return_value = True
+        mock_repo.get_refresh_token_by_hash.return_value = mock_stored
         mock_repo.get_user_by_id.return_value = None
 
         with pytest.raises(AuthenticationError, match="no longer exists"):
@@ -1015,32 +1111,20 @@ class TestAuthService:
         service: AuthService,
         mock_repo: AsyncMock,
     ) -> None:
-        """Refresh rotates the token pair and revokes the old one."""
+        """Refresh atomically claims the old token, issues a new pair, and
+        chains the rotation link."""
         old_token_id = uuid4()
         new_token_id = uuid4()
-        mock_stored = AsyncMock()
-        mock_stored.id = old_token_id
-        mock_stored.user_id = str(self.USER_ID)
-        mock_stored.organization_id = self.ORG_ID
-        mock_repo.find_refresh_token.return_value = mock_stored
-        mock_repo.get_user_by_id.return_value = self._make_mock_user()
-
-        # We need _issue_tokens to create something with a refresh_token we can
-        # match, and then find_refresh_token called again for the rotation chain.
-        # Simulate the full flow by patching _issue_tokens and then having the
-        # second find_refresh_token call return a "new" stored token.
+        stored = AsyncMock()
+        stored.id = old_token_id
+        stored.user_id = str(self.USER_ID)
+        stored.organization_id = self.ORG_ID
         new_stored = AsyncMock()
         new_stored.id = new_token_id
 
-        async def _find_refresh_token_side_effect(
-            token_hash: str,
-        ) -> AsyncMock | None:
-            # First call returns the old token, second call returns the new one
-            if mock_repo.find_refresh_token.call_count <= 1:
-                return mock_stored
-            return new_stored
-
-        mock_repo.find_refresh_token.side_effect = _find_refresh_token_side_effect
+        mock_repo.revoke_refresh_token_if_current.return_value = True
+        mock_repo.get_refresh_token_by_hash.side_effect = [stored, new_stored]
+        mock_repo.get_user_by_id.return_value = self._make_mock_user()
 
         with patch.object(service, "_issue_tokens") as mock_issue:
             mock_issue.return_value = TokenResponse(
@@ -1052,10 +1136,117 @@ class TestAuthService:
 
         assert result.access_token == "new-at"
         assert result.refresh_token == "new-rt"
-        mock_repo.revoke_refresh_token.assert_awaited_once_with(
-            old_token_id,
-            rotated_by=str(new_token_id),
+        mock_repo.revoke_refresh_token_if_current.assert_awaited_once_with(
+            service._hash_refresh_token("old-raw-token")
         )
+        mock_repo.set_refresh_token_rotated_by.assert_awaited_once_with(
+            old_token_id, new_token_id
+        )
+
+    @pytest.mark.asyncio
+    async def test_refresh_reuse_revokes_family_and_rejects(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """Replaying a rotated token revokes the whole family and raises."""
+        presented_id = uuid4()
+        successor_id = uuid4()
+        leaf_id = uuid4()
+
+        presented = AsyncMock()
+        presented.id = presented_id
+        presented.user_id = str(self.USER_ID)
+        presented.organization_id = self.ORG_ID
+        presented.rotated_by = successor_id
+        successor = AsyncMock()
+        successor.id = successor_id
+        successor.rotated_by = leaf_id
+        leaf = AsyncMock()
+        leaf.id = leaf_id
+        leaf.rotated_by = None
+
+        mock_repo.revoke_refresh_token_if_current.return_value = False
+        mock_repo.get_refresh_token_by_hash.return_value = presented
+        mock_repo.get_refresh_token_by_id.side_effect = [successor, leaf]
+
+        with pytest.raises(AuthenticationError, match="invalid or has expired"):
+            await service.refresh("replayed-token")
+
+        # Whole chain walked and revoked: presented → successor → leaf.
+        mock_repo.revoke_refresh_token_ids.assert_awaited_once_with(
+            [presented_id, successor_id, leaf_id]
+        )
+        # The revocation is persisted before the rejection is raised, so
+        # the request dependency cannot roll it back.
+        mock_repo.commit.assert_awaited_once()
+        service._otp_service.generate_and_send.assert_not_awaited()  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    async def test_refresh_concurrent_replay_yields_single_successor(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """Two concurrent refreshes with the same token: exactly one wins,
+        the loser triggers family revocation and a generic rejection."""
+        token_id = uuid4()
+        new_token_id = uuid4()
+        stored = AsyncMock()
+        stored.id = token_id
+        stored.user_id = str(self.USER_ID)
+        stored.organization_id = self.ORG_ID
+        stored.rotated_by = None
+        new_stored = AsyncMock()
+        new_stored.id = new_token_id
+
+        claims = {"n": 0}
+
+        async def _claim(token_hash: str) -> bool:
+            claims["n"] += 1
+            return claims["n"] == 1  # first caller wins the claim
+
+        async def _by_hash(token_hash: str) -> AsyncMock | None:
+            return stored
+
+        mock_repo.revoke_refresh_token_if_current.side_effect = _claim
+        mock_repo.get_refresh_token_by_hash.side_effect = _by_hash
+        mock_repo.get_user_by_id.return_value = self._make_mock_user()
+
+        with patch.object(service, "_issue_tokens") as mock_issue:
+            mock_issue.return_value = TokenResponse(
+                access_token="at", refresh_token="new-rt", expires_in=1800
+            )
+            first = await service.refresh("same-token")
+            with pytest.raises(AuthenticationError):
+                await service.refresh("same-token")
+
+        assert mock_issue.await_count == 1  # exactly ONE successor issued
+        assert first.access_token == "at"
+        # Loser walked the family (presented token only — no chain here).
+        mock_repo.revoke_refresh_token_ids.assert_awaited_once_with(
+            [token_id]
+        )
+
+    @pytest.mark.asyncio
+    async def test_refresh_deactivated_user_rejected(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """Deactivated users cannot refresh."""
+        stored = AsyncMock()
+        stored.id = uuid4()
+        stored.user_id = str(self.USER_ID)
+        stored.organization_id = self.ORG_ID
+        mock_repo.revoke_refresh_token_if_current.return_value = True
+        mock_repo.get_refresh_token_by_hash.return_value = stored
+        mock_repo.get_user_by_id.return_value = self._make_mock_user(
+            is_active=False
+        )
+
+        with pytest.raises(AuthenticationError, match="deactivated"):
+            await service.refresh("some-token")
 
     # ═══════════════════════════════════════════════════════════════════════
     # get_profile()

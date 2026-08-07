@@ -255,7 +255,7 @@ class TestMemoryService:
             )
         assert result == cached
         service._idem.check_idempotency_key.assert_awaited_once_with(
-            "dup-key", ""
+            "dup-key", "", str(self.ORG_ID)
         )
         mock_enqueue.assert_not_called()
         mock_invalidate.assert_not_called()
@@ -709,10 +709,12 @@ class TestMemoryServiceInfrastructure:
 
         assert result.status == "accepted"
         # Step 1: key check ran (NEW → proceed)
-        service._idem.check_idempotency_key.assert_awaited_once_with("my-key", "")
+        service._idem.check_idempotency_key.assert_awaited_once_with(
+            "my-key", "", str(self.ORG_ID)
+        )
         # Step 9: response cached under the key, content hash stored with payload
         service._idem.store_idempotency_key.assert_awaited_once_with(
-            "my-key", "", ANY,
+            "my-key", "", ANY, str(self.ORG_ID),
         )
         service._idem.store_content_hash.assert_awaited_once()
         _args, kwargs = service._idem.store_content_hash.call_args

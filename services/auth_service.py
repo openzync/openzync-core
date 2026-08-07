@@ -71,6 +71,7 @@ def _refresh_token_ttl() -> timedelta:
 
 _JWT_ALGORITHM = "HS256"
 _MFA_SESSION_TTL_SEC = 600  # 10 minutes — MFA pending session lifetime
+_REFRESH_FAMILY_WALK_LIMIT = 30  # bounded loop for rotation-family revocation
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -117,6 +118,10 @@ class AuthService:
         4. Send an OTP verification code to the user's email.
         5. Return a confirmation message (no tokens — user must verify email).
 
+        The response is identical whether or not the email is already
+        registered — the real distinction is logged server-side, so the
+        endpoint cannot be used to enumerate existing accounts.
+
         Args:
             payload: Signup request with email, password, org name.
 
@@ -124,7 +129,6 @@ class AuthService:
             A ``SignupResponse`` with a confirmation message.
 
         Raises:
-            ConflictError: If the email is already registered.
             ValidationError: If the password does not meet requirements.
         """
         # Validate password strength
@@ -133,9 +137,11 @@ class AuthService:
         # Check email uniqueness
         existing = await self._repo.find_user_by_email(payload.email)
         if existing is not None:
-            raise ConflictError(
-                f"A user with email '{payload.email}' is already registered."
+            logger.warning(
+                "security.signup_existing_email",
+                extra={"email": payload.email},
             )
+            return self._signup_success_response(payload.email)
 
         # Create organization
         try:
@@ -163,15 +169,18 @@ class AuthService:
                 purpose="signup",
             )
         except IntegrityError:
-            raise ConflictError(
-                f"A user with email '{payload.email}' is already registered."
+            # Concurrent duplicate signup — the unique email index won.
+            # Same generic response as a fresh signup; roll back the aborted
+            # transaction (the session is unusable until then) so no orphan
+            # org is committed.
+            logger.warning(
+                "security.signup_existing_email",
+                extra={"email": payload.email},
             )
+            await self._repo.rollback()
+            return self._signup_success_response(payload.email)
 
-        return SignupResponse(
-            message="Verification code sent to email. "
-            "Use POST /v1/auth/verify-email to complete signup.",
-            email=payload.email,
-        )
+        return self._signup_success_response(payload.email)
 
     # ── Email verification ──────────────────────────────────────────────────
 
@@ -240,6 +249,10 @@ class AuthService:
     async def resend_verification(self, email: str) -> SignupResponse:
         """Resend the email verification OTP.
 
+        Returns the same generic confirmation for missing, verified, and
+        unverified accounts so the endpoint cannot be used to enumerate
+        accounts.  An OTP is actually sent only for unverified accounts.
+
         Rate limiting is handled internally by the OtpService (cooldown
         and hourly send cap).
 
@@ -248,50 +261,53 @@ class AuthService:
 
         Returns:
             A ``SignupResponse`` confirming the code was sent.
-
-        Raises:
-            NotFoundError: If no user with this email exists.
         """
+        generic = SignupResponse(
+            message="If an account exists with this email, "
+            "a verification code has been sent.",
+            email=email,
+        )
+
         user = await self._repo.find_user_by_email(email)
         if user is None:
-            raise NotFoundError(
-                "No account found with this email address."
+            logger.warning(
+                "security.resend_otp_unknown_email",
+                extra={"email": email},
             )
+            return generic
 
-        if user.is_email_verified:
-            return SignupResponse(
-                message="Email is already verified. You can log in.",
+        if not user.is_email_verified:
+            await self._otp_service.generate_and_send(
                 email=email,
+                purpose="signup",
             )
 
-        await self._otp_service.generate_and_send(
-            email=email,
-            purpose="signup",
-        )
-
-        return SignupResponse(
-            message="Verification code resent to email.",
-            email=email,
-        )
+        return generic
 
     # ── Password reset ─────────────────────────────────────────────────────
 
     async def forgot_password(self, email: str) -> OtpResponse:
         """Send a password-reset OTP to the user's email.
 
+        Returns the same confirmation whether or not the account exists
+        (prevents email enumeration); an OTP is only sent for existing
+        accounts with a password set.
+
         Args:
-            email: The registered email address.
+            email: The email address requesting a reset.
 
         Returns:
             An ``OtpResponse`` confirming the code was sent.
-
-        Raises:
-            ValidationError: If no user with this email address exists.
         """
         user = await self._repo.find_user_by_email(email)
         if user is None or user.password_hash is None:
-            raise ValidationError(
-                "No account found with this email address.",
+            logger.warning(
+                "security.forgot_password_unknown_email",
+                extra={"email": email},
+            )
+            return OtpResponse(
+                message="If an account exists with this email, "
+                "a password reset code has been sent.",
             )
 
         await self._otp_service.generate_and_send(
@@ -370,18 +386,26 @@ class AuthService:
     async def generate_login_otp(self, email: str) -> OtpResponse:
         """Send a passwordless login OTP to the user's email.
 
+        Returns the same confirmation whether or not the account exists
+        (prevents email enumeration); an OTP is only sent for existing
+        accounts.
+
         Args:
-            email: The registered email address.
+            email: The email address requesting a login code.
 
         Returns:
             An ``OtpResponse`` confirming the code was sent.
-
-        Raises:
-            NotFoundError: If no user with this email exists.
         """
         user = await self._repo.find_user_by_email(email)
         if user is None:
-            raise NotFoundError("No account found with this email address.")
+            logger.warning(
+                "security.login_otp_send_unknown_email",
+                extra={"email": email},
+            )
+            return OtpResponse(
+                message="If an account exists with this email, "
+                "a login code has been sent.",
+            )
 
         await self._otp_service.generate_and_send(
             email=email,
@@ -389,8 +413,8 @@ class AuthService:
         )
 
         return OtpResponse(
-            message="Login code sent to email. "
-            "Use POST /v1/auth/login/otp/verify to complete login.",
+            message="If an account exists with this email, "
+            "a login code has been sent.",
         )
 
     async def passwordless_login(self, payload: VerifyOtpRequest) -> TokenResponse:
@@ -671,6 +695,13 @@ class AuthService:
     async def refresh(self, raw_token: str) -> TokenResponse:
         """Rotate a refresh token and issue a new token pair.
 
+        The presented token is claimed with a single conditional UPDATE,
+        so exactly one of two concurrent requests with the same token
+        wins.  A loser — or any replay of an already-rotated token —
+        triggers revocation of the entire rotation family before a
+        generic rejection, so a stolen token cannot keep derived tokens
+        alive.
+
         Args:
             raw_token: The opaque refresh token string from the client.
 
@@ -678,42 +709,110 @@ class AuthService:
             A new ``TokenResponse`` with fresh access and refresh tokens.
 
         Raises:
-            AuthenticationError: If the refresh token is invalid or expired.
+            AuthenticationError: If the refresh token is invalid, expired,
+                reused, or the owning user is deactivated.
         """
         token_hash = self._hash_refresh_token(raw_token)
-        stored = await self._repo.find_refresh_token(token_hash)
 
-        if stored is None:
+        # Atomic claim — a concurrent request with the same token loses here.
+        if not await self._repo.revoke_refresh_token_if_current(token_hash):
+            await self._revoke_family(token_hash)
             raise AuthenticationError(
                 "Refresh token is invalid or has expired."
             )
+
+        stored = await self._repo.get_refresh_token_by_hash(token_hash)
+        if stored is None:
+            # Unreachable: the conditional UPDATE only matches existing rows.
+            raise AuthenticationError("Refresh token is invalid or has expired.")
 
         # Look up the user to get the actual role
         user_id = uuid.UUID(stored.user_id)
         user = await self._repo.get_user_by_id(user_id)
         if user is None:
             raise AuthenticationError("User no longer exists.")
+        if not user.is_active or user.is_deleted:
+            raise AuthenticationError("This account has been deactivated.")
         role = user.role if user.role is not None else "member"
 
-        # Issue new tokens first, then revoke + chain the old one
         new_tokens = await self._issue_tokens(
             user_id=user_id,
             organization_id=stored.organization_id,
             role=role,
         )
 
-        # Find the newly created refresh token to build the rotation chain
+        # Chain the claimed token to its successor (rotation audit trail).
         new_refresh_hash = self._hash_refresh_token(new_tokens.refresh_token)
-        new_stored = await self._repo.find_refresh_token(new_refresh_hash)
-        new_id = new_stored.id if new_stored else None
-
-        # Revoke the old token and set rotation chain
-        await self._repo.revoke_refresh_token(
-            stored.id,
-            rotated_by=str(new_id) if new_id else None,
+        new_stored = await self._repo.get_refresh_token_by_hash(
+            new_refresh_hash
         )
+        if new_stored is not None:
+            await self._repo.set_refresh_token_rotated_by(
+                stored.id,
+                new_stored.id,
+            )
 
         return new_tokens
+
+    async def _revoke_family(self, token_hash: str) -> None:
+        """Revoke the entire rotation family of a reused refresh token.
+
+        Walks the ``rotated_by`` successor chain from the presented token
+        forward to the leaf and revokes every linked token.  Ancestors are
+        already revoked by rotation, so this walk covers every live token
+        in the family.  Bounded to ``_REFRESH_FAMILY_WALK_LIMIT`` hops.
+
+        Args:
+            token_hash: SHA-256 hash of the presented (rejected) token.
+        """
+        presented = await self._repo.get_refresh_token_by_hash(token_hash)
+        if presented is None:
+            return  # token never existed — nothing to walk
+
+        logger.warning(
+            "security.refresh_token_reuse",
+            extra={
+                "user_id": presented.user_id,
+                "token_id": str(presented.id),
+            },
+        )
+
+        family_ids: list[uuid.UUID] = [presented.id]
+        seen: set[uuid.UUID] = {presented.id}
+        node = presented
+        for _ in range(_REFRESH_FAMILY_WALK_LIMIT):
+            if node.rotated_by is None or node.rotated_by in seen:
+                break
+            seen.add(node.rotated_by)
+            family_ids.append(node.rotated_by)
+            successor = await self._repo.get_refresh_token_by_id(
+                node.rotated_by
+            )
+            if successor is None:
+                break
+            node = successor
+
+        await self._repo.revoke_refresh_token_ids(family_ids)
+        # Persist the revocation NOW — the caller raises immediately after,
+        # and the request-scoped session dependency would otherwise roll
+        # the family kill back together with the error.
+        await self._repo.commit()
+
+    @staticmethod
+    def _signup_success_response(email: str) -> SignupResponse:
+        """Build the generic signup confirmation (anti-enumeration).
+
+        Args:
+            email: The email address submitted by the client.
+
+        Returns:
+            A ``SignupResponse`` identical to a fresh-signup response.
+        """
+        return SignupResponse(
+            message="Verification code sent to email. "
+            "Use POST /v1/auth/verify-email to complete signup.",
+            email=email,
+        )
 
     # ── Internal helpers ────────────────────────────────────────────────────
 

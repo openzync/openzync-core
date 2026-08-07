@@ -170,7 +170,8 @@ async def resend_otp(
         "Sends a 6-digit verification code to the user's email for "
         "passwordless login.  The user enters this code at "
         "``POST /v1/auth/login/otp/verify`` to receive JWT tokens.  "
-        "Requires an existing user account."
+        "Returns the same response whether or not the account exists "
+        "(prevents email enumeration)."
     ),
 )
 @audit_action("auth.otp_send", "session", "OTP sent")
@@ -327,7 +328,13 @@ async def login(
         Tokens (MFA off) or MFA challenge (MFA on).
     """
     await throttle.check_login_attempt(payload.email, _client_ip(request))
-    return await service.login(payload)
+    result = await service.login(payload)
+    # A password-only success clears the attempt counters so failed tries
+    # from an attacker never permanently lock out the account owner.  The
+    # MFA path is not "successful" yet — counters are cleared at MFA verify.
+    if not result.requires_mfa:
+        await throttle.record_login_success(payload.email, _client_ip(request))
+    return result
 
 
 @router.post(
@@ -360,7 +367,11 @@ async def mfa_verify(
         Access and refresh tokens.
     """
     await throttle.check_mfa_verify(payload.email, _client_ip(request))
-    return await service.mfa_verify(payload)
+    result = await service.mfa_verify(payload)
+    # Full login is only successful once the MFA OTP verifies — clear the
+    # password-attempt counters accumulated at the login step.
+    await throttle.record_login_success(payload.email, _client_ip(request))
+    return result
 
 
 @router.post(

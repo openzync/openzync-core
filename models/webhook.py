@@ -25,6 +25,8 @@ class WebhookEndpoint(TimestampMixin, Base):
         url: HTTPS endpoint URL that receives POST requests.
         events: JSON array of subscribed event type strings.
         is_active: Whether this endpoint is currently accepting deliveries.
+        signing_secret: Per-endpoint HMAC-SHA256 signing secret.  NULL on
+            legacy rows until lazily backfilled at first emit.
         last_delivery_at: Timestamp of the most recent delivery attempt.
     """
 
@@ -51,6 +53,13 @@ class WebhookEndpoint(TimestampMixin, Base):
         nullable=False,
         default=True,
         server_default="true",
+    )
+    # ponytail: per-org secret stored in DB; upgrade to Transit-at-rest
+    # encryption with core.transit WEBHOOK_SECRET_KEY when TransitManager is wired
+    signing_secret: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Per-endpoint HMAC-SHA256 signing secret (shown once at create/rotate)",
     )
     last_delivery_at: Mapped[datetime | None] = mapped_column(nullable=True)
 

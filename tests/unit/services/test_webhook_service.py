@@ -5,15 +5,38 @@ The ``sign_payload`` standalone function is tested directly — pure logic.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
+import orjson
 import pytest
 
 from models.webhook import WebhookEndpoint
 from services.webhook_service import WebhookService, sign_payload
+
+# Sentinel so ``_make_endpoint`` can distinguish "auto secret" from an
+# explicit ``None`` (which mimics a legacy NULL column / lazy backfill).
+_AUTO_SECRET = object()
+
+
+def _verify_signature(secret: str, body: bytes, signature: str) -> bool:
+    """Recompute the HMAC from the signature's own timestamp and compare.
+
+    Deterministic regardless of when the check runs — we reuse the ``t=``
+    value embedded in the signature instead of ``time.time()``.
+    """
+    _, v1 = signature.split(",v1=", 1)
+    timestamp = signature.split(",", 1)[0].split("t=", 1)[1]
+    expected = hmac.new(
+        secret.encode(),
+        f"{timestamp}.{body.decode()}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(expected, v1)
 
 
 @pytest.mark.unit
@@ -80,8 +103,16 @@ class TestWebhookService:
         url: str = "https://example.com/hook",
         events: list[str] | None = None,
         is_active: bool = True,
+        signing_secret: object = _AUTO_SECRET,
     ) -> MagicMock:
-        """Build a MagicMock mimicking a WebhookEndpoint ORM model."""
+        """Build a MagicMock mimicking a WebhookEndpoint ORM model.
+
+        Args:
+            signing_secret: Secret to attach; pass ``None`` to mimic a
+                legacy row with a NULL column (lazy backfill path).
+                Defaults to a deterministic per-endpoint value so normal
+                tests exercise the per-endpoint signing path.
+        """
         ep = MagicMock(spec=WebhookEndpoint)
         ep.id = endpoint_id or self.ENDPOINT_ID
         ep.organization_id = org_id or self.ORG_ID
@@ -89,9 +120,13 @@ class TestWebhookService:
         ep.url = url
         ep.events = json.dumps(events or [])
         ep.is_active = is_active
-        ep.last_delivery_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        ep.created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        ep.updated_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        if signing_secret is _AUTO_SECRET:
+            ep.signing_secret = f"whsec_{ep.id}"
+        else:
+            ep.signing_secret = signing_secret
+        ep.last_delivery_at = datetime(2025, 1, 1, tzinfo=UTC)
+        ep.created_at = datetime(2025, 1, 1, tzinfo=UTC)
+        ep.updated_at = datetime(2025, 1, 1, tzinfo=UTC)
         return ep
 
     # ── list_endpoints ──────────────────────────────────────────────────────
@@ -153,7 +188,7 @@ class TestWebhookService:
 
     @pytest.mark.asyncio
     async def test_create_endpoint_returns_dict_and_secret(self) -> None:
-        """``create_endpoint`` returns (serialized_dict, signing_secret)."""
+        """``create_endpoint`` returns (serialized_dict, per_endpoint_secret)."""
         service, mock_repo = self._make_service()
         mock_repo.create.return_value = self._make_endpoint()
 
@@ -166,8 +201,80 @@ class TestWebhookService:
 
         assert isinstance(endpoint, dict)
         assert endpoint["name"] == "Test Endpoint"
-        assert secret == "b" * 32  # from conftest WEBHOOK_SIGNING_SECRET
+        # Per-endpoint secret: URL-safe, ≥32 chars, never the global config secret
+        assert isinstance(secret, str)
+        assert len(secret) >= 32
+        assert secret != "b" * 32  # global WEBHOOK_SIGNING_SECRET from conftest
         mock_repo.create.assert_awaited_once()
+        # Secret is persisted on the row, not just returned
+        assert mock_repo.create.await_args.kwargs["signing_secret"] == secret
+
+    @pytest.mark.asyncio
+    async def test_create_endpoint_generates_unique_secrets(self) -> None:
+        """Two orgs and two endpoints within an org get different secrets."""
+        service, mock_repo = self._make_service()
+        mock_repo.create.return_value = self._make_endpoint()
+
+        _, s1 = await service.create_endpoint(
+            self.ORG_ID, "A", "https://example.com/a",
+        )
+        _, s2 = await service.create_endpoint(
+            self.ORG_ID, "B", "https://example.com/b",
+        )
+        _, s3 = await service.create_endpoint(
+            self.WRONG_ORG_ID, "C", "https://example.com/c",
+        )
+        assert len({s1, s2, s3}) == 3
+
+    @pytest.mark.asyncio
+    async def test_endpoint_reads_never_expose_secret(self) -> None:
+        """``list_endpoints``/``get_endpoint`` never return signing_secret."""
+        service, mock_repo = self._make_service()
+        mock_repo.get_by_organization.return_value = [
+            self._make_endpoint(signing_secret="whsec_topsecret"),  # noqa: S106
+        ]
+        mock_repo.get_by_id.return_value = self._make_endpoint(
+            signing_secret="whsec_topsecret",  # noqa: S106
+        )
+
+        listed = await service.list_endpoints(self.ORG_ID)
+        fetched = await service.get_endpoint(self.ENDPOINT_ID, self.ORG_ID)
+
+        assert "signing_secret" not in listed[0]
+        assert "signing_secret" not in fetched
+
+    # ── rotate_endpoint_secret ───────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_rotate_endpoint_secret_returns_new_secret(self) -> None:
+        """``rotate_endpoint_secret`` persists and returns a fresh secret."""
+        service, mock_repo = self._make_service()
+        mock_repo.get_by_id.return_value = self._make_endpoint(
+            signing_secret="whsec_old",  # noqa: S106
+        )
+
+        new_secret = await service.rotate_endpoint_secret(
+            self.ENDPOINT_ID, self.ORG_ID,
+        )
+
+        assert isinstance(new_secret, str)
+        assert len(new_secret) >= 32
+        assert new_secret != "whsec_old"  # noqa: S105
+        mock_repo.update.assert_awaited_once_with(
+            self.ENDPOINT_ID, signing_secret=new_secret,
+        )
+
+    @pytest.mark.asyncio
+    async def test_rotate_endpoint_secret_wrong_org_returns_none(self) -> None:
+        """``rotate_endpoint_secret`` returns None for a different org."""
+        service, mock_repo = self._make_service()
+        mock_repo.get_by_id.return_value = self._make_endpoint()
+
+        result = await service.rotate_endpoint_secret(
+            self.ENDPOINT_ID, self.WRONG_ORG_ID,
+        )
+        assert result is None
+        mock_repo.update.assert_not_awaited()
 
     # ── update_endpoint ─────────────────────────────────────────────────────
 
@@ -329,6 +436,108 @@ class TestWebhookService:
         assert "signature" in call_kwargs
         assert call_kwargs["signature"].startswith("t=")
 
+    @pytest.mark.asyncio
+    async def test_emit_signs_with_each_endpoints_own_secret(self) -> None:
+        """Each endpoint is signed with its own secret — no shared global."""
+        service, mock_repo = self._make_service()
+        ep_a = self._make_endpoint(
+            url="https://hook-a.com", endpoint_id=uuid4(),
+            signing_secret="whsec_org_a",  # noqa: S106
+        )
+        ep_b = self._make_endpoint(
+            url="https://hook-b.com", endpoint_id=uuid4(),
+            signing_secret="whsec_org_b",  # noqa: S106
+        )
+        mock_repo.get_active_endpoints_for_event.return_value = [ep_a, ep_b]
+
+        mock_arq_pool = AsyncMock()
+        with patch("services.webhook_service.get_arq", return_value=mock_arq_pool):
+            await service.emit(
+                organization_id=self.ORG_ID,
+                event_type="session.created",
+                payload={"session_id": "s1"},
+            )
+
+        calls = mock_arq_pool.enqueue.await_args_list
+        assert len(calls) == 2
+        sig_by_url = {c.kwargs["endpoint_url"]: c.kwargs["signature"] for c in calls}
+        body_bytes = orjson.dumps(
+            {"type": "session.created", "payload": {"session_id": "s1"}},
+        )
+        # Each signature verifies against that endpoint's own secret
+        assert _verify_signature(
+            "whsec_org_a", body_bytes, sig_by_url["https://hook-a.com"],
+        )
+        assert _verify_signature(
+            "whsec_org_b", body_bytes, sig_by_url["https://hook-b.com"],
+        )
+        # Different orgs ⇒ different signatures for the identical payload
+        assert sig_by_url["https://hook-a.com"] != sig_by_url["https://hook-b.com"]
+        # No global fallback used
+        mock_repo.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_emit_lazily_backfills_null_secret(self) -> None:
+        """Legacy endpoint with NULL secret gets one generated and persisted."""
+        service, mock_repo = self._make_service()
+        legacy_ep = self._make_endpoint(
+            url="https://hook.com", endpoint_id=uuid4(), signing_secret=None,
+        )
+        mock_repo.get_active_endpoints_for_event.return_value = [legacy_ep]
+        mock_repo.set_signing_secret_if_null.return_value = 1
+
+        mock_arq_pool = AsyncMock()
+        with patch("services.webhook_service.get_arq", return_value=mock_arq_pool):
+            await service.emit(
+                organization_id=self.ORG_ID,
+                event_type="session.created",
+                payload={},
+            )
+
+        mock_repo.set_signing_secret_if_null.assert_awaited_once()
+        backfilled = mock_repo.set_signing_secret_if_null.await_args.kwargs[
+            "signing_secret"
+        ]
+        assert mock_repo.set_signing_secret_if_null.await_args.args[0] == legacy_ep.id
+        assert isinstance(backfilled, str)
+        assert len(backfilled) >= 32
+        signature = mock_arq_pool.enqueue.await_args.kwargs["signature"]
+        body_bytes = orjson.dumps(
+            {"type": "session.created", "payload": {}},
+        )
+        assert _verify_signature(backfilled, body_bytes, signature)
+
+    @pytest.mark.asyncio
+    async def test_emit_backfill_conflict_reads_existing_secret(self) -> None:
+        """Backfill loser re-reads the winner's secret instead of overwriting."""
+        service, mock_repo = self._make_service()
+        legacy_ep = self._make_endpoint(
+            url="https://hook.com", endpoint_id=uuid4(), signing_secret=None,
+        )
+        winner_ep = self._make_endpoint(
+            url="https://hook.com", endpoint_id=legacy_ep.id,
+            signing_secret="whsec_winner",  # noqa: S106
+        )
+        mock_repo.get_active_endpoints_for_event.return_value = [legacy_ep]
+        mock_repo.set_signing_secret_if_null.return_value = 0  # lost the race
+        mock_repo.get_by_id.return_value = winner_ep
+
+        mock_arq_pool = AsyncMock()
+        with patch("services.webhook_service.get_arq", return_value=mock_arq_pool):
+            await service.emit(
+                organization_id=self.ORG_ID,
+                event_type="session.created",
+                payload={},
+            )
+
+        mock_repo.set_signing_secret_if_null.assert_awaited_once()
+        mock_repo.get_by_id.assert_awaited_once_with(legacy_ep.id)
+        signature = mock_arq_pool.enqueue.await_args.kwargs["signature"]
+        body_bytes = orjson.dumps(
+            {"type": "session.created", "payload": {}},
+        )
+        assert _verify_signature("whsec_winner", body_bytes, signature)
+
     # ── _serialize ──────────────────────────────────────────────────────────
 
     def test_serialize_endpoint(self) -> None:
@@ -340,6 +549,7 @@ class TestWebhookService:
         assert result["last_delivery_at"] is not None
         assert result["created_at"] is not None
         assert result["updated_at"] is not None
+        assert "signing_secret" not in result
 
     def test_serialize_endpoint_no_events(self) -> None:
         """``_serialize`` returns empty list when events field is empty."""

@@ -23,10 +23,10 @@ Usage
     service = IdempotencyService(redis=app.state.redis)
 
     # HTTP-level
-    result = await service.check_idempotency_key(key, body_hash)
+    result = await service.check_idempotency_key(key, body_hash, org_id)
     if result.status == IdempotencyStatus.NEW:
         response_data = await process_fn()
-        await service.store_idempotency_key(key, body_hash, response_data)
+        await service.store_idempotency_key(key, body_hash, response_data, org_id)
 
     # Content-level
     existing = await service.check_content_hash(org_id, user_id, session_id, messages)
@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 from uuid import UUID  # noqa: TCH003 — used in type hints for callers
@@ -166,13 +166,19 @@ class IdempotencyService:
     # ──────────────────────────────────────────────────────────────────────────
 
     async def check_idempotency_key(
-        self, key: str, body_hash: str
+        self, key: str, body_hash: str, org_id: str | UUID
     ) -> IdempotencyResult:
         """Check an ``Idempotency-Key`` and return the appropriate action.
+
+        Keys are tenant-namespaced — the cache key is
+        ``OpenZync:{env}:idempotency:{org_id}:{key}`` — so the same key
+        used by two different organizations never collides.
 
         Args:
             key: The ``Idempotency-Key`` header value (max 255 chars).
             body_hash: SHA-256 hex digest of the canonical request body.
+            org_id: The tenant (organization) UUID or string. Normalized
+                to ``str`` for the cache key.
 
         Returns:
             An :class:`IdempotencyResult`:
@@ -190,7 +196,7 @@ class IdempotencyService:
                 f"Idempotency-Key must not exceed {self._max_key_length} characters"
             )
 
-        cache_key = self._idem_prefix + key
+        cache_key = f"{self._idem_prefix}{org_id}:{key}"
 
         cached: str | None = await self._redis.get(cache_key)
         if cached is None:
@@ -242,20 +248,30 @@ class IdempotencyService:
         )
 
     async def store_idempotency_key(
-        self, key: str, body_hash: str, response_data: dict[str, Any]
+        self,
+        key: str,
+        body_hash: str,
+        response_data: dict[str, Any],
+        org_id: str | UUID,
     ) -> None:
         """Persist a successful response for future idempotency replay.
+
+        The cache key is tenant-namespaced
+        (``OpenZync:{env}:idempotency:{org_id}:{key}``) so replays cannot
+        cross organization boundaries.
 
         Args:
             key: The ``Idempotency-Key`` header value.
             body_hash: SHA-256 hex digest of the canonical request body.
             response_data: The response dict to cache for replay.
+            org_id: The tenant (organization) UUID or string. Normalized
+                to ``str`` for the cache key.
         """
-        cache_key = self._idem_prefix + key
+        cache_key = f"{self._idem_prefix}{org_id}:{key}"
         entry: dict[str, Any] = {
             "response_body": response_data,
             "request_body_hash": body_hash,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
 
         await self._redis.setex(
