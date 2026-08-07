@@ -376,6 +376,47 @@ class TestMemoryService:
             payload=ANY,
         )
 
+    @pytest.mark.asyncio
+    async def test_ingest_survives_webhook_emit_failure(
+        self,
+        service: MemoryService,
+    ) -> None:
+        """A webhook emit failure never fails an already-committed ingest.
+
+        Regression test for the live incident: ``emit()`` used to propagate
+        DB/enqueue errors, 500ing an ingest that had already committed
+        (``emit`` runs after ``db.commit()``).  ``emit()`` now absorbs
+        fan-out failures (logs ``webhook.emit_failed``, counts, returns
+        False) — so ingest must still return ``accepted`` even when the
+        endpoint lookup inside the real ``emit`` raises.
+        """
+        webhook_repo = AsyncMock()
+        webhook_repo.get_active_endpoints_for_event.side_effect = RuntimeError(
+            "db unavailable",
+        )
+        service._webhook_service = WebhookService(repo=webhook_repo)
+
+        service._session_repo.get_or_create_default.return_value = MagicMock(
+            id=uuid4(),
+            external_id="__default__",
+        )
+
+        with (
+            patch.object(service, "_enqueue_arq_tasks"),
+            patch.object(service, "_invalidate_context_cache"),
+            patch.object(service, "_get_org_pii_config", return_value={}),
+        ):
+            result = await service.ingest(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
+                session_external_id=None,
+                messages=self._sample_messages(),
+            )
+        assert isinstance(result, IngestMemoryResponse)
+        assert result.status == "accepted"
+        assert result.job_id is not None
+
     # ------------------------------------------------------------------
     # Blob processing during ingest
     # ------------------------------------------------------------------

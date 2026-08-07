@@ -30,6 +30,7 @@ import orjson
 
 from core.arq import get_arq
 from core.config import get_settings
+from middleware.metrics import webhook_emit_failures_total
 from models.webhook import WebhookEndpoint
 from repositories.webhook_repository import WebhookRepository
 from services.worker.worker_settings import get_queue_name
@@ -198,78 +199,99 @@ class WebhookService:
         organization_id: uuid.UUID,
         event_type: str,
         payload: dict | None = None,
-    ) -> None:
+    ) -> bool:
         """Emit an event to all subscribed webhook endpoints via ARQ.
 
         Finds active endpoints subscribed to ``event_type`` and enqueues a
-        ``deliver_webhook`` job for each.  Delivery is async — errors are
-        logged but never propagated to the caller (the event has already
-        happened).
+        ``deliver_webhook`` job for each.  Delivery is async and durable —
+        retries and delivery logging live in the ARQ ``deliver_webhook``
+        worker, not here.
+
+        Guarantee: this method **never raises**.  Any fan-out failure
+        (endpoint lookup, signing, or enqueue) is logged as
+        ``webhook.emit_failed`` with the full traceback and counted on the
+        ``openzync_webhook_emit_failures_total`` metric.  The event has
+        already happened and the caller's transaction is committed — a
+        webhook scheduling failure must never fail that work.
 
         Args:
             organization_id: The organization emitting the event.
             event_type: The event type string (e.g. ``session.created``).
             payload: Optional event payload dict.
+
+        Returns:
+            True if the fan-out was enqueued (or there were no
+            subscribers), False if it failed (failure is logged and
+            counted, never raised).
         """
-        endpoints = await self._repo.get_active_endpoints_for_event(
-            organization_id, event_type,
-        )
-        if not endpoints:
-            return
-
-        payload = payload if payload is not None else {}
-        body_bytes = orjson.dumps({"type": event_type, "payload": payload})
-        body = body_bytes.decode()
-
         try:
-            arq_pool = get_arq()
-        except RuntimeError as exc:
-            logger.error("Webhook emit failed — ARQ not available: %s", exc)
-            raise
-
-        queue_name = get_queue_name(get_settings().ENVIRONMENT, ARQ_WEBHOOK_QUEUE)
-
-        async def _enqueue_one(ep: WebhookEndpoint) -> None:
-            """Enqueue a single delivery, signed with the endpoint's own secret."""
-            signing_secret = ep.signing_secret
-            if not signing_secret:
-                # Legacy row migrated with a NULL secret — backfill one now so
-                # we never fall back to a shared/global secret. Single
-                # conditional UPDATE (WHERE signing_secret IS NULL) so two
-                # concurrent emitters cannot race and write different secrets —
-                # the loser re-reads the winner's secret instead of overwriting.
-                signing_secret = secrets.token_urlsafe(43)
-                if await self._repo.set_signing_secret_if_null(
-                    ep.id, signing_secret=signing_secret,
-                ) == 0:
-                    refreshed = await self._repo.get_by_id(ep.id)
-                    if refreshed is None or not refreshed.signing_secret:
-                        logger.warning(
-                            "webhook.secret_backfill_conflict",
-                            extra={"endpoint_id": str(ep.id)},
-                        )
-                        return  # endpoint deleted mid-emit — nothing to deliver
-                    signing_secret = refreshed.signing_secret
-
-            signature = sign_payload(signing_secret, body_bytes)
-            await arq_pool.enqueue(
-                "deliver_webhook",
-                queue_name=queue_name,
-                endpoint_id=str(ep.id),
-                endpoint_url=ep.url,
-                body=body,
-                event_type=event_type,
-                signature=signature,
-                attempt=0,
+            endpoints = await self._repo.get_active_endpoints_for_event(
+                organization_id, event_type,
             )
+            if not endpoints:
+                return True
 
-        await asyncio.gather(*[_enqueue_one(ep) for ep in endpoints])
+            payload = payload if payload is not None else {}
+            body_bytes = orjson.dumps({"type": event_type, "payload": payload})
+            body = body_bytes.decode()
 
-        logger.info(
-            "Webhook emit: %s → %d endpoint(s)",
-            event_type,
-            len(endpoints),
-        )
+            try:
+                arq_pool = get_arq()
+            except RuntimeError as exc:
+                logger.error("Webhook emit failed — ARQ not available: %s", exc)
+                raise  # re-raise into the outer handler: log + count + return False
+
+            queue_name = get_queue_name(get_settings().ENVIRONMENT, ARQ_WEBHOOK_QUEUE)
+
+            async def _enqueue_one(ep: WebhookEndpoint) -> None:
+                """Enqueue a single delivery, signed with the endpoint's own secret."""
+                signing_secret = ep.signing_secret
+                if not signing_secret:
+                    # Legacy row migrated with a NULL secret — backfill one now so
+                    # we never fall back to a shared/global secret. Single
+                    # conditional UPDATE (WHERE signing_secret IS NULL) so two
+                    # concurrent emitters cannot race and write different secrets —
+                    # the loser re-reads the winner's secret instead of overwriting.
+                    signing_secret = secrets.token_urlsafe(43)
+                    if await self._repo.set_signing_secret_if_null(
+                        ep.id, signing_secret=signing_secret,
+                    ) == 0:
+                        refreshed = await self._repo.get_by_id(ep.id)
+                        if refreshed is None or not refreshed.signing_secret:
+                            logger.warning(
+                                "webhook.secret_backfill_conflict",
+                                extra={"endpoint_id": str(ep.id)},
+                            )
+                            return  # endpoint deleted mid-emit — nothing to deliver
+                        signing_secret = refreshed.signing_secret
+
+                signature = sign_payload(signing_secret, body_bytes)
+                await arq_pool.enqueue(
+                    "deliver_webhook",
+                    queue_name=queue_name,
+                    endpoint_id=str(ep.id),
+                    endpoint_url=ep.url,
+                    body=body,
+                    event_type=event_type,
+                    signature=signature,
+                    attempt=0,
+                )
+
+            await asyncio.gather(*[_enqueue_one(ep) for ep in endpoints])
+
+            logger.info(
+                "Webhook emit: %s → %d endpoint(s)",
+                event_type,
+                len(endpoints),
+            )
+        except Exception:
+            logger.exception(
+                "webhook.emit_failed",
+                extra={"event_type": event_type, "org_id": str(organization_id)},
+            )
+            webhook_emit_failures_total.labels(event_type=event_type).inc()
+            return False
+        return True
 
     # ── Serialization ────────────────────────────────────────────────────────
 

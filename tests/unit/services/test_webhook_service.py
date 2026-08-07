@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
@@ -369,12 +370,13 @@ class TestWebhookService:
         mock_arq_pool.enqueue.return_value = "job-123"
 
         with patch("services.webhook_service.get_arq", return_value=mock_arq_pool):
-            await service.emit(
+            result = await service.emit(
                 organization_id=self.ORG_ID,
                 event_type="session.created",
                 payload={"session_id": "s1"},
             )
 
+        assert result is True
         assert mock_arq_pool.enqueue.await_count == 2
         mock_repo.get_active_endpoints_for_event.assert_awaited_once_with(
             self.ORG_ID, "session.created",
@@ -387,29 +389,102 @@ class TestWebhookService:
         mock_repo.get_active_endpoints_for_event.return_value = []
 
         with patch("services.webhook_service.get_arq") as mock_get_arq:
-            await service.emit(
+            result = await service.emit(
                 organization_id=self.ORG_ID,
                 event_type="unknown.event",
             )
 
+        assert result is True
         mock_get_arq.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_emit_arq_unavailable_raises(self) -> None:
-        """``emit`` raises RuntimeError when ARQ pool is not initialised."""
+    async def test_emit_arq_unavailable_returns_false(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """``emit`` returns False (never raises) when ARQ pool is not initialised."""
         service, mock_repo = self._make_service()
         mock_repo.get_active_endpoints_for_event.return_value = [
             self._make_endpoint(),
         ]
 
-        with patch(
-            "services.webhook_service.get_arq",
-            side_effect=RuntimeError("ARQ not initialised"),
-        ), pytest.raises(RuntimeError):
-            await service.emit(
+        with (
+            patch(
+                "services.webhook_service.get_arq",
+                side_effect=RuntimeError("ARQ not initialised"),
+            ),
+            patch(
+                "services.webhook_service.webhook_emit_failures_total"
+            ) as mock_counter,
+            caplog.at_level(logging.ERROR, logger="openzync.webhooks"),
+        ):
+            result = await service.emit(
                 organization_id=self.ORG_ID,
                 event_type="session.created",
             )
+
+        assert result is False
+        assert "webhook.emit_failed" in caplog.text
+        mock_counter.labels.assert_called_once_with(event_type="session.created")
+        mock_counter.labels.return_value.inc.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_emit_repo_lookup_failure_returns_false(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """``emit`` returns False when the endpoint lookup (DB query) raises."""
+        service, mock_repo = self._make_service()
+        mock_repo.get_active_endpoints_for_event.side_effect = RuntimeError(
+            "db unavailable",
+        )
+
+        with (
+            patch(
+                "services.webhook_service.webhook_emit_failures_total"
+            ) as mock_counter,
+            caplog.at_level(logging.ERROR, logger="openzync.webhooks"),
+        ):
+            result = await service.emit(
+                organization_id=self.ORG_ID,
+                event_type="session.created",
+            )
+
+        assert result is False
+        assert "webhook.emit_failed" in caplog.text
+        mock_counter.labels.assert_called_once_with(event_type="session.created")
+        mock_counter.labels.return_value.inc.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_emit_enqueue_failure_returns_false(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """``emit`` returns False when ARQ enqueue raises."""
+        service, mock_repo = self._make_service()
+        mock_repo.get_active_endpoints_for_event.return_value = [
+            self._make_endpoint(),
+        ]
+
+        mock_arq_pool = AsyncMock()
+        mock_arq_pool.enqueue.side_effect = RuntimeError("queue full")
+
+        with (
+            patch("services.webhook_service.get_arq", return_value=mock_arq_pool),
+            patch(
+                "services.webhook_service.webhook_emit_failures_total"
+            ) as mock_counter,
+            caplog.at_level(logging.ERROR, logger="openzync.webhooks"),
+        ):
+            result = await service.emit(
+                organization_id=self.ORG_ID,
+                event_type="session.created",
+            )
+
+        assert result is False
+        assert "webhook.emit_failed" in caplog.text
+        mock_counter.labels.assert_called_once_with(event_type="session.created")
+        mock_counter.labels.return_value.inc.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_emit_with_payload(self) -> None:
@@ -423,12 +498,13 @@ class TestWebhookService:
         mock_arq_pool.enqueue.return_value = "job-xyz"
 
         with patch("services.webhook_service.get_arq", return_value=mock_arq_pool):
-            await service.emit(
+            result = await service.emit(
                 organization_id=self.ORG_ID,
                 event_type="session.created",
                 payload={"session_id": "s1", "project_id": "p1"},
             )
 
+        assert result is True
         mock_arq_pool.enqueue.assert_awaited_once()
         call_kwargs = mock_arq_pool.enqueue.await_args[1]  # keyword args
         assert call_kwargs["event_type"] == "session.created"
@@ -452,12 +528,13 @@ class TestWebhookService:
 
         mock_arq_pool = AsyncMock()
         with patch("services.webhook_service.get_arq", return_value=mock_arq_pool):
-            await service.emit(
+            result = await service.emit(
                 organization_id=self.ORG_ID,
                 event_type="session.created",
                 payload={"session_id": "s1"},
             )
 
+        assert result is True
         calls = mock_arq_pool.enqueue.await_args_list
         assert len(calls) == 2
         sig_by_url = {c.kwargs["endpoint_url"]: c.kwargs["signature"] for c in calls}
@@ -488,12 +565,13 @@ class TestWebhookService:
 
         mock_arq_pool = AsyncMock()
         with patch("services.webhook_service.get_arq", return_value=mock_arq_pool):
-            await service.emit(
+            result = await service.emit(
                 organization_id=self.ORG_ID,
                 event_type="session.created",
                 payload={},
             )
 
+        assert result is True
         mock_repo.set_signing_secret_if_null.assert_awaited_once()
         backfilled = mock_repo.set_signing_secret_if_null.await_args.kwargs[
             "signing_secret"
@@ -524,12 +602,13 @@ class TestWebhookService:
 
         mock_arq_pool = AsyncMock()
         with patch("services.webhook_service.get_arq", return_value=mock_arq_pool):
-            await service.emit(
+            result = await service.emit(
                 organization_id=self.ORG_ID,
                 event_type="session.created",
                 payload={},
             )
 
+        assert result is True
         mock_repo.set_signing_secret_if_null.assert_awaited_once()
         mock_repo.get_by_id.assert_awaited_once_with(legacy_ep.id)
         signature = mock_arq_pool.enqueue.await_args.kwargs["signature"]

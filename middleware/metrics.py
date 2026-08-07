@@ -100,6 +100,13 @@ facts_superseded_total = Counter(
     registry=METRICS_REGISTRY,
 )
 
+webhook_emit_failures_total = Counter(
+    "openzync_webhook_emit_failures_total",
+    "Webhook emit fan-out failures (endpoint lookup or enqueue).",
+    labelnames=["event_type"],
+    registry=METRICS_REGISTRY,
+)
+
 # ── ASGI middleware ──────────────────────────────────────────────────────────
 
 
