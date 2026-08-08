@@ -26,8 +26,14 @@ class TestSummariseCommunity:
 
         def _execute_side_effect(*args, **kwargs):
             # Check if it's an Organization query or Project query
-            from sqlalchemy.sql.elements import ClauseElement
+            from sqlalchemy.sql.elements import TextClause
+
             stmt = args[0] if args else kwargs.get("statement")
+            if isinstance(stmt, TextClause):
+                # RLS set_config calls — return value is discarded.
+                dummy = MagicMock()
+                dummy.all.return_value = []
+                return dummy
             stmt_str = str(stmt) if stmt is not None else ""
             if "organizations" in stmt_str.lower() or "Organization" in stmt_str:
                 return org_result
@@ -240,3 +246,160 @@ class TestSummariseCommunity:
 
         with pytest.raises(Exception):
             await summarise_community(ctx=self._ctx(db), org_id=_ORG_ID)
+
+    @pytest.mark.asyncio
+    async def test_discovery_sets_bypass_rls_before_org_query(self) -> None:
+        """RLS bypass is set before the org-discovery query in cron mode.
+
+        Regression for the RLS fix: without the transaction-local
+        ``set_config('app.bypass_rls', 'true', true)`` the organizations
+        policy (migrations/0001) admits no rows under any RLS-enforced
+        role, so the nightly run silently returns "skipped".
+        """
+        oid = uuid4()
+        db = self._make_db(org_ids=[oid], project_ids=[])
+
+        with patch(
+            "workers.tasks.summarise_community.resolve_graph_backend",
+            return_value=None,
+        ):
+            from workers.tasks.summarise_community import summarise_community
+
+            await summarise_community(ctx=self._ctx(db))
+
+        calls = db.execute.call_args_list
+        assert str(calls[0].args[0]) == (
+            "SELECT set_config('app.bypass_rls', 'true', true)"
+        )
+        assert "organizations" in str(calls[1].args[0]).lower()
+
+    @pytest.mark.asyncio
+    async def test_process_org_sets_org_id_context(self) -> None:
+        """RLS app.org_id context is set before per-org project discovery.
+
+        Regression for the RLS fix: without the transaction-local
+        ``set_config('app.org_id', ...)`` the projects policy
+        (migrations/0019) admits no rows for this org, so every org
+        silently reports zero projects.
+
+        The statement is pinned to exact full-string equality (including the
+        trailing ``, true)``) so a regression to session-local
+        ``set_config('app.org_id', :org_id, false)`` fails this test — the
+        bug class this fix batch prevents (cf. the ``59c3fcb79b85``
+        session-level precedent in the cleanup worker docstring).
+        """
+        oid = uuid4()
+        db = self._make_db(org_ids=[], project_ids=[uuid4()])
+        mock_backend = AsyncMock()
+        mock_backend.get_all_entities.return_value = self._make_entities(2)
+
+        with patch(
+            "workers.tasks.summarise_community.resolve_graph_backend",
+            return_value=mock_backend,
+        ):
+            from workers.tasks.summarise_community import summarise_community
+
+            await summarise_community(ctx=self._ctx(db), org_id=str(oid))
+
+        calls = db.execute.call_args_list
+        assert str(calls[0].args[0]) == (
+            "SELECT set_config('app.org_id', :org_id, true)"
+        )
+        assert calls[0].args[1] == {"org_id": str(oid)}
+        assert "projects" in str(calls[1].args[0]).lower()
+
+    @pytest.mark.asyncio
+    async def test_org_failure_rolls_back_transaction(self) -> None:
+        """A mid-org DB failure rolls back the shared session before re-raising.
+
+        Regression for the review fix: without the per-org rollback, a
+        failed org aborts the shared transaction and the next org's
+        ``set_config`` raises ``InFailedSqlTransaction``, cascading to
+        "All orgs failed".  With it, ``db.rollback`` is awaited, the org is
+        collected as failed, and the run reports ``partial`` with only the
+        successful org's commit issued.
+        """
+        org_1 = uuid4()
+        org_2 = uuid4()
+
+        discovery = MagicMock()
+        discovery.all.return_value = [(org_1,), (org_2,)]
+        empty = MagicMock()
+        empty.all.return_value = []
+        proj_result = MagicMock()
+        proj_result.all.return_value = [(uuid4(),)]
+
+        db = AsyncMock()
+        db.__aenter__.return_value = db
+        db.__aexit__.return_value = None
+        # bypass_rls + org-discovery + org_1 set_config + org_1 project
+        # query + org_2 set_config + org_2 project query (raises).
+        db.execute.side_effect = [
+            empty, discovery, empty, proj_result, empty,
+            Exception("mid-org DB error"),
+        ]
+
+        mock_backend = AsyncMock()
+        mock_backend.get_all_entities.return_value = self._make_entities(2)
+
+        with patch(
+            "workers.tasks.summarise_community.resolve_graph_backend",
+            return_value=mock_backend,
+        ):
+            from workers.tasks.summarise_community import summarise_community
+
+            result = await summarise_community(ctx=self._ctx(db))
+
+        assert result["status"] == "partial"
+        assert result["orgs_processed"] == 2
+        assert result["orgs_failed"] == 1
+        db.rollback.assert_awaited_once()
+        # Only org_1 committed — org_2's failed transaction was rolled back.
+        db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_all_orgs_fail_raises(self) -> None:
+        """Every org failing in cron mode raises ``RuntimeError``.
+
+        Guards the "All N orgs failed" branch in ``summarise_community``
+        (discovery mode, >1 org): without it, a regression that swallows
+        per-org failures and reports success would pass tests.  Both orgs
+        must be attempted and their failures aggregated into the raised
+        error — the per-org ``set_config`` calls below prove both were
+        reached despite the first org's failure.
+        """
+        org_1 = uuid4()
+        org_2 = uuid4()
+
+        discovery = MagicMock()
+        discovery.all.return_value = [(org_1,), (org_2,)]
+        empty = MagicMock()
+        empty.all.return_value = []
+
+        db = AsyncMock()
+        db.__aenter__.return_value = db
+        db.__aexit__.return_value = None
+        # bypass_rls + org discovery + org_1 set_config + org_1 project
+        # query (raises) + org_2 set_config + org_2 project query (raises).
+        db.execute.side_effect = [
+            empty, discovery, empty,
+            Exception("project select failed"),
+            empty,
+            Exception("project select failed"),
+        ]
+
+        mock_backend = AsyncMock()
+
+        with patch(
+            "workers.tasks.summarise_community.resolve_graph_backend",
+            return_value=mock_backend,
+        ):
+            from workers.tasks.summarise_community import summarise_community
+
+            with pytest.raises(RuntimeError, match="All 2 orgs failed"):
+                await summarise_community(ctx=self._ctx(db))
+
+        calls = db.execute.call_args_list
+        # Both orgs were attempted — each org's set_config ran with its id.
+        assert calls[2].args[1] == {"org_id": str(org_1)}
+        assert calls[4].args[1] == {"org_id": str(org_2)}

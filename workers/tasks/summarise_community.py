@@ -1,7 +1,10 @@
 """ARQ worker for community summarisation — scheduled nightly.
 
 Pipeline:
-1. Find orgs with graph data via the ORM
+1. Find orgs with graph data via the ORM.  Discovery runs under a
+   transaction-local RLS bypass (``app.bypass_rls``); per-org processing
+   re-applies ``app.org_id`` per org because the shared session commits
+   after each org (same rationale as ``cleanup_orphan_blobs``).
 2. Resolve per-org graph backend (surfaces SurrealDB or FalkorDB if configured)
 3. Per project within each org:
    a. Fetch all entities + relationships via the graph backend
@@ -20,7 +23,7 @@ import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from models.organization import Organization
 from models.project import Project
@@ -83,6 +86,13 @@ async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
             if org_id:
                 org_ids = [UUID(org_id)]
             else:
+                # RLS: the organizations policy requires bypass_rls or a
+                # matching org_id; a global discovery has neither.
+                # Transaction-local — dies at the first per-org commit, so
+                # it cannot leak into per-org processing.
+                await db.execute(
+                    text("SELECT set_config('app.bypass_rls', 'true', true)")
+                )
                 # Discover eligible orgs via the Organization table — each
                 # org's resolved backend answers authoritatively for entity
                 # counts via get_all_entities().  Direct GraphEntity ORM
@@ -147,6 +157,10 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
     Resolves the per-org graph backend, discovers projects with graph
     data, and processes each project independently.
 
+    Sets the transaction-local ``app.org_id`` RLS context first so the
+    projects/organizations policies admit this org's rows; re-applied per
+    org because this function commits and the setting is transaction-local.
+
     Args:
         ctx: ARQ worker context (passed to ``resolve_graph_backend``).
         db: Database session.
@@ -160,6 +174,13 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
         detect_communities_label_propagation,
     )
 
+    # RLS: projects/organizations policies need app.org_id (or bypass).
+    # Transaction-local, re-applied per org because _process_org commits.
+    await db.execute(
+        text("SELECT set_config('app.org_id', :org_id, true)"),
+        {"org_id": str(org_id)},
+    )
+
     backend = await resolve_graph_backend(ctx, org_id, db)
     if backend is None:
         logger.warning(
@@ -168,92 +189,102 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
         )
         return 0
 
-    # Discover projects for this org that have graph entities
-    result = await db.execute(
-        select(Project.id).where(
-            Project.organization_id == org_id,
-            Project.is_archived.is_(False),
-        )
-    )
-    project_ids = [r[0] for r in result.all()]
-
-    if not project_ids:
-        logger.info(
-            "community.no_projects",
-            extra={"org_id": str(org_id)},
-        )
-        return 0
-
     total_created = 0
-    for project_id in project_ids:
-        try:
-            # 1. Fetch all entities (non-community) via backend
-            entities = await backend.get_all_entities(org_id, project_id)
-
-            if len(entities) < COMMUNITY_MIN_ENTITY_COUNT:
-                logger.info(
-                    "community.too_few_entities",
-                    extra={
-                        "org_id": str(org_id),
-                        "project_id": str(project_id),
-                        "count": len(entities),
-                    },
-                )
-                continue
-
-            # 2. Fetch relationships via backend
-            relationships = await backend.get_all_relationships(
-                org_id, project_id
+    try:
+        # Discover projects for this org that have graph entities
+        result = await db.execute(
+            select(Project.id).where(
+                Project.organization_id == org_id,
+                Project.is_archived.is_(False),
             )
+        )
+        project_ids = [r[0] for r in result.all()]
 
-            # 3. Build graph and detect communities
-            graph = build_entity_graph(entities, relationships)
-            communities = detect_communities_label_propagation(graph)
+        if not project_ids:
+            logger.info(
+                "community.no_projects",
+                extra={"org_id": str(org_id)},
+            )
+            return 0
 
-            if not communities:
-                logger.info(
-                    "community.no_communities_found",
-                    extra={
-                        "org_id": str(org_id),
-                        "project_id": str(project_id),
-                    },
-                )
-                continue
+        for project_id in project_ids:
+            try:
+                # 1. Fetch all entities (non-community) via backend
+                entities = await backend.get_all_entities(org_id, project_id)
 
-            # 4. Generate summaries and store
-            for community_nodes in communities:
-                try:
-                    await _create_community(
-                        ctx=ctx,
-                        backend=backend,
-                        db=db,
-                        org_id=org_id,
-                        project_id=project_id,
-                        entity_ids=list(community_nodes),
-                        all_entities=entities,
-                        all_relationships=relationships,
-                    )
-                    total_created += 1
-                except Exception as exc:
-                    logger.error(
-                        "community.create_failed",
+                if len(entities) < COMMUNITY_MIN_ENTITY_COUNT:
+                    logger.info(
+                        "community.too_few_entities",
                         extra={
                             "org_id": str(org_id),
                             "project_id": str(project_id),
-                            "error": str(exc),
+                            "count": len(entities),
                         },
                     )
-        except Exception as exc:
-            logger.error(
-                "community.project_failed",
-                extra={
-                    "org_id": str(org_id),
-                    "project_id": str(project_id),
-                    "error": str(exc),
-                },
-            )
+                    continue
 
-    await db.commit()
+                # 2. Fetch relationships via backend
+                relationships = await backend.get_all_relationships(
+                    org_id, project_id
+                )
+
+                # 3. Build graph and detect communities
+                graph = build_entity_graph(entities, relationships)
+                communities = detect_communities_label_propagation(graph)
+
+                if not communities:
+                    logger.info(
+                        "community.no_communities_found",
+                        extra={
+                            "org_id": str(org_id),
+                            "project_id": str(project_id),
+                        },
+                    )
+                    continue
+
+                # 4. Generate summaries and store
+                for community_nodes in communities:
+                    try:
+                        await _create_community(
+                            ctx=ctx,
+                            backend=backend,
+                            db=db,
+                            org_id=org_id,
+                            project_id=project_id,
+                            entity_ids=list(community_nodes),
+                            all_entities=entities,
+                            all_relationships=relationships,
+                        )
+                        total_created += 1
+                    except Exception as exc:
+                        logger.error(
+                            "community.create_failed",
+                            extra={
+                                "org_id": str(org_id),
+                                "project_id": str(project_id),
+                                "error": str(exc),
+                            },
+                        )
+            except Exception as exc:
+                logger.error(
+                    "community.project_failed",
+                    extra={
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                        "error": str(exc),
+                    },
+                )
+
+        await db.commit()
+    except Exception:
+        # The session is shared across orgs in discovery mode: a failed
+        # statement aborts the transaction, and any later statement on this
+        # session raises InFailedSqlTransaction.  Roll back so the next org
+        # starts from a clean transaction — and so this org's pending
+        # writes cannot be flushed by a later commit.
+        await db.rollback()
+        raise
+
     logger.info(
         "community.org_completed",
         extra={"org_id": str(org_id), "communities": total_created},

@@ -220,7 +220,9 @@ async def cleanup_orphan_blobs(
                 # sets neither, so without this the discovery would return
                 # zero rows under any RLS-enforced role and the S3 leak
                 # would silently continue.  Safe to bypass: get_orphaned_blobs
-                # and delete_by_ids are explicitly org-scoped.  Transaction
+                # filters by org, and the blob IDs it returns are the same
+                # org-scoped IDs passed to delete_by_ids in this iteration
+                # (provenance).  Transaction
                 # local (is_local=true), unlike the 59c3fcb79b85 migration
                 # precedent (session-level false): this session is shared
                 # across all orgs, and the setting expires at the first

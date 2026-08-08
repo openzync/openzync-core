@@ -742,6 +742,47 @@ class TestMain:
         finally:
             _unpatch_main_deps(_mocks)
 
+    @pytest.mark.asyncio
+    async def test_main_registers_nightly_community_detection_cron(self) -> None:
+        """Nightly 02:00 UTC summarise_community cron reaches the low worker.
+
+        Guards the community-detection cron registration: it must be passed
+        to the low-priority ``create_arq_worker`` call, wrapped with the
+        real ``summarise_community`` coroutine, job_id
+        ``nightly_community_detection``, and schedule (hour=2, minute=0 —
+        installed arq stores ints, not sets).
+
+        NOTE: this cron only exists in nightly mode, i.e. when
+        ``AUTO_RUN_COMMUNITY_DETECTION`` is False.  The seeded
+        ``WorkerSettings`` (``_seed_worker_settings``) leaves it at its
+        default False — ``WorkerSettings`` is a plain BaseModel, so no env
+        override applies — hence under the test settings the cron must be
+        present.
+        """
+        from services.worker.worker import main
+        from workers.tasks.summarise_community import summarise_community
+
+        _mocks = _patch_main_deps()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await main()
+
+            calls = _mocks["create_arq_worker"].call_args_list
+            assert len(calls) == 2  # high first, low second
+            cron_jobs = calls[1].kwargs["cron_jobs"]
+
+            matches = [
+                job for job in cron_jobs
+                if getattr(job, "job_id", None) == "nightly_community_detection"
+            ]
+            assert len(matches) == 1
+            job = matches[0]
+            assert job.coroutine is summarise_community
+            assert job.hour == 2
+            assert job.minute == 0
+        finally:
+            _unpatch_main_deps(_mocks)
+
 
 @pytest.mark.unit
 class TestEntrypoint:
