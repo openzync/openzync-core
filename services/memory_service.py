@@ -2,7 +2,7 @@
 
 This is the primary entry point for persisting agent memory. The service:
 
-1. Resolves or creates users and sessions
+1. Resolves or creates users and resolves sessions
 2. Validates and persists messages as episodes in PostgreSQL
 3. Enqueues ARQ worker tasks for async enrichment (enrich_episode,
    embed_episode, link_entities_to_episode)
@@ -127,7 +127,7 @@ class MemoryService:
         org_id: UUID,
         project_id: UUID,
         created_by: UUID,
-        session_external_id: str | None,
+        session_external_id: str,
         messages: list[Message],
         uploaded_blobs: list[UploadFile] | None = None,
         idempotency_key: str | None = None,
@@ -138,7 +138,7 @@ class MemoryService:
         Flow:
         1. Idempotency check (Redis) — return cached response if duplicate,
            raise ``ConflictError`` if the key was used with a different body.
-        2. Resolve or create the session (``__default__`` if omitted).
+        2. Resolve the session.
         3. Compute content hash for content-level dedup (via IdempotencyService).
         4. Redis fast-path pre-check for dedup (fast-path ONLY — the
            authoritative arbiter is the ingest_dedup claim in step 5).
@@ -160,8 +160,8 @@ class MemoryService:
             org_id: The authenticated organization UUID.
             project_id: The project UUID for scoping.
             created_by: The authenticated user's UUID (attribution).
-            session_external_id: Optional session external ID.
-                Auto-creates ``__default__`` if omitted.
+            session_external_id: The session external ID. The session must
+                already exist — it is never auto-created.
             messages: List of validated message objects.
             uploaded_blobs: Optional list of uploaded files from a multipart
                 request. Indexed by ``BlobMetadata.blob_id`` in each message.
@@ -202,11 +202,10 @@ class MemoryService:
                     "Idempotency-Key already used with a different request body"
                 )
 
-        # ── Step 2: Resolve or create session ────────────────────────────
+        # ── Step 2: Resolve session ──────────────────────────────────────
         session = await self._resolve_session(
             organization_id=org_id,
             project_id=project_id,
-            created_by=created_by,
             session_external_id=session_external_id,
         )
         session_id = session.id
@@ -482,66 +481,50 @@ class MemoryService:
         self,
         organization_id: UUID,
         project_id: UUID,
-        created_by: UUID,
-        session_external_id: str | None,
+        session_external_id: str,
     ) -> Session:
-        """Resolve an existing session or auto-create a default one.
+        """Resolve an existing session by its external ID.
 
-        Rules:
-        - If ``session_external_id`` is provided: look up the existing
-          session and raise ``NotFoundError`` if it does not exist.
-          Sessions are NOT auto-created from arbitrary IDs — the SDK
-          must call ``POST /sessions`` first.
-        - If ``session_external_id`` is ``None``: get or create a session
-          named ``__default__``. Uses ``INSERT ... ON CONFLICT DO NOTHING``
-          for race safety.
+        Look up the existing session and raise ``NotFoundError`` if it
+        does not exist.  Sessions are NOT auto-created from arbitrary
+        IDs — the SDK must call ``POST /sessions`` first.
 
         Args:
             organization_id: The organization UUID.
             project_id: The project UUID.
-            created_by: The authenticated user's UUID (attribution).
-            session_external_id: The caller-defined session identifier,
-                or ``None`` to use the default session.
+            session_external_id: The caller-defined session identifier.
 
         Returns:
             A ``Session`` ORM instance.
 
         Raises:
-            NotFoundError: If a specific session_id was given but not found.
+            NotFoundError: If no session with the given identifier exists.
         """
-        if session_external_id is not None:
-            # Try by external_id first (the canonical lookup).
-            session = await self._session_repo.get_by_external_id(
-                org_id=organization_id,
-                project_id=project_id,
-                external_id=session_external_id,
-            )
-            if session is None:
-                # Fallback: try resolving as a raw UUID — the caller may
-                # have passed the session's internal UUID rather than its
-                # user-facing external_id.
-                try:
-                    parsed = UUID(session_external_id)
-                except ValueError:
-                    parsed = None
-                if parsed is not None:
-                    session = await self._session_repo.get_by_uuid(
-                        org_id=organization_id,
-                        session_id=parsed,
-                        project_id=project_id,
-                    )
-            if session is None:
-                raise NotFoundError(
-                    f"Session '{session_external_id}' not found in project {project_id}"
-                )
-            return session
-
-        # Auto-create or get existing "__default__" session
-        return await self._session_repo.get_or_create_default(
+        # Try by external_id first (the canonical lookup).
+        session = await self._session_repo.get_by_external_id(
             org_id=organization_id,
             project_id=project_id,
-            created_by=created_by,
+            external_id=session_external_id,
         )
+        if session is None:
+            # Fallback: try resolving as a raw UUID — the caller may
+            # have passed the session's internal UUID rather than its
+            # user-facing external_id.
+            try:
+                parsed = UUID(session_external_id)
+            except ValueError:
+                parsed = None
+            if parsed is not None:
+                session = await self._session_repo.get_by_uuid(
+                    org_id=organization_id,
+                    session_id=parsed,
+                    project_id=project_id,
+                )
+        if session is None:
+            raise NotFoundError(
+                f"Session '{session_external_id}' not found in project {project_id}"
+            )
+        return session
 
     # ── Idempotency & content dedup ──────────────────────────────────────────
     # Delegated to IdempotencyService (self._idem) — see idempotency_service.py.

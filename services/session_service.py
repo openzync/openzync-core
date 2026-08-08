@@ -222,7 +222,7 @@ class SessionService:
         """List sessions for a project with cursor-based pagination.
 
         By default returns open (non-closed, non-deleted) sessions,
-        excluding the ``__default__`` auto-created session.
+        excluding any legacy ``__default__`` session.
 
         Args:
             org_id: The organization UUID for tenant isolation.

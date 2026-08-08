@@ -63,15 +63,16 @@ class FactBatchRequest(BaseModel):
     """Request body for ``POST /v1/projects/{project_id}/facts``.
 
     Attributes:
-        session_id: Optional session external ID to associate facts with.
-            If omitted, facts are not linked to any session.
+        session_id: Required session external ID the facts are associated
+            with. The session must exist — it is never auto-created.
         facts: List of fact triples. Must contain at least 1 and at most
             500 triples.
     """
 
-    session_id: str | None = Field(
-        default=None,
-        description="Optional session external ID to associate facts with.",
+    session_id: str = Field(
+        ...,
+        description="Session external ID the facts are associated with. "
+        "The session must exist — it is never auto-created.",
     )
     facts: list[FactTriple] = Field(
         ...,

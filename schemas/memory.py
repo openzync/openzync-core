@@ -116,16 +116,16 @@ class IngestMemoryRequest(BaseModel):
     """Request body for ``POST /v1/projects/{project_id}/memory``.
 
     Attributes:
-        session_id: Optional session external ID. If omitted, a session
-            named ``__default__`` is auto-created for the user.
+        session_id: Required session external ID. The session must exist
+            (created via ``POST /sessions``) — it is never auto-created.
         messages: List of message objects. Must contain at least 1 and
             at most 1000 messages.
     """
 
-    session_id: str | None = Field(
-        default=None,
-        description="Session external_id. Auto-creates a __default__ session "
-        "if omitted.",
+    session_id: str = Field(
+        ...,
+        description="Session external_id. The session must exist — it is "
+        "never auto-created.",
     )
     messages: list[Message] = Field(
         ...,

@@ -1,27 +1,23 @@
 """Organization service — bootstrap and management business logic.
 
 This is intentionally kept separate from the main domain services because
-the bootstrap flow (creating the first organization + API key) has no
-authentication requirement and runs before any user exists.
+the bootstrap flow (creating the first organization) has no authentication
+requirement and runs before any user exists.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from uuid import UUID
 
 import structlog
 import yaml
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.openbao import OpenBaoClient
-from models.api_key import ApiKey
 from models.organization import Organization
-from models.project import Project
 from repositories.organization_repository import OrganizationRepository
 from schemas.organizations import CreateOrgRequest, CreateOrgResponse
-from utils.crypto import compute_lookup_hash, generate_api_key, hash_api_key
 
 logger = structlog.get_logger(__name__)
 
@@ -46,23 +42,23 @@ class OrganizationService:
         self._db: AsyncSession = repo.session
         self._bao_client = bao_client
 
-    async def create_organization(
-        self, payload: CreateOrgRequest
-    ) -> CreateOrgResponse:
-        """Create a new organization with a default project and admin API key.
+    async def create_organization(self, payload: CreateOrgRequest) -> CreateOrgResponse:
+        """Create a new organization.
 
         Performs a single atomic transaction:
         1. Creates an ``Organization`` record.
-        2. Creates a default project scoped to the organization.
-        3. Generates a ``oz_live_`` API key scoped to the default project.
-        4. Seeds default prompt templates.
-        5. Returns the raw API key — this is the **only** time it is visible.
+        2. Seeds default prompt templates.
+        3. Bootstraps the OpenBao namespace + default config after commit
+           (non-fatal on failure — reconcilable later).
+
+        No default project and no API key are created; first-use
+        authentication flows through ``POST /v1/auth/signup``.
 
         Args:
             payload: Organization name and optional plan.
 
         Returns:
-            A ``CreateOrgResponse`` with the org details and raw API key.
+            A ``CreateOrgResponse`` with the org ID and name.
         """
         # ── 1. Create organization ───────────────────────────────────────
         org = Organization(name=payload.name, plan=payload.plan)
@@ -70,35 +66,7 @@ class OrganizationService:
         await self._db.flush()
         await self._db.refresh(org)
 
-        # ── 2. Create default project ────────────────────────────────────
-        project = Project(
-            organization_id=org.id,
-            name=f"{payload.name} - Default",
-        )
-        self._db.add(project)
-        await self._db.flush()
-        await self._db.refresh(project)
-
-        # ── 3. Generate API key scoped to the default project ────────────
-        raw_key = generate_api_key(prefix="oz_live_")
-        key_hash, salt = hash_api_key(raw_key)
-        lookup_hash = compute_lookup_hash(raw_key)
-
-        api_key = ApiKey(
-            organization_id=org.id,
-            project_id=project.id,
-            key_hash=key_hash,
-            lookup_hash=lookup_hash,
-            salt=salt,
-            prefix="oz_live_",
-            name="default",
-            scopes=["read", "write", "admin"],
-            is_revoked=False,
-        )
-        self._db.add(api_key)
-        await self._db.flush()
-
-        # ── 4. Seed default prompt templates for the new org ─────────────
+        # ── 2. Seed default prompt templates for the new org ─────────────
         from repositories.prompt_template_repository import PromptTemplateRepository
 
         seeded = await PromptTemplateRepository(self._db).seed_default_prompts(org.id)
@@ -109,10 +77,10 @@ class OrganizationService:
                 count=seeded,
             )
 
-        # ── 5. Commit everything atomically ──────────────────────────────
+        # ── 3. Commit everything atomically ──────────────────────────────
         await self._db.commit()
 
-        # ── 6. Bootstrap OpenBao namespace + default config ──────────────
+        # ── 4. Bootstrap OpenBao namespace + default config ──────────────
         if self._bao_client is not None:
             try:
                 await self._bao_client.create_org_namespace(org.id)
@@ -137,15 +105,12 @@ class OrganizationService:
             "organization.created",
             org_id=str(org.id),
             org_name=org.name,
-            project_id=str(project.id),
             org_plan=payload.plan,
         )
 
         return CreateOrgResponse(
             organization_id=org.id,
             organization_name=org.name,
-            api_key=raw_key,
-            api_key_name="default",
         )
 
     def _load_org_defaults(self) -> dict[str, Any]:

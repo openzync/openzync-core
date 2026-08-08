@@ -1,8 +1,10 @@
 """Admin bootstrap and management endpoints — HTTP adapter layer only.
 
 The ``POST /admin/organizations`` endpoint is a first-use bootstrap flow.
-It creates an organization and returns an API key — no authentication
-required (there is no admin user to authenticate as yet).
+It creates an organization and its OpenBao namespace — no API key is
+generated and no authentication is required (there is no admin user to
+authenticate as yet).  First-use authentication flows through
+``POST /v1/auth/signup``.
 
 In production, this endpoint should be disabled or gated behind a
 separate mechanism (environment variable, deployment-time key, etc.).
@@ -32,30 +34,27 @@ async def create_organization(
     payload: CreateOrgRequest,
     db: AsyncSession = Depends(get_db),
 ) -> CreateOrgResponse:
-    """Create a new organization and generate an admin API key.
+    """Create a new organization (and its OpenBao namespace).
 
     This is a bootstrap endpoint for initial setup. It performs a single
-    atomic transaction that:
+    atomic transaction that creates a new ``Organization`` record, then
+    bootstraps the org's OpenBao namespace with default config.
 
-    1. Creates a new ``Organization`` record.
-    2. Generates a ``oz_live_`` API key with ``read``, ``write``, and
-       ``admin`` scopes.
-    3. Returns the raw API key — this is the **only** time it is visible.
+    No API key is generated here — first-use authentication flows through
+    ``POST /v1/auth/signup``.
 
     **Security notes:**
     - This endpoint has **no authentication** — it is designed for the
-      first-use flow before any API keys exist.
+      first-use flow before any users or API keys exist.
     - In production, disable this endpoint or gate it behind a
       deployment-time secret environment variable.
-    - The raw key is returned exactly once and is **not** persisted.
-      Only the salted SHA-256 hash is stored.
 
     Args:
         payload: Organization name and optional plan.
         db: Async database session from dependency injection.
 
     Returns:
-        A ``CreateOrgResponse`` with the org details and raw API key.
+        A ``CreateOrgResponse`` with the org ID and name.
     """
     service = OrganizationService(repo=OrganizationRepository(db=db))
     return await service.create_organization(payload)

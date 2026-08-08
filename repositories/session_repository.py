@@ -7,13 +7,12 @@ logic, no schema construction.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from core.cursor import decode_cursor, encode_cursor
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Select, and_, func, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.episode import Episode
@@ -69,54 +68,6 @@ class SessionRepository:
         self._db.add(session)
         await self._db.flush()
         await self._db.refresh(session)
-        return session
-
-    async def get_or_create_default(
-        self, org_id: UUID, project_id: UUID, created_by: UUID
-    ) -> Session:
-        """Get or create the ``__default__`` session for a project.
-
-        The default session is used when callers send messages without
-        specifying a ``session_id``.  It is hidden from session list
-        endpoints.
-
-        Args:
-            org_id: The organization UUID for tenant isolation.
-            project_id: The project UUID.
-            created_by: The UUID of the authenticated user creating the
-                default session.  Used for attribution — ownership is
-                via the project membership.
-
-        Returns:
-            An existing or newly created default Session.
-        """
-        session = await self.get_by_external_id(org_id, project_id, "__default__")
-        if session is not None:
-            return session
-
-        # Race-safe: the unique constraint on (project_id, external_id)
-        # will prevent a duplicate insert from a concurrent request.
-        from sqlalchemy.exc import IntegrityError
-
-        session = Session(
-            organization_id=org_id,
-            project_id=project_id,
-            user_id=created_by,
-            external_id="__default__",
-            metadata_={"auto_created": True},
-        )
-        self._db.add(session)
-        try:
-            await self._db.flush()
-            await self._db.refresh(session)
-        except IntegrityError:
-            await self._db.rollback()
-            session = await self.get_by_external_id(org_id, project_id, "__default__")
-            if session is None:
-                raise RuntimeError(
-                    f"Failed to get-or-create default session for project {project_id}"
-                ) from None
-
         return session
 
     # ── Read ────────────────────────────────────────────────────────────────
@@ -189,7 +140,9 @@ class SessionRepository:
         """List sessions for a project with cursor-based pagination, scoped to org.
 
         The default excludes:
-        - The ``__default__`` auto-created session.
+        - Any legacy ``__default__`` session created before
+          ``session_id`` became required on ingest (legacy-data hygiene —
+          new sessions are never auto-created).
         - Closed sessions (``closed_at IS NOT NULL``).
 
         Pagination uses a composite cursor of ``(created_at DESC, id ASC)``
@@ -201,7 +154,9 @@ class SessionRepository:
             limit: Maximum results per page (capped at 200).
             cursor: Opaque base64 cursor from a previous page.
             include_closed: If ``True``, include closed sessions.
-            exclude_default: If ``True``, hide the ``__default__`` session.
+            exclude_default: If ``True``, hide any legacy ``__default__``
+                session (legacy-data hygiene — new sessions are never
+                auto-created).
 
         Returns:
             A tuple of ``(sessions, next_cursor)``.  ``next_cursor`` is
@@ -630,7 +585,8 @@ class SessionRepository:
         """Find sessions with no activity in the given window.
 
         Used by the auto-close scheduled task (ARQ cron) to close stale
-        sessions.  Excludes the ``__default__`` session.
+        sessions.  Excludes any legacy ``__default__`` session
+        (legacy-data hygiene — new sessions are never auto-created).
 
         Args:
             inactivity_hours: Hours of inactivity before a session is

@@ -93,13 +93,13 @@ class FactService:
         project_id: UUID,
         created_by: UUID,
         facts: list[FactTriple],
-        session_external_id: str | None = None,
+        session_external_id: str,
     ) -> FactBatchResponse:
         """Ingest a batch of facts for a project.
 
         Flow:
         1. Compute content hash for batch-level dedup.
-        2. Optional: resolve session if session_external_id provided.
+        2. Resolve the session (NotFoundError if it does not exist).
         3. Bulk-insert facts via the invalidation service (supersedes any
            conflicting active facts — see ``FactInvalidationService``).
         4. Enqueue ARQ embedding task for each inserted fact.
@@ -115,11 +115,16 @@ class FactService:
             project_id: The project UUID.
             created_by: The authenticated user's UUID (attribution).
             facts: List of validated fact triples.
-            session_external_id: Optional session external ID.
+            session_external_id: The session external ID the facts are
+                associated with. The session must already exist — it is
+                never auto-created.
 
         Returns:
             A ``FactBatchResponse`` with job_id, accepted_count and
             superseded_count.
+
+        Raises:
+            NotFoundError: If the session does not exist in the project.
         """
         # ── Step 1: Content-level dedup check ─────────────────────────────
         content_hash = self._compute_batch_hash(project_id, facts)
@@ -140,24 +145,22 @@ class FactService:
                 message="Facts already ingested; returning existing job_id",
             )
 
-        # ── Step 2: Optional session resolution ───────────────────────────
-        session_id: UUID | None = None
-        if session_external_id is not None:
-            session = await self._session_repo.get_by_external_id(
-                org_id=org_id,
-                project_id=project_id,
-                external_id=session_external_id,
+        # ── Step 2: Resolve session ──────────────────────────────────────
+        session = await self._session_repo.get_by_external_id(
+            org_id=org_id,
+            project_id=project_id,
+            external_id=session_external_id,
+        )
+        if session is None:
+            raise NotFoundError(
+                message=f"Session '{session_external_id}' not found "
+                f"in project {project_id}",
+                detail={
+                    "session_external_id": session_external_id,
+                    "project_id": str(project_id),
+                },
             )
-            if session is None:
-                raise NotFoundError(
-                    message=f"Session '{session_external_id}' not found "
-                    f"in project {project_id}",
-                    detail={
-                        "session_external_id": session_external_id,
-                        "project_id": str(project_id),
-                    },
-                )
-            session_id = session.id
+        session_id = session.id
 
         # ── Step 3: Early return for empty fact lists ─────────────────────
         if not facts:
@@ -228,7 +231,7 @@ class FactService:
                 payload={
                     "org_id": str(org_id),
                     "project_id": str(project_id),
-                    "session_id": str(session_id) if session_id else None,
+                    "session_id": str(session_id),
                     "fact_count": len(created),
                     "job_id": job_id,
                 },

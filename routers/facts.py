@@ -81,8 +81,8 @@ async def ingest_facts(
 ) -> FactBatchResponse:
     """Ingest a batch of fact triples into a project's knowledge graph.
 
-    - ``session_id`` is optional. If provided, facts are associated with
-      the specified session.
+    - ``session_id`` is required. Facts are associated with the specified
+      session, which must already exist.
     - Maximum 500 fact triples per request (enforced by schema validation).
     - Each triple requires ``subject``, ``predicate``, and ``object``.
       ``content`` is auto-generated if omitted.
