@@ -32,6 +32,7 @@ from fastapi import (
     UploadFile,
     status,
 )
+from pydantic import ValidationError
 
 from core.audit import audit_action
 from dependencies.auth import get_current_user_id
@@ -122,7 +123,13 @@ async def ingest_messages(
         )
 
     # Parse the JSON payload from the multipart form
-    payload = IngestMemoryRequest.model_validate_json(data)
+    try:
+        payload = IngestMemoryRequest.model_validate_json(data)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.errors(),
+        ) from exc
 
     # Validate blob reference integrity
     referenced_ids: set[int] = set()
