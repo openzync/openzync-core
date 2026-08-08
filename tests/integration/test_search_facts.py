@@ -23,7 +23,21 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def isolated_search_session(
+    isolated_auth_client: AsyncClient, isolated_project_id: UUID
+) -> str:
+    """Create a session for ingest + search tests and return its external ID."""
+    resp = await isolated_auth_client.post(
+        f"/v1/projects/{isolated_project_id}/sessions",
+        json={"external_id": "search-session"},
+    )
+    assert resp.status_code == 201, f"Session creation failed: {resp.text}"
+    return "search-session"
 
 
 @pytest.fixture(autouse=True)
@@ -85,6 +99,7 @@ class TestSearchFacts:
         self,
         isolated_auth_client: AsyncClient,
         isolated_project_id: UUID,
+        isolated_search_session: str,
     ) -> None:
         """POST /facts then GET /v1/projects/{project_id}/search?query=hiking → results contain fact."""
         # Create user
@@ -98,6 +113,7 @@ class TestSearchFacts:
         await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/facts",
             json={
+                "session_id": isolated_search_session,
                 "facts": [
                     {"subject": "Alice", "predicate": "likes", "object": "hiking"},
                     {"subject": "Bob", "predicate": "enjoys", "object": "mountain biking"},
@@ -166,6 +182,7 @@ class TestSearchFacts:
         self,
         isolated_auth_client: AsyncClient,
         isolated_project_id: UUID,
+        isolated_search_session: str,
     ) -> None:
         """GET /v1/projects/{project_id}/search?query=... returns facts and episodes by default."""
         user_resp = await isolated_auth_client.post(
@@ -180,6 +197,7 @@ class TestSearchFacts:
             data={
                 "data": json.dumps(
                     {
+                        "session_id": isolated_search_session,
                         "messages": [
                             {"role": "user", "content": "I love mountain hiking in Colorado"},
                         ],
@@ -192,6 +210,7 @@ class TestSearchFacts:
         await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/facts",
             json={
+                "session_id": isolated_search_session,
                 "facts": [
                     {"subject": "User", "predicate": "likes", "object": "hiking"},
                 ],

@@ -35,6 +35,8 @@ import pytest
 from dependencies.auth import get_current_user_id
 from httpx import ASGITransport, AsyncClient
 
+from tests.integration.conftest import bootstrap_tenant
+
 
 class TestUserCrud:
     """Full CRUD lifecycle for the ``/v1/users`` endpoint family.
@@ -439,29 +441,19 @@ class TestUserCrud:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            resp = await cli.post(
-                "/admin/organizations",
-                json={"name": "Org A", "plan": "free"},
-            )
-            assert resp.status_code == 201
-            org_a = resp.json()
+            tenant_a = await bootstrap_tenant(isolated_app, cli, "Org A")
 
         # -- Bootstrap org B --
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            resp = await cli.post(
-                "/admin/organizations",
-                json={"name": "Org B", "plan": "free"},
-            )
-            assert resp.status_code == 201
-            org_b = resp.json()
+            tenant_b = await bootstrap_tenant(isolated_app, cli, "Org B")
 
         # -- Set up fixture user for org A (so get_current_user_id works) --
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {org_a['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_a['api_key']}"
             user_resp = await cli.post("/v1/users", json={"external_id": "org_a_fixture"})
             assert user_resp.status_code == 201
             user_id_a = UUID(user_resp.json()["id"])
@@ -471,7 +463,7 @@ class TestUserCrud:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {org_b['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
             user_resp = await cli.post("/v1/users", json={"external_id": "org_b_fixture"})
             assert user_resp.status_code == 201
             user_id_b = UUID(user_resp.json()["id"])
@@ -481,7 +473,7 @@ class TestUserCrud:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {org_a['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_a['api_key']}"
             isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_a
 
             create_resp = await cli.post(
@@ -498,7 +490,7 @@ class TestUserCrud:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {org_b['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
             get_resp = await cli.get(f"/v1/users/{user_id}")
 
         assert get_resp.status_code == 404, (

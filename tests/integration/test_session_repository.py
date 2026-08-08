@@ -14,7 +14,6 @@ from repositories.project_repository import ProjectRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
 
-
 pytestmark = pytest.mark.integration
 
 
@@ -66,35 +65,36 @@ class TestSessionRepository:
             assert session.is_active is True
             assert session.is_deleted is False
 
-    async def test_get_or_create_default_creates(self, engine) -> None:
-        """get_or_create_default creates __default__ if not exists."""
+    async def test_no_auto_created_default_session(self, engine) -> None:
+        """Sessions are NOT auto-created — no ``__default__`` until explicit.
+
+        The old ``get_or_create_default`` behaviour was removed; a
+        ``__default__`` session must only exist if the caller explicitly
+        creates one with that external ID.
+        """
         async with AsyncSession(engine) as db:
             user_repo = UserRepository(db)
             project_repo = ProjectRepository(db)
             session_repo = SessionRepository(db)
             user_id, project_id = await self._seed_project(user_repo, project_repo)
 
-            session = await session_repo.get_or_create_default(
-                self.ORG_ID, project_id, created_by=user_id
+            # No session exists yet → lookup returns None (no auto-create)
+            found = await session_repo.get_by_external_id(
+                self.ORG_ID, project_id, "__default__"
             )
-            assert session.external_id == "__default__"
-            assert session.id is not None
+            assert found is None, (
+                "No __default__ session may exist until explicitly created"
+            )
 
-    async def test_get_or_create_default_idempotent(self, engine) -> None:
-        """get_or_create_default returns same session on second call."""
-        async with AsyncSession(engine) as db:
-            user_repo = UserRepository(db)
-            project_repo = ProjectRepository(db)
-            session_repo = SessionRepository(db)
-            user_id, project_id = await self._seed_project(user_repo, project_repo)
-
-            s1 = await session_repo.get_or_create_default(
-                self.ORG_ID, project_id, created_by=user_id
+            # Explicit creation with the reserved name is still allowed
+            created = await session_repo.create(
+                organization_id=self.ORG_ID,
+                project_id=project_id,
+                created_by=user_id,
+                external_id="__default__",
             )
-            s2 = await session_repo.get_or_create_default(
-                self.ORG_ID, project_id, created_by=user_id
-            )
-            assert s1.id == s2.id
+            assert created.id is not None
+            assert created.external_id == "__default__"
 
     async def test_get_by_external_id_found(self, engine) -> None:
         """get_by_external_id returns the matching session."""

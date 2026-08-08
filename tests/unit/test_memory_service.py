@@ -80,8 +80,8 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_ingest_resolves_user(self, service: MemoryService) -> None:
         """Ingest accepts a ``created_by`` UUID directly (no user look-up)."""
-        service._session_repo.get_or_create_default.return_value = MagicMock(
-            id=uuid4(), external_id="__default__",
+        service._session_repo.get_by_external_id.return_value = MagicMock(
+            id=uuid4(), external_id="session-abc",
         )
 
         with (
@@ -93,7 +93,7 @@ class TestMemoryService:
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
-                session_external_id=None,
+                session_external_id="session-abc",
                 messages=self._sample_messages(),
             )
         assert result.status == "accepted"
@@ -107,8 +107,8 @@ class TestMemoryService:
         ``MemoryService.ingest`` passes ``created_by`` directly to the
         session resolver — it no longer calls ``user_repo.get_by_uuid``.
         """
-        service._session_repo.get_or_create_default.return_value = MagicMock(
-            id=uuid4(), external_id="__default__",
+        service._session_repo.get_by_external_id.return_value = MagicMock(
+            id=uuid4(), external_id="session-abc",
         )
 
         with (
@@ -125,6 +125,30 @@ class TestMemoryService:
             )
         assert result.status == "accepted"
         service._user_repo.get_by_uuid.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ingest_unknown_session_raises_not_found(
+        self, service: MemoryService,
+    ) -> None:
+        """Ingest raises NotFoundError when the session does not exist.
+
+        Sessions are never auto-created from arbitrary external IDs — the
+        SDK must call ``POST /sessions`` first.
+        """
+        service._session_repo.get_by_external_id.return_value = None
+        service._session_repo.get_by_uuid.return_value = None
+
+        with pytest.raises(NotFoundError, match="not found"):
+            await service.ingest(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
+                session_external_id="unknown-session",
+                messages=self._sample_messages(),
+            )
+        # "unknown-session" is not a UUID → no UUID fallback lookup.
+        service._session_repo.get_by_external_id.assert_awaited_once()
+        service._session_repo.get_by_uuid.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_delete_user_memory(self, service: MemoryService) -> None:
@@ -181,8 +205,8 @@ class TestMemoryService:
         tasks are enqueued to Redis, otherwise workers may race ahead
         and fail with EpisodeNotFoundError.
         """
-        service._session_repo.get_or_create_default.return_value = MagicMock(
-            id=uuid4(), external_id="__default__",
+        service._session_repo.get_by_external_id.return_value = MagicMock(
+            id=uuid4(), external_id="session-abc",
         )
 
         # Make batch_create return a real-looking episode list
@@ -216,7 +240,7 @@ class TestMemoryService:
                     org_id=self.ORG_ID,
                     project_id=self.PROJECT_ID,
                     created_by=self.USER_ID,
-                    session_external_id=None,
+                    session_external_id="session-abc",
                     messages=self._sample_messages(),
                 )
 
@@ -249,7 +273,7 @@ class TestMemoryService:
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
-                session_external_id=None,
+                session_external_id="session-abc",
                 messages=self._sample_messages(),
                 idempotency_key="dup-key",
             )
@@ -272,7 +296,7 @@ class TestMemoryService:
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
-                session_external_id=None,
+                session_external_id="session-abc",
                 messages=self._sample_messages(),
                 idempotency_key="dup-key",
                 body_hash="other-hash",
@@ -285,8 +309,8 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_ingest_content_dedup_hit(self, service: MemoryService) -> None:
         """Ingest returns existing job_id when content hash matches."""
-        service._session_repo.get_or_create_default.return_value = MagicMock(
-            id=uuid4(), external_id="__default__",
+        service._session_repo.get_by_external_id.return_value = MagicMock(
+            id=uuid4(), external_id="session-abc",
         )
         existing_job_id = "existing-job-123"
         service._idem.check_content_hash.return_value = existing_job_id
@@ -296,7 +320,7 @@ class TestMemoryService:
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
-                session_external_id=None,
+                session_external_id="session-abc",
                 messages=self._sample_messages(),
             )
         assert result.job_id == existing_job_id
@@ -314,8 +338,8 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_ingest_with_pii_redaction(self, service: MemoryService) -> None:
         """Ingest redacts content when org has PII masking enabled."""
-        service._session_repo.get_or_create_default.return_value = MagicMock(
-            id=uuid4(), external_id="__default__",
+        service._session_repo.get_by_external_id.return_value = MagicMock(
+            id=uuid4(), external_id="session-abc",
         )
         mock_pii = AsyncMock()
         mock_pii.process_message.side_effect = [
@@ -333,7 +357,7 @@ class TestMemoryService:
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
-                session_external_id=None,
+                session_external_id="session-abc",
                 messages=self._sample_messages(),
             )
         assert result.status == "accepted"
@@ -349,8 +373,8 @@ class TestMemoryService:
         mock_webhook = AsyncMock(spec=WebhookService)
         service._webhook_service = mock_webhook
 
-        service._session_repo.get_or_create_default.return_value = MagicMock(
-            id=uuid4(), external_id="__default__",
+        service._session_repo.get_by_external_id.return_value = MagicMock(
+            id=uuid4(), external_id="session-abc",
         )
 
         with patch.object(service, "_enqueue_arq_tasks"), \
@@ -360,7 +384,7 @@ class TestMemoryService:
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
-                session_external_id=None,
+                session_external_id="session-abc",
                 messages=self._sample_messages(),
             )
         assert result.status == "accepted"
@@ -396,9 +420,9 @@ class TestMemoryService:
         )
         service._webhook_service = WebhookService(repo=webhook_repo)
 
-        service._session_repo.get_or_create_default.return_value = MagicMock(
+        service._session_repo.get_by_external_id.return_value = MagicMock(
             id=uuid4(),
-            external_id="__default__",
+            external_id="session-abc",
         )
 
         with (
@@ -410,7 +434,7 @@ class TestMemoryService:
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
-                session_external_id=None,
+                session_external_id="session-abc",
                 messages=self._sample_messages(),
             )
         assert isinstance(result, IngestMemoryResponse)
@@ -424,8 +448,8 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_ingest_with_blob_processing(self, service: MemoryService) -> None:
         """Ingest processes blobs when uploaded_blobs is provided."""
-        service._session_repo.get_or_create_default.return_value = MagicMock(
-            id=uuid4(), external_id="__default__",
+        service._session_repo.get_by_external_id.return_value = MagicMock(
+            id=uuid4(), external_id="session-abc",
         )
         mock_blob_record = MagicMock()
         mock_blob_record.id = uuid4()
@@ -447,7 +471,7 @@ class TestMemoryService:
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
-                session_external_id=None,
+                session_external_id="session-abc",
                 messages=self._sample_messages(),
                 uploaded_blobs=[MagicMock(spec=UploadFile)],
             )
@@ -461,8 +485,8 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_ingest_without_idempotency_key(self, service: MemoryService) -> None:
         """Ingest succeeds when idempotency_key is None (no Redis check)."""
-        service._session_repo.get_or_create_default.return_value = MagicMock(
-            id=uuid4(), external_id="__default__",
+        service._session_repo.get_by_external_id.return_value = MagicMock(
+            id=uuid4(), external_id="session-abc",
         )
         with patch.object(service, "_enqueue_arq_tasks"), \
              patch.object(service, "_invalidate_context_cache"), \
@@ -471,7 +495,7 @@ class TestMemoryService:
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
-                session_external_id=None,
+                session_external_id="session-abc",
                 messages=self._sample_messages(),
             )
         assert result.status == "accepted"
@@ -492,8 +516,8 @@ class TestMemoryService:
         self, service: MemoryService,
     ) -> None:
         """Ingest enqueues blob extraction tasks when blobs are processed."""
-        service._session_repo.get_or_create_default.return_value = MagicMock(
-            id=uuid4(), external_id="__default__",
+        service._session_repo.get_by_external_id.return_value = MagicMock(
+            id=uuid4(), external_id="session-abc",
         )
         mock_blob = MagicMock()
         mock_blob.id = uuid4()
@@ -513,7 +537,7 @@ class TestMemoryService:
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
-                session_external_id=None,
+                session_external_id="session-abc",
                 messages=self._sample_messages(),
                 uploaded_blobs=[MagicMock(spec=UploadFile)],
             )
@@ -727,8 +751,8 @@ class TestMemoryServiceInfrastructure:
         self, service: MemoryService,
     ) -> None:
         """Happy path with key: stores idempotency entry and content hash."""
-        service._session_repo.get_or_create_default.return_value = MagicMock(
-            id=uuid4(), external_id="__default__",
+        service._session_repo.get_by_external_id.return_value = MagicMock(
+            id=uuid4(), external_id="session-abc",
         )
         service._episode_repo.batch_create.return_value = [
             MagicMock(id=uuid4(), content="msg"),
@@ -743,7 +767,7 @@ class TestMemoryServiceInfrastructure:
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
-                session_external_id=None,
+                session_external_id="session-abc",
                 idempotency_key="my-key",
                 messages=[Message(role="user", content="Test")],
             )
@@ -775,7 +799,6 @@ class TestMemoryServiceInfrastructure:
             organization_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             session_external_id=str(session_id),
-            created_by=self.USER_ID,
         )
 
         assert result == mock_session
@@ -797,5 +820,4 @@ class TestMemoryServiceInfrastructure:
                 organization_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
                 session_external_id=str(session_id),
-                created_by=self.USER_ID,
             )

@@ -28,6 +28,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 
 from tests.integration.conftest import asgi_transport
@@ -67,12 +68,19 @@ def _fake_embedding_backend(monkeypatch) -> None:
 
 
 def _fact_payload(
-    subject: str, predicate: str, obj: str, content: str | None = None
+    subject: str,
+    predicate: str,
+    obj: str,
+    content: str | None = None,
+    session_id: str | None = None,
 ) -> dict:
     triple: dict[str, str] = {"subject": subject, "predicate": predicate, "object": obj}
     if content is not None:
         triple["content"] = content
-    return {"facts": [triple]}
+    payload: dict = {"facts": [triple]}
+    if session_id is not None:
+        payload["session_id"] = session_id
+    return payload
 
 
 async def _create_user(client: AsyncClient, external_id: str) -> None:
@@ -80,17 +88,33 @@ async def _create_user(client: AsyncClient, external_id: str) -> None:
     assert resp.status_code == 201, f"User creation failed: {resp.text}"
 
 
+@pytest_asyncio.fixture(loop_scope="function")
+async def isolated_fact_session(
+    isolated_auth_client: AsyncClient, isolated_project_id: UUID
+) -> str:
+    """Create a session for facts ingestion and return its external ID."""
+    resp = await isolated_auth_client.post(
+        f"/v1/projects/{isolated_project_id}/sessions",
+        json={"external_id": "session-ss"},
+    )
+    assert resp.status_code == 201, f"Session creation failed: {resp.text}"
+    return "session-ss"
+
+
 class TestIngestContract:
     """OBSERVED contract 1–3 + B1 — POST /facts supersession semantics."""
 
     async def test_initial_batch_returns_202_shape(
-        self, isolated_auth_client: AsyncClient, isolated_project_id: UUID
+        self,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
+        isolated_fact_session: str,
     ) -> None:
         """Contract 1 — 202 with {job_id, accepted_count, superseded_count, status}."""
         await _create_user(isolated_auth_client, "ss_202_user")
         resp = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/facts",
-            json=_fact_payload("Alice", "likes", "hiking"),
+            json=_fact_payload("Alice", "likes", "hiking", session_id=isolated_fact_session),
         )
         assert resp.status_code == 202, (
             f"Expected 202, got {resp.status_code}: {resp.text}"
@@ -102,11 +126,16 @@ class TestIngestContract:
         UUID(body["job_id"])
 
     async def test_identical_batch_replays_same_job_id(
-        self, isolated_auth_client: AsyncClient, isolated_project_id: UUID
+        self,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
+        isolated_fact_session: str,
     ) -> None:
         """Contract 2 — identical re-post → 202, same job_id, superseded_count 0."""
         await _create_user(isolated_auth_client, "ss_dedup_user")
-        payload = _fact_payload("DedupEntity", "test", "dedup")
+        payload = _fact_payload(
+            "DedupEntity", "test", "dedup", session_id=isolated_fact_session
+        )
 
         resp1 = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/facts", json=payload
@@ -127,14 +156,21 @@ class TestIngestContract:
         assert body2["status"] == "accepted"
 
     async def test_same_spo_different_content_supersedes(
-        self, isolated_auth_client: AsyncClient, isolated_project_id: UUID
+        self,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
+        isolated_fact_session: str,
     ) -> None:
         """Contract 3 + B1 — same SPO, different content → superseded_count 1,
         and the dedup replay must NOT swallow the second batch."""
         await _create_user(isolated_auth_client, "ss_spo_user")
-        first = _fact_payload("Alice", "likes", "hiking", "Alice likes hiking")
+        first = _fact_payload(
+            "Alice", "likes", "hiking", "Alice likes hiking",
+            session_id=isolated_fact_session,
+        )
         second = _fact_payload(
-            "Alice", "likes", "hiking", "Alice absolutely loves hiking"
+            "Alice", "likes", "hiking", "Alice absolutely loves hiking",
+            session_id=isolated_fact_session,
         )
 
         resp1 = await isolated_auth_client.post(
@@ -164,12 +200,21 @@ class TestFactsListTemporal:
     """OBSERVED contract 4, 5, 7 — GET /facts temporal as-of."""
 
     async def test_list_current_and_as_of(
-        self, isolated_auth_client: AsyncClient, isolated_project_id: UUID
+        self,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
+        isolated_fact_session: str,
     ) -> None:
         """Contracts 3+4+5 — as-of shows old then new; default shows new."""
         await _create_user(isolated_auth_client, "ss_list_user")
-        first = _fact_payload("Alice", "likes", "hiking", "Alice likes hiking")
-        second = _fact_payload("Alice", "likes", "hiking", "Alice loves hiking")
+        first = _fact_payload(
+            "Alice", "likes", "hiking", "Alice likes hiking",
+            session_id=isolated_fact_session,
+        )
+        second = _fact_payload(
+            "Alice", "likes", "hiking", "Alice loves hiking",
+            session_id=isolated_fact_session,
+        )
 
         assert (
             await isolated_auth_client.post(
@@ -252,11 +297,20 @@ class TestContextAsOf:
     """OBSERVED contract 6 — /context as_of echo + effective-at content."""
 
     async def test_context_as_of_returns_original_content(
-        self, isolated_auth_client: AsyncClient, isolated_project_id: UUID
+        self,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
+        isolated_fact_session: str,
     ) -> None:
         await _create_user(isolated_auth_client, "ss_ctx_user")
-        first = _fact_payload("Alice", "likes", "hiking", "Alice likes hiking")
-        second = _fact_payload("Alice", "likes", "hiking", "Alice loves hiking")
+        first = _fact_payload(
+            "Alice", "likes", "hiking", "Alice likes hiking",
+            session_id=isolated_fact_session,
+        )
+        second = _fact_payload(
+            "Alice", "likes", "hiking", "Alice loves hiking",
+            session_id=isolated_fact_session,
+        )
 
         assert (
             await isolated_auth_client.post(

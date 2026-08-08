@@ -21,7 +21,7 @@ import pytest
 from httpx import AsyncClient
 
 from dependencies.auth import get_current_user_id
-from tests.integration.conftest import asgi_transport
+from tests.integration.conftest import asgi_transport, bootstrap_tenant
 
 
 @pytest.fixture
@@ -116,29 +116,14 @@ class TestClassificationEndpoint:
         """Classifications from Org A must not leak to Org B."""
         transport = asgi_transport(isolated_app)
 
-        # Bootstrap two orgs
+        # Bootstrap two orgs (full tenant flow)
         async with AsyncClient(transport=transport, base_url="http://test") as cli:
-            resp_a = await cli.post(
-                "/admin/organizations",
-                json={"name": "Class Org A", "plan": "free"},
-            )
-            assert resp_a.status_code == 201
-            org_a = resp_a.json()
+            tenant_a = await bootstrap_tenant(isolated_app, cli, "Class Org A")
+            tenant_b = await bootstrap_tenant(isolated_app, cli, "Class Org B")
 
-            resp_b = await cli.post(
-                "/admin/organizations",
-                json={"name": "Class Org B", "plan": "free"},
-            )
-            assert resp_b.status_code == 201
-            org_b = resp_b.json()
-
-        # Org A: look up project, create user + session
+        # Org A: create user + session
         async with AsyncClient(transport=transport, base_url="http://test") as cli:
-            cli.headers["Authorization"] = f"Bearer {org_a['api_key']}"
-            proj_resp = await cli.get("/v1/projects")
-            assert proj_resp.status_code == 200
-            project_id_a = proj_resp.json()[0]["id"]
-
+            cli.headers["Authorization"] = f"Bearer {tenant_a['api_key']}"
             user_resp = await cli.post(
                 "/v1/users",
                 json={"external_id": "class_cross_user"},
@@ -150,7 +135,7 @@ class TestClassificationEndpoint:
             isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_a
 
             session_resp = await cli.post(
-                f"/v1/projects/{project_id_a}/sessions",
+                f"/v1/projects/{tenant_a['project_id']}/sessions",
                 json={"external_id": "cross_session"},
             )
             assert session_resp.status_code == 201
@@ -160,9 +145,9 @@ class TestClassificationEndpoint:
         # (require_project_membership raises 403 for API-key scope mismatch
         # before any RLS query is hit — 404 is unreachable.)
         async with AsyncClient(transport=transport, base_url="http://test") as cli:
-            cli.headers["Authorization"] = f"Bearer {org_b['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
             resp = await cli.get(
-                f"/v1/projects/{project_id_a}/sessions/{session_id_a}/classifications"
+                f"/v1/projects/{tenant_a['project_id']}/sessions/{session_id_a}/classifications"
             )
             assert resp.status_code == 403, (
                 f"Expected 403 for cross-tenant access, "

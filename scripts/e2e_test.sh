@@ -354,7 +354,7 @@ fi
 step "3.2 — DB verify: session created"
 db_check "sessions table" "SELECT 1 FROM sessions WHERE id='$SESSION_ID' AND is_deleted=false"
 
-step "3.3 — List sessions (should exclude __default__)"
+step "3.3 — List sessions"
 HTTP_CODE=$(curl_retry -o /tmp/e2e_sessions.json -w "%{http_code}" "$BASE_URL/v1/users/$USER_ID/sessions" -H "$AUTH")
 check_http 200 "$HTTP_CODE" "GET /v1/users/\$USER_ID/sessions"
 
@@ -386,7 +386,7 @@ psql "$DSN" -c "
 
 step "3.7 — Ingest PII-rich message (expect masking)"
 # Create a dedicated session first — _resolve_session does NOT auto-create
-# arbitrary external_ids, only __default__.
+# sessions from arbitrary external_ids.
 PII_SESSION_RESPONSE=$(curl_retry -X POST "$BASE_URL/v1/users/$USER_ID/sessions" \
   -H "$AUTH" -H "Content-Type: application/json" \
   -d '{"external_id":"e2e_pii_session","metadata":{"test":"pii"}}')
@@ -516,16 +516,17 @@ print(len(d.get('data', [])))
 " 2>/dev/null || echo "0")
 [ "$MSG_COUNT" = "5" ] && ok "5 messages returned in correct order" || fail "Expected 5 messages, got $MSG_COUNT"
 
-step "4.5 — Ingest to __default__ session (no session_id)"
-DEF_RESPONSE=$(curl_retry -X POST "$BASE_URL/v1/users/$USER_ID/memory" \
+step "4.5 — Ingest without session_id (expect 422)"
+# session_id is required — the server no longer auto-creates a default
+# session, so a missing session_id is a schema validation error (422).
+DEF_HTTP_CODE=$(curl_retry -o /tmp/e2e_def_ingest.json -w "%{http_code}" \
+  -X POST "$BASE_URL/v1/users/$USER_ID/memory" \
   -H "$AUTH" -H "Content-Type: application/json" \
   -d '{"messages":[{"role":"user","content":"Default session test note"}]}')
-DEF_EP_COUNT=$(echo "$DEF_RESPONSE" | extract_var 'd.get("episode_count",0)')
-DEF_JOB_ID=$(echo "$DEF_RESPONSE" | extract_var 'd.get("job_id","")')
-if [ "$DEF_EP_COUNT" = "1" ] && [ -n "$DEF_JOB_ID" ]; then
-  ok "POST /v1/users/\$USER_ID/memory (no session_id) — 1 episode"
+if [ "$DEF_HTTP_CODE" = "422" ]; then
+  ok "POST /v1/users/\$USER_ID/memory (no session_id) — HTTP 422"
 else
-  fail "Default session ingestion — ep_count=$DEF_EP_COUNT"
+  fail "POST memory without session_id — expected 422, got $DEF_HTTP_CODE"
 fi
 
 # ── Wait for worker enrichment ──────────────────────────────────────────────

@@ -375,13 +375,12 @@ async def _ingest_memory(
     token: str,
     project_id: str,
     messages: list[dict[str, str]],
-    session_id: str | None = None,
+    session_id: str,
 ) -> None:
     """Ingest a batch of messages into a session within a project.
 
-    If ``session_id`` is provided, messages are ingested into that
-    specific session.  If omitted, the server auto-creates a
-    ``__default__`` session.
+    The session must already exist — the server never auto-creates
+    sessions from arbitrary IDs, so a missing ``session_id`` is a 422.
 
     Enrichment runs asynchronously in the background.
 
@@ -390,11 +389,9 @@ async def _ingest_memory(
         token: JWT access token.
         project_id: Target project UUID.
         messages: List of ``{"role": str, "content": str}`` dicts.
-        session_id: Optional session UUID to ingest into.
+        session_id: Session UUID to ingest into.
     """
-    body: dict[str, object] = {"messages": messages}
-    if session_id is not None:
-        body["session_id"] = session_id
+    body: dict[str, object] = {"messages": messages, "session_id": session_id}
 
     await _request_with_retry(
         client, "POST", f"/v1/projects/{project_id}/memory",

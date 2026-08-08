@@ -1,8 +1,12 @@
 """Unit tests for OrganizationService — bootstrap flow with OpenBao seeding.
 
-Model classes (Organization, Project, ApiKey) and the PromptTemplateRepository
+Model classes (Organization, Project) and the PromptTemplateRepository
 are patched at module level. The ``_load_org_defaults`` helper is tested
 directly — pure file I/O with error handling.
+
+New contract (ADR): ``create_organization`` no longer creates an
+``ApiKey`` or a default ``Project``; ``CreateOrgResponse`` carries only
+the org ID and name.
 """
 from __future__ import annotations
 
@@ -22,7 +26,6 @@ class TestOrganizationService:
 
     ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
     PROJECT_ID = UUID("00000000-0000-0000-0000-000000000010")
-    RAW_API_KEY = "oz_live_testkey123"
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -58,51 +61,32 @@ class TestOrganizationService:
         org.plan = "free"
         return org
 
-    def _make_project_mock(self) -> MagicMock:
-        """Build a MagicMock mimicking a Project ORM instance."""
-        proj = MagicMock()
-        proj.id = self.PROJECT_ID
-        proj.organization_id = self.ORG_ID
-        proj.name = "Test Org - Default"
-        return proj
-
     # ── create_organization ──────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_create_organization_creates_org_project_api_key(
+    async def test_create_organization_creates_org_only(
         self,
     ) -> None:
-        """``create_organization`` creates Organization, Project, and ApiKey
-        records and returns a ``CreateOrgResponse``."""
+        """``create_organization`` creates an Organization record only.
+
+        No default ``Project`` and no ``ApiKey`` are created, and the
+        response carries no API key material.
+        """
         service, mock_repo, mock_db = self._make_service()
         payload = self._make_payload()
 
         org_mock = self._make_org_mock()
-        project_mock = self._make_project_mock()
 
         with (
             patch("services.organization_service.Organization") as mock_org_cls,
-            patch("services.organization_service.Project") as mock_proj_cls,
-            patch("services.organization_service.ApiKey") as mock_key_cls,
+            # Project is no longer imported by the service — create=True lets
+            # us assert the NEW contract: it is never constructed.
+            patch("services.organization_service.Project", create=True) as mock_proj_cls,
             patch(
                 "repositories.prompt_template_repository.PromptTemplateRepository",
             ) as mock_pt_repo_cls,
-            patch(
-                "services.organization_service.generate_api_key",
-                return_value=self.RAW_API_KEY,
-            ),
-            patch(
-                "services.organization_service.hash_api_key",
-                return_value=("hashed_key", "salted_salt"),
-            ),
-            patch(
-                "services.organization_service.compute_lookup_hash",
-                return_value="lookup_abc",
-            ),
         ):
             mock_org_cls.return_value = org_mock
-            mock_proj_cls.return_value = project_mock
-            mock_key_cls.return_value = MagicMock()
 
             mock_pt_repo = AsyncMock()
             mock_pt_repo.seed_default_prompts.return_value = 5
@@ -113,33 +97,24 @@ class TestOrganizationService:
         assert isinstance(result, CreateOrgResponse)
         assert result.organization_id == self.ORG_ID
         assert result.organization_name == "Test Org"
-        assert result.api_key == self.RAW_API_KEY
-        assert result.api_key_name == "default"
+        # New contract: the response exposes no API key material.
+        assert "api_key" not in CreateOrgResponse.model_fields
+        assert result.model_dump() == {
+            "organization_id": self.ORG_ID,
+            "organization_name": "Test Org",
+        }
 
-        # Verify model constructors were called
+        # Verify only the Organization constructor was called — no default
+        # project and no API key are auto-created.
         mock_org_cls.assert_called_once_with(
             name="Test Org", plan="free"
         )
-        mock_proj_cls.assert_called_once_with(
-            organization_id=self.ORG_ID,
-            name="Test Org - Default",
-        )
-        mock_key_cls.assert_called_once_with(
-            organization_id=self.ORG_ID,
-            project_id=self.PROJECT_ID,
-            key_hash="hashed_key",
-            lookup_hash="lookup_abc",
-            salt="salted_salt",
-            prefix="oz_live_",
-            name="default",
-            scopes=["read", "write", "admin"],
-            is_revoked=False,
-        )
+        mock_proj_cls.assert_not_called()
 
-        # Verify flush/refresh calls on the DB session
-        assert mock_db.add.call_count == 3
-        assert mock_db.flush.await_count == 3
-        assert mock_db.refresh.await_count == 2
+        # Verify flush/refresh calls on the DB session (single entity)
+        assert mock_db.add.call_count == 1
+        assert mock_db.flush.await_count == 1
+        assert mock_db.refresh.await_count == 1
 
         # Verify transaction commit
         mock_db.commit.assert_awaited_once()
@@ -152,24 +127,14 @@ class TestOrganizationService:
         payload = self._make_payload()
 
         org_mock = self._make_org_mock()
-        project_mock = self._make_project_mock()
 
         with (
             patch("services.organization_service.Organization") as mock_org_cls,
-            patch("services.organization_service.Project") as mock_proj_cls,
-            patch("services.organization_service.ApiKey"),
             patch(
                 "repositories.prompt_template_repository.PromptTemplateRepository",
             ) as mock_pt_repo_cls,
-            patch("services.organization_service.generate_api_key",
-                  return_value=self.RAW_API_KEY),
-            patch("services.organization_service.hash_api_key",
-                  return_value=("hashed_key", "salted_salt")),
-            patch("services.organization_service.compute_lookup_hash",
-                  return_value="lookup_abc"),
         ):
             mock_org_cls.return_value = org_mock
-            mock_proj_cls.return_value = project_mock
 
             mock_pt_repo = AsyncMock()
             mock_pt_repo.seed_default_prompts.return_value = 5
@@ -194,21 +159,12 @@ class TestOrganizationService:
         payload = self._make_payload()
 
         org_mock = self._make_org_mock()
-        project_mock = self._make_project_mock()
 
         with (
             patch("services.organization_service.Organization") as mock_org_cls,
-            patch("services.organization_service.Project") as mock_proj_cls,
-            patch("services.organization_service.ApiKey"),
             patch(
                 "repositories.prompt_template_repository.PromptTemplateRepository",
             ) as mock_pt_repo_cls,
-            patch("services.organization_service.generate_api_key",
-                  return_value=self.RAW_API_KEY),
-            patch("services.organization_service.hash_api_key",
-                  return_value=("hashed_key", "salted_salt")),
-            patch("services.organization_service.compute_lookup_hash",
-                  return_value="lookup_abc"),
             patch.object(
                 service,
                 "_load_org_defaults",
@@ -216,7 +172,6 @@ class TestOrganizationService:
             ),
         ):
             mock_org_cls.return_value = org_mock
-            mock_proj_cls.return_value = project_mock
 
             mock_pt_repo = AsyncMock()
             mock_pt_repo.seed_default_prompts.return_value = 0
@@ -244,24 +199,14 @@ class TestOrganizationService:
         payload = self._make_payload()
 
         org_mock = self._make_org_mock()
-        project_mock = self._make_project_mock()
 
         with (
             patch("services.organization_service.Organization") as mock_org_cls,
-            patch("services.organization_service.Project") as mock_proj_cls,
-            patch("services.organization_service.ApiKey"),
             patch(
                 "repositories.prompt_template_repository.PromptTemplateRepository",
             ) as mock_pt_repo_cls,
-            patch("services.organization_service.generate_api_key",
-                  return_value=self.RAW_API_KEY),
-            patch("services.organization_service.hash_api_key",
-                  return_value=("hashed_key", "salted_salt")),
-            patch("services.organization_service.compute_lookup_hash",
-                  return_value="lookup_abc"),
         ):
             mock_org_cls.return_value = org_mock
-            mock_proj_cls.return_value = project_mock
 
             mock_pt_repo = AsyncMock()
             mock_pt_repo.seed_default_prompts.return_value = 0
@@ -271,7 +216,7 @@ class TestOrganizationService:
 
         assert isinstance(result, CreateOrgResponse)
         assert result.organization_id == self.ORG_ID
-        assert result.api_key == self.RAW_API_KEY
+        assert "api_key" not in CreateOrgResponse.model_fields
 
     # ── _load_org_defaults ───────────────────────────────────────────────────
 

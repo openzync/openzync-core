@@ -1,4 +1,10 @@
-"""Unit tests for OrganizationService — business logic."""
+"""Unit tests for OrganizationService — business logic.
+
+New contract (ADR): ``create_organization`` no longer creates an
+``ApiKey`` or a default ``Project``; ``CreateOrgResponse`` carries only
+the org ID and name. First-use authentication flows through
+``POST /v1/auth/signup``.
+"""
 
 from __future__ import annotations
 
@@ -9,15 +15,15 @@ from uuid import UUID
 import pytest
 
 from repositories.organization_repository import OrganizationRepository
-from schemas.organizations import CreateOrgRequest
+from schemas.organizations import CreateOrgRequest, CreateOrgResponse
 from services.organization_service import OrganizationService
 
 
 @pytest.mark.unit
 class TestOrganizationService:
     @pytest.mark.asyncio
-    async def test_create_organization_returns_keys(self) -> None:
-        """Creating an org returns org_id + api_key."""
+    async def test_create_organization_returns_org_only(self) -> None:
+        """Creating an org returns org_id + name — no API key material."""
         # MagicMock + real async functions for methods that need ``await``.
         # Avoids ``AsyncMock`` altogether — its ``__call__`` creates a
         # coroutine on every invocation, and if *any* code path calls the
@@ -57,14 +63,22 @@ class TestOrganizationService:
 
         original_org = os_mod.Organization
         os_mod.Organization = lambda *a, **kw: mock_org  # type: ignore[assignment]
-        original_apikey = os_mod.ApiKey
 
         try:
             payload = CreateOrgRequest(name="Test Org")
             result = await service.create_organization(payload=payload)
             assert result.organization_id is not None
-            assert result.api_key is not None
             assert result.organization_name == "Test Org"
+            # New contract: the response exposes no API key material.
+            assert "api_key" not in CreateOrgResponse.model_fields
+            assert result.model_dump() == {
+                "organization_id": UUID("00000000-0000-0000-0000-000000000001"),
+                "organization_name": "Test Org",
+            }
         finally:
             os_mod.Organization = original_org
-            os_mod.ApiKey = original_apikey
+
+        # New contract: the service no longer imports the ApiKey or Project
+        # models — nothing can bootstrap an API key or a default project.
+        assert not hasattr(os_mod, "ApiKey")
+        assert not hasattr(os_mod, "Project")

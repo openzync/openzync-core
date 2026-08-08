@@ -22,7 +22,7 @@ from uuid import UUID
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from tests.integration.conftest import asgi_transport
+from tests.integration.conftest import asgi_transport, bootstrap_tenant
 
 
 @pytest.fixture
@@ -342,30 +342,16 @@ class TestMemoryWipe:
         # ── Bootstrap org A ───────────────────────────────────────────────
         transport_a = ASGITransport(app=isolated_app)  # type: ignore[arg-type]
         async with AsyncClient(transport=transport_a, base_url="http://test") as cli:
-            resp = await cli.post(
-                "/admin/organizations",
-                json={"name": "Org A", "plan": "free"},
-            )
-            assert resp.status_code == 201
-            org_a = resp.json()
-            # Look up the default project created during bootstrap
-            cli.headers["Authorization"] = f"Bearer {org_a['api_key']}"
-            proj_resp = await cli.get("/v1/projects")
-            assert proj_resp.status_code == 200
-            project_id_a = proj_resp.json()[0]["id"]
+            tenant_a = await bootstrap_tenant(isolated_app, cli, "Org A")
+            project_id_a = tenant_a["project_id"]
 
         # ── Bootstrap org B + user + session ──────────────────────────────
         transport_b = ASGITransport(app=isolated_app)  # type: ignore[arg-type]
         async with AsyncClient(transport=transport_b, base_url="http://test") as cli:
-            resp = await cli.post(
-                "/admin/organizations",
-                json={"name": "Org B", "plan": "free"},
-            )
-            assert resp.status_code == 201
-            org_b = resp.json()
+            tenant_b = await bootstrap_tenant(isolated_app, cli, "Org B")
 
             # Create a user for org B so get_current_user_id has a valid UUID
-            cli.headers["Authorization"] = f"Bearer {org_b['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
             user_resp_b = await cli.post(
                 "/v1/users",
                 json={"external_id": "cross_tenant_wipe_user_b"},
@@ -376,14 +362,9 @@ class TestMemoryWipe:
             # Override get_current_user_id so the session creation works
             isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_b
 
-            # Look up org B's default project
-            proj_resp_b = await cli.get("/v1/projects")
-            assert proj_resp_b.status_code == 200
-            project_id_b = proj_resp_b.json()[0]["id"]
-
             # Create a session for org B to verify its own resources work
             session_resp_b = await cli.post(
-                f"/v1/projects/{project_id_b}/sessions",
+                f"/v1/projects/{tenant_b['project_id']}/sessions",
                 json={"external_id": "org_b_session"},
             )
             assert session_resp_b.status_code == 201, (
@@ -394,7 +375,7 @@ class TestMemoryWipe:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {org_a['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_a['api_key']}"
             user_resp = await cli.post(
                 "/v1/users",
                 json={"external_id": "cross_tenant_wipe_user"},
@@ -424,7 +405,7 @@ class TestMemoryWipe:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {org_b['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
             delete_resp = await cli.delete(
                 f"/v1/projects/{project_id_a}/memory",
             )

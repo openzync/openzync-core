@@ -6,15 +6,19 @@ Endpoints under test:
     DELETE /v1/projects/{project_id}/memory    — Wipe all project memory
 
 Covers:
-    1.  Happy path: 10-turn conversation → 202 Accepted
-    2.  Empty messages list → error (>= 400)
-    3.  Invalid role field → error (>= 400)
-    4.  Missing auth header → 401
-    5.  No session_id → auto-create __default__ session
+    1.  Happy path: 10-turn conversation → 202 Accepted (latency-guarded)
+    2.  Missing auth header → 401 (RFC 7807 problem-detail shape)
+    3.  Missing session_id → 422 ``missing`` on ``loc ["session_id"]`` —
+        ``session_id`` is required and never auto-created (no more
+        ``__default__`` session).
+    4.  Invalid message role → 422 ``string_pattern_mismatch`` on
+        ``messages.0.role``
+    5.  Unknown session_id → 404 (session not found — not auto-created)
     6.  Same Idempotency-Key header → replay (same 202)
     7.  Same Idempotency-Key, different body → 409 conflict (RFC 7807)
     8.  Identical content payload → content-dedup (same job_id)
     9.  DELETE wipes all episodes + facts → 204
+    10. Cross-tenant: org B cannot access org A's memory → 403/404
 
 Auth strategy:
     Each test creates a fresh org via the admin bootstrap fixture and
@@ -231,53 +235,112 @@ class TestMemoryIngestion:
         assert "detail" in body or "status" in body
 
     # ═════════════════════════════════════════════════════════════════════════
-    # 5.  No session_id → auto-create __default__ session
+    # 5.  Missing session_id → 422 (no auto-created session)
     # ═════════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_ingest_without_session_id_creates_default(
+    async def test_ingest_without_session_id_returns_422(
         self,
         isolated_auth_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
-        """POST /v1/projects/{project_id}/memory without ``session_id`` →
-        auto-create __default__.
+        """POST /v1/projects/{project_id}/memory without ``session_id`` → 422.
 
-        When ``session_id`` is omitted, the service creates a session
-        named ``__default__`` for the user and ingests into it.
+        ``session_id`` is now REQUIRED — the server never auto-creates a
+        ``__default__`` session.  This used to 500 (uncaught validation
+        error); it must now surface as a proper 422 with a ``missing``
+        error on ``session_id``.
         """
         user_resp = await isolated_auth_client.post(
             "/v1/users",
-            json={"external_id": "default_sesh_user"},
+            json={"external_id": "missing_sesh_user"},
         )
         assert user_resp.status_code == 201
-        user_id = user_resp.json()["id"]
 
         response = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/memory",
             data={"data": json.dumps({
-                "external_id": "default_sesh_user",
+                "external_id": "missing_sesh_user",
                 "messages": [
                     {"role": "user", "content": "No session ID"},
-                    {"role": "assistant", "content": "Default session works"},
+                    {"role": "assistant", "content": "Must 422"},
                 ],
             })},
         )
-        assert response.status_code == 202, (
-            f"Expected 202, got {response.status_code}: {response.text}"
+        assert response.status_code == 422, (
+            f"Expected 422, got {response.status_code}: {response.text}"
         )
-        _assert_ingest_response_shape(response.json(), expected_episodes=2)
-
-        # Verify the list endpoint works (the __default__ session is excluded
-        # from list results by design, but the 202 response proves it was
-        # auto-created during ingestion).
-        sessions_resp = await isolated_auth_client.get(
-            f"/v1/projects/{isolated_project_id}/sessions"
-        )
-        assert sessions_resp.status_code == 200
+        detail = response.json()["detail"]
+        assert any(
+            err.get("type") == "missing" and err.get("loc") == ["session_id"]
+            for err in detail
+        ), f"Expected a 'missing' error on session_id, got: {detail}"
 
     # ═════════════════════════════════════════════════════════════════════════
-    # 6.  Idempotency key — replay returns same 202
+    # 6.  Invalid message role → 422 (string_pattern_mismatch)
+    # ═════════════════════════════════════════════════════════════════════════
+
+    @pytest.mark.asyncio
+    async def test_ingest_invalid_role_returns_422(
+        self,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
+    ) -> None:
+        """POST with ``messages[0].role`` outside the allowed set → 422.
+
+        Role must match ``^(user|assistant|system|tool)$`` — a pattern
+        violation surfaces as ``string_pattern_mismatch`` on
+        ``messages.0.role`` (previously a latent 500).
+        """
+        response = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/memory",
+            data={"data": json.dumps({
+                "session_id": "any-session",
+                "messages": [
+                    {"role": "invalid-role", "content": "Hello"},
+                ],
+            })},
+        )
+        assert response.status_code == 422, (
+            f"Expected 422, got {response.status_code}: {response.text}"
+        )
+        detail = response.json()["detail"]
+        assert any(
+            err.get("type") == "string_pattern_mismatch"
+            and err.get("loc") == ["messages", 0, "role"]
+            for err in detail
+        ), f"Expected string_pattern_mismatch on messages.0.role, got: {detail}"
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # 7.  Unknown session_id → 404 (session not found)
+    # ═════════════════════════════════════════════════════════════════════════
+
+    @pytest.mark.asyncio
+    async def test_ingest_unknown_session_returns_404(
+        self,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
+    ) -> None:
+        """POST with a well-formed ``session_id`` that doesn't exist → 404.
+
+        Sessions are never auto-created — the caller must create one via
+        ``POST /v1/projects/{project_id}/sessions`` first.
+        """
+        response = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/memory",
+            data={"data": json.dumps({
+                "session_id": "no-such-session",
+                "messages": [
+                    {"role": "user", "content": "Hello"},
+                ],
+            })},
+        )
+        assert response.status_code == 404, (
+            f"Expected 404, got {response.status_code}: {response.text}"
+        )
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # 8.  Idempotency key — replay returns same 202
     # ═════════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
@@ -346,7 +409,7 @@ class TestMemoryIngestion:
         )
 
     # ═════════════════════════════════════════════════════════════════════════
-    # 7.  Idempotency key — same key, different payload → 409 conflict
+    # 9.  Idempotency key — same key, different payload → 409 conflict
     # ═════════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
@@ -430,7 +493,7 @@ class TestMemoryIngestion:
         )
 
     # ═════════════════════════════════════════════════════════════════════════
-    # 8.  Content dedup — identical payload → dedup hit → same job_id
+    # 10. Content dedup — identical payload → dedup hit → same job_id
     # ═════════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
@@ -499,7 +562,7 @@ class TestMemoryIngestion:
         )
 
     # ═════════════════════════════════════════════════════════════════════════
-    # 9.  Delete user memory — 204
+    # 11. Delete user memory — 204
     # ═════════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
@@ -591,32 +654,19 @@ class TestMemoryCrossTenant:
         # ── Bootstrap org A ───────────────────────────────────────────────
         transport_a = ASGITransport(app=app)  # type: ignore[arg-type]
         async with AsyncClient(transport=transport_a, base_url="http://test") as cli:
-            resp = await cli.post(
-                "/admin/organizations",
-                json={"name": "Org A", "plan": "free"},
-            )
-            assert resp.status_code == 201
-            org_a = resp.json()
-            cli.headers["Authorization"] = f"Bearer {org_a['api_key']}"
-            proj_resp = await cli.get("/v1/projects")
-            assert proj_resp.status_code == 200
-            project_id_a = proj_resp.json()[0]["id"]
+            tenant_a = await bootstrap_tenant(app, cli, "Org A")
+            project_id_a = tenant_a["project_id"]
 
         # ── Bootstrap org B ───────────────────────────────────────────────
         transport_b = ASGITransport(app=app)  # type: ignore[arg-type]
         async with AsyncClient(transport=transport_b, base_url="http://test") as cli:
-            resp = await cli.post(
-                "/admin/organizations",
-                json={"name": "Org B", "plan": "free"},
-            )
-            assert resp.status_code == 201
-            org_b = resp.json()
+            tenant_b = await bootstrap_tenant(app, cli, "Org B")
 
         # ── Org A: create user + ingest memory ────────────────────────────
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {org_a['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_a['api_key']}"
             user_resp = await cli.post(
                 "/v1/users",
                 json={"external_id": "cross_tenant_mem_user"},
@@ -646,7 +696,7 @@ class TestMemoryCrossTenant:
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {org_b['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
             ingest_resp = await cli.post(
                 f"/v1/projects/{project_id_a}/memory",
                 data={"data": json.dumps({

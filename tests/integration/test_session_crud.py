@@ -28,8 +28,10 @@ from __future__ import annotations
 from uuid import UUID
 
 import pytest
-from dependencies.auth import get_current_user_id
 from httpx import ASGITransport, AsyncClient
+
+from dependencies.auth import get_current_user_id
+from tests.integration.conftest import bootstrap_tenant
 
 
 class TestSessionCrud:
@@ -349,18 +351,14 @@ class TestSessionCrud:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            resp = await cli.post(
-                "/admin/organizations",
-                json={"name": "Org A", "plan": "free"},
-            )
-            assert resp.status_code == 201
-            org_a = resp.json()
+            tenant_a = await bootstrap_tenant(isolated_app, cli, "Org A")
+            project_id_a = tenant_a["project_id"]
 
-        # ── Fetch project_id for org A & set up user ────────────────────
+        # ── Set up user for org A ───────────────────────────────────────
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {org_a['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_a['api_key']}"
 
             # Create a user so get_current_user_id has something to return
             user_resp = await cli.post("/v1/users", json={"external_id": "org_a_user"})
@@ -368,28 +366,17 @@ class TestSessionCrud:
             user_id_a = UUID(user_resp.json()["id"])
             isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_a
 
-            proj_resp = await cli.get("/v1/projects")
-            assert proj_resp.status_code == 200
-            projects_a = proj_resp.json()
-            assert isinstance(projects_a, list) and len(projects_a) >= 1
-            project_id_a = projects_a[0]["id"]
-
         # ── Bootstrap org B ─────────────────────────────────────────────
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            resp = await cli.post(
-                "/admin/organizations",
-                json={"name": "Org B", "plan": "free"},
-            )
-            assert resp.status_code == 201
-            org_b = resp.json()
+            tenant_b = await bootstrap_tenant(isolated_app, cli, "Org B")
 
         # ── Set up user for org B ───────────────────────────────────────
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {org_b['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
             user_resp = await cli.post("/v1/users", json={"external_id": "org_b_user"})
             assert user_resp.status_code == 201
             user_id_b = UUID(user_resp.json()["id"])
@@ -399,7 +386,7 @@ class TestSessionCrud:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {org_a['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_a['api_key']}"
             isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_a
 
             session_resp = await cli.post(
@@ -413,7 +400,7 @@ class TestSessionCrud:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {org_b['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
             get_resp = await cli.get(
                 f"/v1/projects/{project_id_a}/sessions/{session_id}"
             )

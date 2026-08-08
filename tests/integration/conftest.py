@@ -142,7 +142,7 @@ async def engine():
     _testcontainers.clear()
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def redis_client(engine) -> Any:
     """Function-scoped async Redis client connected to testcontainers Redis.
 
@@ -233,7 +233,7 @@ async def app(engine, redis_client) -> Any:
     app.dependency_overrides.clear()
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def async_client(app: Any) -> AsyncGenerator[AsyncClient, None]:
     """HTTP client backed by the FastAPI test app."""
     transport = asgi_transport(app)
@@ -241,24 +241,98 @@ async def async_client(app: Any) -> AsyncGenerator[AsyncClient, None]:
         yield client
 
 
-@pytest_asyncio.fixture
+async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict:
+    """Bootstrap a full tenant under the current API contract.
+
+    The org bootstrap (``POST /admin/organizations``) no longer generates
+    an API key and no longer auto-creates a default project.  A working
+    tenant therefore needs the full dashboard flow, which we drive through
+    the real API:
+
+    1. Bootstrap the org via the admin endpoint (public, no auth).
+    2. Insert a user row directly (fixture infra — there is no public
+       "create user" endpoint that runs before auth exists).
+    3. Mint a JWT for that user (signed with the test app's SECRET_KEY).
+    4. Create a project via ``POST /v1/projects`` with the JWT (the
+       creator is auto-added as owner).
+    5. Create a project-scoped API key via the JWT (owner-gated).
+
+    Returns:
+        Dict with ``org_id``, ``user_id``, ``jwt``, ``project_id`` and
+        ``api_key`` — all created through the real API/middleware.
+    """
+    from datetime import timedelta
+    from uuid import uuid4
+
+    from core.config import get_settings
+    from repositories.user_repository import UserRepository
+    from utils.crypto import create_jwt_token
+
+    resp = await client.post(
+        "/admin/organizations",
+        json={"name": org_name, "plan": "free"},
+    )
+    assert resp.status_code == 201, f"Admin bootstrap failed: {resp.text}"
+    data = resp.json()
+    org_id = UUID(data["organization_id"])
+
+    # ── Insert the user row directly (test infra, not a public API) ───
+    async with app.state.db_session_factory() as session:
+        async with session.begin():
+            user = await UserRepository(session).create(
+                organization_id=org_id,
+                external_id=f"bootstrap_{uuid4().hex[:8]}",
+            )
+    user_id = user.id
+
+    # ── Mint a JWT for the user ─────────────────────────────────────────
+    jwt_token = create_jwt_token(
+        data={
+            "sub": str(user_id),
+            "org_id": str(org_id),
+            "role": "admin",
+            "type": "access",
+        },
+        secret=get_settings().SECRET_KEY,
+        expires_delta=timedelta(hours=1),
+    )
+    client.headers["Authorization"] = f"Bearer {jwt_token}"
+
+    # ── Create a project (JWT path auto-adds creator as owner) ──────────
+    proj_resp = await client.post(
+        "/v1/projects",
+        json={"name": f"Project {uuid4().hex[:8]}"},
+    )
+    assert proj_resp.status_code == 201, f"Project creation failed: {proj_resp.text}"
+    project_id = UUID(proj_resp.json()["id"])
+
+    # ── Create a project-scoped API key (owner-gated, JWT only) ─────────
+    key_resp = await client.post(
+        f"/v1/projects/{project_id}/api-keys",
+        json={"name": "test-key"},
+    )
+    assert key_resp.status_code == 201, f"API key creation failed: {key_resp.text}"
+    api_key = key_resp.json()["raw_key"]
+
+    client.headers.pop("Authorization")
+    return {
+        "org_id": org_id,
+        "user_id": user_id,
+        "jwt": jwt_token,
+        "project_id": project_id,
+        "api_key": api_key,
+    }
+
+
+@pytest_asyncio.fixture(loop_scope="function")
 async def org_and_key(app: Any) -> dict:
-    """Create a test org + API key via the admin bootstrap endpoint."""
+    """Create a test org + project + API key via the real API."""
     transport = asgi_transport(app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.post(
-            "/admin/organizations",
-            json={"name": "Test Org", "plan": "free"},
-        )
-        assert resp.status_code == 201, f"Admin bootstrap failed: {resp.text}"
-        data = resp.json()
-        return {
-            "org_id": UUID(data["organization_id"]),
-            "api_key": data["api_key"],
-        }
+        return await bootstrap_tenant(app, client, "Test Org")
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="function")
 async def auth_client(app: Any, org_and_key: dict) -> AsyncGenerator[AsyncClient, None]:
     """HTTP client pre-authenticated with a real API key."""
     transport = asgi_transport(app)
@@ -283,8 +357,8 @@ async def auth_client(app: Any, org_and_key: dict) -> AsyncGenerator[AsyncClient
 #         async def auth_client(self, isolated_app):
 #             transport = asgi_transport(isolated_app)
 #             async with AsyncClient(...) as c:
-#                 resp = await c.post("/admin/organizations", ...)
-#                 c.headers["Authorization"] = f"Bearer {resp.json()['api_key']}"
+#                 tenant = await bootstrap_tenant(isolated_app, c, "Test Org")
+#                 c.headers["Authorization"] = f"Bearer {tenant['api_key']}"
 #                 yield c
 #
 #         @pytest.mark.asyncio
@@ -417,55 +491,18 @@ async def isolated_app(engine, redis_client, db_session) -> Any:
 
 @pytest_asyncio.fixture(loop_scope="function")
 async def isolated_org_and_key(isolated_app: Any) -> dict:
-    """Bootstrap a test org + API key — cleaned up by table truncation.
+    """Bootstrap a test org + project + API key — cleaned up by table truncation.
 
-    Endpoints that depend on ``get_current_user_id`` require a valid user
-    UUID in ``request.state.user_id``.  API keys created via the admin
-    bootstrap don't have a ``created_by`` user, so this fixture also:
-    1. Creates a test user via the Users API.
-    2. Sets a ``dependency_overrides`` for ``get_current_user_id`` on the
-       app so it returns the test user's UUID.
+    Under the current contract the admin org bootstrap creates neither an
+    API key nor a default project, so this fixture drives the full
+    dashboard flow through the real API (see :func:`bootstrap_tenant`):
+    org → user → JWT → project → project-scoped API key.  The returned
+    ``api_key`` authenticates via the middleware like a real SDK client,
+    and ``jwt`` is available for tests that need dashboard-session auth.
     """
-    from dependencies.auth import get_current_user_id
-
     transport = asgi_transport(isolated_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.post(
-            "/admin/organizations",
-            json={"name": "Test Org", "plan": "free"},
-        )
-        assert resp.status_code == 201, f"Admin bootstrap failed: {resp.text}"
-        data = resp.json()
-        org_id = UUID(data["organization_id"])
-        api_key = data["api_key"]
-
-        # Look up the default project.
-        client.headers["Authorization"] = f"Bearer {api_key}"
-        proj_resp = await client.get("/v1/projects")
-        assert proj_resp.status_code == 200, (
-            f"Project lookup failed: {proj_resp.text}"
-        )
-        projects: list = proj_resp.json()
-        assert isinstance(projects, list) and len(projects) >= 1
-        project_id = UUID(projects[0]["id"])
-
-        # Create a test user so get_current_user_id has something to return.
-        user_resp = await client.post(
-            "/v1/users",
-            json={"external_id": "fixture_user"},
-        )
-        assert user_resp.status_code == 201
-        user_id = UUID(user_resp.json()["id"])
-
-        # Override get_current_user_id to return this user's UUID.
-        isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id
-
-        return {
-            "org_id": org_id,
-            "api_key": api_key,
-            "project_id": project_id,
-            "user_id": user_id,
-        }
+        return await bootstrap_tenant(isolated_app, client, "Test Org")
 
 
 @pytest_asyncio.fixture(loop_scope="function")

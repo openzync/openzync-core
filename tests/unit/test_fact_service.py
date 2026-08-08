@@ -66,6 +66,7 @@ class TestFactService:
             project_id=self.PROJECT_ID,
             created_by=self.USER_ID,
             facts=[],
+            session_external_id="session-abc",
         )
         assert result.status == "accepted"
 
@@ -299,6 +300,7 @@ class TestFactServiceGraphSync:
                         content="Alice loves hiking",
                     )
                 ],
+                session_external_id="session-abc",
             )
 
         # Resolver consulted with the org; backend bound into graph_sync.
@@ -370,6 +372,7 @@ class TestFactServiceGraphSync:
                         content="Alice works_at Acme",
                     )
                 ],
+                session_external_id="session-abc",
             )
 
         invalidation = captured[0]
@@ -435,6 +438,7 @@ class TestFactServiceGraphSync:
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 facts=[self._sample_triple()],
+                session_external_id="session-abc",
             )
 
         assert result.status == "accepted"
@@ -474,6 +478,7 @@ class TestFactServiceGraphSync:
                 project_id=self.PROJECT_ID,
                 created_by=self.USER_ID,
                 facts=[self._sample_triple()],
+                session_external_id="session-abc",
             )
 
         assert result.status == "accepted"

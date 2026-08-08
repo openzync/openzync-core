@@ -32,15 +32,15 @@ def _create_app() -> tuple[FastAPI, AsyncMock]:
 
 @pytest.mark.asyncio
 async def test_create_organization_success() -> None:
-    """POST /admin/organizations returns 201 with org details and API key."""
+    """POST /admin/organizations returns 201 with org id and name.
+
+    New contract: no API key is generated at org creation — the response
+    carries only the org id and name, and no default project is created.
+    """
     created_org_id = uuid4()
     mock_response = CreateOrgResponse(
         organization_id=created_org_id,
         organization_name="Acme Corp",
-        api_key="oz_live_abc123def456",
-        api_key_prefix="oz_live_",
-        api_key_name="default",
-        message="Save this API key — it will not be shown again.",
     )
 
     app, db_mock = _create_app()
@@ -60,9 +60,11 @@ async def test_create_organization_success() -> None:
     assert resp.status_code == 201
     body = resp.json()
     assert body["organization_name"] == "Acme Corp"
-    assert body["api_key_prefix"] == "oz_live_"
-    assert body["api_key"].startswith("oz_live_")
     assert UUID(body["organization_id"]) == created_org_id
+    # No API key material in the new contract.
+    assert "api_key" not in body
+    assert "api_key_prefix" not in body
+    assert "api_key_name" not in body
 
     # Verify the service was constructed with the right repo
     mock_service_cls.assert_called_once()
@@ -76,7 +78,6 @@ async def test_create_organization_default_plan() -> None:
     mock_response = CreateOrgResponse(
         organization_id=created_org_id,
         organization_name="Acme Corp",
-        api_key="oz_live_abc123def456",
     )
 
     app, db_mock = _create_app()
@@ -97,6 +98,7 @@ async def test_create_organization_default_plan() -> None:
     body = resp.json()
     assert body["organization_name"] == "Acme Corp"
     assert "organization_id" in body
+    assert "api_key" not in body
 
 
 @pytest.mark.asyncio

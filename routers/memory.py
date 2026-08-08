@@ -127,7 +127,7 @@ async def ingest_messages(
         payload = IngestMemoryRequest.model_validate_json(data)
     except ValidationError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=exc.errors(),
         ) from exc
 
@@ -137,7 +137,7 @@ async def ingest_messages(
         for bm in msg.blobs:
             if bm.blob_id < 0:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=f"Invalid blob_id {bm.blob_id}: must be non-negative",
                 )
             referenced_ids.add(bm.blob_id)
@@ -147,7 +147,7 @@ async def ingest_messages(
         max_allowed = len(blobs) - 1
         if any(bid > max_allowed for bid in referenced_ids):
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"blob_id out of range: max is {max_allowed} "
                        f"but referenced IDs include {referenced_ids}",
             )
@@ -156,7 +156,7 @@ async def ingest_messages(
         for i, _ in enumerate(blobs):
             if i not in referenced_ids:
                 raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=f"Uploaded file blob_{i} is not referenced by any message",
                 )
 

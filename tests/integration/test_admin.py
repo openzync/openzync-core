@@ -2,9 +2,11 @@
 
 Endpoint: ``POST /admin/organizations``
 
-This is the bootstrap endpoint that creates a new organization and returns
-a live API key.  It **must** be publicly accessible (no auth required) since
-callers do not yet have an API key when they first call it.
+This is the bootstrap endpoint that creates a new organization.  It **must**
+be publicly accessible (no auth required) since callers do not yet have any
+credentials when they first call it.  Under the current contract it returns
+only the org ID + name — **no** API key is generated and **no** default
+project is auto-created (first-use auth flows through ``POST /v1/auth/signup``).
 
 Tests:
     - ``test_create_organization_returns_key`` — happy path
@@ -41,14 +43,18 @@ class TestAdminBootstrap:
     # ═════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_create_organization_returns_key(
-        self, anon_client: AsyncClient
+    async def test_create_organization_no_key_no_default_project(
+        self, anon_client: AsyncClient, app: pytest.fixture
     ) -> None:
-        """A valid request creates an org and returns an API key.
+        """A valid request creates an org — with no API key, no default project.
 
         The response should include:
         - ``organization_id`` — a valid UUID.
-        - ``api_key`` — a string starting with ``oz_live_``.
+        - ``organization_name`` — the provided name.
+        - **No** ``api_key`` field — bootstrap keys were removed.
+
+        And the new org must have zero projects until one is created
+        explicitly (no auto-created default project).
         """
         response = await anon_client.post(
             "/admin/organizations",
@@ -62,15 +68,30 @@ class TestAdminBootstrap:
 
         # -- Response shape assertions --
         assert "organization_id" in body, "Missing organization_id in response"
-        assert "api_key" in body, "Missing api_key in response"
+        assert "organization_name" in body, "Missing organization_name in response"
 
         # -- Type / format assertions --
         # organization_id must be a valid UUID
         UUID(body["organization_id"])
 
-        # api_key must start with the live prefix
-        assert body["api_key"].startswith("oz_live_"), (
-            f"api_key should start with 'oz_live_', got: {body['api_key'][:10]}..."
+        # -- No bootstrap API key under the new contract --
+        assert "api_key" not in body, (
+            "Org bootstrap must not return an api_key — got one: "
+            f"{body.get('api_key')}"
+        )
+
+        # -- No default project auto-created --
+        from sqlalchemy import text
+
+        async with app.state.db_session_factory() as session:
+            count = await session.execute(
+                text(
+                    "SELECT count(*) FROM projects WHERE organization_id = :oid"
+                ),
+                {"oid": body["organization_id"]},
+            )
+        assert count.scalar() == 0, (
+            "Org bootstrap must not auto-create a default project"
         )
 
     # ═════════════════════════════════════════════════════════════════════

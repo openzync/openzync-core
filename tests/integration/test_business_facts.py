@@ -10,14 +10,16 @@ Covers:
     3.  Over 500 facts → 422 (via Pydantic max_length on list)
     4.  Missing auth header → 401
     5.  Project not found → 403 (API key scoping)
-    6.  Duplicate content payload → content-dedup (same job_id)
-    7.  Session association → 202 when the session exists
-    8.  GET /search returns ingested facts via BM25
+    6.  Missing session_id → 422 (required; sessions are never auto-created)
+    7.  Duplicate content payload → content-dedup (same job_id)
+    8.  Session association → 202 when the session exists
 
 Auth strategy:
     Each test creates a fresh org via the admin bootstrap fixture and
     uses ``isolated_auth_client`` (pre-authenticated, project-scoped) for
-    all authenticated calls.
+    all authenticated calls.  Sessions are created up-front via
+    ``POST /v1/projects/{project_id}/sessions`` — they are never
+    auto-created during ingestion.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 
 from tests.integration.conftest import asgi_transport
@@ -58,6 +61,19 @@ async def anon_client(isolated_app: Any) -> AsyncClient:
         yield client
 
 
+@pytest_asyncio.fixture(loop_scope="function")
+async def isolated_fact_session(
+    isolated_auth_client: AsyncClient, isolated_project_id: UUID
+) -> str:
+    """Create a session for facts ingestion and return its external ID."""
+    resp = await isolated_auth_client.post(
+        f"/v1/projects/{isolated_project_id}/sessions",
+        json={"external_id": "session-facts"},
+    )
+    assert resp.status_code == 201, f"Session creation failed: {resp.text}"
+    return "session-facts"
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Tests
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -75,6 +91,7 @@ class TestBusinessFacts:
         self,
         isolated_auth_client: AsyncClient,
         isolated_project_id: UUID,
+        isolated_fact_session: str,
     ) -> None:
         """POST /facts with 10 valid triples → 202 + FactBatchResponse."""
         user_resp = await isolated_auth_client.post(
@@ -86,6 +103,7 @@ class TestBusinessFacts:
         resp = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/facts",
             json={
+                "session_id": isolated_fact_session,
                 "facts": [
                     {"subject": "Alice", "predicate": "likes", "object": "hiking"},
                     {"subject": "Alice", "predicate": "works_at", "object": "Acme Corp"},
@@ -113,8 +131,9 @@ class TestBusinessFacts:
         self,
         isolated_auth_client: AsyncClient,
         isolated_project_id: UUID,
+        isolated_fact_session: str,
     ) -> None:
-        """POST /facts with empty facts list → 422."""
+        """POST /facts with empty facts list → 422 (Pydantic min_length)."""
         user_resp = await isolated_auth_client.post(
             "/v1/users",
             json={"external_id": "facts_empty_user"},
@@ -123,7 +142,7 @@ class TestBusinessFacts:
 
         resp = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/facts",
-            json={"facts": []},
+            json={"session_id": isolated_fact_session, "facts": []},
         )
         assert resp.status_code == 422, f"Expected 422, got {resp.status_code}"
 
@@ -136,8 +155,9 @@ class TestBusinessFacts:
         self,
         isolated_auth_client: AsyncClient,
         isolated_project_id: UUID,
+        isolated_fact_session: str,
     ) -> None:
-        """POST /facts with 501 triples → 422."""
+        """POST /facts with 501 triples → 422 (Pydantic max_length)."""
         user_resp = await isolated_auth_client.post(
             "/v1/users",
             json={"external_id": "facts_over_limit_user"},
@@ -150,7 +170,7 @@ class TestBusinessFacts:
         ]
         resp = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/facts",
-            json={"facts": facts},
+            json={"session_id": isolated_fact_session, "facts": facts},
         )
         assert resp.status_code == 422, f"Expected 422, got {resp.status_code}"
 
@@ -207,7 +227,40 @@ class TestBusinessFacts:
         )
 
     # ═════════════════════════════════════════════════════════════════════════
-    # 6.  Content dedup — same payload → same job_id
+    # 6.  Missing session_id → 422 (required field, never auto-created)
+    # ═════════════════════════════════════════════════════════════════════════
+
+    @pytest.mark.asyncio
+    async def test_ingest_facts_missing_session_returns_422(
+        self,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
+    ) -> None:
+        """POST /facts without ``session_id`` → 422 ``missing`` error.
+
+        ``session_id`` is required — the server never auto-creates a
+        session for facts ingestion.
+        """
+        resp = await isolated_auth_client.post(
+            f"/v1/projects/{isolated_project_id}/facts",
+            json={
+                "facts": [
+                    {"subject": "Alice", "predicate": "likes", "object": "hiking"},
+                ],
+            },
+        )
+        assert resp.status_code == 422, (
+            f"Expected 422, got {resp.status_code}: {resp.text}"
+        )
+        detail = resp.json()["detail"]
+        assert any(
+            err.get("type") == "missing"
+            and err.get("loc") == ["body", "session_id"]
+            for err in detail
+        ), f"Expected a 'missing' error on session_id, got: {detail}"
+
+    # ═════════════════════════════════════════════════════════════════════════
+    # 7.  Content dedup — same payload → same job_id
     # ═════════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
@@ -215,6 +268,7 @@ class TestBusinessFacts:
         self,
         isolated_auth_client: AsyncClient,
         isolated_project_id: UUID,
+        isolated_fact_session: str,
     ) -> None:
         """POST /facts with identical payload twice → same job_id."""
         user_resp = await isolated_auth_client.post(
@@ -224,6 +278,7 @@ class TestBusinessFacts:
         assert user_resp.status_code == 201
 
         payload = {
+            "session_id": isolated_fact_session,
             "facts": [
                 {"subject": "DedupEntity", "predicate": "test", "object": "dedup"},
             ],
