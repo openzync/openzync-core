@@ -87,8 +87,7 @@ async def create_session(
     response_model=PaginatedResponse[SessionListResponse],
     summary="List sessions",
     description="List sessions for a project with cursor-based pagination. "
-    "Excludes any legacy ``__default__`` session and closed sessions "
-    "by default.",
+    "Excludes closed sessions by default.",
     responses={
         200: {"description": "Paginated list of sessions."},
         401: {"description": "Missing or invalid authentication."},
@@ -118,8 +117,8 @@ async def list_sessions(
 ) -> PaginatedResponse[SessionListResponse]:
     """List sessions for a project with pagination.
 
-    By default excludes any legacy ``__default__`` session and
-    closed sessions.  Set ``include_closed=true`` to include them.
+    Excludes closed sessions by default.  Set ``include_closed=true``
+    to include them.
     """
     return await service.list_sessions(
         org_id=org_id,

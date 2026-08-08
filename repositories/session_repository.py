@@ -135,15 +135,10 @@ class SessionRepository:
         limit: int = 50,
         cursor: str | None = None,
         include_closed: bool = False,
-        exclude_default: bool = True,
     ) -> tuple[list[Session], str | None]:
         """List sessions for a project with cursor-based pagination, scoped to org.
 
-        The default excludes:
-        - Any legacy ``__default__`` session created before
-          ``session_id`` became required on ingest (legacy-data hygiene —
-          new sessions are never auto-created).
-        - Closed sessions (``closed_at IS NOT NULL``).
+        By default excludes closed sessions (``closed_at IS NOT NULL``).
 
         Pagination uses a composite cursor of ``(created_at DESC, id ASC)``
         for stable, most-recent-first ordering.
@@ -154,9 +149,6 @@ class SessionRepository:
             limit: Maximum results per page (capped at 200).
             cursor: Opaque base64 cursor from a previous page.
             include_closed: If ``True``, include closed sessions.
-            exclude_default: If ``True``, hide any legacy ``__default__``
-                session (legacy-data hygiene — new sessions are never
-                auto-created).
 
         Returns:
             A tuple of ``(sessions, next_cursor)``.  ``next_cursor`` is
@@ -173,9 +165,6 @@ class SessionRepository:
                 Session.is_deleted.is_(False),
             )
         )
-
-        if exclude_default:
-            query = query.where(Session.external_id != "__default__")
 
         if not include_closed:
             query = query.where(Session.closed_at.is_(None))
@@ -585,8 +574,7 @@ class SessionRepository:
         """Find sessions with no activity in the given window.
 
         Used by the auto-close scheduled task (ARQ cron) to close stale
-        sessions.  Excludes any legacy ``__default__`` session
-        (legacy-data hygiene — new sessions are never auto-created).
+        sessions.
 
         Args:
             inactivity_hours: Hours of inactivity before a session is
@@ -602,7 +590,6 @@ class SessionRepository:
             .where(
                 Session.closed_at.is_(None),
                 Session.is_deleted.is_(False),
-                Session.external_id != "__default__",
                 Session.updated_at < cutoff,
             )
             .limit(batch_size)

@@ -221,8 +221,7 @@ class SessionService:
     ) -> PaginatedResponse[SessionListResponse]:
         """List sessions for a project with cursor-based pagination.
 
-        By default returns open (non-closed, non-deleted) sessions,
-        excluding any legacy ``__default__`` session.
+        By default returns open (non-closed, non-deleted) sessions.
 
         Args:
             org_id: The organization UUID for tenant isolation.

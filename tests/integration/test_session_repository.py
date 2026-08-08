@@ -153,7 +153,6 @@ class TestSessionRepository:
             sessions, cursor = await session_repo.list(
                 self.ORG_ID, project_id, limit=10
             )
-            # __default__ is excluded by default
             assert len(sessions) == 2
             assert cursor is None  # no more pages
 
