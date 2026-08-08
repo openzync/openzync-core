@@ -475,3 +475,103 @@ class TestCleanupOrphanBlobs:
         assert result["blobs_cleaned"] == len(blobs_1)
         assert mock_repo.get_orphaned_blobs.call_count == 2
         db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_discovery_all_orgs_fail_raises(self) -> None:
+        """Every org failing in discovery mode raises RuntimeError.
+
+        Covers the ``All {n} orgs failed`` arm (line ~243): when every
+        discovered org raises, the run must fail loudly rather than
+        report a misleading ``partial`` summary.
+
+        Note: the ``@with_retry`` wrapper is applied at import time, so
+        the module-level ``with_retry`` patch does not unwrap it — the
+        whole task runs twice (max_retries=2), consuming each side-effect
+        list twice.  ``asyncio.sleep`` is patched to skip the retry delay.
+        """
+        org_1 = uuid4()
+        org_2 = uuid4()
+
+        discovery = MagicMock()
+        discovery.all.return_value = [(org_1,), (org_2,)]
+        other = MagicMock()
+        other.all.return_value = []
+
+        db = AsyncMock()
+        db.__aenter__.return_value = db
+        db.__aexit__.return_value = None
+        # 2 attempts × (1 org-discovery + 2 per-org set_config executes).
+        db.execute.side_effect = [discovery, other, other] * 2
+
+        with (
+            patch(
+                "workers.tasks.cleanup_orphan_blobs.with_retry",
+                lambda **kw: lambda f: f,
+            ),
+            patch("asyncio.sleep", AsyncMock()),
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
+        ):
+            mock_repo = AsyncMock()
+            mock_repo.get_orphaned_blobs.side_effect = [
+                Exception("org 1 fail"), Exception("org 2 fail"),
+            ] * 2
+            mock_repo_cls.return_value = mock_repo
+
+            from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
+
+            with pytest.raises(RuntimeError, match="All 2 orgs failed"):
+                await cleanup_orphan_blobs(ctx=self._ctx(db))
+
+        # Both orgs were attempted on every attempt (2 orgs × 2 retries).
+        assert mock_repo.get_orphaned_blobs.call_count == 4
+
+    @pytest.mark.asyncio
+    async def test_discovery_all_orgs_succeed_returns_completed(self) -> None:
+        """All orgs succeeding in discovery mode returns a completed summary.
+
+        Covers the ``"completed"`` status arm (line ~249): per-org blob
+        counts are summed into ``blobs_cleaned`` with zero failures.
+        """
+        org_1 = uuid4()
+        org_2 = uuid4()
+        blobs_1 = [self._make_blob()]
+        blobs_2 = [self._make_blob(), self._make_blob()]
+
+        discovery = MagicMock()
+        discovery.all.return_value = [(org_1,), (org_2,)]
+        other = MagicMock()
+        other.all.return_value = []
+
+        db = AsyncMock()
+        db.__aenter__.return_value = db
+        db.__aexit__.return_value = None
+        db.execute.side_effect = [discovery, other, other]
+
+        with (
+            patch(
+                "workers.tasks.cleanup_orphan_blobs.with_retry",
+                lambda **kw: lambda f: f,
+            ),
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
+            patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
+        ):
+            mock_repo = AsyncMock()
+            mock_repo.get_orphaned_blobs.side_effect = [blobs_1, blobs_2]
+            mock_repo.delete_by_ids.side_effect = [blobs_1, blobs_2]
+            mock_repo_cls.return_value = mock_repo
+
+            mock_svc = AsyncMock()
+            mock_svc_cls.return_value = mock_svc
+
+            from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
+
+            result = await cleanup_orphan_blobs(ctx=self._ctx(db))
+
+        assert result["status"] == "completed"
+        assert result["orgs_processed"] == 2
+        assert result["orgs_failed"] == 0
+        assert result["blobs_cleaned"] == 3

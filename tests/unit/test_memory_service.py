@@ -729,6 +729,46 @@ class TestMemoryServiceInfrastructure:
         assert mock_pool.enqueue.await_count == 2
 
     @pytest.mark.asyncio
+    async def test_enqueue_blob_extraction_kwargs_match_task_signature(
+        self, service: MemoryService,
+    ) -> None:
+        """Enqueue kwargs stay in lockstep with the extract_blob_text signature.
+
+        Guards Fix 1 — a kwargs-contract drift between
+        ``_enqueue_blob_extraction_tasks`` and the ``extract_blob_text``
+        worker signature silently drops fields (e.g. a renamed parameter)
+        from every enqueued job.  The kwarg set must be exactly the task's
+        parameters minus ``ctx``, plus ``queue_name`` (routing-only).
+        """
+        import inspect
+
+        from workers.tasks.extract_blob_text import extract_blob_text
+
+        mock_pool = AsyncMock()
+        mock_pool.enqueue = AsyncMock()
+        blob = MagicMock()
+        blob.id = uuid4()
+        blob.episode_id = uuid4()
+        blob.storage_key = "blobs/doc.pdf"
+        blob.mime_type = "application/pdf"
+        blob.file_name = "doc.pdf"
+
+        with patch("services.memory_service.get_arq", return_value=mock_pool):
+            await service._enqueue_blob_extraction_tasks(
+                blob_records=[blob],
+                org_id=str(self.ORG_ID),
+                project_id=str(self.PROJECT_ID),
+            )
+
+        enqueue_call = mock_pool.enqueue.call_args_list[0]
+        assert enqueue_call.args[0] == extract_blob_text.__name__
+
+        task_params = set(inspect.signature(extract_blob_text).parameters) - {"ctx"}
+        # ponytail: queue_name is ARQ routing metadata, not a task param —
+        # pin it explicitly so any other extra key still fails the guard.
+        assert set(enqueue_call.kwargs) == task_params | {"queue_name"}
+
+    @pytest.mark.asyncio
     async def test_process_blobs_empty(self, service: MemoryService) -> None:
         """_process_blobs returns early when no messages have blobs."""
         count, records = await service._process_blobs(

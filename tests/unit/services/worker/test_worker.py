@@ -709,6 +709,39 @@ class TestMain:
         finally:
             _unpatch_main_deps(_mocks)
 
+    @pytest.mark.asyncio
+    async def test_main_registers_orphaned_blob_cleanup_cron(self) -> None:
+        """Daily 03:00 UTC cleanup_orphan_blobs cron reaches the low worker.
+
+        Guards the shipped fix batch: the orphaned-blob cleanup cron must
+        be passed to the low-priority ``create_arq_worker`` call, wrapped
+        with the real ``cleanup_orphan_blobs`` coroutine and the correct
+        schedule (hour=3, minute=0 — installed arq stores ints, not sets).
+        """
+        from services.worker.worker import main
+        from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
+
+        _mocks = _patch_main_deps()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await main()
+
+            calls = _mocks["create_arq_worker"].call_args_list
+            assert len(calls) == 2  # high first, low second
+            cron_jobs = calls[1].kwargs["cron_jobs"]
+
+            matches = [
+                job for job in cron_jobs
+                if getattr(job, "job_id", None) == "orphaned_blob_cleanup"
+            ]
+            assert len(matches) == 1
+            job = matches[0]
+            assert job.coroutine is cleanup_orphan_blobs
+            assert job.hour == 3
+            assert job.minute == 0
+        finally:
+            _unpatch_main_deps(_mocks)
+
 
 @pytest.mark.unit
 class TestEntrypoint:

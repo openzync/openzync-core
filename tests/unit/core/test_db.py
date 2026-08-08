@@ -150,6 +150,23 @@ class TestGetDbDependency:
 
 
 @pytest.mark.unit
+class TestCoreDbReexport:
+    """core.db.get_db must remain the RLS-aware dependencies.db.get_db."""
+
+    def test_core_db_reexports_rls_get_db(self) -> None:
+        """core.db re-exports the RLS dependency rather than a local duplicate.
+
+        A future revert to a local non-RLS ``get_db`` in core/db.py (a
+        pattern that silently disables row-level security) fails here
+        because the two import paths must resolve to the same function.
+        """
+        from core.db import get_db as core_get_db
+        from dependencies.db import get_db as deps_get_db
+
+        assert core_get_db is deps_get_db
+
+
+@pytest.mark.unit
 class TestDbHealth:
     """check_db_health connectivity check."""
 

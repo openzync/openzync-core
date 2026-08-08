@@ -292,3 +292,43 @@ def _raise_401():
     from fastapi import HTTPException, status
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+
+@pytest.mark.unit
+def test_metrics_routes_registered_once() -> None:
+    """The admin_metrics router is included exactly once in the real app.
+
+    Guards Fix 3a — a duplicate ``include_router(admin_metrics.router)``
+    registers the same handlers twice.  FastAPI 0.139 keeps included
+    routers as lazy ``_IncludedRouter`` placeholders in ``app.routes``,
+    so we assert on both the raw include list (router identity) and the
+    resolved effective paths.
+    """
+    from fastapi.routing import _EffectiveRouteContext, _IncludedRouter
+
+    from services.api.main import create_app
+
+    app = create_app()
+
+    included = [r for r in app.routes if isinstance(r, _IncludedRouter)]
+    matches = [r for r in included if r.original_router is router]
+    assert len(matches) == 1
+
+    # Resolve the flattened route list and count /metrics-* occurrences.
+    paths: list[str] = []
+
+    def _collect(routes: list) -> None:
+        for route in routes:
+            if isinstance(route, _IncludedRouter):
+                for candidate in route.effective_candidates():
+                    if isinstance(candidate, _IncludedRouter):
+                        _collect([candidate])
+                    elif isinstance(candidate, _EffectiveRouteContext):
+                        paths.append(candidate.path)
+            elif getattr(route, "path", None):
+                paths.append(route.path)
+
+    _collect(app.routes)
+    metrics_paths = [p for p in paths if p.startswith("/metrics")]
+    assert metrics_paths, "expected /metrics-prefixed routes in the app"
+    assert len(metrics_paths) == len(set(metrics_paths)), metrics_paths
