@@ -71,7 +71,6 @@ data ingestion for business data, GDPR purges.
 #   from services.worker.tasks.classify_dialog import classify_dialog
 #   from services.worker.tasks.extract_structured import extract_structured
 #   from services.worker.tasks.summarise_community import summarise_community
-#   from services.worker.tasks.ingest_business_data import ingest_business_data
 from services.worker.tasks.audit_log import write_audit_log
 #   from services.worker.tasks.merge_duplicate_entities import merge_duplicate_entities
 #   from services.worker.tasks.refresh_context_cache import refresh_context_cache
@@ -90,7 +89,6 @@ TASKS_LOW.extend([
 ])
 #   TASKS_LOW.extend([
 #       summarise_community,
-#       ingest_business_data,
 #       merge_duplicate_entities,
 #       refresh_context_cache,
 #       delete_user_data,

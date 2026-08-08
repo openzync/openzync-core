@@ -12,7 +12,7 @@ Usage in a FastAPI application:
         engine = init_db_engine(str(settings.DATABASE_URL))
         app.state.db_engine = engine
         app.state.db_session_factory = get_async_session(engine)
-        yield
+        yield  # keep the app alive until shutdown
         await close_db_engine(engine)
 
     app = FastAPI(lifespan=lifespan)
@@ -26,21 +26,30 @@ Then in routers:
     @router.get("/items")
     async def list_items(db: AsyncSession = Depends(get_db)):
         ...
+
+``get_db`` itself is re-exported from :mod:`dependencies.db` for backward
+compatibility — both import paths resolve to the same RLS-aware dependency,
+which applies the tenant isolation context (``app.org_id`` /
+``app.bypass_rls``) and handles commit/rollback per request.
 """
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
 from typing import Any
 
 import sqlalchemy as sa
-from fastapi import Request
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+
+# Re-export the RLS-aware dependency so `from core.db import get_db` resolves
+# to the same function as `from dependencies.db import get_db`. The canonical
+# definition lives in dependencies/db.py (sets tenant isolation context,
+# commits/rolls back); keeping a duplicate here would silently disable RLS.
+from dependencies.db import get_db as get_db
 
 
 def init_db_engine(database_url: str, **kwargs: Any) -> AsyncEngine:
@@ -103,41 +112,6 @@ def get_async_session(
         expire_on_commit=False,
         join_transaction_mode="create_savepoint",
     )
-
-
-async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
-    """FastAPI dependency that yields an :class:`AsyncSession`.
-
-    The session is read from the session factory attached to
-    ``request.app.state.db_session_factory`` during the application lifespan.
-    The session is automatically closed when the request finishes.
-    Commit/rollback is **not** handled here — use ``async with
-    session.begin()`` in service code, or call ``await session.commit()``
-    explicitly.
-
-    Usage:
-
-        @router.get("/items")
-        async def list_items(db: AsyncSession = Depends(get_db)): ...
-
-    Yields:
-        An :class:`AsyncSession` from the application's engine.
-
-    Raises:
-        RuntimeError: If ``db_session_factory`` was not initialised on
-            ``app.state`` (i.e. the lifespan did not run).
-    """
-    factory: async_sessionmaker[AsyncSession] | None = getattr(
-        request.app.state, "db_session_factory", None
-    )
-    if factory is None:
-        raise RuntimeError(
-            "db_session_factory not found on app.state. "
-            "Ensure init_db_engine() was called and app.state.db_session_factory "
-            "was set during the application lifespan."
-        )
-    async with factory() as session:
-        yield session
 
 
 async def check_db_health(engine: AsyncEngine) -> bool:

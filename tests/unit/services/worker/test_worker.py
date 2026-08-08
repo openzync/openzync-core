@@ -571,6 +571,10 @@ class TestTaskRegistry:
         assert "deliver_webhook" in names
         assert "generate_user_summary" in names
         assert "reconcile_enrichment" in names
+        assert "expire_graph_edges" in names
+        assert "reconcile_graph_edges" in names
+        assert "cleanup_orphan_blobs" in names
+        assert "extract_blob_text" in names
 
     def test_no_task_in_both_queues(self) -> None:
         """No task is registered in both high and low queues."""

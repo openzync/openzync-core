@@ -106,10 +106,12 @@ logger: structlog.stdlib.BoundLogger = structlog.get_logger("OpenZync.worker")
 from workers.tasks.embed_episode import embed_episode
 from workers.tasks.embed_fact import embed_fact
 from workers.tasks.enrich_episode import enrich_episode
+from workers.tasks.extract_blob_text import extract_blob_text
 from services.worker.tasks.audit_log import write_audit_log
 from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
 from workers.tasks.summarise_community import summarise_community
 from workers.tasks.link_entities_to_episode import link_entities_to_episode
+from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 from workers.tasks.compute_observations import compute_observations
 from services.worker.tasks.deliver_webhook import deliver_webhook
 from workers.tasks.generate_user_summary import generate_user_summary
@@ -135,6 +137,8 @@ LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     reconcile_enrichment,
     expire_graph_edges,
     reconcile_graph_edges,
+    cleanup_orphan_blobs,  # orphaned S3 blobs for soft-deleted episodes — daily cron
+    extract_blob_text,  # blob text extraction — OCR/PDF, low priority
 ]
 """Tasks assigned to the low-priority queue (scheduled batch)."""
 
@@ -566,6 +570,15 @@ async def main() -> NoReturn:
             minute=set(range(0, 60, 5)),
             unique=True,
             job_id="graph_edge_reconciliation",
+        ),
+        # ── Orphaned blob cleanup (daily 03:00 UTC) ──────────────────────
+        # Off-peak, after the 02:00 nightly community detection.
+        cron(
+            cleanup_orphan_blobs,
+            hour=3,
+            minute=0,
+            unique=True,
+            job_id="orphaned_blob_cleanup",
         ),
     ]
 

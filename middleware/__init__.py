@@ -1,15 +1,27 @@
 """OpenZync HTTP middleware — request ID, logging, audit, auth, rate limiting, tracing.
 
-All middleware classes in this package are Starlette ``BaseHTTPMiddleware``
-subclasses.  They are registered in ``main.py`` via ``app.add_middleware(...)``.
-The order of registration matters:
+All middleware classes in this package are raw ASGI middleware: each
+implements ``__call__(scope, receive, send)`` directly rather than subclassing
+Starlette's ``BaseHTTPMiddleware``.  They are registered in
+``services/api/main.py`` via ``app.add_middleware(...)``.
 
-1. ``RequestIDMiddleware`` — earliest, captures X-Request-ID before any logic.
-2. ``LoggingMiddleware`` — logs every request after completion.
-3. ``AuthMiddleware`` — authenticates API keys / JWTs.
-4. ``AuditMiddleware`` — records every request to audit_logs (post-response).
-5. ``RateLimitMiddleware`` — enforces per-IP and per-org rate limits.
-6. ``TracingMiddleware`` — OpenTelemetry span management (outermost).
+Starlette middleware is LIFO — the last ``add_middleware()`` call wraps the
+outermost layer and runs first.  The runtime execution order below
+(outermost → innermost) is documented in the ``main.py`` registration block
+(``services/api/main.py``, lines ~181-191); registration order is the reverse.
+
+Runtime order (outermost → innermost):
+
+1. ``MetricsMiddleware`` — records RED metrics, wrapping everything including 404s.
+2. ``CORSMiddleware`` — intercepts OPTIONS preflight before auth can reject it.
+3. ``LoggingMiddleware`` — logs the request/response lifecycle.
+4. ``TracingMiddleware`` — manages OpenTelemetry spans for the request.
+5. ``AuthMiddleware`` — extracts/validates JWT & API key, sets ``org_id`` state.
+6. ``RateLimitMiddleware`` — enforces per-IP / per-org sliding-window limits.
+7. ``AuditMiddleware`` — records every request to audit_logs (post-response).
+8. ``GZipMiddleware`` — compresses responses >= 1 KB.
+9. ``TrustedHostMiddleware`` — prevents host-header attacks.
+10. ``RequestIDMiddleware`` — assigns ``request_id`` (innermost, closest to the router).
 """
 
 from __future__ import annotations

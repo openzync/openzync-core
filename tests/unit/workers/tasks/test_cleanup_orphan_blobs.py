@@ -398,3 +398,80 @@ class TestCleanupOrphanBlobs:
             )
 
             assert result == len(blobs)
+
+    # ── Org-discovery (scheduled cron) path ───────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_discovery_no_orgs_returns_skipped(self) -> None:
+        """No orgs in DB → cron run reports skipped and cleans nothing."""
+        db = AsyncMock()
+        db.__aenter__.return_value = db
+        db.__aexit__.return_value = None
+        # Override the auto-AsyncMock child so `result.all()` is sync.
+        db.execute.return_value.all = MagicMock(return_value=[])
+
+        with patch(
+            "workers.tasks.cleanup_orphan_blobs.with_retry",
+            lambda **kw: lambda f: f,
+        ):
+            from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
+
+            result = await cleanup_orphan_blobs(ctx=self._ctx(db))
+
+        assert result == {
+            "status": "skipped",
+            "reason": "No organizations found",
+            "orgs_processed": 0,
+            "orgs_failed": 0,
+            "blobs_cleaned": 0,
+        }
+        db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_discovery_multiple_orgs_partial_on_failure(self) -> None:
+        """A failure in one org does not abort cleanup of the others."""
+        org_1 = uuid4()
+        org_2 = uuid4()
+        blobs_1 = [self._make_blob() for _ in range(2)]
+        blobs_2 = [self._make_blob()]
+
+        discovery = MagicMock()
+        discovery.all.return_value = [(org_1,), (org_2,)]
+        other = MagicMock()
+        other.all.return_value = []
+
+        db = AsyncMock()
+        db.__aenter__.return_value = db
+        db.__aexit__.return_value = None
+        db.execute.side_effect = [discovery, other, other]
+
+        with (
+            patch(
+                "workers.tasks.cleanup_orphan_blobs.with_retry",
+                lambda **kw: lambda f: f,
+            ),
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
+            patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
+        ):
+            mock_repo = AsyncMock()
+            mock_repo.get_orphaned_blobs.side_effect = [blobs_1, blobs_2]
+            mock_repo.delete_by_ids.side_effect = [
+                blobs_1, Exception("S3 unavailable"),
+            ]
+            mock_repo_cls.return_value = mock_repo
+
+            mock_svc = AsyncMock()
+            mock_svc_cls.return_value = mock_svc
+
+            from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
+
+            result = await cleanup_orphan_blobs(ctx=self._ctx(db))
+
+        assert result["status"] == "partial"
+        assert result["orgs_processed"] == 2
+        assert result["orgs_failed"] == 1
+        assert result["blobs_cleaned"] == len(blobs_1)
+        assert mock_repo.get_orphaned_blobs.call_count == 2
+        db.commit.assert_called_once()

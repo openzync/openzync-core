@@ -251,7 +251,6 @@ def create_app() -> FastAPI:
     app.include_router(admin_organizations.router)
     app.include_router(admin_org_config.router)
     app.include_router(audit_log.router)
-    app.include_router(admin_metrics.router)
     app.include_router(auth.router)
     app.include_router(users.router)
     app.include_router(sessions.router)
