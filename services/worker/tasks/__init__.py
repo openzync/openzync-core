@@ -40,8 +40,8 @@ from typing import Any, Awaitable, Callable
 #
 # TASKS_HIGH:  Real-time ingestion tasks (entity extraction, embedding, graph
 #              sync, fact extraction, classification).
-# TASKS_LOW:   Batch / scheduled tasks (community summarisation, data ingestion,
-#              entity merging, context cache refresh, GDPR purges).
+# TASKS_LOW:   Batch / scheduled tasks (community summarisation, entity merging,
+#              context cache refresh, GDPR purges).
 
 TASKS_HIGH: list[Callable[..., Awaitable[Any]]] = []
 """Tasks registered with the **high-priority** ARQ queue.
@@ -56,7 +56,8 @@ TASKS_LOW: list[Callable[..., Awaitable[Any]]] = []
 
 These tasks run on a schedule or when queue pressure permits.  They are
 not latency-sensitive.  Examples: community summarisation, entity merging,
-data ingestion for business data, GDPR purges.
+GDPR purges.  ``ingest_business_data`` was removed (commit 2ee87ab) — its
+blob cleanup role was replaced by ``workers.tasks.cleanup_orphan_blobs``.
 """
 
 # ──────────────────────────────────────────────────────────────────────────────

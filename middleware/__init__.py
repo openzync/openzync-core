@@ -8,7 +8,7 @@ Starlette's ``BaseHTTPMiddleware``.  They are registered in
 Starlette middleware is LIFO — the last ``add_middleware()`` call wraps the
 outermost layer and runs first.  The runtime execution order below
 (outermost → innermost) is documented in the ``main.py`` registration block
-(``services/api/main.py``, lines ~181-191); registration order is the reverse.
+(``services/api/main.py``, lines ~194-239); registration order is the reverse.
 
 Runtime order (outermost → innermost):
 

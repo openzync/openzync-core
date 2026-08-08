@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from models.organization import Organization
 from workers.tasks.base import with_retry
@@ -103,7 +103,6 @@ async def cleanup_orphan_blobs(
         db: AsyncSession,
         org_uuid: UUID,
         bao_client: object | None,
-        session_factory: object,
     ) -> int:
         """Remove orphaned blobs for a single org within the open session.
 
@@ -112,18 +111,13 @@ async def cleanup_orphan_blobs(
             org_uuid: Organization UUID.
             bao_client: Authenticated OpenBao client from the ARQ context,
                 or ``None`` (falls back to BootstrapSettings).
-            session_factory: Session factory from the ARQ context (kept
-                for the documented helper contract — the session is
-                already open via ``db``).
 
         Returns:
             Number of blobs cleaned for this org.
         """
         org_id = str(org_uuid)
         org_log = logger.bind(org_id=org_id)
-        org_log.info("cleanup_orphan_blobs.start")
-
-        from sqlalchemy import text
+        org_log.info("cleanup_orphan_blobs.org_start")
 
         await db.execute(
             text("SELECT set_config('app.org_id', :oid, true)"),
@@ -132,76 +126,85 @@ async def cleanup_orphan_blobs(
 
         blob_repo = EpisodeBlobRepository(db)
 
-        # Fetch orphans
-        if episode_id:
-            blobs = await blob_repo.get_by_episode(UUID(episode_id))
-        else:
-            blobs = await blob_repo.get_orphaned_blobs(
-                org_uuid, limit=batch_size,
-            )
-
-        if not blobs:
-            org_log.info("cleanup_orphan_blobs.nothing_to_do")
-            return 0
-
-        org_log.info("cleanup_orphan_blobs.found", count=len(blobs))
-
-        # Resolve org storage config
-        storage_config: dict = {
-            "backend": "s3",
-            "endpoint_url": "http://minio:9000",
-            "region": "auto",
-            "access_key_id": "",
-            "secret_access_key": "",
-            "bucket_name": "openzync-blobs",
-            "max_blob_size_mb": 50,
-        }
         try:
-            if bao_client is not None:
-                from core.org_config import get_org_config
-
-                org_cfg = await get_org_config(
-                    org_uuid, redis=None, bao_client=bao_client,
-                )
-                org_storage = org_cfg.to_blob_storage_config()
-                if org_storage:
-                    storage_config.update(org_storage)
+            # Fetch orphans
+            if episode_id:
+                blobs = await blob_repo.get_by_episode(UUID(episode_id))
             else:
-                from core.config import BootstrapSettings
-                from core.openbao import OpenBaoClient
-                from core.org_config import get_org_config
+                blobs = await blob_repo.get_orphaned_blobs(
+                    org_uuid, limit=batch_size,
+                )
 
-                bootstrap = BootstrapSettings()
-                async with OpenBaoClient(
-                    bootstrap.OPENBAO_ADDR,
-                    bootstrap.OPENBAO_ROLE_ID,
-                    bootstrap.OPENBAO_SECRET_ID,
-                    timeout=10.0,
-                ) as _tmp_bao:
+            if not blobs:
+                org_log.info("cleanup_orphan_blobs.nothing_to_do")
+                return 0
+
+            org_log.info("cleanup_orphan_blobs.found", count=len(blobs))
+
+            # Resolve org storage config
+            storage_config: dict = {
+                "backend": "s3",
+                "endpoint_url": "http://minio:9000",
+                "region": "auto",
+                "access_key_id": "",
+                "secret_access_key": "",
+                "bucket_name": "openzync-blobs",
+                "max_blob_size_mb": 50,
+            }
+            try:
+                if bao_client is not None:
+                    from core.org_config import get_org_config
+
                     org_cfg = await get_org_config(
-                        org_uuid, redis=None, bao_client=_tmp_bao,
+                        org_uuid, redis=None, bao_client=bao_client,
                     )
                     org_storage = org_cfg.to_blob_storage_config()
                     if org_storage:
                         storage_config.update(org_storage)
+                else:
+                    from core.config import BootstrapSettings
+                    from core.openbao import OpenBaoClient
+                    from core.org_config import get_org_config
+
+                    bootstrap = BootstrapSettings()
+                    async with OpenBaoClient(
+                        bootstrap.OPENBAO_ADDR,
+                        bootstrap.OPENBAO_ROLE_ID,
+                        bootstrap.OPENBAO_SECRET_ID,
+                        timeout=10.0,
+                    ) as _tmp_bao:
+                        org_cfg = await get_org_config(
+                            org_uuid, redis=None, bao_client=_tmp_bao,
+                        )
+                        org_storage = org_cfg.to_blob_storage_config()
+                        if org_storage:
+                            storage_config.update(org_storage)
+            except Exception:
+                org_log.warning(
+                    "cleanup_orphan_blobs.config_fetch_failed",
+                    exc_info=True,
+                )
+
+            from services.blob_storage_service import BlobStorageService
+
+            svc = BlobStorageService(db, blob_repo)
+
+            # Delete from S3 (best-effort)
+            await svc.delete_blobs(blobs, storage_config)
+
+            # Delete from DB
+            blob_ids = [b.id for b in blobs]
+            deleted = await blob_repo.delete_by_ids(blob_ids)
+
+            await db.commit()
         except Exception:
-            org_log.warning(
-                "cleanup_orphan_blobs.config_fetch_failed",
-                exc_info=True,
-            )
-
-        from services.blob_storage_service import BlobStorageService
-
-        svc = BlobStorageService(db, blob_repo)
-
-        # Delete from S3 (best-effort)
-        await svc.delete_blobs(blobs, storage_config)
-
-        # Delete from DB
-        blob_ids = [b.id for b in blobs]
-        deleted = await blob_repo.delete_by_ids(blob_ids)
-
-        await db.commit()
+            # The session is shared across orgs in discovery mode: a failed
+            # statement aborts the transaction, and any later statement on
+            # this session would raise InFailedSqlTransaction.  Roll back so
+            # the next org starts from a clean transaction — and so this
+            # org's pending deletes cannot be flushed by a later commit.
+            await db.rollback()
+            raise
         org_log.info(
             "cleanup_orphan_blobs.complete",
             deleted=len(deleted),
@@ -212,6 +215,19 @@ async def cleanup_orphan_blobs(
         async with session_factory() as db:
             if org_id is None:
                 # ── Scheduled cron mode: discover all orgs ───────────────
+                # The organizations RLS policy (migrations/0001) requires
+                # app.bypass_rls='true' OR a matching app.org_id — the cron
+                # sets neither, so without this the discovery would return
+                # zero rows under any RLS-enforced role and the S3 leak
+                # would silently continue.  Safe to bypass: get_orphaned_blobs
+                # and delete_by_ids are explicitly org-scoped.  Transaction
+                # local (is_local=true), unlike the 59c3fcb79b85 migration
+                # precedent (session-level false): this session is shared
+                # across all orgs, and the setting expires at the first
+                # per-org commit instead of leaking into later orgs.
+                await db.execute(
+                    text("SELECT set_config('app.bypass_rls', 'true', true)")
+                )
                 result = await db.execute(select(Organization.id))
                 org_ids = [r[0] for r in result.all()]
 
@@ -229,7 +245,7 @@ async def cleanup_orphan_blobs(
                 for org_uuid in org_ids:
                     try:
                         cleaned = await _cleanup_for_org(
-                            db, org_uuid, bao_client, session_factory,
+                            db, org_uuid, bao_client,
                         )
                         total_cleaned += cleaned
                     except Exception as exc:
@@ -254,7 +270,7 @@ async def cleanup_orphan_blobs(
 
             # ── Manual mode: single org, legacy int contract ─────────────
             return await _cleanup_for_org(
-                db, UUID(org_id), bao_client, session_factory,
+                db, UUID(org_id), bao_client,
             )
 
     except Exception:

@@ -425,7 +425,8 @@ class TestCleanupOrphanBlobs:
             "orgs_failed": 0,
             "blobs_cleaned": 0,
         }
-        db.execute.assert_called_once()
+        # 1 bypass_rls + 1 org-discovery execute.
+        assert db.execute.call_count == 2
 
     @pytest.mark.asyncio
     async def test_discovery_multiple_orgs_partial_on_failure(self) -> None:
@@ -443,7 +444,8 @@ class TestCleanupOrphanBlobs:
         db = AsyncMock()
         db.__aenter__.return_value = db
         db.__aexit__.return_value = None
-        db.execute.side_effect = [discovery, other, other]
+        # 1 bypass_rls + 1 org-discovery + 2 per-org set_config executes.
+        db.execute.side_effect = [other, discovery, other, other]
 
         with (
             patch(
@@ -500,8 +502,9 @@ class TestCleanupOrphanBlobs:
         db = AsyncMock()
         db.__aenter__.return_value = db
         db.__aexit__.return_value = None
-        # 2 attempts × (1 org-discovery + 2 per-org set_config executes).
-        db.execute.side_effect = [discovery, other, other] * 2
+        # 2 attempts × (1 bypass_rls + 1 org-discovery + 2 per-org
+        # set_config executes).
+        db.execute.side_effect = [other, discovery, other, other] * 2
 
         with (
             patch(
@@ -547,7 +550,8 @@ class TestCleanupOrphanBlobs:
         db = AsyncMock()
         db.__aenter__.return_value = db
         db.__aexit__.return_value = None
-        db.execute.side_effect = [discovery, other, other]
+        # 1 bypass_rls + 1 org-discovery + 2 per-org set_config executes.
+        db.execute.side_effect = [other, discovery, other, other]
 
         with (
             patch(
@@ -575,3 +579,65 @@ class TestCleanupOrphanBlobs:
         assert result["orgs_processed"] == 2
         assert result["orgs_failed"] == 0
         assert result["blobs_cleaned"] == 3
+
+    @pytest.mark.asyncio
+    async def test_discovery_org_failure_rolls_back_transaction(self) -> None:
+        """A mid-org DB failure rolls back the shared session before re-raising.
+
+        Regression for the review fix: a failed org used to abort the shared
+        transaction, so the next org's ``set_config`` would raise
+        ``InFailedSqlTransaction`` (or a later commit could flush the failed
+        org's pending deletes).  Now the per-org body rolls back on any
+        exception: ``db.rollback`` is awaited once, the error lands in the
+        per-org collection (``partial``, not a crash), and only the
+        successful org's commit is issued.
+        """
+        org_1 = uuid4()
+        org_2 = uuid4()
+        blobs_1 = [self._make_blob()]
+
+        discovery = MagicMock()
+        discovery.all.return_value = [(org_1,), (org_2,)]
+        other = MagicMock()
+        other.all.return_value = []
+
+        db = AsyncMock()
+        db.__aenter__.return_value = db
+        db.__aexit__.return_value = None
+        # 1 bypass_rls + 1 org-discovery + 2 per-org set_config executes.
+        db.execute.side_effect = [other, discovery, other, other]
+
+        with (
+            patch(
+                "workers.tasks.cleanup_orphan_blobs.with_retry",
+                lambda **kw: lambda f: f,
+            ),
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
+            patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
+        ):
+            mock_repo = AsyncMock()
+            mock_repo.get_orphaned_blobs.side_effect = [
+                blobs_1, [self._make_blob()],
+            ]
+            mock_repo.delete_by_ids.side_effect = [
+                blobs_1, Exception("mid-org DB error"),
+            ]
+            mock_repo_cls.return_value = mock_repo
+
+            mock_svc = AsyncMock()
+            mock_svc_cls.return_value = mock_svc
+
+            from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
+
+            result = await cleanup_orphan_blobs(ctx=self._ctx(db))
+
+        assert result["status"] == "partial"
+        assert result["orgs_processed"] == 2
+        assert result["orgs_failed"] == 1
+        assert result["blobs_cleaned"] == len(blobs_1)
+        assert mock_repo.get_orphaned_blobs.call_count == 2
+        db.rollback.assert_awaited_once()
+        # Only org_1 committed — org_2's pending deletes were rolled back.
+        db.commit.assert_called_once()
