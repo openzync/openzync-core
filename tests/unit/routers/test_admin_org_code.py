@@ -11,15 +11,16 @@ regeneration immediately invalidates the previous code.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from core.exceptions import NotFoundError, register_exception_handlers
 from dependencies.auth import require_org_admin
-from routers.admin_org_code import _get_org_repo, router
+from routers.admin_org_code import _get_org_service, router
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -27,22 +28,19 @@ OLD_CODE = "K7M2Q9X4"
 NEW_CODE = "ZZZ2Q9X4"
 
 
-def _org_mock(code: str = OLD_CODE) -> MagicMock:
-    """A mock Organization row with a join code."""
-    org = MagicMock()
-    org.id = ORG_ID
-    org.org_code = code
-    return org
-
-
 def _make_app() -> tuple[FastAPI, AsyncMock]:
-    """Admin-gated app: ``require_org_admin`` resolved as an org admin."""
+    """Admin-gated app: ``require_org_admin`` resolved as an org admin.
+
+    The router now delegates to ``OrganizationService`` (N5 layering) — the
+    service dependency is overridden with a mock.
+    """
     app = FastAPI()
-    repo_mock = AsyncMock()
+    register_exception_handlers(app)
+    service_mock = AsyncMock()
     app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
-    app.dependency_overrides[_get_org_repo] = lambda: repo_mock
+    app.dependency_overrides[_get_org_service] = lambda: service_mock
     app.include_router(router)
-    return app, repo_mock
+    return app, service_mock
 
 
 def _make_member_app() -> FastAPI:
@@ -76,8 +74,8 @@ def _make_member_app() -> FastAPI:
 @pytest.mark.asyncio
 async def test_get_org_code_admin_200() -> None:
     """GET /admin/org/org-code returns 200 with the current code for admins."""
-    app, repo_mock = _make_app()
-    repo_mock.get_by_id.return_value = _org_mock(OLD_CODE)
+    app, service_mock = _make_app()
+    service_mock.get_org_code.return_value = OLD_CODE
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -85,7 +83,7 @@ async def test_get_org_code_admin_200() -> None:
 
     assert resp.status_code == 200
     assert resp.json() == {"org_code": OLD_CODE}
-    repo_mock.get_by_id.assert_awaited_once_with(ORG_ID)
+    service_mock.get_org_code.assert_awaited_once_with(ORG_ID)
 
 
 @pytest.mark.asyncio
@@ -121,9 +119,15 @@ async def test_get_org_code_unauthenticated_401() -> None:
 
 @pytest.mark.asyncio
 async def test_get_org_code_404_org_missing() -> None:
-    """GET /admin/org/org-code returns 404 when the org no longer exists."""
-    app, repo_mock = _make_app()
-    repo_mock.get_by_id.return_value = None
+    """GET /admin/org/org-code returns 404 when the org no longer exists.
+
+    The service raises NotFoundError; the global exception handler maps it
+    to 404 (registered in ``_make_app``).
+    """
+    app, service_mock = _make_app()
+    service_mock.get_org_code.side_effect = NotFoundError(
+        message=f"Organization {ORG_ID} not found.",
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -137,23 +141,23 @@ async def test_get_org_code_404_org_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_regenerate_org_code_admin_200_different_code() -> None:
-    """POST regenerate returns 200 with a NEW code (old code rotated out)."""
-    app, repo_mock = _make_app()
-    repo_mock.set_org_code.return_value = _org_mock(NEW_CODE)
+    """POST regenerate returns 200 with a NEW code (old code rotated out).
 
-    with patch(
-        "routers.admin_org_code.generate_org_code", return_value=NEW_CODE,
-    ) as mock_generate:
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/admin/org/org-code/regenerate")
+    Code generation now lives in the service layer (N5) — the mocked
+    service returns the fresh code.
+    """
+    app, service_mock = _make_app()
+    service_mock.regenerate_org_code.return_value = NEW_CODE
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/admin/org/org-code/regenerate")
 
     assert resp.status_code == 200
     body = resp.json()
     assert body["org_code"] == NEW_CODE
     assert body["org_code"] != OLD_CODE  # rotation: old code is invalid now
-    mock_generate.assert_called_once()
-    repo_mock.set_org_code.assert_awaited_once_with(ORG_ID, NEW_CODE)
+    service_mock.regenerate_org_code.assert_awaited_once_with(ORG_ID)
 
 
 @pytest.mark.asyncio

@@ -507,7 +507,10 @@ class TestUserRepository:
         mock_result.one_or_none.return_value = mock_row
         mock_db.execute.return_value = mock_result
 
-        summary, updated_at = await repo.get_summary(user_id=self.USER_ID)
+        summary, updated_at = await repo.get_summary(
+            organization_id=self.ORG_ID,
+            user_id=self.USER_ID,
+        )
 
         assert summary == "Existing summary"
         assert updated_at is not None
@@ -520,7 +523,10 @@ class TestUserRepository:
         mock_result.one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        summary, updated_at = await repo.get_summary(user_id=self.USER_ID)
+        summary, updated_at = await repo.get_summary(
+            organization_id=self.ORG_ID,
+            user_id=self.USER_ID,
+        )
 
         assert summary is None
         assert updated_at is None
