@@ -43,6 +43,7 @@ from middleware.tracing import TracingMiddleware
 from routers import (
     admin,
     admin_metrics,
+    admin_org_code,
     admin_org_config,
     admin_organizations,
     admin_quick_actions,
@@ -250,6 +251,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_webhooks.router)
     app.include_router(admin_organizations.router)
     app.include_router(admin_org_config.router)
+    app.include_router(admin_org_code.router)
     app.include_router(audit_log.router)
     app.include_router(auth.router)
     app.include_router(users.router)

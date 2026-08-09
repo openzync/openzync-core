@@ -20,7 +20,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import get_settings
-from dependencies.auth import require_org_id
+from dependencies.auth import require_org_admin
 from dependencies.db import get_db
 from models.episode import Episode
 from models.graph_entity import GraphEntity
@@ -62,7 +62,7 @@ def _get_metrics_service() -> MetricsService:
 )
 async def get_metrics_summary(
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin),
     prom: MetricsService = Depends(_get_metrics_service),
 ) -> MetricsSummaryResponse:
     """Get aggregated metrics for the admin dashboard.
@@ -99,7 +99,7 @@ async def get_metrics_summary(
 )
 async def get_promql_query(
     query: str = Query(..., description="PromQL query string"),
-    _org_id: str = Depends(require_org_id),
+    _org_id: str = Depends(require_org_admin),
     prom: MetricsService = Depends(_get_metrics_service),
 ) -> dict:
     """Run an arbitrary PromQL query.
@@ -143,7 +143,7 @@ async def get_promql_query(
     ),
 )
 async def get_prometheus_targets(
-    _org_id: str = Depends(require_org_id),
+    _org_id: str = Depends(require_org_admin),
 ) -> dict:
     """Get Prometheus scrape target health.
 

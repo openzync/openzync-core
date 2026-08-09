@@ -20,6 +20,7 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.org_codes import generate_org_code
 from models.organization import Organization
 from models.refresh_token import RefreshToken
 from models.user import User
@@ -89,7 +90,7 @@ class AuthRepository:
         Returns:
             The newly created Organization.
         """
-        org = Organization(name=name, plan=plan)
+        org = Organization(name=name, plan=plan, org_code=generate_org_code())
         self._db.add(org)
         await self._db.flush()
         await self._db.refresh(org)

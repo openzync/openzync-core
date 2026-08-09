@@ -37,6 +37,48 @@ class SignupRequest(BaseModel):
         examples=["Acme Corp"],
     )
 
+
+class JoinRequest(BaseModel):
+    """Request body for ``POST /v1/auth/join``.
+
+    Joins an **existing** organization via its join code.  Creates a
+    member dashboard user (never an admin).
+    """
+
+    email: EmailStr = Field(
+        ...,
+        description="Email address for the new member user.",
+        examples=["alice@acme.com"],
+    )
+    password: str = Field(
+        ...,
+        min_length=8,
+        max_length=128,
+        description="Password (min 8 chars, max 128).",
+        examples=["secure-p@ssword-123"],
+    )
+    org_code: str = Field(
+        ...,
+        min_length=1,
+        max_length=24,
+        description="Organization join code (case-insensitive).",
+        examples=["K7M2Q9X4"],
+    )
+
+
+class OrgCodeResponse(BaseModel):
+    """Response body for org-code admin endpoints.
+
+    Returned by ``GET /admin/org/org-code`` and
+    ``POST /admin/org/org-code/regenerate``.
+    """
+
+    org_code: str = Field(
+        ...,
+        description="The organization's current join code.",
+        examples=["K7M2Q9X4"],
+    )
+
 class SignupResponse(BaseModel):
     """Response body for ``POST /v1/auth/signup``.
 

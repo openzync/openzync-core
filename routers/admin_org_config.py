@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from core.audit import audit_action
 from core.config import get_settings
-from dependencies.auth import require_org_id, require_scope
+from dependencies.auth import require_org_admin, require_scope
 from schemas.organization_config import (
     SYSTEM_MANAGED_FALKORDB_FIELDS,
     SYSTEM_MANAGED_SURREALDB_FIELDS,
@@ -110,13 +110,16 @@ async def get_org_config_defaults() -> UpdateOrgConfigRequest:
     response_model=OrgConfigResponse,
 )
 async def get_org_config(
-    _org_id: str = Depends(require_org_id),
+    _org_id: str = Depends(require_org_admin),
     service: OrgConfigService = Depends(_get_config_service),
 ) -> OrgConfigResponse:
     """Get the stored configuration for the current organization.
 
     Returns only the fields explicitly set in the DB.  Unset fields are
     ``null`` — there is no env-var fallback.
+
+    Admin-gated (``require_org_admin``): the response contains unmasked
+    secrets, so members and API keys are denied.
     """
     response = await service.get_config_response(UUID(_org_id))
     response.system_managed_fields = _get_system_managed_fields()

@@ -83,6 +83,7 @@ PUBLIC_ENDPOINTS: set[str] = {
     "/admin/organizations",
     "/admin/org/config/defaults",
     "/v1/auth/signup",
+    "/v1/auth/join",
     "/v1/auth/login",
     "/v1/auth/refresh",
     "/v1/auth/verify-email",

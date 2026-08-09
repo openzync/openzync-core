@@ -11,15 +11,22 @@ Key patterns:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from core.events import EventType
 from core.exceptions import ConflictError, NotFoundError, ValidationError
+from core.rbac import invalidate_role
 from repositories.user_repository import UserRepository
 from schemas.users import UserListResponse, UserResponse, UserResponseWithStats
 from services.webhook_service import WebhookService
+
+if TYPE_CHECKING:
+    from redis.asyncio import Redis as AsyncRedis
+
+logger = logging.getLogger(__name__)
 
 # ╠ This file contains NO SQLAlchemy expressions.
 # ╠ If you see a ``select()`` or ``where()``, it belongs in the repository.
@@ -33,15 +40,34 @@ class UserService:
 
     Args:
         repo: The :class:`UserRepository` instance for DB access.
+        webhook_service: Optional webhook emitter for user lifecycle events.
+        redis: Async Redis client — used to invalidate cached roles on
+            role change / deletion.  ``None`` skips invalidation (logged).
     """
 
     def __init__(
         self,
         repo: UserRepository,
         webhook_service: WebhookService | None = None,
+        redis: AsyncRedis | None = None,  # noqa: F821
     ) -> None:
         self._repo = repo
         self._webhook_service = webhook_service
+        self._redis = redis
+
+    async def _invalidate_role_cache(self, user_id: UUID) -> None:
+        """Invalidate the cached role for a user after a role-affecting change.
+
+        Args:
+            user_id: The user whose cached role must be dropped.
+        """
+        if self._redis is None:
+            logger.error(
+                "user_service.role_cache_missing_redis",
+                extra={"user_id": str(user_id)},
+            )
+            return
+        await invalidate_role(self._redis, user_id)
 
     # ── Create ──────────────────────────────────────────────────────────────
 
@@ -52,6 +78,7 @@ class UserService:
         name: str | None = None,
         email: str | None = None,
         metadata: dict[str, Any] | None = None,
+        role: str = "member",
     ) -> UserResponse:
         """Create a new user within an organization.
 
@@ -61,6 +88,7 @@ class UserService:
             name: Optional display name.
             email: Optional email address.
             metadata: Optional JSON metadata.
+            role: Dashboard role — ``admin`` or ``member`` (default).
 
         Returns:
             A :class:`UserResponse` for the newly created user.
@@ -85,6 +113,7 @@ class UserService:
             name=name,
             email=email,
             metadata=metadata,
+            role=role,
         )
 
         if self._webhook_service:
@@ -112,6 +141,7 @@ class UserService:
             "name": user.name,
             "email": user.email,
             "metadata": dict(user.metadata_) if user.metadata_ else {},
+            "role": user.role,
             "is_active": user.is_active,
             "is_deleted": user.is_deleted,
             "created_at": user.created_at,
@@ -236,6 +266,8 @@ class UserService:
         organization_id: UUID,
         user_id: UUID,
         update_fields: dict[str, Any],
+        *,
+        actor_user_id: UUID,
     ) -> UserResponse:
         """Update user fields using the new sentinel-safe pattern.
 
@@ -244,18 +276,50 @@ class UserService:
         with value ``None`` means "set to null" (clear the field).
         An absent key means "do not update".
 
+        When ``role`` is being changed:
+        - You cannot change your own role.
+        - A demotion (admin -> member) is rejected if the target is the
+          organization's last active admin.
+        - The target's cached role is invalidated after the change so the
+          RBAC cache cannot outlive the decision.
+
         Args:
             organization_id: Tenant scope (must match the user's org).
             user_id: The internal OpenZync user UUID.
             update_fields: Only the fields the client explicitly set.
-                Valid keys: ``name``, ``email``, ``metadata``.
+                Valid keys: ``name``, ``email``, ``metadata``, ``role``.
+            actor_user_id: The authenticated user performing the update.
 
         Returns:
             The updated :class:`UserResponse`.
 
         Raises:
+            ValidationError: If the actor changes their own role or demotes
+                the last admin.
             NotFoundError: No user with this UUID in this organization.
         """
+        if "role" in update_fields:
+            target = await self._repo.get_by_uuid(organization_id, user_id)
+            if target is None:
+                raise NotFoundError(
+                    f"User {user_id} not found in organization {organization_id}"
+                )
+            new_role = update_fields["role"]
+            if user_id == actor_user_id:
+                raise ValidationError("You cannot change your own role.")
+            if target.role == "admin" and new_role != "admin":
+                admin_count = await self._repo.count_active_admins(
+                    organization_id
+                )
+                # ⚠️ RACE CONDITION: two concurrent demotions of different
+                # admins can both pass this check when the org has exactly 2
+                # admins, leaving zero.  Acceptable for the dashboard scale;
+                # a serializable `SELECT ... FOR UPDATE` on the users row
+                # would close it if this ever becomes a concern.
+                if admin_count <= 1:
+                    raise ValidationError(
+                        "Cannot demote the last admin in the organization."
+                    )
 
         user = await self._repo.update(
             organization_id=organization_id,
@@ -265,12 +329,19 @@ class UserService:
         if user is None:
             raise NotFoundError(f"User {user_id} not found in organization {organization_id}")
 
+        if "role" in update_fields:
+            await self._invalidate_role_cache(user_id)
+
         return UserResponse.model_validate(self._user_to_dict(user))
 
     # ── Delete ──────────────────────────────────────────────────────────────
 
     async def delete_user(
-        self, organization_id: UUID, user_id: UUID
+        self,
+        organization_id: UUID,
+        user_id: UUID,
+        *,
+        actor_user_id: UUID,
     ) -> None:
         """Soft-delete a user.
 
@@ -278,24 +349,51 @@ class UserService:
         GET/list queries). Enqueues a GDPR purge worker task that will
         hard-delete after the configured delay (default 30 days).
 
+        Guards: you cannot delete your own account, and the last active
+        admin of an organization cannot be deleted.  The deleted user's
+        cached role is invalidated.
+
         Args:
             organization_id: Tenant scope (must match the user's org).
             user_id: The internal OpenZync user UUID.
+            actor_user_id: The authenticated user performing the deletion.
 
         Raises:
+            ValidationError: If the actor deletes their own account or the
+                last admin.
             NotFoundError: No user with this UUID in this organization.
 
         .. todo::
             Phase 2 — Wire up the ARQ/worker GDPR purge task:
             ``from workers.gdpr_jobs import schedule_user_purge``
         """
-        user = await self._repo.soft_delete(
-            organization_id=organization_id, user_id=user_id
-        )
+        if user_id == actor_user_id:
+            raise ValidationError("You cannot delete your own account.")
+
+        user = await self._repo.get_by_uuid(organization_id, user_id)
         if user is None:
             raise NotFoundError(
                 f"User {user_id} not found in organization {organization_id}"
             )
+        if user.role == "admin":
+            admin_count = await self._repo.count_active_admins(organization_id)
+            # ⚠️ Same TOCTOU window as update_user's demotion guard — two
+            # concurrent deletes of different admins (org has exactly 2)
+            # could both pass, leaving zero admins.
+            if admin_count <= 1:
+                raise ValidationError(
+                    "Cannot delete the last admin in the organization."
+                )
+
+        deleted = await self._repo.soft_delete(
+            organization_id=organization_id, user_id=user_id
+        )
+        if deleted is None:
+            raise NotFoundError(
+                f"User {user_id} not found in organization {organization_id}"
+            )
+
+        await self._invalidate_role_cache(user_id)
 
         # TODO(phase2): Enqueue GDPR purge task for 30 days later
         # from workers.gdpr_jobs import schedule_user_purge

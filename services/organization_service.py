@@ -15,6 +15,7 @@ import yaml
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.openbao import OpenBaoClient
+from core.org_codes import generate_org_code
 from models.organization import Organization
 from repositories.organization_repository import OrganizationRepository
 from schemas.organizations import CreateOrgRequest, CreateOrgResponse
@@ -61,7 +62,11 @@ class OrganizationService:
             A ``CreateOrgResponse`` with the org ID and name.
         """
         # ── 1. Create organization ───────────────────────────────────────
-        org = Organization(name=payload.name, plan=payload.plan)
+        org = Organization(
+            name=payload.name,
+            plan=payload.plan,
+            org_code=generate_org_code(),
+        )
         self._db.add(org)
         await self._db.flush()
         await self._db.refresh(org)

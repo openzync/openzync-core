@@ -8,7 +8,7 @@ Isolation between organizations is enforced via RLS policies keyed on
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, String, Text, func
+from sqlalchemy import Boolean, CheckConstraint, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -30,6 +30,8 @@ class Organization(TimestampMixin, Base):
             ``config`` for new code.
         quotas: JSONB blob for usage quotas (max_sessions, max_episodes, etc.).
         is_active: Soft toggle for deactivation.
+        org_code: Join code a new member presents at ``POST /v1/auth/join``
+            to join the organization.  Plaintext by explicit product decision.
     """
 
     __tablename__ = "organizations"
@@ -74,12 +76,18 @@ class Organization(TimestampMixin, Base):
         default=True,
         server_default="true",
     )
+    org_code: Mapped[str] = mapped_column(
+        String(24),
+        nullable=False,
+        comment="Join code for POST /v1/auth/join — plaintext by product decision.",
+    )
 
     __table_args__ = (
         CheckConstraint(
             "plan IN ('free', 'pro', 'enterprise')",
             name="ck_organization_plan",
         ),
+        UniqueConstraint("org_code", name="uq_organizations_org_code"),
     )
 
     def __repr__(self) -> str:

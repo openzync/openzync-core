@@ -29,6 +29,7 @@ from dependencies.services import get_auth_service, get_auth_throttle
 from middleware.auth_throttle import AuthThrottle
 from schemas.auth import (
     DashboardUserResponse,
+    JoinRequest,
     LoginRequest,
     LoginResponse,
     MfaDisableRequest,
@@ -101,6 +102,42 @@ async def signup(
     """
     await throttle.check_signup_attempt(_client_ip(request))
     return await service.signup(payload)
+
+
+@router.post(
+    "/join",
+    response_model=SignupResponse,
+    status_code=201,
+    summary="Join an existing organization with an org code",
+    description=(
+        "Creates a member dashboard user inside the organization that owns "
+        "the given join code.  A verification code is sent to the user's "
+        "email.  The user must call ``POST /v1/auth/verify-email`` with the "
+        "code to complete signup and receive JWT tokens.  If the email is "
+        "already registered, the same generic response is returned.  "
+        "Invalid org codes return 422."
+    ),
+)
+@audit_action("auth.join", "user", "User joined organization")
+async def join_organization(
+    payload: JoinRequest,
+    request: Request,
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
+    throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
+) -> SignupResponse:
+    """Join an existing organization via its org code.
+
+    Args:
+        payload: Email, password, and org code.
+        request: Incoming HTTP request (for IP extraction).
+        service: Injected auth service.
+        throttle: Injected auth throttle.
+
+    Returns:
+        Confirmation message (tokens obtained via verify-email).
+    """
+    await throttle.check_signup_attempt(_client_ip(request))
+    return await service.join_organization(payload)
 
 
 @router.post(

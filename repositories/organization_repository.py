@@ -9,8 +9,10 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.organization import Organization
 
 
 class OrganizationRepository:
@@ -31,6 +33,69 @@ class OrganizationRepository:
         multi-table transactions that span multiple repository methods.
         """
         return self._db
+
+    # ── Organization rows ───────────────────────────────────────────────────
+
+    async def get_by_id(self, org_id: UUID) -> Organization | None:
+        """Fetch an organization by UUID.
+
+        Args:
+            org_id: The organization UUID.
+
+        Returns:
+            The Organization if found, or ``None``.
+        """
+        result = await self._db.execute(
+            select(Organization).where(Organization.id == org_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_code(self, code: str) -> Organization | None:
+        """Fetch an active organization by its join code.
+
+        The caller normalizes the code (``normalize_org_code``) before
+        calling — this method matches exactly.  Inactive organizations are
+        excluded: a deactivated org's code must not accept new members.
+
+        Args:
+            code: The normalized org code.
+
+        Returns:
+            The active Organization if found, or ``None``.
+        """
+        result = await self._db.execute(
+            select(Organization).where(
+                Organization.org_code == code,
+                Organization.is_active.is_(True),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def set_org_code(self, org_id: UUID, code: str) -> Organization:
+        """Replace an organization's join code (rotation).
+
+        Args:
+            org_id: The organization UUID.
+            code: The new normalized org code.
+
+        Returns:
+            The updated Organization.
+
+        Raises:
+            NotFoundError: If no organization with this UUID exists.
+        """
+        from core.exceptions import NotFoundError
+
+        result = await self._db.execute(
+            select(Organization).where(Organization.id == org_id)
+        )
+        org = result.scalar_one_or_none()
+        if org is None:
+            raise NotFoundError(f"Organization {org_id} not found.")
+        org.org_code = code
+        await self._db.flush()
+        await self._db.refresh(org)
+        return org
 
     # ── Config JSONB (Groups A, B, C — UI-exposed settings) ─────────────────
 

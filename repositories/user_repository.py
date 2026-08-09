@@ -50,6 +50,7 @@ class UserRepository:
         name: str | None = None,
         email: str | None = None,
         metadata: dict[str, Any] | None = None,
+        role: str = "member",
     ) -> User:
         """Insert a new user.
 
@@ -59,6 +60,7 @@ class UserRepository:
             name: Optional display name.
             email: Optional email address.
             metadata: Arbitrary JSONB metadata.
+            role: Dashboard role — ``admin`` or ``member`` (default).
 
         Returns:
             The newly created User ORM instance (with generated id and
@@ -74,6 +76,7 @@ class UserRepository:
             name=name,
             email=email,
             metadata_=metadata if metadata is not None else {},
+            role=role,
         )
         self._db.add(user)
         await self._db.flush()
@@ -188,7 +191,7 @@ class UserRepository:
             organization_id: Tenant scope (always applied).
             user_id: The internal OpenZync user UUID.
             update_fields: Dict of fields to update. Valid keys: ``name``,
-                ``email``, ``metadata``.
+                ``email``, ``metadata``, ``role``.
 
         Returns:
             The updated User, or ``None`` if not found.
@@ -207,6 +210,8 @@ class UserRepository:
             user.name = update_fields["name"]
         if "email" in update_fields:
             user.email = update_fields["email"]
+        if "role" in update_fields:
+            user.role = update_fields["role"]
         if "metadata" in update_fields:
             # Deep merge: new keys override, None values remove
             existing = dict(user.metadata_ if user.metadata_ is not None else {})
@@ -490,6 +495,28 @@ class UserRepository:
         result = await self._db.execute(
             select(func.count(User.id)).where(
                 User.organization_id == organization_id,
+                User.is_deleted.is_(False),
+            )
+        )
+        return result.scalar() or 0
+
+    async def count_active_admins(self, organization_id: UUID) -> int:
+        """Count active admins for the given organization.
+
+        Used by the service layer to enforce the "last admin cannot be
+        demoted/deleted" rule.
+
+        Args:
+            organization_id: Tenant scope.
+
+        Returns:
+            Number of active, non-deleted admins (0 if none).
+        """
+        result = await self._db.execute(
+            select(func.count(User.id)).where(
+                User.organization_id == organization_id,
+                User.role == "admin",
+                User.is_active.is_(True),
                 User.is_deleted.is_(False),
             )
         )

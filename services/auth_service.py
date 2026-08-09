@@ -29,9 +29,14 @@ from core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from core.org_codes import normalize_org_code
 from repositories.auth_repository import AuthRepository
+from repositories.organization_repository import (  # noqa: TC001
+    OrganizationRepository,
+)
 from schemas.auth import (
     DashboardUserResponse,
+    JoinRequest,
     LoginRequest,
     LoginResponse,
     MfaDisableRequest,
@@ -86,6 +91,7 @@ class AuthService:
         repo: Repository for auth-related DB access.
         otp_service: OTP service for email verification and MFA.
         redis: Async Redis client for MFA session storage.
+        org_repo: Repository for organization lookups (org-code join).
         email_service: Optional email service for notification-only emails
             (e.g. password-change confirmation).  ``None`` skips notifications.
         bao_client: Optional OpenBao client for bootstrapping org namespaces
@@ -97,12 +103,14 @@ class AuthService:
         repo: AuthRepository,
         otp_service: OtpService,  # noqa: F821
         redis: AsyncRedis,  # noqa: F821
+        org_repo: OrganizationRepository,
         email_service: EmailService | None = None,  # noqa: F821
         bao_client: OpenBaoClient | None = None,  # noqa: F821
     ) -> None:
         self._repo = repo
         self._otp_service = otp_service
         self._redis = redis
+        self._org_repo = org_repo
         self._email_service = email_service
         self._bao_client = bao_client
 
@@ -182,7 +190,71 @@ class AuthService:
 
         return self._signup_success_response(payload.email)
 
-    # ── Email verification ──────────────────────────────────────────────────
+    # ── Org-code join ────────────────────────────────────────────────────────
+
+    async def join_organization(self, payload: JoinRequest) -> SignupResponse:
+        """Join an existing organization via its join code.
+
+        Flow:
+        1. Normalize the org code and look up the active organization.
+        2. If the email is already registered, return the generic response
+           (no user created, no OTP sent — anti-enumeration, mirrors signup).
+        3. Hash the password and create a **member** dashboard user in the
+           target organization.
+        4. Send a signup OTP to the user's email.
+
+        The response is identical whether or not the email already exists.
+        An invalid org code is the one case that fails loudly — the code is
+        the credential being presented, and there is no enumeration risk in
+        rejecting it.
+
+        Args:
+            payload: Email, password, and org code.
+
+        Returns:
+            A ``SignupResponse`` with a confirmation message.
+
+        Raises:
+            ValidationError: If the org code is unknown or the org is inactive.
+        """
+        code = normalize_org_code(payload.org_code)
+        org = await self._org_repo.get_by_code(code)
+        if org is None:
+            raise ValidationError("Invalid organization code")
+
+        existing = await self._repo.find_user_by_email(payload.email)
+        if existing is not None:
+            logger.warning(
+                "security.join_existing_email",
+                extra={"email": payload.email},
+            )
+            return self._signup_success_response(payload.email)
+
+        pw_hash = hash_password(payload.password)
+        try:
+            await self._repo.create_dashboard_user(
+                organization_id=org.id,
+                email=payload.email,
+                password_hash=pw_hash,
+                name=payload.email.split("@")[0],  # default name from email
+                role="member",
+            )
+            await self._otp_service.generate_and_send(
+                email=payload.email,
+                purpose="signup",
+            )
+        except IntegrityError:
+            # Concurrent duplicate join — the unique email index won.  Same
+            # generic response as a fresh join; roll back the aborted
+            # transaction so the session is usable.
+            logger.warning(
+                "security.join_existing_email",
+                extra={"email": payload.email},
+            )
+            await self._repo.rollback()
+            return self._signup_success_response(payload.email)
+
+        return self._signup_success_response(payload.email)
 
     async def verify_email(
         self,
@@ -248,7 +320,7 @@ class AuthService:
         return await self._issue_tokens(
             user_id=user.id,
             organization_id=user.organization_id,
-            role=user.role if user.role is not None else "admin",
+            role=user.role if user.role is not None else "member",
         )
 
     async def resend_verification(self, email: str) -> SignupResponse:
