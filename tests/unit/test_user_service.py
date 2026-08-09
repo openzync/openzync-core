@@ -19,6 +19,7 @@ class TestUserService:
     ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
     USER_ID = UUID("00000000-0000-0000-0000-000000000002")
     USER_ID_STR = "00000000-0000-0000-0000-000000000002"
+    OTHER_USER_ID = UUID("00000000-0000-0000-0000-0000000000aa")
 
     def _make_service(self) -> tuple[UserService, AsyncMock]:
         mock_repo = AsyncMock()
@@ -34,6 +35,7 @@ class TestUserService:
         user.name = kwargs.get("name", "Test User")
         user.email = kwargs.get("email", "test@example.com")
         user.metadata_ = kwargs.get("metadata", {})
+        user.role = kwargs.get("role", "member")
         user.is_active = kwargs.get("is_active", True)
         user.is_deleted = kwargs.get("is_deleted", False)
         user.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
@@ -95,7 +97,9 @@ class TestUserService:
         mock_repo.soft_delete.return_value = self._mock_user()
 
         # delete_user returns None on success (raises on failure)
-        result = await service.delete_user(self.ORG_ID, self.USER_ID)
+        result = await service.delete_user(
+            self.ORG_ID, self.USER_ID, actor_user_id=self.OTHER_USER_ID,
+        )
         assert result is None
         mock_repo.soft_delete.assert_awaited_once()
 
@@ -103,10 +107,13 @@ class TestUserService:
     async def test_delete_user_not_found_raises_404(self) -> None:
         """Deleting a non-existent user raises NotFoundError."""
         service, mock_repo = self._make_service()
+        mock_repo.get_by_uuid.return_value = None
         mock_repo.soft_delete.return_value = None
 
         with pytest.raises(NotFoundError):
-            await service.delete_user(self.ORG_ID, uuid4())
+            await service.delete_user(
+                self.ORG_ID, uuid4(), actor_user_id=self.OTHER_USER_ID,
+            )
 
     @pytest.mark.asyncio
     async def test_update_user(self) -> None:
@@ -115,7 +122,8 @@ class TestUserService:
         mock_repo.update.return_value = self._mock_user(name="Updated Name")
 
         result = await service.update_user(
-            self.ORG_ID, self.USER_ID, {"name": "Updated Name"}
+            self.ORG_ID, self.USER_ID, {"name": "Updated Name"},
+            actor_user_id=self.OTHER_USER_ID,
         )
         assert result.name == "Updated Name"
 

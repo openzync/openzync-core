@@ -35,11 +35,12 @@ def _build_app(mock_service: AsyncMock) -> FastAPI:
         return mock_service
 
     app.dependency_overrides = {}  # reset
-    from dependencies.auth import get_dashboard_user, require_org_id
+    from dependencies.auth import get_dashboard_user, require_org_admin, require_org_id
     from dependencies.services import get_webhook_service
 
     app.dependency_overrides[get_webhook_service] = _mock_webhook_service
     app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+    app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
 
     @app.middleware("http")

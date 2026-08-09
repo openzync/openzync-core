@@ -47,6 +47,7 @@ class TestMfaService:
         mock_redis = AsyncMock()
         service = AuthService(
             repo=mock_repo, otp_service=mock_otp, redis=mock_redis,
+            org_repo=AsyncMock(),
         )
         return service, mock_repo, mock_otp, mock_redis
 

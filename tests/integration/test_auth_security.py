@@ -69,6 +69,7 @@ def _make_service(db: AsyncSession) -> AuthService:
         repo=AuthRepository(db),
         otp_service=AsyncMock(),
         redis=AsyncMock(),
+        org_repo=AsyncMock(),
         email_service=None,
         bao_client=None,
     )

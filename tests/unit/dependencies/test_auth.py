@@ -76,16 +76,50 @@ class TestRequireScope:
     ORG_ID_STR = "00000000-0000-0000-0000-000000000001"
 
     @pytest.mark.asyncio
-    async def test_jwt_auth_grants_all_scopes(self) -> None:
-        """auth_type=jwt → scope check passes regardless of scope list."""
+    async def test_jwt_member_level_scope_passes_without_role_check(self) -> None:
+        """auth_type=jwt + member-level scope → passes without a role lookup.
+
+        The role gate only applies to ``admin``-prefixed scopes; member-level
+        scopes (``read``, ``write``, ``sessions:read``) pass for any
+        authenticated JWT user without touching the DB or Redis.
+        """
+        from dependencies.auth import require_scope
+
+        checker = require_scope("sessions:read")
+        request = MagicMock(spec=Request)
+        request.state.auth_type = "jwt"
+        request.state.user_id = str(
+            UUID("00000000-0000-0000-0000-000000000002")
+        )
+
+        result = await checker(request, self.ORG_ID_STR, db=MagicMock())
+        assert result == self.ORG_ID_STR
+
+    @pytest.mark.asyncio
+    async def test_jwt_admin_scope_requires_role_check(self) -> None:
+        """auth_type=jwt + admin:write scope → role-checked, denied for members.
+
+        Admin-prefixed scopes on a JWT session are gated on the org ``admin``
+        role (DB-verified via ``core.rbac.get_org_role``) — a member raises 403.
+        """
+        from unittest.mock import AsyncMock, patch
+
         from dependencies.auth import require_scope
 
         checker = require_scope("admin:write")
         request = MagicMock(spec=Request)
         request.state.auth_type = "jwt"
+        request.state.user_id = str(
+            UUID("00000000-0000-0000-0000-000000000002")
+        )
+        request.app.state.redis = AsyncMock()
 
-        result = await checker(request, self.ORG_ID_STR)
-        assert result == self.ORG_ID_STR
+        with patch(
+            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member")
+        ):
+            with pytest.raises(HTTPException) as exc:
+                await checker(request, self.ORG_ID_STR, db=MagicMock())
+        assert exc.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_api_key_with_valid_scope_passes(self) -> None:

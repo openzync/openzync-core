@@ -68,6 +68,12 @@ class TestAuthService:
         return AsyncMock()
 
     @pytest.fixture
+    def mock_org_repo(self) -> AsyncMock:
+        """Org repository mock — required by the AuthService constructor
+        (org-code join lookups).  Unused by the legacy flows under test."""
+        return AsyncMock()
+
+    @pytest.fixture
     def service(
         self,
         mock_repo: AsyncMock,
@@ -75,11 +81,13 @@ class TestAuthService:
         mock_redis: AsyncMock,
         mock_email_service: AsyncMock,
         mock_bao_client: AsyncMock,
+        mock_org_repo: AsyncMock,
     ) -> AuthService:
         return AuthService(
             repo=mock_repo,
             otp_service=mock_otp,
             redis=mock_redis,
+            org_repo=mock_org_repo,
             email_service=mock_email_service,
             bao_client=mock_bao_client,
         )
@@ -91,11 +99,13 @@ class TestAuthService:
         mock_otp: AsyncMock,
         mock_redis: AsyncMock,
         mock_email_service: AsyncMock,
+        mock_org_repo: AsyncMock,
     ) -> AuthService:
         return AuthService(
             repo=mock_repo,
             otp_service=mock_otp,
             redis=mock_redis,
+            org_repo=mock_org_repo,
             email_service=mock_email_service,
             bao_client=None,
         )
@@ -107,11 +117,13 @@ class TestAuthService:
         mock_otp: AsyncMock,
         mock_redis: AsyncMock,
         mock_bao_client: AsyncMock,
+        mock_org_repo: AsyncMock,
     ) -> AuthService:
         return AuthService(
             repo=mock_repo,
             otp_service=mock_otp,
             redis=mock_redis,
+            org_repo=mock_org_repo,
             email_service=None,
             bao_client=mock_bao_client,
         )

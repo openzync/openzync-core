@@ -148,6 +148,7 @@ class TestGetAuthService:
                 repo=mock_repo,
                 otp_service=mock_otp,
                 redis=request.app.state.redis,
+                org_repo=mock_svc_cls.call_args.kwargs["org_repo"],
                 email_service=mock_email,
                 bao_client=request.app.state.openbao_client,
             )

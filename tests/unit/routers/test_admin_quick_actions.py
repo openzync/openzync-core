@@ -12,7 +12,11 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from dependencies.auth import get_dashboard_user, require_org_id
+from dependencies.auth import (
+    get_dashboard_user,
+    require_org_admin,
+    require_org_id,
+)
 from dependencies.services import get_quick_actions_service
 from routers.admin_quick_actions import router
 
@@ -36,6 +40,7 @@ def _create_app() -> tuple[FastAPI, dict[str, AsyncMock]]:
     mocks["quick_actions_service"] = AsyncMock()
 
     app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+    app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
     app.dependency_overrides[get_quick_actions_service] = lambda: mocks["quick_actions_service"]
 

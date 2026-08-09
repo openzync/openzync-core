@@ -23,6 +23,7 @@ class TestUserService:
     ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
     USER_ID = UUID("00000000-0000-0000-0000-000000000010")
     EXTERNAL_ID = "user_abc123"
+    OTHER_USER_ID = UUID("00000000-0000-0000-0000-0000000000aa")
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -51,6 +52,7 @@ class TestUserService:
         metadata: dict | None = None,
         is_active: bool = True,
         is_deleted: bool = False,
+        role: str = "member",
     ) -> MagicMock:
         """Build a MagicMock mimicking a User ORM model."""
         user = MagicMock()
@@ -60,6 +62,7 @@ class TestUserService:
         user.name = name
         user.email = email
         user.metadata_ = metadata or {}
+        user.role = role
         user.is_active = is_active
         user.is_deleted = is_deleted
         user.created_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
@@ -114,6 +117,7 @@ class TestUserService:
             name="Alice",
             email="alice@example.com",
             metadata={"source": "onboarding"},
+            role="member",
         )
 
     @pytest.mark.asyncio
@@ -375,6 +379,7 @@ class TestUserService:
             organization_id=self.ORG_ID,
             user_id=self.USER_ID,
             update_fields={"name": "Updated Alice"},
+            actor_user_id=self.USER_ID,  # self-change guard only applies to role
         )
 
         assert isinstance(result, UserResponse)
@@ -397,6 +402,7 @@ class TestUserService:
                 organization_id=self.ORG_ID,
                 user_id=self.USER_ID,
                 update_fields={"name": "Ghost"},
+                actor_user_id=self.USER_ID,
             )
 
     # ── delete_user ──────────────────────────────────────────────────────────
@@ -406,10 +412,13 @@ class TestUserService:
         """``delete_user`` calls ``repo.soft_delete`` and returns ``None``
         on success."""
         service, mock_repo = self._make_service()
+        mock_repo.get_by_uuid.return_value = self._make_user()
         mock_repo.soft_delete.return_value = self._make_user()
 
         result = await service.delete_user(
-            organization_id=self.ORG_ID, user_id=self.USER_ID
+            organization_id=self.ORG_ID,
+            user_id=self.USER_ID,
+            actor_user_id=self.OTHER_USER_ID,
         )
 
         assert result is None
@@ -422,11 +431,14 @@ class TestUserService:
         """``delete_user`` raises ``NotFoundError`` when the user does not
         exist."""
         service, mock_repo = self._make_service()
+        mock_repo.get_by_uuid.return_value = None
         mock_repo.soft_delete.return_value = None
 
         with pytest.raises(NotFoundError):
             await service.delete_user(
-                organization_id=self.ORG_ID, user_id=self.USER_ID
+                organization_id=self.ORG_ID,
+                user_id=self.USER_ID,
+                actor_user_id=self.OTHER_USER_ID,
             )
 
     # ── list_users ───────────────────────────────────────────────────────────
@@ -502,3 +514,209 @@ class TestUserService:
 
         with pytest.raises(ValidationError):
             await service.list_users(organization_id=self.ORG_ID, limit=201)
+
+
+@pytest.mark.unit
+class TestUserServiceRoleGuards:
+    """Role-change / self-delete guards on ``update_user`` and ``delete_user``.
+
+    Observed contract:
+    - Changing your own role → ``ValidationError``.
+    - Deleting your own account → ``ValidationError``.
+    - Demoting/deleting the LAST active admin → ``ValidationError``.
+    - A successful role change invalidates the target's cached RBAC role.
+    """
+
+    ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+    ADMIN_ID = UUID("00000000-0000-0000-0000-000000000010")
+    OTHER_ADMIN_ID = UUID("00000000-0000-0000-0000-000000000011")
+    MEMBER_ID = UUID("00000000-0000-0000-0000-000000000012")
+
+    def _make_service(
+        self, with_redis: bool = False,
+    ) -> tuple[UserService, AsyncMock, AsyncMock | None]:
+        """Build a ``UserService`` with mocked repo and optional Redis."""
+        mock_repo = AsyncMock()
+        mock_redis = AsyncMock() if with_redis else None
+        service = UserService(repo=mock_repo, redis=mock_redis)
+        return service, mock_repo, mock_redis
+
+    def _make_user(self, role: str = "member", user_id: UUID | None = None) -> MagicMock:
+        """Build a User ORM mock with the fields ``_user_to_dict`` reads."""
+        user = MagicMock()
+        user.id = user_id or self.MEMBER_ID
+        user.organization_id = self.ORG_ID
+        user.external_id = "user_x"
+        user.name = "A User"
+        user.email = "a@example.com"
+        user.metadata_ = {}
+        user.role = role
+        user.is_active = True
+        user.is_deleted = False
+        user.created_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        user.updated_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        return user
+
+    # ── Self-change guard ─────────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_changing_own_role_rejected(self) -> None:
+        """Actor changing their OWN role → ValidationError, no repo update."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.get_by_uuid.return_value = MagicMock(role="admin")
+
+        with pytest.raises(ValidationError) as exc:
+            await service.update_user(
+                organization_id=self.ORG_ID,
+                user_id=self.ADMIN_ID,
+                update_fields={"role": "member"},
+                actor_user_id=self.ADMIN_ID,  # same user
+            )
+
+        assert str(exc.value) == "You cannot change your own role."
+        mock_repo.update.assert_not_awaited()
+        mock_repo.count_active_admins.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_self_promotion_also_rejected(self) -> None:
+        """Self-promotion is rejected too — role changes on self are blocked."""
+        service, mock_repo, _ = self._make_service()
+
+        with pytest.raises(ValidationError):
+            await service.update_user(
+                organization_id=self.ORG_ID,
+                user_id=self.MEMBER_ID,
+                update_fields={"role": "admin"},
+                actor_user_id=self.MEMBER_ID,
+            )
+        mock_repo.update.assert_not_awaited()
+
+    # ── Last-admin guards ────────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_demoting_last_admin_rejected(self) -> None:
+        """Demoting the org's last admin → ValidationError."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.get_by_uuid.return_value = MagicMock(role="admin")
+        mock_repo.count_active_admins.return_value = 1  # last admin
+
+        with pytest.raises(ValidationError) as exc:
+            await service.update_user(
+                organization_id=self.ORG_ID,
+                user_id=self.ADMIN_ID,
+                update_fields={"role": "member"},
+                actor_user_id=self.OTHER_ADMIN_ID,
+            )
+
+        assert "last admin" in str(exc.value)
+        mock_repo.count_active_admins.assert_awaited_once_with(self.ORG_ID)
+        mock_repo.update.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_demotion_allowed_when_more_than_one_admin(self) -> None:
+        """Demoting an admin when another active admin exists → proceeds."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.get_by_uuid.return_value = MagicMock(role="admin")
+        mock_repo.count_active_admins.return_value = 2
+        mock_repo.update.return_value = self._make_user(role="member")
+
+        result = await service.update_user(
+            organization_id=self.ORG_ID,
+            user_id=self.ADMIN_ID,
+            update_fields={"role": "member"},
+            actor_user_id=self.OTHER_ADMIN_ID,
+        )
+
+        assert isinstance(result, UserResponse)
+        assert result.role == "member"
+        mock_repo.count_active_admins.assert_awaited_once_with(self.ORG_ID)
+        mock_repo.update.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_deleting_last_admin_rejected(self) -> None:
+        """Deleting the org's last admin → ValidationError."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.get_by_uuid.return_value = MagicMock(role="admin")
+        mock_repo.count_active_admins.return_value = 1
+
+        with pytest.raises(ValidationError) as exc:
+            await service.delete_user(
+                organization_id=self.ORG_ID,
+                user_id=self.ADMIN_ID,
+                actor_user_id=self.OTHER_ADMIN_ID,
+            )
+
+        assert "last admin" in str(exc.value)
+        mock_repo.soft_delete.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_deleting_self_rejected(self) -> None:
+        """Deleting your own account → ValidationError."""
+        service, mock_repo, _ = self._make_service()
+
+        with pytest.raises(ValidationError) as exc:
+            await service.delete_user(
+                organization_id=self.ORG_ID,
+                user_id=self.ADMIN_ID,
+                actor_user_id=self.ADMIN_ID,
+            )
+
+        assert str(exc.value) == "You cannot delete your own account."
+        mock_repo.soft_delete.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_delete_admin_allowed_when_more_than_one(self) -> None:
+        """Deleting an admin when another active admin exists → proceeds."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.get_by_uuid.return_value = MagicMock(role="admin")
+        mock_repo.count_active_admins.return_value = 2
+        mock_repo.soft_delete.return_value = MagicMock(role="admin")
+
+        result = await service.delete_user(
+            organization_id=self.ORG_ID,
+            user_id=self.ADMIN_ID,
+            actor_user_id=self.OTHER_ADMIN_ID,
+        )
+
+        assert result is None
+        mock_repo.count_active_admins.assert_awaited_once_with(self.ORG_ID)
+        mock_repo.soft_delete.assert_awaited_once()
+
+    # ── Role-cache invalidation ───────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_role_change_invalidates_cached_role(self) -> None:
+        """A successful role change invalidates the target's RBAC cache key."""
+        service, mock_repo, _mock_redis = self._make_service(with_redis=True)
+        mock_repo.get_by_uuid.return_value = self._make_user(role="member")
+        mock_repo.update.return_value = self._make_user(role="admin")
+
+        with patch(
+            "services.user_service.invalidate_role", new=AsyncMock(),
+        ) as mock_invalidate:
+            await service.update_user(
+                organization_id=self.ORG_ID,
+                user_id=self.MEMBER_ID,
+                update_fields={"role": "admin"},
+                actor_user_id=self.ADMIN_ID,
+            )
+
+        mock_invalidate.assert_awaited_once_with(_mock_redis, self.MEMBER_ID)
+
+    @pytest.mark.asyncio
+    async def test_delete_invalidates_cached_role(self) -> None:
+        """Deleting a user invalidates their cached RBAC role."""
+        service, mock_repo, _mock_redis = self._make_service(with_redis=True)
+        mock_repo.get_by_uuid.return_value = MagicMock(role="member")
+        mock_repo.soft_delete.return_value = MagicMock(role="member")
+
+        with patch(
+            "services.user_service.invalidate_role", new=AsyncMock(),
+        ) as mock_invalidate:
+            await service.delete_user(
+                organization_id=self.ORG_ID,
+                user_id=self.MEMBER_ID,
+                actor_user_id=self.ADMIN_ID,
+            )
+
+        mock_invalidate.assert_awaited_once_with(_mock_redis, self.MEMBER_ID)

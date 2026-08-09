@@ -137,6 +137,122 @@ async def test_signup_short_password_422() -> None:
     assert resp.status_code == 422
 
 
+# ── Org-code join ────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_join_success() -> None:
+    """POST /v1/auth/join returns 201 with confirmation message."""
+    from core.exceptions import register_exception_handlers
+
+    app, mocks = _create_app()
+    register_exception_handlers(app)
+    mocks["auth_service"].join_organization.return_value = SignupResponse(
+        message="Verification code sent to email. "
+        "Use POST /v1/auth/verify-email to complete signup.",
+        email="alice@acme.com",
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/auth/join",
+            json={
+                "email": "alice@acme.com",
+                "password": "SecurePass1",
+                "org_code": "K7M2Q9X4",
+            },
+        )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["email"] == "alice@acme.com"
+    mocks["auth_service"].join_organization.assert_awaited_once()
+    # Join is throttled like signup — per-IP signup attempt counter.
+    mocks["auth_throttle"].check_signup_attempt.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_join_invalid_org_code_422_problem_json() -> None:
+    """POST /v1/auth/join with an unknown org code → 422 problem+json.
+
+    Observed contract: ``{"type":".../validation_error","title":"Validation
+    Error","status":422,"detail":"Invalid organization code"}`` — NOT a 400.
+    """
+    from core.exceptions import ValidationError, register_exception_handlers
+
+    app, mocks = _create_app()
+    register_exception_handlers(app)
+    mocks["auth_service"].join_organization.side_effect = ValidationError(
+        "Invalid organization code"
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/auth/join",
+            json={
+                "email": "alice@acme.com",
+                "password": "SecurePass1",
+                "org_code": "K7M2Q9X4",
+            },
+        )
+
+    assert resp.status_code == 422
+    body = resp.json()
+    assert body["type"] == "https://errors.openzync.tech/validation_error"
+    assert body["title"] == "Validation Error"
+    assert body["status"] == 422
+    assert body["detail"] == "Invalid organization code"
+
+
+@pytest.mark.asyncio
+async def test_join_missing_field_422() -> None:
+    """POST /v1/auth/join missing org_code → 422 Pydantic detail array."""
+    app, mocks = _create_app()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/auth/join",
+            json={"email": "alice@acme.com", "password": "SecurePass1"},
+        )
+
+    assert resp.status_code == 422
+    body = resp.json()
+    assert isinstance(body["detail"], list)  # Pydantic validation array
+    mocks["auth_service"].join_organization.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_join_throttled_429() -> None:
+    """POST /v1/auth/join over the signup throttle → 429 problem+json."""
+    from core.exceptions import RateLimitError, register_exception_handlers
+
+    app, mocks = _create_app()
+    register_exception_handlers(app)
+    mocks["auth_throttle"].check_signup_attempt.side_effect = RateLimitError(
+        "Too many signup attempts from this IP address. Try again later."
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/auth/join",
+            json={
+                "email": "alice@acme.com",
+                "password": "SecurePass1",
+                "org_code": "K7M2Q9X4",
+            },
+        )
+
+    assert resp.status_code == 429
+    body = resp.json()
+    assert body["type"] == "https://errors.openzync.tech/rate_limit_exceeded"
+    assert body["status"] == 429
+    mocks["auth_service"].join_organization.assert_not_awaited()
+
+
 # ── Email verification ──────────────────────────────────────────────────────────
 
 

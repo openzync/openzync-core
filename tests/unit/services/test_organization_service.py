@@ -10,7 +10,7 @@ the org ID and name.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -105,11 +105,19 @@ class TestOrganizationService:
         }
 
         # Verify only the Organization constructor was called — no default
-        # project and no API key are auto-created.
+        # project and no API key are auto-created.  ``org_code`` is a freshly
+        # generated join code (feature: org-code join flow).
         mock_org_cls.assert_called_once_with(
-            name="Test Org", plan="free"
+            name="Test Org", plan="free", org_code=ANY,
         )
         mock_proj_cls.assert_not_called()
+
+        # Verify the generated org code conforms to the code alphabet/length.
+        generated = mock_org_cls.call_args.kwargs["org_code"]
+        from core.org_codes import ORG_CODE_ALPHABET, ORG_CODE_LENGTH
+
+        assert len(generated) == ORG_CODE_LENGTH
+        assert all(ch in ORG_CODE_ALPHABET for ch in generated)
 
         # Verify flush/refresh calls on the DB session (single entity)
         assert mock_db.add.call_count == 1
