@@ -64,6 +64,7 @@ from routers import (
 from routers.admin_org_code import _get_org_service
 from routers.users import get_user_summary_service
 from schemas.user_summary import UserSummaryResponse
+from services.organization_service import OrgCodeInfo
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 MEMBER_USER_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -96,6 +97,7 @@ ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [
     ("GET", "/v1/admin/audit-logs", {}, {}),
     # org join code
     ("GET", "/admin/org/org-code", {}, {}),
+    ("PATCH", "/admin/org/org-code", {}, {}),
     ("POST", "/admin/org/org-code/regenerate", {}, {}),
     # org config (PATCH/PUT gate via require_scope("admin:write"))
     ("GET", "/admin/org/config", {}, {}),
@@ -323,7 +325,7 @@ async def test_admin_role_passes_org_code_200() -> None:
     """Admin role gets 200 through the REAL gate — 403s above are role-driven."""
     app = _make_app(authenticated=True)
     service = AsyncMock()
-    service.get_org_code.return_value = "K7M2Q9X4"
+    service.get_org_code.return_value = OrgCodeInfo("K7M2Q9X4", True)
     app.dependency_overrides[_get_org_service] = lambda: service
 
     with patch(
@@ -334,7 +336,7 @@ async def test_admin_role_passes_org_code_200() -> None:
             resp = await client.get("/admin/org/org-code")
 
     assert resp.status_code == 200
-    assert resp.json() == {"org_code": "K7M2Q9X4"}
+    assert resp.json() == {"org_code": "K7M2Q9X4", "join_enabled": True}
 
 
 # ── Coverage guard: matrix must match every actually-gated route ──────────────

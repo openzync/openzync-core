@@ -69,7 +69,8 @@ class JoinRequest(BaseModel):
 class OrgCodeResponse(BaseModel):
     """Response body for org-code admin endpoints.
 
-    Returned by ``GET /admin/org/org-code`` and
+    Returned by ``GET /admin/org/org-code``,
+    ``PATCH /admin/org/org-code`` and
     ``POST /admin/org/org-code/regenerate``.
     """
 
@@ -77,6 +78,25 @@ class OrgCodeResponse(BaseModel):
         ...,
         description="The organization's current join code.",
         examples=["K7M2Q9X4"],
+    )
+    join_enabled: bool = Field(
+        ...,
+        description="Whether the org accepts new members via org-code join.",
+        examples=[True],
+    )
+
+
+class UpdateOrgJoinRequest(BaseModel):
+    """Request body for ``PATCH /admin/org/org-code``.
+
+    Toggles org-code self-registration for the organization.  The field is
+    mandatory — a missing ``join_enabled`` fails with 422.
+    """
+
+    join_enabled: bool = Field(
+        ...,
+        description="Whether the org accepts new members via org-code join.",
+        examples=[False],
     )
 
 class SignupResponse(BaseModel):

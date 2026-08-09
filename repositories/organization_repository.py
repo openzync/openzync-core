@@ -97,6 +97,32 @@ class OrganizationRepository:
         await self._db.refresh(org)
         return org
 
+    async def set_join_enabled(self, org_id: UUID, enabled: bool) -> Organization:
+        """Toggle whether the org accepts new members via org-code join.
+
+        Args:
+            org_id: The organization UUID.
+            enabled: Whether org-code self-registration is accepted.
+
+        Returns:
+            The updated Organization.
+
+        Raises:
+            NotFoundError: If no organization with this UUID exists.
+        """
+        from core.exceptions import NotFoundError
+
+        result = await self._db.execute(
+            select(Organization).where(Organization.id == org_id)
+        )
+        org = result.scalar_one_or_none()
+        if org is None:
+            raise NotFoundError(f"Organization {org_id} not found.")
+        org.join_enabled = enabled
+        await self._db.flush()
+        await self._db.refresh(org)
+        return org
+
     # ── Config JSONB (Groups A, B, C — UI-exposed settings) ─────────────────
 
     async def get_config(self, org_id: UUID) -> dict[str, Any]:

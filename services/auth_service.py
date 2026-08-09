@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 from core.config import get_settings
 from core.exceptions import (
     AuthenticationError,
+    AuthorizationError,
     ConflictError,
     NotFoundError,
     ValidationError,
@@ -216,11 +217,24 @@ class AuthService:
 
         Raises:
             ValidationError: If the org code is unknown or the org is inactive.
+            AuthorizationError: If the org has disabled org-code
+                self-registration (``join_enabled`` False → 403).
         """
         code = normalize_org_code(payload.org_code)
         org = await self._org_repo.get_by_code(code)
         if org is None:
             raise ValidationError("Invalid organization code")
+        if not org.join_enabled:
+            # Admin-disabled self-registration: the code is valid but the
+            # org is not accepting new members — distinct from an unknown
+            # code (422 above), so admins can see join attempts in the logs.
+            logger.warning(
+                "auth.join_disabled",
+                extra={"org_id": str(org.id)},
+            )
+            raise AuthorizationError(
+                "This organization is not accepting new members"
+            )
 
         existing = await self._repo.find_user_by_email(payload.email)
         if existing is not None:

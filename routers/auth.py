@@ -125,7 +125,8 @@ async def signup(
         "email.  The user must call ``POST /v1/auth/verify-email`` with the "
         "code to complete signup and receive JWT tokens.  If the email is "
         "already registered, the same generic response is returned.  "
-        "Invalid org codes return 422."
+        "Invalid org codes return 422.  A valid code for an organization "
+        "that has disabled self-registration returns 403."
     ),
 )
 @audit_action("auth.join", "user", "User joined organization")

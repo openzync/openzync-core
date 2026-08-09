@@ -7,6 +7,7 @@ requirement and runs before any user exists.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -23,6 +24,14 @@ from repositories.organization_repository import OrganizationRepository
 from schemas.organizations import CreateOrgRequest, CreateOrgResponse
 
 logger = structlog.get_logger(__name__)
+
+
+@dataclass(frozen=True)
+class OrgCodeInfo:
+    """Org-code admin view — the join code plus its registration toggle."""
+
+    org_code: str
+    join_enabled: bool
 
 
 class OrganizationService:
@@ -122,14 +131,14 @@ class OrganizationService:
 
     # ── Org join code (admin management) ──────────────────────────────────────
 
-    async def get_org_code(self, org_id: UUID) -> str:
-        """Return the organization's current join code.
+    async def get_org_code(self, org_id: UUID) -> OrgCodeInfo:
+        """Return the organization's current join code and registration state.
 
         Args:
             org_id: The organization UUID.
 
         Returns:
-            The current org code.
+            An ``OrgCodeInfo`` with the org code and ``join_enabled`` flag.
 
         Raises:
             NotFoundError: If no organization with this UUID exists.
@@ -137,9 +146,25 @@ class OrganizationService:
         org = await self._repo.get_by_id(org_id)
         if org is None:
             raise NotFoundError(f"Organization {org_id} not found.")
-        return org.org_code
+        return OrgCodeInfo(org_code=org.org_code, join_enabled=org.join_enabled)
 
-    async def regenerate_org_code(self, org_id: UUID) -> str:
+    async def set_join_enabled(self, org_id: UUID, enabled: bool) -> OrgCodeInfo:
+        """Toggle whether the org accepts new members via org-code join.
+
+        Args:
+            org_id: The organization UUID.
+            enabled: Whether org-code self-registration is accepted.
+
+        Returns:
+            The fresh ``OrgCodeInfo`` (code unchanged, toggle updated).
+
+        Raises:
+            NotFoundError: If no organization with this UUID exists.
+        """
+        org = await self._repo.set_join_enabled(org_id, enabled)
+        return OrgCodeInfo(org_code=org.org_code, join_enabled=org.join_enabled)
+
+    async def regenerate_org_code(self, org_id: UUID) -> OrgCodeInfo:
         """Generate and persist a new join code (rotating the old one).
 
         Immediately invalidates any previously distributed code.
@@ -148,14 +173,14 @@ class OrganizationService:
             org_id: The organization UUID.
 
         Returns:
-            The new org code.
+            The fresh ``OrgCodeInfo`` with the new org code.
 
         Raises:
             NotFoundError: If no organization with this UUID exists.
         """
         new_code = generate_org_code()
         org = await self._repo.set_org_code(org_id, new_code)
-        return org.org_code
+        return OrgCodeInfo(org_code=org.org_code, join_enabled=org.join_enabled)
 
     def _load_org_defaults(self) -> dict[str, Any]:
         """Load default per-org config values from ``config/defaults/org_config.yaml``.

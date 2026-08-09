@@ -1,11 +1,13 @@
 """Unit tests for the admin org-code router.
 
-Tests ``GET /admin/org/org-code`` and ``POST /admin/org/org-code/regenerate``:
-- 200 for org admins (returns the current / new join code).
+Tests ``GET /admin/org/org-code``, ``PATCH /admin/org/org-code`` and
+``POST /admin/org/org-code/regenerate``:
+- 200 for org admins (returns the current / new join code + toggle state).
 - 403 for org members (JWT, non-admin role).
 - 401 for unauthenticated requests.
+- 422 for a PATCH with a missing ``join_enabled`` body field.
 
-Observed contract: both endpoints are admin-only (JWT + org ``admin`` role);
+Observed contract: all endpoints are admin-only (JWT + org ``admin`` role);
 regeneration immediately invalidates the previous code.
 """
 
@@ -21,6 +23,7 @@ from httpx import ASGITransport, AsyncClient
 from core.exceptions import NotFoundError, register_exception_handlers
 from dependencies.auth import require_org_admin
 from routers.admin_org_code import _get_org_service, router
+from services.organization_service import OrgCodeInfo
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -73,16 +76,16 @@ def _make_member_app() -> FastAPI:
 
 @pytest.mark.asyncio
 async def test_get_org_code_admin_200() -> None:
-    """GET /admin/org/org-code returns 200 with the current code for admins."""
+    """GET /admin/org/org-code returns 200 with code + toggle for admins."""
     app, service_mock = _make_app()
-    service_mock.get_org_code.return_value = OLD_CODE
+    service_mock.get_org_code.return_value = OrgCodeInfo(OLD_CODE, True)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.get("/admin/org/org-code")
 
     assert resp.status_code == 200
-    assert resp.json() == {"org_code": OLD_CODE}
+    assert resp.json() == {"org_code": OLD_CODE, "join_enabled": True}
     service_mock.get_org_code.assert_awaited_once_with(ORG_ID)
 
 
@@ -136,6 +139,55 @@ async def test_get_org_code_404_org_missing() -> None:
     assert resp.status_code == 404
 
 
+# ── PATCH /admin/org/org-code ──────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_patch_join_enabled_admin_200_toggles() -> None:
+    """PATCH /admin/org/org-code toggles and returns the fresh state."""
+    app, service_mock = _make_app()
+    service_mock.set_join_enabled.return_value = OrgCodeInfo(OLD_CODE, False)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.patch(
+            "/admin/org/org-code", json={"join_enabled": False},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"org_code": OLD_CODE, "join_enabled": False}
+    service_mock.set_join_enabled.assert_awaited_once_with(ORG_ID, False)
+
+
+@pytest.mark.asyncio
+async def test_patch_join_enabled_admin_200_re_enable() -> None:
+    """PATCH re-enables self-registration and returns the fresh state."""
+    app, service_mock = _make_app()
+    service_mock.set_join_enabled.return_value = OrgCodeInfo(OLD_CODE, True)
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.patch(
+            "/admin/org/org-code", json={"join_enabled": True},
+        )
+
+    assert resp.status_code == 200
+    assert resp.json() == {"org_code": OLD_CODE, "join_enabled": True}
+    service_mock.set_join_enabled.assert_awaited_once_with(ORG_ID, True)
+
+
+@pytest.mark.asyncio
+async def test_patch_join_enabled_empty_body_422() -> None:
+    """PATCH with an empty body fails 422 — ``join_enabled`` is mandatory."""
+    app, _service_mock = _make_app()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.patch("/admin/org/org-code", json={})
+
+    assert resp.status_code == 422
+
+
 # ── POST /admin/org/org-code/regenerate ─────────────────────────────────────────
 
 
@@ -147,7 +199,7 @@ async def test_regenerate_org_code_admin_200_different_code() -> None:
     service returns the fresh code.
     """
     app, service_mock = _make_app()
-    service_mock.regenerate_org_code.return_value = NEW_CODE
+    service_mock.regenerate_org_code.return_value = OrgCodeInfo(NEW_CODE, True)
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -157,6 +209,7 @@ async def test_regenerate_org_code_admin_200_different_code() -> None:
     body = resp.json()
     assert body["org_code"] == NEW_CODE
     assert body["org_code"] != OLD_CODE  # rotation: old code is invalid now
+    assert body["join_enabled"] is True
     service_mock.regenerate_org_code.assert_awaited_once_with(ORG_ID)
 
 

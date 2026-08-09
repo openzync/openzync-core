@@ -17,7 +17,7 @@ import pytest
 import yaml
 
 from schemas.organizations import CreateOrgRequest, CreateOrgResponse
-from services.organization_service import OrganizationService
+from services.organization_service import OrganizationService, OrgCodeInfo
 
 
 @pytest.mark.unit
@@ -59,6 +59,8 @@ class TestOrganizationService:
         org.id = self.ORG_ID
         org.name = "Test Org"
         org.plan = "free"
+        org.org_code = "K7M2Q9X4"
+        org.join_enabled = True
         return org
 
     # ── create_organization ──────────────────────────────────────────────────
@@ -225,6 +227,71 @@ class TestOrganizationService:
         assert isinstance(result, CreateOrgResponse)
         assert result.organization_id == self.ORG_ID
         assert "api_key" not in CreateOrgResponse.model_fields
+
+    # ── Org join code (admin management) ────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_get_org_code_returns_org_code_info(self) -> None:
+        """``get_org_code`` returns code + ``join_enabled`` as OrgCodeInfo."""
+        service, mock_repo, _ = self._make_service()
+        org = self._make_org_mock()
+        mock_repo.get_by_id.return_value = org
+
+        info = await service.get_org_code(self.ORG_ID)
+
+        assert isinstance(info, OrgCodeInfo)
+        assert info.org_code == "K7M2Q9X4"
+        assert info.join_enabled is True
+        mock_repo.get_by_id.assert_awaited_once_with(self.ORG_ID)
+
+    @pytest.mark.asyncio
+    async def test_get_org_code_missing_org_raises_not_found(self) -> None:
+        """``get_org_code`` raises NotFoundError when the org is missing."""
+        from core.exceptions import NotFoundError
+
+        service, mock_repo, _ = self._make_service()
+        mock_repo.get_by_id.return_value = None
+
+        with pytest.raises(NotFoundError):
+            await service.get_org_code(self.ORG_ID)
+
+    @pytest.mark.asyncio
+    async def test_set_join_enabled_delegates_and_returns_fresh_state(
+        self,
+    ) -> None:
+        """``set_join_enabled`` delegates to the repo and returns OrgCodeInfo."""
+        service, mock_repo, _ = self._make_service()
+        org = self._make_org_mock()
+        org.join_enabled = False
+        mock_repo.set_join_enabled.return_value = org
+
+        info = await service.set_join_enabled(self.ORG_ID, False)
+
+        assert isinstance(info, OrgCodeInfo)
+        assert info.org_code == "K7M2Q9X4"
+        assert info.join_enabled is False
+        mock_repo.set_join_enabled.assert_awaited_once_with(self.ORG_ID, False)
+
+    @pytest.mark.asyncio
+    async def test_regenerate_org_code_returns_org_code_info(self) -> None:
+        """``regenerate_org_code`` rotates the code and returns OrgCodeInfo."""
+        service, mock_repo, _ = self._make_service()
+        org = self._make_org_mock()
+        org.org_code = "ZZZ2Q9X4"
+        mock_repo.set_org_code.return_value = org
+
+        with patch(
+            "services.organization_service.generate_org_code",
+            return_value="ZZZ2Q9X4",
+        ):
+            info = await service.regenerate_org_code(self.ORG_ID)
+
+        assert isinstance(info, OrgCodeInfo)
+        assert info.org_code == "ZZZ2Q9X4"
+        assert info.join_enabled is True
+        mock_repo.set_org_code.assert_awaited_once_with(
+            self.ORG_ID, "ZZZ2Q9X4",
+        )
 
     # ── _load_org_defaults ───────────────────────────────────────────────────
 

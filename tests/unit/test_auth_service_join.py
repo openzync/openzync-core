@@ -7,6 +7,8 @@ Observed contract (smoke-verified):
 - Valid code + new email → member user created in the target org + signup
   OTP sent.  The created user's role is ALWAYS ``"member"`` — never admin.
 - Unknown or inactive org code → ``ValidationError("Invalid organization code")``.
+- Org with ``join_enabled=False`` → ``AuthorizationError`` (403), no user
+  created, no OTP sent — distinct from the 422 for an unknown code.
 - Email already registered anywhere → generic ``SignupResponse``, no user
   created, no OTP sent (anti-enumeration — mirrors signup).
 - Codes are normalized (case-insensitive, surrounding whitespace stripped)
@@ -20,7 +22,7 @@ from uuid import UUID
 
 import pytest
 
-from core.exceptions import ValidationError
+from core.exceptions import AuthorizationError, ValidationError
 from repositories.auth_repository import AuthRepository
 from repositories.organization_repository import OrganizationRepository
 from schemas.auth import JoinRequest, SignupResponse
@@ -72,10 +74,13 @@ class TestJoinOrganization:
             bao_client=None,
         )
 
-    def _make_org(self, code: str = "K7M2Q9X4") -> AsyncMock:
+    def _make_org(
+        self, code: str = "K7M2Q9X4", join_enabled: bool = True,
+    ) -> AsyncMock:
         org = AsyncMock()
         org.id = ORG_ID
         org.org_code = code
+        org.join_enabled = join_enabled
         return org
 
     @pytest.mark.asyncio
@@ -146,6 +151,32 @@ class TestJoinOrganization:
 
         assert str(exc.value) == "Invalid organization code"
         mock_repo.create_dashboard_user.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_disabled_org_raises_authorization_error_no_create_no_otp(
+        self,
+        service: AuthService,
+        mock_org_repo: AsyncMock,
+        mock_repo: AsyncMock,
+        mock_otp: AsyncMock,
+    ) -> None:
+        """Org with ``join_enabled=False`` → AuthorizationError (403).
+
+        The code resolves to a real (active) org, so this must be distinct
+        from the 422 for an unknown code — and no user is created and no
+        OTP is sent.
+        """
+        mock_org_repo.get_by_code.return_value = self._make_org(
+            join_enabled=False,
+        )
+
+        with pytest.raises(AuthorizationError) as exc:
+            await service.join_organization(_join_request())
+
+        assert str(exc.value) == "This organization is not accepting new members"
+        mock_repo.find_user_by_email.assert_not_awaited()
+        mock_repo.create_dashboard_user.assert_not_awaited()
+        mock_otp.generate_and_send.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_existing_email_returns_generic_response_no_create_no_otp(
