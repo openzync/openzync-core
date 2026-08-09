@@ -136,6 +136,8 @@ EXEMPT_PATHS: frozenset = frozenset({
 #   shown exactly once to the caller.
 # - ``routers/admin_org_code.py`` POST "/admin/org/org-code/regenerate" →
 #   returns the freshly rotated org join code, which is a valid join token.
+# - ``routers/admin_org_code.py`` PATCH "/admin/org/org-code" → returns the
+#   live org join code (unchanged by the toggle) — a valid join token.
 # - ``routers/admin_org_config.py`` PATCH/PUT "/admin/org/config" → responses
 #   echo the stored config, which may include unmasked LLM API keys.
 # - ``routers/auth.py`` POST "/v1/auth/invites/accept" → returns the JWT
@@ -151,6 +153,7 @@ EXEMPT_PATHS: frozenset = frozenset({
 WEBHOOK_SECRET_RESPONSE_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/v1/admin/webhooks"),
     ("POST", "/admin/org/org-code/regenerate"),
+    ("PATCH", "/admin/org/org-code"),
     ("PATCH", "/admin/org/config"),
     ("PUT", "/admin/org/config"),
     ("POST", "/v1/auth/invites/accept"),

@@ -293,6 +293,35 @@ class TestOrganizationService:
             self.ORG_ID, "ZZZ2Q9X4",
         )
 
+    @pytest.mark.asyncio
+    async def test_regenerate_org_code_preserves_join_enabled_false(
+        self,
+    ) -> None:
+        """Regenerate preserves the paused state — rotation does NOT reset
+        ``join_enabled``.
+
+        Contract #8: a paused org stays paused after code rotation; the
+        response carries the new code AND the existing toggle value.
+        """
+        service, mock_repo, _ = self._make_service()
+        org = self._make_org_mock()
+        org.org_code = "ZZZ2Q9X4"
+        org.join_enabled = False
+        mock_repo.set_org_code.return_value = org
+
+        with patch(
+            "services.organization_service.generate_org_code",
+            return_value="ZZZ2Q9X4",
+        ):
+            info = await service.regenerate_org_code(self.ORG_ID)
+
+        assert isinstance(info, OrgCodeInfo)
+        assert info.org_code == "ZZZ2Q9X4"
+        assert info.join_enabled is False
+        mock_repo.set_org_code.assert_awaited_once_with(
+            self.ORG_ID, "ZZZ2Q9X4",
+        )
+
     # ── _load_org_defaults ───────────────────────────────────────────────────
 
     def test_load_org_defaults_returns_yaml_content(self) -> None:

@@ -179,6 +179,35 @@ class TestJoinOrganization:
         mock_otp.generate_and_send.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_disabled_org_existing_email_still_403(
+        self,
+        service: AuthService,
+        mock_org_repo: AsyncMock,
+        mock_repo: AsyncMock,
+        mock_otp: AsyncMock,
+    ) -> None:
+        """Disabled org + already-registered email → still 403, NOT generic.
+
+        Contract #1 ordering: the ``join_enabled`` check sits after
+        ``get_by_code`` but BEFORE the existing-email anti-enumeration
+        short-circuit.  A registered email must NOT leak the generic
+        signup response for a paused org — the 403 wins, and the email
+        lookup is never even reached.
+        """
+        mock_org_repo.get_by_code.return_value = self._make_org(
+            join_enabled=False,
+        )
+        mock_repo.find_user_by_email.return_value = AsyncMock()  # registered
+
+        with pytest.raises(AuthorizationError) as exc:
+            await service.join_organization(_join_request())
+
+        assert str(exc.value) == "This organization is not accepting new members"
+        mock_repo.find_user_by_email.assert_not_awaited()
+        mock_repo.create_dashboard_user.assert_not_awaited()
+        mock_otp.generate_and_send.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_existing_email_returns_generic_response_no_create_no_otp(
         self,
         service: AuthService,

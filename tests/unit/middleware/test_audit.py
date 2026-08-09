@@ -345,6 +345,50 @@ class TestAuditMiddleware:
         assert refresh not in orjson.dumps(details).decode()
 
     @pytest.mark.asyncio
+    async def test_org_code_patch_response_body_never_captured(self) -> None:
+        """The org-code PATCH response (live join code) is never body-captured.
+
+        PATCH /admin/org/org-code returns the current join code alongside
+        the toggle state — a valid join token, identical in sensitivity to
+        the regenerate response.  It must not be persisted to audit_logs
+        even when the org enables body capture.  The audit event itself is
+        still enqueued.
+        """
+        mock_pool = AsyncMock()
+        mock_pool.enqueue = AsyncMock(return_value=None)
+
+        app = self._create_app(mock_arq_pool=mock_pool)
+        middleware = AuditMiddleware(app)
+
+        scope: dict[str, Any] = {
+            "type": "http",
+            "method": "PATCH",
+            "path": "/admin/org/org-code",
+            "headers": [(b"host", b"example.com")],
+            "query_string": b"",
+            "client": ["10.0.0.1", 54321],
+            "state": {"org_id": "org-001", "auth_type": "jwt"},
+        }
+        app.state.arq_pool = mock_pool
+        scope["app"] = app
+
+        org_code = "K7M2Q9X4"
+        with patch(
+            "middleware.audit._resolve_audit_body_capture", return_value=True,
+        ):
+            body = (
+                f'{{"org_code": "{org_code}", "join_enabled": false}}'
+            ).encode()
+            await middleware._enqueue_audit(
+                scope, "PATCH", "/admin/org/org-code", 200, [body],
+            )
+
+        assert mock_pool.enqueue.called  # event still audited
+        details = orjson.loads(mock_pool.enqueue.call_args.kwargs["details"])
+        assert "response_body" not in details
+        assert org_code not in orjson.dumps(details).decode()
+
+    @pytest.mark.asyncio
     async def test_response_body_captured_for_non_webhook_route(self) -> None:
         """Body capture still works for ordinary routes (control).
 
