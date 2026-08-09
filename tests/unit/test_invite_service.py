@@ -264,6 +264,9 @@ class TestInviteService:
         # between (the transaction stays open and is rolled back).
         mock_repo.create.assert_awaited_once()
         mock_email_service.send_email.assert_awaited_once()
+        # Regression guard: a commit-then-send refactor (which would orphan
+        # the pending row on email failure) must fail this test.
+        mock_repo.commit.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_invite_email_service_none_raises(
@@ -407,10 +410,19 @@ class TestInviteService:
             )
 
         assert result == FAKE_TOKEN_RESPONSE
-        mock_repo.claim_invite.assert_awaited_once_with(
-            token_hash="34d328009b123fbbb0dc93f18b3e6de1ecf7b1a5783c33dff7ffe1926f09e943",
-            password_hash="hashed",
+        mock_repo.claim_invite.assert_awaited_once()
+        claim_kwargs = mock_repo.claim_invite.call_args.kwargs
+        assert claim_kwargs["token_hash"] == (
+            "34d328009b123fbbb0dc93f18b3e6de1ecf7b1a5783c33dff7ffe1926f09e943"
         )
+        assert claim_kwargs["password_hash"] == "hashed"
+        # Cutoff must be derived from INVITE_EXPIRY_HOURS as naive UTC —
+        # otherwise the claim SQL and the service check can drift.
+        expected_cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+            hours=INVITE_EXPIRY_HOURS
+        )
+        assert claim_kwargs["cutoff"].tzinfo is None
+        assert abs((expected_cutoff - claim_kwargs["cutoff"]).total_seconds()) < 5
         # Tokens issued from the atomic claim's RETURNING values — no
         # select-then-update, no stale identity-mapped row.
         mock_auth_service.issue_tokens.assert_awaited_once_with(

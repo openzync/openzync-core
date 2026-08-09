@@ -2,16 +2,22 @@
 
 Requires testcontainers PostgreSQL (provided by ``tests/integration/conftest.py``).
 """
+# ruff: noqa: S105, S106 — password fixtures are by design
 
 from __future__ import annotations
 
+import hashlib
+from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.user import User
-from repositories.user_repository import UserRepository
+from repositories.user_repository import ClaimedInvite, UserRepository
+
+if TYPE_CHECKING:
+    from models.user import User
 
 
 pytestmark = pytest.mark.integration
@@ -174,13 +180,61 @@ class TestUserRepository:
 
     async def test_cursor_encode_decode_roundtrip(self, engine) -> None:
         """Cursor encoding and decoding round-trips correctly."""
-        from datetime import datetime, timezone
-
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         uid = UUID("12345678-1234-5678-1234-567812345678")
 
         cursor = UserRepository._encode_cursor(now, uid)
         decoded_at, decoded_id = UserRepository._decode_cursor(cursor)
 
-        assert decoded_at.replace(tzinfo=timezone.utc) == now
+        assert decoded_at.replace(tzinfo=UTC) == now
         assert decoded_id == uid
+
+    async def test_claim_invite_returns_identity_and_clears_token(self, engine) -> None:
+        """claim_invite returns the claimed identity and flips the row live.
+
+        The winning UPDATE ... RETURNING must hand back exactly the identity
+        the accept flow needs (id, org, role), leave ``invite_token_hash``
+        NULL, set the password hash and mark the email verified — and a
+        second claim of the same token must miss (replay-safe).
+        """
+        async with AsyncSession(engine) as db:
+            repo = UserRepository(db)
+            org_id = UUID("00000000-0000-0000-0000-000000000001")
+            token_hash = hashlib.sha256(b"integration-claim-token").hexdigest()
+            user = await repo.create(
+                organization_id=org_id,
+                external_id="pending_invite_claim",
+                email="pending@example.com",
+                name="Pending Invitee",
+                role="member",
+                password_hash=None,
+                invite_token_hash=token_hash,
+            )
+
+            cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=72)
+            claimed = await repo.claim_invite(
+                token_hash=token_hash,
+                password_hash="hashed-password",
+                cutoff=cutoff,
+            )
+
+            assert claimed is not None
+            assert isinstance(claimed, ClaimedInvite)
+            assert claimed.id == user.id
+            assert claimed.organization_id == org_id
+            assert claimed.role == "member"
+
+            # The UPDATE ... RETURNING leaves the identity-mapped instance
+            # stale — refresh to read the claimed row's new state.
+            await db.refresh(user)
+            assert user.invite_token_hash is None
+            assert user.password_hash == "hashed-password"
+            assert user.is_email_verified is True
+
+            # Replay: the token hash is now NULL, so the claim misses.
+            again = await repo.claim_invite(
+                token_hash=token_hash,
+                password_hash="hashed-password",
+                cutoff=cutoff,
+            )
+            assert again is None

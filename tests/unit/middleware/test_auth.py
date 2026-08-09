@@ -1,18 +1,25 @@
 """Unit tests for AuthMiddleware — dual-mode JWT + API key auth."""
+# ruff: noqa: S105, S106, S107 — every fixture here IS a token/secret by design
+
 from __future__ import annotations
 
-import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import jwt
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from starlette.requests import Request
+from starlette.requests import (
+    Request,  # noqa: TC002 — FastAPI resolves Request at route registration
+)
 
+from core.exceptions import NotFoundError, register_exception_handlers
+from dependencies.services import get_invite_service
 from middleware.auth import AuthMiddleware, _is_jwt_token, _is_public_path
+from routers.auth import router
+from schemas.auth import InviteInfoResponse
 
 
 @pytest.mark.unit
@@ -37,10 +44,10 @@ class TestAuthMiddleware:
             "type": token_type,
         }
         if expired:
-            payload["exp"] = datetime.now(timezone.utc) - timedelta(hours=1)
+            payload["exp"] = datetime.now(UTC) - timedelta(hours=1)
         else:
-            payload["exp"] = datetime.now(timezone.utc) + timedelta(hours=1)
-        payload["iat"] = datetime.now(timezone.utc)
+            payload["exp"] = datetime.now(UTC) + timedelta(hours=1)
+        payload["iat"] = datetime.now(UTC)
         return jwt.encode(payload, secret, algorithm="HS256")
 
     def _create_app(self) -> FastAPI:
@@ -69,7 +76,9 @@ class TestAuthMiddleware:
                 "user_id": getattr(request.state, "user_id", None),
                 "role": getattr(request.state, "role", None),
                 "api_key_scopes": getattr(request.state, "api_key_scopes", []),
-                "api_key_project_id": getattr(request.state, "api_key_project_id", None),
+                "api_key_project_id": getattr(
+                    request.state, "api_key_project_id", None
+                ),
             }
 
         @app.options("/test")
@@ -181,7 +190,9 @@ class TestAuthMiddleware:
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             resp = await c.get("/test", headers={"Authorization": f"Bearer {token}"})
-            assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+            assert resp.status_code == 200, (
+                f"Expected 200, got {resp.status_code}: {resp.text}"
+            )
             state = resp.json()
             assert state["auth_type"] == "jwt"
             assert state["org_id"] == "org-xyz"
@@ -201,7 +212,7 @@ class TestAuthMiddleware:
 
     @pytest.mark.asyncio
     async def test_malformed_jwt_returns_401(self) -> None:
-        """Malformed token (no dots, no api key prefix) falls through to API key flow -> 401."""
+        """Malformed token falls through to the API key flow -> 401."""
         app = self._create_app()
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
@@ -229,8 +240,8 @@ class TestAuthMiddleware:
         import core.config as cfg
 
         payload: dict[str, Any] = {
-            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
-            "iat": datetime.now(timezone.utc),
+            "exp": datetime.now(UTC) + timedelta(hours=1),
+            "iat": datetime.now(UTC),
             "type": "access",
         }
         s = cfg.get_settings()
@@ -372,3 +383,91 @@ class TestAuthMiddleware:
             data = resp.json()
             assert data["org_id"] is None
             assert data["auth_type"] is None
+
+
+class TestInviteEndpointsPublicThroughMiddleware:
+    """Regression — invite endpoints must pass the REAL AuthMiddleware.
+
+    QA P1-1: the router-level invite tests build a bare ``FastAPI()`` with
+    no auth middleware, so deleting ``/v1/auth/invites`` from
+    ``PUBLIC_ENDPOINTS`` would break production with zero failing tests.
+    These tests wire the real middleware + real auth router and assert the
+    invite endpoints are reached without an ``Authorization`` header.
+    """
+
+    def _create_app(self) -> tuple[FastAPI, AsyncMock]:
+        """Auth router + mocked invite service under the real AuthMiddleware."""
+        app = FastAPI()
+        register_exception_handlers(app)
+        service_mock = AsyncMock()
+        app.dependency_overrides[get_invite_service] = lambda: service_mock
+        app.include_router(router)
+        app.add_middleware(AuthMiddleware)
+        return app, service_mock
+
+    @pytest.mark.asyncio
+    async def test_invite_info_no_auth_header_200(self) -> None:
+        """No Authorization header → 200: the middleware must not 401."""
+        app, service_mock = self._create_app()
+        service_mock.get_invite_info.return_value = InviteInfoResponse(
+            org_name="Acme Corp",
+            email="alice@acme.com",
+            name="Alice Johnson",
+        )
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post("/v1/auth/invites/info", json={"token": "raw-token"})
+
+        assert resp.status_code == 200
+        assert resp.status_code != 401
+        assert resp.json()["org_name"] == "Acme Corp"
+
+    @pytest.mark.asyncio
+    async def test_invite_info_bogus_token_reaches_route_404(self) -> None:
+        """Bogus token → 404 from the ROUTE, not 401 from the middleware.
+
+        A 404 (rather than 401) proves the request passed the middleware and
+        reached the invite handler.
+        """
+        app, service_mock = self._create_app()
+        service_mock.get_invite_info.side_effect = NotFoundError(
+            "This invitation link is invalid or has expired."
+        )
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post("/v1/auth/invites/info", json={"token": "bogus"})
+
+        assert resp.status_code == 404
+        assert resp.status_code != 401
+
+    @pytest.mark.asyncio
+    async def test_invite_accept_no_auth_header_not_401(self) -> None:
+        """No Authorization header → the accept request passes the middleware."""
+        app, service_mock = self._create_app()
+        service_mock.accept_invite.side_effect = NotFoundError(
+            "This invitation link is invalid or has expired."
+        )
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post(
+                "/v1/auth/invites/accept",
+                json={"token": "bogus", "password": "SecurePass1"},
+            )
+
+        # Reached the route handler (service 404) — middleware did not 401.
+        assert resp.status_code == 404
+        assert resp.status_code != 401
+
+    @pytest.mark.asyncio
+    async def test_protected_route_without_auth_401_negative_control(self) -> None:
+        """Negative control — a non-public route still 401s with no auth.
+
+        Proves the middleware is actually enforcing: only the invite paths
+        (and the rest of ``PUBLIC_ENDPOINTS``) bypass it.
+        """
+        app, _ = self._create_app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.get("/v1/auth/me")
+
+        assert resp.status_code == 401
