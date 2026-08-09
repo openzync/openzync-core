@@ -144,6 +144,7 @@ class UserService:
             "role": user.role,
             "is_active": user.is_active,
             "is_deleted": user.is_deleted,
+            "is_pending_invite": user.invite_token_hash is not None,
             "created_at": user.created_at,
             "updated_at": user.updated_at,
         }

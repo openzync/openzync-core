@@ -51,6 +51,8 @@ class UserRepository:
         email: str | None = None,
         metadata: dict[str, Any] | None = None,
         role: str = "member",
+        password_hash: str | None = None,
+        invite_token_hash: str | None = None,
     ) -> User:
         """Insert a new user.
 
@@ -61,6 +63,11 @@ class UserRepository:
             email: Optional email address.
             metadata: Arbitrary JSONB metadata.
             role: Dashboard role — ``admin`` or ``member`` (default).
+            password_hash: Optional bcrypt hash — ``None`` for pending
+                invites (the invitee sets a password at accept time).
+            invite_token_hash: Optional SHA-256 hash of a pending invite
+                token.  Set at creation for the invite flow so the row is
+                created atomically with its claim credential.
 
         Returns:
             The newly created User ORM instance (with generated id and
@@ -77,6 +84,8 @@ class UserRepository:
             email=email,
             metadata_=metadata if metadata is not None else {},
             role=role,
+            password_hash=password_hash,
+            invite_token_hash=invite_token_hash,
         )
         self._db.add(user)
         await self._db.flush()
@@ -169,6 +178,136 @@ class UserRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def find_user_by_email(self, email: str) -> User | None:
+        """Find a user by email across all organizations (global lookup).
+
+        Mirrors ``AuthRepository.find_user_by_email`` — email is globally
+        unique (partial unique index) — so the invite flow's duplicate
+        check sees accounts created via signup/join too, not just rows this
+        repository created.
+
+        Args:
+            email: The user's email address.
+
+        Returns:
+            The User if found, or ``None``.
+        """
+        result = await self._db.execute(
+            select(User).where(
+                User.email == email,
+                User.is_deleted.is_(False),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    # ── Invite flow ─────────────────────────────────────────────────────────
+
+    async def find_user_by_invite_token(self, token_hash: str) -> User | None:
+        """Look up a live pending invite by its token hash.
+
+        Used by the self-clean path in the service: after a claim misses,
+        a row present here means the token matched but the invite has
+        expired (the only claim condition not mirrored below is the
+        72-hour window).
+
+        Args:
+            token_hash: SHA-256 hex digest of the raw invite token.
+
+        Returns:
+            The User with a matching non-expired-agnostic pending invite,
+            or ``None``.
+        """
+        result = await self._db.execute(
+            select(User).where(
+                User.invite_token_hash == token_hash,
+                User.is_active.is_(True),
+                User.is_deleted.is_(False),
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def claim_invite(
+        self,
+        token_hash: str,
+        password_hash: str,
+    ) -> Any:
+        """Atomically accept a pending invite with a single conditional UPDATE.
+
+        Exactly one concurrent caller wins (the loser's UPDATE matches zero
+        rows).  This is the same race-free pattern as
+        ``AuthRepository.revoke_refresh_token_if_current``, extended with
+        ``RETURNING`` so the winner reads back ``id``, ``organization_id``
+        and ``role`` without a second round-trip — the caller must not
+        select-then-update, because any identity-mapped User instance goes
+        stale once this UPDATE runs.
+
+        Args:
+            token_hash: SHA-256 hex digest of the raw invite token.
+            password_hash: bcrypt hash of the invitee's chosen password.
+
+        Returns:
+            A ``Row`` with ``id``, ``organization_id`` and ``role`` if this
+            caller claimed the invite, or ``None`` (no live invite matched).
+        """
+        stmt = (
+            sa_update(User)
+            .where(
+                User.invite_token_hash == token_hash,
+                User.invite_token_hash.is_not(None),
+                User.is_active.is_(True),
+                User.is_deleted.is_(False),
+                # created_at is TIMESTAMP WITH TIME ZONE — now() is aware.
+                # Keep this interval in sync with the service's
+                # ``INVITE_EXPIRY_HOURS`` self-clean check.
+                User.created_at >= func.now() - text("interval '72 hours'"),
+            )
+            .values(
+                invite_token_hash=None,
+                password_hash=password_hash,
+                is_email_verified=True,
+                email_verified_at=func.now(),
+            )
+            .returning(User.id, User.organization_id, User.role)
+        )
+        result = await self._db.execute(stmt)
+        row = result.first()
+        await self._db.flush()
+        return row
+
+    async def hard_delete_pending_user(
+        self,
+        organization_id: UUID,
+        user_id: UUID,
+    ) -> int:
+        """Permanently delete a user row that still carries a pending invite.
+
+        The ``invite_token_hash IS NOT NULL`` predicate makes this a revoke
+        (or a self-clean of an expired invite) — an already-accepted or
+        ordinary user is never touched.  A pending invite row has no audit
+        trail (the invitee never logged in), so hard delete is safe.
+
+        Args:
+            organization_id: Tenant scope (always applied — a revoke must
+                not delete a row from another org).
+            user_id: The internal OpenZync user UUID.
+
+        Returns:
+            Number of rows deleted (1 = pending invite revoked, 0 = no
+            matching pending invite → caller raises 404).
+        """
+        from sqlalchemy import delete
+
+        result = await self._db.execute(
+            delete(User).where(
+                User.id == user_id,
+                User.organization_id == organization_id,
+                User.invite_token_hash.is_not(None),
+                User.is_deleted.is_(False),
+            )
+        )
+        await self._db.flush()
+        return result.rowcount or 0  # type: ignore[attr-defined]
 
     # ── Update ──────────────────────────────────────────────────────────────
 
@@ -566,6 +705,16 @@ class UserRepository:
         after a concurrent-insert race in ``get_or_create_user``.
         """
         await self._db.rollback()
+
+    async def commit(self) -> None:
+        """Commit the current transaction.
+
+        Used on paths that persist a cleanup action (e.g. hard-deleting an
+        expired invite) before raising an error — the request-scoped
+        session dependency would otherwise roll the cleanup back together
+        with the error.
+        """
+        await self._db.commit()
 
     # ── Cursor Helpers ──────────────────────────────────────────────────────
 

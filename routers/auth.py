@@ -15,6 +15,8 @@ Endpoints:
     POST   /v1/auth/refresh            — Rotate refresh token, return new JWT pair
     GET    /v1/auth/me                 — Get current dashboard user profile
     PATCH  /v1/auth/me                 — Update profile name, email, or password
+    POST   /v1/auth/invites/info       — Resolve invite details (public, token in body)
+    POST   /v1/auth/invites/accept     — Claim invite, set password, return JWT pair
 """
 
 from __future__ import annotations
@@ -25,10 +27,17 @@ from fastapi import APIRouter, Depends, Request
 
 from core.audit import audit_action
 from dependencies.auth import get_dashboard_user
-from dependencies.services import get_auth_service, get_auth_throttle
+from dependencies.services import (
+    get_auth_service,
+    get_auth_throttle,
+    get_invite_service,
+)
 from middleware.auth_throttle import AuthThrottle
 from schemas.auth import (
+    AcceptInviteRequest,
     DashboardUserResponse,
+    InviteInfoResponse,
+    InviteTokenRequest,
     JoinRequest,
     LoginRequest,
     LoginResponse,
@@ -49,6 +58,7 @@ from schemas.email import (
     VerifyOtpRequest,
 )
 from services.auth_service import AuthService
+from services.invite_service import InviteService
 
 router = APIRouter(
     prefix="/v1/auth",
@@ -559,4 +569,76 @@ async def update_profile(
     return await service.update_profile(
         user_id=UUID(user_id),
         payload=payload,
+    )
+
+
+@router.post(
+    "/invites/info",
+    response_model=InviteInfoResponse,
+    summary="Resolve pending-invite details",
+    description=(
+        "Returns the organization name and invitee identity for a valid "
+        "magic-link token, shown on the invite landing page.  Unknown, "
+        "expired, and used tokens all return the same generic 404.  "
+        "PUBLIC ENDPOINT — no auth required (the token IS the credential)."
+    ),
+)
+@audit_action("auth.invite_info", "user", "Invite info requested")
+async def invite_info(
+    payload: InviteTokenRequest,
+    service: InviteService = Depends(get_invite_service),  # noqa: B008
+) -> InviteInfoResponse:
+    """Resolve the invite details behind a magic-link token.
+
+    The token arrives in the POST body — never the URL path — so the magic
+    link (a live bearer credential) cannot leak into request logs.
+
+    Args:
+        payload: The raw magic-link token.
+        service: Invite service (injected).
+
+    Returns:
+        The invitee's org name, email, and name.
+
+    Raises:
+        NotFoundError: Generic 404 for unknown/expired/used tokens.
+    """
+    return await service.get_invite_info(payload.token)
+
+
+@router.post(
+    "/invites/accept",
+    response_model=TokenResponse,
+    summary="Accept an invite and log in",
+    description=(
+        "Claims the pending invite atomically, sets the invitee's password, "
+        "and returns a JWT pair — the invitee is authenticated immediately.  "
+        "PUBLIC ENDPOINT — no auth required (the token IS the credential)."
+    ),
+)
+@audit_action("auth.invite_accept", "user", "Invite accepted")
+async def accept_invite(
+    payload: AcceptInviteRequest,
+    service: InviteService = Depends(get_invite_service),  # noqa: B008
+) -> TokenResponse:
+    """Accept a pending invite and return a fresh token pair.
+
+    The token arrives in the POST body — never the URL path — for the same
+    log-leak reason as ``/invites/info``.  The response is the standard
+    ``TokenResponse`` (JWT pair) and is excluded from audit body capture.
+
+    Args:
+        payload: Raw magic-link token + chosen password.
+        service: Invite service (injected).
+
+    Returns:
+        A fresh access + refresh token pair.
+
+    Raises:
+        NotFoundError: Generic 404 for unknown/expired/used tokens.
+        ValidationError: If the password is too weak (→ 422).
+    """
+    return await service.accept_invite(
+        token=payload.token,
+        password=payload.password,
     )

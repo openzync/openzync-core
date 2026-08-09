@@ -56,6 +56,7 @@ from services.auth_service import AuthService
 from services.email_service import EmailService
 from services.fact_service import FactService
 from services.graph_service import GraphService
+from services.invite_service import InviteService
 from services.memory_service import MemoryService
 from services.otp_service import OtpService
 from services.quick_actions_service import QuickActionsService
@@ -150,6 +151,35 @@ async def get_auth_service(
         org_repo=OrganizationRepository(db),
         email_service=email_service,
         bao_client=bao_client,
+    )
+
+
+# ── Invite ─────────────────────────────────────────────────────────────────────
+
+
+async def get_invite_service(
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    auth_service: AuthService = Depends(get_auth_service),  # noqa: B008
+) -> InviteService:
+    """Dependency that yields an initialised InviteService.
+
+    Shares the request-scoped session and the wired ``AuthService`` (for
+    token issuance on accept).  The email service is built from the SMTP
+    settings like ``get_auth_service`` does.
+
+    Args:
+        db: Async DB session from dependency injection.
+        auth_service: Fully wired auth service (token issuance).
+
+    Returns:
+        An initialised ``InviteService``.
+    """
+    email_config = EmailConfig.from_settings(get_settings())
+    return InviteService(
+        repo=UserRepository(db),
+        auth_service=auth_service,
+        email_service=EmailService(email_config),
+        org_repo=OrganizationRepository(db),
     )
 
 

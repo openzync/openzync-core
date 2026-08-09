@@ -162,6 +162,13 @@ class Settings(BaseModel):
         default="http://localhost:3000",
         description="Comma-separated list of allowed CORS origins.",
     )
+    FRONTEND_URL: str = Field(
+        default="http://localhost:3000",
+        description=(
+            "Base URL of the frontend web app, used for invite email links "
+            "(e.g. ``{FRONTEND_URL}/invite?token=...``)."
+        ),
+    )
     HOSTS_ALLOWED: str = Field(
         default="localhost:8000",
         description=(

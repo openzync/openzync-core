@@ -317,7 +317,7 @@ class AuthService:
                 )
 
         # Issue tokens now that email is verified
-        return await self._issue_tokens(
+        return await self.issue_tokens(
             user_id=user.id,
             organization_id=user.organization_id,
             role=user.role if user.role is not None else "member",
@@ -549,7 +549,7 @@ class AuthService:
             purpose="passwordless_login",
         )
 
-        return await self._issue_tokens(
+        return await self.issue_tokens(
             user_id=user.id,
             organization_id=user.organization_id,
             role=user.role if user.role is not None else "member",
@@ -623,7 +623,7 @@ class AuthService:
             )
 
         # ── Normal login (MFA disabled) ──────────────────────────────────────
-        tokens = await self._issue_tokens(
+        tokens = await self.issue_tokens(
             user_id=user.id,
             organization_id=user.organization_id,
             role=role,
@@ -686,7 +686,7 @@ class AuthService:
         org_id = uuid.UUID(session_data["org_id"])
         role = session_data["role"]
 
-        return await self._issue_tokens(
+        return await self.issue_tokens(
             user_id=user_id,
             organization_id=org_id,
             role=role,
@@ -822,7 +822,7 @@ class AuthService:
             raise AuthenticationError("This account has been deactivated.")
         role = user.role if user.role is not None else "member"
 
-        new_tokens = await self._issue_tokens(
+        new_tokens = await self.issue_tokens(
             user_id=user_id,
             organization_id=stored.organization_id,
             role=role,
@@ -903,13 +903,17 @@ class AuthService:
 
     # ── Internal helpers ────────────────────────────────────────────────────
 
-    async def _issue_tokens(
+    async def issue_tokens(
         self,
         user_id: uuid.UUID,
         organization_id: uuid.UUID,
         role: str,
     ) -> TokenResponse:
         """Generate and persist an access + refresh token pair.
+
+        Public so sibling services (e.g. ``InviteService``) can log a user
+        in without re-implementing JWT issuance.  All internal auth flows
+        call this too — it is the single token-issuance path.
 
         Args:
             user_id: The authenticated user's UUID.

@@ -93,6 +93,7 @@ PUBLIC_ENDPOINTS: set[str] = {
     "/v1/auth/login/otp/send",
     "/v1/auth/login/otp/verify",
     "/v1/auth/mfa/verify",
+    "/v1/auth/invites",
 }
 """Paths that are allowed without authentication.
 
@@ -100,6 +101,13 @@ The ``/metrics`` path is handled by an exact-path exemption in
 :meth:`AuthMiddleware.dispatch` — it must be unauthenticated so
 Prometheus scrapers can reach it, but sub-paths (``/metrics/summary``
 etc.) go through normal auth.
+
+``/v1/auth/invites`` is a prefix entry: ``_is_public_path`` matches
+``path.startswith(f"{endpoint}/")``, so it covers both
+``POST /v1/auth/invites/info`` and ``POST /v1/auth/invites/accept``.
+Those endpoints are deliberately unauthenticated — the magic-link token
+in the request body IS the credential presented by the invitee, who has
+no account (and therefore no JWT) yet.
 
 These endpoints do not require an ``Authorization`` header.  The set may be
 extended at the application level.  Paths are matched suffix-wise so that

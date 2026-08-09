@@ -159,6 +159,14 @@ class UserResponse(BaseModel):
         default=False,
         description="Soft-delete flag. True during the 30-day GDPR grace period.",
     )
+    is_pending_invite: bool = Field(
+        default=False,
+        description=(
+            "True while the user has a pending admin invite "
+            "(``invite_token_hash`` is not NULL) — the user cannot log in "
+            "until the invite is accepted."
+        ),
+    )
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

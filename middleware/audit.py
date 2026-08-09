@@ -138,15 +138,22 @@ EXEMPT_PATHS: frozenset = frozenset({
 #   returns the freshly rotated org join code, which is a valid join token.
 # - ``routers/admin_org_config.py`` PATCH/PUT "/admin/org/config" → responses
 #   echo the stored config, which may include unmasked LLM API keys.
+# - ``routers/auth.py`` POST "/v1/auth/invites/accept" → returns the JWT
+#   access + refresh pair.  The magic-link flow is unauthenticated, so the
+#   audit middleware cannot derive org_id from request state — the tokens
+#   must never be body-captured regardless (defense-in-depth: a live bearer
+#   credential in the audit log is a standing credential leak).
 #
 # SECURITY: these responses skip response-body capture while the audit event
 # itself (action, actor, status) is still logged.  Add any new secret-bearing
-# route here.
+# route here.  ``POST /v1/auth/invites/info`` is deliberately NOT listed: its
+# response (org name, invitee email/name) contains no secrets.
 WEBHOOK_SECRET_RESPONSE_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/v1/admin/webhooks"),
     ("POST", "/admin/org/org-code/regenerate"),
     ("PATCH", "/admin/org/config"),
     ("PUT", "/admin/org/config"),
+    ("POST", "/v1/auth/invites/accept"),
 })
 
 def _resolve_action(

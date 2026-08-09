@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 class SignupRequest(BaseModel):
@@ -167,6 +167,95 @@ class RefreshRequest(BaseModel):
         ...,
         min_length=1,
         description="The refresh token obtained from login.",
+    )
+
+
+class InviteRequest(BaseModel):
+    """Request body for ``POST /v1/admin/users/invite``.
+
+    The invitee is created as a pending member (``password_hash`` NULL,
+    ``invite_token_hash`` set) and receives the magic-link email.  Both
+    fields are mandatory.
+    """
+
+    email: EmailStr = Field(
+        ...,
+        description="Email address of the invitee (globally unique).",
+        examples=["alice@acme.com"],
+    )
+    name: str = Field(
+        ...,
+        max_length=512,
+        description="Display name for the invitee.",
+        examples=["Alice Johnson"],
+    )
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        """Strip surrounding whitespace and require a non-empty name."""
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("name must not be empty")
+        return stripped
+
+
+class InviteResponse(BaseModel):
+    """Response body for ``POST /v1/admin/users/invite``.
+
+    Deliberately excludes the raw invite token — it is delivered to the
+    invitee by email only and must never travel back over this API.
+    """
+
+    id: UUID = Field(..., description="The pending user's UUID.")
+    email: EmailStr = Field(..., description="Invitee email address.")
+    name: str = Field(..., description="Invitee display name.")
+
+
+class InviteTokenRequest(BaseModel):
+    """Request body for ``POST /v1/auth/invites/info``.
+
+    The token travels in the POST body — never in the URL path — so the
+    magic link (a live bearer credential) cannot leak into access logs.
+    """
+
+    token: str = Field(
+        ...,
+        min_length=1,
+        description="The magic-link token from the invite email.",
+    )
+
+
+class InviteInfoResponse(BaseModel):
+    """Response body for ``POST /v1/auth/invites/info``.
+
+    Shown on the invite landing page before the invitee sets a password.
+    Contains no secrets — safe to return for any valid (unexpired) token.
+    """
+
+    org_name: str = Field(..., description="Inviting organization's name.")
+    email: EmailStr = Field(..., description="Invitee email address.")
+    name: str = Field(..., description="Invitee display name.")
+
+
+class AcceptInviteRequest(BaseModel):
+    """Request body for ``POST /v1/auth/invites/accept``.
+
+    Claims the invite atomically (single conditional UPDATE) and returns a
+    JWT pair — the invitee is logged in immediately after setting a password.
+    """
+
+    token: str = Field(
+        ...,
+        min_length=1,
+        description="The magic-link token from the invite email.",
+    )
+    password: str = Field(
+        ...,
+        min_length=8,
+        max_length=128,
+        description="New password (min 8 chars, max 128).",
+        examples=["secure-p@ssword-123"],
     )
 
 
