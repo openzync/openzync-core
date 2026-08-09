@@ -129,14 +129,24 @@ EXEMPT_PATHS: frozenset = frozenset({
     "/favicon.ico",
 })
 
-# Routes whose responses carry the one-time webhook signing secret
-# (``routers/admin_webhooks.py`` POST "/v1/admin/webhooks" → create, and any
-# future rotate route added there).  SECURITY: the raw secret must never be
-# persisted to audit_logs — it is shown exactly once to the caller, so these
-# responses skip response-body capture while the audit event itself (action,
-# actor, status) is still logged.  Add any new secret-bearing route here.
+# Routes whose responses carry one-time secrets that must never be persisted:
+#
+# - ``routers/admin_webhooks.py`` POST "/v1/admin/webhooks" → create (and any
+#   future rotate route added there) returns the raw webhook signing secret —
+#   shown exactly once to the caller.
+# - ``routers/admin_org_code.py`` POST "/admin/org/org-code/regenerate" →
+#   returns the freshly rotated org join code, which is a valid join token.
+# - ``routers/admin_org_config.py`` PATCH/PUT "/admin/org/config" → responses
+#   echo the stored config, which may include unmasked LLM API keys.
+#
+# SECURITY: these responses skip response-body capture while the audit event
+# itself (action, actor, status) is still logged.  Add any new secret-bearing
+# route here.
 WEBHOOK_SECRET_RESPONSE_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/v1/admin/webhooks"),
+    ("POST", "/admin/org/org-code/regenerate"),
+    ("PATCH", "/admin/org/config"),
+    ("PUT", "/admin/org/config"),
 })
 
 def _resolve_action(
@@ -277,9 +287,9 @@ class AuditMiddleware:
         # Resolve audit_log_response_body: per-org config → env default.
         _capture_body = await _resolve_audit_body_capture(org_id, scope)
         if (method, path) in WEBHOOK_SECRET_RESPONSE_ROUTES:
-            # SECURITY: never persist the one-time webhook signing secret —
-            # it is returned exactly once to the caller (see the constant's
-            # comment for the routes this covers).
+            # SECURITY: never persist one-time secrets (webhook signing
+            # secret, freshly rotated org join code, unmasked LLM API keys) —
+            # see the constant's comment for the routes this covers.
             _capture_body = False
         if _capture_body and body_chunks:
             try:

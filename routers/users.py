@@ -152,8 +152,9 @@ async def update_user(
     - Set a metadata key to ``null`` to remove it.
     - Send ``name: null`` or ``email: null`` to clear those fields.
     - At least one field must be provided.
-    - ``role`` may only be changed by an org admin (JWT) — never via API
-      key — and you cannot change your own role.
+    - ``role`` may only be changed by an org admin (JWT) — API keys are
+      rejected upstream by ``require_org_admin`` (401), and you cannot
+      change your own role.
 
     Uses ``model_dump(exclude_unset=True)`` so that ``None`` means
     "set to null" and an absent key means "do not update."
@@ -163,12 +164,6 @@ async def update_user(
         raise ValidationError(
             "At least one field (name, email, metadata, role) must be "
             "provided for update",
-        )
-    auth_type: str | None = getattr(request.state, "auth_type", None)
-    if auth_type == "api_key" and "role" in update_fields:
-        raise HTTPException(
-            status_code=403,
-            detail="API keys cannot change user roles. Use a JWT dashboard session.",
         )
     return await service.update_user(
         organization_id=UUID(org_id),

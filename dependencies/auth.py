@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Path, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002 (runtime import — FastAPI resolves annotation names)
@@ -343,6 +343,41 @@ async def require_org_admin(
         HTTPException: 403 if the user is not an org admin.
     """
     await _ensure_org_admin(request, org_id, user_id, db)
+    return org_id
+
+
+async def require_org_admin_or_self(
+    request: Request,
+    user_id: UUID = Path(...),
+    org_id: str = Depends(require_org_id),  # noqa: B008
+    actor_user_id: str = Depends(get_dashboard_user),  # noqa: B008
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> str:
+    """Require the target user themself, or an org admin.
+
+    Intended for per-user sub-resources (e.g. ``GET /users/{user_id}/summary``):
+    the authenticated user may access their **own** data, and org admins may
+    access any user's.  A member attempting to read another user's data is
+    denied with 403; API-key auth is rejected with 401 (via
+    :func:`get_dashboard_user`).
+
+    Args:
+        request: The incoming HTTP request.
+        user_id: The target user's UUID (path param).
+        org_id: The authenticated organization ID (from ``require_org_id``).
+        actor_user_id: The dashboard user's UUID string (from ``get_dashboard_user``).
+        db: Request-scoped async DB session.
+
+    Returns:
+        The authenticated organization UUID string.
+
+    Raises:
+        HTTPException: 401 if not a JWT-authenticated session.
+        HTTPException: 403 if the caller is not the target user and not an
+            org admin.
+    """
+    if str(user_id) != actor_user_id:
+        await _ensure_org_admin(request, org_id, actor_user_id, db)
     return org_id
 
 

@@ -128,9 +128,11 @@ async def require_project_owner(
 ) -> None:
     """Verify the authenticated user is an owner of the given project.
 
-    Like ``require_project_membership`` but additionally checks the
-    ``owner`` role — org admins are also allowed (project ``owner``
-    membership OR org ``admin`` role).
+    Requires project membership **and** then passes only if
+    ``member.role == "owner"`` **or** the authenticated user's org role is
+    ``"admin"`` (verified against the DB, not the JWT ``role`` claim).  An
+    org admin who has NOT been added to the project is denied — the check
+    is fail-closed and org-scoped.
 
     **Note**: API key auth is NOT supported for owner-level operations.
     Only JWT-authenticated dashboard users can perform owner-gated actions
@@ -138,7 +140,8 @@ async def require_project_owner(
 
     Raises:
         HTTPException 401: If the user is not authenticated.
-        HTTPException 403: If the user is not a project owner or org admin.
+        HTTPException 403: If the user is not a project member/owner, or
+            not an org admin.
         HTTPException 404: If the project does not exist.
     """
     auth_type: str | None = getattr(request.state, "auth_type", None)

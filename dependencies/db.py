@@ -62,6 +62,14 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
 
     async with factory() as session:
         # ── Apply RLS context from auth middleware ─────────────────────
+        # Invariant: PUBLIC endpoints (signup/join) run with NO org context
+        # — ``org_id`` is None here, so no set_config runs and the query is
+        # issued as the app DB role.  This is safe only while that role OWNS
+        # the tables (verified: ``openzep`` owns ``organizations``/``users``,
+        # ``rls_forced = false`` → the table owner bypasses RLS).  If the
+        # role ever changes to a non-owner, or FORCE ROW SECURITY is enabled
+        # on those tables, signup/join will silently fail — check this
+        # invariant on deployment.
         org_id: str | None = getattr(request.state, "org_id", None)
         if org_id is not None:
             from sqlalchemy import text

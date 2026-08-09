@@ -21,7 +21,7 @@ def generate_org_code() -> str:
     """Generate a new random org code.
 
     Uses :func:`secrets.choice` — cryptographically secure, so codes are
-    unguessable (32-char alphabet, 8 positions ≈ 40 bits of entropy).
+    unguessable (31-char alphabet, 8 positions ≈ 39.6 bits of entropy).
 
     Returns:
         An 8-character org code, e.g. ``"K7M2Q9X4"``.
