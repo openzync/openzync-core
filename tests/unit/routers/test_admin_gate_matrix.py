@@ -49,6 +49,7 @@ from core.exceptions import register_exception_handlers
 from dependencies.auth import require_org_admin, require_org_admin_or_self
 from dependencies.db import get_db
 from routers import (
+    admin_invites,
     admin_metrics,
     admin_organizations,
     admin_org_code,
@@ -81,6 +82,7 @@ ALL_ROUTERS = [
     admin_metrics.router,
     admin_quick_actions.router,
     admin_schemas.router,
+    admin_invites.router,
     users.router,
 ]
 
@@ -140,6 +142,14 @@ ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [
     ("POST", "/v1/users/{user_id}/summary", {"user_id": str(OTHER_USER_ID)}, {}),
     ("PUT", "/v1/users/{user_id}/summary-instructions", {"user_id": str(OTHER_USER_ID)}, {}),
     ("DELETE", "/v1/users/{user_id}/summary-instructions", {"user_id": str(OTHER_USER_ID)}, {}),
+    # users — invite flow (admin only)
+    ("POST", "/v1/admin/users/invite", {}, {}),
+    (
+        "DELETE",
+        "/v1/admin/users/invites/{user_id}",
+        {"user_id": str(OTHER_USER_ID)},
+        {},
+    ),
     # users — require_org_admin_or_self: member on ANOTHER user
     ("GET", "/v1/users/{user_id}/summary", {"user_id": str(OTHER_USER_ID)}, {}),
     ("GET", "/v1/users/{user_id}/summary-instructions", {"user_id": str(OTHER_USER_ID)}, {}),
@@ -165,6 +175,11 @@ def _make_app(*, authenticated: bool) -> FastAPI:
     # handlers' signatures and calls core.arq.get_arq() (RuntimeError when
     # uninitialised) — mock it so the gate is what decides the outcome.
     app.dependency_overrides[get_user_summary_service] = lambda: AsyncMock()
+    # Same for get_invite_service: it pulls get_auth_service (Redis on
+    # app.state) and must not execute before the gate rejects.
+    from dependencies.services import get_invite_service
+
+    app.dependency_overrides[get_invite_service] = lambda: AsyncMock()
 
     if authenticated:
 

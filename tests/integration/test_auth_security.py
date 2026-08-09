@@ -35,7 +35,7 @@ def _token_hash(raw: str) -> str:
 
 @pytest.fixture(autouse=True)
 def _init_settings() -> None:
-    """Initialise the Settings singleton (AuthService._issue_tokens needs it)."""
+    """Initialise the Settings singleton (AuthService.issue_tokens needs it)."""
     settings = Settings(
         DATABASE_URL="postgresql+asyncpg://u:p@localhost:5432/test",
         REDIS_URL="redis://localhost:6379/1",

@@ -340,7 +340,7 @@ class TestAuthService:
         payload = VerifyEmailRequest(email="admin@acme.com", otp="123456")
 
         with patch.object(
-            service, "_issue_tokens"
+            service, "issue_tokens"
         ) as mock_issue:
             mock_issue.return_value = TokenResponse(
                 access_token="at", refresh_token="rt", expires_in=1800
@@ -368,7 +368,7 @@ class TestAuthService:
         payload = VerifyEmailRequest(email="admin@acme.com", otp="123456")
 
         with patch.object(
-            service_no_bao, "_issue_tokens"
+            service_no_bao, "issue_tokens"
         ) as mock_issue:
             mock_issue.return_value = TokenResponse(
                 access_token="at", refresh_token="rt", expires_in=1800
@@ -393,7 +393,7 @@ class TestAuthService:
         payload = VerifyEmailRequest(email="admin@acme.com", otp="123456")
 
         with patch.object(
-            service, "_issue_tokens"
+            service, "issue_tokens"
         ) as mock_issue:
             mock_issue.return_value = TokenResponse(
                 access_token="at", refresh_token="rt", expires_in=1800
@@ -682,7 +682,7 @@ class TestAuthService:
 
         payload = VerifyOtpRequest(email="admin@acme.com", otp="123456")
 
-        with patch.object(service, "_issue_tokens") as mock_issue:
+        with patch.object(service, "issue_tokens") as mock_issue:
             mock_issue.return_value = TokenResponse(
                 access_token="at", refresh_token="rt", expires_in=1800
             )
@@ -707,7 +707,7 @@ class TestAuthService:
 
         payload = VerifyOtpRequest(email="admin@acme.com", otp="123456")
 
-        with patch.object(service, "_issue_tokens") as mock_issue:
+        with patch.object(service, "issue_tokens") as mock_issue:
             mock_issue.return_value = TokenResponse(
                 access_token="at", refresh_token="rt", expires_in=1800
             )
@@ -855,7 +855,7 @@ class TestAuthService:
         with patch(
             "services.auth_service.verify_password", return_value=True
         ):
-            with patch.object(service, "_issue_tokens") as mock_issue:
+            with patch.object(service, "issue_tokens") as mock_issue:
                 mock_issue.return_value = TokenResponse(
                     access_token="at",
                     refresh_token="rt",
@@ -936,7 +936,7 @@ class TestAuthService:
             mfa_session_token="valid-token",
         )
 
-        with patch.object(service, "_issue_tokens") as mock_issue:
+        with patch.object(service, "issue_tokens") as mock_issue:
             mock_issue.return_value = TokenResponse(
                 access_token="at", refresh_token="rt", expires_in=1800
             )
@@ -1142,7 +1142,7 @@ class TestAuthService:
         mock_repo.get_refresh_token_by_hash.side_effect = [stored, new_stored]
         mock_repo.get_user_by_id.return_value = self._make_mock_user()
 
-        with patch.object(service, "_issue_tokens") as mock_issue:
+        with patch.object(service, "issue_tokens") as mock_issue:
             mock_issue.return_value = TokenResponse(
                 access_token="new-at",
                 refresh_token="new-rt",
@@ -1229,7 +1229,7 @@ class TestAuthService:
         mock_repo.get_refresh_token_by_hash.side_effect = _by_hash
         mock_repo.get_user_by_id.return_value = self._make_mock_user()
 
-        with patch.object(service, "_issue_tokens") as mock_issue:
+        with patch.object(service, "issue_tokens") as mock_issue:
             mock_issue.return_value = TokenResponse(
                 access_token="at", refresh_token="new-rt", expires_in=1800
             )
@@ -1554,7 +1554,7 @@ class TestAuthService:
         assert h1 != h2
 
     # ═══════════════════════════════════════════════════════════════════════
-    # _issue_tokens()
+    # issue_tokens()
     # ═══════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
@@ -1563,7 +1563,7 @@ class TestAuthService:
         service: AuthService,
         mock_repo: AsyncMock,
     ) -> None:
-        """_issue_tokens returns a populated TokenResponse and persists refresh."""
+        """issue_tokens returns a populated TokenResponse and persists refresh."""
         mock_repo.create_refresh_token.return_value = AsyncMock()
 
         with patch(
@@ -1572,7 +1572,7 @@ class TestAuthService:
             with patch(
                 "services.auth_service.secrets.token_hex", return_value="raw-refresh"
             ):
-                result = await service._issue_tokens(
+                result = await service.issue_tokens(
                     user_id=self.USER_ID,
                     organization_id=self.ORG_ID,
                     role="admin",

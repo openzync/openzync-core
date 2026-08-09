@@ -296,6 +296,55 @@ class TestAuditMiddleware:
         assert secret not in orjson.dumps(details).decode()
 
     @pytest.mark.asyncio
+    async def test_accept_invite_response_body_never_captured(self) -> None:
+        """The invite-accept JWT pair is never audit body-captured.
+
+        POST /v1/auth/invites/accept returns a live access + refresh pair.
+        The flow is unauthenticated, so ``org_id`` is None on the public
+        path and the audit middleware cannot gate on org config alone —
+        the route must be excluded by constant.  Defense-in-depth: a bearer
+        credential persisted to audit_logs is a standing leak.  The audit
+        event itself is still enqueued.
+        """
+        mock_pool = AsyncMock()
+        mock_pool.enqueue = AsyncMock(return_value=None)
+
+        app = self._create_app(mock_arq_pool=mock_pool)
+        middleware = AuditMiddleware(app)
+
+        scope: dict[str, Any] = {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/auth/invites/accept",
+            "headers": [(b"host", b"example.com")],
+            "query_string": b"",
+            "client": ["10.0.0.1", 54321],
+            # Public path — auth middleware leaves org_id/user_id as None.
+            "state": {"org_id": None, "auth_type": None},
+        }
+        app.state.arq_pool = mock_pool
+        scope["app"] = app
+
+        access = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEifQ.signature"  # noqa: S105
+        refresh = "raw-refresh-token-never-persist"  # noqa: S105
+        with patch(
+            "middleware.audit._resolve_audit_body_capture", return_value=True,
+        ):
+            body = (
+                f'{{"access_token": "{access}", '
+                f'"refresh_token": "{refresh}"}}'
+            ).encode()
+            await middleware._enqueue_audit(
+                scope, "POST", "/v1/auth/invites/accept", 200, [body],
+            )
+
+        assert mock_pool.enqueue.called  # event still audited
+        details = orjson.loads(mock_pool.enqueue.call_args.kwargs["details"])
+        assert "response_body" not in details
+        assert access not in orjson.dumps(details).decode()
+        assert refresh not in orjson.dumps(details).decode()
+
+    @pytest.mark.asyncio
     async def test_response_body_captured_for_non_webhook_route(self) -> None:
         """Body capture still works for ordinary routes (control).
 
