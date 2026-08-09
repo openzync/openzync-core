@@ -12,23 +12,40 @@ Key patterns:
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from core.cursor import decode_cursor, encode_cursor
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import Select, String, func, or_, select, text, update as sa_update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import String, func, or_, select
+from sqlalchemy import update as sa_update
 
+from core.cursor import decode_cursor, encode_cursor
 from models.episode import Episode
 from models.fact import Fact
 from models.session import Session
 from models.user import User
 
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
 # ╠ This file contains NO business logic — only query construction.
 # ╠ If you find yourself writing an ``if`` statement that makes a
 # ╠ decision based on domain rules, it belongs in the service layer.
+
+
+@dataclass(frozen=True)
+class ClaimedInvite:
+    """Identity of a successfully claimed invite.
+
+    Returned by :meth:`UserRepository.claim_invite` — the three fields the
+    accept flow needs to issue tokens, read back via ``RETURNING`` so no
+    second round-trip (and no stale identity-mapped row) is involved.
+    """
+
+    id: UUID
+    organization_id: UUID
+    role: str
 
 
 class UserRepository:
@@ -125,7 +142,7 @@ class UserRepository:
                 email=email,
                 metadata=metadata,
             )
-        except IntegrityError:
+        except IntegrityError as err:
             await self._db.rollback()
             user = await self.get_by_external_id(organization_id, external_id)
             if user is None:
@@ -134,7 +151,7 @@ class UserRepository:
                 raise NotFoundError(
                     f"Failed to get-or-create user '{external_id}' "
                     f"in organization {organization_id}"
-                )
+                ) from err
             return user
 
     # ── Read ────────────────────────────────────────────────────────────────
@@ -231,7 +248,8 @@ class UserRepository:
         self,
         token_hash: str,
         password_hash: str,
-    ) -> Any:
+        cutoff: datetime,
+    ) -> ClaimedInvite | None:
         """Atomically accept a pending invite with a single conditional UPDATE.
 
         Exactly one concurrent caller wins (the loser's UPDATE matches zero
@@ -245,10 +263,16 @@ class UserRepository:
         Args:
             token_hash: SHA-256 hex digest of the raw invite token.
             password_hash: bcrypt hash of the invitee's chosen password.
+            cutoff: Naive-UTC expiry cutoff — rows with ``created_at <
+                cutoff`` are expired and not claimable.  The service derives
+                it from ``INVITE_EXPIRY_HOURS`` so the expiry window lives
+                in exactly one place (a hardcoded SQL interval here could
+                silently drift from the service constant).
 
         Returns:
-            A ``Row`` with ``id``, ``organization_id`` and ``role`` if this
-            caller claimed the invite, or ``None`` (no live invite matched).
+            A :class:`ClaimedInvite` with ``id``, ``organization_id`` and
+            ``role`` if this caller claimed the invite, or ``None`` (no
+            live invite matched).
         """
         stmt = (
             sa_update(User)
@@ -257,10 +281,10 @@ class UserRepository:
                 User.invite_token_hash.is_not(None),
                 User.is_active.is_(True),
                 User.is_deleted.is_(False),
-                # created_at is TIMESTAMP WITH TIME ZONE — now() is aware.
-                # Keep this interval in sync with the service's
-                # ``INVITE_EXPIRY_HOURS`` self-clean check.
-                User.created_at >= func.now() - text("interval '72 hours'"),
+                # created_at is TIMESTAMP WITH TIME ZONE — the bound cutoff
+                # is naive UTC, which asyncpg interprets as UTC for
+                # timestamptz parameters (the auth_service convention).
+                User.created_at >= cutoff,
             )
             .values(
                 invite_token_hash=None,
@@ -269,11 +293,23 @@ class UserRepository:
                 email_verified_at=func.now(),
             )
             .returning(User.id, User.organization_id, User.role)
+            # Skip the identity-map sync: the evaluator would compare the
+            # bound naive-UTC cutoff against the aware created_at attribute
+            # and raise TypeError.  The caller is already forbidden from
+            # reading the row back through the identity map (it goes stale),
+            # so there is nothing to synchronize.
+            .execution_options(synchronize_session=False)
         )
         result = await self._db.execute(stmt)
         row = result.first()
         await self._db.flush()
-        return row
+        if row is None:
+            return None
+        return ClaimedInvite(
+            id=row.id,
+            organization_id=row.organization_id,
+            role=row.role,
+        )
 
     async def hard_delete_pending_user(
         self,
@@ -354,7 +390,7 @@ class UserRepository:
         if "metadata" in update_fields:
             # Deep merge: new keys override, None values remove
             existing = dict(user.metadata_ if user.metadata_ is not None else {})
-            new_meta = update_fields["metadata"] if update_fields["metadata"] is not None else {}
+            new_meta = update_fields.get("metadata") or {}
             for k, v in new_meta.items():
                 if v is None:
                     existing.pop(k, None)

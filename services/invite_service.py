@@ -56,9 +56,11 @@ logger = logging.getLogger(__name__)
 INVITE_EXPIRY_HOURS = 72
 """Lifetime of a pending invite, in hours.
 
-Must stay in sync with the ``interval '72 hours'`` window in
-``UserRepository.claim_invite`` — the SQL-side claim guard and the
-service-side self-clean check are the two halves of the same rule.
+Single source of the expiry rule: ``accept_invite`` derives the claim
+cutoff from this constant and passes it to
+``UserRepository.claim_invite`` as a bound parameter, and the info-path
+self-clean check uses it directly.  The SQL-side claim guard can no
+longer drift from the service-side check.
 """
 
 _GENERIC_INVITE_404 = "This invitation link is invalid or has expired."
@@ -312,9 +314,15 @@ class InviteService:
         token_hash = _hash_invite_token(token)
         pw_hash = hash_password(password)
 
+        # Naive UTC (auth_service storage convention) — the single source
+        # of the expiry window is INVITE_EXPIRY_HOURS above.
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+            hours=INVITE_EXPIRY_HOURS
+        )
         claimed = await self._repo.claim_invite(
             token_hash=token_hash,
             password_hash=pw_hash,
+            cutoff=cutoff,
         )
         if claimed is None:
             # Miss — distinguish "expired but present" (self-clean) from

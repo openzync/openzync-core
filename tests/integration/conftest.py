@@ -18,14 +18,24 @@ Fixtures provided:
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
-from typing import Any
+from contextlib import suppress
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
+
+from core.db import get_async_session
+from tests.conftest import (
+    _ensure_testcontainers_env,
+    _start_postgres_container,
+    _start_redis_container,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -45,13 +55,6 @@ def asgi_transport(app: Any) -> ASGITransport:
         await app(scope, receive, send)
 
     return ASGITransport(app=_asgi_with_scope)
-
-from core.db import get_async_session
-from tests.conftest import (
-    _ensure_testcontainers_env,
-    _start_postgres_container,
-    _start_redis_container,
-)
 
 # Module-level container registry.
 # SQLAlchemy AsyncEngine uses __slots__ and rejects arbitrary attributes,
@@ -108,19 +111,24 @@ async def engine():
     async with async_engine.connect() as conn:
         # Check if bootstrap org exists
         result = await conn.execute(
-            text("SELECT 1 FROM organizations WHERE id = '00000000-0000-0000-0000-000000000001'")
+            text(
+                "SELECT 1 FROM organizations "
+                "WHERE id = '00000000-0000-0000-0000-000000000001'"
+            )
         )
         if not result.scalar():
             await conn.execute(
                 text(
-                    "INSERT INTO organizations (id, name, plan) "
-                    "VALUES ('00000000-0000-0000-0000-000000000001', 'Bootstrap Org', 'free')"
+                    "INSERT INTO organizations (id, name, plan, org_code) "
+                    "VALUES ('00000000-0000-0000-0000-000000000001', "
+                    "'Bootstrap Org', 'free', 'bootstrap01')"
                 )
             )
         # Seed a project for tests that need project-scoped entities
         result = await conn.execute(
             text(
-                "SELECT 1 FROM projects WHERE id = '00000000-0000-0000-0000-000000000002'"
+                "SELECT 1 FROM projects "
+                "WHERE id = '00000000-0000-0000-0000-000000000002'"
             )
         )
         if not result.scalar():
@@ -128,7 +136,8 @@ async def engine():
                 text(
                     "INSERT INTO projects (id, organization_id, name) "
                     "VALUES ('00000000-0000-0000-0000-000000000002', "
-                    "'00000000-0000-0000-0000-000000000001', 'Integration Test Project')"
+                    "'00000000-0000-0000-0000-000000000001', "
+                    "'Integration Test Project')"
                 )
             )
         await conn.commit()
@@ -166,10 +175,9 @@ async def redis_client(engine) -> Any:
         socket_timeout=10,
     )
     yield client
-    try:
+    with suppress(RuntimeError):
+        # Event loop already closed during fixture teardown
         await client.aclose()
-    except RuntimeError:
-        pass  # event loop already closed during fixture teardown
 
 
 @pytest_asyncio.fixture(loop_scope="function")
@@ -277,12 +285,14 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
     org_id = UUID(data["organization_id"])
 
     # ── Insert the user row directly (test infra, not a public API) ───
-    async with app.state.db_session_factory() as session:
-        async with session.begin():
-            user = await UserRepository(session).create(
-                organization_id=org_id,
-                external_id=f"bootstrap_{uuid4().hex[:8]}",
-            )
+    async with (
+        app.state.db_session_factory() as session,
+        session.begin(),
+    ):
+        user = await UserRepository(session).create(
+            organization_id=org_id,
+            external_id=f"bootstrap_{uuid4().hex[:8]}",
+        )
     user_id = user.id
 
     # ── Mint a JWT for the user ─────────────────────────────────────────
@@ -399,9 +409,9 @@ async def db_session(engine) -> AsyncGenerator[None, None]:
         # created by the session-scoped engine fixture and relied on by
         # many integration tests, e.g. test_user_repository.py).
         for stmt in (
-            "INSERT INTO organizations (id, name, plan) "
+            "INSERT INTO organizations (id, name, plan, org_code) "
             "VALUES ('00000000-0000-0000-0000-000000000001', "
-            "'Bootstrap Org', 'free') ON CONFLICT (id) DO NOTHING",
+            "'Bootstrap Org', 'free', 'bootstrap01') ON CONFLICT (id) DO NOTHING",
             "INSERT INTO projects (id, organization_id, name) "
             "VALUES ('00000000-0000-0000-0000-000000000002', "
             "'00000000-0000-0000-0000-000000000001', "
@@ -450,8 +460,8 @@ async def isolated_app(engine, redis_client, db_session) -> Any:
     )
     set_settings(settings)
 
-    from services.api.main import create_app
     from dependencies.db import get_db
+    from services.api.main import create_app
 
     test_app = create_app()
     from core.db import get_async_session
