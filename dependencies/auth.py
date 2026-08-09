@@ -348,7 +348,7 @@ async def require_org_admin(
 
 async def require_org_admin_or_self(
     request: Request,
-    user_id: UUID = Path(...),
+    user_id: UUID = Path(...),  # noqa: B008
     org_id: str = Depends(require_org_id),  # noqa: B008
     actor_user_id: str = Depends(get_dashboard_user),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008

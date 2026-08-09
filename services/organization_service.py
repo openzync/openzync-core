@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import structlog
 import yaml
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import NotFoundError
 from core.openbao import OpenBaoClient
 from core.org_codes import generate_org_code
 from models.organization import Organization
@@ -117,6 +119,43 @@ class OrganizationService:
             organization_id=org.id,
             organization_name=org.name,
         )
+
+    # ── Org join code (admin management) ──────────────────────────────────────
+
+    async def get_org_code(self, org_id: UUID) -> str:
+        """Return the organization's current join code.
+
+        Args:
+            org_id: The organization UUID.
+
+        Returns:
+            The current org code.
+
+        Raises:
+            NotFoundError: If no organization with this UUID exists.
+        """
+        org = await self._repo.get_by_id(org_id)
+        if org is None:
+            raise NotFoundError(f"Organization {org_id} not found.")
+        return org.org_code
+
+    async def regenerate_org_code(self, org_id: UUID) -> str:
+        """Generate and persist a new join code (rotating the old one).
+
+        Immediately invalidates any previously distributed code.
+
+        Args:
+            org_id: The organization UUID.
+
+        Returns:
+            The new org code.
+
+        Raises:
+            NotFoundError: If no organization with this UUID exists.
+        """
+        new_code = generate_org_code()
+        org = await self._repo.set_org_code(org_id, new_code)
+        return org.org_code
 
     def _load_org_defaults(self) -> dict[str, Any]:
         """Load default per-org config values from ``config/defaults/org_config.yaml``.

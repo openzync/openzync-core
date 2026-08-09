@@ -19,7 +19,11 @@ from starlette.responses import Response
 
 from core.audit import audit_action
 from core.exceptions import RateLimitError, ValidationError
-from dependencies.auth import require_org_admin, require_org_id
+from dependencies.auth import (
+    require_org_admin,
+    require_org_admin_or_self,
+    require_org_id,
+)
 from dependencies.db import get_db
 from repositories.user_repository import UserRepository
 from schemas.custom_instructions import (
@@ -225,9 +229,11 @@ async def get_user_summary_service(
 async def get_user_summary(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin_or_self),
 ) -> UserSummaryResponse:
     """Get the current summary for a user.
+
+    Readable by the target user themself or an org admin (JWT only).
 
     Returns 404 if no summary has been generated yet.
     """
@@ -252,12 +258,13 @@ async def get_user_summary(
 async def trigger_user_summary(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin),
 ) -> UserSummaryTriggerResponse:
     """Trigger generation of a user summary.
 
-    Enqueues an ARQ background job. Rate-limited to once per 5 minutes
-    per user (enforced via Redis).
+    Enqueues an ARQ background job.  Admin-gated (``require_org_admin``):
+    this mutates another user's data and enqueues paid LLM work.  Rate-
+    limited to once per 5 minutes per user (enforced via Redis).
     """
     try:
         return await service.trigger_generation(
@@ -274,9 +281,12 @@ async def trigger_user_summary(
 async def list_user_summary_instructions(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin_or_self),
 ) -> CustomInstructionsResponse:
-    """List custom instructions for a user's summary generation."""
+    """List custom instructions for a user's summary generation.
+
+    Readable by the target user themself or an org admin (JWT only).
+    """
     instructions = await service.get_instructions(
         org_id=UUID(org_id), user_id=user_id,
     )
@@ -295,9 +305,12 @@ async def set_user_summary_instructions(
     user_id: UUID,
     body: SetCustomInstructionsRequest,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin),
 ) -> CustomInstructionsResponse:
-    """Replace all summary instructions for a user."""
+    """Replace all summary instructions for a user.
+
+    Admin-gated (``require_org_admin``): mutates another user's data.
+    """
     instructions_data = [i.model_dump() for i in body.instructions]
     instructions = await service.set_instructions(
         org_id=UUID(org_id),
@@ -314,8 +327,11 @@ async def set_user_summary_instructions(
 async def delete_user_summary_instructions(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin),
 ) -> Response:
-    """Clear all summary instructions for a user."""
+    """Clear all summary instructions for a user.
+
+    Admin-gated (``require_org_admin``): mutates another user's data.
+    """
     await service.delete_instructions(org_id=UUID(org_id), user_id=user_id)
     return Response(status_code=204)

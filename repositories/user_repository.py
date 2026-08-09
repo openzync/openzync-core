@@ -464,11 +464,14 @@ class UserRepository:
         await self._db.flush()
 
     async def get_summary(
-        self, user_id: UUID
+        self,
+        organization_id: UUID,
+        user_id: UUID,
     ) -> tuple[str | None, datetime | None]:
         """Return ``(summary, summary_updated_at)`` for a user.
 
         Args:
+            organization_id: Tenant scope (always applied).
             user_id: The internal OpenZync user UUID.
 
         Returns:
@@ -476,7 +479,10 @@ class UserRepository:
             ``(None, None)`` if the user is not found.
         """
         result = await self._db.execute(
-            select(User.summary, User.summary_updated_at).where(User.id == user_id)
+            select(User.summary, User.summary_updated_at).where(
+                User.id == user_id,
+                User.organization_id == organization_id,
+            )
         )
         row = result.one_or_none()
         if row is None:
