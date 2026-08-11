@@ -6,9 +6,28 @@ All auth schemas are request/response models — never stored or logged directly
 
 from __future__ import annotations
 
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+)
+
+from schemas.system_config import (  # noqa: TC001 — runtime imports: pydantic resolves field types
+    ApprovalScope,
+    OrgCreationPolicy,
+)
+
+_EMAIL_ADAPTER = TypeAdapter(EmailStr)
+"""TypeAdapter for EmailStr — validates a string with EmailStr semantics
+outside of a field declaration (used by ``LoginRequest``'s root-or-email
+validator)."""
 
 
 class SignupRequest(BaseModel):
@@ -119,6 +138,67 @@ class SignupResponse(BaseModel):
     )
 
 
+class PendingOrgResponse(BaseModel):
+    """Signup response when the org enters the approval queue.
+
+    Returned instead of :class:`SignupResponse` when the platform
+    ``org_creation_policy`` is ``approvals`` with ``public_signup``
+    scope: the org is created as ``pending`` and the designated admin
+    receives no OTP — no live org exists until a superadmin approves it.
+    """
+
+    status: Literal["pending"] = Field(
+        default="pending",
+        description="Always ``pending`` — distinguishes this from SignupResponse.",
+    )
+    message: str = Field(
+        ...,
+        description="Human-readable confirmation message.",
+        examples=[
+            "Your organization is pending approval. "
+            "You will receive an email when it is approved."
+        ],
+    )
+
+
+class ChangePasswordRequest(BaseModel):
+    """Request body for ``POST /v1/auth/change-password``.
+
+    The first-login password-change flow for the seeded root credential.
+    """
+
+    old_password: str = Field(
+        ...,
+        min_length=1,
+        description="Current password.",
+    )
+    new_password: str = Field(
+        ...,
+        min_length=8,
+        max_length=128,
+        description="New password (min 8 chars, max 128).",
+        examples=["secure-p@ssword-123"],
+    )
+
+
+class RegistrationStatusResponse(BaseModel):
+    """Public registration status — drives frontend signup/request UI states.
+
+    Returned by ``GET /v1/auth/registration-status`` (no auth).  Defaults
+    to ``allow_all`` / ``both`` when OpenBao has no system config record —
+    backward compatible with pre-feature installs.
+    """
+
+    org_creation_policy: OrgCreationPolicy = Field(
+        ...,
+        description="Platform new-org creation policy.",
+    )
+    approval_scope: ApprovalScope = Field(
+        ...,
+        description="Channels gated by the approvals policy.",
+    )
+
+
 class VerifyEmailRequest(BaseModel):
     """Request body for ``POST /v1/auth/verify-email``.
 
@@ -141,11 +221,19 @@ class VerifyEmailRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    """Request body for ``POST /v1/auth/login``."""
+    """Request body for ``POST /v1/auth/login``.
 
-    email: EmailStr = Field(
+    The ``email`` field accepts either a regular email address or the
+    literal ``root`` (case-insensitive) — the seeded platform root user
+    logs in with ``email='root'``, which is not an address.  Any other
+    value must pass the same email-format check as before.
+    """
+
+    email: str = Field(
         ...,
-        description="Email address of the dashboard user.",
+        min_length=1,
+        max_length=320,
+        description="Email address of the dashboard user, or 'root'.",
         examples=["admin@acme.com"],
     )
     password: str = Field(
@@ -153,6 +241,37 @@ class LoginRequest(BaseModel):
         min_length=1,
         description="Dashboard user password.",
     )
+
+    @field_validator("email")
+    @classmethod
+    def _validate_email_or_root(cls, v: str) -> str:
+        """Accept a valid email OR the literal ``root`` (case-insensitive).
+
+        Whitespace is stripped; the root check is case-insensitive so the
+        DB lookup matches the seeded ``'root'`` row.  Any other value is
+        checked with the same ``EmailStr`` semantics as before — a
+        malformed address raises the identical ``ValidationError``.
+
+        Args:
+            v: The raw email/root value from the request body.
+
+        Returns:
+            The normalized value — ``"root"`` for the platform root user,
+            otherwise the EmailStr-normalized address (domain lowercased,
+            local part preserved, whitespace stripped).
+
+        Raises:
+            ValueError: If the value is not ``root`` and not a valid
+                email address (surfaced as 422 by FastAPI).
+        """
+        stripped = v.strip()
+        if stripped.lower() == "root":
+            return "root"
+        try:
+            validated = _EMAIL_ADAPTER.validate_python(stripped)
+        except ValidationError as exc:
+            raise ValueError("value is not a valid email address") from exc
+        return str(validated)
 
 
 class TokenResponse(BaseModel):
@@ -297,6 +416,13 @@ class DashboardUserResponse(BaseModel):
     mfa_enabled: bool = Field(
         default=False,
         description="Whether MFA is enabled.",
+    )
+    must_change_password: bool = Field(
+        default=False,
+        description=(
+            "Whether the user must set a new password before using the "
+            "dashboard (seeded root credential)."
+        ),
     )
 
     model_config = ConfigDict(from_attributes=True)

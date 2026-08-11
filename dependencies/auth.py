@@ -38,7 +38,8 @@ from sqlalchemy.ext.asyncio import (
     AsyncSession,  # noqa: TC002 (runtime import — FastAPI resolves annotation names)
 )
 
-from core.rbac import get_org_role
+from core.config import PLATFORM_ORG_ID
+from core.rbac import get_must_change_password, get_org_role
 from dependencies.db import get_db
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -52,6 +53,24 @@ When used as a dependency, this extracts the ``Authorization: Bearer <token>``
 header and populates the OpenAPI docs with a security scheme.  Setting
 ``auto_error=False`` means it does not raise on missing headers — our
 middleware handles that.
+"""
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Must-change-password exemption
+# ═══════════════════════════════════════════════════════════════════════════════
+
+MUST_CHANGE_PASSWORD_EXEMPT_PATHS: frozenset[tuple[str, str]] = frozenset({
+    ("POST", "/v1/auth/change-password"),
+    ("GET", "/v1/auth/me"),
+    ("POST", "/v1/auth/logout"),
+    ("POST", "/v1/auth/refresh"),
+})
+"""Paths a user with ``must_change_password=True`` may still call.
+
+The change-password endpoint itself, the profile read (so the UI can
+discover the flag), logout, and refresh.  Everything else returns 403
+until the password is changed.
 """
 
 
@@ -220,22 +239,34 @@ def require_scope(required_scope: str):
 
 async def get_dashboard_user(
     request: Request,
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_id),  # noqa: B008
+    db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> str:
     """Require a JWT-authenticated dashboard user.
 
     Returns the ``user_id`` from the JWT claims.  Raises 401 if the
     request is authenticated via API key instead of JWT.
 
+    **Must-change-password gate**: after resolving the user, if the DB
+    row has ``must_change_password=True`` and the request path is not in
+    :data:`MUST_CHANGE_PASSWORD_EXEMPT_PATHS`, a 403 is raised — the
+    seeded root credential must be replaced before the dashboard is
+    usable.  API-key auth paths are unaffected.  The flag is read from
+    the DB (Redis-cached briefly, fail-closed to "must change") via
+    :func:`core.rbac.get_must_change_password`.
+
     Args:
         request: The incoming HTTP request.
         org_id: The authenticated organization ID (from ``require_org_id``).
+        db: Request-scoped async DB session (flag lookup).
 
     Returns:
         The dashboard user's UUID string.
 
     Raises:
         HTTPException: 401 if not a JWT-authenticated session.
+        HTTPException: 403 if the user must change their password and the
+            path is not exempt.
     """
     auth_type: str | None = getattr(request.state, "auth_type", None)
     if auth_type != "jwt":
@@ -263,6 +294,32 @@ async def get_dashboard_user(
                 "detail": "The JWT token does not contain a valid user identifier.",
             },
         )
+
+    # ── Must-change-password gate (JWT dashboard sessions only) ──────────
+    path = request.url.path
+    if (request.method, path) not in MUST_CHANGE_PASSWORD_EXEMPT_PATHS:
+        redis = getattr(request.app.state, "redis", None)
+        if redis is not None:
+            must_change = await get_must_change_password(
+                redis,
+                db,
+                UUID(org_id),
+                UUID(user_id),
+            )
+            if must_change:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail={
+                        "type": "https://errors.openzync.tech/authorization_error",
+                        "title": "Password Change Required",
+                        "status": 403,
+                        "detail": (
+                            "You must set a new password before using the "
+                            "dashboard."
+                        ),
+                    },
+                )
+
     return user_id
 
 
@@ -418,3 +475,108 @@ async def get_current_user_id(
             },
         )
     return UUID(user_id)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Platform super-admin
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+async def _ensure_superadmin(
+    request: Request,
+    org_id: str,
+    user_id: str,
+    db: AsyncSession,
+) -> None:
+    """Raise 403 unless the JWT session is a DB-verified platform superadmin.
+
+    Requires all of:
+    1. A JWT dashboard session (``get_dashboard_user`` has already raised
+       401 otherwise).
+    2. ``org_id == PLATFORM_ORG_ID`` — the session must belong to the
+       platform org.
+    3. A DB-verified role of ``superadmin`` (Redis-cached, fail-closed to
+       ``member``) — the JWT ``role`` claim is never trusted.
+
+    Fail-closed: any Redis/DB error degrades the role lookup to
+    ``member``, which denies.  This is the gate that authorises the RLS
+    bypass in ``get_db_superadmin`` — no superadmin check, no bypass.
+
+    Args:
+        request: The incoming HTTP request (for ``app.state.redis``).
+        org_id: The authenticated organization ID (JWT claim).
+        user_id: The authenticated dashboard user's UUID string.
+        db: Request-scoped async DB session (role lookup).
+
+    Raises:
+        HTTPException: 503 if Redis is not configured on app state.
+        HTTPException: 403 if the org is not the platform org or the role
+            is not ``superadmin``.
+    """
+    if org_id != str(PLATFORM_ORG_ID):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "type": "https://errors.openzync.tech/authorization_error",
+                "title": "Insufficient Permissions",
+                "status": 403,
+                "detail": "This action requires the platform super-admin role.",
+            },
+        )
+
+    redis = getattr(request.app.state, "redis", None)
+    if redis is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "type": "https://errors.openzync.tech/service_unavailable",
+                "title": "Service Unavailable",
+                "status": 503,
+                "detail": (
+                    "The authorization cache is not configured. "
+                    "Contact the administrator."
+                ),
+            },
+        )
+    role = await get_org_role(redis, db, PLATFORM_ORG_ID, UUID(user_id))
+    if role != "superadmin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "type": "https://errors.openzync.tech/authorization_error",
+                "title": "Insufficient Permissions",
+                "status": 403,
+                "detail": "This action requires the platform super-admin role.",
+            },
+        )
+
+
+async def require_superadmin(
+    request: Request,
+    org_id: str = Depends(require_org_id),  # noqa: B008
+    user_id: str = Depends(get_dashboard_user),  # noqa: B008
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> str:
+    """Require a JWT dashboard session with the platform super-admin role.
+
+    Raises 401 for API-key auth or a missing user id (via
+    :func:`get_dashboard_user`), 403 for any non-platform org, any
+    non-``superadmin`` role, or a user who must still change their
+    password.  The role is verified against the DB (Redis-cached for
+    60 s, fail-closed) — never trusted from the JWT ``role`` claim.
+
+    Args:
+        request: The incoming HTTP request.
+        org_id: The authenticated organization ID (from ``require_org_id``).
+        user_id: The dashboard user's UUID string (from ``get_dashboard_user``).
+        db: Request-scoped async DB session.
+
+    Returns:
+        The authenticated platform-org UUID string.
+
+    Raises:
+        HTTPException: 401 if not a JWT-authenticated session.
+        HTTPException: 403 if not a platform superadmin.
+    """
+    await _ensure_superadmin(request, org_id, user_id, db)
+    return org_id

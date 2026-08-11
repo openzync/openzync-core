@@ -83,6 +83,59 @@ def _hash_invite_token(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+async def send_invite_email(
+    email_service: EmailService,
+    *,
+    org_name: str,
+    inviter_name: str,
+    invitee_name: str,
+    invitee_email: str,
+    raw_token: str,
+) -> None:
+    """Render and send the magic-link invite email.
+
+    Shared by the admin invite flow and the platform org-approval flow
+    (``OrganizationService.approve_org``) — one template, one link shape
+    (``{FRONTEND_URL}/invite?token=...``).
+
+    Args:
+        email_service: The email service used to send.
+        org_name: Inviting organization's name (subject + body).
+        inviter_name: Name of the inviting actor (admin or superadmin).
+        invitee_name: Invitee display name (greeting).
+        invitee_email: Recipient address.
+        raw_token: The plaintext magic-link token — appears only in the
+            emailed link, never in logs or responses.
+
+    Raises:
+        ExternalServiceError: If the email service is unavailable or
+            sending fails — propagates so the pending row is rolled back.
+    """
+    from services.email_service import (  # noqa: PLC0415
+        render_email_template,
+        render_text_template,
+    )
+
+    link = f"{get_settings().FRONTEND_URL}/invite?token={raw_token}"
+    context: dict[str, object] = {
+        "org_name": org_name,
+        "inviter_name": inviter_name,
+        "invitee_name": invitee_name,
+        "invitee_email": invitee_email,
+        "link": link,
+        "expiry_hours": INVITE_EXPIRY_HOURS,
+    }
+    html_body = await render_email_template("invite", context)
+    text_body = await render_text_template("invite", context)
+
+    await email_service.send_email(
+        to=invitee_email,
+        subject=f"You've been invited to {org_name}",
+        html_body=html_body,
+        text_body=text_body,
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Service
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -378,28 +431,13 @@ class InviteService:
                 "Email service is not configured — cannot send invite."
             )
 
-        from services.email_service import (  # noqa: PLC0415
-            render_email_template,
-            render_text_template,
-        )
-
-        link = f"{get_settings().FRONTEND_URL}/invite?token={raw_token}"
-        context: dict[str, object] = {
-            "org_name": org_name,
-            "inviter_name": inviter_name,
-            "invitee_name": invitee_name,
-            "invitee_email": invitee_email,
-            "link": link,
-            "expiry_hours": INVITE_EXPIRY_HOURS,
-        }
-        html_body = await render_email_template("invite", context)
-        text_body = await render_text_template("invite", context)
-
-        await self._email_service.send_email(
-            to=invitee_email,
-            subject=f"You've been invited to {org_name}",
-            html_body=html_body,
-            text_body=text_body,
+        await send_invite_email(
+            self._email_service,
+            org_name=org_name,
+            inviter_name=inviter_name,
+            invitee_name=invitee_name,
+            invitee_email=invitee_email,
+            raw_token=raw_token,
         )
 
     def _is_expired(self, created_at: datetime) -> bool:

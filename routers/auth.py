@@ -26,6 +26,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 
 from core.audit import audit_action
+from core.system_config import get_system_config
 from dependencies.auth import get_dashboard_user
 from dependencies.services import (
     get_auth_service,
@@ -35,6 +36,7 @@ from dependencies.services import (
 from middleware.auth_throttle import AuthThrottle
 from schemas.auth import (
     AcceptInviteRequest,
+    ChangePasswordRequest,
     DashboardUserResponse,
     InviteInfoResponse,
     InviteTokenRequest,
@@ -44,7 +46,9 @@ from schemas.auth import (
     MfaDisableRequest,
     MfaEnableRequest,
     MfaVerifyRequest,
+    PendingOrgResponse,
     RefreshRequest,
+    RegistrationStatusResponse,
     SignupRequest,
     SignupResponse,
     TokenResponse,
@@ -80,16 +84,49 @@ def _client_ip(request: Request) -> str:
     return "unknown"
 
 
+@router.get(
+    "/registration-status",
+    response_model=RegistrationStatusResponse,
+    summary="Public registration status",
+    description=(
+        "Returns the platform's org-creation policy and approval scope so "
+        "the frontend can decide between signup, org-request, and disabled "
+        "states.  PUBLIC ENDPOINT — no auth required."
+    ),
+)
+async def registration_status(
+    request: Request,
+) -> RegistrationStatusResponse:
+    """Return the platform registration policy for the signup UI.
+
+    Args:
+        request: Incoming HTTP request (app-state Redis/OpenBao access).
+
+    Returns:
+        The current ``org_creation_policy`` and ``approval_scope``
+        (defaults to ``allow_all``/``both`` when OpenBao has no record).
+    """
+    bao_client = getattr(request.app.state, "openbao_client", None)
+    redis = getattr(request.app.state, "redis", None)
+    config = await get_system_config(redis, bao_client)
+    return RegistrationStatusResponse(
+        org_creation_policy=config.org_creation_policy,
+        approval_scope=config.approval_scope,
+    )
+
+
 @router.post(
     "/signup",
-    response_model=SignupResponse,
+    response_model=SignupResponse | PendingOrgResponse,
     status_code=201,
     summary="Create organization and admin user",
     description=(
         "Registers a new organization with an admin dashboard user "
         "identified by email and password.  A verification code is sent "
         "to the user's email.  The user must call ``POST /v1/auth/verify-email`` "
-        "with the code to complete signup and receive JWT tokens."
+        "with the code to complete signup and receive JWT tokens.  Under "
+        "the platform approvals policy, the org is created as pending and "
+        "the response carries ``status='pending'`` instead."
     ),
 )
 @audit_action("auth.signup", "user", "User signed up")
@@ -98,7 +135,7 @@ async def signup(
     request: Request,
     service: AuthService = Depends(get_auth_service),  # noqa: B008
     throttle: AuthThrottle = Depends(get_auth_throttle),  # noqa: B008
-) -> SignupResponse:
+) -> SignupResponse | PendingOrgResponse:
     """Sign up a new organization with an admin dashboard user.
 
     Args:
@@ -108,7 +145,8 @@ async def signup(
         throttle: Injected auth throttle.
 
     Returns:
-        Confirmation message (tokens obtained via verify-email).
+        Confirmation message (tokens obtained via verify-email), or a
+        pending-approval response under the approvals policy.
     """
     await throttle.check_signup_attempt(_client_ip(request))
     return await service.signup(payload)
@@ -513,6 +551,40 @@ async def refresh(
         New access and refresh tokens.
     """
     return await service.refresh(payload.refresh_token)
+
+
+@router.post(
+    "/change-password",
+    response_model=TokenResponse,
+    summary="Change password and rotate the session",
+    description=(
+        "Verifies the current password, sets the new one, clears the "
+        "must-change-password gate, revokes all existing refresh tokens, "
+        "and returns a fresh token pair.  Exempt from the "
+        "must-change-password gate — this is how the seeded root "
+        "credential is replaced."
+    ),
+)
+@audit_action("auth.password_changed", "user", "Password changed")
+async def change_password(
+    payload: ChangePasswordRequest,
+    service: AuthService = Depends(get_auth_service),  # noqa: B008
+    user_id: str = Depends(get_dashboard_user),  # noqa: B008
+) -> TokenResponse:
+    """Change the current user's password.
+
+    Args:
+        payload: Current + new password.
+        service: Injected auth service.
+        user_id: Authenticated user UUID from JWT claims.
+
+    Returns:
+        A fresh access + refresh token pair (all prior sessions revoked).
+    """
+    return await service.change_password(
+        user_id=UUID(user_id),
+        payload=payload,
+    )
 
 
 @router.get(

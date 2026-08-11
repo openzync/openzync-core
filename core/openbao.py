@@ -74,11 +74,35 @@ SYSTEM_KEY_MAPPING: dict[str, str] = {
     "OZ_SMTP_FROM_ADDR": "OZ_SMTP_FROM_ADDR",
     "OZ_SMTP_USE_TLS": "OZ_SMTP_USE_TLS",
     "OZ_SMTP_START_TLS": "OZ_SMTP_START_TLS",
+    "OZ_ROOT_PASSWORD": "OZ_ROOT_PASSWORD",
 }
 """Maps OpenBao config key names (``OZ_`` uppercase) to ``OZ_`` environment variable names."""
 
 _MAX_RETRIES = 3
 """Maximum number of times to retry a request that receives a 429 (rate-limited)."""
+
+_KV_UPGRADE_TRANSIENT_MARKER = "upgrading from non-versioned to versioned data"
+"""Lowercased substring marking the KV-v2 migration-window transient.
+
+Immediately after :meth:`OpenBaoClient.enable_kv_v2` mounts the engine on
+a fresh path, the first write can hit ``HTTP 400: Upgrading from
+non-versioned to versioned data`` — a known Vault/OpenBao transient that
+clears within a brief window.  :meth:`OpenBaoClient._request` retries
+**only** this message; other 400s raise immediately.
+"""
+
+
+def _is_kv_upgrade_transient(exc: OpenBaoError) -> bool:
+    """True when the error is the KV-v2 migration-window 400.
+
+    Args:
+        exc: The raised OpenBao error (``[path] HTTP 400: <msg>``).
+
+    Returns:
+        Whether the message contains the upgrade-transient marker
+        (case-insensitive).
+    """
+    return _KV_UPGRADE_TRANSIENT_MARKER in str(exc).lower()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -277,8 +301,10 @@ class OpenBaoClient:
 
         Wraps network-level errors in :class:`OpenBaoConnectionError` and
         delegates HTTP status-code handling to :meth:`_raise_on_error`.
-        Retries up to :data:`_MAX_RETRIES` times on ``OpenBaoRateLimitError``
-        with exponential backoff.
+        Retries up to :data:`_MAX_RETRIES` times with exponential backoff
+        on two transient conditions: ``OpenBaoRateLimitError`` (429) and
+        the KV-v2 migration-window 400 ("Upgrading from non-versioned to
+        versioned data" — see :func:`_is_kv_upgrade_transient`).
 
         Args:
             method: HTTP method (``GET``, ``POST``, ``LIST``, ``DELETE``, …).
@@ -296,7 +322,9 @@ class OpenBaoClient:
             OpenBaoSecretNotFoundError: On 404.
             OpenBaoNamespaceError: On 412.
             OpenBaoRateLimitError: On 429 (raised after retries are exhausted).
-            OpenBaoError: On any other non-200 status.
+            OpenBaoError: On any other non-200 status (the KV-v2
+                migration-window 400 is retried, then raised after retries
+                are exhausted).
         """
         if self._http is None:
             raise OpenBaoConnectionError(
@@ -331,6 +359,21 @@ class OpenBaoClient:
                     wait = 2 ** attempt
                     logger.warning(
                         "Rate limited by OpenBao, retrying in %ds (attempt %d/%d)",
+                        wait, attempt + 1, _MAX_RETRIES,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                raise
+            except OpenBaoError as exc:
+                # KV-v2 migration window (enable_kv_v2 → first write): the
+                # transient "Upgrading from non-versioned to versioned data"
+                # 400 clears within a brief window.  Retry ONLY this message
+                # — every other 400 raises immediately (no blanket retry).
+                if _is_kv_upgrade_transient(exc) and attempt < _MAX_RETRIES - 1:
+                    wait = 2 ** attempt
+                    logger.warning(
+                        "KV v2 upgrade in progress, retrying in %ds "
+                        "(attempt %d/%d)",
                         wait, attempt + 1, _MAX_RETRIES,
                     )
                     await asyncio.sleep(wait)

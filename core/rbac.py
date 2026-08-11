@@ -35,6 +35,12 @@ RBAC_ROLE_CACHE_PREFIX: str = "rbac:role:"
 RBAC_ROLE_CACHE_TTL: int = 60
 """TTL in seconds for cached role lookups."""
 
+PWD_FLAG_CACHE_PREFIX: str = "rbac:pwd:flag:"  # noqa: S105  — a Redis key prefix, not a credential
+"""Redis key prefix for the cached must-change-password flag."""
+
+PWD_FLAG_CACHE_TTL: int = 60
+"""TTL in seconds for cached must-change-password lookups."""
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Helpers
@@ -138,6 +144,89 @@ async def invalidate_role(redis: Redis, user_id: UUID) -> None:
     except Exception:
         logger.error(
             "rbac.role_cache_invalidate_failed",
+            extra={"user_id": str(user_id)},
+            exc_info=True,
+        )
+
+
+async def get_must_change_password(
+    redis: Redis,
+    db: AsyncSession,
+    org_id: UUID,
+    user_id: UUID,
+) -> bool:
+    """Return the user's must-change-password flag (fail-closed).
+
+    Cache-aside with a 60 s TTL, mirroring :func:`get_org_role`.  **Fails
+    closed**: any Redis or DB read error returns ``True`` — the user is
+    treated as requiring a password change and denied — so an outage can
+    never clear the gate.
+
+    Args:
+        redis: Async Redis client (from ``request.app.state.redis``).
+        db: Request-scoped async DB session.
+        org_id: The organization UUID the user belongs to.
+        user_id: The user's UUID.
+
+    Returns:
+        ``True`` when the user must change their password before using
+        dashboard routes, ``False`` otherwise.
+    """
+    cache_key = f"{PWD_FLAG_CACHE_PREFIX}{user_id}"
+    try:
+        cached = await redis.get(cache_key)
+        if cached is not None:
+            return cached == b"1" if isinstance(cached, bytes) else cached == "1"
+    except Exception:
+        logger.error(
+            "rbac.pwd_flag_cache_read_failed",
+            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            exc_info=True,
+        )
+
+    try:
+        user = await UserRepository(db).get_by_uuid(org_id, user_id)
+    except Exception:
+        logger.error(
+            "rbac.pwd_flag_db_lookup_failed",
+            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            exc_info=True,
+        )
+        return True
+
+    if user is None or not user.is_active or user.is_deleted:
+        return True
+
+    try:
+        await redis.setex(
+            cache_key,
+            PWD_FLAG_CACHE_TTL,
+            "1" if user.must_change_password else "0",
+        )
+    except Exception:
+        logger.error(
+            "rbac.pwd_flag_cache_write_failed",
+            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            exc_info=True,
+        )
+    return bool(user.must_change_password)
+
+
+async def invalidate_must_change_password(redis: Redis, user_id: UUID) -> None:
+    """Delete the cached must-change-password flag for a user.
+
+    Called after a password change clears the flag, so the next lookup
+    re-reads the source of truth.  Failures are logged, never swallowed.
+
+    Args:
+        redis: Async Redis client.
+        user_id: The user's UUID.
+    """
+    try:
+        await redis.delete(f"{PWD_FLAG_CACHE_PREFIX}{user_id}")
+    except Exception:
+        logger.error(
+            "rbac.pwd_flag_cache_invalidate_failed",
             extra={"user_id": str(user_id)},
             exc_info=True,
         )

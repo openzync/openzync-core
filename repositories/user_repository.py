@@ -244,6 +244,78 @@ class UserRepository:
         )
         return result.scalar_one_or_none()
 
+    async def find_pending_admin_by_org(self, organization_id: UUID) -> User | None:
+        """Find an org's pending admin user (approval flow).
+
+        A pending admin is the designated admin of a ``pending`` org: role
+        ``admin``, no password yet, no invite token yet (the invite is
+        minted at approval time).  At most one is expected per org —
+        returns the oldest if duplicates somehow exist.
+
+        Args:
+            organization_id: The organization UUID.
+
+        Returns:
+            The pending admin User, or ``None``.
+        """
+        result = await self._db.execute(
+            select(User)
+            .where(
+                User.organization_id == organization_id,
+                User.role == "admin",
+                User.password_hash.is_(None),
+                User.invite_token_hash.is_(None),
+                User.is_deleted.is_(False),
+            )
+            .order_by(User.created_at.asc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def set_invite_token(
+        self,
+        organization_id: UUID,
+        user_id: UUID,
+        token_hash: str,
+    ) -> User:
+        """Mint an invite token on a pending user (approval flow).
+
+        Sets ``invite_token_hash`` and re-stamps ``created_at`` to now, so
+        the 72-hour invite window starts at approval time rather than at
+        the (possibly much earlier) request time.
+
+        Args:
+            organization_id: Tenant scope (always applied).
+            user_id: The pending user's UUID.
+            token_hash: SHA-256 hex digest of the raw magic-link token.
+
+        Returns:
+            The updated User.
+
+        Raises:
+            NotFoundError: If no user with this UUID exists in the org.
+        """
+        from datetime import UTC, datetime
+
+        from core.exceptions import NotFoundError
+
+        result = await self._db.execute(
+            select(User).where(
+                User.id == user_id,
+                User.organization_id == organization_id,
+            )
+        )
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise NotFoundError(
+                f"User {user_id} not found in organization {organization_id}."
+            )
+        user.invite_token_hash = token_hash
+        user.created_at = datetime.now(UTC)
+        await self._db.flush()
+        await self._db.refresh(user)
+        return user
+
     async def claim_invite(
         self,
         token_hash: str,
@@ -559,6 +631,51 @@ class UserRepository:
             next_cursor = self._encode_cursor(last.created_at, last.id)
 
         return users, next_cursor
+
+    async def list_by_org(
+        self,
+        organization_id: UUID,
+        page: int = 1,
+        limit: int = 50,
+    ) -> tuple[list[User], int]:
+        """List an organization's dashboard users with offset pagination.
+
+        Offset-based counterpart to :meth:`list` (which uses cursors) —
+        for the platform super-admin members listing, where the response
+        shape is ``data/total/page/limit`` like the orgs list.  Soft-
+        deleted users are excluded.
+
+        Args:
+            organization_id: Tenant scope (always applied).
+            page: 1-based page number.
+            limit: Page size (clamped to 1..200).
+
+        Returns:
+            A tuple of ``(users_on_page, total_matching_count)``.
+        """
+        effective_limit = min(max(limit, 1), 200)
+        effective_page = max(page, 1)
+
+        total_stmt = (
+            select(func.count(User.id))
+            .where(
+                User.organization_id == organization_id,
+                User.is_deleted.is_(False),
+            )
+        )
+        total = (await self._db.execute(total_stmt)).scalar() or 0
+
+        result = await self._db.execute(
+            select(User)
+            .where(
+                User.organization_id == organization_id,
+                User.is_deleted.is_(False),
+            )
+            .order_by(User.created_at.asc(), User.id.asc())
+            .offset((effective_page - 1) * effective_limit)
+            .limit(effective_limit)
+        )
+        return result.scalars().all(), total
 
     # ── Aggregate Stats ─────────────────────────────────────────────────────
 

@@ -20,8 +20,12 @@ class Organization(TimestampMixin, Base):
 
     Attributes:
         id: UUID primary key, generated server-side via gen_random_uuid().
-        name: Human-readable organization name.
+        name: Human-readable organization name.  The platform org is always
+            named ``SYSTEM`` (exact match — see :attr:`is_platform`).
         plan: Billing plan — one of ``free``, ``pro``, ``enterprise``.
+        status: Lifecycle state — one of ``pending``, ``approved``,
+            ``rejected``.  ``pending`` orgs await superadmin approval and
+            are excluded from every tenant-facing lookup.
         config: JSONB blob for all per-org configuration (LLM, embeddings,
             graph, behaviour).  UI-exposed.  ``None`` fields fall back to
             env-var defaults from ``core.config.settings``.
@@ -49,6 +53,14 @@ class Organization(TimestampMixin, Base):
         nullable=False,
         default="free",
         server_default="free",
+    )
+    # Org lifecycle — pending orgs await superadmin approval and are
+    # excluded from tenant-facing lookups (get_by_code filters on it).
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="approved",
+        server_default="approved",
     )
     config: Mapped[dict] = mapped_column(
         JSONB,
@@ -96,8 +108,20 @@ class Organization(TimestampMixin, Base):
             "plan IN ('free', 'pro', 'enterprise')",
             name="ck_organization_plan",
         ),
+        CheckConstraint(
+            "status IN ('pending', 'approved', 'rejected')",
+            name="ck_organization_status",
+        ),
         UniqueConstraint("org_code", name="uq_organizations_org_code"),
     )
 
+    @property
+    def is_platform(self) -> bool:
+        """Derived platform marker — the platform org is always named SYSTEM."""
+        return self.name == "SYSTEM"
+
     def __repr__(self) -> str:
-        return f"<Organization id={self.id} name={self.name!r} plan={self.plan}>"
+        return (
+            f"<Organization id={self.id} name={self.name!r} "
+            f"plan={self.plan} status={self.status}>"
+        )
