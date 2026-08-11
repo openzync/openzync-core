@@ -30,10 +30,10 @@ Excluded by design (documented public / non-admin routes — verified against
 router sources):
 - ``GET /v1/admin/webhooks/events``  — no auth, public event-type listing.
 - ``GET /admin/org/config/defaults`` — no auth, seeded onboarding defaults.
-- ``POST /admin/organizations``      — no auth, first-use bootstrap (router
-  ``routers/admin.py`` is intentionally not included in the harness).
 - ``GET /v1/users``, ``GET /v1/users/{user_id}`` — ``require_org_id`` only
   (any authenticated caller), not admin-gated.
+- ``GET /v1/auth/registration-status`` — PUBLIC by design (registration
+  policy drives the signup UI).
 """
 
 from __future__ import annotations
@@ -45,24 +45,33 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from core.config import PLATFORM_ORG_ID
 from core.exceptions import register_exception_handlers
-from dependencies.auth import require_org_admin, require_org_admin_or_self
+from dependencies.auth import (
+    require_org_admin,
+    require_org_admin_or_self,
+    require_superadmin,
+)
 from dependencies.db import get_db
 from routers import (
+    admin,
     admin_invites,
     admin_metrics,
-    admin_organizations,
     admin_org_code,
     admin_org_config,
+    admin_organizations,
     admin_quick_actions,
     admin_schemas,
     admin_stats,
+    admin_system,
     admin_webhooks,
     audit_log,
     users,
 )
+from routers.admin import _get_admin_org_service
 from routers.admin_org_code import _get_org_service
 from routers.users import get_user_summary_service
+from schemas.organizations import CreateOrgResponse
 from schemas.user_summary import UserSummaryResponse
 from services.organization_service import OrgCodeInfo
 
@@ -71,10 +80,12 @@ MEMBER_USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 OTHER_USER_ID = UUID("00000000-0000-0000-0000-000000000003")
 ENDPOINT_ID = UUID("00000000-0000-0000-0000-000000000004")
 SCHEMA_ID = UUID("00000000-0000-0000-0000-000000000005")
+SUPERADMIN_USER_ID = UUID("00000000-0000-0000-0000-0000000000bb")
 PROMPT_NAME = "extract_facts_v2"
 
 ALL_ROUTERS = [
     audit_log.router,
+    admin.router,
     admin_org_code.router,
     admin_org_config.router,
     admin_webhooks.router,
@@ -84,6 +95,7 @@ ALL_ROUTERS = [
     admin_quick_actions.router,
     admin_schemas.router,
     admin_invites.router,
+    admin_system.router,
     users.router,
 ]
 
@@ -155,18 +167,45 @@ ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [
     # users — require_org_admin_or_self: member on ANOTHER user
     ("GET", "/v1/users/{user_id}/summary", {"user_id": str(OTHER_USER_ID)}, {}),
     ("GET", "/v1/users/{user_id}/summary-instructions", {"user_id": str(OTHER_USER_ID)}, {}),
+    # platform superadmin — POST /admin/organizations (re-gated bootstrap)
+    ("POST", "/admin/organizations", {}, {}),
+    # platform superadmin — /admin/system/*
+    ("GET", "/admin/system/config", {}, {}),
+    ("PATCH", "/admin/system/config", {}, {}),
+    ("GET", "/admin/system/orgs", {}, {}),
+    ("GET", "/admin/system/orgs/{org_id}/members", {"org_id": str(ORG_ID)}, {}),
+    ("GET", "/admin/system/orgs/{org_id}/config", {"org_id": str(ORG_ID)}, {}),
+    ("PATCH", "/admin/system/orgs/{org_id}/config", {"org_id": str(ORG_ID)}, {}),
+    ("POST", "/admin/system/orgs/{org_id}/approve", {"org_id": str(ORG_ID)}, {}),
+    ("POST", "/admin/system/orgs/{org_id}/reject", {"org_id": str(ORG_ID)}, {}),
+    (
+        "PATCH",
+        "/admin/system/orgs/{org_id}/members/{user_id}/role",
+        {"org_id": str(ORG_ID), "user_id": str(OTHER_USER_ID)},
+        {},
+    ),
 ]
 
 _MUTATING_METHODS = frozenset({"POST", "PATCH", "PUT"})
 
 
-def _make_app(*, authenticated: bool) -> FastAPI:
+def _make_app(
+    *,
+    authenticated: bool,
+    auth_org_id: str | None = None,
+    auth_user_id: str | None = None,
+    auth_role: str = "member",
+) -> FastAPI:
     """Build the app with the real admin-gate dependency chain.
 
     ``authenticated=True`` adds middleware that sets a member JWT session
     on ``request.state`` (same pattern as
     ``test_admin_org_code.py::_make_member_app``).  The gate dependencies
     are NEVER overridden — only their infrastructure is mocked.
+
+    ``auth_org_id``/``auth_user_id``/``auth_role`` customise the session
+    (used by the superadmin-200 test, which must present the platform org
+    and the ``superadmin`` role).
     """
     app = FastAPI()
     register_exception_handlers(app)
@@ -187,10 +226,10 @@ def _make_app(*, authenticated: bool) -> FastAPI:
 
         @app.middleware("http")
         async def _member_jwt(request, call_next):
-            request.state.org_id = str(ORG_ID)
-            request.state.user_id = str(MEMBER_USER_ID)
+            request.state.org_id = auth_org_id or str(ORG_ID)
+            request.state.user_id = auth_user_id or str(MEMBER_USER_ID)
             request.state.auth_type = "jwt"
-            request.state.role = "member"
+            request.state.role = auth_role
             request.state.api_key_scopes = []
             return await call_next(request)
 
@@ -339,18 +378,58 @@ async def test_admin_role_passes_org_code_200() -> None:
     assert resp.json() == {"org_code": "K7M2Q9X4", "join_enabled": True}
 
 
+# ── Positive control: superadmin passes the re-gated bootstrap ────────────────
+
+
+@pytest.mark.asyncio
+async def test_superadmin_role_passes_bootstrap_201() -> None:
+    """Superadmin JWT gets 201 through the REAL gate on POST /admin/organizations.
+
+    Proves the re-gated bootstrap endpoint rejects without a superadmin
+    token (403/401 above) and succeeds with one.
+    """
+    app = _make_app(
+        authenticated=True,
+        auth_org_id=str(PLATFORM_ORG_ID),
+        auth_user_id=str(SUPERADMIN_USER_ID),
+        auth_role="superadmin",
+    )
+    service = AsyncMock()
+    service.create_organization.return_value = CreateOrgResponse(
+        organization_id=UUID("00000000-0000-0000-0000-0000000000cc"),
+        organization_name="Acme Corp",
+    )
+    app.dependency_overrides[_get_admin_org_service] = lambda: service
+
+    with patch(
+        "dependencies.auth.get_org_role",
+        new=AsyncMock(return_value="superadmin"),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/admin/organizations",
+                json={"name": "Acme Corp", "plan": "free"},
+            )
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["organization_name"] == "Acme Corp"
+    service.create_organization.assert_awaited_once()
+
+
 # ── Coverage guard: matrix must match every actually-gated route ──────────────
 
 
 def _admin_gate_on_route(route) -> bool:
     """True if the route declares an admin gate dependency.
 
-    Detects ``require_org_admin``, ``require_org_admin_or_self``, and
-    ``require_scope("admin...")`` closures directly on the route.
+    Detects ``require_org_admin``, ``require_org_admin_or_self``,
+    ``require_superadmin``, and ``require_scope("admin...")`` closures
+    directly on the route.
     """
     for dep in route.dependant.dependencies:
         call = dep.call
-        if call in (require_org_admin, require_org_admin_or_self):
+        if call in (require_org_admin, require_org_admin_or_self, require_superadmin):
             return True
         if getattr(call, "__name__", "") == "_scope_checker":
             scope = next(

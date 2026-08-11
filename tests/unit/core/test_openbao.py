@@ -510,6 +510,83 @@ class TestRateLimitRetry:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# KV v2 migration-window 400 retry
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.unit
+class TestKvUpgradeRetry:
+    """``_request`` retries the transient KV-v2 upgrade 400, nothing else."""
+
+    def _upgrade_400(self) -> MagicMock:
+        """Build the transient 400 the migration window emits."""
+        return _make_response(
+            400,
+            {
+                "errors": [
+                    "Upgrading from non-versioned to versioned data. "
+                    "This backend will be unavailable for a brief period "
+                    "and will resume service shortly."
+                ]
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_retries_kv_upgrade_400_and_succeeds(
+        self,
+        bao_client: OpenBaoClient,
+        mock_http: AsyncMock,
+    ) -> None:
+        """The first write hits the upgrade 400; the retry succeeds."""
+        upgrade = self._upgrade_400()
+        success = _make_response(204, {})
+        mock_http.request.side_effect = [upgrade, upgrade, success]
+
+        with patch.object(asyncio, "sleep", AsyncMock()) as mock_sleep:
+            resp = await bao_client._request("POST", "config/data/llm_backend")
+
+        assert resp.status_code == 204
+        assert mock_http.request.call_count == 3
+        # Backoff sleeps before retry attempts 2 and 3: 2^0=1s, 2^1=2s
+        assert mock_sleep.call_count == 2
+        assert mock_sleep.call_args_list[0][0][0] == 1.0
+        assert mock_sleep.call_args_list[1][0][0] == 2.0
+
+    @pytest.mark.asyncio
+    async def test_raises_after_exhausting_kv_upgrade_retries(
+        self,
+        bao_client: OpenBaoClient,
+        mock_http: AsyncMock,
+    ) -> None:
+        """A persistent upgrade 400 raises ``OpenBaoError`` after retries."""
+        upgrade = self._upgrade_400()
+        mock_http.request.return_value = upgrade
+
+        with (
+            patch.object(asyncio, "sleep", AsyncMock()),
+            pytest.raises(OpenBaoError, match="Upgrading from non-versioned"),
+        ):
+            await bao_client._request("POST", "config/data/llm_backend")
+
+        assert mock_http.request.call_count == _MAX_RETRIES
+
+    @pytest.mark.asyncio
+    async def test_other_400s_raise_immediately(
+        self,
+        bao_client: OpenBaoClient,
+        mock_http: AsyncMock,
+    ) -> None:
+        """A plain 400 (unrelated message) is NOT retried."""
+        bad_request = _make_response(400, {"errors": ["bad data"]})
+        mock_http.request.side_effect = [bad_request, _make_response(200, {})]
+
+        with pytest.raises(OpenBaoError, match="bad data"):
+            await bao_client._request("POST", "config/data/llm_backend")
+
+        assert mock_http.request.call_count == 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # KV v2 — read
 # ═══════════════════════════════════════════════════════════════════════════════
 

@@ -74,6 +74,22 @@ class TestJoinOrganization:
             bao_client=None,
         )
 
+    @pytest.fixture(autouse=True)
+    def _default_platform_policy(self) -> None:
+        """Default the platform policy to allow_all (backward compatible).
+
+        ``join_organization`` now consults the platform policy first; the
+        pre-feature join tests rely on the default policy so they keep
+        passing unchanged.
+        """
+        from schemas.system_config import SystemConfigResponse
+
+        with patch(
+            "services.auth_service.get_system_config",
+            new=AsyncMock(return_value=SystemConfigResponse()),
+        ):
+            yield
+
     def _make_org(
         self, code: str = "K7M2Q9X4", join_enabled: bool = True,
     ) -> AsyncMock:
@@ -279,3 +295,34 @@ class TestJoinOrganization:
         assert result.email == "alice@acme.com"
         mock_repo.rollback.assert_awaited_once()
         mock_otp.generate_and_send.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_reject_all_policy_blocks_join_with_403(
+        self,
+        service: AuthService,
+        mock_org_repo: AsyncMock,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """reject_all blocks join BEFORE the org-code lookup (403).
+
+        The platform policy gate sits on top of the per-org join_enabled
+        check — with reject_all nothing is looked up or created.
+        """
+        from schemas.system_config import SystemConfigResponse
+
+        with (
+            patch(
+                "services.auth_service.get_system_config",
+                new=AsyncMock(
+                    return_value=SystemConfigResponse(
+                        org_creation_policy="reject_all",
+                        approval_scope="both",
+                    ),
+                ),
+            ),
+            pytest.raises(AuthorizationError),
+        ):
+            await service.join_organization(_join_request())
+
+        mock_org_repo.get_by_code.assert_not_awaited()
+        mock_repo.create_dashboard_user.assert_not_awaited()

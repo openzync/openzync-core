@@ -228,6 +228,19 @@ class TestOrganizationService:
         assert result.organization_id == self.ORG_ID
         assert "api_key" not in CreateOrgResponse.model_fields
 
+    @pytest.mark.asyncio
+    async def test_create_organization_rejects_reserved_system_name(
+        self,
+    ) -> None:
+        """The reserved ``SYSTEM`` name (any case) → ValidationError."""
+        from core.exceptions import ValidationError
+
+        service, mock_repo, _ = self._make_service()
+        for bad in ("SYSTEM", "system", "System"):
+            with pytest.raises(ValidationError):
+                await service.create_organization(self._make_payload(name=bad))
+        mock_repo.session.add.assert_not_called()
+
     # ── Org join code (admin management) ────────────────────────────────────
 
     @pytest.mark.asyncio
@@ -368,3 +381,63 @@ class TestOrganizationService:
             result = service._load_org_defaults()
 
         assert result == {}
+
+    # ── Platform superadmin surface: list_all_orgs / list_org_members ───────
+
+    @pytest.mark.asyncio
+    async def test_list_all_orgs_delegates_with_filter(
+        self,
+    ) -> None:
+        """list_all_orgs forwards the status filter + pagination to the repo."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.list_all.return_value = ([], 0)
+
+        orgs, total = await service.list_all_orgs(
+            status="pending", page=2, limit=20
+        )
+
+        assert orgs == []
+        assert total == 0
+        mock_repo.list_all.assert_awaited_once_with(
+            status="pending", page=2, limit=20
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_org_members_returns_users_for_existing_org(
+        self,
+    ) -> None:
+        """list_org_members verifies the org exists, then lists its users."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.get_by_id.return_value = self._make_org_mock()
+        mock_user_repo = AsyncMock()
+        mock_user_repo.list_by_org.return_value = ([MagicMock()], 1)
+
+        with patch(
+            "services.organization_service.UserRepository",
+            return_value=mock_user_repo,
+        ):
+            users, total = await service.list_org_members(
+                self.ORG_ID, page=1, limit=50
+            )
+
+        assert len(users) == 1
+        assert total == 1
+        mock_repo.get_by_id.assert_awaited_once_with(self.ORG_ID)
+        mock_user_repo.list_by_org.assert_awaited_once_with(
+            self.ORG_ID, page=1, limit=50
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_org_members_missing_org_raises_not_found(
+        self,
+    ) -> None:
+        """list_org_members for a nonexistent org → NotFoundError, no query."""
+        from core.exceptions import NotFoundError
+
+        service, mock_repo, _ = self._make_service()
+        mock_repo.get_by_id.return_value = None
+
+        with pytest.raises(NotFoundError):
+            await service.list_org_members(self.ORG_ID)
+
+        mock_repo.get_by_id.assert_awaited_once_with(self.ORG_ID)

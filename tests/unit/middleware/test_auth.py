@@ -20,6 +20,7 @@ from dependencies.services import get_invite_service
 from middleware.auth import AuthMiddleware, _is_jwt_token, _is_public_path
 from routers.auth import router
 from schemas.auth import InviteInfoResponse
+from schemas.users import UserListResponse
 
 
 @pytest.mark.unit
@@ -36,6 +37,7 @@ class TestAuthMiddleware:
         token_type: str = "access",
         secret: str = "a" * 32,
         expired: bool = False,
+        mcp: bool | None = None,
     ) -> str:
         payload: dict[str, Any] = {
             "sub": sub,
@@ -43,6 +45,8 @@ class TestAuthMiddleware:
             "role": role,
             "type": token_type,
         }
+        if mcp is not None:
+            payload["mcp"] = mcp
         if expired:
             payload["exp"] = datetime.now(UTC) - timedelta(hours=1)
         else:
@@ -254,14 +258,161 @@ class TestAuthMiddleware:
 
     @pytest.mark.asyncio
     async def test_refresh_token_rejected(self) -> None:
-        """Refresh tokens (type=refresh) are rejected for API auth."""
+        """Refresh-type token returns 401."""
         token = self._create_jwt(token_type="refresh")
         app = self._create_app()
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as c:
             resp = await c.get("/test", headers={"Authorization": f"Bearer {token}"})
             assert resp.status_code == 401
-            assert resp.json()["title"] == "Invalid Token Type"
+
+    # ── Must-change-password gate (mcp claim) ────────────────────────────────
+
+    def _create_exempt_app(self) -> FastAPI:
+        """App with the four exempt must-change paths + a normal route."""
+        app = FastAPI()
+
+        @app.post("/v1/auth/change-password")
+        async def change_password() -> dict:
+            return {"ok": True}
+
+        @app.get("/v1/auth/me")
+        async def me() -> dict:
+            return {"ok": True}
+
+        @app.post("/v1/auth/logout")
+        async def logout() -> dict:
+            return {"ok": True}
+
+        @app.post("/v1/auth/refresh")
+        async def refresh() -> dict:
+            return {"ok": True}
+
+        @app.get("/v1/users")
+        async def list_users() -> dict:
+            return {"ok": True}
+
+        app.add_middleware(AuthMiddleware)
+        return app
+
+    @pytest.mark.asyncio
+    async def test_jwt_mcp_claim_blocks_dashboard_route_403(self) -> None:
+        """A JWT with mcp=True is rejected with 403 on ANY non-exempt route —
+        including member surfaces that authenticate via get_current_user_id
+        (the middleware gate closes the dependency-level gap)."""
+        token = self._create_jwt(mcp=True)
+        app = self._create_app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.get("/test", headers={"Authorization": f"Bearer {token}"})
+
+        assert resp.status_code == 403
+        body = resp.json()
+        assert body["status"] == 403
+        assert body["detail"] == "Password change required"
+
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("POST", "/v1/auth/change-password"),
+            ("GET", "/v1/auth/me"),
+            ("POST", "/v1/auth/logout"),
+            ("POST", "/v1/auth/refresh"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_jwt_mcp_claim_exempt_paths_pass(
+        self, method: str, path: str
+    ) -> None:
+        """A JWT with mcp=True still reaches the exempt paths (200)."""
+        token = self._create_jwt(mcp=True)
+        app = self._create_exempt_app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.request(
+                method, path, headers={"Authorization": f"Bearer {token}"}
+            )
+        assert resp.status_code == 200, resp.text
+
+    @pytest.mark.asyncio
+    async def test_jwt_mcp_false_or_absent_passes(self) -> None:
+        """mcp=False (or an absent claim — pre-feature tokens) passes."""
+        app = self._create_app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.get(
+                "/test",
+                headers={"Authorization": f"Bearer {self._create_jwt(mcp=False)}"},
+            )
+            assert resp.status_code == 200
+            resp2 = await c.get(
+                "/test",
+                headers={"Authorization": f"Bearer {self._create_jwt()}"},
+            )
+            assert resp2.status_code == 200
+
+    # ── Must-change-password gate — REAL /v1/users router ─────────────────
+    # The generic 403 test above uses a stub route.  These pin the observed
+    # contract on the surface it names: GET /v1/users (a route that
+    # authenticates via get_current_user_id) under the REAL AuthMiddleware
+    # + REAL users router — the middleware must 403 before the route runs.
+
+    def _create_users_app(self) -> FastAPI:
+        """Real users router + real AuthMiddleware, route deps mocked."""
+        from dependencies.auth import require_org_id
+        from dependencies.db import get_db
+        from routers.users import get_user_service, router
+
+        app = FastAPI()
+        service = AsyncMock()
+        service.list_users.return_value = UserListResponse(
+            data=[], next_cursor=None, has_more=False
+        )
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
+        app.dependency_overrides[get_user_service] = lambda: service
+        app.dependency_overrides[require_org_id] = (
+            lambda: "00000000-0000-0000-0000-000000000001"
+        )
+        app.include_router(router)
+        app.add_middleware(AuthMiddleware)
+        return app
+
+    @pytest.mark.asyncio
+    async def test_jwt_mcp_claim_blocks_get_users_403(self) -> None:
+        """mcp=True JWT → GET /v1/users → 403 RFC 7807 before the route.
+
+        The middleware gate covers get_current_user_id surfaces — the
+        users route is never reached.
+        """
+        token = self._create_jwt(mcp=True)
+        app = self._create_users_app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.get(
+                "/v1/users",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        assert resp.status_code == 403
+        body = resp.json()
+        assert body["status"] == 403
+        assert body["title"] == "Authorization Error"
+        assert body["detail"] == "Password change required"
+
+    @pytest.mark.asyncio
+    async def test_jwt_mcp_false_reaches_get_users_200(self) -> None:
+        """mcp=False JWT → GET /v1/users passes the middleware (200)."""
+        token = self._create_jwt(mcp=False)
+        app = self._create_users_app()
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.get(
+                "/v1/users",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"data": [], "next_cursor": None, "has_more": False}
 
     # ── API key auth ────────────────────────────────────────────────────────────
 

@@ -216,3 +216,26 @@ class TestOrganizationRepository:
         quota = await repo.get_quota(org_id=self.ORG_ID, quota_name="max_users")
 
         assert quota is None
+
+    # ── approve_if_pending (race-safe approval claim) ─────────────────────────
+
+    async def test_approve_if_pending_flags_rowcount(
+        self, repo: OrganizationRepository, mock_db: AsyncMock
+    ) -> None:
+        """Returns True when exactly one row was updated (the claim won),
+        False otherwise — the loser of a concurrent approval matches zero
+        rows because the winner already flipped status away from 'pending'."""
+        mock_result = MagicMock()
+        mock_result.rowcount = 1
+        mock_db.execute.return_value = mock_result
+
+        assert await repo.approve_if_pending(org_id=self.ORG_ID) is True
+
+        mock_result.rowcount = 0
+        assert await repo.approve_if_pending(org_id=self.ORG_ID) is False
+
+        # The claim is a conditional UPDATE on the organizations table
+        # (WHERE id AND status='pending') — never a plain read-then-write.
+        stmt = mock_db.execute.call_args.args[0]
+        assert stmt.table.name == "organizations"
+        assert stmt.whereclause is not None

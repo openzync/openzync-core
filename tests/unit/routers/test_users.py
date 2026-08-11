@@ -6,7 +6,7 @@ management.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
@@ -14,13 +14,12 @@ import pytest
 from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
+from schemas.user_summary import UserSummaryResponse, UserSummaryTriggerResponse
 from schemas.users import (
+    UserListResponse,
     UserResponse,
     UserResponseWithStats,
-    UserListResponse,
 )
-from schemas.user_summary import UserSummaryResponse, UserSummaryTriggerResponse
-from schemas.custom_instructions import CustomInstructionsResponse, CustomInstructionSchema
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -51,8 +50,8 @@ def _make_user_response(overrides: dict | None = None) -> dict:
         "email": "alice@example.com",
         "metadata": {},
         "organization_id": ORG_ID,
-        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
-        "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "updated_at": datetime(2026, 1, 1, tzinfo=UTC),
         "is_deleted": False,
     }
     base.update(overrides or {})
@@ -73,8 +72,8 @@ class TestUsersRouter:
             _make_user_response(),
         )
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_admin, require_org_id
+        from dependencies.db import get_db
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -117,8 +116,8 @@ class TestUsersRouter:
         mock_instance = AsyncMock()
         mock_user_service.return_value = mock_instance
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_admin, require_org_id
+        from dependencies.db import get_db
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -151,8 +150,8 @@ class TestUsersRouter:
         mock_instance = AsyncMock()
         mock_user_service.return_value = mock_instance
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_admin, require_org_id
+        from dependencies.db import get_db
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -195,8 +194,8 @@ class TestUsersRouter:
             has_more=False,
         )
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_admin, require_org_id
+        from dependencies.db import get_db
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -239,8 +238,8 @@ class TestUsersRouter:
             }),
         )
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_admin, require_org_id
+        from dependencies.db import get_db
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -280,8 +279,8 @@ class TestUsersRouter:
             detail={"user_id": str(USER_ID)},
         )
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
+        from dependencies.db import get_db
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -316,8 +315,8 @@ class TestUsersRouter:
             _make_user_response({"name": "Alice B."}),
         )
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_admin, require_org_id
+        from dependencies.db import get_db
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -356,8 +355,8 @@ class TestUsersRouter:
         mock_user_service.return_value = mock_instance
         mock_instance.delete_user.return_value = None
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_admin, require_org_id
+        from dependencies.db import get_db
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -395,11 +394,11 @@ class TestUsersRouter:
         mock_instance.get_summary.return_value = UserSummaryResponse(
             user_id=USER_ID,
             summary="Alice is a helpful user.",
-            updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
+        from dependencies.db import get_db
         from routers.users import get_user_summary_service, router
 
         # get_user_summary_service needs arq and redis on app.state
@@ -445,8 +444,8 @@ class TestUsersRouter:
         mock_summary_service.return_value = mock_instance
         mock_instance.get_summary.return_value = None
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
+        from dependencies.db import get_db
         from routers.users import get_user_summary_service, router
 
         app = FastAPI()
@@ -485,8 +484,8 @@ class TestUsersRouter:
             user_id=USER_ID,
         )
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_admin
+        from dependencies.db import get_db
         from routers.users import get_user_summary_service, router
 
         app = FastAPI()
@@ -525,8 +524,8 @@ class TestUsersRouter:
             message="Rate limited. Try again in 5 minutes.",
         )
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_admin
+        from dependencies.db import get_db
         from routers.users import get_user_summary_service, router
 
         app = FastAPI()
@@ -564,8 +563,8 @@ class TestUsersRouter:
             {"name": "legal_domain", "text": "Focus on legal terms."},
         ]
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
+        from dependencies.db import get_db
         from routers.users import get_user_summary_service, router
 
         app = FastAPI()
@@ -608,8 +607,8 @@ class TestUsersRouter:
             {"name": "healthcare", "text": "Focus on medical terms."},
         ]
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_admin
+        from dependencies.db import get_db
         from routers.users import get_user_summary_service, router
 
         app = FastAPI()
@@ -654,8 +653,8 @@ class TestUsersRouter:
         mock_summary_service.return_value = mock_instance
         mock_instance.delete_instructions.return_value = None
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_admin
+        from dependencies.db import get_db
         from routers.users import get_user_summary_service, router
 
         app = FastAPI()
@@ -704,8 +703,8 @@ class TestUsersRouterRoleChanges:
             _make_user_response({"role": "admin", "external_id": "u_1"}),
         )
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_admin
+        from dependencies.db import get_db
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -765,7 +764,6 @@ class TestUsersRouterRoleChanges:
 
         app.include_router(router)
 
-        from dependencies.auth import get_org_role
 
         with patch(
             "dependencies.auth.get_org_role",
@@ -801,7 +799,11 @@ class TestUsersRouterRoleChanges:
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        # lambda form — the raw ``AsyncMock`` class would be introspected as
+        # a dependency with required ``args``/``kwargs`` query params and
+        # 422 before the gate's 401 (get_db is now a sub-dependency of
+        # get_dashboard_user).
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_user_service] = lambda: mock_instance
 
         @app.middleware("http")

@@ -6,7 +6,7 @@ The ``_user_to_dict`` helper is tested directly — pure transformation.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -720,3 +720,78 @@ class TestUserServiceRoleGuards:
             )
 
         mock_invalidate.assert_awaited_once_with(_mock_redis, self.MEMBER_ID)
+
+
+class TestUserServiceSuperadminSurface:
+    """update_member_role — the platform superadmin cross-org role change."""
+
+    ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+    USER_ID = UUID("00000000-0000-0000-0000-000000000010")
+
+    def _make_service(self) -> tuple[UserService, AsyncMock]:
+        """Create ``UserService`` with mocked repository and redis."""
+        mock_repo = AsyncMock()
+        service = UserService(repo=mock_repo, redis=AsyncMock())
+        return service, mock_repo
+
+    def _make_user(self) -> MagicMock:
+        user = MagicMock()
+        user.id = self.USER_ID
+        user.organization_id = self.ORG_ID
+        user.role = "admin"
+        return user
+
+    @pytest.mark.asyncio
+    async def test_update_member_role_persists_and_returns_user(self) -> None:
+        """update_member_role delegates to repo.update with the role field."""
+        service, mock_repo = self._make_service()
+        mock_repo.update.return_value = self._make_user()
+
+        user = await service.update_member_role(
+            organization_id=self.ORG_ID,
+            user_id=self.USER_ID,
+            role="admin",
+        )
+
+        assert user.role == "admin"
+        mock_repo.update.assert_awaited_once_with(
+            organization_id=self.ORG_ID,
+            user_id=self.USER_ID,
+            update_fields={"role": "admin"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_member_role_missing_user_raises_not_found(self) -> None:
+        """A user not in the org → NotFoundError."""
+        service, mock_repo = self._make_service()
+        mock_repo.update.return_value = None
+
+        with pytest.raises(NotFoundError):
+            await service.update_member_role(
+                organization_id=self.ORG_ID,
+                user_id=self.USER_ID,
+                role="member",
+            )
+
+        mock_repo.update.assert_awaited_once_with(
+            organization_id=self.ORG_ID,
+            user_id=self.USER_ID,
+            update_fields={"role": "member"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_member_role_invalidates_cached_role(self) -> None:
+        """The role cache is invalidated after the change."""
+        service, mock_repo = self._make_service()
+        mock_repo.update.return_value = self._make_user()
+
+        with patch(
+            "services.user_service.invalidate_role", new=AsyncMock()
+        ) as mock_invalidate:
+            await service.update_member_role(
+                organization_id=self.ORG_ID,
+                user_id=self.USER_ID,
+                role="member",
+            )
+
+        mock_invalidate.assert_awaited_once_with(ANY, self.USER_ID)

@@ -128,6 +128,24 @@ class TestAuthService:
             bao_client=mock_bao_client,
         )
 
+    @pytest.fixture(autouse=True)
+    def _default_platform_policy(self) -> None:
+        """Default the platform policy to allow_all/both for legacy flows.
+
+        ``signup``/``join_organization`` now consult the platform policy
+        via ``get_system_config`` before acting.  The legacy tests assert
+        pre-feature behaviour, so this fixture pins the backward-compatible
+        default (``allow_all``/``both``) and the policy-gate tests override
+        it explicitly.
+        """
+        from schemas.system_config import SystemConfigResponse
+
+        with patch(
+            "services.auth_service.get_system_config",
+            new=AsyncMock(return_value=SystemConfigResponse()),
+        ):
+            yield
+
     # ── Helpers ──────────────────────────────────────────────────────────────
 
     def _make_mock_user(self, **kwargs: object) -> MagicMock:
@@ -146,6 +164,7 @@ class TestAuthService:
         user.is_deleted = kwargs.get("is_deleted", False)
         user.is_email_verified = kwargs.get("is_email_verified", True)
         user.mfa_enabled = kwargs.get("mfa_enabled", False)
+        user.must_change_password = kwargs.get("must_change_password", False)
         return user
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -169,7 +188,7 @@ class TestAuthService:
 
         payload = SignupRequest(
             email="admin@acme.com",
-            password="StrongPass1",
+            password="StrongPass1",  # noqa: S106 — test fixture
             organization_name="Acme Corp",
         )
 
@@ -200,7 +219,7 @@ class TestAuthService:
 
         payload = SignupRequest(
             email="admin@acme.com",
-            password="StrongPass1",
+            password="StrongPass1",  # noqa: S106 — test fixture
             organization_name="Acme Corp",
         )
 
@@ -225,7 +244,7 @@ class TestAuthService:
 
         payload = SignupRequest(
             email="admin@acme.com",
-            password="StrongPass1",
+            password="StrongPass1",  # noqa: S106 — test fixture
             organization_name="Acme Corp",
         )
 
@@ -254,7 +273,7 @@ class TestAuthService:
 
         payload = SignupRequest(
             email="admin@acme.com",
-            password="StrongPass1",
+            password="StrongPass1",  # noqa: S106 — test fixture
             organization_name="Acme Corp",
         )
         fresh = await service.signup(payload)
@@ -265,6 +284,336 @@ class TestAuthService:
         assert existing.message == fresh.message
         assert existing.email == fresh.email
         assert existing.model_dump() == fresh.model_dump()
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Platform policy gates (superadmin layer)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def _policy_config(
+        self,
+        policy: str = "allow_all",
+        scope: str = "both",
+    ) -> object:
+        """Build a SystemConfigResponse for a given policy/scope."""
+        from schemas.system_config import SystemConfigResponse
+
+        return SystemConfigResponse(
+            org_creation_policy=policy,
+            approval_scope=scope,
+        )
+
+    @pytest.mark.asyncio
+    async def test_signup_reject_all_raises_403(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """reject_all blocks signup with 403 before any org creation."""
+        from core.exceptions import AuthorizationError
+
+        payload = SignupRequest(
+            email="admin@acme.com",
+            password="StrongPass1",  # noqa: S106 — test fixture
+            organization_name="Acme Corp",
+        )
+        with (
+            patch(
+                "services.auth_service.get_system_config",
+                new=AsyncMock(
+                    return_value=self._policy_config(policy="reject_all"),
+                ),
+            ),
+            pytest.raises(AuthorizationError),
+        ):
+            await service.signup(payload)
+
+        mock_repo.create_organization.assert_not_awaited()
+        mock_repo.create_dashboard_user.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_signup_approvals_public_signup_creates_pending_org(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+        mock_otp: AsyncMock,
+        mock_bao_client: AsyncMock,
+    ) -> None:
+        """approvals + public_signup scope → pending org + pending admin.
+
+        Asserts the pending-path contract: org created with
+        status='pending', admin user with password_hash=None, and NO
+        namespace call, NO OTP.
+        """
+        from schemas.auth import PendingOrgResponse
+
+        payload = SignupRequest(
+            email="admin@acme.com",
+            password="StrongPass1",  # noqa: S106 — test fixture
+            organization_name="Acme Corp",
+        )
+        with patch(
+            "services.auth_service.get_system_config",
+            new=AsyncMock(
+                return_value=self._policy_config(
+                    policy="approvals", scope="public_signup"
+                ),
+            ),
+        ):
+            result = await service.signup(payload)
+
+        assert isinstance(result, PendingOrgResponse)
+        assert result.status == "pending"
+
+        mock_repo.create_organization.assert_awaited_once_with(
+            name="Acme Corp", plan="free", status="pending"
+        )
+        mock_repo.create_dashboard_user.assert_awaited_once()
+        # Pending admin — no password hash yet (set at invite-accept time).
+        assert (
+            mock_repo.create_dashboard_user.call_args.kwargs["password_hash"]
+            is None
+        )
+        # No OpenBao namespace, no OTP, no prompt seeding for pending orgs.
+        mock_bao_client.create_org_namespace.assert_not_awaited()
+        mock_otp.generate_and_send.assert_not_awaited()
+        mock_repo.seed_prompts_for_org.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_signup_approvals_duplicate_email_returns_generic_success(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """Concurrent duplicate in the approvals path (IntegrityError) →
+        generic success + rollback — no pending org leaks, no 409, no
+        account enumeration."""
+        mock_repo.create_organization.side_effect = IntegrityError(
+            "mock", "mock", "mock"
+        )
+
+        payload = SignupRequest(
+            email="admin@acme.com",
+            password="StrongPass1",  # noqa: S106 — test fixture
+            organization_name="Acme Corp",
+        )
+        with patch(
+            "services.auth_service.get_system_config",
+            new=AsyncMock(
+                return_value=self._policy_config(
+                    policy="approvals", scope="public_signup"
+                ),
+            ),
+        ):
+            result = await service.signup(payload)
+
+        assert "Verification code sent" in result.message
+        mock_repo.rollback.assert_awaited_once()
+        mock_repo.create_organization.assert_awaited_once_with(
+            name="Acme Corp", plan="free", status="pending"
+        )
+
+    @pytest.mark.asyncio
+    async def test_signup_allow_all_unchanged(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+        mock_otp: AsyncMock,
+    ) -> None:
+        """allow_all keeps the live path — verified admin + OTP sent."""
+        mock_repo.find_user_by_email.return_value = None
+        mock_repo.create_organization.return_value = MagicMock(
+            id=self.ORG_ID, name="Acme Corp", plan="free"
+        )
+        mock_repo.seed_prompts_for_org.return_value = 3
+        mock_repo.create_dashboard_user.return_value = self._make_mock_user()
+
+        payload = SignupRequest(
+            email="admin@acme.com",
+            password="StrongPass1",  # noqa: S106 — test fixture
+            organization_name="Acme Corp",
+        )
+        # Policy fixture defaults to allow_all already; assert explicitly.
+        with patch(
+            "services.auth_service.get_system_config",
+            new=AsyncMock(return_value=self._policy_config()),
+        ):
+            result = await service.signup(payload)
+
+        assert "Verification code sent" in result.message
+        mock_repo.create_organization.assert_awaited_once_with(
+            name="Acme Corp", plan="free"
+        )
+        mock_otp.generate_and_send.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_signup_system_name_rejected(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """The reserved SYSTEM org name is rejected even under allow_all."""
+        from core.exceptions import ValidationError
+
+        payload = SignupRequest(
+            email="admin@acme.com",
+            password="StrongPass1",  # noqa: S106 — test fixture
+            organization_name="system",
+        )
+        with (
+            patch(
+                "services.auth_service.get_system_config",
+                new=AsyncMock(return_value=self._policy_config()),
+            ),
+            pytest.raises(ValidationError),
+        ):
+            await service.signup(payload)
+
+        mock_repo.create_organization.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_signup_approvals_without_public_signup_raises_403(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """approvals WITHOUT public_signup scope → 403, never live creation.
+
+        A non-selected channel is rejected — it must not fall through to
+        instant org creation nor create a pending row.
+        """
+        from core.exceptions import AuthorizationError
+
+        payload = SignupRequest(
+            email="admin@acme.com",
+            password="StrongPass1",  # noqa: S106 — test fixture
+            organization_name="Acme Corp",
+        )
+        with (
+            patch(
+                "services.auth_service.get_system_config",
+                new=AsyncMock(
+                    return_value=self._policy_config(
+                        policy="approvals", scope="in_app"
+                    ),
+                ),
+            ),
+            pytest.raises(AuthorizationError),
+        ):
+            await service.signup(payload)
+
+        mock_repo.create_organization.assert_not_awaited()
+        mock_repo.create_dashboard_user.assert_not_awaited()
+        mock_repo.seed_prompts_for_org.assert_not_awaited()
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # change_password()
+    # ═══════════════════════════════════════════════════════════════════════
+
+    @pytest.mark.asyncio
+    async def test_change_password_rotates_session_and_clears_flag(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+        mock_redis: AsyncMock,
+    ) -> None:
+        """change_password verifies old pw, sets new hash, clears the flag,
+        revokes refresh-token family, and returns fresh tokens."""
+        from schemas.auth import ChangePasswordRequest
+
+        user = self._make_mock_user()
+        user.password_hash = "hashed-old"  # noqa: S105 — test fixture hash
+        mock_repo.get_user_by_id.return_value = user
+        mock_repo.update_dashboard_user.return_value = user
+        mock_repo.create_refresh_token.return_value = MagicMock()
+
+        payload = ChangePasswordRequest(  # noqa: S106 — test fixture credential
+            old_password="OldPass1",  # noqa: S106 — test fixture
+            new_password="NewPass1",  # noqa: S106 — test fixture
+        )
+        with (
+            patch("services.auth_service.verify_password", return_value=True),
+            patch("services.auth_service.hash_password", return_value="hashed-new"),
+            patch(
+                "services.auth_service.invalidate_must_change_password",
+                new=AsyncMock(),
+            ) as mock_invalidate,
+        ):
+            tokens = await service.change_password(
+                user_id=self.USER_ID,
+                payload=payload,
+            )
+
+        assert tokens.access_token  # fresh pair returned
+        mock_repo.update_dashboard_user.assert_awaited_once_with(
+            user_id=self.USER_ID,
+            password_hash="hashed-new",  # noqa: S106 — test fixture
+            must_change_password=False,
+        )
+        mock_repo.revoke_all_refresh_tokens.assert_awaited_once_with(
+            self.USER_ID
+        )
+        mock_invalidate.assert_awaited_once_with(mock_redis, self.USER_ID)
+
+    @pytest.mark.asyncio
+    async def test_change_password_wrong_old_password_raises(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """Wrong old password → AuthenticationError, nothing changes."""
+        from core.exceptions import AuthenticationError
+        from schemas.auth import ChangePasswordRequest
+
+        user = self._make_mock_user()
+        user.password_hash = "hashed-old"  # noqa: S105 — test fixture hash
+        mock_repo.get_user_by_id.return_value = user
+
+        payload = ChangePasswordRequest(  # noqa: S106 — test fixture credential
+            old_password="WrongPass1",  # noqa: S106 — test fixture
+            new_password="NewPass1",  # noqa: S106 — test fixture
+        )
+        with (
+            patch("services.auth_service.verify_password", return_value=False),
+            pytest.raises(AuthenticationError),
+        ):
+            await service.change_password(
+                user_id=self.USER_ID,
+                payload=payload,
+            )
+
+        mock_repo.update_dashboard_user.assert_not_awaited()
+        mock_repo.revoke_all_refresh_tokens.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_change_password_weak_new_password_rejected(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """A weak new password → ValidationError before any mutation."""
+        from core.exceptions import ValidationError
+        from schemas.auth import ChangePasswordRequest
+
+        user = self._make_mock_user()
+        user.password_hash = "hashed-old"  # noqa: S105 — test fixture hash
+        mock_repo.get_user_by_id.return_value = user
+
+        # 8 chars but no uppercase letter — passes the schema min_length
+        # but fails the service-level strength rule.
+        payload = ChangePasswordRequest(  # noqa: S106 — test fixture credential
+            old_password="OldPass1",  # noqa: S106 — test fixture
+            new_password="short123",  # noqa: S106 — test fixture
+        )
+        with (
+            patch("services.auth_service.verify_password", return_value=True),
+            pytest.raises(ValidationError),
+        ):
+            await service.change_password(
+                user_id=self.USER_ID,
+                payload=payload,
+            )
+
+        mock_repo.update_dashboard_user.assert_not_awaited()
 
     @pytest.mark.parametrize(
         ("flow", "expected_fragment"),
@@ -852,20 +1201,88 @@ class TestAuthService:
 
         payload = LoginRequest(email="admin@acme.com", password="StrongPass1")
 
-        with patch(
-            "services.auth_service.verify_password", return_value=True
+        with (
+            patch("services.auth_service.verify_password", return_value=True),
+            patch.object(service, "issue_tokens") as mock_issue,
         ):
-            with patch.object(service, "issue_tokens") as mock_issue:
-                mock_issue.return_value = TokenResponse(
-                    access_token="at",
-                    refresh_token="rt",
-                    expires_in=1800,
-                )
-                result = await service.login(payload)
+            mock_issue.return_value = TokenResponse(
+                access_token="at",  # noqa: S106 — test fixture token
+                refresh_token="rt",  # noqa: S106 — test fixture token
+                expires_in=1800,
+            )
+            result = await service.login(payload)
 
         assert result.requires_mfa is False
-        assert result.access_token == "at"
+        assert result.access_token == "at"  # noqa: S105 — test fixture
         assert result.refresh_token == "rt"
+
+    @pytest.mark.asyncio
+    async def test_login_root_user_looks_up_by_root_and_issues_tokens(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """The seeded root user logs in via email='root' like any user.
+
+        The root user's row (email='root', must_change_password=True) is
+        looked up by the raw string — login itself is NOT gated by
+        must_change_password; only dashboard APIs are.
+        """
+        root = self._make_mock_user(email="root")
+        root.must_change_password = True
+        root.role = "superadmin"
+        mock_repo.find_user_by_email.return_value = root
+
+        payload = LoginRequest(  # noqa: S106 — test fixture credential
+            email="root", password="admin"
+        )
+
+        with (
+            patch("services.auth_service.verify_password", return_value=True),
+            patch.object(service, "issue_tokens") as mock_issue,
+        ):
+            mock_issue.return_value = TokenResponse(
+                access_token="at",  # noqa: S106 — test fixture token
+                refresh_token="rt",  # noqa: S106 — test fixture token
+                expires_in=1800,
+            )
+            result = await service.login(payload)
+
+        mock_repo.find_user_by_email.assert_awaited_once_with("root")
+        assert result.requires_mfa is False
+        assert result.access_token == "at"  # noqa: S105 — test fixture
+        mock_issue.assert_awaited_once_with(
+            user_id=root.id,
+            organization_id=root.organization_id,
+            role="superadmin",  # root's role claim comes from the DB row
+        )
+
+    def test_login_schema_accepts_root_and_rejects_malformed(self) -> None:
+        """LoginRequest admits 'root' (case-insensitive) and keeps the
+        EmailStr format check for everything else."""
+        from pydantic import ValidationError
+
+        # root forms normalize to 'root'
+        for raw in ("root", "ROOT", "  Root  "):
+            assert LoginRequest(  # noqa: S106 — test fixture credential
+                email=raw, password="admin"
+            ).email == "root"
+
+        # malformed addresses (including 'root@') still fail with 422
+        for bad in ("root@", "not-an-email", "@x.com", ""):
+            with pytest.raises(ValidationError):
+                LoginRequest(  # noqa: S106 — test fixture credential
+                    email=bad, password="admin"
+                )
+
+        # regular email semantics unchanged — domain lowercased, local
+        # part preserved, whitespace stripped
+        assert (
+            LoginRequest(  # noqa: S106 — test fixture credential
+                email="John.Doe@Example.COM", password="x"
+            ).email
+            == "John.Doe@example.com"
+        )
 
     # ═══════════════════════════════════════════════════════════════════════
     # mfa_verify()
@@ -1591,3 +2008,113 @@ class TestAuthService:
         assert call_kwargs["token_hash"] == service._hash_refresh_token(
             "raw-refresh"
         )
+
+    @pytest.mark.asyncio
+    async def test_issue_tokens_includes_mcp_claim_from_db_row(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """The access token carries an ``mcp`` claim read from the DB row.
+
+        With must_change_password=True on the row, the minted JWT data has
+        ``mcp: True``; after the flag is cleared, the next issuance has
+        ``mcp: False`` — the claim always reflects issue-time state.
+        """
+        mock_repo.create_refresh_token.return_value = AsyncMock()
+        user = self._make_mock_user(must_change_password=True)
+        mock_repo.get_user_by_id.return_value = user
+
+        captured: dict = {}
+
+        def _capture_jwt(data: dict, **kwargs: object) -> str:
+            captured.update(data)
+            return "jwt-access"
+
+        with (
+            patch(
+                "services.auth_service.create_jwt_token",
+                side_effect=_capture_jwt,
+            ),
+            patch(
+                "services.auth_service.secrets.token_hex",
+                return_value="raw-refresh",
+            ),
+        ):
+            await service.issue_tokens(
+                user_id=self.USER_ID,
+                organization_id=self.ORG_ID,
+                role="admin",
+            )
+        assert captured["mcp"] is True
+        mock_repo.get_user_by_id.assert_awaited_once_with(self.USER_ID)
+
+        # Flag cleared on the row → next issuance carries False.
+        user.must_change_password = False
+        mock_repo.get_user_by_id.reset_mock()
+        with (
+            patch(
+                "services.auth_service.create_jwt_token",
+                side_effect=_capture_jwt,
+            ),
+            patch(
+                "services.auth_service.secrets.token_hex",
+                return_value="raw-refresh",
+            ),
+        ):
+            await service.issue_tokens(
+                user_id=self.USER_ID,
+                organization_id=self.ORG_ID,
+                role="admin",
+            )
+        assert captured["mcp"] is False
+
+    @pytest.mark.asyncio
+    async def test_refresh_reissues_with_fresh_mcp_claim(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """Refresh re-reads the user row and mints a fresh mcp claim.
+
+        The refreshed token must reflect the CURRENT flag value — it never
+        copies the old token's claim.  After the user changes their
+        password (flag cleared), the next refresh issues mcp: False.
+        """
+        old_token_id = uuid4()
+        stored = AsyncMock()
+        stored.id = old_token_id
+        stored.user_id = str(self.USER_ID)
+        stored.organization_id = self.ORG_ID
+        new_stored = AsyncMock()
+        new_stored.id = uuid4()
+
+        user = self._make_mock_user(must_change_password=True)
+        mock_repo.revoke_refresh_token_if_current.return_value = True
+        mock_repo.get_user_by_id.return_value = user
+        mock_repo.create_refresh_token.return_value = AsyncMock()
+
+        captured: dict = {}
+
+        def _capture_jwt(data: dict, **kwargs: object) -> str:
+            captured.update(data)
+            return "jwt-access"
+
+        # First refresh while the flag is still set → mcp: True
+        mock_repo.get_refresh_token_by_hash.side_effect = [stored, new_stored]
+        with patch("services.auth_service.create_jwt_token", side_effect=_capture_jwt):
+            await service.refresh("old-raw-token")
+        assert captured["mcp"] is True
+
+        # change_password clears the flag → next refresh issues mcp: False
+        user.must_change_password = False
+        stored2 = AsyncMock()
+        stored2.id = uuid4()
+        stored2.user_id = str(self.USER_ID)
+        stored2.organization_id = self.ORG_ID
+        new_stored2 = AsyncMock()
+        new_stored2.id = uuid4()
+        mock_repo.get_refresh_token_by_hash.side_effect = [stored2, new_stored2]
+        with patch("services.auth_service.create_jwt_token", side_effect=_capture_jwt):
+            await service.refresh("another-raw-token")
+        assert captured["mcp"] is False

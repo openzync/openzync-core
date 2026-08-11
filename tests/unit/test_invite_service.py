@@ -432,6 +432,33 @@ class TestInviteService:
         )
 
     @pytest.mark.asyncio
+    async def test_accept_admin_invite_issues_admin_role_tokens(
+        self,
+        service: InviteService,
+        mock_repo: AsyncMock,
+        mock_auth_service: AsyncMock,
+    ) -> None:
+        """An admin invite's claimed row carries role='admin' → minted as admin."""
+        mock_repo.claim_invite.return_value = SimpleNamespace(
+            id=INVITEE_ID,
+            organization_id=ORG_ID,
+            role="admin",
+        )
+
+        with patch("services.invite_service.hash_password", return_value="hashed"):
+            result = await service.accept_invite(
+                token="raw-token",
+                password="SecurePass1",
+            )
+
+        assert result == FAKE_TOKEN_RESPONSE
+        mock_auth_service.issue_tokens.assert_awaited_once_with(
+            user_id=INVITEE_ID,
+            organization_id=ORG_ID,
+            role="admin",
+        )
+
+    @pytest.mark.asyncio
     async def test_accept_weak_password_raises_before_claim(
         self,
         service: InviteService,
