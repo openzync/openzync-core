@@ -19,6 +19,7 @@ from uuid import UUID
 from core.events import EventType
 from core.exceptions import ConflictError, NotFoundError, ValidationError
 from core.rbac import invalidate_role
+from models.user import User
 from repositories.user_repository import UserRepository
 from schemas.users import UserListResponse, UserResponse, UserResponseWithStats
 from services.webhook_service import WebhookService
@@ -334,6 +335,44 @@ class UserService:
             await self._invalidate_role_cache(user_id)
 
         return UserResponse.model_validate(self._user_to_dict(user))
+
+    # ── Platform superadmin (cross-org role change) ──────────────────────────
+
+    async def update_member_role(
+        self,
+        organization_id: UUID,
+        user_id: UUID,
+        role: str,
+    ) -> User:
+        """Set a member's role in any org (platform superadmin surface).
+
+        Cross-org analogue of :meth:`update_user` without the tenant
+        guards (self-change, last-admin) — the actor is a platform
+        superadmin operating outside the target org's tenant rules.
+        Invalidates the cached role so RBAC cannot outlive the change.
+
+        Args:
+            organization_id: The organization UUID.
+            user_id: The member's user UUID.
+            role: The new role (``admin`` or ``member``).
+
+        Returns:
+            The updated User.
+
+        Raises:
+            NotFoundError: If the user does not exist in the org.
+        """
+        user = await self._repo.update(
+            organization_id=organization_id,
+            user_id=user_id,
+            update_fields={"role": role},
+        )
+        if user is None:
+            raise NotFoundError(
+                f"User {user_id} not found in organization {organization_id}."
+            )
+        await self._invalidate_role_cache(user_id)
+        return user
 
     # ── Delete ──────────────────────────────────────────────────────────────
 

@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import (
 from core.audit import audit_action
 from core.config import get_settings
 from core.email import EmailConfig
+from core.exceptions import NotFoundError
 from core.system_config import get_system_config, update_system_config
 from dependencies.auth import require_superadmin
 from dependencies.db import get_db_superadmin
@@ -53,6 +54,7 @@ from schemas.system_config import SystemConfigResponse, SystemConfigUpdate
 from services.email_service import EmailService
 from services.org_config_service import OrgConfigService
 from services.organization_service import OrganizationService
+from services.user_service import UserService
 
 router = APIRouter(
     prefix="/admin/system",
@@ -99,6 +101,19 @@ def _get_org_service(
         bao_client=bao_client,
         email_service=EmailService(email_config),
     )
+
+
+def _get_user_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db_superadmin),  # noqa: B008
+) -> UserService:
+    """Build a superadmin UserService on the RLS-bypass session.
+
+    Cross-org member-role changes must bypass tenant RLS — the target
+    user may live in any organization.
+    """
+    redis = getattr(request.app.state, "redis", None)
+    return UserService(repo=UserRepository(db), redis=redis)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -183,7 +198,7 @@ async def list_all_orgs(
     limit: int = 50,
     status: str | None = None,
     _org_id: str = Depends(require_superadmin),  # noqa: B008
-    db: AsyncSession = Depends(get_db_superadmin),  # noqa: B008
+    service: OrganizationService = Depends(_get_org_service),  # noqa: B008
 ) -> SystemOrgListResponse:
     """List all orgs for the platform admin.
 
@@ -191,14 +206,13 @@ async def list_all_orgs(
         page: 1-based page number.
         limit: Page size (clamped to 1..200).
         status: Optional lifecycle filter (pending/approved/rejected).
-        db: RLS-bypass superadmin session.
+        service: Superadmin OrganizationService (bypass session).
         _org_id: Platform org UUID (superadmin-gated).
 
     Returns:
         A paginated :class:`SystemOrgListResponse`.
     """
-    repo = OrganizationRepository(db)
-    orgs, total = await repo.list_all(status=status, page=page, limit=limit)
+    orgs, total = await service.list_all_orgs(status=status, page=page, limit=limit)
     return SystemOrgListResponse(
         data=[
             SystemOrgListItem(
@@ -230,7 +244,7 @@ async def list_org_members(
     page: int = 1,
     limit: int = 50,
     _org_id: str = Depends(require_superadmin),  # noqa: B008
-    db: AsyncSession = Depends(get_db_superadmin),  # noqa: B008
+    service: OrganizationService = Depends(_get_org_service),  # noqa: B008
 ) -> SystemOrgMembersResponse:
     """List a target org's dashboard users for the platform admin.
 
@@ -239,7 +253,7 @@ async def list_org_members(
         page: 1-based page number.
         limit: Page size (clamped to 1..200).
         _org_id: Platform org UUID (superadmin-gated).
-        db: RLS-bypass superadmin session.
+        service: Superadmin OrganizationService (bypass session).
 
     Returns:
         A paginated :class:`SystemOrgMembersResponse`.
@@ -247,16 +261,15 @@ async def list_org_members(
     Raises:
         HTTPException: 404 if the organization does not exist.
     """
-    org = await OrganizationRepository(db).get_by_id(org_id)
-    if org is None:
+    try:
+        users, total = await service.list_org_members(
+            org_id, page=page, limit=limit
+        )
+    except NotFoundError:
         raise HTTPException(
             status_code=404,
             detail=f"Organization {org_id} not found.",
-        )
-
-    users, total = await UserRepository(db).list_by_org(
-        org_id, page=page, limit=limit
-    )
+        ) from None
     return SystemOrgMembersResponse(
         data=[
             SystemMemberListItem(
@@ -429,9 +442,8 @@ async def update_member_role(
     org_id: UUID,
     user_id: UUID,
     body: UpdateMemberRoleRequest,
-    request: Request,
     _org_id: str = Depends(require_superadmin),  # noqa: B008
-    db: AsyncSession = Depends(get_db_superadmin),  # noqa: B008
+    service: UserService = Depends(_get_user_service),  # noqa: B008
 ) -> MemberRoleResponse:
     """Set a member's role in any org.
 
@@ -439,34 +451,26 @@ async def update_member_role(
         org_id: The organization UUID.
         user_id: The member's user UUID.
         body: The new role (``admin`` or ``member``).
-        request: Incoming HTTP request (app-state Redis for cache invalidation).
-        db: RLS-bypass superadmin session.
+        service: Superadmin UserService (bypass session).
         _org_id: Platform org UUID (superadmin-gated).
 
     Returns:
         The updated member's id/org/role.
 
     Raises:
-        NotFoundError: 404 if the user does not exist in the org.
+        HTTPException: 404 if the user does not exist in the org.
     """
-    user = await UserRepository(db).update(
-        organization_id=org_id,
-        user_id=user_id,
-        update_fields={"role": body.role},
-    )
-    if user is None:
+    try:
+        user = await service.update_member_role(
+            organization_id=org_id,
+            user_id=user_id,
+            role=body.role,
+        )
+    except NotFoundError:
         raise HTTPException(
             status_code=404,
             detail=f"User {user_id} not found in organization {org_id}.",
-        )
-    # ⚠️ ROLE CACHE: the demoted/promoted user's cached role (60s TTL) is
-    # still valid until it expires or is invalidated — subsequent requests
-    # may use the stale role for up to a minute.  Invalidate here.
-    redis = getattr(request.app.state, "redis", None)
-    if redis is not None:
-        from core.rbac import invalidate_role
-
-        await invalidate_role(redis, user_id)
+        ) from None
     return MemberRoleResponse(
         id=user.id,
         organization_id=user.organization_id,

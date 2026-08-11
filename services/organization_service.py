@@ -21,6 +21,7 @@ from core.exceptions import ConflictError, NotFoundError
 from core.openbao import OpenBaoClient
 from core.org_codes import generate_org_code
 from models.organization import Organization
+from models.user import User
 from repositories.organization_repository import OrganizationRepository
 from repositories.user_repository import UserRepository
 from schemas.organizations import CreateOrgRequest, CreateOrgResponse
@@ -187,6 +188,27 @@ class OrganizationService:
                 f"Organization {org_id} is not pending (status={org.status!r})."
             )
 
+        # Atomic claim — the status flip is a single conditional UPDATE
+        # (WHERE id AND status='pending'), so exactly one of two concurrent
+        # approvals wins.  A loser's UPDATE matches zero rows and raises
+        # 409 here, BEFORE any side effect: no second invite is minted and
+        # no duplicate approval email is sent.
+        if not await self._repo.approve_if_pending(org_id):
+            org = await self._repo.get_by_id(org_id)
+            if org is None:
+                raise NotFoundError(f"Organization {org_id} not found.")
+            raise ConflictError(
+                f"Organization {org_id} is not pending (status={org.status!r})."
+            )
+
+        # Re-read the (now approved) row — the atomic UPDATE owns it.  The
+        # attribute is set on the instance so the returned object (and the
+        # router's {id, name, status} response) is coherent.
+        org = await self._repo.get_by_id(org_id)
+        if org is None:  # unreachable — the UPDATE only matched an existing row
+            raise NotFoundError(f"Organization {org_id} not found.")
+        org.status = "approved"
+
         # Pending admin — the designated admin of the approval request.
         user_repo = UserRepository(self._db)
         pending_admin = await user_repo.find_pending_admin_by_org(org_id)
@@ -199,10 +221,6 @@ class OrganizationService:
             raise ConflictError(
                 f"Organization {org_id}'s pending admin has no email."
             )
-
-        org.status = "approved"
-        await self._db.flush()
-        await self._db.refresh(org)
 
         # OpenBao bootstrap — errors propagate and roll the approval back.
         if self._bao_client is not None:
@@ -280,6 +298,52 @@ class OrganizationService:
             actor_id=str(actor_id),
         )
         return org
+
+    # ── Platform superadmin cross-org surface (routers/admin_system) ────────
+
+    async def list_all_orgs(
+        self,
+        status: str | None = None,
+        page: int = 1,
+        limit: int = 50,
+    ) -> tuple[list[Organization], int]:
+        """List every organization (pending/approved/rejected) for a superadmin.
+
+        Args:
+            status: Optional lifecycle filter (pending/approved/rejected).
+            page: 1-based page number.
+            limit: Page size (clamped to 1..200 by the repository).
+
+        Returns:
+            A tuple of ``(orgs_on_page, total_matching_count)``.
+        """
+        return await self._repo.list_all(status=status, page=page, limit=limit)
+
+    async def list_org_members(
+        self,
+        org_id: UUID,
+        page: int = 1,
+        limit: int = 50,
+    ) -> tuple[list[User], int]:
+        """List a target org's dashboard users (superadmin cross-org view).
+
+        Args:
+            org_id: The target organization UUID.
+            page: 1-based page number.
+            limit: Page size (clamped to 1..200 by the repository).
+
+        Returns:
+            A tuple of ``(users_on_page, total_matching_count)``.
+
+        Raises:
+            NotFoundError: If no organization with this UUID exists.
+        """
+        org = await self._repo.get_by_id(org_id)
+        if org is None:
+            raise NotFoundError(f"Organization {org_id} not found.")
+        return await UserRepository(self._db).list_by_org(
+            org_id, page=page, limit=limit
+        )
 
     @staticmethod
     def _validate_org_name(name: str) -> None:

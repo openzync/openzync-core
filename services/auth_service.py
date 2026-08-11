@@ -176,11 +176,24 @@ class AuthService:
             # public signup must not fall through to instant org creation.
             if system_config.approval_scope not in ("public_signup", "both"):
                 raise AuthorizationError("Registration is disabled")
-            return await self.create_pending_org_and_admin(
-                organization_name=payload.organization_name,
-                admin_email=str(payload.email),
-                admin_name=payload.email.split("@")[0],
-            )
+            try:
+                return await self.create_pending_org_and_admin(
+                    organization_name=payload.organization_name,
+                    admin_email=str(payload.email),
+                    admin_name=payload.email.split("@")[0],
+                )
+            except IntegrityError:
+                # Concurrent duplicate email in the approvals path — the
+                # unique email index won.  Same generic success the live
+                # path returns (anti-enumeration, smoke contract); roll
+                # back the aborted transaction (the pending org row is
+                # uncommitted) so the session stays usable.
+                logger.warning(
+                    "security.signup_existing_email",
+                    extra={"email": payload.email},
+                )
+                await self._repo.rollback()
+                return self._signup_success_response(payload.email)
 
         # ── Live path (allow_all only) ─────────────────────────────────────
         # Validate password strength

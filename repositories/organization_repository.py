@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.organization import Organization
@@ -112,6 +112,34 @@ class OrganizationRepository:
             .limit(effective_limit)
         )
         return result.scalars().all(), total
+
+    async def approve_if_pending(self, org_id: UUID) -> bool:
+        """Atomically flip a ``pending`` org to ``approved``.
+
+        Single conditional UPDATE — exactly one concurrent caller wins:
+        the loser's statement matches zero rows once the winner's
+        transaction commits (READ COMMITTED re-evaluates the WHERE against
+        the committed status), so two racing approvals can never both pass
+        the ``status == 'pending'`` gate.  Same race-free pattern as
+        ``AuthRepository.revoke_refresh_token_if_current``.
+
+        Args:
+            org_id: The organization UUID.
+
+        Returns:
+            ``True`` if this caller claimed (approved) the org.
+        """
+        result = await self._db.execute(
+            update(Organization)
+            .where(
+                Organization.id == org_id,
+                Organization.status == "pending",
+            )
+            .values(status="approved")
+            .execution_options(synchronize_session=False)
+        )
+        await self._db.flush()
+        return result.rowcount == 1  # type: ignore[attr-defined,no-any-return]
 
     async def set_status(self, org_id: UUID, status: str) -> Organization:
         """Set an organization's lifecycle status.

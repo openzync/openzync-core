@@ -117,20 +117,38 @@ class OrgRequestService:
         payload: OrgRequestCreate,
     ) -> OrgRequestResponse:
         """allow_all: create a live org + OTP-activated admin."""
-        org = await self._org_service.create_organization(
-            CreateOrgRequest(name=payload.organization_name, plan="free")
-        )
-        await self._auth_service.create_live_admin_user(
-            organization_id=org.organization_id,
-            email=str(payload.admin_email),
-            name=payload.admin_name,
-        )
-        # OTP email — the admin activates via verify-email, then sets a
-        # real password via the reset flow (they have none yet).
-        await self._otp_service.generate_and_send(
-            email=str(payload.admin_email),
-            purpose="signup",
-        )
+        # Duplicate-email guard — mirrors _create_pending: a live account
+        # with the designated admin email must not receive a second org,
+        # and the unique index must never surface as a raw 500.
+        existing = await self._auth_repo.find_user_by_email(str(payload.admin_email))
+        if existing is not None:
+            raise ConflictError(
+                f"An account with email '{payload.admin_email}' already exists. "
+                "Each organization requires a unique admin email."
+            )
+        try:
+            org = await self._org_service.create_organization(
+                CreateOrgRequest(name=payload.organization_name, plan="free")
+            )
+            await self._auth_service.create_live_admin_user(
+                organization_id=org.organization_id,
+                email=str(payload.admin_email),
+                name=payload.admin_name,
+            )
+            # OTP email — the admin activates via verify-email, then sets a
+            # real password via the reset flow (they have none yet).
+            await self._otp_service.generate_and_send(
+                email=str(payload.admin_email),
+                purpose="signup",
+            )
+        except IntegrityError:
+            # Concurrent duplicate — the unique email index won.  Roll back
+            # the aborted transaction so the session stays usable.
+            await self._auth_repo.rollback()
+            raise ConflictError(
+                f"An account with email '{payload.admin_email}' already exists. "
+                "Each organization requires a unique admin email."
+            ) from None
         logger.info(
             "org_request.created",
             extra={
