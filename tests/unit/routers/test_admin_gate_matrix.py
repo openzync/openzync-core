@@ -172,6 +172,8 @@ ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [
     # platform superadmin — /admin/system/*
     ("GET", "/admin/system/config", {}, {}),
     ("PATCH", "/admin/system/config", {}, {}),
+    ("GET", "/admin/system/settings", {}, {}),
+    ("GET", "/admin/system/settings/{key}", {"key": "OZ_DATABASE_URL"}, {}),
     ("GET", "/admin/system/orgs", {}, {}),
     ("GET", "/admin/system/orgs/{org_id}/members", {"org_id": str(ORG_ID)}, {}),
     ("GET", "/admin/system/orgs/{org_id}/config", {"org_id": str(ORG_ID)}, {}),

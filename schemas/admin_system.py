@@ -85,3 +85,79 @@ class OrgApprovalResponse(BaseModel):
     id: UUID = Field(..., description="Organization UUID.")
     name: str = Field(..., description="Organization name.")
     status: str = Field(..., description="Lifecycle state after the action.")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# System settings (read-only, masked)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+SYSTEM_SETTING_CATEGORIES: dict[str, str] = {
+    # Infrastructure
+    "OZ_DATABASE_URL": "Infrastructure",
+    "OZ_REDIS_URL": "Infrastructure",
+    "OZ_FALKORDB_URL": "Infrastructure",
+    "OZ_FALKORDB_MAX_CONNECTIONS": "Infrastructure",
+    "OZ_FALKORDB_SOCKET_TIMEOUT": "Infrastructure",
+    "OZ_SURREALDB_URL": "Infrastructure",
+    "OZ_PROMETHEUS_URL": "Infrastructure",
+    # Security
+    "OZ_SECRET_KEY": "Security",
+    "OZ_WEBHOOK_SIGNING_SECRET": "Security",
+    "OZ_ROOT_PASSWORD": "Security",
+    # Auth
+    "OZ_JWT_ACCESS_TOKEN_TTL_MINUTES": "Auth",
+    "OZ_JWT_REFRESH_TOKEN_TTL_DAYS": "Auth",
+    # Email
+    "OZ_SMTP_HOST": "Email",
+    "OZ_SMTP_PORT": "Email",
+    "OZ_SMTP_USERNAME": "Email",
+    "OZ_SMTP_PASSWORD": "Email",
+    "OZ_SMTP_FROM_ADDR": "Email",
+    "OZ_SMTP_USE_TLS": "Email",
+    "OZ_SMTP_START_TLS": "Email",
+    # Platform (everything else)
+    "OZ_ENVIRONMENT": "Platform",
+    "OZ_LOG_LEVEL": "Platform",
+    "OZ_CORS_ORIGINS": "Platform",
+    "OZ_FRONTEND_URL": "Platform",
+    "OZ_HOSTS_ALLOWED": "Platform",
+    "OZ_MAX_WORKERS": "Platform",
+    "OZ_RATE_LIMIT_IP_MAX": "Platform",
+    "OZ_RATE_LIMIT_WINDOW_SEC": "Platform",
+    "OZ_PROMPT_CACHING_ENABLED": "Platform",
+    "OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS": "Platform",
+    "OZ_PROMPT_CACHING_ANTHROPIC_TTL": "Platform",
+}
+"""Functional category for every key in ``core.openbao.SYSTEM_KEY_MAPPING``."""
+
+
+class SystemSettingItem(BaseModel):
+    """One platform system setting with a masked value."""
+
+    key: str = Field(..., description="``OZ_*`` system setting key.")
+    category: str = Field(
+        ...,
+        description="Functional category: Infrastructure/Security/Auth/Email/Platform.",
+    )
+    is_set: bool = Field(..., description="Whether the key is set in the system secret.")
+    masked_value: str | None = Field(
+        default=None,
+        description="Masked value (bullets for secrets, userinfo-stripped URLs); None when unset.",
+    )
+
+
+class SystemSettingsResponse(BaseModel):
+    """Response for ``GET /admin/system/settings``."""
+
+    data: list[SystemSettingItem] = Field(
+        ...,
+        description="All known system settings, masked.",
+    )
+
+
+class SystemSettingRevealResponse(BaseModel):
+    """Response for ``GET /admin/system/settings/{key}``."""
+
+    key: str = Field(..., description="``OZ_*`` system setting key.")
+    value: str = Field(..., description="Raw stored value.")

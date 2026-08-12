@@ -528,3 +528,169 @@ async def test_update_member_role_missing_user_404() -> None:
         user_id=MEMBER_B,
         role="member",
     )
+
+
+# ── system settings (GET /admin/system/settings[/{key}]) ──────────────────
+
+
+def _make_app_unauthenticated() -> FastAPI:
+    """Build the app with NO auth state — the superadmin gate must 401."""
+    app = FastAPI()
+    app.dependency_overrides[get_db] = lambda: AsyncMock()
+    app.include_router(router)
+    return app
+
+
+def _settings_route(path: str):
+    return next(
+        r
+        for r in router.routes
+        if getattr(r, "path", "") == path and "GET" in r.methods
+    )
+
+
+@pytest.mark.asyncio
+async def test_list_system_settings_200_masked_under_superadmin() -> None:
+    """GET /admin/system/settings → 200 masked list under superadmin."""
+    from schemas.admin_system import SystemSettingItem, SystemSettingsResponse
+
+    app = _make_app()
+    app.state.openbao_client = AsyncMock()
+
+    with (
+        patch(
+            "routers.admin_system.list_system_settings",
+            new=AsyncMock(
+                return_value=SystemSettingsResponse(
+                    data=[
+                        SystemSettingItem(
+                            key="OZ_DATABASE_URL",
+                            category="Infrastructure",
+                            is_set=True,
+                            masked_value="postgresql+asyncpg://db.example.com:5432",
+                        ),
+                        SystemSettingItem(
+                            key="OZ_ENVIRONMENT",
+                            category="Platform",
+                            is_set=False,
+                            masked_value=None,
+                        ),
+                    ]
+                ),
+            ),
+        ),
+        patch(
+            "dependencies.auth.get_org_role",
+            new=AsyncMock(return_value="superadmin"),
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/admin/system/settings")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {
+        "data": [
+            {
+                "key": "OZ_DATABASE_URL",
+                "category": "Infrastructure",
+                "is_set": True,
+                "masked_value": "postgresql+asyncpg://db.example.com:5432",
+            },
+            {
+                "key": "OZ_ENVIRONMENT",
+                "category": "Platform",
+                "is_set": False,
+                "masked_value": None,
+            },
+        ]
+    }
+
+
+@pytest.mark.asyncio
+async def test_list_system_settings_401_without_superadmin() -> None:
+    """No JWT session → 401 before any OpenBao read."""
+    app = _make_app_unauthenticated()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/admin/system/settings")
+
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_reveal_system_setting_200_raw_value() -> None:
+    """GET /admin/system/settings/{key} → 200 with the raw value."""
+    from schemas.admin_system import SystemSettingRevealResponse
+
+    app = _make_app()
+    app.state.openbao_client = AsyncMock()
+    raw_url = "postgresql+asyncpg://user:pass@db.example.com:5432/mydb"
+
+    with (
+        patch(
+            "routers.admin_system.reveal_system_setting",
+            new=AsyncMock(
+                return_value=SystemSettingRevealResponse(
+                    key="OZ_DATABASE_URL",
+                    value=raw_url,
+                )
+            ),
+        ),
+        patch(
+            "dependencies.auth.get_org_role",
+            new=AsyncMock(return_value="superadmin"),
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/admin/system/settings/OZ_DATABASE_URL")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"key": "OZ_DATABASE_URL", "value": raw_url}
+
+
+@pytest.mark.asyncio
+async def test_reveal_system_setting_unknown_key_404() -> None:
+    """Unknown or unset key → 404 (NotFoundError mapped)."""
+    from core.exceptions import NotFoundError
+
+    app = _make_app()
+    app.state.openbao_client = AsyncMock()
+
+    with (
+        patch(
+            "routers.admin_system.reveal_system_setting",
+            new=AsyncMock(
+                side_effect=NotFoundError("Unknown system setting key: OZ_NOPE.")
+            ),
+        ),
+        patch(
+            "dependencies.auth.get_org_role",
+            new=AsyncMock(return_value="superadmin"),
+        ),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/admin/system/settings/OZ_NOPE")
+
+    assert resp.status_code == 404
+    assert "OZ_NOPE" in resp.json()["detail"]
+
+
+def test_settings_routes_superadmin_gated() -> None:
+    """Both settings routes declare require_superadmin (coverage guard)."""
+    for path in ("/admin/system/settings", "/admin/system/settings/{key}"):
+        route = _settings_route(path)
+        calls = {dep.call for dep in route.dependant.dependencies}
+        assert require_superadmin in calls
+
+
+def test_reveal_route_audit_decorated() -> None:
+    """The reveal route carries audit metadata (action/resource/display)."""
+    route = _settings_route("/admin/system/settings/{key}")
+    endpoint = route.endpoint
+    assert endpoint._audit_action == "system.settings.revealed"
+    assert endpoint._audit_resource == "system"
+    assert endpoint._audit_display == "System setting revealed by superadmin"

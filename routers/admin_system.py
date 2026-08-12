@@ -9,6 +9,8 @@ alone; it is only set after the superadmin role check passes.
 Endpoints:
     GET    /admin/system/config                        — platform system config
     PATCH  /admin/system/config                        — update platform system config
+    GET    /admin/system/settings                      — list platform system settings (masked)
+    GET    /admin/system/settings/{key}                — reveal one system setting (audited)
     GET    /admin/system/orgs                          — list ALL orgs (incl. pending)
     GET    /admin/system/orgs/{org_id}/members         — list an org's dashboard users
     GET    /admin/system/orgs/{org_id}/config          — read any org's config
@@ -32,6 +34,7 @@ from core.config import get_settings
 from core.email import EmailConfig
 from core.exceptions import NotFoundError
 from core.system_config import get_system_config, update_system_config
+from core.system_settings import list_system_settings, reveal_system_setting
 from dependencies.auth import require_superadmin
 from dependencies.db import get_db_superadmin
 from repositories.organization_repository import OrganizationRepository
@@ -43,6 +46,8 @@ from schemas.admin_system import (
     SystemOrgListItem,
     SystemOrgListResponse,
     SystemOrgMembersResponse,
+    SystemSettingRevealResponse,
+    SystemSettingsResponse,
     UpdateMemberRoleRequest,
 )
 from schemas.organization_config import (
@@ -176,6 +181,81 @@ async def update_platform_config(
     """
     bao_client, redis = _get_openbao_and_redis(request)
     return await update_system_config(body, bao_client, redis)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Platform system settings (read-only, masked)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@router.get(
+    "/settings",
+    response_model=SystemSettingsResponse,
+    summary="List platform system settings (masked)",
+    description=(
+        "Returns every known ``OZ_*`` system setting with a masked value — "
+        "secrets render as bullets and database/Redis URLs have userinfo "
+        "stripped.  Raw values are exposed only by the audited reveal "
+        "endpoint.  Requires the platform super-admin role."
+    ),
+)
+async def list_platform_system_settings(
+    request: Request,
+    _org_id: str = Depends(require_superadmin),  # noqa: B008
+) -> SystemSettingsResponse:
+    """List all known system settings, masked.
+
+    Args:
+        request: Incoming HTTP request (app-state OpenBao access).
+        _org_id: Platform org UUID (superadmin-gated).
+
+    Returns:
+        A :class:`SystemSettingsResponse` with masked values.
+    """
+    bao_client, _redis = _get_openbao_and_redis(request)
+    return await list_system_settings(bao_client)
+
+
+@router.get(
+    "/settings/{key}",
+    response_model=SystemSettingRevealResponse,
+    summary="Reveal a system setting",
+    description=(
+        "Returns the raw stored value of one ``OZ_*`` system setting.  "
+        "Audited.  Requires the platform super-admin role."
+    ),
+)
+@audit_action(
+    "system.settings.revealed",
+    "system",
+    "System setting revealed by superadmin",
+)
+async def reveal_platform_system_setting(
+    key: str,
+    request: Request,
+    _org_id: str = Depends(require_superadmin),  # noqa: B008
+) -> SystemSettingRevealResponse:
+    """Reveal one system setting's raw value.
+
+    Args:
+        key: An ``OZ_*`` setting key.
+        request: Incoming HTTP request (app-state OpenBao access).
+        _org_id: Platform org UUID (superadmin-gated).
+
+    Returns:
+        A :class:`SystemSettingRevealResponse` with the raw value.
+
+    Raises:
+        HTTPException: 404 if the key is unknown or not set.
+    """
+    bao_client, _redis = _get_openbao_and_redis(request)
+    try:
+        return await reveal_system_setting(key, bao_client)
+    except NotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"System setting '{key}' not found.",
+        ) from None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
