@@ -166,10 +166,22 @@ def _resolve_action(
 ) -> tuple[str, str, str | None]:
     """Resolve audit (action, resource_type, display_name) from route metadata.
 
-    Tries to match the request against registered FastAPI routes.  If the
-    matched route's endpoint has audit metadata (via ``@audit_action``
-    decorator), uses that.  Falls back to ``http.{method}``.
+    Checks ``scope["route"]`` first: FastAPI 0.139+ lazy-includes routers —
+    ``app.include_router()`` appends ``_IncludedRouter`` placeholder objects
+    to ``app.routes`` instead of flattened ``APIRoute``s, so scanning
+    ``app.routes`` never finds the ``@audit_action`` metadata and every
+    request degrades to ``http.{method}``.  During request handling FastAPI
+    sets ``scope["route"]`` to the matched ``APIRoute``, which carries the
+    real endpoint.  The ``app.routes`` scan is kept as a fallback for older
+    FastAPI/Starlette ``Route`` objects and non-FastAPI apps;
+    ``http.{method}`` remains the last-resort fallback.
     """
+    route = scope.get("route")
+    if route is not None and hasattr(route, "endpoint"):
+        meta = get_audit_metadata(route.endpoint)
+        if meta is not None:
+            return (meta["action"], meta["resource"], meta["display"])
+
     app = scope.get("app")
     if app is not None and hasattr(app, "routes"):
         for route in app.routes:

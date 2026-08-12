@@ -7,9 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import orjson
 import pytest
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from core.audit import audit_action
 from middleware.audit import AuditMiddleware, _resolve_action
 
 
@@ -203,6 +204,88 @@ class TestAuditMiddleware:
         action, resource, display = _resolve_action("GET", "/unknown", {})
         assert action == "http.get"
         assert resource == "unknown"
+
+    @pytest.mark.asyncio
+    async def test_audit_action_resolved_via_scope_route_on_lazy_included_router(
+        self,
+    ) -> None:
+        """FastAPI 0.139+ lazy-include: action resolves via scope['route'].
+
+        ``app.include_router`` appends ``_IncludedRouter`` placeholders
+        (no ``.endpoint``) to ``app.routes``, so the ``app.routes`` scan
+        alone misses ``@audit_action`` metadata and every request degrades
+        to ``http.{method}``.  The matched ``APIRoute`` is set on
+        ``scope["route"]`` during handling — the resolved action must be
+        the decorated one, not ``http.post``.
+        """
+        mock_pool = AsyncMock()
+        mock_pool.enqueue = AsyncMock(return_value=None)
+
+        app = FastAPI()
+        router = APIRouter()
+
+        @router.post("/settings/reveal")
+        @audit_action(
+            "system.settings.revealed", "system_setting", "System setting revealed",
+        )
+        async def reveal_setting() -> dict:
+            return {"status": "ok"}
+
+        app.include_router(router)  # lazy-include path → _IncludedRouter in app.routes
+        app.state.arq_pool = mock_pool
+        app.add_middleware(AuditMiddleware)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post("/settings/reveal")
+            assert resp.status_code == 200
+
+        await asyncio.sleep(0.02)
+        assert mock_pool.enqueue.called
+        assert (
+            mock_pool.enqueue.call_args.kwargs["action"]
+            == "system.settings.revealed"
+        )
+        assert (
+            mock_pool.enqueue.call_args.kwargs["resource_type"]
+            == "system_setting"
+        )
+
+    @pytest.mark.asyncio
+    async def test_audit_action_resolved_via_scope_route_unit(self) -> None:
+        """_resolve_action prefers scope['route'] endpoint metadata.
+
+        Focused unit check: a scope carrying the matched ``APIRoute`` (as
+        set by FastAPI during request handling) resolves the decorated
+        action even though ``app.routes`` holds only ``_IncludedRouter``
+        placeholders.
+        """
+        router = APIRouter()
+
+        @router.post("/org/approve")
+        @audit_action("org.approved", "org", "Organization approved")
+        async def approve_org() -> dict:
+            return {"status": "ok"}
+
+        app = FastAPI()
+        app.include_router(router)
+
+        # The sub-router still holds the real APIRoute after lazy inclusion;
+        # app.routes only has the _IncludedRouter placeholder.
+        matched = router.routes[0]
+        action, resource, display = _resolve_action(
+            "POST", "/org/approve", {"app": app, "route": matched},
+        )
+        assert action == "org.approved"
+        assert resource == "org"
+
+        # Without scope['route'], the lazy-included route is invisible to the
+        # app.routes scan → falls back to http.{method}.
+        fallback_action, fallback_resource, _ = _resolve_action(
+            "POST", "/org/approve", {"app": app},
+        )
+        assert fallback_action == "http.post"
+        assert fallback_resource == "approve"
 
     @pytest.mark.asyncio
     async def test_non_http_passthrough(self) -> None:
