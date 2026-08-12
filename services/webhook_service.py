@@ -123,7 +123,7 @@ class WebhookService:
             events=events,
             signing_secret=signing_secret,
         )
-        # ponytail: per-org secret stored in DB; upgrade to Transit-at-rest
+        # per-org secret stored in DB; upgrade to Transit-at-rest
         # encryption with core.transit WEBHOOK_SECRET_KEY when TransitManager is wired
         return self._serialize(endpoint), signing_secret
 

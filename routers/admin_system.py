@@ -9,8 +9,8 @@ alone; it is only set after the superadmin role check passes.
 Endpoints:
     GET    /admin/system/config                        — platform system config
     PATCH  /admin/system/config                        — update platform system config
-    GET    /admin/system/settings                      — list platform system settings (masked)
-    GET    /admin/system/settings/{key}                — reveal one system setting (audited)
+    GET    /admin/system/settings                      — list settings (masked)
+    POST   /admin/system/settings/{key}/reveal         — reveal one setting (audited)
     GET    /admin/system/orgs                          — list ALL orgs (incl. pending)
     GET    /admin/system/orgs/{org_id}/members         — list an org's dashboard users
     GET    /admin/system/orgs/{org_id}/config          — read any org's config
@@ -216,8 +216,12 @@ async def list_platform_system_settings(
     return await list_system_settings(bao_client)
 
 
-@router.get(
-    "/settings/{key}",
+# ⚠️ BREAKING: reveal moved from GET /settings/{key} to POST
+# /settings/{key}/reveal — GET requests are skipped by the audit
+# middleware (middleware/audit.py:231), so a GET reveal could never be
+# audited. POST is required to guarantee the audit trail.
+@router.post(
+    "/settings/{key}/reveal",
     response_model=SystemSettingRevealResponse,
     summary="Reveal a system setting",
     description=(

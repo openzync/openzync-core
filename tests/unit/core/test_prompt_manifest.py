@@ -27,7 +27,7 @@ from core.prompt_manifest import (
 )
 
 
-# ponytail: Path.parent is a readonly property — can't patch.object it.
+# Path.parent is a readonly property — can't patch.object it.
 # Instead we patch PROMPTS_DIR itself (the whole Path), which is mutable
 # at the module attribute level.
 

@@ -102,7 +102,7 @@ class AuthThrottle:
     async def _decrement_if_positive(self, key: str) -> None:
         """Decrement a Redis counter only when it is above zero.
 
-        ponytail: read-then-decr is not atomic — a concurrent success can
+        read-then-decr is not atomic — a concurrent success can
         double-decrement into a small negative.  Negatives only widen the
         attempt budget (never re-lock a user), so the race is benign; use
         a Lua script if the counter must never go negative.

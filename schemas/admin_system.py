@@ -140,10 +140,16 @@ class SystemSettingItem(BaseModel):
         ...,
         description="Functional category: Infrastructure/Security/Auth/Email/Platform.",
     )
-    is_set: bool = Field(..., description="Whether the key is set in the system secret.")
+    is_set: bool = Field(
+        ...,
+        description="Whether the key is set in the system secret.",
+    )
     masked_value: str | None = Field(
         default=None,
-        description="Masked value (bullets for secrets, userinfo-stripped URLs); None when unset.",
+        description=(
+            "Masked value (bullets for secrets, userinfo-stripped URLs); "
+            "None when unset."
+        ),
     )
 
 
@@ -157,7 +163,7 @@ class SystemSettingsResponse(BaseModel):
 
 
 class SystemSettingRevealResponse(BaseModel):
-    """Response for ``GET /admin/system/settings/{key}``."""
+    """Response for ``POST /admin/system/settings/{key}/reveal``."""
 
     key: str = Field(..., description="``OZ_*`` system setting key.")
     value: str = Field(..., description="Raw stored value.")

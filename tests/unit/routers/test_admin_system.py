@@ -541,11 +541,11 @@ def _make_app_unauthenticated() -> FastAPI:
     return app
 
 
-def _settings_route(path: str):
+def _settings_route(path: str, method: str = "GET"):
     return next(
         r
         for r in router.routes
-        if getattr(r, "path", "") == path and "GET" in r.methods
+        if getattr(r, "path", "") == path and method in r.methods
     )
 
 
@@ -621,7 +621,7 @@ async def test_list_system_settings_401_without_superadmin() -> None:
 
 @pytest.mark.asyncio
 async def test_reveal_system_setting_200_raw_value() -> None:
-    """GET /admin/system/settings/{key} → 200 with the raw value."""
+    """POST /admin/system/settings/{key}/reveal → 200 with the raw value."""
     from schemas.admin_system import SystemSettingRevealResponse
 
     app = _make_app()
@@ -645,7 +645,9 @@ async def test_reveal_system_setting_200_raw_value() -> None:
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/admin/system/settings/OZ_DATABASE_URL")
+            resp = await client.post(
+                "/admin/system/settings/OZ_DATABASE_URL/reveal"
+            )
 
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"key": "OZ_DATABASE_URL", "value": raw_url}
@@ -673,7 +675,7 @@ async def test_reveal_system_setting_unknown_key_404() -> None:
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/admin/system/settings/OZ_NOPE")
+            resp = await client.post("/admin/system/settings/OZ_NOPE/reveal")
 
     assert resp.status_code == 404
     assert "OZ_NOPE" in resp.json()["detail"]
@@ -681,15 +683,23 @@ async def test_reveal_system_setting_unknown_key_404() -> None:
 
 def test_settings_routes_superadmin_gated() -> None:
     """Both settings routes declare require_superadmin (coverage guard)."""
-    for path in ("/admin/system/settings", "/admin/system/settings/{key}"):
-        route = _settings_route(path)
+    for path, method in (
+        ("/admin/system/settings", "GET"),
+        ("/admin/system/settings/{key}/reveal", "POST"),
+    ):
+        route = _settings_route(path, method)
         calls = {dep.call for dep in route.dependant.dependencies}
         assert require_superadmin in calls
 
 
 def test_reveal_route_audit_decorated() -> None:
-    """The reveal route carries audit metadata (action/resource/display)."""
-    route = _settings_route("/admin/system/settings/{key}")
+    """The reveal route is a POST carrying audit metadata.
+
+    A GET here would be silently skipped by the audit middleware
+    (middleware/audit.py:231) — POST is what makes the reveal auditable.
+    """
+    route = _settings_route("/admin/system/settings/{key}/reveal", "POST")
+    assert "POST" in route.methods
     endpoint = route.endpoint
     assert endpoint._audit_action == "system.settings.revealed"
     assert endpoint._audit_resource == "system"

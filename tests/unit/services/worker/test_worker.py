@@ -366,7 +366,7 @@ class TestMonitorQueueDepth:
     # Helper: set shutdown=True after first loop iteration so the
     # coroutine returns normally.  _shutdown_requested starts False (run
     # the loop body) and patched asyncio.sleep flips it to True (exit).
-    # ponyTail: mutable list avoids a dedicated flag class.
+    # mutable list avoids a dedicated flag class.
     @staticmethod
     async def _stop_after_first(*_: object) -> None:
         import services.worker.worker as _wmod

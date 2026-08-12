@@ -24,14 +24,15 @@ from schemas.admin_system import (
 _MASK = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022"
 """Mask rendered for secret values (8 bullet chars)."""
 
-# note: explicit set rather than substring matching on PASSWORD/SECRET/KEY/TOKEN —
-# "TOKEN" would false-positive on OZ_JWT_*_TOKEN_TTL_* (numeric TTLs, not secrets).
+# note: explicit set rather than substring matching on
+# PASSWORD/SECRET/KEY/TOKEN — "TOKEN" would false-positive on the
+# OZ_JWT_*_TOKEN_TTL_* keys (numeric TTLs, not secrets).
 _SECRET_KEYS: frozenset[str] = frozenset(
     {
         "OZ_SECRET_KEY",
         "OZ_WEBHOOK_SIGNING_SECRET",
         "OZ_SMTP_PASSWORD",
-        "OZ_SMTP_USERNAME",  # treat SMTP username as secret — it pairs with the password
+        "OZ_SMTP_USERNAME",  # treated as a secret — pairs with the password
         "OZ_ROOT_PASSWORD",
     }
 )
@@ -46,7 +47,10 @@ _URL_KEYS: frozenset[str] = frozenset(
 )
 
 _USERINFO_RE = re.compile(r"://[^/@]+@")
-"""Matches ``://<userinfo>@`` — the userinfo of a URL (never contains ``/`` or ``@``)."""
+"""Matches ``://<userinfo>@`` — the userinfo of a URL.
+
+Userinfo never contains ``/`` or ``@``.
+"""
 
 
 def _is_set(value: Any) -> bool:
