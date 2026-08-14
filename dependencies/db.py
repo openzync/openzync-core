@@ -142,6 +142,19 @@ async def get_db_superadmin(
 
     # ── 1. Verify superadmin (DB-verified role) on a clean session ────────
     async with factory() as verify_session:
+        from sqlalchemy import text
+
+        # Same non-bypass RLS context as get_db: the role lookup must run
+        # under the role's own row visibility.  If the app DB role ever
+        # stops bypassing RLS implicitly (or FORCE ROW SECURITY is enabled),
+        # the lookup fails loudly here instead of silently mis-verifying.
+        await verify_session.execute(
+            text("SELECT set_config('app.org_id', :org_id, true)"),
+            {"org_id": org_id},
+        )
+        await verify_session.execute(
+            text("SELECT set_config('app.bypass_rls', 'false', true)"),
+        )
         await _ensure_superadmin(request, org_id, user_id, verify_session)
 
     # ── 2. Open the bypass session only now that the check passed ──────────

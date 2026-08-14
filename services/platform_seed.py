@@ -139,10 +139,12 @@ async def ensure_platform_root(
         # hits the PLATFORM_ORG_ID primary-key conflict.  That is not a
         # failure — the winner bootstrapped the platform — so roll back the
         # aborted transaction and continue startup instead of crash-looping.
-        # Any OTHER constraint error (e.g. an org-code collision) still
-        # aborts startup loudly.
+        # Fail-closed: ONLY the exact `organizations_pkey` constraint is the
+        # benign race.  A driver that reports no constraint name (None) or
+        # any other constraint (e.g. an org-code collision) is a REAL startup
+        # failure and re-raises loudly — never masked as "already seeded".
         constraint = getattr(getattr(err, "orig", None), "constraint_name", None)
-        if constraint is not None and constraint != "organizations_pkey":
+        if constraint != "organizations_pkey":
             raise
         await db.rollback()
         logger.warning(

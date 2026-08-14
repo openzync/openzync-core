@@ -128,3 +128,141 @@ class TestGetDb:
         with pytest.raises(RuntimeError, match="db_session_factory not found"):
             async for _ in get_db(request):
                 pass  # noqa
+
+
+class TestGetDbSuperadmin:
+    """get_db_superadmin: RLS context on the verify session + bypass session."""
+
+    PLATFORM_ORG_ID_STR = "00000000-0000-0000-0000-000000000002"
+
+    @pytest.fixture
+    def request_with_session(self) -> MagicMock:
+        req = MagicMock()
+        req.app.state.db_session_factory = MagicMock()
+        req.state.org_id = self.PLATFORM_ORG_ID_STR
+        req.state.user_id = "00000000-0000-0000-0000-000000000003"
+        return req
+
+    @pytest.fixture
+    def verify_and_bypass_sessions(self) -> tuple[AsyncMock, AsyncMock]:
+        """Two sessions from the factory: the verify session + the bypass session."""
+        verify = AsyncMock(spec=AsyncSession)
+        bypass = AsyncMock(spec=AsyncSession)
+        return verify, bypass
+
+    @pytest.fixture
+    def two_session_factory(
+        self, verify_and_bypass_sessions: tuple[AsyncMock, AsyncMock]
+    ) -> MagicMock:
+        """An async context manager per factory() call, yielding the sessions."""
+        verify, bypass = verify_and_bypass_sessions
+        factory = MagicMock()
+        factory.side_effect = [
+            _cm(verify),
+            _cm(bypass),
+        ]
+        return factory
+
+    @pytest.mark.asyncio
+    async def test_verify_session_sets_rls_context_before_superadmin_check(
+        self,
+        request_with_session: MagicMock,
+        verify_and_bypass_sessions: tuple[AsyncMock, AsyncMock],
+        two_session_factory: MagicMock,
+    ) -> None:
+        """The superadmin role check runs on a session with get_db's RLS context.
+
+        Fail-closed: set_config('app.org_id'...) and set_config
+        ('app.bypass_rls', 'false'...) must execute on the verify session
+        BEFORE _ensure_superadmin's role lookup, so the lookup is subject to
+        the same row visibility as every other query in the app.
+        """
+        from dependencies.auth import _ensure_superadmin  # noqa: F401  — patch target
+        from dependencies.db import get_db_superadmin
+
+        verify, bypass = verify_and_bypass_sessions
+        request_with_session.app.state.db_session_factory = two_session_factory
+
+        events: list[tuple[str, object]] = []
+
+        def record_execute(*args: object, **kwargs: object) -> AsyncMock:
+            events.append(("set_config", str(args[0])))
+            return AsyncMock()
+
+        verify.execute.side_effect = record_execute
+
+        async def record_ensure(*args: object, **kwargs: object) -> None:
+            events.append(("ensure_superadmin", args[3]))
+
+        with patch(
+            "dependencies.auth._ensure_superadmin",
+            new=AsyncMock(side_effect=record_ensure),
+        ):
+            gen = get_db_superadmin(request_with_session)
+            session = await gen.__anext__()
+            assert session is bypass
+
+            with pytest.raises(StopAsyncIteration):
+                await gen.__anext__()
+
+        # RLS context set before the role check; bypass only on the yielded session.
+        assert events == [
+            ("set_config", "SELECT set_config('app.org_id', :org_id, true)"),
+            ("set_config", "SELECT set_config('app.bypass_rls', 'false', true)"),
+            ("ensure_superadmin", verify),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_bypass_session_sets_bypass_after_verification(
+        self,
+        request_with_session: MagicMock,
+        verify_and_bypass_sessions: tuple[AsyncMock, AsyncMock],
+        two_session_factory: MagicMock,
+    ) -> None:
+        """The yielded bypass session gets bypass_rls='true' + platform org_id."""
+        from dependencies.db import get_db_superadmin
+
+        verify, bypass = verify_and_bypass_sessions
+        request_with_session.app.state.db_session_factory = two_session_factory
+
+        with patch(
+            "dependencies.auth._ensure_superadmin", new=AsyncMock()
+        ):
+            gen = get_db_superadmin(request_with_session)
+            session = await gen.__anext__()
+            assert session is bypass
+
+            with pytest.raises(StopAsyncIteration):
+                await gen.__anext__()
+
+        set_config_calls = [str(c.args[0]) for c in bypass.execute.await_args_list]
+        assert any(
+            "set_config('app.bypass_rls', 'true', true)" in c
+            for c in set_config_calls
+        )
+        assert any(
+            "set_config('app.org_id', :org_id, true)" in c
+            for c in set_config_calls
+        )
+        bypass.commit.assert_awaited_once()
+    @pytest.mark.asyncio
+    async def test_raises_runtime_error_when_state_missing(self) -> None:
+        """No org_id/user_id on request.state → RuntimeError (fail-closed)."""
+        from dependencies.db import get_db_superadmin
+
+        request = MagicMock()
+        request.app.state.db_session_factory = MagicMock()
+        request.state.org_id = None
+        request.state.user_id = None
+
+        with pytest.raises(RuntimeError, match="requires an authenticated JWT"):
+            async for _ in get_db_superadmin(request):
+                pass  # noqa
+
+
+def _cm(session: AsyncMock) -> AsyncMock:
+    """Build an async context manager yielding ``session``."""
+    cm = AsyncMock()
+    cm.__aenter__.return_value = session
+    cm.__aexit__.return_value = None
+    return cm

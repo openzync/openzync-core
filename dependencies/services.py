@@ -208,7 +208,18 @@ async def get_org_request_service(
         An initialised ``OrgRequestService``.
     """
     bao_client = getattr(request.app.state, "openbao_client", None)
+    if bao_client is None:
+        raise RuntimeError(
+            "OpenBao client not found on app.state. "
+            "Ensure the OpenBao client was initialised during the application "
+            "lifespan."
+        )
     redis = getattr(request.app.state, "redis", None)
+    if redis is None:
+        raise RuntimeError(
+            "Redis client not found on app.state. "
+            "Ensure init_redis() was called during the application lifespan."
+        )
     email_config = EmailConfig.from_settings(get_settings())
     email_service = EmailService(email_config)
     return OrgRequestService(

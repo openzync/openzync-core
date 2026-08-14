@@ -193,3 +193,37 @@ class TestEnsurePlatformRoot:
                 await ensure_platform_root(db, bao)
 
         db.rollback.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unknown_constraint_name_still_aborts(self) -> None:
+        """Driver returns constraint_name=None → NOT the seed race → propagates.
+
+        Fail-closed: only the exact ``organizations_pkey`` constraint is the
+        benign multi-worker race.  A missing constraint name means we cannot
+        prove the failure was the PK race, so it must abort startup loudly —
+        never be masked as "already seeded".
+        """
+        db = AsyncMock()
+        bao = AsyncMock()
+        org_repo = AsyncMock()
+        org_repo.get_by_id.return_value = None
+
+        with (
+            patch(
+                "repositories.organization_repository.OrganizationRepository",
+                return_value=org_repo,
+            ),
+            patch(
+                "repositories.user_repository.UserRepository",
+                return_value=AsyncMock(),
+            ),
+            patch(
+                "services.platform_seed.hash_password",
+                return_value="hashed",
+            ),
+        ):
+            db.flush.side_effect = _make_integrity_error(None)
+            with pytest.raises(IntegrityError):
+                await ensure_platform_root(db, bao)
+
+        db.rollback.assert_not_awaited()

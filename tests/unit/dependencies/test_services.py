@@ -167,6 +167,100 @@ class TestGetAuthService:
             await get_auth_service(request, db)
 
 
+# ── Org Request Service ─────────────────────────────────────────────────────────
+
+
+class TestGetOrgRequestService:
+    """get_org_request_service: factory for OrgRequestService (needs Bao + Redis)."""
+
+    @pytest.mark.asyncio
+    async def test_creates_org_request_service_with_all_deps(self) -> None:
+        from dependencies.services import get_org_request_service
+
+        request = MagicMock(spec=Request)
+        request.app.state.redis = AsyncMock()
+        request.app.state.openbao_client = MagicMock()
+
+        db = AsyncMock(spec=AsyncSession)
+        auth_service = MagicMock()
+
+        with (
+            patch("dependencies.services.EmailConfig") as mock_email_config_cls,
+            patch("dependencies.services.EmailService") as mock_email_svc_cls,
+            patch("dependencies.services.OtpService") as mock_otp_svc_cls,
+            patch("dependencies.services.OrganizationRepository") as mock_org_repo_cls,
+            patch("dependencies.services.OrganizationService") as mock_org_svc_cls,
+            patch("dependencies.services.OrgRequestService") as mock_svc_cls,
+        ):
+            mock_email_config = MagicMock()
+            mock_email_config_cls.from_settings.return_value = mock_email_config
+            mock_email = MagicMock()
+            mock_email_svc_cls.return_value = mock_email
+            mock_otp = MagicMock()
+            mock_otp_svc_cls.return_value = mock_otp
+            mock_org_repo = MagicMock()
+            mock_org_repo_cls.return_value = mock_org_repo
+            mock_org_svc = MagicMock()
+            mock_org_svc_cls.return_value = mock_org_svc
+            mock_svc_cls.return_value = "org_request_service"
+
+            result = await get_org_request_service(request, db, auth_service)
+
+            mock_otp_svc_cls.assert_called_once_with(
+                redis=request.app.state.redis, email_service=mock_email
+            )
+            mock_org_svc_cls.assert_called_once_with(
+                repo=mock_org_repo, bao_client=request.app.state.openbao_client
+            )
+            mock_svc_cls.assert_called_once_with(
+                db=db,
+                auth_service=auth_service,
+                org_service=mock_org_svc,
+                otp_service=mock_otp,
+                redis=request.app.state.redis,
+                bao_client=request.app.state.openbao_client,
+            )
+            assert result == "org_request_service"
+
+    @pytest.mark.asyncio
+    async def test_raises_when_redis_missing(self) -> None:
+        """No redis on app.state → RuntimeError before service construction."""
+        from dependencies.services import get_org_request_service
+
+        request = MagicMock(spec=Request)
+        request.app.state.redis = None
+        request.app.state.openbao_client = MagicMock()
+        db = AsyncMock(spec=AsyncSession)
+        auth_service = MagicMock()
+
+        with (
+            pytest.raises(RuntimeError, match="Redis client not found"),
+            patch("dependencies.services.OrgRequestService") as mock_svc_cls,
+        ):
+            await get_org_request_service(request, db, auth_service)
+
+        mock_svc_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_raises_when_openbao_missing(self) -> None:
+        """No openbao_client on app.state → RuntimeError before service construction."""
+        from dependencies.services import get_org_request_service
+
+        request = MagicMock(spec=Request)
+        request.app.state.redis = AsyncMock()
+        request.app.state.openbao_client = None
+        db = AsyncMock(spec=AsyncSession)
+        auth_service = MagicMock()
+
+        with (
+            pytest.raises(RuntimeError, match="OpenBao client not found"),
+            patch("dependencies.services.OrgRequestService") as mock_svc_cls,
+        ):
+            await get_org_request_service(request, db, auth_service)
+
+        mock_svc_cls.assert_not_called()
+
+
 # ── Fact Service ────────────────────────────────────────────────────────────────
 
 
