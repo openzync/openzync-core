@@ -104,6 +104,7 @@ class TestH5EnumerationClosed:
             repo=AsyncMock(spec=AuthRepository),
             otp_service=AsyncMock(),
             redis=AsyncMock(),
+            org_repo=AsyncMock(),
             email_service=AsyncMock(),
             bao_client=AsyncMock(),
         )

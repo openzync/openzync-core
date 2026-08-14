@@ -7,9 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import orjson
 import pytest
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from core.audit import audit_action
 from middleware.audit import AuditMiddleware, _resolve_action
 
 
@@ -205,6 +206,88 @@ class TestAuditMiddleware:
         assert resource == "unknown"
 
     @pytest.mark.asyncio
+    async def test_audit_action_resolved_via_scope_route_on_lazy_included_router(
+        self,
+    ) -> None:
+        """FastAPI 0.139+ lazy-include: action resolves via scope['route'].
+
+        ``app.include_router`` appends ``_IncludedRouter`` placeholders
+        (no ``.endpoint``) to ``app.routes``, so the ``app.routes`` scan
+        alone misses ``@audit_action`` metadata and every request degrades
+        to ``http.{method}``.  The matched ``APIRoute`` is set on
+        ``scope["route"]`` during handling — the resolved action must be
+        the decorated one, not ``http.post``.
+        """
+        mock_pool = AsyncMock()
+        mock_pool.enqueue = AsyncMock(return_value=None)
+
+        app = FastAPI()
+        router = APIRouter()
+
+        @router.post("/settings/reveal")
+        @audit_action(
+            "system.settings.revealed", "system_setting", "System setting revealed",
+        )
+        async def reveal_setting() -> dict:
+            return {"status": "ok"}
+
+        app.include_router(router)  # lazy-include path → _IncludedRouter in app.routes
+        app.state.arq_pool = mock_pool
+        app.add_middleware(AuditMiddleware)
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            resp = await c.post("/settings/reveal")
+            assert resp.status_code == 200
+
+        await asyncio.sleep(0.02)
+        assert mock_pool.enqueue.called
+        assert (
+            mock_pool.enqueue.call_args.kwargs["action"]
+            == "system.settings.revealed"
+        )
+        assert (
+            mock_pool.enqueue.call_args.kwargs["resource_type"]
+            == "system_setting"
+        )
+
+    @pytest.mark.asyncio
+    async def test_audit_action_resolved_via_scope_route_unit(self) -> None:
+        """_resolve_action prefers scope['route'] endpoint metadata.
+
+        Focused unit check: a scope carrying the matched ``APIRoute`` (as
+        set by FastAPI during request handling) resolves the decorated
+        action even though ``app.routes`` holds only ``_IncludedRouter``
+        placeholders.
+        """
+        router = APIRouter()
+
+        @router.post("/org/approve")
+        @audit_action("org.approved", "org", "Organization approved")
+        async def approve_org() -> dict:
+            return {"status": "ok"}
+
+        app = FastAPI()
+        app.include_router(router)
+
+        # The sub-router still holds the real APIRoute after lazy inclusion;
+        # app.routes only has the _IncludedRouter placeholder.
+        matched = router.routes[0]
+        action, resource, display = _resolve_action(
+            "POST", "/org/approve", {"app": app, "route": matched},
+        )
+        assert action == "org.approved"
+        assert resource == "org"
+
+        # Without scope['route'], the lazy-included route is invisible to the
+        # app.routes scan → falls back to http.{method}.
+        fallback_action, fallback_resource, _ = _resolve_action(
+            "POST", "/org/approve", {"app": app},
+        )
+        assert fallback_action == "http.post"
+        assert fallback_resource == "approve"
+
+    @pytest.mark.asyncio
     async def test_non_http_passthrough(self) -> None:
         """Non-HTTP scopes pass through."""
         app = self._create_app()
@@ -294,6 +377,99 @@ class TestAuditMiddleware:
         details = orjson.loads(mock_pool.enqueue.call_args.kwargs["details"])
         assert "response_body" not in details
         assert secret not in orjson.dumps(details).decode()
+
+    @pytest.mark.asyncio
+    async def test_accept_invite_response_body_never_captured(self) -> None:
+        """The invite-accept JWT pair is never audit body-captured.
+
+        POST /v1/auth/invites/accept returns a live access + refresh pair.
+        The flow is unauthenticated, so ``org_id`` is None on the public
+        path and the audit middleware cannot gate on org config alone —
+        the route must be excluded by constant.  Defense-in-depth: a bearer
+        credential persisted to audit_logs is a standing leak.  The audit
+        event itself is still enqueued.
+        """
+        mock_pool = AsyncMock()
+        mock_pool.enqueue = AsyncMock(return_value=None)
+
+        app = self._create_app(mock_arq_pool=mock_pool)
+        middleware = AuditMiddleware(app)
+
+        scope: dict[str, Any] = {
+            "type": "http",
+            "method": "POST",
+            "path": "/v1/auth/invites/accept",
+            "headers": [(b"host", b"example.com")],
+            "query_string": b"",
+            "client": ["10.0.0.1", 54321],
+            # Public path — auth middleware leaves org_id/user_id as None.
+            "state": {"org_id": None, "auth_type": None},
+        }
+        app.state.arq_pool = mock_pool
+        scope["app"] = app
+
+        access = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEifQ.signature"  # noqa: S105
+        refresh = "raw-refresh-token-never-persist"  # noqa: S105
+        with patch(
+            "middleware.audit._resolve_audit_body_capture", return_value=True,
+        ):
+            body = (
+                f'{{"access_token": "{access}", '
+                f'"refresh_token": "{refresh}"}}'
+            ).encode()
+            await middleware._enqueue_audit(
+                scope, "POST", "/v1/auth/invites/accept", 200, [body],
+            )
+
+        assert mock_pool.enqueue.called  # event still audited
+        details = orjson.loads(mock_pool.enqueue.call_args.kwargs["details"])
+        assert "response_body" not in details
+        assert access not in orjson.dumps(details).decode()
+        assert refresh not in orjson.dumps(details).decode()
+
+    @pytest.mark.asyncio
+    async def test_org_code_patch_response_body_never_captured(self) -> None:
+        """The org-code PATCH response (live join code) is never body-captured.
+
+        PATCH /admin/org/org-code returns the current join code alongside
+        the toggle state — a valid join token, identical in sensitivity to
+        the regenerate response.  It must not be persisted to audit_logs
+        even when the org enables body capture.  The audit event itself is
+        still enqueued.
+        """
+        mock_pool = AsyncMock()
+        mock_pool.enqueue = AsyncMock(return_value=None)
+
+        app = self._create_app(mock_arq_pool=mock_pool)
+        middleware = AuditMiddleware(app)
+
+        scope: dict[str, Any] = {
+            "type": "http",
+            "method": "PATCH",
+            "path": "/admin/org/org-code",
+            "headers": [(b"host", b"example.com")],
+            "query_string": b"",
+            "client": ["10.0.0.1", 54321],
+            "state": {"org_id": "org-001", "auth_type": "jwt"},
+        }
+        app.state.arq_pool = mock_pool
+        scope["app"] = app
+
+        org_code = "K7M2Q9X4"
+        with patch(
+            "middleware.audit._resolve_audit_body_capture", return_value=True,
+        ):
+            body = (
+                f'{{"org_code": "{org_code}", "join_enabled": false}}'
+            ).encode()
+            await middleware._enqueue_audit(
+                scope, "PATCH", "/admin/org/org-code", 200, [body],
+            )
+
+        assert mock_pool.enqueue.called  # event still audited
+        details = orjson.loads(mock_pool.enqueue.call_args.kwargs["details"])
+        assert "response_body" not in details
+        assert org_code not in orjson.dumps(details).decode()
 
     @pytest.mark.asyncio
     async def test_response_body_captured_for_non_webhook_route(self) -> None:

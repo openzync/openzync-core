@@ -7,7 +7,7 @@ Response models use ``from_attributes = True`` for ORM-to-schema conversion.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
@@ -22,6 +22,8 @@ class CreateUserRequest(BaseModel):
         name: Optional human-readable display name.
         email: Optional email address (validated to contain ``@``).
         metadata: Arbitrary JSON metadata for the user. Deep-merged on update.
+        role: Dashboard role — ``admin`` or ``member``.  Only meaningful
+            for dashboard users (JWT login); default ``member``.
     """
 
     external_id: str = Field(
@@ -47,6 +49,11 @@ class CreateUserRequest(BaseModel):
         default_factory=dict,
         description="Arbitrary JSON metadata for the user. Deep-merged on update.",
         examples=[{"plan": "pro", "region": "us-east", "onboarded_at": "2026-01-15"}],
+    )
+    role: Literal["admin", "member"] = Field(
+        default="member",
+        description="Dashboard role — 'admin' or 'member'. Defaults to 'member'.",
+        examples=["member"],
     )
 
     @field_validator("email")
@@ -78,6 +85,9 @@ class UpdateUserRequest(BaseModel):
         metadata: Metadata keys to merge into existing metadata.
             Set a key to ``null`` to remove it. Does **not** replace the
             full metadata dict.
+        role: New dashboard role — ``admin`` or ``member``.  Absent = no
+            change.  Cannot be used on your own account or to demote the
+            last admin.
     """
 
     name: str | None = Field(
@@ -96,6 +106,11 @@ class UpdateUserRequest(BaseModel):
             "Metadata keys to merge into existing metadata. "
             "Set a key to null to remove it. Does NOT replace the full metadata dict."
         ),
+    )
+    role: Literal["admin", "member"] | None = Field(
+        default=None,
+        description="New dashboard role — 'admin' or 'member'. Absent = no change.",
+        examples=["admin"],
     )
 
     @field_validator("email")
@@ -116,6 +131,8 @@ class UserResponse(BaseModel):
         name: Display name.
         email: Email address.
         metadata: User metadata JSON.
+        role: Dashboard role — ``admin`` or ``member`` (from the
+            ``users.role`` column).
         organization_id: Tenant organization UUID.
         created_at: User creation timestamp (UTC).
         updated_at: Last update timestamp (UTC).
@@ -130,12 +147,25 @@ class UserResponse(BaseModel):
         default_factory=dict,
         description="User metadata JSON.",
     )
+    role: str = Field(
+        default="member",
+        description="Dashboard role — 'admin' or 'member'.",
+        examples=["member"],
+    )
     organization_id: UUID = Field(..., description="Tenant organization UUID.")
     created_at: datetime = Field(..., description="User creation timestamp (UTC).")
     updated_at: datetime = Field(..., description="Last update timestamp (UTC).")
     is_deleted: bool = Field(
         default=False,
         description="Soft-delete flag. True during the 30-day GDPR grace period.",
+    )
+    is_pending_invite: bool = Field(
+        default=False,
+        description=(
+            "True while the user has a pending admin invite "
+            "(``invite_token_hash`` is not NULL) — the user cannot log in "
+            "until the invite is accepted."
+        ),
     )
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)

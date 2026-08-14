@@ -13,7 +13,12 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies.auth import get_dashboard_user, require_org_id, require_scope
+from dependencies.auth import (
+    get_dashboard_user,
+    require_org_admin,
+    require_org_id,
+    require_scope,
+)
 from dependencies.db import get_db
 from routers.admin_org_config import router, _get_config_service
 from schemas.organization_config import (
@@ -27,10 +32,28 @@ ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 
 
+@pytest.fixture(autouse=True)
+def _mock_org_admin_role(monkeypatch) -> None:
+    """Resolve the org-admin role lookup for every test in this file.
+
+    GET is gated by ``require_org_admin`` and PATCH/PUT by
+    ``require_scope("admin:write")``; both JWT paths funnel into
+    ``core.rbac.get_org_role`` via ``dependencies.auth._ensure_org_admin``.
+    Patching the role lookup to ``"admin"`` keeps the JWT/db/redis dependency
+    chain intact while mocking only the role source of truth.
+    """
+
+    async def _fake_get_org_role(redis, db, org_id, user_id) -> str:
+        return "admin"
+
+    monkeypatch.setattr("dependencies.auth.get_org_role", _fake_get_org_role)
+
+
 def _create_app() -> tuple[FastAPI, AsyncMock]:
     """Build a minimal FastAPI app with the admin org config router."""
     app = FastAPI()
     db_mock = AsyncMock(spec=AsyncSession)
+    app.state.redis = AsyncMock()
 
     @app.middleware("http")
     async def _mock_auth(request, call_next):
@@ -43,6 +66,7 @@ def _create_app() -> tuple[FastAPI, AsyncMock]:
 
     app.dependency_overrides[get_db] = lambda: db_mock
     app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+    app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
 
     app.include_router(router)
@@ -284,6 +308,11 @@ async def test_get_config_401_unauthenticated() -> None:
 async def test_patch_config_requires_scope() -> None:
     """PATCH /admin/org/config returns 403 without admin:write scope."""
     app = FastAPI()
+    # require_scope("admin:write") resolves get_db even for API keys — the
+    # dependency is resolved eagerly by FastAPI before the scope check runs.
+    from dependencies.db import get_db
+
+    app.dependency_overrides[get_db] = lambda: AsyncMock(spec=AsyncSession)
 
     @app.middleware("http")
     async def _mock_auth(request, call_next):

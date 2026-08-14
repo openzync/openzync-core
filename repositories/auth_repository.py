@@ -20,6 +20,7 @@ from typing import Any
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.org_codes import generate_org_code
 from models.organization import Organization
 from models.refresh_token import RefreshToken
 from models.user import User
@@ -78,18 +79,25 @@ class AuthRepository:
     # ── Organization ────────────────────────────────────────────────────────
 
     async def create_organization(
-        self, name: str, plan: str = "free"
+        self, name: str, plan: str = "free", status: str = "approved"
     ) -> Organization:
         """Create a new organization.
 
         Args:
             name: Organization name.
             plan: Billing plan (default ``'free'``).
+            status: Lifecycle state — ``approved`` (default) for a live
+                org, ``pending`` for an approval-queue org.
 
         Returns:
             The newly created Organization.
         """
-        org = Organization(name=name, plan=plan)
+        org = Organization(
+            name=name,
+            plan=plan,
+            status=status,
+            org_code=generate_org_code(),
+        )
         self._db.add(org)
         await self._db.flush()
         await self._db.refresh(org)
@@ -119,11 +127,12 @@ class AuthRepository:
         self,
         organization_id: uuid.UUID,
         email: str,
-        password_hash: str,
+        password_hash: str | None = None,
         name: str | None = None,
         role: str = "admin",
+        must_change_password: bool = False,
     ) -> User:
-        """Create a dashboard user (admin/member) with password auth.
+        """Create a dashboard user (admin/member).
 
         Sets ``external_id`` to the email for simplicity.  The unique
         constraint on ``(organization_id, external_id)`` prevents two
@@ -132,9 +141,12 @@ class AuthRepository:
         Args:
             organization_id: Owning organization.
             email: Email address (used as external_id too).
-            password_hash: bcrypt hash of the password.
+            password_hash: bcrypt hash of the password.  ``None`` for a
+                pending user (approval flow — no credential yet).
             name: Optional display name.
             role: Role string (``'admin'`` or ``'member'``).
+            must_change_password: Whether the user must set a new password
+                at first login (seeded root credential).
 
         Returns:
             The newly created User.
@@ -146,6 +158,7 @@ class AuthRepository:
             name=name,
             password_hash=password_hash,
             role=role,
+            must_change_password=must_change_password,
             metadata_={},
         )
         self._db.add(user)
@@ -471,6 +484,7 @@ class AuthRepository:
         name: str | None = None,
         email: str | None = None,
         password_hash: str | None = None,
+        must_change_password: bool | None = None,
     ) -> User:
         """Update a dashboard user's profile fields and flush.
 
@@ -483,6 +497,7 @@ class AuthRepository:
             email: New email (``None`` = no change).  When set,
                 ``external_id`` is also updated to match.
             password_hash: New bcrypt hash (``None`` = no change).
+            must_change_password: New flag value (``None`` = no change).
 
         Returns:
             The updated User instance.
@@ -503,6 +518,8 @@ class AuthRepository:
             user.external_id = email
         if password_hash is not None:
             user.password_hash = password_hash
+        if must_change_password is not None:
+            user.must_change_password = must_change_password
 
         await self._db.flush()
         await self._db.refresh(user)

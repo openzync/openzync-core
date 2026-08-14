@@ -54,7 +54,7 @@ class WebhookEndpoint(TimestampMixin, Base):
         default=True,
         server_default="true",
     )
-    # ponytail: per-org secret stored in DB; upgrade to Transit-at-rest
+    # per-org secret stored in DB; upgrade to Transit-at-rest
     # encryption with core.transit WEBHOOK_SECRET_KEY when TransitManager is wired
     signing_secret: Mapped[str | None] = mapped_column(
         Text,

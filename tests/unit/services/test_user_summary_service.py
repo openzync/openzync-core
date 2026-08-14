@@ -103,7 +103,10 @@ class TestUserSummaryService:
         assert response.user_id == USER_ID
         assert response.summary == "User is an active contributor."
         assert response.updated_at == now
-        mock_user_repo.get_summary.assert_awaited_once_with(USER_ID)
+        mock_user_repo.get_summary.assert_awaited_once_with(
+            organization_id=ORG_ID,
+            user_id=USER_ID,
+        )
 
     async def test_get_summary_no_summary_returns_none(self) -> None:
         """No stored summary returns None."""
@@ -114,7 +117,10 @@ class TestUserSummaryService:
         response = await service.get_summary(org_id=ORG_ID, user_id=USER_ID)
 
         assert response is None
-        mock_user_repo.get_summary.assert_awaited_once_with(USER_ID)
+        mock_user_repo.get_summary.assert_awaited_once_with(
+            organization_id=ORG_ID,
+            user_id=USER_ID,
+        )
 
     # ── get_instructions ───────────────────────────────────────────────────
 

@@ -14,7 +14,11 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies.auth import get_dashboard_user, require_org_id
+from dependencies.auth import (
+    get_dashboard_user,
+    require_org_admin,
+    require_org_id,
+)
 from dependencies.db import get_db
 from routers.admin_organizations import router
 from schemas.custom_instructions import (
@@ -54,6 +58,7 @@ def _create_app() -> tuple[FastAPI, AsyncMock]:
 
     app.dependency_overrides[get_db] = lambda: db_mock
     app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+    app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
 
     app.include_router(router)

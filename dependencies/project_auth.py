@@ -24,11 +24,13 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Path, Request, status
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,  # noqa: TC002 (runtime import — FastAPI resolves annotation names)
+)
 
-from core.exceptions import NotFoundError
-from repositories.project_repository import ProjectRepository
 from dependencies.db import get_db
-from sqlalchemy.ext.asyncio import AsyncSession
+from repositories.project_repository import ProjectRepository
+from repositories.user_repository import UserRepository
 
 
 async def require_project_membership(
@@ -126,8 +128,11 @@ async def require_project_owner(
 ) -> None:
     """Verify the authenticated user is an owner of the given project.
 
-    Like ``require_project_membership`` but additionally checks the
-    ``owner`` role.
+    Requires project membership **and** then passes only if
+    ``member.role == "owner"`` **or** the authenticated user's org role is
+    ``"admin"`` (verified against the DB, not the JWT ``role`` claim).  An
+    org admin who has NOT been added to the project is denied — the check
+    is fail-closed and org-scoped.
 
     **Note**: API key auth is NOT supported for owner-level operations.
     Only JWT-authenticated dashboard users can perform owner-gated actions
@@ -135,7 +140,8 @@ async def require_project_owner(
 
     Raises:
         HTTPException 401: If the user is not authenticated.
-        HTTPException 403: If the user is not a project owner.
+        HTTPException 403: If the user is not a project member/owner, or
+            not an org admin.
         HTTPException 404: If the project does not exist.
     """
     auth_type: str | None = getattr(request.state, "auth_type", None)
@@ -168,8 +174,20 @@ async def require_project_owner(
         project_id=project_id,
         user_id=UUID(user_id),
     )
-    if member is None or member.role != "owner":
+    if member is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Project owner access required",
+            detail="Not a member of this project",
         )
+    if member.role != "owner":
+        # Org admins can perform owner-level project actions — verify the
+        # user's org role rather than trusting the JWT ``role`` claim.
+        user = await UserRepository(db).get_by_uuid(
+            UUID(request.state.org_id),
+            UUID(user_id),
+        )
+        if user is None or user.role != "admin":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Project owner access required",
+            )

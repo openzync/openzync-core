@@ -10,14 +10,14 @@ the org ID and name.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 import yaml
 
 from schemas.organizations import CreateOrgRequest, CreateOrgResponse
-from services.organization_service import OrganizationService
+from services.organization_service import OrganizationService, OrgCodeInfo
 
 
 @pytest.mark.unit
@@ -59,6 +59,8 @@ class TestOrganizationService:
         org.id = self.ORG_ID
         org.name = "Test Org"
         org.plan = "free"
+        org.org_code = "K7M2Q9X4"
+        org.join_enabled = True
         return org
 
     # ── create_organization ──────────────────────────────────────────────────
@@ -105,11 +107,19 @@ class TestOrganizationService:
         }
 
         # Verify only the Organization constructor was called — no default
-        # project and no API key are auto-created.
+        # project and no API key are auto-created.  ``org_code`` is a freshly
+        # generated join code (feature: org-code join flow).
         mock_org_cls.assert_called_once_with(
-            name="Test Org", plan="free"
+            name="Test Org", plan="free", org_code=ANY,
         )
         mock_proj_cls.assert_not_called()
+
+        # Verify the generated org code conforms to the code alphabet/length.
+        generated = mock_org_cls.call_args.kwargs["org_code"]
+        from core.org_codes import ORG_CODE_ALPHABET, ORG_CODE_LENGTH
+
+        assert len(generated) == ORG_CODE_LENGTH
+        assert all(ch in ORG_CODE_ALPHABET for ch in generated)
 
         # Verify flush/refresh calls on the DB session (single entity)
         assert mock_db.add.call_count == 1
@@ -218,6 +228,113 @@ class TestOrganizationService:
         assert result.organization_id == self.ORG_ID
         assert "api_key" not in CreateOrgResponse.model_fields
 
+    @pytest.mark.asyncio
+    async def test_create_organization_rejects_reserved_system_name(
+        self,
+    ) -> None:
+        """The reserved ``SYSTEM`` name (any case) → ValidationError."""
+        from core.exceptions import ValidationError
+
+        service, mock_repo, _ = self._make_service()
+        for bad in ("SYSTEM", "system", "System"):
+            with pytest.raises(ValidationError):
+                await service.create_organization(self._make_payload(name=bad))
+        mock_repo.session.add.assert_not_called()
+
+    # ── Org join code (admin management) ────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_get_org_code_returns_org_code_info(self) -> None:
+        """``get_org_code`` returns code + ``join_enabled`` as OrgCodeInfo."""
+        service, mock_repo, _ = self._make_service()
+        org = self._make_org_mock()
+        mock_repo.get_by_id.return_value = org
+
+        info = await service.get_org_code(self.ORG_ID)
+
+        assert isinstance(info, OrgCodeInfo)
+        assert info.org_code == "K7M2Q9X4"
+        assert info.join_enabled is True
+        mock_repo.get_by_id.assert_awaited_once_with(self.ORG_ID)
+
+    @pytest.mark.asyncio
+    async def test_get_org_code_missing_org_raises_not_found(self) -> None:
+        """``get_org_code`` raises NotFoundError when the org is missing."""
+        from core.exceptions import NotFoundError
+
+        service, mock_repo, _ = self._make_service()
+        mock_repo.get_by_id.return_value = None
+
+        with pytest.raises(NotFoundError):
+            await service.get_org_code(self.ORG_ID)
+
+    @pytest.mark.asyncio
+    async def test_set_join_enabled_delegates_and_returns_fresh_state(
+        self,
+    ) -> None:
+        """``set_join_enabled`` delegates to the repo and returns OrgCodeInfo."""
+        service, mock_repo, _ = self._make_service()
+        org = self._make_org_mock()
+        org.join_enabled = False
+        mock_repo.set_join_enabled.return_value = org
+
+        info = await service.set_join_enabled(self.ORG_ID, False)
+
+        assert isinstance(info, OrgCodeInfo)
+        assert info.org_code == "K7M2Q9X4"
+        assert info.join_enabled is False
+        mock_repo.set_join_enabled.assert_awaited_once_with(self.ORG_ID, False)
+
+    @pytest.mark.asyncio
+    async def test_regenerate_org_code_returns_org_code_info(self) -> None:
+        """``regenerate_org_code`` rotates the code and returns OrgCodeInfo."""
+        service, mock_repo, _ = self._make_service()
+        org = self._make_org_mock()
+        org.org_code = "ZZZ2Q9X4"
+        mock_repo.set_org_code.return_value = org
+
+        with patch(
+            "services.organization_service.generate_org_code",
+            return_value="ZZZ2Q9X4",
+        ):
+            info = await service.regenerate_org_code(self.ORG_ID)
+
+        assert isinstance(info, OrgCodeInfo)
+        assert info.org_code == "ZZZ2Q9X4"
+        assert info.join_enabled is True
+        mock_repo.set_org_code.assert_awaited_once_with(
+            self.ORG_ID, "ZZZ2Q9X4",
+        )
+
+    @pytest.mark.asyncio
+    async def test_regenerate_org_code_preserves_join_enabled_false(
+        self,
+    ) -> None:
+        """Regenerate preserves the paused state — rotation does NOT reset
+        ``join_enabled``.
+
+        Contract #8: a paused org stays paused after code rotation; the
+        response carries the new code AND the existing toggle value.
+        """
+        service, mock_repo, _ = self._make_service()
+        org = self._make_org_mock()
+        org.org_code = "ZZZ2Q9X4"
+        org.join_enabled = False
+        mock_repo.set_org_code.return_value = org
+
+        with patch(
+            "services.organization_service.generate_org_code",
+            return_value="ZZZ2Q9X4",
+        ):
+            info = await service.regenerate_org_code(self.ORG_ID)
+
+        assert isinstance(info, OrgCodeInfo)
+        assert info.org_code == "ZZZ2Q9X4"
+        assert info.join_enabled is False
+        mock_repo.set_org_code.assert_awaited_once_with(
+            self.ORG_ID, "ZZZ2Q9X4",
+        )
+
     # ── _load_org_defaults ───────────────────────────────────────────────────
 
     def test_load_org_defaults_returns_yaml_content(self) -> None:
@@ -264,3 +381,63 @@ class TestOrganizationService:
             result = service._load_org_defaults()
 
         assert result == {}
+
+    # ── Platform superadmin surface: list_all_orgs / list_org_members ───────
+
+    @pytest.mark.asyncio
+    async def test_list_all_orgs_delegates_with_filter(
+        self,
+    ) -> None:
+        """list_all_orgs forwards the status filter + pagination to the repo."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.list_all.return_value = ([], 0)
+
+        orgs, total = await service.list_all_orgs(
+            status="pending", page=2, limit=20
+        )
+
+        assert orgs == []
+        assert total == 0
+        mock_repo.list_all.assert_awaited_once_with(
+            status="pending", page=2, limit=20
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_org_members_returns_users_for_existing_org(
+        self,
+    ) -> None:
+        """list_org_members verifies the org exists, then lists its users."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.get_by_id.return_value = self._make_org_mock()
+        mock_user_repo = AsyncMock()
+        mock_user_repo.list_by_org.return_value = ([MagicMock()], 1)
+
+        with patch(
+            "services.organization_service.UserRepository",
+            return_value=mock_user_repo,
+        ):
+            users, total = await service.list_org_members(
+                self.ORG_ID, page=1, limit=50
+            )
+
+        assert len(users) == 1
+        assert total == 1
+        mock_repo.get_by_id.assert_awaited_once_with(self.ORG_ID)
+        mock_user_repo.list_by_org.assert_awaited_once_with(
+            self.ORG_ID, page=1, limit=50
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_org_members_missing_org_raises_not_found(
+        self,
+    ) -> None:
+        """list_org_members for a nonexistent org → NotFoundError, no query."""
+        from core.exceptions import NotFoundError
+
+        service, mock_repo, _ = self._make_service()
+        mock_repo.get_by_id.return_value = None
+
+        with pytest.raises(NotFoundError):
+            await service.list_org_members(self.ORG_ID)
+
+        mock_repo.get_by_id.assert_awaited_once_with(self.ORG_ID)

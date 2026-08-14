@@ -42,12 +42,15 @@ from middleware.request_id import RequestIDMiddleware
 from middleware.tracing import TracingMiddleware
 from routers import (
     admin,
+    admin_invites,
     admin_metrics,
+    admin_org_code,
     admin_org_config,
     admin_organizations,
     admin_quick_actions,
     admin_schemas,
     admin_stats,
+    admin_system,
     admin_webhooks,
     api_key_self,
     audit_log,
@@ -61,6 +64,7 @@ from routers import (
     memory,
     metrics,
     observations,
+    org_requests,
     project_api_keys,
     projects,
     search,
@@ -142,6 +146,20 @@ def create_app() -> FastAPI:
         await _bao.__aenter__()  # sets up httpx client + authenticates via AppRole
         app.state.openbao_client = _bao
         logger.info("openbao_client.initialised")
+
+        # ── Seed the platform org + root superadmin (fail-fast) ──────────
+        # Idempotent: no-op when the SYSTEM org already exists.  Any
+        # failure aborts startup loudly — a silently-missing superadmin
+        # would leave the platform unbootstrappable.
+        try:
+            from services.platform_seed import ensure_platform_root
+
+            async with app.state.db_session_factory() as seed_session:
+                await ensure_platform_root(seed_session, _bao)
+            logger.info("platform_seed.ensured")
+        except Exception:
+            logger.exception("platform_seed.failed — aborting startup")
+            raise
 
         yield
 
@@ -250,6 +268,10 @@ def create_app() -> FastAPI:
     app.include_router(admin_webhooks.router)
     app.include_router(admin_organizations.router)
     app.include_router(admin_org_config.router)
+    app.include_router(admin_org_code.router)
+    app.include_router(admin_invites.router)
+    app.include_router(admin_system.router)
+    app.include_router(org_requests.router)
     app.include_router(audit_log.router)
     app.include_router(auth.router)
     app.include_router(users.router)

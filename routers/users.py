@@ -14,15 +14,17 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from starlette.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.responses import Response
 
 from core.audit import audit_action
-
 from core.exceptions import RateLimitError, ValidationError
-from dependencies.auth import require_org_id
+from dependencies.auth import (
+    require_org_admin,
+    require_org_admin_or_self,
+    require_org_id,
+)
 from dependencies.db import get_db
-from repositories.custom_instruction_repository import CustomInstructionRepository
 from repositories.user_repository import UserRepository
 from schemas.custom_instructions import (
     CustomInstructionSchema,
@@ -44,29 +46,32 @@ router = APIRouter(prefix="/v1/users", tags=["Users"])
 
 
 async def get_user_service(
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> UserService:
     """FastAPI dependency that yields an initialised :class:`UserService`.
 
     Wires up the repository and service layers with the request-scoped
-    database session.
+    database session and the app-level Redis client (used for role-cache
+    invalidation on role changes / deletions).
     """
     repo = UserRepository(db=db)
-    return UserService(repo=repo)
+    redis = getattr(request.app.state, "redis", None)
+    return UserService(repo=repo, redis=redis)
 
 
 @router.post("", response_model=UserResponse, status_code=201)
 @audit_action("user.create", "user", "User created")
 async def create_user(
     body: CreateUserRequest,
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin),
     service: UserService = Depends(get_user_service),
 ) -> UserResponse:
     """Create a new user.
 
     The ``external_id`` is caller-defined and must be unique within the
     organization. Returns 409 if a user with this ``external_id`` already
-    exists.
+    exists.  Admin-gated (JWT org admin only).
     """
     return await service.create_user(
         organization_id=UUID(org_id),
@@ -74,6 +79,7 @@ async def create_user(
         name=body.name,
         email=body.email,
         metadata=body.metadata,
+        role=body.role,
     )
 
 
@@ -140,8 +146,9 @@ async def get_user(
 async def update_user(
     user_id: UUID,
     body: UpdateUserRequest,
+    request: Request,
     service: UserService = Depends(get_user_service),
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin),
 ) -> UserResponse:
     """Update user fields.
 
@@ -149,6 +156,9 @@ async def update_user(
     - Set a metadata key to ``null`` to remove it.
     - Send ``name: null`` or ``email: null`` to clear those fields.
     - At least one field must be provided.
+    - ``role`` may only be changed by an org admin (JWT) — API keys are
+      rejected upstream by ``require_org_admin`` (401), and you cannot
+      change your own role.
 
     Uses ``model_dump(exclude_unset=True)`` so that ``None`` means
     "set to null" and an absent key means "do not update."
@@ -156,13 +166,14 @@ async def update_user(
     update_fields = body.model_dump(exclude_unset=True)
     if not update_fields:
         raise ValidationError(
-            "At least one field (name, email, metadata) must be "
+            "At least one field (name, email, metadata, role) must be "
             "provided for update",
         )
     return await service.update_user(
         organization_id=UUID(org_id),
         user_id=user_id,
         update_fields=update_fields,
+        actor_user_id=UUID(request.state.user_id),
     )
 
 
@@ -170,8 +181,9 @@ async def update_user(
 @audit_action("user.delete", "user", "User deleted")
 async def delete_user(
     user_id: UUID,
+    request: Request,
     service: UserService = Depends(get_user_service),
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin),
 ) -> Response:
     """Delete a user and all associated data.
 
@@ -184,8 +196,15 @@ async def delete_user(
 
     If you re-create a user with the same ``external_id`` within the 30-day
     grace period, it will be treated as a new user.
+
+    Admin-gated (JWT org admin only).  You cannot delete your own account
+    or the organization's last admin.
     """
-    await service.delete_user(organization_id=UUID(org_id), user_id=user_id)
+    await service.delete_user(
+        organization_id=UUID(org_id),
+        user_id=user_id,
+        actor_user_id=UUID(request.state.user_id),
+    )
     return Response(status_code=204)
 
 
@@ -210,9 +229,11 @@ async def get_user_summary_service(
 async def get_user_summary(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin_or_self),
 ) -> UserSummaryResponse:
     """Get the current summary for a user.
+
+    Readable by the target user themself or an org admin (JWT only).
 
     Returns 404 if no summary has been generated yet.
     """
@@ -237,12 +258,13 @@ async def get_user_summary(
 async def trigger_user_summary(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin),
 ) -> UserSummaryTriggerResponse:
     """Trigger generation of a user summary.
 
-    Enqueues an ARQ background job. Rate-limited to once per 5 minutes
-    per user (enforced via Redis).
+    Enqueues an ARQ background job.  Admin-gated (``require_org_admin``):
+    this mutates another user's data and enqueues paid LLM work.  Rate-
+    limited to once per 5 minutes per user (enforced via Redis).
     """
     try:
         return await service.trigger_generation(
@@ -259,9 +281,12 @@ async def trigger_user_summary(
 async def list_user_summary_instructions(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin_or_self),
 ) -> CustomInstructionsResponse:
-    """List custom instructions for a user's summary generation."""
+    """List custom instructions for a user's summary generation.
+
+    Readable by the target user themself or an org admin (JWT only).
+    """
     instructions = await service.get_instructions(
         org_id=UUID(org_id), user_id=user_id,
     )
@@ -280,9 +305,12 @@ async def set_user_summary_instructions(
     user_id: UUID,
     body: SetCustomInstructionsRequest,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin),
 ) -> CustomInstructionsResponse:
-    """Replace all summary instructions for a user."""
+    """Replace all summary instructions for a user.
+
+    Admin-gated (``require_org_admin``): mutates another user's data.
+    """
     instructions_data = [i.model_dump() for i in body.instructions]
     instructions = await service.set_instructions(
         org_id=UUID(org_id),
@@ -299,8 +327,11 @@ async def set_user_summary_instructions(
 async def delete_user_summary_instructions(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin),
 ) -> Response:
-    """Clear all summary instructions for a user."""
+    """Clear all summary instructions for a user.
+
+    Admin-gated (``require_org_admin``): mutates another user's data.
+    """
     await service.delete_instructions(org_id=UUID(org_id), user_id=user_id)
     return Response(status_code=204)

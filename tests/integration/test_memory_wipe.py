@@ -232,7 +232,7 @@ class TestMemoryWipe:
         delete_resp = await isolated_auth_client.delete(
             f"/v1/projects/{fake_project_id}/memory",
         )
-        # ponytail: require_project_membership checks the key's project scope
+        # require_project_membership checks the key's project scope
         # before checking if the project exists, returning 403.
         assert delete_resp.status_code == 403, (
             f"Expected 403 for non-existent project (key scoping), "

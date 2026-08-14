@@ -25,18 +25,28 @@ from sqlalchemy.exc import IntegrityError
 from core.config import get_settings
 from core.exceptions import (
     AuthenticationError,
+    AuthorizationError,
     ConflictError,
     NotFoundError,
     ValidationError,
 )
-from repositories.auth_repository import AuthRepository
+from core.org_codes import normalize_org_code
+from core.rbac import invalidate_must_change_password
+from core.system_config import get_system_config
+from repositories.auth_repository import AuthRepository  # noqa: TC001
+from repositories.organization_repository import (  # noqa: TC001
+    OrganizationRepository,
+)
 from schemas.auth import (
+    ChangePasswordRequest,
     DashboardUserResponse,
+    JoinRequest,
     LoginRequest,
     LoginResponse,
     MfaDisableRequest,
     MfaEnableRequest,
     MfaVerifyRequest,
+    PendingOrgResponse,
     SignupRequest,
     SignupResponse,
     TokenResponse,
@@ -86,6 +96,7 @@ class AuthService:
         repo: Repository for auth-related DB access.
         otp_service: OTP service for email verification and MFA.
         redis: Async Redis client for MFA session storage.
+        org_repo: Repository for organization lookups (org-code join).
         email_service: Optional email service for notification-only emails
             (e.g. password-change confirmation).  ``None`` skips notifications.
         bao_client: Optional OpenBao client for bootstrapping org namespaces
@@ -97,21 +108,35 @@ class AuthService:
         repo: AuthRepository,
         otp_service: OtpService,  # noqa: F821
         redis: AsyncRedis,  # noqa: F821
+        org_repo: OrganizationRepository,
         email_service: EmailService | None = None,  # noqa: F821
         bao_client: OpenBaoClient | None = None,  # noqa: F821
     ) -> None:
         self._repo = repo
         self._otp_service = otp_service
         self._redis = redis
+        self._org_repo = org_repo
         self._email_service = email_service
         self._bao_client = bao_client
 
     # ── Signup ──────────────────────────────────────────────────────────────
 
-    async def signup(self, payload: SignupRequest) -> SignupResponse:
+    async def signup(
+        self, payload: SignupRequest
+    ) -> SignupResponse | PendingOrgResponse:
         """Create a new organization with an admin dashboard user.
 
-        Flow:
+        Platform policy gate (``get_system_config``) runs FIRST:
+        - ``reject_all`` → 403, no org is created.
+        - ``approvals`` with ``public_signup`` in scope → the org is
+          created as ``pending`` (approval queue) with a pending admin
+          user — no OpenBao namespace, no OTP, no live access.
+        - ``approvals`` WITHOUT ``public_signup`` in scope → 403.  A
+          non-selected channel is rejected, never silently routed to
+          instant creation.
+        - ``allow_all`` → the current live-org flow below.
+
+        Live flow:
         1. Check email uniqueness (no existing user with this email).
         2. Create the organization.
         3. Hash the password and create the dashboard admin user.
@@ -126,11 +151,51 @@ class AuthService:
             payload: Signup request with email, password, org name.
 
         Returns:
-            A ``SignupResponse`` with a confirmation message.
+            A ``SignupResponse`` with a confirmation message, or a
+            ``PendingOrgResponse`` when the org enters the approval queue.
 
         Raises:
-            ValidationError: If the password does not meet requirements.
+            AuthorizationError: If registration is disabled (``reject_all``)
+                or the approvals policy excludes the public signup channel.
+            ValidationError: If the password does not meet requirements,
+                or the org name is reserved (``SYSTEM``).
         """
+        # ── Platform policy gate (before any org creation) ────────────────
+        system_config = await get_system_config(
+            self._redis, self._bao_client
+        )
+        if system_config.org_creation_policy == "reject_all":
+            raise AuthorizationError("Registration is disabled")
+
+        # Reserved name check — the platform org owns "SYSTEM" exclusively.
+        self._validate_org_name(payload.organization_name)
+
+        # ── Approval-queue path ────────────────────────────────────────────
+        if system_config.org_creation_policy == "approvals":
+            # Non-selected channels are rejected — a scope that excludes
+            # public signup must not fall through to instant org creation.
+            if system_config.approval_scope not in ("public_signup", "both"):
+                raise AuthorizationError("Registration is disabled")
+            try:
+                return await self.create_pending_org_and_admin(
+                    organization_name=payload.organization_name,
+                    admin_email=str(payload.email),
+                    admin_name=payload.email.split("@")[0],
+                )
+            except IntegrityError:
+                # Concurrent duplicate email in the approvals path — the
+                # unique email index won.  Same generic success the live
+                # path returns (anti-enumeration, smoke contract); roll
+                # back the aborted transaction (the pending org row is
+                # uncommitted) so the session stays usable.
+                logger.warning(
+                    "security.signup_existing_email",
+                    extra={"email": payload.email},
+                )
+                await self._repo.rollback()
+                return self._signup_success_response(payload.email)
+
+        # ── Live path (allow_all only) ─────────────────────────────────────
         # Validate password strength
         self._validate_password(payload.password)
 
@@ -182,7 +247,252 @@ class AuthService:
 
         return self._signup_success_response(payload.email)
 
-    # ── Email verification ──────────────────────────────────────────────────
+    async def create_pending_org_and_admin(
+        self,
+        *,
+        organization_name: str,
+        admin_email: str,
+        admin_name: str,
+    ) -> PendingOrgResponse:
+        """Create a pending org + pending admin user (approval queue).
+
+        Shared by the signup approval path and the in-app org-request
+        flow.  One transaction: the org row (``status='pending'``) and the
+        admin row (``role='admin'``, ``password_hash=None``,
+        ``invite_token_hash=None`` — NOT an invite yet).  No OpenBao
+        namespace, no OTP — the org is not live until a superadmin
+        approves it (``OrganizationService.approve_org`` mints the invite
+        then).
+
+        Args:
+            organization_name: Desired org name (already validated != SYSTEM).
+            admin_email: Email of the designated admin.
+            admin_name: Display name for the designated admin.
+
+        Returns:
+            A ``PendingOrgResponse`` confirming the request is queued.
+
+        Raises:
+            ValidationError: If the org name is reserved (``SYSTEM``).
+        """
+        self._validate_org_name(organization_name)
+
+        org = await self._repo.create_organization(
+            name=organization_name,
+            plan="free",
+            status="pending",
+        )
+        # Pending admin — no password, no invite token yet.  The unique
+        # email index (ix_user_email_unique) guarantees the admin email
+        # cannot belong to any live user; a duplicate raises IntegrityError
+        # which the caller maps to 409.
+        await self._repo.create_dashboard_user(
+            organization_id=org.id,
+            email=admin_email,
+            password_hash=None,
+            name=admin_name,
+            role="admin",
+        )
+        logger.info(
+            "auth.org_pending",
+            extra={"org_id": str(org.id), "email": admin_email},
+        )
+        return PendingOrgResponse(
+            message=(
+                "Your organization is pending approval. "
+                "You will receive an email when it is approved."
+            ),
+        )
+
+    # ── Password change (first-login gate) ────────────────────────────────
+
+    async def change_password(
+        self,
+        user_id: uuid.UUID,
+        payload: ChangePasswordRequest,
+    ) -> TokenResponse:
+        """Change the user's password and clear the must-change gate.
+
+        First-login flow for the seeded root credential: verify the old
+        password, set the new hash, clear ``must_change_password``, rotate
+        the refresh-token family (all existing sessions are revoked) and
+        return a fresh token pair so the user stays signed in.
+
+        Args:
+            user_id: The authenticated user's UUID.
+            payload: Old + new password.
+
+        Returns:
+            A fresh ``TokenResponse`` for the newly-rotated session.
+
+        Raises:
+            NotFoundError: If the user no longer exists.
+            AuthenticationError: If the old password is wrong.
+            ValidationError: If the new password is too weak.
+        """
+        user = await self._repo.get_user_by_id(user_id)
+        if user is None:
+            raise NotFoundError("Dashboard user not found.")
+
+        if user.password_hash is None:
+            raise ValidationError(
+                "This account does not have a password set."
+            )
+        if not verify_password(payload.old_password, user.password_hash):
+            raise AuthenticationError("Current password is incorrect.")
+
+        self._validate_password(payload.new_password)
+        new_hash = hash_password(payload.new_password)
+
+        await self._repo.update_dashboard_user(
+            user_id=user_id,
+            password_hash=new_hash,
+            must_change_password=False,
+        )
+        # Rotate the refresh-token family — every prior session is dead,
+        # including the one that logged the default credential in.
+        await self._repo.revoke_all_refresh_tokens(user_id)
+        await invalidate_must_change_password(self._redis, user_id)
+
+        logger.info(
+            "auth.password_changed",
+            extra={"user_id": str(user_id)},
+        )
+        return await self.issue_tokens(
+            user_id=user_id,
+            organization_id=user.organization_id,
+            role=user.role if user.role is not None else "member",
+        )
+
+    # ── Org-request shared helpers ─────────────────────────────────────────
+
+    async def create_live_admin_user(
+        self,
+        organization_id: uuid.UUID,
+        email: str,
+        name: str | None,
+    ) -> None:
+        """Create a live admin user with no password (OTP-activated).
+
+        Used by the in-app org-request ``allow_all`` path: the designated
+        admin activates via email OTP (verify-email), then sets a real
+        password via the reset flow.
+
+        Args:
+            organization_id: The (already live) organization UUID.
+            email: The admin's email address.
+            name: Optional display name.
+        """
+        await self._repo.create_dashboard_user(
+            organization_id=organization_id,
+            email=email,
+            password_hash=None,
+            name=name,
+            role="admin",
+        )
+
+    @staticmethod
+    def _validate_org_name(name: str) -> None:
+        """Reject the reserved platform org name ``SYSTEM`` (case-insensitive).
+
+        Args:
+            name: The proposed organization name.
+
+        Raises:
+            ValidationError: If the name is reserved.
+        """
+        if name.strip().upper() == "SYSTEM":
+            raise ValidationError(
+                f"Organization name '{name}' is reserved and cannot be used."
+            )
+
+    # ── Org-code join ────────────────────────────────────────────────────────
+
+    async def join_organization(self, payload: JoinRequest) -> SignupResponse:
+        """Join an existing organization via its join code.
+
+        Flow:
+        1. Normalize the org code and look up the active organization.
+        2. If the email is already registered, return the generic response
+           (no user created, no OTP sent — anti-enumeration, mirrors signup).
+        3. Hash the password and create a **member** dashboard user in the
+           target organization.
+        4. Send a signup OTP to the user's email.
+
+        The response is identical whether or not the email already exists.
+        An invalid org code is the one case that fails loudly — the code is
+        the credential being presented, and there is no enumeration risk in
+        rejecting it.
+
+        Args:
+            payload: Email, password, and org code.
+
+        Returns:
+            A ``SignupResponse`` with a confirmation message.
+
+        Raises:
+            ValidationError: If the org code is unknown or the org is inactive.
+            AuthorizationError: If the org has disabled org-code
+                self-registration (``join_enabled`` False → 403), or the
+                platform policy is ``reject_all`` (403).
+        """
+        # ── Platform policy gate — sits on top of the per-org join_enabled
+        #    check; reject_all blocks every channel. ────────────────────────
+        system_config = await get_system_config(
+            self._redis, self._bao_client
+        )
+        if system_config.org_creation_policy == "reject_all":
+            raise AuthorizationError("Registration is disabled")
+
+        code = normalize_org_code(payload.org_code)
+        org = await self._org_repo.get_by_code(code)
+        if org is None:
+            raise ValidationError("Invalid organization code")
+        if not org.join_enabled:
+            # Admin-disabled self-registration: the code is valid but the
+            # org is not accepting new members — distinct from an unknown
+            # code (422 above), so admins can see join attempts in the logs.
+            logger.warning(
+                "auth.join_disabled",
+                extra={"org_id": str(org.id)},
+            )
+            raise AuthorizationError(
+                "This organization is not accepting new members"
+            )
+
+        existing = await self._repo.find_user_by_email(payload.email)
+        if existing is not None:
+            logger.warning(
+                "security.join_existing_email",
+                extra={"email": payload.email},
+            )
+            return self._signup_success_response(payload.email)
+
+        pw_hash = hash_password(payload.password)
+        try:
+            await self._repo.create_dashboard_user(
+                organization_id=org.id,
+                email=payload.email,
+                password_hash=pw_hash,
+                name=payload.email.split("@")[0],  # default name from email
+                role="member",
+            )
+            await self._otp_service.generate_and_send(
+                email=payload.email,
+                purpose="signup",
+            )
+        except IntegrityError:
+            # Concurrent duplicate join — the unique email index won.  Same
+            # generic response as a fresh join; roll back the aborted
+            # transaction so the session is usable.
+            logger.warning(
+                "security.join_existing_email",
+                extra={"email": payload.email},
+            )
+            await self._repo.rollback()
+            return self._signup_success_response(payload.email)
+
+        return self._signup_success_response(payload.email)
 
     async def verify_email(
         self,
@@ -245,10 +555,10 @@ class AuthService:
                 )
 
         # Issue tokens now that email is verified
-        return await self._issue_tokens(
+        return await self.issue_tokens(
             user_id=user.id,
             organization_id=user.organization_id,
-            role=user.role if user.role is not None else "admin",
+            role=user.role if user.role is not None else "member",
         )
 
     async def resend_verification(self, email: str) -> SignupResponse:
@@ -477,7 +787,7 @@ class AuthService:
             purpose="passwordless_login",
         )
 
-        return await self._issue_tokens(
+        return await self.issue_tokens(
             user_id=user.id,
             organization_id=user.organization_id,
             role=user.role if user.role is not None else "member",
@@ -551,7 +861,7 @@ class AuthService:
             )
 
         # ── Normal login (MFA disabled) ──────────────────────────────────────
-        tokens = await self._issue_tokens(
+        tokens = await self.issue_tokens(
             user_id=user.id,
             organization_id=user.organization_id,
             role=role,
@@ -614,7 +924,7 @@ class AuthService:
         org_id = uuid.UUID(session_data["org_id"])
         role = session_data["role"]
 
-        return await self._issue_tokens(
+        return await self.issue_tokens(
             user_id=user_id,
             organization_id=org_id,
             role=role,
@@ -750,7 +1060,7 @@ class AuthService:
             raise AuthenticationError("This account has been deactivated.")
         role = user.role if user.role is not None else "member"
 
-        new_tokens = await self._issue_tokens(
+        new_tokens = await self.issue_tokens(
             user_id=user_id,
             organization_id=stored.organization_id,
             role=role,
@@ -831,13 +1141,24 @@ class AuthService:
 
     # ── Internal helpers ────────────────────────────────────────────────────
 
-    async def _issue_tokens(
+    async def issue_tokens(
         self,
         user_id: uuid.UUID,
         organization_id: uuid.UUID,
         role: str,
     ) -> TokenResponse:
         """Generate and persist an access + refresh token pair.
+
+        Public so sibling services (e.g. ``InviteService``) can log a user
+        in without re-implementing JWT issuance.  All internal auth flows
+        call this too — it is the single token-issuance path.
+
+        The access token carries a ``mcp`` claim (must-change-password)
+        **read from the DB row at issue time** — every issuance path
+        (login, refresh, verify-email, invite-accept, change-password)
+        gets the flag's current value.  Refresh never copies claims from
+        the old token; a flag cleared by ``change_password`` produces
+        ``mcp: false`` on the very next issuance.
 
         Args:
             user_id: The authenticated user's UUID.
@@ -847,6 +1168,13 @@ class AuthService:
         Returns:
             A ``TokenResponse`` with fresh tokens.
         """
+        # Must-change-password flag — read from the source of truth at
+        # issue time so a rotated/stale token can never outlive the flag.
+        user = await self._repo.get_user_by_id(user_id)
+        must_change_password = (
+            bool(user.must_change_password) if user is not None else False
+        )
+
         # Use naive UTC datetime for DB storage (refresh_token.expires_at
         # is TIMESTAMP WITHOUT TIME ZONE).
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -857,6 +1185,7 @@ class AuthService:
                 "sub": str(user_id),
                 "org_id": str(organization_id),
                 "role": role,
+                "mcp": must_change_password,
                 "type": "access",
             },
             secret=get_settings().SECRET_KEY,
@@ -918,6 +1247,7 @@ class AuthService:
             organization_id=user.organization_id,
             is_email_verified=user.is_email_verified,
             mfa_enabled=user.mfa_enabled,
+            must_change_password=bool(user.must_change_password),
         )
 
     async def update_profile(
@@ -1027,6 +1357,7 @@ class AuthService:
             organization_id=user.organization_id,
             is_email_verified=user.is_email_verified,
             mfa_enabled=user.mfa_enabled,
+            must_change_password=bool(user.must_change_password),
         )
 
     @staticmethod

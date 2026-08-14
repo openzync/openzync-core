@@ -242,7 +242,11 @@ class TestRequireProjectOwner:
     async def test_non_owner_raises_403(
         self, db_session: AsyncMock, mock_repo: MagicMock
     ) -> None:
-        """JWT user with non-owner role → raises 403."""
+        """JWT user with non-owner role and non-admin org role → raises 403.
+
+        The org-admin bypass verifies the user's org role via
+        ``UserRepository`` — a member-role user is denied.
+        """
         from dependencies.project_auth import require_project_owner
 
         request = MagicMock(spec=Request)
@@ -255,8 +259,19 @@ class TestRequireProjectOwner:
         mock_member.role = "member"
         mock_repo.get_member.return_value = mock_member
 
-        with patch(
-            "dependencies.project_auth.ProjectRepository", return_value=mock_repo
+        mock_user_repo = MagicMock()
+        mock_user_repo.get_by_uuid = AsyncMock()
+        mock_user = MagicMock()
+        mock_user.role = "member"
+        mock_user_repo.get_by_uuid.return_value = mock_user
+
+        with (
+            patch(
+                "dependencies.project_auth.ProjectRepository", return_value=mock_repo
+            ),
+            patch(
+                "dependencies.project_auth.UserRepository", return_value=mock_user_repo
+            ),
         ):
             with pytest.raises(HTTPException) as exc:
                 await require_project_owner(request, PROJECT_ID, db_session)

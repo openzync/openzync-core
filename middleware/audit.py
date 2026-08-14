@@ -129,14 +129,34 @@ EXEMPT_PATHS: frozenset = frozenset({
     "/favicon.ico",
 })
 
-# Routes whose responses carry the one-time webhook signing secret
-# (``routers/admin_webhooks.py`` POST "/v1/admin/webhooks" → create, and any
-# future rotate route added there).  SECURITY: the raw secret must never be
-# persisted to audit_logs — it is shown exactly once to the caller, so these
-# responses skip response-body capture while the audit event itself (action,
-# actor, status) is still logged.  Add any new secret-bearing route here.
+# Routes whose responses carry one-time secrets that must never be persisted:
+#
+# - ``routers/admin_webhooks.py`` POST "/v1/admin/webhooks" → create (and any
+#   future rotate route added there) returns the raw webhook signing secret —
+#   shown exactly once to the caller.
+# - ``routers/admin_org_code.py`` POST "/admin/org/org-code/regenerate" →
+#   returns the freshly rotated org join code, which is a valid join token.
+# - ``routers/admin_org_code.py`` PATCH "/admin/org/org-code" → returns the
+#   live org join code (unchanged by the toggle) — a valid join token.
+# - ``routers/admin_org_config.py`` PATCH/PUT "/admin/org/config" → responses
+#   echo the stored config, which may include unmasked LLM API keys.
+# - ``routers/auth.py`` POST "/v1/auth/invites/accept" → returns the JWT
+#   access + refresh pair.  The magic-link flow is unauthenticated, so the
+#   audit middleware cannot derive org_id from request state — the tokens
+#   must never be body-captured regardless (defense-in-depth: a live bearer
+#   credential in the audit log is a standing credential leak).
+#
+# SECURITY: these responses skip response-body capture while the audit event
+# itself (action, actor, status) is still logged.  Add any new secret-bearing
+# route here.  ``POST /v1/auth/invites/info`` is deliberately NOT listed: its
+# response (org name, invitee email/name) contains no secrets.
 WEBHOOK_SECRET_RESPONSE_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/v1/admin/webhooks"),
+    ("POST", "/admin/org/org-code/regenerate"),
+    ("PATCH", "/admin/org/org-code"),
+    ("PATCH", "/admin/org/config"),
+    ("PUT", "/admin/org/config"),
+    ("POST", "/v1/auth/invites/accept"),
 })
 
 def _resolve_action(
@@ -146,10 +166,22 @@ def _resolve_action(
 ) -> tuple[str, str, str | None]:
     """Resolve audit (action, resource_type, display_name) from route metadata.
 
-    Tries to match the request against registered FastAPI routes.  If the
-    matched route's endpoint has audit metadata (via ``@audit_action``
-    decorator), uses that.  Falls back to ``http.{method}``.
+    Checks ``scope["route"]`` first: FastAPI 0.139+ lazy-includes routers —
+    ``app.include_router()`` appends ``_IncludedRouter`` placeholder objects
+    to ``app.routes`` instead of flattened ``APIRoute``s, so scanning
+    ``app.routes`` never finds the ``@audit_action`` metadata and every
+    request degrades to ``http.{method}``.  During request handling FastAPI
+    sets ``scope["route"]`` to the matched ``APIRoute``, which carries the
+    real endpoint.  The ``app.routes`` scan is kept as a fallback for older
+    FastAPI/Starlette ``Route`` objects and non-FastAPI apps;
+    ``http.{method}`` remains the last-resort fallback.
     """
+    route = scope.get("route")
+    if route is not None and hasattr(route, "endpoint"):
+        meta = get_audit_metadata(route.endpoint)
+        if meta is not None:
+            return (meta["action"], meta["resource"], meta["display"])
+
     app = scope.get("app")
     if app is not None and hasattr(app, "routes"):
         for route in app.routes:
@@ -277,9 +309,9 @@ class AuditMiddleware:
         # Resolve audit_log_response_body: per-org config → env default.
         _capture_body = await _resolve_audit_body_capture(org_id, scope)
         if (method, path) in WEBHOOK_SECRET_RESPONSE_ROUTES:
-            # SECURITY: never persist the one-time webhook signing secret —
-            # it is returned exactly once to the caller (see the constant's
-            # comment for the routes this covers).
+            # SECURITY: never persist one-time secrets (webhook signing
+            # secret, freshly rotated org join code, unmasked LLM API keys) —
+            # see the constant's comment for the routes this covers.
             _capture_body = False
         if _capture_body and body_chunks:
             try:

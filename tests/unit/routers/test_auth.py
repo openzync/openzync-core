@@ -5,7 +5,7 @@ Tests all ``/v1/auth/...`` endpoints — signup, login, MFA, tokens, profile.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
@@ -16,8 +16,10 @@ from dependencies.auth import get_dashboard_user
 from dependencies.services import get_auth_service, get_auth_throttle
 from routers.auth import router
 from schemas.auth import (
+    ChangePasswordRequest,
     DashboardUserResponse,
     LoginResponse,
+    PendingOrgResponse,
     SignupResponse,
     TokenResponse,
 )
@@ -137,6 +139,122 @@ async def test_signup_short_password_422() -> None:
     assert resp.status_code == 422
 
 
+# ── Org-code join ────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_join_success() -> None:
+    """POST /v1/auth/join returns 201 with confirmation message."""
+    from core.exceptions import register_exception_handlers
+
+    app, mocks = _create_app()
+    register_exception_handlers(app)
+    mocks["auth_service"].join_organization.return_value = SignupResponse(
+        message="Verification code sent to email. "
+        "Use POST /v1/auth/verify-email to complete signup.",
+        email="alice@acme.com",
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/auth/join",
+            json={
+                "email": "alice@acme.com",
+                "password": "SecurePass1",
+                "org_code": "K7M2Q9X4",
+            },
+        )
+
+    assert resp.status_code == 201
+    body = resp.json()
+    assert body["email"] == "alice@acme.com"
+    mocks["auth_service"].join_organization.assert_awaited_once()
+    # Join is throttled like signup — per-IP signup attempt counter.
+    mocks["auth_throttle"].check_signup_attempt.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_join_invalid_org_code_422_problem_json() -> None:
+    """POST /v1/auth/join with an unknown org code → 422 problem+json.
+
+    Observed contract: ``{"type":".../validation_error","title":"Validation
+    Error","status":422,"detail":"Invalid organization code"}`` — NOT a 400.
+    """
+    from core.exceptions import ValidationError, register_exception_handlers
+
+    app, mocks = _create_app()
+    register_exception_handlers(app)
+    mocks["auth_service"].join_organization.side_effect = ValidationError(
+        "Invalid organization code"
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/auth/join",
+            json={
+                "email": "alice@acme.com",
+                "password": "SecurePass1",
+                "org_code": "K7M2Q9X4",
+            },
+        )
+
+    assert resp.status_code == 422
+    body = resp.json()
+    assert body["type"] == "https://errors.openzync.tech/validation_error"
+    assert body["title"] == "Validation Error"
+    assert body["status"] == 422
+    assert body["detail"] == "Invalid organization code"
+
+
+@pytest.mark.asyncio
+async def test_join_missing_field_422() -> None:
+    """POST /v1/auth/join missing org_code → 422 Pydantic detail array."""
+    app, mocks = _create_app()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/auth/join",
+            json={"email": "alice@acme.com", "password": "SecurePass1"},
+        )
+
+    assert resp.status_code == 422
+    body = resp.json()
+    assert isinstance(body["detail"], list)  # Pydantic validation array
+    mocks["auth_service"].join_organization.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_join_throttled_429() -> None:
+    """POST /v1/auth/join over the signup throttle → 429 problem+json."""
+    from core.exceptions import RateLimitError, register_exception_handlers
+
+    app, mocks = _create_app()
+    register_exception_handlers(app)
+    mocks["auth_throttle"].check_signup_attempt.side_effect = RateLimitError(
+        "Too many signup attempts from this IP address. Try again later."
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/auth/join",
+            json={
+                "email": "alice@acme.com",
+                "password": "SecurePass1",
+                "org_code": "K7M2Q9X4",
+            },
+        )
+
+    assert resp.status_code == 429
+    body = resp.json()
+    assert body["type"] == "https://errors.openzync.tech/rate_limit_exceeded"
+    assert body["status"] == 429
+    mocks["auth_service"].join_organization.assert_not_awaited()
+
+
 # ── Email verification ──────────────────────────────────────────────────────────
 
 
@@ -235,6 +353,58 @@ async def test_login_success() -> None:
     mocks["auth_throttle"].check_login_attempt.assert_awaited_once()
     # Password-only success clears the attempt counters (H4d).
     mocks["auth_throttle"].record_login_success.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_login_root_user_success() -> None:
+    """POST /v1/auth/login with email='root' returns 200 (seeded root user).
+
+    The root credential is literally ``login using root`` — the schema
+    admits the non-email identifier and the flow proceeds like any user.
+    """
+    app, mocks = _create_app()
+    mocks["auth_service"].login.return_value = LoginResponse(
+        access_token="at_root123",  # noqa: S106 — test fixture token
+        refresh_token="rt_root456",  # noqa: S106 — test fixture token
+        expires_in=1800,
+        token_type="Bearer",  # noqa: S106 — test fixture token
+        requires_mfa=False,
+        mfa_session_token=None,
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/auth/login",
+            json={"email": "root", "password": "admin"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["access_token"] == "at_root123"  # noqa: S105 — test fixture
+    # The schema normalized the identifier before the service saw it.
+    mocks["auth_service"].login.assert_awaited_once()
+    sent_payload = mocks["auth_service"].login.call_args.args[0]
+    assert sent_payload.email == "root"
+
+
+@pytest.mark.asyncio
+async def test_login_root_at_422() -> None:
+    """POST /v1/auth/login with email='root@' still fails schema validation.
+
+    Only the literal ``root`` bypasses the email check — a malformed
+    address is 422 exactly as before.
+    """
+    app, mocks = _create_app()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/auth/login",
+            json={"email": "root@", "password": "admin"},
+        )
+
+    assert resp.status_code == 422
+    mocks["auth_service"].login.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -643,3 +813,141 @@ def _raise_401():
     from fastapi import HTTPException, status
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+
+# ── Signup — pending-approval path ───────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_signup_pending_approval_201() -> None:
+    """Org-approval signup → 201 with flat {status, message}, no email key."""
+    app, mocks = _create_app()
+    mocks["auth_service"].signup.return_value = PendingOrgResponse(
+        status="pending",
+        message="Your organization is pending approval.",
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/auth/signup",
+            json={
+                "email": "admin@acme.com",
+                "password": "secure-p@ssword-123",
+                "organization_name": "Acme Corp",
+            },
+        )
+
+    assert resp.status_code == 201
+    assert resp.json() == {
+        "status": "pending",
+        "message": "Your organization is pending approval.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_signup_reserved_system_name_422() -> None:
+    """Organization name 'SYSTEM' → 422 with the loud reserved-name detail."""
+    app, mocks = _create_app()
+    from core.exceptions import ValidationError, register_exception_handlers
+
+    register_exception_handlers(app)
+    mocks["auth_service"].signup.side_effect = ValidationError(
+        "Organization name 'SYSTEM' is reserved and cannot be used."
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/auth/signup",
+            json={
+                "email": "admin@acme.com",
+                "password": "secure-p@ssword-123",
+                "organization_name": "SYSTEM",
+            },
+        )
+
+    assert resp.status_code == 422
+    assert "reserved" in resp.json()["detail"]
+
+
+# ── Change password ──────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_change_password_success_200() -> None:
+    """POST /v1/auth/change-password → 200 with fresh tokens."""
+    app, mocks = _create_app()
+    mocks["auth_service"].change_password.return_value = TokenResponse(
+        access_token="at.new",
+        refresh_token="rt.new",
+        expires_in=1800,
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/v1/auth/change-password",
+            json={
+                "old_password": "OldPass1",
+                "new_password": "NewPass1",
+            },
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["access_token"] == "at.new"
+    assert body["refresh_token"] == "rt.new"
+    mocks["auth_service"].change_password.assert_awaited_once_with(
+        user_id=USER_ID,
+        payload=ChangePasswordRequest(
+            old_password="OldPass1",
+            new_password="NewPass1",
+        ),
+    )
+
+
+# ── Registration status (public) ─────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_registration_status_200_flat_defaults() -> None:
+    """GET /v1/auth/registration-status → flat two-field body (defaults)."""
+    app, _ = _create_app()
+    from schemas.system_config import SystemConfigResponse
+
+    with patch("routers.auth.get_system_config") as mock_get:
+        mock_get.return_value = SystemConfigResponse()
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/v1/auth/registration-status")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "org_creation_policy": "allow_all",
+        "approval_scope": "both",
+    }
+
+
+@pytest.mark.asyncio
+async def test_registration_status_200_flat_approvals() -> None:
+    """Approvals policy → flat body mirrors the stored config."""
+    app, _ = _create_app()
+    from schemas.system_config import SystemConfigResponse
+
+    with patch("routers.auth.get_system_config") as mock_get:
+        mock_get.return_value = SystemConfigResponse(
+            org_creation_policy="approvals",
+            approval_scope="in_app",
+        )
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/v1/auth/registration-status")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "org_creation_policy": "approvals",
+        "approval_scope": "in_app",
+    }

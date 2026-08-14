@@ -764,7 +764,7 @@ class TestMemoryServiceInfrastructure:
         assert enqueue_call.args[0] == extract_blob_text.__name__
 
         task_params = set(inspect.signature(extract_blob_text).parameters) - {"ctx"}
-        # ponytail: queue_name is ARQ routing metadata, not a task param —
+        # queue_name is ARQ routing metadata, not a task param —
         # pin it explicitly so any other extra key still fails the guard.
         assert set(enqueue_call.kwargs) == task_params | {"queue_name"}
 

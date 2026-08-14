@@ -25,17 +25,22 @@ RFC 7807 error bodies are returned for all 401/403 responses.
 
 from __future__ import annotations
 
-import orjson
 import logging
+from datetime import UTC
 from typing import Any, cast
-
-import redis.asyncio as aioredis
 from uuid import UUID
 
+import orjson
+import redis.asyncio as aioredis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+# Single source of truth for the must-change-password exempt paths — the
+# same frozenset used by dependencies.auth.get_dashboard_user, so the
+# middleware gate and the dependency gate can never drift.  Import is safe:
+# dependencies.auth does not import this middleware module.
+from dependencies.auth import MUST_CHANGE_PASSWORD_EXEMPT_PATHS  # noqa: E402
 from repositories.api_key_repository import ApiKeyRepository
 from utils.crypto import compute_lookup_hash, verify_api_key
 
@@ -80,9 +85,9 @@ PUBLIC_ENDPOINTS: set[str] = {
     "/docs",
     "/openapi.json",
     "/redoc",
-    "/admin/organizations",
     "/admin/org/config/defaults",
     "/v1/auth/signup",
+    "/v1/auth/join",
     "/v1/auth/login",
     "/v1/auth/refresh",
     "/v1/auth/verify-email",
@@ -92,6 +97,8 @@ PUBLIC_ENDPOINTS: set[str] = {
     "/v1/auth/login/otp/send",
     "/v1/auth/login/otp/verify",
     "/v1/auth/mfa/verify",
+    "/v1/auth/registration-status",
+    "/v1/auth/invites",
 }
 """Paths that are allowed without authentication.
 
@@ -99,6 +106,13 @@ The ``/metrics`` path is handled by an exact-path exemption in
 :meth:`AuthMiddleware.dispatch` — it must be unauthenticated so
 Prometheus scrapers can reach it, but sub-paths (``/metrics/summary``
 etc.) go through normal auth.
+
+``/v1/auth/invites`` is a prefix entry: ``_is_public_path`` matches
+``path.startswith(f"{endpoint}/")``, so it covers both
+``POST /v1/auth/invites/info`` and ``POST /v1/auth/invites/accept``.
+Those endpoints are deliberately unauthenticated — the magic-link token
+in the request body IS the credential presented by the invitee, who has
+no account (and therefore no JWT) yet.
 
 These endpoints do not require an ``Authorization`` header.  The set may be
 extended at the application level.  Paths are matched suffix-wise so that
@@ -240,7 +254,7 @@ async def _lookup_key_in_redis(
         try:
             # ⚠️: Data is stored as JSON string.  type: ignore is safe
             # because we wrote it ourselves.
-            return cast(dict[str, Any], orjson.loads(cached.encode()))
+            return cast("dict[str, Any]", orjson.loads(cached.encode()))
         except (orjson.JSONDecodeError, TypeError):
             logger.warning("Corrupted auth cache entry, ignoring", key=cache_key)
             await redis.delete(cache_key)
@@ -348,10 +362,9 @@ async def _query_key_from_db(
         Dict with ``id``, ``org_id``, ``scopes``, ``key_hash``, ``salt``,
         ``is_revoked``, ``expires_at`` if found, or ``None``.
     """
-    async with db_factory() as session:
-        async with session.begin():
-            repo = ApiKeyRepository(session)
-            api_key = await repo.get_by_lookup_hash(lookup_hash)
+    async with db_factory() as session, session.begin():
+        repo = ApiKeyRepository(session)
+        api_key = await repo.get_by_lookup_hash(lookup_hash)
 
     if api_key is None:
         return None
@@ -393,16 +406,23 @@ def _is_jwt_token(token: str) -> bool:
 def _verify_jwt_and_set_state(
     state: dict[str, Any],
     path: str,
+    method: str,
     token: str,
 ) -> dict | None:
     """Verify a JWT token and populate the request state dict.
 
     Extracts ``sub`` (user_id), ``org_id``, and ``role`` from the JWT
-    claims and writes them into ``state``.
+    claims and writes them into ``state``.  Also enforces the
+    must-change-password gate: an access token whose ``mcp`` claim is
+    truthy is rejected with 403 (except on the exempt paths) and no auth
+    state is set — the same defense enforced (defense-in-depth) by
+    ``dependencies.auth.get_dashboard_user``.
 
     Args:
         state: Mutable request state dict (populated on success).
-        path: The request URL path (used in error responses).
+        path: The request URL path (used in error responses and the
+            exempt-path check).
+        method: The HTTP method (used in the exempt-path check).
         token: The raw JWT string.
 
     Returns:
@@ -442,6 +462,19 @@ def _verify_jwt_and_set_state(
             "status": 401,
             "title": "Invalid Token Claims",
             "detail": "JWT must contain 'sub' (user_id) and 'org_id' claims.",
+            "path": path,
+        }
+
+    # ── Must-change-password gate (JWT dashboard sessions only) ──────────
+    # The mcp claim is minted from the DB row at issue time.  A truthy
+    # value blocks every dashboard API except the exempt paths until the
+    # user replaces the seeded credential.  Tokens issued before this
+    # claim existed (payload.get → None → falsy) pass — backward compat.
+    if payload.get("mcp") and (method, path) not in MUST_CHANGE_PASSWORD_EXEMPT_PATHS:
+        return {
+            "status": 403,
+            "title": "Authorization Error",
+            "detail": "Password change required",
             "path": path,
         }
 
@@ -588,7 +621,7 @@ class AuthMiddleware:
         # If the token doesn't have an API key prefix, try JWT first.
         if not raw_key.startswith(API_KEY_PREFIXES) and _is_jwt_token(raw_key):
             jwt_error = _verify_jwt_and_set_state(
-                scope["state"], path, raw_key,
+                scope["state"], path, method, raw_key,
             )
             if jwt_error is not None:
                 await _send_rfc7807(send, **jwt_error)
@@ -735,12 +768,12 @@ class AuthMiddleware:
             return
 
         if key_data.get("expires_at") is not None:
-            from datetime import datetime, timezone
+            from datetime import datetime
 
             expires = key_data["expires_at"]
             if expires.tzinfo is None:
-                expires = expires.replace(tzinfo=timezone.utc)
-            if expires < datetime.now(timezone.utc):
+                expires = expires.replace(tzinfo=UTC)
+            if expires < datetime.now(UTC):
                 await _send_rfc7807(
                     send,
                     status=401,

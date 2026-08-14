@@ -47,6 +47,7 @@ class TestMfaService:
         mock_redis = AsyncMock()
         service = AuthService(
             repo=mock_repo, otp_service=mock_otp, redis=mock_redis,
+            org_repo=AsyncMock(),
         )
         return service, mock_repo, mock_otp, mock_redis
 
@@ -83,7 +84,7 @@ class TestMfaService:
             refresh_token="rt1",
             expires_in=1800,
         )
-        service._issue_tokens = AsyncMock(return_value=fake_tokens)
+        service.issue_tokens = AsyncMock(return_value=fake_tokens)
 
         with patch("services.auth_service.verify_password", return_value=True):
             result = await service.login(
@@ -163,7 +164,7 @@ class TestMfaService:
             refresh_token="rt-mfa",
             expires_in=1800,
         )
-        service._issue_tokens = AsyncMock(return_value=fake_tokens)
+        service.issue_tokens = AsyncMock(return_value=fake_tokens)
 
         result = await service.mfa_verify(
             MfaVerifyRequest(
@@ -183,7 +184,7 @@ class TestMfaService:
         )
 
         # Tokens were issued with the correct identity
-        service._issue_tokens.assert_awaited_once_with(
+        service.issue_tokens.assert_awaited_once_with(
             user_id=self.USER_ID,
             organization_id=self.ORG_ID,
             role="admin",

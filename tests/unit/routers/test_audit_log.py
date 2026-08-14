@@ -51,13 +51,13 @@ def _build_app(mock_service: AsyncMock) -> FastAPI:
     app = FastAPI()
     app.include_router(router)
 
-    from dependencies.auth import get_dashboard_user, require_org_id
+    from dependencies.auth import require_org_admin
     from dependencies.db import get_db
 
     app.dependency_overrides = {}
     app.dependency_overrides[get_db] = lambda: mock_service._db  # not used directly
-    app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
-    app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
+    # Admin-gated: the endpoint is org-wide (IPs, actors, resources, bodies).
+    app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
 
     @app.middleware("http")
     async def _mock_auth(request: Request, call_next):

@@ -17,6 +17,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from routers.admin_schemas import router
 from schemas.extraction_schemas import UpdateExtractionSchemaRequest
@@ -25,6 +26,24 @@ ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 SCHEMA_ID = UUID("00000000-0000-0000-0000-000000000003")
 NOW = datetime.now(timezone.utc)
+
+
+@pytest.fixture(autouse=True)
+def _mock_org_admin_role(monkeypatch) -> None:
+    """Resolve the org-admin role check for every test in this file.
+
+    The router gates reads with ``require_scope("admin")`` and writes with
+    ``require_org_admin``; both funnel into ``core.rbac.get_org_role`` via
+    ``dependencies.auth._ensure_org_admin``.  Patching the role lookup to
+    return ``"admin"`` keeps the full dependency chain exercised (JWT state,
+    Redis on app state, DB session) while mocking only the role source of
+    truth.  RBAC itself is unit-tested in ``dependencies/test_rbac.py``.
+    """
+
+    async def _fake_get_org_role(redis, db, org_id, user_id) -> str:
+        return "admin"
+
+    monkeypatch.setattr("dependencies.auth.get_org_role", _fake_get_org_role)
 
 
 def _stub_schema_response(overrides: dict | None = None) -> dict:
@@ -50,22 +69,17 @@ def _build_app() -> FastAPI:
     app = FastAPI()
     # get_db dependency requires db_session_factory on app.state
     app.state.db_session_factory = MagicMock()
+    # _ensure_org_admin requires a Redis client on app.state
+    app.state.redis = AsyncMock()
     app.include_router(router)
 
-    from dependencies.auth import require_org_id, require_scope
+    from dependencies.auth import require_org_admin, require_org_id
+    from dependencies.db import get_db
 
     app.dependency_overrides = {}
     app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
-
-    # require_scope("admin") returns a callable — mock it to return org_id
-    async def _admin_scope() -> str:
-        return str(ORG_ID)
-
-    # The router uses require_scope("admin") which is a factory returning _scope_checker.
-    # We need to override the returned inner function. Since we can't directly reference
-    # _scope_checker, we patch the factory or override the specific call.
-    # Simpler: patch SchemaService at the module level in each test class.
-    app.dependency_overrides[require_scope("admin")] = _admin_scope
+    app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
+    app.dependency_overrides[get_db] = lambda: AsyncMock(spec=AsyncSession)
 
     @app.middleware("http")
     async def _mock_auth(request: Request, call_next):

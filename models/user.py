@@ -70,6 +70,15 @@ class User(TimestampMixin, Base):
         default=True,
         server_default="true",
     )
+    # First-login password reset gate — True for the seeded root user (whose
+    # password comes from the OZ_ROOT_PASSWORD default) until they set a
+    # real password.  Enforced in dependencies/auth.py get_dashboard_user.
+    must_change_password: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+        server_default="false",
+    )
     is_deleted: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -95,6 +104,15 @@ class User(TimestampMixin, Base):
         default=False,
         server_default="false",
     )
+    invite_token_hash: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+        comment=(
+            "SHA-256 hash of the pending admin-invite token.  Non-NULL means "
+            "this user was invited but has not yet accepted; NULL after accept "
+            "or revoke."
+        ),
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -104,6 +122,11 @@ class User(TimestampMixin, Base):
         ),
         Index("ix_user_organization_id", "organization_id"),
         Index("ix_user_email_unique", "email", postgresql_where=text("email IS NOT NULL AND is_deleted = false")),
+        Index(
+            "ix_user_invite_token_hash",
+            "invite_token_hash",
+            postgresql_where=text("invite_token_hash IS NOT NULL"),
+        ),
     )
 
     def __repr__(self) -> str:

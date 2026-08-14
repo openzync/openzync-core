@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import audit_action
-from dependencies.auth import require_org_id, require_scope
+from dependencies.auth import require_org_admin, require_scope
 from dependencies.db import get_db
 from repositories.extraction_schema_repository import (
     ExtractionSchemaRepository,
@@ -80,7 +80,7 @@ async def list_schemas(
         description="Filter by active status",
     ),
     service: SchemaService = Depends(_get_schema_service),
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin),
 ) -> ExtractionSchemaListResponse:
     """List all schemas for the authenticated organization.
 
@@ -105,7 +105,7 @@ async def list_schemas(
 async def get_schema(
     schema_id: UUID,
     service: SchemaService = Depends(_get_schema_service),
-    org_id: str = Depends(require_org_id),
+    org_id: str = Depends(require_org_admin),
 ) -> ExtractionSchemaResponse:
     """Get a single schema by ID.  Scoped to the authenticated organization."""
     return await service.get_schema(

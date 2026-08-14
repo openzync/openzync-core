@@ -56,7 +56,10 @@ from services.auth_service import AuthService
 from services.email_service import EmailService
 from services.fact_service import FactService
 from services.graph_service import GraphService
+from services.invite_service import InviteService
 from services.memory_service import MemoryService
+from services.org_request_service import OrgRequestService
+from services.organization_service import OrganizationService  # noqa: TC001
 from services.otp_service import OtpService
 from services.quick_actions_service import QuickActionsService
 from services.session_service import SessionService
@@ -147,7 +150,87 @@ async def get_auth_service(
         repo=AuthRepository(db),
         otp_service=otp_service,
         redis=redis_client,
+        org_repo=OrganizationRepository(db),
         email_service=email_service,
+        bao_client=bao_client,
+    )
+
+
+# ── Invite ─────────────────────────────────────────────────────────────────────
+
+
+async def get_invite_service(
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    auth_service: AuthService = Depends(get_auth_service),  # noqa: B008
+) -> InviteService:
+    """Dependency that yields an initialised InviteService.
+
+    Shares the request-scoped session and the wired ``AuthService`` (for
+    token issuance on accept).  The email service is built from the SMTP
+    settings like ``get_auth_service`` does.
+
+    Args:
+        db: Async DB session from dependency injection.
+        auth_service: Fully wired auth service (token issuance).
+
+    Returns:
+        An initialised ``InviteService``.
+    """
+    email_config = EmailConfig.from_settings(get_settings())
+    return InviteService(
+        repo=UserRepository(db),
+        auth_service=auth_service,
+        email_service=EmailService(email_config),
+        org_repo=OrganizationRepository(db),
+    )
+
+
+# ── Org requests ────────────────────────────────────────────────────────────────
+
+
+async def get_org_request_service(
+    request: Request,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    auth_service: AuthService = Depends(get_auth_service),  # noqa: B008
+) -> OrgRequestService:
+    """Dependency that yields an initialised OrgRequestService.
+
+    Wires the shared auth service (pending-org/admin creation), the
+    organization service (instant creation + OpenBao bootstrap), and an
+    OTP service (email activation for the allow_all path).
+
+    Args:
+        request: Incoming HTTP request (for ``app.state`` access).
+        db: Async DB session from dependency injection.
+        auth_service: Fully wired auth service.
+
+    Returns:
+        An initialised ``OrgRequestService``.
+    """
+    bao_client = getattr(request.app.state, "openbao_client", None)
+    if bao_client is None:
+        raise RuntimeError(
+            "OpenBao client not found on app.state. "
+            "Ensure the OpenBao client was initialised during the application "
+            "lifespan."
+        )
+    redis = getattr(request.app.state, "redis", None)
+    if redis is None:
+        raise RuntimeError(
+            "Redis client not found on app.state. "
+            "Ensure init_redis() was called during the application lifespan."
+        )
+    email_config = EmailConfig.from_settings(get_settings())
+    email_service = EmailService(email_config)
+    return OrgRequestService(
+        db=db,
+        auth_service=auth_service,
+        org_service=OrganizationService(
+            repo=OrganizationRepository(db),
+            bao_client=bao_client,
+        ),
+        otp_service=OtpService(redis=redis, email_service=email_service),
+        redis=redis,
         bao_client=bao_client,
     )
 

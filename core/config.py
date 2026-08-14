@@ -32,12 +32,28 @@ Usage::
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Platform constants
+# ═══════════════════════════════════════════════════════════════════════════════
+
+PLATFORM_ORG_ID = uuid.UUID("00000000-0000-0000-0000-0000000000aa")
+"""Fixed UUID of the platform (super-admin) organization.
+
+The platform org is seeded at startup by ``services.platform_seed`` with
+``name="SYSTEM"`` and holds the root ``superadmin`` user.  A JWT session
+is super-admin only when its ``org_id`` claim equals this UUID AND the
+DB-verified role is ``superadmin`` (see ``dependencies.auth``).  Fixed —
+never generated — so auth checks are deterministic and the seed is
+idempotent.
+"""
 
 # Re-export init_settings so callers can do:
 #   from core.config import init_settings, BootstrapSettings
@@ -162,6 +178,13 @@ class Settings(BaseModel):
         default="http://localhost:3000",
         description="Comma-separated list of allowed CORS origins.",
     )
+    FRONTEND_URL: str = Field(
+        default="http://localhost:3000",
+        description=(
+            "Base URL of the frontend web app, used for invite email links "
+            "(e.g. ``{FRONTEND_URL}/invite?token=...``)."
+        ),
+    )
     HOSTS_ALLOWED: str = Field(
         default="localhost:8000",
         description=(
@@ -202,6 +225,18 @@ class Settings(BaseModel):
         ge=1,
         le=90,
         description="Refresh token TTL in days (default 7).",
+    )
+
+    # ── Platform root credential ───────────────────────────────────────────
+    # The seeded root user's initial password.  Default 'admin' is for the
+    # FIRST install only — the seed sets must_change_password=True so the
+    # root user is forced to set a real password at first login, and a loud
+    # ``security.root_default_credentials`` warning is logged whenever the
+    # default is in effect.  Set OZ_ROOT_PASSWORD in OpenBao system config
+    # (via SYSTEM_KEY_MAPPING) to override.  Never log the value itself.
+    OZ_ROOT_PASSWORD: str = Field(
+        default="admin",
+        description="Initial password for the seeded platform root user.",
     )
 
     # ── FalkorDB (graph backend) ──────────────────────────────────────────

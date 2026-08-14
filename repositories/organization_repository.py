@@ -9,8 +9,10 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.organization import Organization
 
 
 class OrganizationRepository:
@@ -31,6 +33,191 @@ class OrganizationRepository:
         multi-table transactions that span multiple repository methods.
         """
         return self._db
+
+    # ── Organization rows ───────────────────────────────────────────────────
+
+    async def get_by_id(self, org_id: UUID) -> Organization | None:
+        """Fetch an organization by UUID.
+
+        Args:
+            org_id: The organization UUID.
+
+        Returns:
+            The Organization if found, or ``None``.
+        """
+        result = await self._db.execute(
+            select(Organization).where(Organization.id == org_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_by_code(self, code: str) -> Organization | None:
+        """Fetch a joinable organization by its join code.
+
+        The caller normalizes the code (``normalize_org_code``) before
+        calling — this method matches exactly.  Inactive, pending,
+        rejected, and platform (``SYSTEM``) organizations are excluded:
+        a deactivated or unapproved org's code must not accept new
+        members.
+
+        Args:
+            code: The normalized org code.
+
+        Returns:
+            The joinable Organization if found, or ``None``.
+        """
+        result = await self._db.execute(
+            select(Organization).where(
+                Organization.org_code == code,
+                Organization.is_active.is_(True),
+                Organization.status == "approved",
+                Organization.name != "SYSTEM",
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def list_all(
+        self,
+        status: str | None = None,
+        page: int = 1,
+        limit: int = 50,
+    ) -> tuple[list[Organization], int]:
+        """List all organizations (superadmin view, requires RLS bypass).
+
+        Intended for the platform super-admin org listing — every org
+        including pending and rejected, newest first.
+
+        Args:
+            status: Optional lifecycle filter — ``pending``, ``approved``,
+                or ``rejected``.  ``None`` returns every status.
+            page: 1-based page number.
+            limit: Page size (clamped to 1..200).
+
+        Returns:
+            A tuple of ``(orgs_on_page, total_matching_count)``.
+        """
+        effective_limit = min(max(limit, 1), 200)
+        effective_page = max(page, 1)
+
+        base = select(Organization)
+        if status is not None:
+            base = base.where(Organization.status == status)
+
+        total = (
+            await self._db.execute(select(func.count()).select_from(base.subquery()))
+        ).scalar() or 0
+
+        result = await self._db.execute(
+            base.order_by(Organization.created_at.desc())
+            .offset((effective_page - 1) * effective_limit)
+            .limit(effective_limit)
+        )
+        return result.scalars().all(), total
+
+    async def approve_if_pending(self, org_id: UUID) -> bool:
+        """Atomically flip a ``pending`` org to ``approved``.
+
+        Single conditional UPDATE — exactly one concurrent caller wins:
+        the loser's statement matches zero rows once the winner's
+        transaction commits (READ COMMITTED re-evaluates the WHERE against
+        the committed status), so two racing approvals can never both pass
+        the ``status == 'pending'`` gate.  Same race-free pattern as
+        ``AuthRepository.revoke_refresh_token_if_current``.
+
+        Args:
+            org_id: The organization UUID.
+
+        Returns:
+            ``True`` if this caller claimed (approved) the org.
+        """
+        result = await self._db.execute(
+            update(Organization)
+            .where(
+                Organization.id == org_id,
+                Organization.status == "pending",
+            )
+            .values(status="approved")
+            .execution_options(synchronize_session=False)
+        )
+        await self._db.flush()
+        return result.rowcount == 1  # type: ignore[attr-defined,no-any-return]
+
+    async def set_status(self, org_id: UUID, status: str) -> Organization:
+        """Set an organization's lifecycle status.
+
+        Args:
+            org_id: The organization UUID.
+            status: One of ``pending``, ``approved``, ``rejected``.
+
+        Returns:
+            The updated Organization.
+
+        Raises:
+            NotFoundError: If no organization with this UUID exists.
+        """
+        from core.exceptions import NotFoundError
+
+        result = await self._db.execute(
+            select(Organization).where(Organization.id == org_id)
+        )
+        org = result.scalar_one_or_none()
+        if org is None:
+            raise NotFoundError(f"Organization {org_id} not found.")
+        org.status = status
+        await self._db.flush()
+        await self._db.refresh(org)
+        return org
+
+    async def set_org_code(self, org_id: UUID, code: str) -> Organization:
+        """Replace an organization's join code (rotation).
+
+        Args:
+            org_id: The organization UUID.
+            code: The new normalized org code.
+
+        Returns:
+            The updated Organization.
+
+        Raises:
+            NotFoundError: If no organization with this UUID exists.
+        """
+        from core.exceptions import NotFoundError
+
+        result = await self._db.execute(
+            select(Organization).where(Organization.id == org_id)
+        )
+        org = result.scalar_one_or_none()
+        if org is None:
+            raise NotFoundError(f"Organization {org_id} not found.")
+        org.org_code = code
+        await self._db.flush()
+        await self._db.refresh(org)
+        return org
+
+    async def set_join_enabled(self, org_id: UUID, enabled: bool) -> Organization:
+        """Toggle whether the org accepts new members via org-code join.
+
+        Args:
+            org_id: The organization UUID.
+            enabled: Whether org-code self-registration is accepted.
+
+        Returns:
+            The updated Organization.
+
+        Raises:
+            NotFoundError: If no organization with this UUID exists.
+        """
+        from core.exceptions import NotFoundError
+
+        result = await self._db.execute(
+            select(Organization).where(Organization.id == org_id)
+        )
+        org = result.scalar_one_or_none()
+        if org is None:
+            raise NotFoundError(f"Organization {org_id} not found.")
+        org.join_enabled = enabled
+        await self._db.flush()
+        await self._db.refresh(org)
+        return org
 
     # ── Config JSONB (Groups A, B, C — UI-exposed settings) ─────────────────
 

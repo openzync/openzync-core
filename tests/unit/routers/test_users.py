@@ -6,7 +6,7 @@ management.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
@@ -14,13 +14,12 @@ import pytest
 from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
+from schemas.user_summary import UserSummaryResponse, UserSummaryTriggerResponse
 from schemas.users import (
+    UserListResponse,
     UserResponse,
     UserResponseWithStats,
-    UserListResponse,
 )
-from schemas.user_summary import UserSummaryResponse, UserSummaryTriggerResponse
-from schemas.custom_instructions import CustomInstructionsResponse, CustomInstructionSchema
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -51,8 +50,8 @@ def _make_user_response(overrides: dict | None = None) -> dict:
         "email": "alice@example.com",
         "metadata": {},
         "organization_id": ORG_ID,
-        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
-        "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "updated_at": datetime(2026, 1, 1, tzinfo=UTC),
         "is_deleted": False,
     }
     base.update(overrides or {})
@@ -73,8 +72,8 @@ class TestUsersRouter:
             _make_user_response(),
         )
 
+        from dependencies.auth import require_org_admin, require_org_id
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -82,6 +81,7 @@ class TestUsersRouter:
         app.dependency_overrides[get_db] = AsyncMock
         app.dependency_overrides[get_user_service] = lambda: mock_instance
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -116,8 +116,8 @@ class TestUsersRouter:
         mock_instance = AsyncMock()
         mock_user_service.return_value = mock_instance
 
+        from dependencies.auth import require_org_admin, require_org_id
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -125,6 +125,7 @@ class TestUsersRouter:
         app.dependency_overrides[get_db] = AsyncMock
         app.dependency_overrides[get_user_service] = lambda: mock_instance
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -149,8 +150,8 @@ class TestUsersRouter:
         mock_instance = AsyncMock()
         mock_user_service.return_value = mock_instance
 
+        from dependencies.auth import require_org_admin, require_org_id
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -158,6 +159,7 @@ class TestUsersRouter:
         app.dependency_overrides[get_db] = AsyncMock
         app.dependency_overrides[get_user_service] = lambda: mock_instance
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -192,8 +194,8 @@ class TestUsersRouter:
             has_more=False,
         )
 
+        from dependencies.auth import require_org_admin, require_org_id
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -201,6 +203,7 @@ class TestUsersRouter:
         app.dependency_overrides[get_db] = AsyncMock
         app.dependency_overrides[get_user_service] = lambda: mock_instance
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -235,8 +238,8 @@ class TestUsersRouter:
             }),
         )
 
+        from dependencies.auth import require_org_admin, require_org_id
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -244,6 +247,7 @@ class TestUsersRouter:
         app.dependency_overrides[get_db] = AsyncMock
         app.dependency_overrides[get_user_service] = lambda: mock_instance
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -275,8 +279,8 @@ class TestUsersRouter:
             detail={"user_id": str(USER_ID)},
         )
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
+        from dependencies.db import get_db
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -311,8 +315,8 @@ class TestUsersRouter:
             _make_user_response({"name": "Alice B."}),
         )
 
+        from dependencies.auth import require_org_admin, require_org_id
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -320,6 +324,7 @@ class TestUsersRouter:
         app.dependency_overrides[get_db] = AsyncMock
         app.dependency_overrides[get_user_service] = lambda: mock_instance
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -350,8 +355,8 @@ class TestUsersRouter:
         mock_user_service.return_value = mock_instance
         mock_instance.delete_user.return_value = None
 
+        from dependencies.auth import require_org_admin, require_org_id
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id
         from routers.users import get_user_service, router
 
         app = FastAPI()
@@ -359,6 +364,7 @@ class TestUsersRouter:
         app.dependency_overrides[get_db] = AsyncMock
         app.dependency_overrides[get_user_service] = lambda: mock_instance
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -388,18 +394,20 @@ class TestUsersRouter:
         mock_instance.get_summary.return_value = UserSummaryResponse(
             user_id=USER_ID,
             summary="Alice is a helpful user.",
-            updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
-        from core.arq import get_arq
+        from dependencies.db import get_db
         from routers.users import get_user_summary_service, router
 
         # get_user_summary_service needs arq and redis on app.state
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        # ``require_org_admin_or_self`` resolves ``get_db`` (owner path never
+        # touches it) — a lambda override avoids AsyncMock's *args/**kwargs
+        # signature confusing FastAPI's dependency analysis.
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_user_summary_service] = lambda: mock_instance
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
 
@@ -436,13 +444,13 @@ class TestUsersRouter:
         mock_summary_service.return_value = mock_instance
         mock_instance.get_summary.return_value = None
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
+        from dependencies.db import get_db
         from routers.users import get_user_summary_service, router
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_user_summary_service] = lambda: mock_instance
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
 
@@ -476,15 +484,15 @@ class TestUsersRouter:
             user_id=USER_ID,
         )
 
+        from dependencies.auth import require_org_admin
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id
         from routers.users import get_user_summary_service, router
 
         app = FastAPI()
         app.include_router(router)
         app.dependency_overrides[get_db] = AsyncMock
         app.dependency_overrides[get_user_summary_service] = lambda: mock_instance
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -516,8 +524,8 @@ class TestUsersRouter:
             message="Rate limited. Try again in 5 minutes.",
         )
 
+        from dependencies.auth import require_org_admin
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id
         from routers.users import get_user_summary_service, router
 
         app = FastAPI()
@@ -525,7 +533,7 @@ class TestUsersRouter:
         register_exception_handlers(app)
         app.dependency_overrides[get_db] = AsyncMock
         app.dependency_overrides[get_user_summary_service] = lambda: mock_instance
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -555,13 +563,13 @@ class TestUsersRouter:
             {"name": "legal_domain", "text": "Focus on legal terms."},
         ]
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
+        from dependencies.db import get_db
         from routers.users import get_user_summary_service, router
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_user_summary_service] = lambda: mock_instance
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
 
@@ -599,15 +607,15 @@ class TestUsersRouter:
             {"name": "healthcare", "text": "Focus on medical terms."},
         ]
 
+        from dependencies.auth import require_org_admin
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id
         from routers.users import get_user_summary_service, router
 
         app = FastAPI()
         app.include_router(router)
         app.dependency_overrides[get_db] = AsyncMock
         app.dependency_overrides[get_user_summary_service] = lambda: mock_instance
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -645,15 +653,15 @@ class TestUsersRouter:
         mock_summary_service.return_value = mock_instance
         mock_instance.delete_instructions.return_value = None
 
+        from dependencies.auth import require_org_admin
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id
         from routers.users import get_user_summary_service, router
 
         app = FastAPI()
         app.include_router(router)
         app.dependency_overrides[get_db] = AsyncMock
         app.dependency_overrides[get_user_summary_service] = lambda: mock_instance
-        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -672,3 +680,147 @@ class TestUsersRouter:
         assert response.status_code == 204
         assert response.content == b""
         mock_instance.delete_instructions.assert_awaited_once()
+
+
+class TestUsersRouterRoleChanges:
+    """PATCH /v1/users/{id} with ``role`` — admin-gated role management.
+
+    Observed contract:
+    - Admin (JWT + org admin role) → 200, role change passes to the service.
+    - Member (JWT + member role) → 403 (require_org_admin).
+    - API-key auth → 401 (require_org_admin → get_dashboard_user rejects
+      API keys upstream; the router has no API-key guard of its own).
+    """
+
+    @patch("routers.users.UserService")
+    async def test_update_role_admin_200(
+        self, mock_user_service: AsyncMock,
+    ) -> None:
+        """PATCH with ``role`` as an org admin → 200 with updated role."""
+        mock_instance = AsyncMock()
+        mock_user_service.return_value = mock_instance
+        mock_instance.update_user.return_value = UserResponse.model_validate(
+            _make_user_response({"role": "admin", "external_id": "u_1"}),
+        )
+
+        from dependencies.auth import require_org_admin
+        from dependencies.db import get_db
+        from routers.users import get_user_service, router
+
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_user_service] = lambda: mock_instance
+        app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
+
+        @app.middleware("http")
+        async def _mock_auth(request: Request, call_next):
+            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(USER_ID)
+            request.state.auth_type = "jwt"
+            response = await call_next(request)
+            return response
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.patch(
+                f"/v1/users/{UUID('00000000-0000-0000-0000-0000000000bb')}",
+                json={"role": "admin"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["role"] == "admin"
+        # The service receives the role change with the actor's user id.
+        mock_instance.update_user.assert_awaited_once_with(
+            organization_id=ORG_ID,
+            user_id=UUID("00000000-0000-0000-0000-0000000000bb"),
+            update_fields={"role": "admin"},
+            actor_user_id=USER_ID,
+        )
+
+    @patch("routers.users.UserService")
+    async def test_update_role_member_403(
+        self, mock_user_service: AsyncMock,
+    ) -> None:
+        """PATCH with ``role`` as a JWT member → 403 (real role check)."""
+        from dependencies.db import get_db
+        from routers.users import get_user_service, router
+
+        mock_instance = AsyncMock()
+        mock_user_service.return_value = mock_instance
+
+        app = FastAPI()
+        app.state.redis = AsyncMock()
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
+        app.dependency_overrides[get_user_service] = lambda: mock_instance
+
+        @app.middleware("http")
+        async def _mock_auth(request: Request, call_next):
+            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(USER_ID)
+            request.state.auth_type = "jwt"
+            response = await call_next(request)
+            return response
+
+        app.include_router(router)
+
+
+        with patch(
+            "dependencies.auth.get_org_role",
+            new=AsyncMock(return_value="member"),
+        ):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(
+                transport=transport, base_url="http://test"
+            ) as client:
+                response = await client.patch(
+                    f"/v1/users/{USER_ID}",
+                    json={"role": "admin"},
+                )
+
+        assert response.status_code == 403
+        mock_instance.update_user.assert_not_awaited()
+
+    @patch("routers.users.UserService")
+    async def test_update_role_api_key_401(
+        self, mock_user_service: AsyncMock,
+    ) -> None:
+        """API-key auth → 401 (upstream gate, before the handler runs).
+
+        ``require_org_admin`` → ``get_dashboard_user`` raises 401 for
+        API-key auth, so the router-level API-key guard is dead code and
+        was removed — the rejection now comes from the dependency chain.
+        """
+        from dependencies.db import get_db
+        from routers.users import get_user_service, router
+
+        mock_instance = AsyncMock()
+        mock_user_service.return_value = mock_instance
+
+        app = FastAPI()
+        app.include_router(router)
+        # lambda form — the raw ``AsyncMock`` class would be introspected as
+        # a dependency with required ``args``/``kwargs`` query params and
+        # 422 before the gate's 401 (get_db is now a sub-dependency of
+        # get_dashboard_user).
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
+        app.dependency_overrides[get_user_service] = lambda: mock_instance
+
+        @app.middleware("http")
+        async def _mock_auth(request: Request, call_next):
+            request.state.org_id = str(ORG_ID)
+            request.state.user_id = str(USER_ID)
+            request.state.auth_type = "api_key"
+            request.state.api_key_scopes = ["admin", "admin:write"]
+            response = await call_next(request)
+            return response
+
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.patch(
+                f"/v1/users/{USER_ID}",
+                json={"role": "admin"},
+            )
+
+        assert response.status_code == 401
+        mock_instance.update_user.assert_not_awaited()

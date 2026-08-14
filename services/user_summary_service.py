@@ -140,11 +140,12 @@ class UserSummaryService:
             A ``UserSummaryResponse`` with the summary text and timestamp,
             or ``None`` if no summary has been generated yet.
         """
-        # ⚠️  `org_id` is accepted for future tenant-isolation enforcement,
-        # but the underlying ``UserRepository.get_summary`` currently queries
-        # by ``user_id`` only.  If users span organisations a where clause on
-        # ``organization_id`` must be added to the query.
-        summary, updated_at = await self._user_repo.get_summary(user_id)
+        # Tenant isolation is enforced at the repository layer: the query is
+        # scoped by ``organization_id`` AND ``user_id`` (defense in depth).
+        summary, updated_at = await self._user_repo.get_summary(
+            organization_id=org_id,
+            user_id=user_id,
+        )
         if summary is None:
             return None
         return UserSummaryResponse(
