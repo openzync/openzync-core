@@ -2,9 +2,12 @@
 
 Runs as a periodic ARQ cron job (low-priority worker).  Postgres
 anti-join: an active edge (``invalid_at IS NULL``) is kept only while an
-active fact asserts the same edge key ``(subject_entity_id = source_id,
-predicate = relationship_type, object_entity_id = target_id)``.  Edges
-with no matching active fact are expired by enqueueing the
+effective-at-now fact asserts the same edge key ``(subject_entity_id =
+source_id, predicate = relationship_type, object_entity_id = target_id)``.
+"Effective at now" means the fact is not hard-retracted and its valid
+range is open or extends past now (``valid_to IS NULL OR valid_to > now``),
+so facts with a future ``valid_to`` (time-based expiry) still sustain their
+edges.  Edges with no matching active fact are expired by enqueueing the
 ``expire_graph_edges`` task per edge.
 
 This is the safety net AND the backfill: it self-heals any drift the
@@ -34,10 +37,14 @@ RECONCILE_BATCH_SIZE: int = 200
 Limits the burst of enqueued ``expire_graph_edges`` jobs on each run.
 """
 
-# Active edges whose triple key has NO active fact asserting it.
-# ``f.valid_to IS NULL`` excludes superseded facts — an edge kept alive by
-# a superseded fact (post-commit sync failed) is exactly the drift this
-# cron exists to repair.
+# Active edges whose triple key has NO effective-at-now fact asserting it.
+# Effective-at-now semantics match the valid_to component of
+# ``fact_repository._effective_at_clause`` (half-open valid range):
+# ``valid_to IS NULL OR valid_to > now`` keeps
+# facts with a future expiry date (e.g. "sale ends Friday") sustaining
+# their edges, while superseded facts (past ``valid_to``) stop doing so —
+# an edge kept alive by a superseded fact (post-commit sync failed) is
+# exactly the drift this cron exists to repair.
 STALE_EDGES_SQL = """
 SELECT e.id, e.organization_id, e.project_id,
        e.source_id, e.target_id, e.relationship_type
@@ -47,7 +54,11 @@ WHERE e.invalid_at IS NULL
           SELECT 1
           FROM facts f
           WHERE f.invalid_at IS NULL
-            AND f.valid_to IS NULL
+            -- No valid_from bound: a future-dated fact (valid_from > now)
+            -- must still sustain its edge so it pre-materializes before
+            -- the fact becomes effective; its valid_to is either open or
+            -- future, both of which the clause below keeps.
+            AND (f.valid_to IS NULL OR f.valid_to > :now)
             AND f.organization_id = e.organization_id
             AND f.project_id = e.project_id
             AND f.subject_entity_id = e.source_id
@@ -60,11 +71,12 @@ LIMIT :limit
 
 
 async def reconcile_graph_edges(ctx: dict[str, Any]) -> str:
-    """Expire active graph edges that no active fact re-asserts.
+    """Expire active graph edges that no effective-at-now fact re-asserts.
 
-    Scans active edges lacking a matching active fact (Postgres
-    anti-join), batch-limited, and enqueues one ``expire_graph_edges``
-    task per edge on the low-priority queue.
+    Scans active edges lacking a matching effective-at-now fact (Postgres
+    anti-join; "effective at now" per the module docstring), batch-limited,
+    and enqueues one ``expire_graph_edges`` task per edge on the
+    low-priority queue.
 
     Args:
         ctx: ARQ worker context dict containing ``db_session_factory``
@@ -98,7 +110,10 @@ async def reconcile_graph_edges(ctx: dict[str, Any]) -> str:
     async with session_factory() as db:
         result = await db.execute(
             text(STALE_EDGES_SQL),
-            {"limit": RECONCILE_BATCH_SIZE},
+            # Scan and enqueue share the same instant: ``now`` is also the
+            # expiry ``at_time`` below, so a fact expiring exactly at this
+            # tick's boundary is expired in the same tick.
+            {"limit": RECONCILE_BATCH_SIZE, "now": now},
         )
         for row in result.all():
             stale_edges.append(

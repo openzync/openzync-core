@@ -60,7 +60,14 @@ async def _seed_user(db: AsyncSession, user_id: UUID) -> None:
     )
 
 
-async def _make_graph(engine, *, src_name: str, tgt_name: str, rel: str, valid_from: datetime | None = None) -> dict:
+async def _make_graph(
+    engine,
+    *,
+    src_name: str,
+    tgt_name: str,
+    rel: str,
+    valid_from: datetime | None = None,
+) -> dict:
     """Create two entities + one edge with the Postgres backend (real code)."""
     db = AsyncSession(engine, expire_on_commit=False)
     try:
@@ -81,17 +88,24 @@ async def _make_graph(engine, *, src_name: str, tgt_name: str, rel: str, valid_f
             valid_from=valid_from,
         )
         await db.commit()
-        return {"src_id": UUID(src["id"]), "tgt_id": UUID(tgt["id"]), "edge_id": UUID(rel_row["id"])}
+        return {
+            "src_id": UUID(src["id"]),
+            "tgt_id": UUID(tgt["id"]),
+            "edge_id": UUID(rel_row["id"]),
+        }
     finally:
         await db.close()
 
 
-async def _edge_invalid_at(engine, src_id: UUID, tgt_id: UUID, rel: str) -> datetime | None:
+async def _edge_invalid_at(
+    engine, src_id: UUID, tgt_id: UUID, rel: str
+) -> datetime | None:
     async with AsyncSession(engine) as db:
         result = await db.execute(
             sa_text(
                 "SELECT invalid_at FROM graph_relationships "
-                "WHERE source_id = :src AND target_id = :tgt AND relationship_type = :rel"
+                "WHERE source_id = :src AND target_id = :tgt "
+                "AND relationship_type = :rel"
             ),
             {"src": str(src_id), "tgt": str(tgt_id), "rel": rel},
         )
@@ -157,7 +171,9 @@ class TestCrossFormSupersessionExpiresEdge:
         graph = await _make_graph(
             engine, src_name="Robbie", tgt_name="Adidas", rel="wears", valid_from=T0
         )
-        assert await _edge_ids_for(engine, graph["src_id"]), "edge must exist post-enrichment"
+        assert await _edge_ids_for(engine, graph["src_id"]), (
+            "edge must exist post-enrichment"
+        )
 
         # ── Pre-supersession snapshot: the edge is traversable at T0 ──────
         db = AsyncSession(engine, expire_on_commit=False)
@@ -186,7 +202,11 @@ class TestCrossFormSupersessionExpiresEdge:
                 org_id=ORG_ID,
                 project_id=PROJECT_ID,
                 user_id=user_id,
-                facts=[_entity_triple(graph["src_id"], graph["tgt_id"], "Robbie wears Adidas")],
+                facts=[
+                    _entity_triple(
+                        graph["src_id"], graph["tgt_id"], "Robbie wears Adidas"
+                    )
+                ],
                 now=T0,
             )
             assert r1.inserted_count == 1
@@ -211,7 +231,8 @@ class TestCrossFormSupersessionExpiresEdge:
                 now=T1,
             )
             assert r2.superseded_count == 1, (
-                "string-identity ingest MUST supersede the entity-linked fact (headline fix)"
+                "string-identity ingest MUST supersede the entity-linked "
+                "fact (headline fix)"
             )
             await db.commit()
         finally:
@@ -257,7 +278,11 @@ class TestCrossFormSupersessionExpiresEdge:
             await db.commit()
 
         graph = await _make_graph(
-            engine, src_name="AsOfSource", tgt_name="AsOfTarget", rel="wears", valid_from=T0
+            engine,
+            src_name="AsOfSource",
+            tgt_name="AsOfTarget",
+            rel="wears",
+            valid_from=T0,
         )
 
         db = AsyncSession(engine, expire_on_commit=False)
@@ -341,7 +366,9 @@ class TestCrossFormSupersessionExpiresEdge:
 class TestSameKeySupersessionKeepsEdge:
     """Scenario 6 — D1 case 3: successor re-asserts the same edge key."""
 
-    async def test_edge_survives_same_entity_supersession(self, engine, db_session) -> None:
+    async def test_edge_survives_same_entity_supersession(
+        self, engine, db_session
+    ) -> None:
         user_id = uuid4()
         async with AsyncSession(engine) as db:
             await _seed_user(db, user_id)
@@ -378,7 +405,10 @@ class TestSameKeySupersessionKeepsEdge:
 
         # D1 case 3 — the successor re-asserts the same edge key: no expiry.
         await asyncio.sleep(0.2)  # give any (incorrect) expiry time to land
-        assert await _edge_invalid_at(engine, graph["src_id"], graph["tgt_id"], "wears") is None
+        assert (
+            await _edge_invalid_at(engine, graph["src_id"], graph["tgt_id"], "wears")
+            is None
+        )
         assert await _edge_ids_for(engine, graph["src_id"]), (
             "same-key supersession must NOT expire the edge"
         )
@@ -394,7 +424,11 @@ class TestRetractionExpiresEdge:
             await db.commit()
 
         graph = await _make_graph(
-            engine, src_name="RetractSrc", tgt_name="RetractTgt", rel="wears", valid_from=T0
+            engine,
+            src_name="RetractSrc",
+            tgt_name="RetractTgt",
+            rel="wears",
+            valid_from=T0,
         )
 
         db = AsyncSession(engine, expire_on_commit=False)
@@ -409,7 +443,11 @@ class TestRetractionExpiresEdge:
                 org_id=ORG_ID,
                 project_id=PROJECT_ID,
                 user_id=user_id,
-                facts=[_entity_triple(graph["src_id"], graph["tgt_id"], "supports edge")],
+                facts=[
+                    _entity_triple(
+                        graph["src_id"], graph["tgt_id"], "supports edge"
+                    )
+                ],
                 now=T0,
             )
             await db.commit()
@@ -493,7 +531,10 @@ class TestIngestRollbackKeepsEdge:
             await db.close()
 
         await asyncio.sleep(0.2)  # give any (phantom) expiry time to land
-        assert await _edge_invalid_at(engine, graph["src_id"], graph["tgt_id"], "wears") is None
+        assert (
+            await _edge_invalid_at(engine, graph["src_id"], graph["tgt_id"], "wears")
+            is None
+        )
         assert await _edge_ids_for(engine, graph["src_id"]), (
             "rolled-back supersession must not expire the edge"
         )
@@ -502,13 +543,17 @@ class TestIngestRollbackKeepsEdge:
 class TestInBatchCrossFormCollapse:
     """Scenario 4 — entity + literal duplicates of one assertion collapse."""
 
-    async def test_entity_and_literal_duplicates_insert_once(self, engine, db_session) -> None:
+    async def test_entity_and_literal_duplicates_insert_once(
+        self, engine, db_session
+    ) -> None:
         user_id = uuid4()
         async with AsyncSession(engine) as db:
             await _seed_user(db, user_id)
             await db.commit()
 
-        graph = await _make_graph(engine, src_name="DupSrc", tgt_name="DupTgt", rel="wears")
+        graph = await _make_graph(
+            engine, src_name="DupSrc", tgt_name="DupTgt", rel="wears"
+        )
 
         db = AsyncSession(engine, expire_on_commit=False)
         try:
@@ -518,7 +563,9 @@ class TestInBatchCrossFormCollapse:
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
-                    _entity_triple(graph["src_id"], graph["tgt_id"], "identical assertion"),
+                    _entity_triple(
+                        graph["src_id"], graph["tgt_id"], "identical assertion"
+                    ),
                     _literal_triple("identical assertion"),
                 ],
                 now=T0,
@@ -527,7 +574,9 @@ class TestInBatchCrossFormCollapse:
         finally:
             await db.close()
 
-        assert result.inserted_count == 1, "entity+literal duplicates must collapse to ONE row"
+        assert result.inserted_count == 1, (
+            "entity+literal duplicates must collapse to ONE row"
+        )
         assert result.skipped_count == 1
 
         async with AsyncSession(engine) as db:
@@ -551,7 +600,9 @@ class TestReconcileAntiJoin:
             await _seed_user(db, user_id)
             await db.commit()
 
-        graph = await _make_graph(engine, src_name="RecSrc", tgt_name="RecTgt", rel="works_at")
+        graph = await _make_graph(
+            engine, src_name="RecSrc", tgt_name="RecTgt", rel="works_at"
+        )
 
         enqueued: list[dict] = []
 
@@ -580,13 +631,17 @@ class TestReconcileAntiJoin:
         assert kwargs["relationship_type"] == "works_at"
         assert kwargs["fact_id"] == str(graph["edge_id"])
 
-    async def test_active_edge_with_active_fact_is_kept(self, engine, db_session) -> None:
+    async def test_active_edge_with_active_fact_is_kept(
+        self, engine, db_session
+    ) -> None:
         user_id = uuid4()
         async with AsyncSession(engine) as db:
             await _seed_user(db, user_id)
             await db.commit()
 
-        graph = await _make_graph(engine, src_name="KeepRecSrc", tgt_name="KeepRecTgt", rel="works_at")
+        graph = await _make_graph(
+            engine, src_name="KeepRecSrc", tgt_name="KeepRecTgt", rel="works_at"
+        )
 
         # A live, open-ended fact asserts the exact edge key.
         db = AsyncSession(engine, expire_on_commit=False)
@@ -633,7 +688,9 @@ class TestReconcileAntiJoin:
         assert summary == "No stale edges found"
         assert enqueued == [], "an edge asserted by an active fact must not expire"
 
-    async def test_superseded_fact_releases_edge_for_reconcile(self, engine, db_session) -> None:
+    async def test_superseded_fact_releases_edge_for_reconcile(
+        self, engine, db_session
+    ) -> None:
         """Drift repair: cross-form supersession (missed by the sync) closes
         the fact while the edge stays active → the anti-join flags it stale."""
         user_id = uuid4()
@@ -641,7 +698,9 @@ class TestReconcileAntiJoin:
             await _seed_user(db, user_id)
             await db.commit()
 
-        graph = await _make_graph(engine, src_name="DriftSrc", tgt_name="DriftTgt", rel="works_at")
+        graph = await _make_graph(
+            engine, src_name="DriftSrc", tgt_name="DriftTgt", rel="works_at"
+        )
 
         db = AsyncSession(engine, expire_on_commit=False)
         try:
@@ -671,7 +730,9 @@ class TestReconcileAntiJoin:
             # is closed, no active fact asserts the edge, edge stays active.
             db2 = AsyncSession(engine, expire_on_commit=False)
             try:
-                service2 = FactInvalidationService(db=db2, fact_repo=FactRepository(db2))
+                service2 = FactInvalidationService(
+                    db=db2, fact_repo=FactRepository(db2)
+                )
                 result2 = await service2.ingest_with_supersession(
                     org_id=ORG_ID,
                     project_id=PROJECT_ID,
@@ -697,7 +758,10 @@ class TestReconcileAntiJoin:
             await db.close()
 
         # Drift present: edge active, first fact closed, no open entity fact.
-        assert await _edge_invalid_at(engine, graph["src_id"], graph["tgt_id"], "works_at") is None
+        assert (
+            await _edge_invalid_at(engine, graph["src_id"], graph["tgt_id"], "works_at")
+            is None
+        )
         async with AsyncSession(engine) as db:
             row = await db.execute(
                 sa_text("SELECT valid_to FROM facts WHERE id = :fid"), {"fid": fact_id}
@@ -724,3 +788,194 @@ class TestReconcileAntiJoin:
         )
         assert len(enqueued) == 1
         assert enqueued[0]["kwargs"]["fact_id"] == str(graph["edge_id"])
+
+    async def test_future_valid_to_fact_keeps_edge(self, engine, db_session) -> None:
+        """REGRESSION: a currently-valid fact whose window closes in the
+        future (``valid_to > now``) must still sustain its edge. Fails against
+        the old ``f.valid_to IS NULL`` anti-join predicate; passes with the
+        effective-at ``f.valid_to > :now`` bound."""
+        user_id = uuid4()
+        async with AsyncSession(engine) as db:
+            await _seed_user(db, user_id)
+            await db.commit()
+
+        now = datetime.now(UTC)
+        graph = await _make_graph(
+            engine, src_name="FutValidSrc", tgt_name="FutValidTgt", rel="works_at"
+        )
+
+        db = AsyncSession(engine, expire_on_commit=False)
+        try:
+            await FactRepository(db).batch_create(
+                organization_id=ORG_ID,
+                project_id=PROJECT_ID,
+                user_id=user_id,
+                facts=[
+                    {
+                        "subject": "FutValidSrc",
+                        "predicate": "works_at",
+                        "object": "FutValidTgt",
+                        "content": "FutValidSrc works_at FutValidTgt",
+                        "confidence": 1.0,
+                        "subject_type": "entity",
+                        "object_type": "entity",
+                        "subject_entity_id": str(graph["src_id"]),
+                        "object_entity_id": str(graph["tgt_id"]),
+                        "valid_from": now - timedelta(days=30),
+                        "valid_to": now + timedelta(days=30),
+                    }
+                ],
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+        enqueued: list[dict] = []
+
+        class _Redis:
+            async def enqueue_job(self, task: str, **kwargs) -> str:
+                enqueued.append({"task": task, "kwargs": kwargs})
+                return "job-1"
+
+        from core.db import get_async_session
+
+        ctx = {
+            "db_session_factory": get_async_session(engine),
+            "redis": _Redis(),
+            "_queue_name": "OpenZync:test:queue:low",
+        }
+
+        # Fact is effective at now and expires later → edge must be kept.
+        summary = await reconcile_graph_edges(ctx)
+
+        assert summary == "No stale edges found"
+        assert enqueued == [], (
+            "an edge asserted by a not-yet-expired fact must not expire"
+        )
+
+    async def test_future_dated_fact_keeps_edge(self, engine, db_session) -> None:
+        """Pre-materialization branch: a fact whose window opens in the
+        future (``valid_from > now``) but closes later still sustains the
+        pre-created edge — the anti-join only checks ``valid_to``."""
+        user_id = uuid4()
+        async with AsyncSession(engine) as db:
+            await _seed_user(db, user_id)
+            await db.commit()
+
+        now = datetime.now(UTC)
+        graph = await _make_graph(
+            engine, src_name="FutDatedSrc", tgt_name="FutDatedTgt", rel="works_at"
+        )
+
+        db = AsyncSession(engine, expire_on_commit=False)
+        try:
+            await FactRepository(db).batch_create(
+                organization_id=ORG_ID,
+                project_id=PROJECT_ID,
+                user_id=user_id,
+                facts=[
+                    {
+                        "subject": "FutDatedSrc",
+                        "predicate": "works_at",
+                        "object": "FutDatedTgt",
+                        "content": "FutDatedSrc works_at FutDatedTgt",
+                        "confidence": 1.0,
+                        "subject_type": "entity",
+                        "object_type": "entity",
+                        "subject_entity_id": str(graph["src_id"]),
+                        "object_entity_id": str(graph["tgt_id"]),
+                        "valid_from": now + timedelta(days=7),
+                        "valid_to": now + timedelta(days=60),
+                    }
+                ],
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+        enqueued: list[dict] = []
+
+        class _Redis:
+            async def enqueue_job(self, task: str, **kwargs) -> str:
+                enqueued.append({"task": task, "kwargs": kwargs})
+                return "job-1"
+
+        from core.db import get_async_session
+
+        ctx = {
+            "db_session_factory": get_async_session(engine),
+            "redis": _Redis(),
+            "_queue_name": "OpenZync:test:queue:low",
+        }
+
+        summary = await reconcile_graph_edges(ctx)
+
+        assert summary == "No stale edges found"
+        assert enqueued == [], "a future-dated fact window must still sustain the edge"
+
+    async def test_past_window_fact_releases_edge(self, engine, db_session) -> None:
+        """Post-``valid_to`` expiry: a fully elapsed fact window
+        (``valid_to < now``) no longer asserts the edge → the anti-join
+        flags it stale and enqueues the expiry with reconcile provenance."""
+        user_id = uuid4()
+        async with AsyncSession(engine) as db:
+            await _seed_user(db, user_id)
+            await db.commit()
+
+        now = datetime.now(UTC)
+        graph = await _make_graph(
+            engine, src_name="PastWinSrc", tgt_name="PastWinTgt", rel="works_at"
+        )
+
+        db = AsyncSession(engine, expire_on_commit=False)
+        try:
+            await FactRepository(db).batch_create(
+                organization_id=ORG_ID,
+                project_id=PROJECT_ID,
+                user_id=user_id,
+                facts=[
+                    {
+                        "subject": "PastWinSrc",
+                        "predicate": "works_at",
+                        "object": "PastWinTgt",
+                        "content": "PastWinSrc works_at PastWinTgt",
+                        "confidence": 1.0,
+                        "subject_type": "entity",
+                        "object_type": "entity",
+                        "subject_entity_id": str(graph["src_id"]),
+                        "object_entity_id": str(graph["tgt_id"]),
+                        "valid_from": now - timedelta(days=60),
+                        "valid_to": now - timedelta(days=30),
+                    }
+                ],
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+        enqueued: list[dict] = []
+
+        class _Redis:
+            async def enqueue_job(self, task: str, **kwargs) -> str:
+                enqueued.append({"task": task, "kwargs": kwargs})
+                return "job-1"
+
+        from core.db import get_async_session
+
+        ctx = {
+            "db_session_factory": get_async_session(engine),
+            "redis": _Redis(),
+            "_queue_name": "OpenZync:test:queue:low",
+        }
+
+        summary = await reconcile_graph_edges(ctx)
+
+        assert "1 stale" in summary, (
+            "an edge whose fact window has fully elapsed must be flagged stale"
+        )
+        assert len(enqueued) == 1
+        kwargs = enqueued[0]["kwargs"]
+        assert enqueued[0]["task"] == "expire_graph_edges"
+        assert kwargs["fact_id"] == str(graph["edge_id"]), (
+            "reconcile-sourced expiries carry the edge id as provenance"
+        )
