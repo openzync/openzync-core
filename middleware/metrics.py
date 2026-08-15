@@ -100,6 +100,18 @@ facts_superseded_total = Counter(
     registry=METRICS_REGISTRY,
 )
 
+facts_retracted_total = Counter(
+    "openzync_facts_retracted_total",
+    "Facts retracted via the manual retraction API.",
+    registry=METRICS_REGISTRY,
+)
+
+facts_invalidated_total = Counter(
+    "openzync_facts_invalidated_total",
+    "Facts invalidated by LLM-driven contradiction detection.",
+    registry=METRICS_REGISTRY,
+)
+
 webhook_emit_failures_total = Counter(
     "openzync_webhook_emit_failures_total",
     "Webhook emit fan-out failures (endpoint lookup or enqueue).",

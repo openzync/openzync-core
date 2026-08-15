@@ -216,3 +216,67 @@ class PaginatedFactsResponse(BaseModel):
     has_more: bool = Field(
         default=False, description="Whether additional pages exist."
     )
+
+
+class FactRetractRequest(BaseModel):
+    """Request body for the fact-retraction endpoint.
+
+    Attributes:
+        reason: Optional human-readable explanation of the retraction.
+    """
+
+    reason: str | None = Field(
+        default=None,
+        description="Optional human-readable reason for the retraction.",
+    )
+
+
+class FactHistoryEvent(BaseModel):
+    """One invalidation-lineage event for a fact.
+
+    UUID fields are strings, matching the repository's history dict
+    convention.
+
+    Attributes:
+        id: Event row UUID (string).
+        old_fact_id: The fact that stopped being current.
+        new_fact_id: The fact that replaced it (``None`` for retractions).
+        kind: Invalidation kind (``superseded``, ``retracted``, ...).
+        reason: Optional explanation of the invalidation.
+        at_time: Instant the invalidation took effect.
+        source_episode_id: Episode that drove the invalidation, if any.
+    """
+
+    id: str = Field(..., description="Event UUID (string).")
+    old_fact_id: str | None = Field(
+        None, description="The fact that stopped being current."
+    )
+    new_fact_id: str | None = Field(
+        None, description="The fact that replaced it, if any."
+    )
+    kind: str = Field(..., description="Invalidation kind.")
+    reason: str | None = Field(
+        None, description="Optional explanation of the invalidation."
+    )
+    at_time: datetime = Field(
+        ..., description="Instant the invalidation took effect (UTC)."
+    )
+    source_episode_id: str | None = Field(
+        None, description="Episode that drove the invalidation, if any."
+    )
+
+
+class FactHistoryResponse(BaseModel):
+    """A fact plus its invalidation-lineage events.
+
+    Attributes:
+        fact: The fact whose lineage this is.
+        events: Invalidation events, newest first.
+    """
+
+    fact: FactResponse = Field(
+        ..., description="The fact whose lineage this is."
+    )
+    events: list[FactHistoryEvent] = Field(
+        ..., description="Invalidation-lineage events, newest first."
+    )

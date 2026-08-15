@@ -9,6 +9,7 @@ from models.episode import Episode
 from models.episode_blob import EpisodeBlob
 from models.extraction_schema import ExtractionSchema
 from models.fact import Fact
+from models.fact_invalidation_event import FactInvalidationEvent
 from models.graph_entity import GraphEntity
 from models.graph_observation import GraphObservation, ObservationType
 from models.llm_usage import LLMUsage
@@ -35,6 +36,7 @@ __all__: list[str] = [
     "Episode",
     "EpisodeBlob",
     "Fact",
+    "FactInvalidationEvent",
     "GraphEntity",
     "GraphObservation",
     "ObservationType",

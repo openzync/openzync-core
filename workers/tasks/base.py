@@ -37,6 +37,9 @@ logger = logging.getLogger(__name__)
 #           The observations pass is non-blocking and deferred — including
 #           it in the ALL mask would gate "fully enriched" status on an
 #           unimplemented worker.
+#   bit 8 = LLM-driven fact invalidation (inside enrich_episode's facts
+#           savepoint).  Deliberately NOT in ENRICHMENT_ALL — it is part of
+#           the single LLM enrichment pass, not an independently gating step.
 
 ENRICHMENT_ENTITIES: int = 1 << 0  # bit 0
 ENRICHMENT_EMBEDDING: int = 1 << 1  # bit 1
@@ -46,6 +49,7 @@ ENRICHMENT_CLASSIFICATION: int = 1 << 4  # bit 4
 ENRICHMENT_STRUCTURED_EXTRACTION: int = 1 << 5  # bit 5
 ENRICHMENT_OBSERVATIONS: int = 1 << 6  # bit 6 — reserved, not in ALL
 ENRICHMENT_BLOB_TEXT: int = 1 << 7  # bit 7 — blob text extraction complete
+LLM_INVALIDATION_BIT: int = 1 << 8  # bit 8 — LLM-driven fact invalidation
 
 ENRICHMENT_ALL: int = (
     ENRICHMENT_ENTITIES

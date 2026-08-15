@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -167,6 +168,338 @@ class TestFactService:
         trimmed = self._sample_triple(content="Python is great")
         padded = self._sample_triple(content="   Python is great   ")
         assert self._hash(trimmed) == self._hash(padded)
+
+
+@pytest.mark.unit
+class TestFactRetraction:
+    """retract_fact — hard retraction with lineage + idempotency guards.
+
+    Phase 1.2/1.4: a not-yet-closed fact is hard-retracted (``invalid_at``
+    set), a ``kind="retracted"`` lineage row is recorded, and the
+    retraction is routed through ``FactInvalidationService.notify_retraction``
+    for post-commit effects.  Already-closed facts (``invalid_at`` or
+    ``valid_to``) are 200 no-ops — no second event, no re-notify.  The
+    ``(organization_id, project_id)`` scope makes a cross-project fact
+    indistinguishable from a missing one (no existence leak).
+    """
+
+    ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+    PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
+    OTHER_PROJECT_ID = UUID("00000000-0000-0000-0000-0000000000ff")
+    FACT_1_ID = UUID("00000000-0000-0000-0000-000000000100")
+    NOW = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+
+    @pytest.fixture
+    def service(self) -> FactService:
+        mock_db = AsyncMock(spec=AsyncSession)
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = None
+        mock_fact_repo = AsyncMock()
+        mock_session_repo = AsyncMock()
+
+        s = FactService(
+            db=mock_db,
+            redis_client=mock_redis,
+            fact_repo=mock_fact_repo,
+            session_repo=mock_session_repo,
+        )
+        return s
+
+    def _open_fact(self, **overrides) -> MagicMock:
+        """A retractable fact — no ``invalid_at``, no ``valid_to``."""
+        fact = MagicMock()
+        fact.id = overrides.get("id", self.FACT_1_ID)
+        fact.project_id = overrides.get("project_id", self.PROJECT_ID)
+        fact.organization_id = overrides.get("organization_id", self.ORG_ID)
+        fact.invalid_at = overrides.get("invalid_at")
+        fact.valid_to = overrides.get("valid_to")
+        return fact
+
+    @pytest.mark.asyncio
+    async def test_retract_happy_path_sets_invalid_at_and_records_event(
+        self, service: FactService
+    ) -> None:
+        """An open fact is closed at ``at_time`` with a ``retracted`` event
+        and routed to ``notify_retraction`` for post-commit effects."""
+        fact = self._open_fact()
+        service._fact_repo.get_by_id.return_value = fact
+
+        # The repo primitive is an UPDATE — mirror its effect on the row so
+        # the returned fact reflects invalid_at (behavior, not internals).
+        async def _apply_invalid_at(fact_id: UUID, at_time: datetime) -> None:
+            fact.invalid_at = at_time
+
+        service._fact_repo.set_invalid_at.side_effect = _apply_invalid_at
+
+        with patch(
+            "services.fact_invalidation_service.FactInvalidationService"
+        ) as mock_inv_cls:
+            result = await service.retract_fact(
+                self.FACT_1_ID,
+                organization_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                reason="outdated",
+                at_time=self.NOW,
+            )
+
+        assert result is fact
+        assert result.invalid_at == self.NOW
+        service._fact_repo.get_by_id.assert_awaited_once_with(
+            self.FACT_1_ID, organization_id=self.ORG_ID
+        )
+        service._fact_repo.set_invalid_at.assert_awaited_once_with(
+            self.FACT_1_ID, self.NOW
+        )
+        service._fact_repo.record_invalidation_event.assert_awaited_once_with(
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            old_fact_id=self.FACT_1_ID,
+            new_fact_id=None,
+            kind="retracted",
+            reason="outdated",
+            at_time=self.NOW,
+        )
+        mock_inv_cls.return_value.notify_retraction.assert_called_once_with(
+            org_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            old_fact=fact,
+            at_time=self.NOW,
+        )
+
+    @pytest.mark.asyncio
+    async def test_retract_defaults_at_time_to_now(
+        self, service: FactService
+    ) -> None:
+        """Omitting ``at_time`` stamps the current UTC instant."""
+        fact = self._open_fact()
+        service._fact_repo.get_by_id.return_value = fact
+
+        async def _apply_invalid_at(fact_id: UUID, at_time: datetime) -> None:
+            fact.invalid_at = at_time
+
+        service._fact_repo.set_invalid_at.side_effect = _apply_invalid_at
+
+        with patch(
+            "services.fact_invalidation_service.FactInvalidationService"
+        ):
+            result = await service.retract_fact(
+                self.FACT_1_ID,
+                organization_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+            )
+
+        assert result.invalid_at is not None
+        assert result.invalid_at.tzinfo == UTC
+
+    @pytest.mark.asyncio
+    async def test_retract_already_invalidated_is_noop(
+        self, service: FactService
+    ) -> None:
+        """A fact with ``invalid_at`` set returns unchanged — no second
+        event row, no notify, no invalidation service constructed."""
+        fact = self._open_fact(invalid_at=self.NOW)
+        service._fact_repo.get_by_id.return_value = fact
+
+        with patch(
+            "services.fact_invalidation_service.FactInvalidationService"
+        ) as mock_inv_cls:
+            result = await service.retract_fact(
+                self.FACT_1_ID,
+                organization_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                reason="again",
+                at_time=self.NOW,
+            )
+
+        assert result is fact
+        assert result.invalid_at == self.NOW
+        service._fact_repo.record_invalidation_event.assert_not_awaited()
+        mock_inv_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_retract_superseded_fact_is_noop(
+        self, service: FactService
+    ) -> None:
+        """A fact closed by supersession (``valid_to`` set) is a no-op too —
+        history already recorded by the deterministic path."""
+        fact = self._open_fact(valid_to=self.NOW)
+        service._fact_repo.get_by_id.return_value = fact
+
+        with patch(
+            "services.fact_invalidation_service.FactInvalidationService"
+        ) as mock_inv_cls:
+            result = await service.retract_fact(
+                self.FACT_1_ID,
+                organization_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                at_time=self.NOW,
+            )
+
+        assert result is fact
+        service._fact_repo.record_invalidation_event.assert_not_awaited()
+        mock_inv_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_retract_unknown_fact_raises_not_found(
+        self, service: FactService
+    ) -> None:
+        """An unknown fact id raises NotFoundError."""
+        service._fact_repo.get_by_id.return_value = None
+
+        with pytest.raises(NotFoundError) as exc_info:
+            await service.retract_fact(
+                self.FACT_1_ID,
+                organization_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                at_time=self.NOW,
+            )
+
+        assert "not found" in exc_info.value.message
+        service._fact_repo.record_invalidation_event.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_retract_cross_project_fact_raises_not_found(
+        self, service: FactService
+    ) -> None:
+        """A fact from another project is indistinguishable from a missing
+        one — NotFoundError, never a leak of its existence."""
+        service._fact_repo.get_by_id.return_value = self._open_fact(
+            project_id=self.OTHER_PROJECT_ID
+        )
+
+        with pytest.raises(NotFoundError):
+            await service.retract_fact(
+                self.FACT_1_ID,
+                organization_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                at_time=self.NOW,
+            )
+
+        service._fact_repo.record_invalidation_event.assert_not_awaited()
+
+
+@pytest.mark.unit
+class TestFactHistory:
+    """get_fact_history — fact + lineage events, scoped to the project."""
+
+    ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+    PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
+    OTHER_PROJECT_ID = UUID("00000000-0000-0000-0000-0000000000ff")
+    FACT_1_ID = UUID("00000000-0000-0000-0000-000000000100")
+    NOW = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
+
+    @pytest.fixture
+    def service(self) -> FactService:
+        mock_db = AsyncMock(spec=AsyncSession)
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = None
+        mock_fact_repo = AsyncMock()
+        mock_session_repo = AsyncMock()
+
+        s = FactService(
+            db=mock_db,
+            redis_client=mock_redis,
+            fact_repo=mock_fact_repo,
+            session_repo=mock_session_repo,
+        )
+        return s
+
+    def _full_fact(self) -> MagicMock:
+        """A fact shaped like the ORM row ``FactResponse`` reads."""
+        fact = MagicMock()
+        fact.id = self.FACT_1_ID
+        fact.content = "Alice likes hiking"
+        fact.subject = "Alice"
+        fact.predicate = "likes"
+        fact.object = "hiking"
+        fact.confidence = 0.95
+        fact.source_episode_id = None
+        fact.subject_type = "literal"
+        fact.object_type = "literal"
+        fact.subject_entity_id = None
+        fact.object_entity_id = None
+        fact.valid_from = self.NOW
+        fact.valid_to = None
+        fact.invalid_at = None
+        fact.created_at = self.NOW
+        fact.organization_id = self.ORG_ID
+        fact.project_id = self.PROJECT_ID
+        return fact
+
+    @pytest.mark.asyncio
+    async def test_history_returns_fact_and_events(self, service: FactService) -> None:
+        """get_fact_history returns the serialized fact plus the repo events."""
+        fact = self._full_fact()
+        events = [
+            {
+                "id": "event-1",
+                "old_fact_id": str(self.FACT_1_ID),
+                "new_fact_id": None,
+                "kind": "retracted",
+                "reason": "user correction",
+                "at_time": self.NOW.isoformat(),
+                "source_episode_id": None,
+            }
+        ]
+        service._fact_repo.get_by_id.return_value = fact
+        service._fact_repo.get_fact_history.return_value = events
+
+        result = await service.get_fact_history(
+            self.FACT_1_ID,
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            limit=10,
+            offset=5,
+        )
+
+        assert result["fact"].id == self.FACT_1_ID
+        assert result["fact"].content == "Alice likes hiking"
+        assert result["events"] == events
+        service._fact_repo.get_by_id.assert_awaited_once_with(
+            self.FACT_1_ID, organization_id=self.ORG_ID
+        )
+        service._fact_repo.get_fact_history.assert_awaited_once_with(
+            self.FACT_1_ID,
+            organization_id=self.ORG_ID,
+            limit=10,
+            offset=5,
+        )
+
+    @pytest.mark.asyncio
+    async def test_history_unknown_fact_raises_not_found(
+        self, service: FactService
+    ) -> None:
+        """An unknown fact id raises NotFoundError — no history call."""
+        service._fact_repo.get_by_id.return_value = None
+
+        with pytest.raises(NotFoundError) as exc_info:
+            await service.get_fact_history(
+                self.FACT_1_ID,
+                organization_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+            )
+
+        assert "not found" in exc_info.value.message
+        service._fact_repo.get_fact_history.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_history_cross_project_fact_raises_not_found(
+        self, service: FactService
+    ) -> None:
+        """A fact from another project is indistinguishable from a missing
+        one — NotFoundError, and no lineage is exposed."""
+        fact = self._full_fact()
+        fact.project_id = self.OTHER_PROJECT_ID
+        service._fact_repo.get_by_id.return_value = fact
+
+        with pytest.raises(NotFoundError):
+            await service.get_fact_history(
+                self.FACT_1_ID,
+                organization_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+            )
+
+        service._fact_repo.get_fact_history.assert_not_awaited()
 
 
 # ── Graph edge sync wiring (Phase 3) ──────────────────────────────────────────

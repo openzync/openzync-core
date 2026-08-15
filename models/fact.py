@@ -47,6 +47,9 @@ class Fact(TimestampMixin, Base):
         valid_from: Temporal validity start.
         valid_to: Temporal validity end.
         invalid_at: Timestamp when this fact was invalidated/retracted.
+        superseded_by_fact_id: ID of the fact that superseded/invalidated
+            this one; NULL for retractions/expiry. Self-FK preserves
+            lineage when the successor is deleted.
         embedding: pgvector embedding placeholder (migrated to
             ``vector(1536)`` via Alembic).
         embedded_at: Timestamp of the last embedding attempt. Set on success
@@ -124,6 +127,16 @@ class Fact(TimestampMixin, Base):
     )
     invalid_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True,
+    )
+    superseded_by_fact_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("facts.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+        comment=(
+            "ID of the fact that superseded/invalidated this one; NULL "
+            "for retractions/expiry. Self-FK preserves lineage when the "
+            "successor is deleted."
+        ),
     )
     # note: Text is a stand-in for ``vector(1536)``. The Alembic
     # migration will alter this column when pgvector is available.

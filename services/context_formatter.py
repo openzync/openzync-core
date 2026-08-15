@@ -13,8 +13,8 @@ Provides two formatting modes:
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
-
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -111,7 +111,10 @@ def format_text(
             )
             score_str = f" [score={score:.4f}]" if score is not None else ""
 
-            parts.append(f"  {i}. {content}{confidence_str}{score_str}")
+            # ⚠️ BREAKING: context text shape gains validity dates (Zep parity).
+            validity_str = _validity_suffix(fact)
+
+            parts.append(f"  {i}. {content}{validity_str}{confidence_str}{score_str}")
         parts.append("")
 
     # ── Entities ─────────────────────────────────────────────────────────
@@ -183,6 +186,55 @@ def format_json(
 # ── Internal Helpers ───────────────────────────────────────────────────────────
 
 
+def _parse_validity_date(value: Any) -> datetime | None:
+    """Coerce a validity value to a datetime, or ``None`` when unparseable.
+
+    Accepts tz-aware datetimes (as returned by asyncpg) and ISO-8601
+    strings.  Parse failures are swallowed so a malformed value never
+    breaks context formatting.
+
+    Args:
+        value: Raw ``valid_from``/``valid_to`` value from a fact dict.
+
+    Returns:
+        The parsed datetime, or ``None`` if the value is not a datetime
+        and not an ISO-8601 string.
+    """
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    return None
+
+
+def _validity_suffix(fact: dict[str, Any]) -> str:
+    """Build a Zep-style validity date suffix for a fact, or ``""``.
+
+    ``valid_from``/``valid_to`` are rendered as ``YYYY-MM-DD`` dates;
+    ``invalid_at`` is not rendered (retraction is handled upstream by the
+    retrieval predicate, not by the context text).
+
+    Args:
+        fact: RRF-merged fact result dict.
+
+    Returns:
+        A suffix like ``" (valid: 2026-01-01 to 2026-06-01)"``, or
+        ``""`` when neither component is present/parseable.
+    """
+    valid_from = _parse_validity_date(fact.get("valid_from"))
+    valid_to = _parse_validity_date(fact.get("valid_to"))
+    if valid_from is not None and valid_to is not None:
+        return f" (valid: {valid_from:%Y-%m-%d} to {valid_to:%Y-%m-%d})"
+    if valid_from is not None:
+        return f" (valid: from {valid_from:%Y-%m-%d})"
+    if valid_to is not None:
+        return f" (valid: until {valid_to:%Y-%m-%d})"
+    return ""
+
+
 def _clean_episodes(
     episodes: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -210,7 +262,8 @@ def _clean_facts(
     """Remove internal ranking fields from fact dicts.
 
     Keeps: ``id``, ``content``, ``subject``, ``predicate``, ``object``,
-    ``confidence``, ``created_at``.
+    ``confidence``, ``created_at``, ``valid_from``, ``valid_to``,
+    ``invalid_at``.
     Removes: ``score``, ``rrf_score``, ``reranker_score``.
 
     Args:
@@ -222,6 +275,7 @@ def _clean_facts(
     allowed_keys = {
         "id", "content", "subject", "predicate",
         "object", "confidence", "created_at",
+        "valid_from", "valid_to", "invalid_at",
     }
     return [
         {k: v for k, v in fact.items() if k in allowed_keys}

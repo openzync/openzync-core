@@ -31,7 +31,8 @@ class FactInvalidationEvent(TimestampMixin, Base):
             mirrors ``facts.organization_id``.
         project_id: Project scope, FK to ``projects`` (CASCADE).
         old_fact_id: The fact that stopped being current (FK to
-            ``facts``, SET NULL on delete).
+            ``facts``, SET NULL on delete — nullable so a hard-deleted
+            fact leaves a NULL here and the history row survives).
         new_fact_id: The fact that replaced it, if any — NULL for
             retractions/expiry (FK to ``facts``, SET NULL on delete).
         kind: One of ``"superseded" | "retracted" | "llm_invalidated" |
@@ -55,15 +56,16 @@ class FactInvalidationEvent(TimestampMixin, Base):
         # No FK constraint — denormalized for RLS performance, mirrors facts.
         # ⚠️ data integrity is application-enforced, not DB-enforced
         nullable=False,
+        index=True,
     )
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    old_fact_id: Mapped[uuid.UUID] = mapped_column(
+    old_fact_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("facts.id", ondelete="SET NULL"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     new_fact_id: Mapped[uuid.UUID | None] = mapped_column(

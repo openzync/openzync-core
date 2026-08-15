@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.dml import Update
 
+from core.exceptions import ValidationError
 from repositories.fact_repository import FactRepository
 
 
@@ -452,7 +454,7 @@ class TestFactRepository:
                 str(self.FACT_ID), "Alice likes hiking", "Alice", "likes",
                 "hiking", 0.95, str(self.EPISODE_ID),
                 datetime.now(timezone.utc), "literal", "literal",
-                None, None,
+                None, None, None, None, None,
             ),
         ]
         mock_db.execute.return_value = mock_result
@@ -545,7 +547,10 @@ class TestFactRepository:
         """search_by_bm25 returns full-text ranked results."""
         mock_result = MagicMock()
         mock_result.fetchall.return_value = [
-            (str(self.FACT_ID), "Alice likes hiking", "Alice", "likes", "hiking", 0.95, 0.85),
+            (
+                str(self.FACT_ID), "Alice likes hiking", "Alice", "likes",
+                "hiking", 0.95, 0.85, None, None, None,
+            ),
         ]
         mock_db.execute.return_value = mock_result
 
@@ -575,3 +580,237 @@ class TestFactRepository:
         )
 
         assert results == []
+
+    # ── get_by_id ─────────────────────────────────────────────────────────────
+
+    async def test_get_by_id(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
+        """get_by_id returns the matching fact."""
+        fact = self._mock_fact()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = fact
+        mock_db.execute.return_value = mock_result
+
+        result = await repo.get_by_id(self.FACT_ID)
+
+        assert result == fact
+        mock_db.execute.assert_awaited_once()
+
+    async def test_get_by_id_scopes_to_organization(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
+        """get_by_id passes the tenant filter when provided (defense-in-depth)."""
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_db.execute.return_value = mock_result
+
+        result = await repo.get_by_id(
+            self.FACT_ID, organization_id=self.ORG_ID
+        )
+
+        assert result is None
+        mock_db.execute.assert_awaited_once()
+
+    # ── record_invalidation_event ─────────────────────────────────────────────
+
+    async def test_record_invalidation_event(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
+        """record_invalidation_event inserts a lineage row and flushes."""
+        at_time = datetime.now(UTC)
+        mock_db.flush.return_value = None
+
+        await repo.record_invalidation_event(
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            old_fact_id=self.FACT_ID,
+            new_fact_id=None,
+            kind="retracted",
+            reason="user correction",
+            at_time=at_time,
+        )
+
+        mock_db.add.assert_called_once()
+        event = mock_db.add.call_args.args[0]
+        assert event.organization_id == self.ORG_ID
+        assert event.project_id == self.PROJECT_ID
+        assert event.old_fact_id == self.FACT_ID
+        assert event.new_fact_id is None
+        assert event.kind == "retracted"
+        assert event.reason == "user correction"
+        assert event.at_time == at_time
+        mock_db.flush.assert_awaited_once()
+
+    # ── batch temporal guards ─────────────────────────────────────────────────
+
+    async def test_batch_create_accepts_valid_to(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
+        """batch_create carries a caller-provided ``valid_to`` into the row."""
+        valid_to = datetime(2026, 12, 31, tzinfo=UTC)
+        facts = [
+            {
+                "subject": "A",
+                "predicate": "is",
+                "object": "B",
+                "valid_from": datetime(2026, 1, 1, tzinfo=UTC),
+                "valid_to": valid_to,
+            },
+        ]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [self._mock_fact()]
+        mock_db.execute.return_value = mock_result
+        mock_db.refresh.return_value = None
+
+        await repo.batch_create(
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            user_id=self.USER_ID,
+            facts=facts,
+        )
+
+        (_, rows) = mock_db.execute.await_args.args
+        assert rows[0]["valid_to"] == valid_to
+
+    async def test_batch_create_rejects_born_dead_range(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
+        """batch_create raises ValidationError when valid_from >= valid_to."""
+        facts = [
+            {
+                "subject": "A",
+                "predicate": "is",
+                "object": "B",
+                "valid_from": datetime(2026, 5, 1, tzinfo=UTC),
+                "valid_to": datetime(2026, 4, 1, tzinfo=UTC),
+            },
+        ]
+
+        with pytest.raises(ValidationError):
+            await repo.batch_create(
+                organization_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                user_id=self.USER_ID,
+                facts=facts,
+            )
+
+        mock_db.execute.assert_not_awaited()
+
+    async def test_batch_create_rejects_past_valid_to_without_valid_from(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
+        """batch_create rejects a valid_to already in the past when no
+        valid_from is given — a missing valid_from defaults to now at
+        insert, making the range born-dead."""
+        from datetime import timedelta
+
+        facts = [
+            {
+                "subject": "A",
+                "predicate": "is",
+                "object": "B",
+                "valid_to": datetime.now(UTC) - timedelta(hours=1),
+            },
+        ]
+
+        with pytest.raises(ValidationError):
+            await repo.batch_create(
+                organization_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                user_id=self.USER_ID,
+                facts=facts,
+            )
+
+        mock_db.execute.assert_not_awaited()
+
+    async def test_batch_create_or_skip_accepts_valid_to(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
+        """batch_create_or_skip carries a caller-provided ``valid_to``."""
+        valid_to = datetime(2026, 12, 31, tzinfo=UTC)
+        facts = [
+            {
+                "subject": "A",
+                "predicate": "is",
+                "object": "B",
+                "confidence": 0.9,
+                "valid_from": datetime(2026, 1, 1, tzinfo=UTC),
+                "valid_to": valid_to,
+            },
+        ]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [self._mock_fact()]
+        mock_db.execute.return_value = mock_result
+
+        await repo.batch_create_or_skip(
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            user_id=self.USER_ID,
+            source_episode_id=self.EPISODE_ID,
+            facts=facts,
+        )
+
+        (_, rows) = mock_db.execute.await_args.args
+        assert rows[0]["valid_to"] == valid_to
+
+    async def test_batch_create_or_skip_rejects_born_dead_range(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
+        """batch_create_or_skip raises ValidationError on born-dead ranges."""
+        facts = [
+            {
+                "subject": "A",
+                "predicate": "is",
+                "object": "B",
+                "confidence": 0.9,
+                "valid_from": datetime(2026, 5, 1, tzinfo=UTC),
+                "valid_to": datetime(2026, 4, 1, tzinfo=UTC),
+            },
+        ]
+
+        with pytest.raises(ValidationError):
+            await repo.batch_create_or_skip(
+                organization_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                user_id=self.USER_ID,
+                source_episode_id=self.EPISODE_ID,
+                facts=facts,
+            )
+
+        mock_db.execute.assert_not_awaited()
+
+    # ── set_superseded_by ─────────────────────────────────────────────────────
+
+    async def test_set_superseded_by_issues_update(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
+        """set_superseded_by issues an UPDATE writing the successor link."""
+        mock_db.flush.return_value = None
+
+        await repo.set_superseded_by(self.FACT_ID, self.EPISODE_ID)
+
+        mock_db.execute.assert_awaited_once()
+        stmt = mock_db.execute.await_args.args[0]
+        assert isinstance(stmt, Update)
+        assert stmt.table.name == "facts"
+        column_keys = {col.key for col in stmt._values}
+        assert "superseded_by_fact_id" in column_keys
+        mock_db.flush.assert_awaited_once()
+
+    async def test_set_superseded_by_none_clears_lineage(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
+        """set_superseded_by(None) issues the UPDATE with a NULL successor
+        (retraction/expiry path closes the lineage)."""
+        mock_db.flush.return_value = None
+
+        await repo.set_superseded_by(self.FACT_ID, None)
+
+        mock_db.execute.assert_awaited_once()
+        stmt = mock_db.execute.await_args.args[0]
+        assert isinstance(stmt, Update)
+        assert stmt.table.name == "facts"
+        column_keys = {col.key for col in stmt._values}
+        assert "superseded_by_fact_id" in column_keys
+        mock_db.flush.assert_awaited_once()

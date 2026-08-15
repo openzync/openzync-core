@@ -31,7 +31,9 @@ from repositories.fact_repository import FactRepository
 from schemas.facts import (
     FactBatchRequest,
     FactBatchResponse,
+    FactHistoryResponse,
     FactResponse,
+    FactRetractRequest,
     PaginatedFactsResponse,
 )
 from services.fact_service import FactService
@@ -179,3 +181,120 @@ async def list_facts_at_time(
         next_cursor=str(offset + limit) if has_more else None,
         has_more=has_more,
     )
+
+
+# ── POST: Retract a fact ────────────────────────────────────────────────────
+
+
+@router.post(
+    "/{fact_id}/retract",
+    status_code=200,
+    response_model=FactResponse,
+    summary="Retract a fact",
+    description="Hard-retract a fact by setting its invalid_at timestamp. "
+    "Records a 'retracted' invalidation-lineage event and queues "
+    "post-commit graph edge expiry, webhook emission, and cache purge. "
+    "Idempotent — retracting an already-closed fact is a 200 no-op.",
+    responses={
+        200: {"description": "Fact retracted (or already closed — no-op)."},
+        401: {"description": "Missing or invalid authentication."},
+        403: {"description": "Not a member of this project."},
+        404: {"description": "Fact not found."},
+    },
+)
+async def retract_fact(
+    request: Request,
+    fact_id: UUID,
+    payload: FactRetractRequest | None = None,
+    service: FactService = Depends(get_fact_service),  # noqa: B008
+    _: None = Depends(require_project_membership),  # noqa: B008
+) -> FactResponse:
+    """Retract a fact, recording its invalidation lineage.
+
+    A fact closed by supersession (``valid_to`` set) or a previous
+    retraction (``invalid_at`` set) is returned unchanged — the endpoint
+    is idempotent.  The fact must belong to the project in the path;
+    otherwise a 404 is returned (existence is not leaked across
+    projects).
+
+    Args:
+        request: The FastAPI request object (org/project IDs).
+        fact_id: The fact to retract.
+        payload: Optional retraction metadata (reason).
+        service: Request-scoped FactService (injected).
+        _: Project membership gate (injected).
+
+    Returns:
+        The retracted fact (or the unchanged fact if already closed).
+    """
+    org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
+    fact = await service.retract_fact(
+        fact_id,
+        organization_id=org_id,
+        project_id=project_id,
+        reason=payload.reason if payload else None,
+    )
+    return FactResponse.model_validate(fact)
+
+
+# ── GET: Fact invalidation history ──────────────────────────────────────────
+
+
+@router.get(
+    "/{fact_id}/history",
+    response_model=FactHistoryResponse,
+    summary="Get a fact and its invalidation history",
+    description="Return a fact plus its invalidation-lineage events "
+    "(supersessions, retractions), newest first.",
+    responses={
+        200: {"description": "Fact and its lineage events."},
+        401: {"description": "Missing or invalid authentication."},
+        403: {"description": "Not a member of this project."},
+        404: {"description": "Fact not found."},
+    },
+)
+async def get_fact_history(
+    request: Request,
+    fact_id: UUID,
+    limit: int = Query(
+        default=50,
+        ge=1,
+        le=200,
+        description="Maximum events per page (1–200).",
+    ),  # noqa: B008
+    offset: int = Query(
+        default=0,
+        ge=0,
+        description="Number of events to skip (offset pagination).",
+    ),  # noqa: B008
+    service: FactService = Depends(get_fact_service),  # noqa: B008
+    _: None = Depends(require_project_membership),  # noqa: B008
+) -> FactHistoryResponse:
+    """Fetch a fact and its invalidation lineage.
+
+    The fact must belong to the project in the path; otherwise a 404 is
+    returned (existence is not leaked across projects).
+
+    Args:
+        request: The FastAPI request object (org/project IDs).
+        fact_id: The fact whose lineage to fetch.
+        limit: Max events per page (1–200).
+        offset: Number of events to skip.
+        service: Request-scoped FactService (injected).
+        _: Project membership gate (injected).
+
+    Returns:
+        A ``FactHistoryResponse`` with the serialized fact and its
+        lineage events (newest first).
+    """
+    org_id = UUID(request.state.org_id)
+    project_id = UUID(request.path_params["project_id"])
+    result = await service.get_fact_history(
+        fact_id,
+        organization_id=org_id,
+        project_id=project_id,
+        limit=limit,
+        offset=offset,
+    )
+    return FactHistoryResponse(fact=result["fact"], events=result["events"])

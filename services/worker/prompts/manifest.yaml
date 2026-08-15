@@ -80,5 +80,5 @@ templates:
   - file: enrich_episode_v1.jinja2
     name: enrich_episode_v1
     type: enrich_episode
-    description: Combined episode enrichment (classification + entities + facts + structured) in a single LLM call
+    description: Combined episode enrichment (classification + entities + facts + LLM-driven fact invalidations + structured) in a single LLM call
     is_default_for_type: true

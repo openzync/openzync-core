@@ -368,16 +368,25 @@ class PromptTemplateRepository:
         from disk and creates an org-scoped copy at ``version = 1`` for
         each manifest entry where ``is_default_for_type == true``.
 
+        Existing default rows are **upserted**: when the org already has a
+        row for a manifest default (``is_default_for_type == true``) whose
+        stored text differs from the current file, the file wins and the
+        row is updated in place.  Contract: this method is invoked at
+        signup only (``organization_service`` / ``auth_repository``), so
+        the upsert reaches NEW orgs — EXISTING orgs keep their stored
+        default rows until they are explicitly re-seeded (a one-off
+        re-seed script is a follow-up).  The disk manifest is the single
+        source of truth for defaults; org-customized (non-default /
+        demoted) rows are never touched.
+
         Only the **current defaults** are seeded.  Legacy versions
         (e.g. ``extract_facts_v3``) are available via the import endpoint.
-
-        Template names that the org already has are skipped — idempotent.
 
         Args:
             org_id: UUID of the newly created organisation.
 
         Returns:
-            Number of templates seeded.
+            Number of templates seeded or updated.
         """
         MANIFEST = load_manifest()
         count = 0
@@ -387,17 +396,30 @@ class PromptTemplateRepository:
                 continue
             name = entry["name"]
 
-            # Skip if the org already has this template name.
             existing = await self._db.execute(
                 select(PromptTemplate).where(
                     PromptTemplate.organization_id == org_id,
                     PromptTemplate.template_name == name,
                 )
             )
-            if existing.scalar_one_or_none() is not None:
-                continue
+            existing_tmpl = existing.scalar_one_or_none()
 
             text = MANIFEST.get_template_text(entry["file"])
+            if existing_tmpl is not None:
+                # Default rows are file-owned — at signup, propagate the
+                # current file content over whatever the org was seeded
+                # with previously.  Tradeoff: an org that hand-edited its
+                # DEFAULT row is overwritten (file wins for defaults by
+                # design); non-default / demoted rows are left untouched.
+                if existing_tmpl.is_default_for_type and (
+                    existing_tmpl.template_text != text
+                    or existing_tmpl.description != entry.get("description")
+                ):
+                    existing_tmpl.template_text = text
+                    existing_tmpl.description = entry.get("description")
+                    count += 1
+                continue
+
             org_tmpl = PromptTemplate(
                 organization_id=org_id,
                 template_name=name,

@@ -89,6 +89,11 @@ class OrgConfigBase(BaseModel):
         default=None,
         description="Base URL for a local Ollama instance.",
     )
+    llm_fact_invalidation_enabled: bool | None = Field(
+        default=None,
+        description="Enable LLM-driven fact invalidation during episode "
+        "enrichment (defaults to ON when unset).",
+    )
 
     # ── Embeddings ─────────────────────────────────────────────────────────
     embedding_backend: str | None = Field(
@@ -326,6 +331,11 @@ class UpdateOrgConfigRequest(BaseModel):
     azure_openai_key: str | None = None
     anthropic_api_key: str | None = None
     ollama_base_url: str | None = None
+    llm_fact_invalidation_enabled: bool | None = Field(
+        default=None,
+        description="Enable LLM-driven fact invalidation during episode "
+        "enrichment (defaults to ON when unset).",
+    )
     embedding_backend: str | None = None
     embedding_model: str | None = None
     embedding_dim: int | None = Field(default=None, ge=64, le=4096)

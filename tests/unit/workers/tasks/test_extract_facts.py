@@ -10,6 +10,7 @@ idempotency, episode not found) is covered by ``test_enrich_episode.py``.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -64,6 +65,76 @@ class TestFilterFacts:
     def test_empty_list_returns_empty(self) -> None:
         """No facts in → no facts out."""
         assert _filter_facts([]) == []
+
+    def test_born_dead_window_dropped(self) -> None:
+        """A fact whose validity window has already ended (valid_from >=
+        valid_to) is dropped, not raised — the repo guard would otherwise
+        wedge the worker via with_retry."""
+        facts = [
+            {
+                "subject": "Alice",
+                "predicate": "works_at",
+                "object": "Acme Corp",
+                "confidence": 0.95,
+                "valid_from": datetime(2026, 5, 1, tzinfo=UTC),
+                "valid_to": datetime(2026, 4, 1, tzinfo=UTC),  # born-dead
+            },
+            {
+                "subject": "Bob",
+                "predicate": "leads",
+                "object": "Acme Corp",
+                "confidence": 0.9,
+                "valid_from": datetime(2026, 1, 1, tzinfo=UTC),
+                "valid_to": datetime(2026, 12, 31, tzinfo=UTC),  # valid window
+            },
+        ]
+
+        valid = _filter_facts(facts)
+
+        assert len(valid) == 1
+        assert valid[0]["subject"] == "Bob"
+        assert valid[0]["valid_to"] == datetime(2026, 12, 31, tzinfo=UTC)
+
+    def test_zero_length_window_dropped(self) -> None:
+        """valid_from == valid_to is a zero-length window — also born-dead."""
+        facts = [
+            {
+                "subject": "Alice",
+                "predicate": "works_at",
+                "object": "Acme Corp",
+                "confidence": 0.95,
+                "valid_from": datetime(2026, 5, 1, tzinfo=UTC),
+                "valid_to": datetime(2026, 5, 1, tzinfo=UTC),
+            },
+        ]
+
+        valid = _filter_facts(facts)
+
+        assert valid == []
+
+    def test_open_ended_window_kept(self) -> None:
+        """A future-closing window (valid_from < valid_to) survives; a
+        window with only valid_from (no valid_to) survives too."""
+        facts = [
+            {
+                "subject": "Alice",
+                "predicate": "works_at",
+                "object": "Acme Corp",
+                "confidence": 0.95,
+                "valid_from": datetime(2026, 1, 1, tzinfo=UTC),
+            },
+            {
+                "subject": "Bob",
+                "predicate": "leads",
+                "object": "Acme Corp",
+                "confidence": 0.9,
+                "valid_to": datetime(2026, 12, 31, tzinfo=UTC),
+            },
+        ]
+
+        valid = _filter_facts(facts)
+
+        assert len(valid) == 2
 
 
 # ── process_facts_output ───────────────────────────────────────────────────────
@@ -333,3 +404,68 @@ class TestProcessFactsOutput:
         job_args = arq_redis.enqueue_job.await_args
         assert job_args.args[0] == "embed_fact"
         assert job_args.kwargs["fact_id"] == str(persisted.id)
+
+    @pytest.mark.asyncio
+    async def test_slot_map_keys_on_content_fallback_keeps_successor_linkage(
+        self,
+        db: AsyncMock,
+        fact_repo: MagicMock,
+        episode_repo: MagicMock,
+    ) -> None:
+        """Slot map resolves via the service's content fallback.
+
+        ``content_to_fact`` keys on ``content or "{subject} {predicate}
+        {object}"`` — the exact fallback ``FactInvalidationService._prepare_entry``
+        computes when persisting — so a persisted row's content (here the
+        SPO join, since ``FactOutput`` carries no explicit ``content`` field)
+        always finds its input slot and the successor linkage survives.
+        """
+        persisted = self._persisted_fact()  # content = "Alice works_at Acme Corp"
+
+        with (
+            patch(
+                "services.fact_invalidation_service.FactInvalidationService"
+            ) as mock_inval_cls,
+            patch("services.graph_edge_sync_service.GraphEdgeSyncService"),
+            patch("services.cache_service.CacheService"),
+        ):
+            mock_inval = MagicMock()
+            mock_inval.ingest_with_supersession = AsyncMock(
+                return_value=FactIngestionResult(
+                    created=[persisted], superseded_count=0
+                )
+            )
+            mock_inval_cls.return_value = mock_inval
+
+            entity_repo = MagicMock()
+            entity_repo.upsert_relationship = AsyncMock(
+                return_value={"id": str(uuid4())}
+            )
+            entity_repo.get_entity_by_name = AsyncMock(return_value=None)
+
+            new_facts, slot_map = await process_facts_output(
+                db=db,
+                graph_backend=MagicMock(),
+                entity_repo=entity_repo,
+                fact_repo=fact_repo,
+                episode_repo=episode_repo,
+                org_id=_ORG_ID,
+                episode_id=_EPISODE_ID,
+                project_id=_PROJECT_ID,
+                session_id=_SESSION_ID,
+                user_id=_USER_ID,
+                trace_id=_TRACE_ID,
+                parsed=self._parsed([
+                    {"subject": "Alice", "predicate": "works_at",
+                     "object": "Acme Corp", "confidence": 0.95,
+                     "subject_type": "literal", "object_type": "literal"},
+                ]),
+                known_entities=[],
+                existing_facts=[],
+                return_slot_map=True,
+            )
+
+        # Slot 1 (the only parsed fact) resolves to the persisted row — the
+        # successor link for an "N1" LLM invalidation reference is not lost.
+        assert new_facts == [persisted]
+        assert slot_map == {1: persisted}

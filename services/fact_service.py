@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -18,6 +19,7 @@ import structlog
 if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
 
+    from models.fact import Fact
     from packages.graph_backend.interface import GraphBackend
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,7 +31,7 @@ from core.exceptions import NotFoundError
 from repositories.fact_repository import FactRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
-from schemas.facts import FactBatchResponse, FactTriple
+from schemas.facts import FactBatchResponse, FactResponse, FactTriple
 from services.webhook_service import WebhookService
 from services.worker.worker_settings import get_queue_name
 
@@ -255,6 +257,182 @@ class FactService:
             message=f"{len(created)} facts accepted for processing",
             superseded_count=result.superseded_count,
         )
+
+    async def retract_fact(
+        self,
+        fact_id: UUID,
+        *,
+        organization_id: UUID,
+        project_id: UUID,
+        reason: str | None = None,
+        at_time: datetime | None = None,
+    ) -> Fact:
+        """Hard-retract a fact by setting ``invalid_at`` and record its lineage.
+
+        Scoped to ``(organization_id, project_id)``: a fact from another
+        project (even in the same org) is indistinguishable from a missing
+        one — ``NotFoundError`` either way, so the fact's existence is not
+        leaked across project boundaries.
+
+        Idempotent: a fact already closed (``invalid_at`` or ``valid_to``
+        set — superseded or previously retracted) is returned unchanged
+        with no second event row and no re-notification.  The transaction
+        is owned by the caller's session — the ``set_invalid_at``
+        primitive updates the row and the event insert flushes in the same
+        transaction; the request-scoped ``get_db`` dependency commits when
+        the handler returns, firing the post-commit retraction effects.
+
+        Args:
+            fact_id: The fact to retract.
+            organization_id: Tenant scope — the fact must belong to this
+                organization (defense-in-depth; RLS is org-scoped).
+            project_id: Project scope — the fact must belong to this
+                project or ``NotFoundError`` is raised.
+            reason: Optional human-readable explanation.
+            at_time: Retraction instant; defaults to now (UTC).
+
+        Returns:
+            The fact with ``invalid_at`` set (unchanged on idempotent
+            calls).
+
+        Raises:
+            NotFoundError: If no fact with the given ID exists in the
+                scoped organization and project.
+        """
+        if at_time is None:
+            at_time = datetime.now(UTC)
+
+        fact = await self._fact_repo.get_by_id(
+            fact_id, organization_id=organization_id
+        )
+        # NotFoundError, not 403 — a cross-project fact must be
+        # indistinguishable from a nonexistent one (no existence leak).
+        if fact is None or fact.project_id != project_id:
+            raise NotFoundError(
+                message=f"Fact {fact_id} not found",
+                detail={"fact_id": str(fact_id)},
+            )
+
+        # Idempotency gate — a closed fact is a 200 no-op: no second
+        # event row, no re-notify.
+        if fact.invalid_at is not None or fact.valid_to is not None:
+            logger.debug(
+                "fact_retraction.requested",
+                extra={
+                    "org_id": str(fact.organization_id),
+                    "project_id": str(fact.project_id),
+                    "fact_id": str(fact.id),
+                    "reason": reason,
+                    "idempotent": True,
+                },
+            )
+            return fact
+
+        await self._fact_repo.set_invalid_at(fact.id, at_time)
+        # The primitive is an UPDATE, not an attribute set — reload the
+        # row so the returned/serialized fact reflects invalid_at.
+        await self._db.refresh(fact)
+
+        await self._fact_repo.record_invalidation_event(
+            organization_id=fact.organization_id,
+            project_id=fact.project_id,
+            old_fact_id=fact.id,
+            new_fact_id=None,
+            kind="retracted",
+            reason=reason,
+            at_time=at_time,
+        )
+
+        from services.cache_service import CacheService
+        from services.fact_invalidation_service import (
+            PURGE_ONLY_CACHE_TTL,
+            FactInvalidationService,
+        )
+
+        invalidation = FactInvalidationService(
+            db=self._db,
+            fact_repo=self._fact_repo,
+            webhook_service=self._webhook_service,
+            cache_service=(
+                CacheService(self._redis, default_ttl=PURGE_ONLY_CACHE_TTL)
+                if self._redis is not None
+                else None
+            ),
+            graph_sync=await self._resolve_graph_sync(
+                fact.organization_id, fact.project_id
+            ),
+        )
+        invalidation.notify_retraction(
+            org_id=fact.organization_id,
+            project_id=fact.project_id,
+            old_fact=fact,
+            at_time=at_time,
+        )
+
+        logger.info(
+            "fact_retraction.requested",
+            extra={
+                "org_id": str(fact.organization_id),
+                "project_id": str(fact.project_id),
+                "fact_id": str(fact.id),
+                "reason": reason,
+                "idempotent": False,
+            },
+        )
+
+        return fact
+
+    async def get_fact_history(
+        self,
+        fact_id: UUID,
+        *,
+        organization_id: UUID,
+        project_id: UUID,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        """Fetch a fact and its invalidation-lineage events.
+
+        Scoped to ``(organization_id, project_id)`` — same non-leaking
+        ``NotFoundError`` behavior as :meth:`retract_fact`.
+
+        Args:
+            fact_id: The fact whose lineage to fetch.
+            organization_id: Tenant scope — the fact must belong to this
+                organization (defense-in-depth; RLS is org-scoped).
+            project_id: Project scope — the fact must belong to this
+                project or ``NotFoundError`` is raised.
+            limit: Maximum events (capped at 200 by the repository).
+            offset: Number of events to skip (offset pagination).
+
+        Returns:
+            A dict with ``fact`` serialized in the ``FactResponse`` shape
+            (same as the list endpoint) and ``events`` — lineage event
+            dicts, newest first.
+
+        Raises:
+            NotFoundError: If no fact with the given ID exists in the
+                scoped organization and project.
+        """
+        fact = await self._fact_repo.get_by_id(
+            fact_id, organization_id=organization_id
+        )
+        if fact is None or fact.project_id != project_id:
+            raise NotFoundError(
+                message=f"Fact {fact_id} not found",
+                detail={"fact_id": str(fact_id)},
+            )
+
+        events = await self._fact_repo.get_fact_history(
+            fact_id,
+            organization_id=organization_id,
+            limit=limit,
+            offset=offset,
+        )
+        return {
+            "fact": FactResponse.model_validate(fact),
+            "events": events,
+        }
 
     # ── Internal helpers ────────────────────────────────────────────────────────
 

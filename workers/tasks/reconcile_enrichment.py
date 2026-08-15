@@ -31,17 +31,20 @@ from workers.tasks.base import (
     ENRICHMENT_ENTITY_LINKS,
     ENRICHMENT_FACTS,
     ENRICHMENT_STRUCTURED_EXTRACTION,
+    LLM_INVALIDATION_BIT,
 )
 
 if TYPE_CHECKING:
     from schemas.organization_config import OrgConfigBase
 
 # Combined LLM enrichment bits — one task replaces 4 individual LLM calls
+# (plus the LLM-driven invalidation pass inside the same facts savepoint).
 LLM_ENRICHMENT_BITS: int = (
     ENRICHMENT_ENTITIES
     | ENRICHMENT_FACTS
     | ENRICHMENT_CLASSIFICATION
     | ENRICHMENT_STRUCTURED_EXTRACTION
+    | LLM_INVALIDATION_BIT
 )
 
 logger = structlog.get_logger()

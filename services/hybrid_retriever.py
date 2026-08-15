@@ -440,7 +440,8 @@ class HybridRetriever:
 
         Returns:
             A list of result dicts with ``id``, ``content``, ``subject``,
-            ``predicate``, ``object``, ``score``, and ``confidence`` keys.
+            ``predicate``, ``object``, ``score``, ``confidence``,
+            ``valid_from``, ``valid_to``, and ``invalid_at`` keys.
         """
         effective_time = query_time or datetime.now(timezone.utc)
 
@@ -470,6 +471,9 @@ class HybridRetriever:
                 Fact.object,
                 Fact.confidence,
                 Fact.created_at,
+                Fact.valid_from,
+                Fact.valid_to,
+                Fact.invalid_at,
                 (
                     literal(1.0, Float)
                     - func.coalesce(
@@ -564,7 +568,8 @@ class HybridRetriever:
 
         Returns:
             A list of result dicts with ``id``, ``content``, ``subject``,
-            ``predicate``, ``object``, ``score``, and ``confidence`` keys.
+            ``predicate``, ``object``, ``score``, ``confidence``,
+            ``valid_from``, ``valid_to``, and ``invalid_at`` keys.
         """
         ts_query = func.plainto_tsquery("english", query)
         effective_time = query_time or datetime.now(timezone.utc)
@@ -577,6 +582,9 @@ class HybridRetriever:
                 Fact.object,
                 Fact.confidence,
                 Fact.created_at,
+                Fact.valid_from,
+                Fact.valid_to,
+                Fact.invalid_at,
                 func.ts_rank(
                     func.to_tsvector("english", Fact.content),
                     ts_query,

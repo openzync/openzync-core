@@ -1039,11 +1039,11 @@ def build_enrichment_prompt(system_prompt: str, ctx: dict[str, Any]) -> str:
     existing_facts: list = ctx.get("existing_facts", [])
     if existing_facts:
         parts.append("\n\n## EXISTING FACTS\n\n")
-        parts.append("| Subject | Predicate | Object |\n")
-        parts.append("|---------|-----------|--------|\n")
-        for f in existing_facts:
+        parts.append("| Ref | Subject | Predicate | Object |\n")
+        parts.append("|-----|---------|-----------|--------|\n")
+        for i, f in enumerate(existing_facts, start=1):
             parts.append(
-                f"| {f.get('subject', '')} | {f.get('predicate', '')} "
+                f"| E{i} | {f.get('subject', '')} | {f.get('predicate', '')} "
                 f"| {f.get('object', '')} |\n"
             )
 

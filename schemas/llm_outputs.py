@@ -27,7 +27,8 @@ Usage::
 
 from __future__ import annotations
 
-from typing import Any
+from datetime import datetime  # noqa: TC003 — pydantic resolves field annotations at runtime
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -90,6 +91,13 @@ class FactOutput(BaseModel):
     confidence: float = 0.0
     subject_type: str | None = None
     object_type: str | None = None
+    valid_from: datetime | None = None
+    """Explicit temporal validity start (ISO-8601) — only when the fact
+    text itself states an explicit validity window/event date."""
+
+    valid_to: datetime | None = None
+    """Explicit temporal validity end (ISO-8601) — only when the fact
+    text itself states an explicit validity window/event date."""
 
 
 class FactExtractionOutput(BaseModel):
@@ -145,6 +153,32 @@ class StructuredExtractionOutput(BaseModel):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+class InvalidationOutput(BaseModel):
+    """An LLM-detected contradiction requiring an existing fact to close.
+
+    Emitted only when the current message explicitly contradicts or updates
+    a fact from the prompt's ``EXISTING FACTS`` table — never for stylistic
+    differences, summarization, or same-meaning rephrasing without a change.
+    The cited fact is closed by :class:`FactInvalidationService` inside the
+    enrichment transaction; the optional successor takes over its range.
+    """
+
+    existing_fact_ref: str
+    """``"E{index}"`` — 1-based reference into the prompt's EXISTING FACTS
+    table pointing at the fact this message contradicts."""
+
+    action: Literal["invalidate"]
+    """The only supported action — close the referenced fact."""
+
+    reason: str
+    """One sentence explaining the contradiction or update."""
+
+    successor_fact_ref: str | None = None
+    """``"N{index}"`` — 1-based reference into this response's ``facts``
+    array for the fact carrying the new value, or ``None`` when the message
+    only retracts/negates (no replacement value given)."""
+
+
 class CombinedLLMOutput(BaseModel):
     """Single LLM response combining all episode enrichment tasks.
 
@@ -167,3 +201,8 @@ class CombinedLLMOutput(BaseModel):
 
     structured_extractions: dict[str, Any] = Field(default_factory=dict)
     """Org-defined structured extractions keyed by schema name."""
+
+    invalidations: list[InvalidationOutput] = Field(default_factory=list)
+    """Existing facts this message contradicts, each optionally replaced by
+    a successor fact from the ``facts`` array.  Empty by default — keeps
+    the schema stable for older model outputs that predate invalidation."""

@@ -11,7 +11,10 @@ Two pieces backing fact-invalidation lineage:
   ``retracted`` (manual), ``llm_invalidated`` (LLM-driven), or
   ``time_expired``.  A CHECK constraint enforces the four kinds; the
   ``organization_id`` column is denormalized (no FK) to mirror
-  ``facts.organization_id`` for RLS.
+  ``facts.organization_id`` for RLS.  ``old_fact_id`` is nullable:
+  the FK is ``ON DELETE SET NULL``, so hard-deleting a referenced fact
+  (e.g. GDPR wipe) nulls the link instead of violating NOT NULL —
+  history rows survive with ``old_fact_id NULL``.
 
 Pure DDL with no backfill — existing facts keep ``superseded_by_fact_id``
 NULL, which is the pre-feature behaviour.
@@ -63,7 +66,7 @@ def upgrade() -> None:
         ),
         sa.Column("organization_id", sa.Uuid(), nullable=False),
         sa.Column("project_id", sa.Uuid(), nullable=False),
-        sa.Column("old_fact_id", sa.Uuid(), nullable=False),
+        sa.Column("old_fact_id", sa.Uuid(), nullable=True),
         sa.Column("new_fact_id", sa.Uuid(), nullable=True),
         sa.Column("kind", sa.Text(), nullable=False),
         sa.Column("reason", sa.Text(), nullable=True),
@@ -94,6 +97,11 @@ def upgrade() -> None:
             ["source_episode_id"], ["episodes.id"], ondelete="SET NULL",
         ),
         sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        "ix_fact_invalidation_events_organization_id",
+        "fact_invalidation_events",
+        ["organization_id"],
     )
     op.create_index(
         "ix_fact_invalidation_events_project_id",

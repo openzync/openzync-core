@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from core.events import EventType
+from core.exceptions import ValidationError
 from services.fact_invalidation_service import (
     FactIngestionResult,
     FactInvalidationService,
@@ -53,6 +54,8 @@ def _fact(**overrides) -> SimpleNamespace:
         content=overrides.get("content", "Alice likes hiking"),
         subject_entity_id=overrides.get("subject_entity_id"),
         object_entity_id=overrides.get("object_entity_id"),
+        valid_to=overrides.get("valid_to"),
+        invalid_at=overrides.get("invalid_at"),
     )
 
 
@@ -1134,3 +1137,290 @@ class TestGraphEdgeSync:
             for e in service._pending_effects
         )
         await _commit(service, mock_db)
+
+
+class TestApplyLLMInvalidations:
+    """apply_llm_invalidations — the Phase 2 LLM contradiction-close path.
+
+    Every ``existing_fact_ref`` must resolve in ``ref_to_fact`` (loud
+    ValidationError, never a silent skip); a candidate already closed by
+    the deterministic layer (``valid_to`` set) is skipped and counted;
+    a real close sets ``valid_to`` + ``superseded_by`` + records a
+    ``kind="llm_invalidated"`` lineage row.  Advisory locks are taken per
+    targeted fact id (``inv:`` keys), and the ``FACT_INVALIDATED`` webhook
+    fires post-commit only.
+    """
+
+    @pytest.mark.asyncio
+    async def test_unknown_existing_fact_ref_raises(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Trust boundary — an unresolved candidate ref is a loud error."""
+        with pytest.raises(ValidationError, match="Unknown fact reference"):
+            await service.apply_llm_invalidations(
+                org_id=ORG_ID,
+                project_id=PROJECT_ID,
+                invalidations=[{"existing_fact_ref": "ghost"}],
+                ref_to_fact={},
+                successor_by_ref={},
+                now=NOW,
+            )
+
+        mock_repo.lock_conflict_identities.assert_not_awaited()
+        mock_repo.set_valid_to.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_overlap_guard_skips_already_closed_fact(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """A candidate the deterministic layer already closed (valid_to set)
+        is skipped — never double-fired, no event row."""
+        old = _fact(id=FACT_1_ID, valid_to=NOW)
+
+        result = await service.apply_llm_invalidations(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            invalidations=[
+                {"existing_fact_ref": "f1", "reason": "contradiction"}
+            ],
+            ref_to_fact={"f1": old},
+            successor_by_ref={},
+            now=NOW,
+        )
+
+        assert result.closed_count == 0
+        assert result.skipped_count == 1
+        mock_repo.set_valid_to.assert_not_awaited()
+        mock_repo.set_superseded_by.assert_not_awaited()
+        mock_repo.record_invalidation_event.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_overlap_guard_skips_retracted_fact(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """A candidate the retraction layer already closed (invalid_at set,
+        valid_to None) is skipped too — no double-fire, no effects queued."""
+        old = _fact(id=FACT_1_ID, invalid_at=NOW)
+
+        result = await service.apply_llm_invalidations(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            invalidations=[
+                {"existing_fact_ref": "f1", "reason": "contradiction"}
+            ],
+            ref_to_fact={"f1": old},
+            successor_by_ref={},
+            now=NOW,
+        )
+
+        assert result.closed_count == 0
+        assert result.skipped_count == 1
+        mock_repo.set_valid_to.assert_not_awaited()
+        mock_repo.set_superseded_by.assert_not_awaited()
+        mock_repo.record_invalidation_event.assert_not_awaited()
+        assert not service._pending_effects, (
+            "a skipped invalidation must not queue post-commit effects"
+        )
+
+    @pytest.mark.asyncio
+    async def test_unknown_successor_fact_ref_raises(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Trust boundary — a successor ref outside ``successor_by_ref`` is a
+        loud ValidationError, never an opaque KeyError."""
+        old = _fact(id=FACT_1_ID)
+        successor = _fact(id=FACT_2_ID)
+
+        with pytest.raises(
+            ValidationError, match="Unknown successor fact reference"
+        ):
+            await service.apply_llm_invalidations(
+                org_id=ORG_ID,
+                project_id=PROJECT_ID,
+                invalidations=[
+                    {
+                        "existing_fact_ref": "f1",
+                        "successor_fact_ref": "ghost",
+                        "reason": "contradiction",
+                    }
+                ],
+                ref_to_fact={"f1": old},
+                successor_by_ref={"f2": successor},
+                now=NOW,
+            )
+
+        # Validation runs before any DB work.
+        mock_repo.lock_conflict_identities.assert_not_awaited()
+        mock_repo.set_valid_to.assert_not_awaited()
+        mock_repo.set_superseded_by.assert_not_awaited()
+        mock_repo.record_invalidation_event.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_happy_path_with_successor_closes_old(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """A close with a successor sets valid_to, links the lineage, and
+        records the ``llm_invalidated`` event with the reason."""
+        old = _fact(id=FACT_1_ID)
+        successor = _fact(id=FACT_2_ID, content="Alice loves hiking")
+
+        result = await service.apply_llm_invalidations(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            invalidations=[
+                {
+                    "existing_fact_ref": "f1",
+                    "successor_fact_ref": "f2",
+                    "reason": "contradiction detected",
+                }
+            ],
+            ref_to_fact={"f1": old},
+            successor_by_ref={"f2": successor},
+            now=NOW,
+        )
+
+        assert result.closed_count == 1
+        assert result.skipped_count == 0
+        mock_repo.set_valid_to.assert_awaited_once_with(FACT_1_ID, NOW)
+        mock_repo.set_superseded_by.assert_awaited_once_with(
+            FACT_1_ID, FACT_2_ID
+        )
+        mock_repo.record_invalidation_event.assert_awaited_once_with(
+            organization_id=ORG_ID,
+            project_id=PROJECT_ID,
+            old_fact_id=FACT_1_ID,
+            new_fact_id=FACT_2_ID,
+            kind="llm_invalidated",
+            reason="contradiction detected",
+            at_time=NOW,
+        )
+
+    @pytest.mark.asyncio
+    async def test_pure_contradiction_webhooks_after_commit(
+        self, mock_db: AsyncMock, mock_repo: AsyncMock
+    ) -> None:
+        """A successor-less invalidation records new_fact_id=None and
+        queues the FACT_INVALIDATED webhook for the post-commit phase."""
+        webhook = AsyncMock()
+        old = _fact(id=FACT_1_ID)
+        service = FactInvalidationService(
+            db=mock_db, fact_repo=mock_repo, webhook_service=webhook
+        )
+
+        result = await service.apply_llm_invalidations(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            invalidations=[
+                {"existing_fact_ref": "f1", "reason": "pure contradiction"}
+            ],
+            ref_to_fact={"f1": old},
+            successor_by_ref={},
+            now=NOW,
+        )
+
+        assert result.closed_count == 1
+        mock_repo.set_superseded_by.assert_awaited_once_with(FACT_1_ID, None)
+        event_kwargs = mock_repo.record_invalidation_event.await_args.kwargs
+        assert event_kwargs["kind"] == "llm_invalidated"
+        assert event_kwargs["new_fact_id"] is None
+        assert event_kwargs["reason"] == "pure contradiction"
+
+        # Pre-commit: nothing fired yet.
+        webhook.emit.assert_not_awaited()
+
+        await _commit(service, mock_db)
+
+        webhook.emit.assert_awaited_once()
+        _, kwargs = webhook.emit.await_args
+        assert kwargs["organization_id"] == ORG_ID
+        assert kwargs["event_type"] == EventType.FACT_INVALIDATED
+        assert kwargs["payload"]["old_fact_id"] == str(FACT_1_ID)
+        assert kwargs["payload"]["new_fact_id"] is None
+        assert kwargs["payload"]["reason"] == "pure contradiction"
+
+    @pytest.mark.asyncio
+    async def test_advisory_locks_acquired_per_targeted_fact(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Concurrent invalidators serialize on ``inv:``-keyed xact locks —
+        one lock per targeted fact id, sorted for deadlock-free acquisition."""
+        old_1 = _fact(id=FACT_1_ID)
+        old_2 = _fact(id=FACT_2_ID)
+
+        await service.apply_llm_invalidations(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            invalidations=[
+                {"existing_fact_ref": "f1"},
+                {"existing_fact_ref": "f2"},
+            ],
+            ref_to_fact={"f1": old_1, "f2": old_2},
+            successor_by_ref={},
+            now=NOW,
+        )
+
+        mock_repo.lock_conflict_identities.assert_awaited_once()
+        keys = mock_repo.lock_conflict_identities.await_args.args[0]
+        assert keys == sorted(
+            [
+                f"inv:{ORG_ID}:{PROJECT_ID}:{FACT_1_ID}",
+                f"inv:{ORG_ID}:{PROJECT_ID}:{FACT_2_ID}",
+            ]
+        )
+
+
+class TestRetractionWebhook:
+    """FACT_RETRACTED webhook — the retraction path's post-commit effect.
+
+    ``notify_retraction`` queues the same deferred-effect machinery as
+    supersession: nothing fires while the transaction is open, and the
+    payload after commit carries ``new_fact_id=None`` (a retraction has no
+    successor), the old fact id, the SPO triple, and the org/project scope.
+    """
+
+    @pytest.mark.asyncio
+    async def test_retraction_webhook_emitted_after_commit(
+        self, mock_db: AsyncMock, mock_repo: AsyncMock
+    ) -> None:
+        webhook = AsyncMock()
+        old_fact = _fact(
+            id=FACT_1_ID,
+            subject="Alice",
+            predicate="works_at",
+            object="Acme",
+        )
+        service = FactInvalidationService(
+            db=mock_db, fact_repo=mock_repo, webhook_service=webhook
+        )
+
+        service.notify_retraction(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            old_fact=old_fact,
+            at_time=NOW,
+        )
+
+        # Pre-commit: no phantom event.
+        webhook.emit.assert_not_awaited()
+
+        await _commit(service, mock_db)
+
+        webhook.emit.assert_awaited_once()
+        _, kwargs = webhook.emit.await_args
+        assert kwargs["organization_id"] == ORG_ID
+        assert kwargs["event_type"] == EventType.FACT_RETRACTED
+        payload = kwargs["payload"]
+        assert payload["old_fact_id"] == str(FACT_1_ID)
+        assert payload["new_fact_id"] is None, (
+            "a retraction has no successor — new_fact_id must be null"
+        )
+        assert payload["triple"] == {
+            "subject": "Alice",
+            "predicate": "works_at",
+            "object": "Acme",
+        }
+        assert payload["org_id"] == str(ORG_ID)
+        assert payload["project_id"] == str(PROJECT_ID)
+        assert "reason" not in payload, (
+            "the retraction webhook payload carries no reason"
+        )
