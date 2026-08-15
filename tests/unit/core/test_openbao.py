@@ -1028,10 +1028,11 @@ class TestOrgConfig:
     ) -> None:
         """Writing org config sends one POST per key."""
         mock_http.request.return_value = _make_response(200)
-        await bao_client.write_org_config(
-            self.ORG_ID,
-            {"llm_api_key": "sk-123", "graph_backend": "surrealdb"},
-        )
+        with patch.object(bao_client, "create_org_namespace", new=AsyncMock()):
+            await bao_client.write_org_config(
+                self.ORG_ID,
+                {"llm_api_key": "sk-123", "graph_backend": "surrealdb"},
+            )
         assert mock_http.request.call_count == 2
 
     @pytest.mark.asyncio
@@ -1042,8 +1043,79 @@ class TestOrgConfig:
     ) -> None:
         """A ``None`` value triggers a DELETE instead of a POST."""
         mock_http.request.return_value = _make_response(204)
-        await bao_client.write_org_config(self.ORG_ID, {"llm_api_key": None})
+        with patch.object(bao_client, "create_org_namespace", new=AsyncMock()):
+            await bao_client.write_org_config(self.ORG_ID, {"llm_api_key": None})
         assert mock_http.request.call_args[0][0] == "DELETE"
+
+    @pytest.mark.asyncio
+    async def test_write_org_config_ensures_namespace_before_writes(
+        self,
+        bao_client: OpenBaoClient,
+        mock_http: AsyncMock,
+    ) -> None:
+        """The org namespace is bootstrapped before any KV write."""
+        mock_http.request.return_value = _make_response(200)
+        with patch.object(
+            bao_client,
+            "create_org_namespace",
+            new=AsyncMock(),
+        ) as ensure_ns:
+            call_log = MagicMock()
+            call_log.attach_mock(ensure_ns, "create_org_namespace")
+            call_log.attach_mock(mock_http.request, "kv_write")
+            await bao_client.write_org_config(
+                self.ORG_ID,
+                {"llm_api_key": "sk-123", "graph_backend": "surrealdb"},
+            )
+        ensure_ns.assert_awaited_once_with(self.ORG_ID)
+        assert [call[0] for call in call_log.method_calls] == [
+            "create_org_namespace",
+            "kv_write",
+            "kv_write",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_write_org_config_ensures_namespace_before_delete(
+        self,
+        bao_client: OpenBaoClient,
+        mock_http: AsyncMock,
+    ) -> None:
+        """The org namespace is bootstrapped before KV deletes (None values)."""
+        mock_http.request.return_value = _make_response(204)
+        with patch.object(
+            bao_client,
+            "create_org_namespace",
+            new=AsyncMock(),
+        ) as ensure_ns:
+            call_log = MagicMock()
+            call_log.attach_mock(ensure_ns, "create_org_namespace")
+            call_log.attach_mock(mock_http.request, "kv_delete")
+            await bao_client.write_org_config(self.ORG_ID, {"llm_api_key": None})
+        ensure_ns.assert_awaited_once_with(self.ORG_ID)
+        assert [call[0] for call in call_log.method_calls] == [
+            "create_org_namespace",
+            "kv_delete",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_read_org_config_does_not_bootstrap_namespace(
+        self,
+        bao_client: OpenBaoClient,
+        mock_http: AsyncMock,
+    ) -> None:
+        """Reading org config never bootstraps the namespace (read-only)."""
+        mock_http.request.return_value = _make_response(
+            404,
+            {"errors": ["not found"]},
+        )
+        with patch.object(
+            bao_client,
+            "create_org_namespace",
+            new=AsyncMock(),
+        ) as ensure_ns:
+            config = await bao_client.read_org_config(self.ORG_ID)
+        assert config == {}
+        ensure_ns.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_create_org_namespace_creates_and_enables_kv(

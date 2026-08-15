@@ -784,6 +784,9 @@ class OpenBaoClient:
     ) -> None:
         """Write organisation-level configuration key/value pairs.
 
+        Ensures the org namespace exists (lazy bootstrap — idempotent)
+        before writing.
+
         If a value is ``None``, the corresponding secret is deleted
         rather than written.
 
@@ -792,6 +795,13 @@ class OpenBaoClient:
             config: Flat dict of key/value pairs.  ``None`` values
                 trigger deletion.
         """
+        # Lazy self-heal: org creation tolerates namespace-bootstrap failures
+        # (organization_service logs and continues), so an org may reach its
+        # first config write without a namespace.  Ensure it exists — idempotent
+        # no-op when already present.  Verified: the AppRole token can create
+        # org namespaces.
+        await self.create_org_namespace(org_id)
+
         ns = self._org_ns(org_id, parent=self._namespace or "")
         for key, value in config.items():
             path = f"{KV_MOUNT}/data/{key}"
