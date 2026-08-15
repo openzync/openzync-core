@@ -215,6 +215,13 @@ python3 <<- 'PYEOF'
 	    "OZ_PROMPT_CACHING_ENABLED":        "OZ_PROMPT_CACHING_ENABLED",
 	    "OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS": "OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS",
 	    "OZ_PROMPT_CACHING_ANTHROPIC_TTL":  "OZ_PROMPT_CACHING_ANTHROPIC_TTL",
+	    "OZ_SMTP_HOST":                     "OZ_SMTP_HOST",
+	    "OZ_SMTP_PORT":                     "OZ_SMTP_PORT",
+	    "OZ_SMTP_USERNAME":                 "OZ_SMTP_USERNAME",
+	    "OZ_SMTP_PASSWORD":                 "OZ_SMTP_PASSWORD",
+	    "OZ_SMTP_FROM_ADDR":                "OZ_SMTP_FROM_ADDR",
+	    "OZ_SMTP_USE_TLS":                  "OZ_SMTP_USE_TLS",
+	    "OZ_SMTP_START_TLS":                "OZ_SMTP_START_TLS",
 	    "OZ_DATABASE_URL":                  "OZ_DATABASE_URL",
 	}
 

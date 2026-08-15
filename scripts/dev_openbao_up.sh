@@ -55,17 +55,43 @@ wait_postgres() {
     exit 1
 }
 
-# ── 1. Stable secrets (OZ_SECRET_KEY, webhook secret, postgres URL) ───────────
+# ── 1. Stable secrets (OZ_SECRET_KEY, webhook secret, SMTP block) ────────────
+# OZ_DATABASE_URL is appended by ensure_postgres() on first container creation;
+# on a pre-existing postgres container it must already be present in the file.
 gen_secrets() {
     umask 077
-    [ -f "$SECRETS_FILE" ] || {
+    if [ ! -f "$SECRETS_FILE" ]; then
         log "Generating initial secrets -> ${SECRETS_FILE}"
         {
             echo "OZ_SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_urlsafe(48))')"
             echo "OZ_WEBHOOK_SIGNING_SECRET=$(python3 -c 'import secrets;print(secrets.token_urlsafe(32))')"
+            cat <<'EOF'
+OZ_SMTP_HOST=localhost
+OZ_SMTP_PORT=1025
+OZ_SMTP_USERNAME=
+OZ_SMTP_PASSWORD=
+OZ_SMTP_FROM_ADDR=no-reply@openzync.local
+OZ_SMTP_USE_TLS=false
+OZ_SMTP_START_TLS=false
+EOF
         } > "$SECRETS_FILE"
         chmod 600 "$SECRETS_FILE"
-    }
+    elif ! grep -q '^OZ_SMTP_HOST=' "$SECRETS_FILE"; then
+        # File predates mailpit — append the SMTP block so the bootstrap
+        # env passthrough is never missing keys (they'd be wiped from the
+        # system secret on the next full kv put).
+        log "Appending SMTP block to ${SECRETS_FILE}"
+        cat >> "$SECRETS_FILE" <<'EOF'
+OZ_SMTP_HOST=localhost
+OZ_SMTP_PORT=1025
+OZ_SMTP_USERNAME=
+OZ_SMTP_PASSWORD=
+OZ_SMTP_FROM_ADDR=no-reply@openzync.local
+OZ_SMTP_USE_TLS=false
+OZ_SMTP_START_TLS=false
+EOF
+        chmod 600 "$SECRETS_FILE"
+    fi
     # shellcheck disable=SC1090
     set -a; source "$SECRETS_FILE"; set +a
 }
@@ -100,6 +126,19 @@ ensure_postgres() {
     # gen_secrets already sourced it.
     # shellcheck disable=SC1090
     set -a; source "$SECRETS_FILE"; set +a
+}
+
+# ── 2b. Mailpit (SMTP sink + web UI; local dev only) ──────────────────────────
+ensure_mailpit() {
+    if container_exists mailpit; then
+        docker start mailpit >/dev/null 2>&1 || true
+    else
+        log "Creating mailpit container ..."
+        docker run -d --name mailpit --restart unless-stopped \
+            -p 127.0.0.1:1025:1025 \
+            -p 127.0.0.1:8025:8025 \
+            axllent/mailpit >/dev/null
+    fi
 }
 
 # ── 3. OpenBao server container (Shamir-sealed, config.dev.hcl) ───────────────
@@ -148,6 +187,13 @@ bootstrap() {
         -e OZ_PROMPT_CACHING_ANTHROPIC_TTL=5m \
         -e OZ_CORS_ORIGINS=http://localhost:3000 \
         -e OZ_DATABASE_URL="$OZ_DATABASE_URL" \
+        -e OZ_SMTP_HOST="$OZ_SMTP_HOST" \
+        -e OZ_SMTP_PORT="$OZ_SMTP_PORT" \
+        -e OZ_SMTP_USERNAME="$OZ_SMTP_USERNAME" \
+        -e OZ_SMTP_PASSWORD="$OZ_SMTP_PASSWORD" \
+        -e OZ_SMTP_FROM_ADDR="$OZ_SMTP_FROM_ADDR" \
+        -e OZ_SMTP_USE_TLS="$OZ_SMTP_USE_TLS" \
+        -e OZ_SMTP_START_TLS="$OZ_SMTP_START_TLS" \
         -v "$POLICIES_DIR:/policies:ro,z" \
         -v "$OPENBAO_INIT_VOL:/bao-init" \
         -v "$INIT_SCRIPT:/init_openbao.sh:ro,z" \
@@ -188,6 +234,7 @@ PY
 up() {
     gen_secrets
     ensure_postgres
+    ensure_mailpit
     ensure_openbao
     bootstrap
     sync_env
@@ -210,6 +257,11 @@ status() {
         echo "Postgres: UP"
     else
         echo "Postgres: DOWN"
+    fi
+    if container_exists mailpit && docker ps --format '{{.Names}}' | grep -qx mailpit; then
+        echo "Mailpit: UP (SMTP 127.0.0.1:1025, UI http://127.0.0.1:8025)"
+    else
+        echo "Mailpit: DOWN"
     fi
 }
 
