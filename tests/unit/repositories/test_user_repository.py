@@ -83,6 +83,36 @@ class TestUserRepository:
 
         assert result is not None
 
+    async def test_create_defaults_locale_en(
+        self, repo: UserRepository, mock_db: AsyncMock
+    ) -> None:
+        """create defaults the user locale to 'en' when not provided."""
+        mock_db.add.return_value = None
+        mock_db.flush.return_value = None
+        mock_db.refresh.return_value = None
+
+        await repo.create(organization_id=self.ORG_ID, external_id="ext-007")
+
+        added = mock_db.add.call_args.args[0]
+        assert added.locale == "en"
+
+    async def test_create_passes_locale_through(
+        self, repo: UserRepository, mock_db: AsyncMock
+    ) -> None:
+        """create persists an explicitly provided locale."""
+        mock_db.add.return_value = None
+        mock_db.flush.return_value = None
+        mock_db.refresh.return_value = None
+
+        await repo.create(
+            organization_id=self.ORG_ID,
+            external_id="ext-008",
+            locale="en",
+        )
+
+        added = mock_db.add.call_args.args[0]
+        assert added.locale == "en"
+
     # ── create_or_get_by_external_id ───────────────────────────────────────────
 
     async def test_create_or_get_creates(

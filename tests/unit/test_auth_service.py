@@ -1766,6 +1766,59 @@ class TestAuthService:
         )
 
     @pytest.mark.asyncio
+    async def test_get_profile_includes_locale(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """get_profile echoes the stored user locale."""
+        mock_repo.get_user_by_id.return_value = self._make_mock_user(locale="en")
+
+        result = await service.get_profile(self.USER_ID)
+
+        assert result.locale == "en"
+
+    @pytest.mark.asyncio
+    async def test_update_profile_locale(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """A supported locale is persisted via the repo."""
+        mock_repo.get_user_by_id.return_value = self._make_mock_user()
+        mock_repo.update_dashboard_user.return_value = self._make_mock_user(
+            locale="en"
+        )
+
+        payload = UpdateProfileRequest(locale="en")
+
+        result = await service.update_profile(self.USER_ID, payload)
+
+        assert result.locale == "en"
+        mock_repo.update_dashboard_user.assert_awaited_once_with(
+            user_id=self.USER_ID, locale="en"
+        )
+
+    @pytest.mark.asyncio
+    async def test_update_profile_locale_unsupported_raises(
+        self,
+        service: AuthService,
+        mock_repo: AsyncMock,
+    ) -> None:
+        """A direct service call with an unsupported locale raises ValidationError.
+
+        The HTTP layer rejects unknown tags in the schema; this guard covers
+        in-process callers (workers, tests) that bypass schema validation.
+        """
+        mock_repo.get_user_by_id.return_value = self._make_mock_user()
+        payload = UpdateProfileRequest(locale="en")
+        payload.locale = "xx"  # bypass the schema validator — direct call path
+
+        with pytest.raises(ValidationError, match="Unsupported locale 'xx'"):
+            await service.update_profile(self.USER_ID, payload)
+        mock_repo.update_dashboard_user.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_update_profile_email(
         self,
         service: AuthService,

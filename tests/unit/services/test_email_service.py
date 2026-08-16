@@ -147,6 +147,74 @@ class TestRenderSubjectTemplate:
                 await render_subject_template("nonexistent")
 
 
+class TestRealTemplateRendering:
+    """Renders the shipped ``prompts/email/en/`` templates — no mocking.
+
+    These assert the actual files the product ships: every email type must
+    render non-empty HTML/text/subject, a locale without templates must
+    fall back to English, and a missing English template must be loud.
+    """
+
+    @pytest.mark.parametrize(
+        ("template_name", "context"),
+        [
+            pytest.param(
+                "otp",
+                {"code": "483926", "expiry_minutes": 10},
+                id="otp",
+            ),
+            pytest.param(
+                "password_changed",
+                {"name": "Alice"},
+                id="password_changed",
+            ),
+            pytest.param(
+                "invite",
+                {
+                    "org_name": "Acme Corp",
+                    "invitee_name": "Alice",
+                    "inviter_name": "Bob",
+                    "link": "https://app.openzync.tech/invite/abc123",
+                    "expiry_hours": 72,
+                },
+                id="invite",
+            ),
+        ],
+    )
+    async def test_all_three_email_types_render_non_empty(
+        self, template_name: str, context: dict[str, object]
+    ) -> None:
+        """Each shipped email type has working html/txt/subject templates."""
+        html = await render_email_template(template_name, context, locale="en")
+        text = await render_text_template(template_name, context, locale="en")
+        subject = await render_subject_template(template_name, context, locale="en")
+
+        assert html.strip()
+        assert text.strip()
+        assert subject.strip()
+
+    async def test_locale_without_templates_falls_back_to_en(self) -> None:
+        """A locale with no template directory renders the English variant."""
+        html = await render_email_template(
+            "otp", {"code": "483926", "expiry_minutes": 10}, locale="de"
+        )
+
+        assert html.strip()
+        assert 'lang="en"' in html  # effective locale injected for the lang attr
+
+    async def test_missing_en_template_raises(self) -> None:
+        """A missing English template is a loud ExternalServiceError — never
+        an empty string or a raw template key."""
+        with pytest.raises(ExternalServiceError, match="not found"):
+            await render_email_template("no_such_email", locale="en")
+        with pytest.raises(ExternalServiceError, match="not found"):
+            await render_subject_template("no_such_email", locale="en")
+
+    async def test_missing_text_template_returns_empty(self) -> None:
+        """No .txt.jinja2 → empty string (the builder HTML-strips as fallback)."""
+        assert await render_text_template("no_such_email", locale="en") == ""
+
+
 class TestEmailService:
     """Tests for EmailService — send_email with mocked SMTP."""
 

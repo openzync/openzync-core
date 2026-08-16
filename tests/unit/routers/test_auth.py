@@ -5,7 +5,7 @@ Tests all ``/v1/auth/...`` endpoints — signup, login, MFA, tokens, profile.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 from uuid import UUID
 
 import pytest
@@ -743,6 +743,7 @@ async def test_get_me_success() -> None:
     assert body["role"] == "admin"
     assert body["is_email_verified"] is True
     assert body["mfa_enabled"] is False
+    assert body["locale"] == "en"  # additive field — legacy fields intact
     mocks["auth_service"].get_profile.assert_awaited_once_with(user_id=USER_ID)
 
 
@@ -772,6 +773,58 @@ async def test_update_me_success() -> None:
     assert body["name"] == "Updated User"
     assert body["email"] == "updated@acme.com"
     mocks["auth_service"].update_profile.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_update_me_locale_success() -> None:
+    """PATCH /v1/auth/me with a supported locale → 200, locale echoed."""
+    app, mocks = _create_app()
+    mocks["auth_service"].update_profile.return_value = DashboardUserResponse(
+        id=USER_ID,
+        email="admin@acme.com",
+        name="Admin User",
+        role="admin",
+        organization_id=ORG_ID,
+        is_email_verified=True,
+        mfa_enabled=False,
+        locale="en",
+    )
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.patch("/v1/auth/me", json={"locale": "en"})
+
+    assert resp.status_code == 200
+    assert resp.json()["locale"] == "en"
+    # Self-update only — user_id always comes from the JWT session, never the body.
+    mocks["auth_service"].update_profile.assert_awaited_once_with(
+        user_id=USER_ID, payload=ANY
+    )
+    sent_payload = mocks["auth_service"].update_profile.call_args.kwargs["payload"]
+    assert sent_payload.locale == "en"
+
+
+@pytest.mark.asyncio
+async def test_update_me_invalid_locale_422() -> None:
+    """PATCH /v1/auth/me with an unsupported locale → 422, exact message.
+
+    Observed contract: the Pydantic field_validator rejects the tag before
+    the service is reached — detail is the validation array whose ``msg``
+    carries the canonical ``Unsupported locale 'xx'. Supported: en.`` text.
+    """
+    app, mocks = _create_app()
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.patch("/v1/auth/me", json={"locale": "xx"})
+
+    assert resp.status_code == 422
+    body = resp.json()
+    assert isinstance(body["detail"], list)
+    # The canonical message is the observed contract; Pydantic v2 prepends
+    # its own "Value error, " prefix to the raw validator message.
+    assert body["detail"][0]["msg"].endswith("Unsupported locale 'xx'. Supported: en.")
+    mocks["auth_service"].update_profile.assert_not_awaited()
 
 
 @pytest.mark.asyncio
