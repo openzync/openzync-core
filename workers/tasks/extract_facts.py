@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from arq.connections import ArqRedis
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from models.fact import Fact
     from packages.graph_backend.interface import GraphBackend
     from repositories.entity_repository import EntityRepository
     from repositories.episode_repository import EpisodeRepository
@@ -69,6 +70,27 @@ def _filter_facts(facts: list[dict]) -> list[dict]:
             )
             continue
 
+        # Reject born-dead validity windows (valid_from >= valid_to).  The
+        # repository raises ValidationError on these, which would wedge the
+        # worker: with_retry re-emits the same LLM-produced window forever
+        # and the episode never enriches.  A window that has already ended
+        # can never be active, so drop the fact like any other low-quality
+        # output.  The repository guard stays — it protects the API path.
+        valid_from = fact.get("valid_from")
+        valid_to = fact.get("valid_to")
+        if valid_from is not None and valid_to is not None and valid_from >= valid_to:
+            logger.warning(
+                "extract_facts.dropped_born_dead",
+                extra={
+                    "subject": subject,
+                    "predicate": predicate,
+                    "object": obj,
+                    "valid_from": valid_from.isoformat(),
+                    "valid_to": valid_to.isoformat(),
+                },
+            )
+            continue
+
         valid.append(
             {
                 "subject": subject,
@@ -81,6 +103,14 @@ def _filter_facts(facts: list[dict]) -> list[dict]:
                 "object_type": fact.get("object_type", "literal"),
                 "subject_entity_id": None,
                 "object_entity_id": None,
+                # Temporal validity window — only when the LLM stated an
+                # explicit window/event date (see FactOutput.valid_from/valid_to).
+                "valid_from": fact.get("valid_from"),
+                "valid_to": fact.get("valid_to"),
+                # 1-based output-slot provenance (set by process_facts_output)
+                # so created rows can be mapped back to "N{index}" references
+                # for LLM-driven invalidations.
+                "_slot": fact.get("_slot"),
             }
         )
 
@@ -331,7 +361,8 @@ async def process_facts_output(
     known_entities: list[dict],
     existing_facts: list[dict],
     arq_redis: ArqRedis | None = None,
-) -> list[str]:
+    return_slot_map: bool = False,
+) -> list[str] | tuple[list[Fact], dict[int, Fact | None]]:
     """Process and persist fact extraction output from LLM.
 
     Filters by confidence, resolves entity references, deduplicates
@@ -363,25 +394,36 @@ async def process_facts_output(
         arq_redis: Optional ARQ Redis client.  If provided, chains an
             ``embed_fact`` job per persisted fact (non-blocking — failures
             are logged as warnings and do not propagate).
+        return_slot_map: When ``True``, returns
+            ``(created_rows, slot_map)`` where ``slot_map`` maps each
+            1-based output slot of ``parsed.facts`` to the created
+            ``Fact`` row (or ``None`` when that slot was filtered,
+            deduplicated, or skipped).  Used by ``enrich_episode`` to
+            resolve ``"N{index}"`` successor references for LLM-driven
+            invalidations.
 
     Returns:
-        List of persisted fact UUID strings (empty if nothing was persisted).
+        List of persisted fact UUID strings (empty if nothing was
+        persisted).  When ``return_slot_map=True``, a tuple of the created
+        ``Fact`` rows and the slot map instead.
 
     Raises:
         Various DB errors on persistence failure.
     """
-    facts: list[dict] = [f.model_dump() for f in parsed.facts]
+    facts: list[dict] = [
+        dict(f.model_dump(), _slot=i) for i, f in enumerate(parsed.facts, start=1)
+    ]
     if not facts:
-        return []
+        return ([], {}) if return_slot_map else []
 
     valid_facts = _filter_facts(facts)
     if not valid_facts:
-        return []
+        return ([], {}) if return_slot_map else []
 
     resolved_facts = _resolve_fact_entities(valid_facts, known_entities)
     resolved_facts = _deduplicate_facts(resolved_facts, existing_facts)
     if not resolved_facts:
-        return []
+        return ([], {}) if return_slot_map else []
 
     # ── Batch-persist all new facts via supersession ───────────────────────
     # Conflicting active facts (same SPO identity) are superseded in the
@@ -420,10 +462,15 @@ async def process_facts_output(
     new_facts = result.created
 
     # Build a lookup from content string → input fact dict to match returned
-    # Fact ORM objects back to their original input for entity resolution
-    # and graph upserts.
+    # Fact ORM objects back to their original input for entity resolution,
+    # graph upserts, and the invalidation slot map.  Keyed on the SAME
+    # content fallback the supersession service computes in
+    # ``_prepare_entry`` (``fact.get("content") or "s p o"``) — an SPO-only
+    # key would silently miss facts with explicit LLM content, losing the
+    # slot linkage and degrading a successor invalidation to a retraction
+    # (D1 case-1 edge expiry despite a successor existing).
     content_to_fact: dict[str, dict] = {
-        f"{f['subject']} {f['predicate']} {f['object']}": f
+        f.get("content") or f"{f['subject']} {f['predicate']} {f['object']}": f
         for f in resolved_facts
     }
 
@@ -578,6 +625,21 @@ async def process_facts_output(
             )
             # Non-blocking — fact extraction already committed via flush.
 
+    # ── Output-slot map for LLM invalidation successors ──────────────────
+    # Each 1-based output slot of ``parsed.facts`` maps to the created
+    # Fact row (or ``None`` when the slot was filtered, deduplicated, or
+    # skipped by the conflict scan) so the caller can resolve
+    # ``"N{index}"`` successor references for LLM-driven invalidations.
+    slot_map: dict[int, Fact | None] = {}
+    for fact_obj in new_facts:
+        input_fact = content_to_fact.get(fact_obj.content)
+        slot = input_fact.get("_slot") if input_fact is not None else None
+        if slot is not None:
+            slot_map[slot] = fact_obj
+    slot_map = {i: slot_map.get(i) for i in range(1, len(parsed.facts) + 1)}
+
+    if return_slot_map:
+        return new_facts, slot_map
     return persisted_ids
 
 

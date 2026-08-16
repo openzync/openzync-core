@@ -53,6 +53,51 @@ class TestMigrations:
             f"Downgrade failed:\n  stdout: {result.stdout}\n  stderr: {result.stderr}"
         )
 
+    def test_downgrade_0047_drops_lineage_schema(self) -> None:
+        """``alembic downgrade 0047`` removes the 0048 lineage objects.
+
+        The downgrade must drop ``fact_invalidation_events`` and the
+        ``facts.superseded_by_fact_id`` column (plus its FK and index)
+        cleanly, so a rollback to the pre-lineage schema leaves no
+        orphaned objects behind.
+        """
+        # Ensure we are at head first
+        subprocess.run(
+            ["alembic", "upgrade", "head"],  # noqa: S607 — mirrors sibling tests
+            capture_output=True,
+            cwd=PROJECT_ROOT,
+        )
+
+        result = subprocess.run(
+            ["alembic", "downgrade", "0047"],  # noqa: S607 — mirrors sibling tests
+            capture_output=True,
+            text=True,
+            cwd=PROJECT_ROOT,
+        )
+        assert result.returncode == 0, (
+            "Downgrade to 0047 failed: "
+            f"\n  stdout: {result.stdout}\n  stderr: {result.stderr}"
+        )
+
+        url = os.environ.get("OZ_DATABASE_URL") or os.environ.get("DATABASE_URL")
+        if not url:
+            pytest.skip("DATABASE_URL not set — cannot inspect the schema")
+
+        from sqlalchemy import create_engine, inspect
+
+        engine = create_engine(url)
+        try:
+            inspector = inspect(engine)
+            assert "fact_invalidation_events" not in inspector.get_table_names(), (
+                "fact_invalidation_events must be dropped by downgrade 0047"
+            )
+            fact_columns = {c["name"] for c in inspector.get_columns("facts")}
+            assert "superseded_by_fact_id" not in fact_columns, (
+                "facts.superseded_by_fact_id must be dropped by downgrade 0047"
+            )
+        finally:
+            engine.dispose()
+
     def test_migration_idempotent(self) -> None:
         """Re-applying ``upgrade head`` after a full downgrade must succeed.
 

@@ -1107,3 +1107,78 @@ class TestContextCachePurge:
 
         assert await redis_client.get(f"ctx:{ORG_ID}:{PROJECT_ID}:ab12") is None
         assert await redis_client.get(f"ctx:{ORG_ID}:{PROJECT_ID}:cd34") is None
+
+
+class TestSupersessionLineage:
+    """Phase 1.3 — supersession writes the lineage, not just valid_to.
+
+    The superseded fact row carries ``superseded_by_fact_id`` pointing at
+    the successor, and a ``fact_invalidation_events`` row of kind
+    ``superseded`` records the old/new ids at the deterministic instant.
+    """
+
+    async def test_superseded_fact_records_lineage(self, engine, db_session) -> None:
+        """After a supersession the old fact is linked to the new one and a
+        ``superseded`` event row exists with the exact ``at_time``."""
+        user_id = _new_uuid()
+        async with AsyncSession(engine) as db:
+            await _seed_user(db, user_id)
+            await db.commit()
+
+        r1 = await _ingest(
+            engine,
+            facts=[_triple(content="Alice likes hiking")],
+            user_id=user_id,
+            now=T0,
+        )
+        old_id = r1.created[0].id
+        assert old_id is not None
+
+        r2 = await _ingest(
+            engine,
+            facts=[_triple(content="Alice absolutely loves hiking")],
+            user_id=user_id,
+            now=T1,
+        )
+        new_id = r2.created[0].id
+        assert r2.superseded_count == 1
+
+        async with AsyncSession(engine) as db:
+            # 1. The superseded fact points at its successor.
+            row = await db.execute(
+                sa_text(
+                    "SELECT superseded_by_fact_id FROM facts WHERE id = :fid"
+                ),
+                {"fid": old_id},
+            )
+            assert row.scalar_one() == new_id, (
+                "superseded fact must be lineage-linked to the successor"
+            )
+
+            # The open-ended successor never points at anything.
+            row = await db.execute(
+                sa_text(
+                    "SELECT superseded_by_fact_id FROM facts WHERE id = :fid"
+                ),
+                {"fid": new_id},
+            )
+            assert row.scalar_one() is None
+
+            # 2. Exactly one superseded event with the correct pair + instant.
+            event_rows = await db.execute(
+                sa_text(
+                    "SELECT old_fact_id, new_fact_id, kind, at_time "
+                    "FROM fact_invalidation_events "
+                    "WHERE old_fact_id = :fid OR new_fact_id = :fid",
+                ),
+                {"fid": old_id},
+            )
+            events = event_rows.fetchall()
+        assert len(events) == 1, "one lineage row per old→new transition"
+        (old_fact_id, new_fact_id, kind, at_time) = events[0]
+        assert old_fact_id == old_id
+        assert new_fact_id == new_id
+        assert kind == "superseded"
+        assert at_time == T1, (
+            "the event must carry the deterministic supersession instant"
+        )

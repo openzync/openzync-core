@@ -6,17 +6,18 @@ one pass.  Each enrichment section is processed independently with savepoint
 isolation, so partial failures don't lose completed work.
 
 Bitmask:
-    Sets ``episodes.enrichment_status`` bits 0, 2, 4, 5
+    Sets ``episodes.enrichment_status`` bits 0, 2, 4, 5, 8
     (``ENRICHMENT_ENTITIES | ENRICHMENT_FACTS | ENRICHMENT_CLASSIFICATION |
-     ENRICHMENT_STRUCTURED_EXTRACTION``) on success.
+     ENRICHMENT_STRUCTURED_EXTRACTION | LLM_INVALIDATION_BIT``) on success.
 """
 
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING, cast
 
 import structlog
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from core.exceptions import EpisodeNotFoundError, GraphBackendUnavailableError
 from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
@@ -25,8 +26,15 @@ from workers.tasks.base import (
     ENRICHMENT_ENTITIES,
     ENRICHMENT_FACTS,
     ENRICHMENT_STRUCTURED_EXTRACTION,
+    LLM_INVALIDATION_BIT,
     with_retry,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from models.fact import Fact
+    from schemas.organization_config import OrgConfigBase
 
 logger = structlog.get_logger()
 
@@ -41,6 +49,50 @@ class PartialEnrichmentError(Exception):
     def __init__(self, message: str, successful_bits: int = 0) -> None:
         self.successful_bits = successful_bits
         super().__init__(message)
+
+
+async def _resolve_existing_fact_refs(
+    db: AsyncSession, existing_facts: list[dict[str, object]]
+) -> dict[str, Fact]:
+    """Map prompt E-references to the Fact rows the LLM was shown.
+
+    The render context's ``existing_facts`` dicts (from
+    :meth:`FactRepository.list_by_session`) carry the row ids; a single
+    query avoids N+1 and returns real ORM rows for the invalidation
+    service (which reads ``valid_to``/entity columns off the ORM objects).
+
+    Args:
+        db: Active session, RLS-scoped to the org.
+        existing_facts: The exact list rendered into the prompt's
+            EXISTING FACTS table, in table order.
+
+    Returns:
+        ``{"E<1-based index>": Fact}`` for every rendered table row.
+
+    Raises:
+        RuntimeError: If a rendered row is missing from the DB — a
+            data-integrity anomaly that must not be silently skipped.
+    """
+    from models.fact import Fact  # noqa: PLC0415 — lazy import
+
+    ids = {uuid.UUID(str(f["id"])) for f in existing_facts if f.get("id")}
+    if not ids:
+        return {}
+
+    result = await db.execute(select(Fact).where(Fact.id.in_(ids)))
+    by_id = {fact.id: fact for fact in result.scalars().all()}
+
+    ref_to_fact: dict[str, Fact] = {}
+    for index, fact_dict in enumerate(existing_facts, start=1):
+        fact_id = uuid.UUID(str(fact_dict["id"]))
+        fact_row = by_id.get(fact_id)
+        if fact_row is None:
+            raise RuntimeError(
+                f"existing fact {fact_id} rendered as E{index} "
+                "disappeared before invalidation"
+            )
+        ref_to_fact[f"E{index}"] = fact_row
+    return ref_to_fact
 
 
 @with_retry(max_retries=3, base_delay_s=2.0)
@@ -59,7 +111,7 @@ async def enrich_episode(
 
     Pipeline:
         1. Open session, set RLS context.
-        2. Check idempotency — skip if all 4 LLM bits already set.
+        2. Check idempotency — skip if all 5 LLM bits already set.
         3. Resolve ``user_id`` from the episode record.
         4. Render the ``enrich_episode_v1.jinja2`` prompt with auto-injected
            context (entities, facts, schemas, history, …).
@@ -68,7 +120,7 @@ async def enrich_episode(
         7. Process each enrichment section in an independent savepoint:
            - Classification  (bit 4)
            - Entities        (bit 0)
-           - Facts           (bit 2)
+           - Facts           (bit 2) + LLM-driven invalidations (bit 8)
            - Structured      (bit 5)
         8. Commit all successful savepoints.
         9. Raise ``PartialEnrichmentError`` if any section failed.
@@ -105,6 +157,7 @@ async def enrich_episode(
     from core.llm import resolve_backend
     from core.org_config import get_org_config
     from repositories.entity_repository import EntityRepository
+    from repositories.episode_blob_repository import EpisodeBlobRepository
     from repositories.episode_repository import EpisodeRepository
     from repositories.fact_repository import FactRepository
     from schemas.llm_outputs import (
@@ -117,7 +170,6 @@ async def enrich_episode(
     from workers.tasks.extract_entities import process_entities_output
     from workers.tasks.extract_facts import process_facts_output
     from workers.tasks.extract_structured import process_structured_output
-    from repositories.episode_blob_repository import EpisodeBlobRepository
 
     metadata = metadata or {}
 
@@ -165,6 +217,7 @@ async def enrich_episode(
                 | ENRICHMENT_FACTS
                 | ENRICHMENT_CLASSIFICATION
                 | ENRICHMENT_STRUCTURED_EXTRACTION
+                | LLM_INVALIDATION_BIT
             )
             if episode.enrichment_status & llm_bits == llm_bits:
                 log.info("enrich_episode.already_done")
@@ -225,6 +278,7 @@ async def enrich_episode(
                 )
 
             # ── 4. Fetch per-organization config ────────────────────────
+            org_cfg: OrgConfigBase | None = None
             llm_config_dict: dict | None = None
             try:
                 if bao_client is not None:
@@ -272,7 +326,9 @@ async def enrich_episode(
                 log.exception("enrich_episode.llm_call_failed")
                 raise
 
-            parsed = response.validated_data
+            # chat() was called with response_model=CombinedLLMOutput, so a
+            # successful call guarantees validated_data is a CombinedLLMOutput.
+            parsed = cast("CombinedLLMOutput", response.validated_data)
             log.info(
                 "enrich_episode.llm_call_done",
                 has_classification=(
@@ -284,6 +340,16 @@ async def enrich_episode(
                 fact_count=len(parsed.facts),
                 structured_count=len(parsed.structured_extractions),
                 blob_count=blob_count,
+            )
+
+            # ── LLM-driven fact invalidation gate ───────────────────────
+            # Default ON; the org opts out with ``llm_fact_invalidation_enabled:
+            # false``.  The single LLM call above succeeding is the availability
+            # gate — resolve_backend raises without an org-level llm_backend,
+            # so a completed call means an LLM is actually configured.
+            invalidation_enabled = (
+                org_cfg is not None
+                and org_cfg.llm_fact_invalidation_enabled is not False
             )
 
             # ── 6b. Resolve graph backend (shared across sections) ──────
@@ -407,11 +473,11 @@ async def enrich_episode(
             else:
                 set_bits |= ENRICHMENT_ENTITIES
 
-            # ── SECTION 3: Facts (bit 2) ─────────────────────────────────
+            # ── SECTION 3: Facts (bit 2) + LLM invalidations (bit 8) ────
             if not (episode.enrichment_status & ENRICHMENT_FACTS):
                 try:
                     async with db.begin_nested():
-                        await process_facts_output(
+                        facts_result = await process_facts_output(
                             db=db,
                             graph_backend=graph_backend,
                             entity_repo=entity_repo,
@@ -429,14 +495,101 @@ async def enrich_episode(
                             known_entities=known_entities,
                             existing_facts=existing_facts,
                             arq_redis=arq_redis,
+                            return_slot_map=True,
                         )
-                    set_bits |= ENRICHMENT_FACTS
+                        slot_map: dict[int, Fact | None]
+                        if isinstance(facts_result, tuple):
+                            _, slot_map = facts_result
+                        else:
+                            # Legacy test doubles return the plain id list.
+                            slot_map = {}
+
+                        # ── LLM-driven fact invalidations — inside the same
+                        # savepoint as the facts they depend on, so a failure
+                        # rolls back the persisted facts AND the invalidations
+                        # together.
+                        invalidations = (
+                            parsed.invalidations
+                            if isinstance(parsed.invalidations, list)
+                            else []
+                        )
+                        if invalidation_enabled and invalidations:
+                            from services.cache_service import CacheService
+                            from services.fact_invalidation_service import (
+                                PURGE_ONLY_CACHE_TTL,
+                                FactInvalidationService,
+                            )
+                            from services.graph_edge_sync_service import (
+                                GraphEdgeSyncService,
+                            )
+
+                            ref_to_fact = await _resolve_existing_fact_refs(
+                                db, existing_facts
+                            )
+                            # Every output slot gets an entry — None when the
+                            # slot's fact wasn't actually inserted (filtered,
+                            # deduplicated, or skipped by the conflict scan),
+                            # so a pure retraction never KeyErrors on lookup.
+                            successor_by_ref = {
+                                f"N{i}": slot_map.get(i)
+                                for i in range(1, len(parsed.facts) + 1)
+                            }
+                            invalidation_svc = FactInvalidationService(
+                                db=db,
+                                fact_repo=fact_repo,
+                                cache_service=(
+                                    CacheService(
+                                        arq_redis, default_ttl=PURGE_ONLY_CACHE_TTL
+                                    )
+                                    if arq_redis is not None
+                                    else None
+                                ),
+                                graph_sync=(
+                                    GraphEdgeSyncService(backends=[graph_backend])
+                                    if graph_backend is not None
+                                    else None
+                                ),
+                            )
+                            invalidation_result = (
+                                await invalidation_svc.apply_llm_invalidations(
+                                    org_id=uuid.UUID(org_id),
+                                    project_id=uuid.UUID(project_id),
+                                    invalidations=[
+                                        inv.model_dump() for inv in invalidations
+                                    ],
+                                    ref_to_fact=ref_to_fact,
+                                    successor_by_ref=successor_by_ref,
+                                )
+                            )
+                            log.info(
+                                "enrich_episode.invalidations_applied",
+                                closed_count=invalidation_result.closed_count,
+                                skipped_count=invalidation_result.skipped_count,
+                            )
+
+                        # Invalidation bit — stamped unconditionally: an
+                        # episode whose facts are persisted and invalidation
+                        # assessed (or skipped because disabled / no
+                        # invalidations) must not re-enrich.
+                        await episode_repo.apply_enrichment_bits(
+                            uuid.UUID(episode_id), LLM_INVALIDATION_BIT
+                        )
+                    set_bits |= ENRICHMENT_FACTS | LLM_INVALIDATION_BIT
                     log.info("enrich_episode.facts_done")
                 except Exception:
                     log.exception("enrich_episode.facts_failed")
                     errors.append("facts")
             else:
                 set_bits |= ENRICHMENT_FACTS
+                # Pre-invalidation episodes carry bit 2 but not bit 8 —
+                # stamp bit 8 so the top-level check stops re-running the
+                # LLM.  There is no stored LLM output to invalidate against
+                # retroactively, so the bit is marked assessed.
+                if not (episode.enrichment_status & LLM_INVALIDATION_BIT):
+                    await episode_repo.apply_enrichment_bits(
+                        uuid.UUID(episode_id), LLM_INVALIDATION_BIT
+                    )
+                    set_bits |= LLM_INVALIDATION_BIT
 
             # ── SECTION 4: Structured Extraction (bit 5) ─────────────────
             if not (episode.enrichment_status & ENRICHMENT_STRUCTURED_EXTRACTION):

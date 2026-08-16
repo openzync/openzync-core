@@ -20,11 +20,13 @@ from uuid import UUID
 from typing import Any, Literal
 
 from core.cursor import decode_cursor, encode_cursor
+from core.exceptions import ValidationError
 from sqlalchemy import or_, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.fact import Fact
+from models.fact_invalidation_event import FactInvalidationEvent
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +200,32 @@ class FactRepository:
         await self._db.flush()
         return result.scalar_one_or_none()
 
+    # ── Get by ID ────────────────────────────────────────────────────────────
+
+    async def get_by_id(
+        self,
+        fact_id: UUID,
+        *,
+        organization_id: UUID | None = None,
+    ) -> Fact | None:
+        """Fetch a single fact by primary key.
+
+        Args:
+            fact_id: The fact's UUID.
+            organization_id: Optional tenant filter for defense-in-depth.
+
+        Returns:
+            The matching :class:`Fact`, or ``None`` if not found.
+        """
+        from sqlalchemy import select
+
+        stmt = select(Fact).where(Fact.id == fact_id)
+        if organization_id is not None:
+            stmt = stmt.where(Fact.organization_id == organization_id)
+
+        result = await self._db.execute(stmt)
+        return result.scalar_one_or_none()
+
     # ── Batch Create ────────────────────────────────────────────────────────────
 
     async def batch_create(
@@ -233,6 +261,12 @@ class FactRepository:
             A list of created ``Fact`` ORM instances with server-generated
             fields populated.  When ``on_conflict="skip"``, only
             non-conflicting rows are returned.
+
+        Raises:
+            ValidationError: If any fact's effective validity range is
+                born-dead — ``valid_from >= valid_to`` where a missing
+                ``valid_from`` defaults to ``now`` at insert — rejected
+                before any insert.
         """
         if not facts:
             return []
@@ -240,6 +274,26 @@ class FactRepository:
         from datetime import datetime, timezone
 
         now = datetime.now(timezone.utc)
+
+        # Born-dead guard — reject empty validity ranges before building
+        # the insert statement.  A missing ``valid_from`` defaults to
+        # ``now`` at insert, so a ``valid_to <= now`` is born-dead too.
+        for f in facts:
+            valid_to = f.get("valid_to")
+            if valid_to is None:
+                continue
+            valid_from = f.get("valid_from") or now
+            if valid_from >= valid_to:
+                raise ValidationError(
+                    f"Fact has a born-dead validity range: "
+                    f"valid_from ({valid_from}) >= valid_to ({valid_to}).",
+                    detail={
+                        "subject": f.get("subject"),
+                        "predicate": f.get("predicate"),
+                        "object": f.get("object"),
+                    },
+                )
+
         rows = []
         for f in facts:
             subject = f.get("subject")
@@ -346,11 +400,18 @@ class FactRepository:
             source_episode_id: FK back to the source episode.
             facts: List of fact dicts with keys: ``subject``, ``predicate``,
                 ``object``, ``confidence``, ``subject_type``, ``object_type``,
-                ``subject_entity_id``, ``object_entity_id``.
+                ``subject_entity_id``, ``object_entity_id``, ``valid_from``,
+                ``valid_to``.
 
         Returns:
             List of newly created :class:`Fact` ORM instances (conflicting
             rows are excluded).
+
+        Raises:
+            ValidationError: If any fact's effective validity range is
+                born-dead — ``valid_from >= valid_to`` where a missing
+                ``valid_from`` defaults to ``now`` at insert — rejected
+                before any insert.
         """
         # ⚠️ Uses constraint name rather than index_elements to stay
         # consistent with the existing create_or_skip method. Both must
@@ -360,6 +421,26 @@ class FactRepository:
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
         now = datetime.now(timezone.utc)
+
+        # Born-dead guard — reject empty validity ranges before building
+        # the insert statement.  A missing ``valid_from`` defaults to
+        # ``now`` at insert, so a ``valid_to <= now`` is born-dead too.
+        for f in facts:
+            valid_to = f.get("valid_to")
+            if valid_to is None:
+                continue
+            valid_from = f.get("valid_from") or now
+            if valid_from >= valid_to:
+                raise ValidationError(
+                    f"Fact has a born-dead validity range: "
+                    f"valid_from ({valid_from}) >= valid_to ({valid_to}).",
+                    detail={
+                        "subject": f.get("subject"),
+                        "predicate": f.get("predicate"),
+                        "object": f.get("object"),
+                    },
+                )
+
         rows = []
         for f in facts:
             subject = f["subject"]
@@ -379,6 +460,7 @@ class FactRepository:
                     "confidence": f["confidence"],
                     "source_episode_id": source_episode_id,
                     "valid_from": f.get("valid_from", now),
+                    "valid_to": f.get("valid_to"),
                     "subject_entity_id": f.get("subject_entity_id"),
                     "object_entity_id": f.get("object_entity_id"),
                     "embedding": None,
@@ -511,6 +593,167 @@ class FactRepository:
             .values(valid_to=now, updated_at=now)
         )
         await self._db.flush()
+
+    async def set_invalid_at(self, fact_id: UUID, now: datetime) -> None:
+        """Hard-retract a fact by setting ``invalid_at``.
+
+        Retraction primitive — mirrors ``set_valid_to``: the ORM
+        ``update()`` sets ``updated_at`` explicitly so the ``onupdate``
+        hook fires.  ``invalid_at`` is the hard-retraction timestamp
+        (distinct from ``valid_to``, which supersession sets).
+
+        Args:
+            fact_id: The fact to retract.
+            now: The retraction instant.
+        """
+        await self._db.execute(
+            update(Fact)
+            .where(Fact.id == fact_id)
+            .values(invalid_at=now, updated_at=now)
+        )
+        await self._db.flush()
+
+    async def set_superseded_by(
+        self, fact_id: UUID, successor_id: UUID | None
+    ) -> None:
+        """Record the lineage successor of a fact.
+
+        Supersession primitive — links the superseded fact to the fact
+        that replaced it, preserving lineage when the successor is later
+        deleted (self-FK, ``ON DELETE SET NULL``).  A ``None`` successor
+        closes the lineage (retraction/expiry path).  ``updated_at`` is
+        set explicitly so the ``onupdate`` hook fires on the ORM
+        ``update()``.
+
+        Args:
+            fact_id: The superseded fact.
+            successor_id: The replacing fact's ID, or ``None`` to clear.
+        """
+        from datetime import UTC
+
+        await self._db.execute(
+            update(Fact)
+            .where(Fact.id == fact_id)
+            .values(
+                superseded_by_fact_id=successor_id,
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await self._db.flush()
+
+    # ── Invalidation Lineage ────────────────────────────────────────────────────
+
+    async def record_invalidation_event(
+        self,
+        *,
+        organization_id: UUID,
+        project_id: UUID,
+        old_fact_id: UUID,
+        new_fact_id: UUID | None = None,
+        kind: str,
+        reason: str | None = None,
+        at_time: datetime,
+        source_episode_id: UUID | None = None,
+    ) -> None:
+        """Record a fact-invalidation lineage event.
+
+        Insert-only, in-transaction (``add`` + ``flush``, no commit —
+        the caller owns the transaction).  ``kind`` is not validated here;
+        callers pass one of ``superseded``, ``retracted``,
+        ``llm_invalidated``, ``time_expired`` (enforced by the DB CHECK
+        constraint ``ck_fact_invalidation_events_kind``).
+
+        Args:
+            organization_id: Denormalized tenant scope for RLS.
+            project_id: Project scope.
+            old_fact_id: The fact that stopped being current.
+            new_fact_id: The fact that replaced it, if any.
+            kind: Invalidation kind — see docstring for allowed values.
+            reason: Optional explanation of the invalidation.
+            at_time: Instant the invalidation took effect.
+            source_episode_id: Episode that drove the invalidation, if any.
+        """
+        event = FactInvalidationEvent(
+            organization_id=organization_id,
+            project_id=project_id,
+            old_fact_id=old_fact_id,
+            new_fact_id=new_fact_id,
+            kind=kind,
+            reason=reason,
+            at_time=at_time,
+            source_episode_id=source_episode_id,
+        )
+        self._db.add(event)
+        await self._db.flush()
+
+    async def get_fact_history(
+        self,
+        fact_id: UUID,
+        *,
+        organization_id: UUID | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        """Return the invalidation lineage of a fact, newest first.
+
+        Matches events where the fact is either the retired one
+        (``old_fact_id``) or the successor (``new_fact_id``), so both the
+        fact's own history and the facts it replaced appear.
+
+        Args:
+            fact_id: The fact whose lineage to fetch.
+            organization_id: Optional tenant filter for defense-in-depth.
+            limit: Maximum results (capped at 200).
+            offset: Number of results to skip (for pagination).
+
+        Returns:
+            List of event dicts with keys ``id``, ``old_fact_id``,
+            ``new_fact_id``, ``kind``, ``reason``, ``at_time``,
+            ``source_episode_id`` (UUIDs str-ified, timestamps ISO-8601),
+            ordered by ``at_time`` descending.
+        """
+        from sqlalchemy import select
+
+        effective_limit = min(limit, 200)
+
+        stmt = (
+            select(
+                FactInvalidationEvent.id,
+                FactInvalidationEvent.old_fact_id,
+                FactInvalidationEvent.new_fact_id,
+                FactInvalidationEvent.kind,
+                FactInvalidationEvent.reason,
+                FactInvalidationEvent.at_time,
+                FactInvalidationEvent.source_episode_id,
+            )
+            .where(
+                or_(
+                    FactInvalidationEvent.old_fact_id == fact_id,
+                    FactInvalidationEvent.new_fact_id == fact_id,
+                )
+            )
+            .order_by(FactInvalidationEvent.at_time.desc())
+            .limit(effective_limit)
+            .offset(offset)
+        )
+        if organization_id is not None:
+            stmt = stmt.where(
+                FactInvalidationEvent.organization_id == organization_id
+            )
+
+        result = await self._db.execute(stmt)
+        return [
+            {
+                "id": str(r[0]),
+                "old_fact_id": str(r[1]) if r[1] else None,
+                "new_fact_id": str(r[2]) if r[2] else None,
+                "kind": r[3],
+                "reason": r[4],
+                "at_time": r[5].isoformat() if r[5] else None,
+                "source_episode_id": str(r[6]) if r[6] else None,
+            }
+            for r in result.fetchall()
+        ]
 
     # ── Temporal Queries ───────────────────────────────────────────────────────
 
@@ -721,7 +964,9 @@ class FactRepository:
             cursor: Opaque base64 cursor from a previous page.
 
         Returns:
-            Tuple of (list of fact dicts, next_cursor or None).
+            Tuple of (list of fact dicts, next_cursor or None).  Each dict
+            includes ``id``, ``valid_from``, ``valid_to``, ``invalid_at``
+            (ISO-8601) for prompt-rendering validity checks.
         """
         from datetime import timezone
 
@@ -750,7 +995,8 @@ class FactRepository:
             SELECT f.id, f.content, f.subject, f.predicate,
                    f."object", f.confidence, f.source_episode_id,
                    f.created_at, f.subject_type, f.object_type,
-                   f.subject_entity_id, f.object_entity_id
+                   f.subject_entity_id, f.object_entity_id,
+                   f.valid_from, f.valid_to, f.invalid_at
             FROM facts f
             WHERE f.organization_id = :org_id
               AND f.source_episode_id IN (
@@ -821,6 +1067,9 @@ class FactRepository:
                     "object_type": r[9],
                     "subject_entity_id": str(r[10]) if r[10] else None,
                     "object_entity_id": str(r[11]) if r[11] else None,
+                    "valid_from": r[12].isoformat() if r[12] else None,
+                    "valid_to": r[13].isoformat() if r[13] else None,
+                    "invalid_at": r[14].isoformat() if r[14] else None,
                 }
             )
 
@@ -910,7 +1159,9 @@ class FactRepository:
 
         Returns:
             A list of dicts with keys ``id``, ``content``, ``subject``,
-            ``predicate``, ``object``, ``confidence``, and ``score``.
+            ``predicate``, ``object``, ``confidence``, ``score``,
+            ``valid_from``, ``valid_to``, ``invalid_at`` (the validity
+            fields ISO-8601) for prompt-rendering validity checks.
         """
         effective_limit = min(limit, 200)
         from datetime import timezone
@@ -923,7 +1174,8 @@ class FactRepository:
                        ts_rank(
                            to_tsvector('english', content),
                            plainto_tsquery('english', :query)
-                       ) AS score
+                       ) AS score,
+                       valid_from, valid_to, invalid_at
                 FROM facts
                 WHERE project_id = :project_id
                   AND organization_id = :org_id
@@ -953,6 +1205,9 @@ class FactRepository:
                 "object": r[4],
                 "confidence": float(r[5]) if r[5] is not None else 0.0,
                 "score": float(r[6]),
+                "valid_from": r[7].isoformat() if r[7] else None,
+                "valid_to": r[8].isoformat() if r[8] else None,
+                "invalid_at": r[9].isoformat() if r[9] else None,
             }
             for r in result.fetchall()
         ]

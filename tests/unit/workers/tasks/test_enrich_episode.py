@@ -111,14 +111,18 @@ class TestEnrichEpisodeIdempotency:
             ENRICHMENT_ENTITIES,
             ENRICHMENT_FACTS,
             ENRICHMENT_STRUCTURED_EXTRACTION,
+            LLM_INVALIDATION_BIT,
         )
         from workers.tasks.enrich_episode import enrich_episode
 
+        # Mirrors enrich_episode's top-level idempotency mask exactly
+        # (bits 0, 2, 4, 5 + LLM_INVALIDATION_BIT = bit 8).
         all_llm_bits = (
             ENRICHMENT_ENTITIES
             | ENRICHMENT_FACTS
             | ENRICHMENT_CLASSIFICATION
             | ENRICHMENT_STRUCTURED_EXTRACTION
+            | LLM_INVALIDATION_BIT
         )
 
         mock_db = AsyncMock()
@@ -149,6 +153,82 @@ class TestEnrichEpisodeIdempotency:
         assert result is None
         # LLM call should NOT have been made
         mock_db.begin_nested.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_invalidation_bit_does_not_return_early(self) -> None:
+        """Bits 0,2,4,5 WITHOUT bit 8 is NOT done — the pass runs and stamps it.
+
+        The top-level idempotency mask requires all five LLM bits including
+        ``LLM_INVALIDATION_BIT``.  A pre-invalidation episode (entities,
+        facts, classification, structured set; bit 8 clear) must run the
+        flow — the facts else-branch stamps bit 8 and the transaction
+        commits — never the early-return path.
+        """
+        from workers.tasks.base import (
+            ENRICHMENT_CLASSIFICATION,
+            ENRICHMENT_ENTITIES,
+            ENRICHMENT_FACTS,
+            ENRICHMENT_STRUCTURED_EXTRACTION,
+        )
+        from workers.tasks.enrich_episode import enrich_episode
+
+        old_llm_bits = (
+            ENRICHMENT_ENTITIES
+            | ENRICHMENT_FACTS
+            | ENRICHMENT_CLASSIFICATION
+            | ENRICHMENT_STRUCTURED_EXTRACTION
+        )
+        mock_db = _mock_successful_db(enrichment_status=old_llm_bits)
+
+        with (
+            patch("workers.tasks.enrich_episode.render_prompt") as mock_render,
+            patch("workers.tasks.enrich_episode.build_enrichment_prompt") as mock_build,
+            patch("core.llm.resolve_backend") as mock_resolve_backend,
+            patch("core.org_config.get_org_config") as mock_org_config,
+            patch("workers.backend.resolve_graph_backend"),
+            patch("workers.tasks.classify_dialog.process_classification_output"),
+            patch("workers.tasks.extract_entities.process_entities_output"),
+            patch("workers.tasks.extract_facts.process_facts_output"),
+            patch("workers.tasks.extract_structured.process_structured_output"),
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository"),
+        ):
+            mock_render.return_value = (
+                "p",
+                {
+                    "entity_types": [],
+                    "known_entities": [],
+                    "existing_facts": [],
+                    "schemas": [],
+                },
+            )
+            mock_build.return_value = "prompt"
+
+            mock_org_cfg = MagicMock()
+            mock_org_cfg.to_llm_config_dict.return_value = {}
+            mock_org_config.return_value = mock_org_cfg
+
+            mock_llm = AsyncMock()
+            mock_response = MagicMock()
+            mock_response.validated_data = _make_combined_output()
+            mock_llm.chat.return_value = mock_response
+            mock_resolve_backend.return_value = mock_llm
+
+            ctx = _make_ctx(db=mock_db)
+
+            result = await enrich_episode(
+                ctx=ctx,
+                episode_id=_EPISODE_ID,
+                content=_CONTENT,
+                org_id=_ORG_ID,
+                project_id=_PROJECT_ID,
+                session_id=_SESSION_ID,
+                trace_id="trace-1",
+            )
+
+            # The flow ran to completion — NOT the early-return path.
+            assert result is None
+            mock_resolve_backend.assert_awaited_once()
+            mock_db.commit.assert_awaited_once()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -918,8 +998,12 @@ def _make_ctx(db: AsyncMock | None = None, include_redis: bool = True) -> dict:
     return ctx
 
 
-def _mock_successful_db() -> AsyncMock:
+def _mock_successful_db(enrichment_status: int = 0) -> AsyncMock:
     """Create a mock DB that returns a fresh episode with no enrichment bits set.
+
+    Args:
+        enrichment_status: Bitmask to set on the episode row (defaults to
+            0 — a brand-new episode).
 
     Returns:
         A configured AsyncMock DB session.
@@ -928,7 +1012,7 @@ def _mock_successful_db() -> AsyncMock:
 
     # Episode row
     mock_episode = MagicMock()
-    mock_episode.enrichment_status = 0
+    mock_episode.enrichment_status = enrichment_status
     mock_episode.user_id = uuid4()
 
     # SQL result

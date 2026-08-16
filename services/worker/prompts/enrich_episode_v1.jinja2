@@ -57,10 +57,10 @@ Relationships must reference entities from this table OR from the entities list 
 ---
 ## EXISTING FACTS (deduplicate against these)
 
-| Subject | Predicate | Object |
-|---------|-----------|--------|
+| Ref | Subject | Predicate | Object |
+|-----|---------|-----------|--------|
 {% for f in existing_facts %}
-| {{ f.get('subject', '') }} | {{ f.get('predicate', '') }} | {{ f.get('object', '') }} |
+| E{{ loop.index }} | {{ f.get('subject', '') }} | {{ f.get('predicate', '') }} | {{ f.get('object', '') }} |
 {% endfor %}
 {% endif %}
 {% if recent_history %}
@@ -165,6 +165,19 @@ Array of factual triples. Deduplicate against the existing facts table above.
 
 ### 5. structured_extractions
 {% if schemas %}Extract data matching the active schemas above, keyed by schema name.{% else %}An empty object `{}` if no schemas are configured.{% endif %}
+{% if existing_facts %}
+
+---
+## INVALIDATIONS
+
+The message may contradict or update an existing fact from the EXISTING FACTS table. Only then — never for stylistic differences, summarization, or same-meaning rephrasing without a change — add an `invalidations` entry:
+
+- Set `existing_fact_ref` to the cited fact's `E<index>` from the Ref column above.
+- If the message states the new value, emit that fact in the `facts` array and set `successor_fact_ref` to its 1-based position in your output `facts` list (`N<index>`). If the message only retracts or negates (no replacement value given), set `successor_fact_ref` to `null`.
+- `action` must be `"invalidate"` and `reason` must be one sentence explaining the contradiction or update.
+
+Example: the table says `| E1 | Alice | works_at | Acme |` and the message says "Alice now works at Globex" → emit the new fact in `facts` and add `{"existing_fact_ref": "E1", "action": "invalidate", "successor_fact_ref": "N1", "reason": "Alice's employer changed to Globex."}`.
+{% endif %}
 
 ---
 ## RULES

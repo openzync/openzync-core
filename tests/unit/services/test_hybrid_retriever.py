@@ -5,14 +5,15 @@ Tests the static ``_rrf_merge`` method directly (pure algorithm, no I/O) and
 """
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 
 from core.exceptions import SearchLegFailedError
-from services.hybrid_retriever import HybridRetriever, MAX_BFS_RESULTS
+from services.hybrid_retriever import MAX_BFS_RESULTS, HybridRetriever
 
 
 @pytest.mark.unit
@@ -659,6 +660,34 @@ class TestVectorSearch:
 
         assert results == []
 
+    @pytest.mark.asyncio
+    async def test_vector_search_facts_include_validity_keys(self) -> None:
+        """Fact vector leg returns dicts carrying valid_from, valid_to, invalid_at."""
+        service, _ = self._make_service()
+        mock_results = [
+            {
+                "id": "f1",
+                "score": 0.92,
+                "content": "test fact",
+                "subject": "S",
+                "predicate": "P",
+                "valid_from": datetime(2026, 1, 1, tzinfo=UTC),
+                "valid_to": datetime(2026, 6, 1, tzinfo=UTC),
+                "invalid_at": None,
+            },
+        ]
+
+        service._execute_ranked_query = AsyncMock(return_value=mock_results)
+
+        results = await service._vector_search_facts(
+            [0.1, 0.2, 0.3], self.PROJECT_ID, limit=20,
+        )
+
+        assert len(results) == 1
+        assert results[0]["valid_from"] == datetime(2026, 1, 1, tzinfo=UTC)
+        assert results[0]["valid_to"] == datetime(2026, 6, 1, tzinfo=UTC)
+        assert results[0]["invalid_at"] is None
+
 
 @pytest.mark.unit
 class TestGraphBFSSearch:
@@ -821,3 +850,68 @@ class TestExecuteRankedQuery:
         results = await service._execute_ranked_query(MagicMock())
 
         assert results[0]["score"] is None
+
+    @pytest.mark.asyncio
+    async def test_execute_ranked_query_passes_validity_keys(self) -> None:
+        """Validity columns in ``row._mapping`` flow through into result dicts."""
+        service, mock_db = self._make_service()
+
+        mock_row = MagicMock()
+        mock_row._mapping = {
+            "id": "1",
+            "score": 0.95,
+            "valid_from": datetime(2026, 1, 1, tzinfo=UTC),
+            "valid_to": datetime(2026, 6, 1, tzinfo=UTC),
+            "invalid_at": None,
+        }
+        mock_result = MagicMock()
+        mock_result.all.return_value = [mock_row]
+        mock_db.execute.return_value = mock_result
+
+        results = await service._execute_ranked_query(MagicMock())
+
+        assert len(results) == 1
+        assert results[0]["valid_from"] == datetime(2026, 1, 1, tzinfo=UTC)
+        assert results[0]["valid_to"] == datetime(2026, 6, 1, tzinfo=UTC)
+        assert results[0]["invalid_at"] is None
+
+
+@pytest.mark.unit
+class TestBM25Search:
+    """Tests for ``HybridRetriever._bm25_search_facts`` — the BM25 fact leg."""
+
+    ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+    PROJECT_ID = UUID("00000000-0000-0000-0000-000000000002")
+
+    def _make_service(self) -> tuple[HybridRetriever, AsyncMock]:
+        mock_db = AsyncMock()
+        service = HybridRetriever(db=mock_db, org_id=self.ORG_ID)
+        return service, mock_db
+
+    @pytest.mark.asyncio
+    async def test_bm25_search_facts_include_validity_keys(self) -> None:
+        """Fact BM25 leg returns dicts carrying valid_from, valid_to, invalid_at."""
+        service, _ = self._make_service()
+        mock_results = [
+            {
+                "id": "f1",
+                "score": 0.5,
+                "content": "test fact",
+                "subject": "S",
+                "predicate": "P",
+                "valid_from": datetime(2026, 1, 1, tzinfo=UTC),
+                "valid_to": datetime(2026, 6, 1, tzinfo=UTC),
+                "invalid_at": None,
+            },
+        ]
+
+        service._execute_ranked_query = AsyncMock(return_value=mock_results)
+
+        results = await service._bm25_search_facts(
+            "test", self.PROJECT_ID, limit=20,
+        )
+
+        assert len(results) == 1
+        assert results[0]["valid_from"] == datetime(2026, 1, 1, tzinfo=UTC)
+        assert results[0]["valid_to"] == datetime(2026, 6, 1, tzinfo=UTC)
+        assert results[0]["invalid_at"] is None

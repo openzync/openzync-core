@@ -47,6 +47,8 @@ class EventType(str):
     FACT_EXTRACTED: ClassVar[str] = "fact.extracted"
     FACT_DELETED: ClassVar[str] = "fact.deleted"
     FACT_SUPERSEDED: ClassVar[str] = "fact.superseded"
+    FACT_RETRACTED: ClassVar[str] = "fact.retracted"
+    FACT_INVALIDATED: ClassVar[str] = "fact.invalidated"
     CLASSIFICATION_CREATED: ClassVar[str] = "classification.created"
     EXTRACTION_CREATED: ClassVar[str] = "extraction.created"
     USER_CREATED: ClassVar[str] = "user.created"
@@ -78,6 +80,8 @@ EVENT_REGISTRY: list[EventMeta] = [
     EventMeta(EventType.FACT_EXTRACTED, "Fact Extracted", "Fact", "Fired when a fact (triple) is extracted"),
     EventMeta(EventType.FACT_DELETED, "Fact Deleted", "Fact", "Fired when a fact is deleted"),
     EventMeta(EventType.FACT_SUPERSEDED, "Fact Superseded", "Fact", "Fired when a conflicting newer fact invalidates an existing active fact (valid_to set)"),
+    EventMeta(EventType.FACT_RETRACTED, "Fact Retracted", "Fact", "Fired when a fact is manually retracted"),
+    EventMeta(EventType.FACT_INVALIDATED, "Fact Invalidated", "Fact", "Fired when an LLM-driven invalidation retires an active fact"),
     EventMeta(EventType.CLASSIFICATION_CREATED, "Classification Created", "Classification", "Fired when a dialog classification is created"),
     EventMeta(EventType.EXTRACTION_CREATED, "Extraction Created", "Extraction", "Fired when a structured extraction is created"),
     EventMeta(EventType.USER_CREATED, "User Created", "User", "Fired when a new user is created"),
