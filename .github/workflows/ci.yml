@@ -262,7 +262,9 @@ jobs:
             # infra-api-run-* container tracked by compose as the "api"
             # service. We remove it below before up -d, otherwise compose
             # skips creating the real service container.
-            docker compose --env-file .env -f infra/docker-compose.backend.yml run --rm --no-deps api alembic upgrade head
+            docker compose --env-file .env -f infra/docker-compose.backend.yml run --rm --no-deps \
+              -e OZ_DATABASE_URL="$OZ_DATABASE_URL" \
+              --entrypoint alembic api upgrade head
 
             # ── CRITICAL: Remove all compose-tracked containers for api/worker ──
             # docker compose run creates infra-api-run-* containers that compose
