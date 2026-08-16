@@ -27,6 +27,10 @@ class LLMUsage(CreatedAtMixin, Base):
             ``embedding``, ``classification``).
         prompt_tokens: Number of tokens in the prompt.
         completion_tokens: Number of tokens in the completion.
+        cache_read_input_tokens: Tokens served from the provider's prompt
+            cache (e.g. Anthropic ``cache_read_input_tokens``).
+        cache_creation_input_tokens: Tokens written to the provider's prompt
+            cache (e.g. Anthropic ``cache_creation_input_tokens``).
         total_tokens: **Generated column** — always equals
             ``prompt_tokens + completion_tokens``. Computed and stored
             by PostgreSQL; cannot be written directly.
@@ -53,6 +57,18 @@ class LLMUsage(CreatedAtMixin, Base):
         server_default="0",
     )
     completion_tokens: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    cache_read_input_tokens: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+        server_default="0",
+    )
+    cache_creation_input_tokens: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
         default=0,

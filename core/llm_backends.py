@@ -604,6 +604,14 @@ class AnthropicBackend(LLMBackend):
                     if cache_config.anthropic_cache_ttl == "1h":
                         cache_kw["ttl"] = "1h"
                     system_block["cache_control"] = cache_kw
+                else:
+                    logger.debug(
+                        "anthropic.cache_skipped_small_prompt",
+                        extra={
+                            "approx_tokens": approx_tokens,
+                            "min_tokens": cache_config.anthropic_min_tokens,
+                        },
+                    )
                 system = [system_block]
             else:
                 system = system_text

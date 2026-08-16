@@ -10,9 +10,12 @@ Key pattern:
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+logger = logging.getLogger(__name__)
 
 # ── System-managed field sets ──────────────────────────────────────────────
 # These fields are overridden at the system level (via OpenBao / env vars)
@@ -30,6 +33,36 @@ SYSTEM_MANAGED_SURREALDB_FIELDS: frozenset[str] = frozenset({
 SYSTEM_MANAGED_FALKORDB_FIELDS: frozenset[str] = frozenset({
     "falkordb_url",
 })
+
+
+class PromptCachingOrgConfig(BaseModel):
+    """Per-org overrides for provider-side prompt caching.
+
+    Mirrors the global ``PROMPT_CACHING_*`` settings.  Every field is
+    optional — unset fields fall back to the global value in
+    ``core.llm.build_cache_config``.
+    """
+
+    enabled: bool | None = None
+    anthropic_min_tokens: int | None = Field(default=None, ge=512)
+    anthropic_cache_ttl: str | None = Field(default=None)
+
+    @field_validator("anthropic_cache_ttl", mode="before")
+    @classmethod
+    def _validate_cache_ttl(cls, v: str | None) -> str | None:
+        """Validate cache TTL, falling back to ``"5m"`` on invalid input.
+
+        Mirrors the global ``PROMPT_CACHING_ANTHROPIC_TTL`` validator in
+        ``core.config`` — invalid values degrade to the default instead of
+        failing the whole config update.
+        """
+        if v is None or v in ("5m", "1h"):
+            return v
+        logger.warning(
+            "Invalid prompt_caching.anthropic_cache_ttl=%r, falling back to '5m'",
+            v,
+        )
+        return "5m"
 
 
 # ── DB shape (stored in organizations.config JSONB) ──────────────────────────
@@ -93,6 +126,12 @@ class OrgConfigBase(BaseModel):
         default=None,
         description="Enable LLM-driven fact invalidation during episode "
         "enrichment (defaults to ON when unset).",
+    )
+    prompt_caching: PromptCachingOrgConfig | None = Field(
+        default=None,
+        description="Per-org overrides for provider-side prompt caching "
+        "(enabled, anthropic_min_tokens, anthropic_cache_ttl).  Unset "
+        "fields fall back to the global PROMPT_CACHING_* settings.",
     )
 
     # ── Embeddings ─────────────────────────────────────────────────────────
@@ -236,14 +275,16 @@ class OrgConfigBase(BaseModel):
 
     # ── Helpers for downstream callers ───────────────────────────────────────
 
-    def to_llm_config_dict(self) -> dict[str, str | float | int]:
+    def to_llm_config_dict(self) -> dict[str, str | float | int | dict[str, object]]:
         """Return config as a dict suitable for ``core.llm.resolve_backend()``.
 
         Only non-``None`` fields are included.  The returned dict maps
         our canonical field names to the provider-specific keys that
-        ``_create_backend()`` in ``core/llm.py`` expects.
+        ``_create_backend()`` in ``core/llm.py`` expects.  ``prompt_caching``
+        is included as a nested dict so ``build_cache_config()`` can honour
+        per-org overrides.
         """
-        d: dict[str, str | float | int] = {}
+        d: dict[str, str | float | int | dict[str, object]] = {}
         if self.llm_backend is not None:
             d["llm_backend"] = self.llm_backend
         if self.openai_api_key is not None:
@@ -268,6 +309,10 @@ class OrgConfigBase(BaseModel):
             d["temperature"] = self.llm_temperature
         if self.llm_max_tokens is not None:
             d["max_tokens"] = self.llm_max_tokens
+        if self.prompt_caching is not None:
+            d["prompt_caching"] = self.prompt_caching.model_dump(
+                mode="python", exclude_none=True
+            )
         return d
 
     def to_embedding_config_dict(self) -> dict[str, str | int]:
@@ -336,6 +381,7 @@ class UpdateOrgConfigRequest(BaseModel):
         description="Enable LLM-driven fact invalidation during episode "
         "enrichment (defaults to ON when unset).",
     )
+    prompt_caching: PromptCachingOrgConfig | None = None
     embedding_backend: str | None = None
     embedding_model: str | None = None
     embedding_dim: int | None = Field(default=None, ge=64, le=4096)

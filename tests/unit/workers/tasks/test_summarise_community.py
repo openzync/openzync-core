@@ -15,6 +15,9 @@ class TestSummariseCommunity:
 
     def _make_db(self, org_ids: list | None = None, project_ids: list | None = None) -> AsyncMock:
         db = AsyncMock()
+        # ``add`` is sync in SQLAlchemy — an AsyncMock child would return an
+        # unawaited coroutine (RuntimeWarning → error under filterwarnings).
+        db.add = MagicMock()
         db.__aenter__.return_value = db
         db.__aexit__.return_value = None
         org_id_tuples = [(oid,) for oid in (org_ids or [uuid4()])]

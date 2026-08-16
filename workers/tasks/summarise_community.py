@@ -20,6 +20,7 @@ All raw SQL has been removed — every graph operation goes through the
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -318,8 +319,10 @@ async def _create_community(
         all_relationships: All relationships in the project (for building
             the prompt context).
     """
+    from core.llm import build_cache_config
     from core.llm import resolve_backend as resolve_llm_backend
     from core.org_config import get_org_config
+    from services.usage_service import record_llm_usage
 
     # Build entity name map
     entity_map = {e["id"]: e for e in all_entities}
@@ -361,7 +364,9 @@ async def _create_community(
                 org_cfg = await get_org_config(
                     org_id, redis=None, bao_client=_tmp_bao
                 )
-        llm = await resolve_llm_backend(org_config=org_cfg.to_llm_config_dict())
+        llm_config_dict = org_cfg.to_llm_config_dict()
+        llm = await resolve_llm_backend(org_config=llm_config_dict)
+        start = time.monotonic()
         response = await llm.chat(
             [
                 {
@@ -371,7 +376,8 @@ async def _create_community(
                     ),
                 },
                 {"role": "user", "content": prompt},
-            ]
+            ],
+            cache_config=build_cache_config(org_config=llm_config_dict),
         )
         summary = response.content.strip()
     except Exception as exc:
@@ -382,6 +388,19 @@ async def _create_community(
         summary = (
             f"Community of {len(member_names)} entities: "
             f"{', '.join(member_names)}"
+        )
+    else:
+        # Chat succeeded — record usage in the shared session (commits with
+        # the community work in _process_org).  Kept out of the try so a
+        # usage-recording failure propagates instead of being swallowed by
+        # the fallback handler above.
+        await record_llm_usage(
+            session=db,
+            organization_id=org_id,
+            model=response.model,
+            task_type="community_summary",
+            usage=response.usage,
+            duration_ms=round((time.monotonic() - start) * 1000),
         )
 
     # Create community entity via backend

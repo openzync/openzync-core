@@ -82,6 +82,31 @@ class TestOrgConfigBaseToDict:
         d = cfg.to_llm_config_dict()
         assert d == {}
 
+    def test_to_llm_config_dict_includes_prompt_caching(self) -> None:
+        """prompt_caching overrides should be plumbed through as a nested dict."""
+        cfg = OrgConfigBase(
+            prompt_caching={
+                "enabled": False,
+                "anthropic_min_tokens": 4096,
+            }
+        )
+        d = cfg.to_llm_config_dict()
+        assert d["prompt_caching"] == {
+            "enabled": False,
+            "anthropic_min_tokens": 4096,
+        }
+
+    def test_to_llm_config_dict_prompt_caching_excludes_none(self) -> None:
+        """Null prompt_caching fields should be omitted, not leaked as None."""
+        cfg = OrgConfigBase(
+            prompt_caching={
+                "enabled": None,
+                "anthropic_min_tokens": 4096,
+            }
+        )
+        d = cfg.to_llm_config_dict()
+        assert d["prompt_caching"] == {"anthropic_min_tokens": 4096}
+
     def test_to_llm_config_dict_temperature_boundaries(self) -> None:
         """Temperature should respect inclusive bounds."""
         cfg = OrgConfigBase(llm_temperature=0.0)

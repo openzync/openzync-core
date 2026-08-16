@@ -19,6 +19,7 @@ Pipeline:
 
 from __future__ import annotations
 
+import time
 import uuid
 
 import structlog
@@ -93,7 +94,8 @@ async def generate_user_summary(
         session_factory = get_async_session(engine)
 
     # ── 1-4. Render prompt with auto-injected context ─────────────────────
-    from core.llm import resolve_backend
+    from core.llm import build_cache_config, resolve_backend
+    from services.usage_service import record_llm_usage
 
     try:
         prompt_text = await render_prompt(
@@ -145,6 +147,7 @@ async def generate_user_summary(
 
     try:
         llm = await resolve_backend(org_config=llm_config_dict)
+        start = time.monotonic()
         response = await llm.chat(
             [
                 {
@@ -156,6 +159,7 @@ async def generate_user_summary(
                 {"role": "user", "content": prompt_text},
             ],
             temperature=0.3,
+            cache_config=build_cache_config(org_config=llm_config_dict),
         )
     except Exception as exc:
         logger.error(
@@ -174,6 +178,17 @@ async def generate_user_summary(
             await UserRepository(db).update_summary(
                 user_id=uuid.UUID(user_id),
                 summary=response.content,
+            )
+            # Usage row shares the summary-persist transaction — the chat
+            # itself is not transactional, so this is the earliest commit
+            # point that keeps the record atomic with the surrounding work.
+            await record_llm_usage(
+                session=db,
+                organization_id=uuid.UUID(org_id),
+                model=response.model,
+                task_type="user_summary",
+                usage=response.usage,
+                duration_ms=round((time.monotonic() - start) * 1000),
             )
             await db.commit()
     except Exception as exc:

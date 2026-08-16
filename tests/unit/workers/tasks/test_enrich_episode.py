@@ -1010,6 +1010,10 @@ def _mock_successful_db(enrichment_status: int = 0) -> AsyncMock:
     """
     mock_db = AsyncMock()
 
+    # ``add`` is sync in SQLAlchemy — an AsyncMock child would return an
+    # unawaited coroutine (RuntimeWarning → error under filterwarnings).
+    mock_db.add = MagicMock()
+
     # Episode row
     mock_episode = MagicMock()
     mock_episode.enrichment_status = enrichment_status

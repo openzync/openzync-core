@@ -17,6 +17,9 @@ class TestGenerateUserSummary:
 
     def _make_db(self) -> AsyncMock:
         db = AsyncMock()
+        # ``add`` is sync in SQLAlchemy — an AsyncMock child would return an
+        # unawaited coroutine (RuntimeWarning → error under filterwarnings).
+        db.add = MagicMock()
         db.__aenter__.return_value = db
         db.__aexit__.return_value = None
         return db

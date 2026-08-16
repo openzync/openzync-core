@@ -145,14 +145,29 @@ def build_cache_config(
     if org_config:
         pc = org_config.get("prompt_caching") or {}
 
+    # Explicit nulls in the stored config mean "unset" — fall back to the
+    # global default instead of letting None flow into the backend (None is
+    # falsy for `enabled` and would silently disable caching for the org).
+    enabled = (
+        pc["enabled"]
+        if pc.get("enabled") is not None
+        else settings.PROMPT_CACHING_ENABLED
+    )
+    anthropic_min_tokens = (
+        pc["anthropic_min_tokens"]
+        if pc.get("anthropic_min_tokens") is not None
+        else settings.PROMPT_CACHING_ANTHROPIC_MIN_TOKENS
+    )
+    anthropic_cache_ttl = (
+        pc["anthropic_cache_ttl"]
+        if pc.get("anthropic_cache_ttl") is not None
+        else settings.PROMPT_CACHING_ANTHROPIC_TTL
+    )
+
     return PromptCachingConfig(
-        enabled=pc.get("enabled", settings.PROMPT_CACHING_ENABLED),
-        anthropic_min_tokens=pc.get(
-            "anthropic_min_tokens", settings.PROMPT_CACHING_ANTHROPIC_MIN_TOKENS
-        ),
-        anthropic_cache_ttl=pc.get(
-            "anthropic_cache_ttl", settings.PROMPT_CACHING_ANTHROPIC_TTL
-        ),
+        enabled=enabled,
+        anthropic_min_tokens=anthropic_min_tokens,
+        anthropic_cache_ttl=anthropic_cache_ttl,
         session_id=session_id,
     )
 
@@ -243,7 +258,10 @@ class LLMBackend(ABC):
                 attempts.  Defaults to :attr:`VALIDATION_RETRIES`.
             cache_config: Optional prompt caching configuration.  Passed
                 through to the backend's ``_chat`` which interprets it
-                according to the provider's caching capabilities.
+                according to the provider's caching capabilities.  When
+                ``None`` (default), a config is built from global settings
+                via :func:`build_cache_config` — caching is on by default
+                unless the ``OZ_PROMPT_CACHING_ENABLED`` kill switch is off.
             **kwargs: Additional provider-specific parameters (temperature,
                 max_tokens, top_p, etc.).
 
@@ -259,6 +277,11 @@ class LLMBackend(ABC):
             if validation_retries is not None
             else self.VALIDATION_RETRIES
         )
+
+        # Default-on prompt caching: build once so every _chat() call —
+        # including validation retries — reuses the same config.
+        if cache_config is None:
+            cache_config = build_cache_config()
 
         # No schema — fast path, delegate directly.
         if response_model is None:

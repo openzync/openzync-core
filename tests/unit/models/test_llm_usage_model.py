@@ -25,8 +25,15 @@ class TestLLMUsageModel:
 
     @pytest.mark.unit
     def test_defaults_configured(self) -> None:
-        """prompt_tokens, completion_tokens, cost_estimate, duration_ms have server_defaults."""
-        for col_name in ["prompt_tokens", "completion_tokens", "cost_estimate", "duration_ms"]:
+        """Token/cost/duration columns have server_defaults."""
+        for col_name in [
+            "prompt_tokens",
+            "completion_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
+            "cost_estimate",
+            "duration_ms",
+        ]:
             col = LLMUsage.__table__.columns[col_name]
             assert col.server_default is not None, f"{col_name} missing server_default"
 
