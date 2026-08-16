@@ -70,6 +70,7 @@ class UserRepository:
         role: str = "member",
         password_hash: str | None = None,
         invite_token_hash: str | None = None,
+        permissions: list[str] | None = None,
     ) -> User:
         """Insert a new user.
 
@@ -85,6 +86,9 @@ class UserRepository:
             invite_token_hash: Optional SHA-256 hash of a pending invite
                 token.  Set at creation for the invite flow so the row is
                 created atomically with its claim credential.
+            permissions: Explicit permission strings.  ``None`` falls back
+                to the model default (empty array — wildcard via role).
+                The service layer seeds role-appropriate defaults.
 
         Returns:
             The newly created User ORM instance (with generated id and
@@ -103,6 +107,7 @@ class UserRepository:
             role=role,
             password_hash=password_hash,
             invite_token_hash=invite_token_hash,
+            permissions=permissions,
         )
         self._db.add(user)
         await self._db.flush()
@@ -132,6 +137,11 @@ class UserRepository:
         Returns:
             A User ORM instance — newly created or already existing.
         """
+        # Lazy import: core.rbac imports this module, so a top-level import
+        # would be circular.  These are API-key-authenticated ingestion users
+        # (always member role) — seed member defaults so they are not
+        # deny-everything.
+        from core.rbac import MEMBER_DEFAULT_PERMISSIONS
         from sqlalchemy.exc import IntegrityError
 
         try:
@@ -141,6 +151,7 @@ class UserRepository:
                 name=name,
                 email=email,
                 metadata=metadata,
+                permissions=list(MEMBER_DEFAULT_PERMISSIONS),
             )
         except IntegrityError as err:
             await self._db.rollback()
@@ -438,7 +449,7 @@ class UserRepository:
             organization_id: Tenant scope (always applied).
             user_id: The internal OpenZync user UUID.
             update_fields: Dict of fields to update. Valid keys: ``name``,
-                ``email``, ``metadata``, ``role``.
+                ``email``, ``metadata``, ``role``, ``permissions``.
 
         Returns:
             The updated User, or ``None`` if not found.
@@ -459,6 +470,8 @@ class UserRepository:
             user.email = update_fields["email"]
         if "role" in update_fields:
             user.role = update_fields["role"]
+        if "permissions" in update_fields:
+            user.permissions = update_fields["permissions"]
         if "metadata" in update_fields:
             # Deep merge: new keys override, None values remove
             existing = dict(user.metadata_ if user.metadata_ is not None else {})

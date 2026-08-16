@@ -166,8 +166,8 @@ async def update_user(
     update_fields = body.model_dump(exclude_unset=True)
     if not update_fields:
         raise ValidationError(
-            "At least one field (name, email, metadata, role) must be "
-            "provided for update",
+            "At least one field (name, email, metadata, role, permissions) "
+            "must be provided for update",
         )
     return await service.update_user(
         organization_id=UUID(org_id),

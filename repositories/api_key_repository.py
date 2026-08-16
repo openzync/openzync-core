@@ -83,7 +83,7 @@ class ApiKeyRepository:
         salt: str,
         prefix: str,
         name: str,
-        scopes: list[str] | None = None,
+        permissions: list[str] | None = None,
         project_id: uuid.UUID | None = None,
         created_by: uuid.UUID | None = None,
     ) -> ApiKey:
@@ -96,7 +96,8 @@ class ApiKeyRepository:
             salt: Hex-encoded 16-byte salt.
             prefix: Key prefix (``oz_live_`` or ``oz_test_``).
             name: Human-readable label.
-            scopes: Permission scopes (defaults to ``["read", "write"]``).
+            permissions: Permission strings (defaults to
+                ``["project:read", "project:write"]``).
             project_id: Optional project scope. ``None`` means org-wide key.
             created_by: Optional UUID of the user creating this key.
                 Populated from the JWT session when created via the dashboard.
@@ -112,7 +113,7 @@ class ApiKeyRepository:
             salt=salt,
             prefix=prefix,
             name=name,
-            scopes=scopes or ["read", "write"],
+            permissions=permissions or ["project:read", "project:write"],
             created_by=created_by,
         )
         self._db.add(api_key)

@@ -128,7 +128,7 @@ async def create_api_key(
         name=api_key.name or payload.name,
         prefix=api_key.prefix,
         project_id=api_key.project_id,
-        scopes=list(api_key.scopes),
+        permissions=list(api_key.permissions),
         is_revoked=api_key.is_revoked,
         last_used_at=api_key.last_used_at,
         created_at=api_key.created_at,

@@ -41,7 +41,6 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 # middleware gate and the dependency gate can never drift.  Import is safe:
 # dependencies.auth does not import this middleware module.
 from dependencies.auth import MUST_CHANGE_PASSWORD_EXEMPT_PATHS  # noqa: E402
-from core.rbac import ALL_PERMISSIONS
 from repositories.api_key_repository import ApiKeyRepository
 from utils.crypto import compute_lookup_hash, verify_api_key
 
@@ -483,10 +482,10 @@ def _verify_jwt_and_set_state(
     state["org_id"] = org_id
     state["user_id"] = user_id
     state["role"] = role
-    # Informational only — JWT authorization is decided in
-    # dependencies.auth via get_org_role / get_effective_permissions, never
-    # from this state key.
-    state["api_key_permissions"] = list(ALL_PERMISSIONS)
+    # Informational only — JWT sessions are not API keys, and nothing reads
+    # this key for JWT.  JWT permission checks are done in dependencies.auth
+    # via get_org_role / get_effective_permissions, never from this state key.
+    state["api_key_permissions"] = []
 
     return None
 

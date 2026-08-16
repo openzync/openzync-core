@@ -131,6 +131,7 @@ class AuthRepository:
         name: str | None = None,
         role: str = "admin",
         must_change_password: bool = False,
+        permissions: list[str] | None = None,
     ) -> User:
         """Create a dashboard user (admin/member).
 
@@ -147,6 +148,9 @@ class AuthRepository:
             role: Role string (``'admin'`` or ``'member'``).
             must_change_password: Whether the user must set a new password
                 at first login (seeded root credential).
+            permissions: Explicit permission strings.  ``None`` falls back
+                to the model default (empty array — wildcard via role).
+                The service layer seeds role-appropriate defaults.
 
         Returns:
             The newly created User.
@@ -159,6 +163,7 @@ class AuthRepository:
             password_hash=password_hash,
             role=role,
             must_change_password=must_change_password,
+            permissions=permissions,
             metadata_={},
         )
         self._db.add(user)

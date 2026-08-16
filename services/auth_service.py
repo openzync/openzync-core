@@ -31,7 +31,7 @@ from core.exceptions import (
     ValidationError,
 )
 from core.org_codes import normalize_org_code
-from core.rbac import invalidate_must_change_password
+from core.rbac import MEMBER_DEFAULT_PERMISSIONS, invalidate_must_change_password
 from core.system_config import get_system_config
 from repositories.auth_repository import AuthRepository  # noqa: TC001
 from repositories.organization_repository import (  # noqa: TC001
@@ -226,6 +226,7 @@ class AuthService:
                 password_hash=pw_hash,
                 name=payload.email.split("@")[0],  # default name from email
                 role="admin",
+                permissions=[],  # admin = wildcard via role
             )
 
             # Send verification OTP — no tokens issued until email is verified.
@@ -292,6 +293,7 @@ class AuthService:
             password_hash=None,
             name=admin_name,
             role="admin",
+            permissions=[],  # admin = wildcard via role
         )
         logger.info(
             "auth.org_pending",
@@ -389,6 +391,7 @@ class AuthService:
             password_hash=None,
             name=name,
             role="admin",
+            permissions=[],  # admin = wildcard via role
         )
 
     @staticmethod
@@ -476,6 +479,7 @@ class AuthService:
                 password_hash=pw_hash,
                 name=payload.email.split("@")[0],  # default name from email
                 role="member",
+                permissions=list(MEMBER_DEFAULT_PERMISSIONS),
             )
             await self._otp_service.generate_and_send(
                 email=payload.email,

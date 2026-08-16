@@ -65,8 +65,6 @@ _SCOPE_MAP: tuple[tuple[str, str], ...] = (
     ("members:write", "members:write"),
 )
 
-_MEMBER_DEFAULTS = "{project:read,project:write}"
-
 
 def upgrade() -> None:
     """Add users.permissions, rename api_keys.scopes, backfill both."""
@@ -99,9 +97,9 @@ def upgrade() -> None:
     #    UPDATE a no-op on re-run so custom grants are never clobbered.
     op.execute(
         sa.text(
-            "UPDATE users SET permissions = :defaults "
+            "UPDATE users SET permissions = '{project:read,project:write}' "
             "WHERE role = 'member' AND permissions = '{}'"
-        ).bindparams(defaults=_MEMBER_DEFAULTS)
+        )
     )
 
     # 4. Backfill api_keys: map each legacy scope element through the table

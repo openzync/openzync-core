@@ -79,7 +79,9 @@ class ApiKeyService:
             salt=salt,
             prefix="oz_live_",
             name=payload.name,
-            scopes=["read", "write"],
+            # Schema contract: empty payload.permissions → member defaults
+            # seeded here, not in the schema.
+            permissions=payload.permissions or ["project:read", "project:write"],
             created_by=created_by,
         )
 

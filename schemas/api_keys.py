@@ -79,7 +79,9 @@ class ApiKeyResponse(BaseModel):
         "``None`` for keys created before this field was added.",
     )
     permissions: list[str] = Field(
-        ..., description="Permission strings.", examples=[["project:read", "project:write"]]
+        ...,
+        description="Permission strings.",
+        examples=[["project:read", "project:write"]],
     )
     is_revoked: bool = Field(
         ..., description="Whether the key has been revoked."
