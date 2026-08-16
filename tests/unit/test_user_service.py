@@ -36,6 +36,7 @@ class TestUserService:
         user.email = kwargs.get("email", "test@example.com")
         user.metadata_ = kwargs.get("metadata", {})
         user.role = kwargs.get("role", "member")
+        user.locale = kwargs.get("locale", "en")
         user.is_active = kwargs.get("is_active", True)
         user.is_deleted = kwargs.get("is_deleted", False)
         user.created_at = kwargs.get("created_at", datetime.now(timezone.utc))

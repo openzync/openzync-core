@@ -70,6 +70,7 @@ class UserRepository:
         role: str = "member",
         password_hash: str | None = None,
         invite_token_hash: str | None = None,
+        locale: str = "en",
     ) -> User:
         """Insert a new user.
 
@@ -85,6 +86,7 @@ class UserRepository:
             invite_token_hash: Optional SHA-256 hash of a pending invite
                 token.  Set at creation for the invite flow so the row is
                 created atomically with its claim credential.
+            locale: BCP-47 locale tag (default ``en``).
 
         Returns:
             The newly created User ORM instance (with generated id and
@@ -103,6 +105,7 @@ class UserRepository:
             role=role,
             password_hash=password_hash,
             invite_token_hash=invite_token_hash,
+            locale=locale,
         )
         self._db.add(user)
         await self._db.flush()
@@ -459,6 +462,8 @@ class UserRepository:
             user.email = update_fields["email"]
         if "role" in update_fields:
             user.role = update_fields["role"]
+        if "locale" in update_fields:
+            user.locale = update_fields["locale"]
         if "metadata" in update_fields:
             # Deep merge: new keys override, None values remove
             existing = dict(user.metadata_ if user.metadata_ is not None else {})

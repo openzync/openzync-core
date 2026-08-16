@@ -66,6 +66,7 @@ class TestMfaService:
         user.is_email_verified = kwargs.get("is_email_verified", True)
         user.mfa_enabled = kwargs.get("mfa_enabled", False)
         user.role = kwargs.get("role", "admin")
+        user.locale = kwargs.get("locale", "en")
         return user
 
     # ── Login — MFA disabled ───────────────────────────────────────────────
@@ -130,6 +131,7 @@ class TestMfaService:
         mock_otp.generate_and_send.assert_awaited_once_with(
             email="a@b.com",
             purpose="mfa",
+            locale="en",
         )
 
         # Verify the session was stored in Redis with correct key, TTL, and payload

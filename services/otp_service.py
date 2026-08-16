@@ -156,6 +156,7 @@ class OtpService:
         self,
         email: str,
         purpose: OtpPurpose,
+        locale: str = "en",
     ) -> None:
         """Generate a secure OTP, store its hash in Redis, and send via email.
 
@@ -165,6 +166,8 @@ class OtpService:
         Args:
             email: Recipient email address.
             purpose: Purpose scope (``signup``, ``password_reset``, etc.).
+            locale: Recipient's BCP-47 locale tag — selects the email
+                template language (falls back to English).
 
         Raises:
             RateLimitError: If the email has exceeded the send limit or
@@ -190,7 +193,7 @@ class OtpService:
         await pipe.execute()
 
         # ── Send via email service ───────────────────────────────────────
-        await self._send_otp_email(email_key, purpose, otp)
+        await self._send_otp_email(email_key, purpose, otp, locale)
 
     async def verify(
         self,
@@ -280,6 +283,7 @@ class OtpService:
         email_key: str,
         purpose: OtpPurpose,
         otp: str,
+        locale: str,
     ) -> None:
         """Render and send the OTP email.
 
@@ -287,9 +291,11 @@ class OtpService:
             email_key: Lowercased recipient email.
             purpose: OTP purpose (for logging).
             otp: The plaintext OTP to include in the email.
+            locale: Recipient's BCP-47 locale tag (template language).
         """
         from services.email_service import (  # noqa: PLC0415
             render_email_template,
+            render_subject_template,
             render_text_template,
         )
 
@@ -297,12 +303,13 @@ class OtpService:
             "code": otp,
             "expiry_minutes": _OTP_TTL_SEC // 60,
         }
-        html_body = await render_email_template("otp", context)
-        text_body = await render_text_template("otp", context)
+        html_body = await render_email_template("otp", context, locale=locale)
+        text_body = await render_text_template("otp", context, locale=locale)
+        subject = await render_subject_template("otp", context, locale=locale)
 
         await self._email_service.send_email(
             to=email_key,
-            subject="Your OpenZync verification code",
+            subject=subject,
             html_body=html_body,
             text_body=text_body,
         )

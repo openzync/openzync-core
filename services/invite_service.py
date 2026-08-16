@@ -91,6 +91,7 @@ async def send_invite_email(
     invitee_name: str,
     invitee_email: str,
     raw_token: str,
+    locale: str = "en",
 ) -> None:
     """Render and send the magic-link invite email.
 
@@ -106,6 +107,8 @@ async def send_invite_email(
         invitee_email: Recipient address.
         raw_token: The plaintext magic-link token — appears only in the
             emailed link, never in logs or responses.
+        locale: Recipient's BCP-47 locale tag — selects the template
+            language (falls back to English).
 
     Raises:
         ExternalServiceError: If the email service is unavailable or
@@ -113,6 +116,7 @@ async def send_invite_email(
     """
     from services.email_service import (  # noqa: PLC0415
         render_email_template,
+        render_subject_template,
         render_text_template,
     )
 
@@ -125,12 +129,13 @@ async def send_invite_email(
         "link": link,
         "expiry_hours": INVITE_EXPIRY_HOURS,
     }
-    html_body = await render_email_template("invite", context)
-    text_body = await render_text_template("invite", context)
+    html_body = await render_email_template("invite", context, locale=locale)
+    text_body = await render_text_template("invite", context, locale=locale)
+    subject = await render_subject_template("invite", context, locale=locale)
 
     await email_service.send_email(
         to=invitee_email,
-        subject=f"You've been invited to {org_name}",
+        subject=subject,
         html_body=html_body,
         text_body=text_body,
     )
@@ -252,6 +257,7 @@ class InviteService:
             invitee_name=payload.name,
             invitee_email=payload.email,
             raw_token=raw_token,
+            locale=user.locale,
         )
 
         return InviteResponse(
@@ -411,6 +417,7 @@ class InviteService:
         invitee_name: str,
         invitee_email: str,
         raw_token: str,
+        locale: str,
     ) -> None:
         """Render and send the magic-link invite email.
 
@@ -421,6 +428,7 @@ class InviteService:
             invitee_email: Recipient address.
             raw_token: The plaintext magic-link token — appears only in the
                 emailed link, never in logs or responses.
+            locale: Invitee's BCP-47 locale tag (template language).
 
         Raises:
             ExternalServiceError: If the email service is unavailable or
@@ -438,6 +446,7 @@ class InviteService:
             invitee_name=invitee_name,
             invitee_email=invitee_email,
             raw_token=raw_token,
+            locale=locale,
         )
 
     def _is_expired(self, created_at: datetime) -> bool:

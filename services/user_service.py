@@ -80,6 +80,7 @@ class UserService:
         email: str | None = None,
         metadata: dict[str, Any] | None = None,
         role: str = "member",
+        locale: str = "en",
     ) -> UserResponse:
         """Create a new user within an organization.
 
@@ -90,6 +91,7 @@ class UserService:
             email: Optional email address.
             metadata: Optional JSON metadata.
             role: Dashboard role — ``admin`` or ``member`` (default).
+            locale: BCP-47 locale tag (default ``en``).
 
         Returns:
             A :class:`UserResponse` for the newly created user.
@@ -115,6 +117,7 @@ class UserService:
             email=email,
             metadata=metadata,
             role=role,
+            locale=locale,
         )
 
         if self._webhook_service:
@@ -143,6 +146,7 @@ class UserService:
             "email": user.email,
             "metadata": dict(user.metadata_) if user.metadata_ else {},
             "role": user.role,
+            "locale": user.locale,
             "is_active": user.is_active,
             "is_deleted": user.is_deleted,
             "is_pending_invite": user.invite_token_hash is not None,

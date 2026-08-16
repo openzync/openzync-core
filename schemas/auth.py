@@ -19,6 +19,7 @@ from pydantic import (
     field_validator,
 )
 
+from core.locales import ALLOWED_LOCALES
 from schemas.system_config import (  # noqa: TC001 — runtime imports: pydantic resolves field types
     ApprovalScope,
     OrgCreationPolicy,
@@ -424,6 +425,11 @@ class DashboardUserResponse(BaseModel):
             "dashboard (seeded root credential)."
         ),
     )
+    locale: str = Field(
+        default="en",
+        description="BCP-47 locale tag selecting the user's email language.",
+        examples=["en"],
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -494,3 +500,22 @@ class UpdateProfileRequest(BaseModel):
         max_length=128,
         description="New password (min 8 chars). Requires ``current_password``.",
     )
+    locale: str | None = Field(
+        default=None,
+        description=(
+            "New BCP-47 locale tag. Absent = no change. Must be in the "
+            "supported set."
+        ),
+        examples=["en"],
+    )
+
+    @field_validator("locale")
+    @classmethod
+    def validate_locale(cls, v: str | None) -> str | None:
+        """Reject locale tags outside the shipped set (see core.locales)."""
+        if v is not None and v not in ALLOWED_LOCALES:
+            raise ValueError(
+                f"Unsupported locale '{v}'. Supported: "
+                f"{', '.join(sorted(ALLOWED_LOCALES))}."
+            )
+        return v

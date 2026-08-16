@@ -11,6 +11,7 @@ from services.email_service import (
     EmailService,
     _mask_email,
     render_email_template,
+    render_subject_template,
     render_text_template,
 )
 
@@ -48,8 +49,27 @@ class TestRenderEmailTemplate:
             result = await render_email_template("welcome", {"name": "John"})
 
         assert result == "<html>Hello John</html>"
-        mock_env.get_template.assert_called_once_with("welcome.html.jinja2")
-        mock_template.render.assert_called_once_with(name="John")
+        mock_env.get_template.assert_called_once_with("en/welcome.html.jinja2")
+        mock_template.render.assert_called_once_with(locale="en", name="John")
+
+    async def test_locale_missing_falls_back_to_en(self) -> None:
+        """A locale without its own template falls back to the en variant."""
+        mock_env = MagicMock()
+        mock_env.get_template.side_effect = [
+            FileNotFoundError("no de template"),
+            MagicMock(render=MagicMock(return_value="<html>en fallback</html>")),
+        ]
+
+        with patch("services.email_service._env", mock_env):
+            result = await render_email_template("welcome", locale="de")
+
+        assert result == "<html>en fallback</html>"
+        assert mock_env.get_template.call_args_list[0].args == (
+            "de/welcome.html.jinja2",
+        )
+        assert mock_env.get_template.call_args_list[1].args == (
+            "en/welcome.html.jinja2",
+        )
 
     async def test_template_not_found_raises_error(self) -> None:
         """Missing template raises ExternalServiceError."""
@@ -69,7 +89,7 @@ class TestRenderEmailTemplate:
 
             result = await render_email_template("empty")
             assert result == "<html></html>"
-            mock_template.render.assert_called_once_with()
+            mock_template.render.assert_called_once_with(locale="en")
 
 
 class TestRenderTextTemplate:
@@ -85,7 +105,7 @@ class TestRenderTextTemplate:
 
             result = await render_text_template("welcome")
             assert result == "Hello in plain text"
-            mock_env.get_template.assert_called_once_with("welcome.txt.jinja2")
+            mock_env.get_template.assert_called_once_with("en/welcome.txt.jinja2")
 
     async def test_missing_text_template_returns_empty(self) -> None:
         """No .txt.jinja2 template returns empty fallback string."""
@@ -94,6 +114,37 @@ class TestRenderTextTemplate:
 
             result = await render_text_template("welcome")
             assert result == ""
+
+
+class TestRenderSubjectTemplate:
+    """Tests for the render_subject_template() function."""
+
+    async def test_renders_subject_line(self) -> None:
+        """Subject template renders with context, whitespace stripped."""
+        mock_template = MagicMock()
+        mock_template.render.return_value = "Welcome {{ name }}\n"
+
+        with patch("services.email_service._env") as mock_env:
+            mock_env.get_template.return_value = mock_template
+
+            result = await render_subject_template(
+                "welcome", {"name": "John"}, locale="en"
+            )
+            assert result == "Welcome {{ name }}"
+            mock_env.get_template.assert_called_once_with(
+                "en/welcome.subject.jinja2"
+            )
+            mock_template.render.assert_called_once_with(name="John")
+
+    async def test_subject_missing_raises(self) -> None:
+        """A missing subject template is loud — never an empty subject."""
+        with patch("services.email_service._env") as mock_env:
+            mock_env.get_template.side_effect = FileNotFoundError("missing")
+
+            with pytest.raises(
+                ExternalServiceError, match="subject template.*not found"
+            ):
+                await render_subject_template("nonexistent")
 
 
 class TestEmailService:

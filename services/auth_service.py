@@ -18,7 +18,7 @@ import logging
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import IntegrityError
 
@@ -30,6 +30,7 @@ from core.exceptions import (
     NotFoundError,
     ValidationError,
 )
+from core.locales import ALLOWED_LOCALES
 from core.org_codes import normalize_org_code
 from core.rbac import invalidate_must_change_password
 from core.system_config import get_system_config
@@ -595,6 +596,7 @@ class AuthService:
             await self._otp_service.generate_and_send(
                 email=email,
                 purpose="signup",
+                locale=user.locale,
             )
 
         return generic
@@ -628,6 +630,7 @@ class AuthService:
         await self._otp_service.generate_and_send(
             email=email,
             purpose="password_reset",
+            locale=user.locale,
         )
 
         return OtpResponse(
@@ -730,6 +733,7 @@ class AuthService:
         await self._otp_service.generate_and_send(
             email=email,
             purpose="passwordless_login",
+            locale=user.locale,
         )
 
         return OtpResponse(
@@ -840,6 +844,7 @@ class AuthService:
             await self._otp_service.generate_and_send(
                 email=payload.email,
                 purpose="mfa",
+                locale=user.locale,
             )
 
             # Store pending MFA session in Redis
@@ -965,6 +970,7 @@ class AuthService:
         await self._otp_service.generate_and_send(
             email=user.email or "",
             purpose="mfa",
+            locale=user.locale,
         )
 
         return OtpResponse(
@@ -1248,6 +1254,7 @@ class AuthService:
             is_email_verified=user.is_email_verified,
             mfa_enabled=user.mfa_enabled,
             must_change_password=bool(user.must_change_password),
+            locale=user.locale,
         )
 
     async def update_profile(
@@ -1282,6 +1289,17 @@ class AuthService:
             update_kwargs["name"] = payload.name
             has_changes = True
 
+        if payload.locale is not None:
+            # Schema validator already rejects unknown tags for HTTP callers;
+            # this guard also covers direct service invocations (tests, workers).
+            if payload.locale not in ALLOWED_LOCALES:
+                raise ValidationError(
+                    f"Unsupported locale '{payload.locale}'. Supported: "
+                    f"{', '.join(sorted(ALLOWED_LOCALES))}."
+                )
+            update_kwargs["locale"] = payload.locale
+            has_changes = True
+
         if payload.email is not None:
             # Check email uniqueness
             existing = await self._repo.find_user_by_email(payload.email)
@@ -1297,6 +1315,7 @@ class AuthService:
             await self._otp_service.generate_and_send(
                 email=payload.email,
                 purpose="signup",
+                locale=user.locale,
             )
 
         # Password change
@@ -1321,19 +1340,27 @@ class AuthService:
                 if user_email:
                     from services.email_service import (  # noqa: PLC0415
                         render_email_template,
+                        render_subject_template,
                         render_text_template,
                     )
 
                     context: dict[str, object] = {
                         "name": user.name or "there",
                     }
-                    html_body = await render_email_template("password_changed", context)
-                    text_body = await render_text_template("password_changed", context)
+                    html_body = await render_email_template(
+                        "password_changed", context, locale=user.locale,
+                    )
+                    text_body = await render_text_template(
+                        "password_changed", context, locale=user.locale,
+                    )
+                    subject = await render_subject_template(
+                        "password_changed", context, locale=user.locale,
+                    )
 
                     try:
                         await self._email_service.send_email(
                             to=user_email,
-                            subject="Your OpenZync password was changed",
+                            subject=subject,
                             html_body=html_body,
                             text_body=text_body,
                         )
@@ -1358,6 +1385,7 @@ class AuthService:
             is_email_verified=user.is_email_verified,
             mfa_enabled=user.mfa_enabled,
             must_change_password=bool(user.must_change_password),
+            locale=user.locale,
         )
 
     @staticmethod

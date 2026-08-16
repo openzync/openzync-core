@@ -63,6 +63,7 @@ class TestUserService:
         user.email = email
         user.metadata_ = metadata or {}
         user.role = role
+        user.locale = "en"
         user.is_active = is_active
         user.is_deleted = is_deleted
         user.created_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
@@ -118,6 +119,7 @@ class TestUserService:
             email="alice@example.com",
             metadata={"source": "onboarding"},
             role="member",
+            locale="en",
         )
 
     @pytest.mark.asyncio
@@ -551,6 +553,7 @@ class TestUserServiceRoleGuards:
         user.email = "a@example.com"
         user.metadata_ = {}
         user.role = role
+        user.locale = "en"
         user.is_active = True
         user.is_deleted = False
         user.created_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
@@ -739,6 +742,7 @@ class TestUserServiceSuperadminSurface:
         user.id = self.USER_ID
         user.organization_id = self.ORG_ID
         user.role = "admin"
+        user.locale = "en"
         return user
 
     @pytest.mark.asyncio

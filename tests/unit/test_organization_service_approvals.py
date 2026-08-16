@@ -62,6 +62,7 @@ class TestOrganizationApprovals:
         admin.organization_id = ORG_ID
         admin.email = "admin@acme.com"
         admin.name = "Admin"
+        admin.locale = "en"
         return admin
 
     # ── approve_org ─────────────────────────────────────────────────────────
@@ -129,6 +130,7 @@ class TestOrganizationApprovals:
             invitee_name="Admin",
             invitee_email="admin@acme.com",
             raw_token="raw-token",  # noqa: S106 — test fixture token  # noqa: S106 — test fixture token
+            locale="en",
         )
 
     @pytest.mark.asyncio

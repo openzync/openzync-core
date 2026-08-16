@@ -113,6 +113,17 @@ class User(TimestampMixin, Base):
             "or revoke."
         ),
     )
+    locale: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="en",
+        server_default="en",
+        comment=(
+            "BCP-47 locale tag (lowercase, e.g. 'en', 'de') — selects the "
+            "language of transactional emails.  Must be in "
+            "core.locales.ALLOWED_LOCALES."
+        ),
+    )
 
     __table_args__ = (
         UniqueConstraint(

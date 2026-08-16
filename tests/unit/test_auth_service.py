@@ -165,6 +165,7 @@ class TestAuthService:
         user.is_email_verified = kwargs.get("is_email_verified", True)
         user.mfa_enabled = kwargs.get("mfa_enabled", False)
         user.must_change_password = kwargs.get("must_change_password", False)
+        user.locale = kwargs.get("locale", "en")
         return user
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -823,7 +824,8 @@ class TestAuthService:
 
         assert "verification code has been sent" in result.message
         mock_otp.generate_and_send.assert_awaited_once_with(
-            email="admin@acme.com", purpose="signup"
+            email="admin@acme.com", purpose="signup",
+            locale="en",
         )
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -874,7 +876,8 @@ class TestAuthService:
 
         assert "code has been sent" in result.message
         mock_otp.generate_and_send.assert_awaited_once_with(
-            email="admin@acme.com", purpose="password_reset"
+            email="admin@acme.com", purpose="password_reset",
+            locale="en",
         )
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -977,7 +980,8 @@ class TestAuthService:
 
         assert "a login code has been sent" in result.message
         mock_otp.generate_and_send.assert_awaited_once_with(
-            email="admin@acme.com", purpose="passwordless_login"
+            email="admin@acme.com", purpose="passwordless_login",
+            locale="en",
         )
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -1182,7 +1186,8 @@ class TestAuthService:
         assert result.access_token is None
 
         mock_otp.generate_and_send.assert_awaited_once_with(
-            email="admin@acme.com", purpose="mfa"
+            email="admin@acme.com", purpose="mfa",
+            locale="en",
         )
         mock_redis.setex.assert_awaited_once()
         key, ttl, data = mock_redis.setex.call_args[0]
@@ -1420,7 +1425,8 @@ class TestAuthService:
             self.USER_ID, enabled=True
         )
         mock_otp.generate_and_send.assert_awaited_once_with(
-            email="admin@acme.com", purpose="mfa"
+            email="admin@acme.com", purpose="mfa",
+            locale="en",
         )
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -1783,7 +1789,8 @@ class TestAuthService:
         mock_repo.find_user_by_email.assert_awaited_once_with("new@acme.com")
         mock_repo.reset_email_verification.assert_awaited_once_with(self.USER_ID)
         mock_otp.generate_and_send.assert_awaited_once_with(
-            email="new@acme.com", purpose="signup"
+            email="new@acme.com", purpose="signup",
+            locale="en",
         )
 
     @pytest.mark.asyncio

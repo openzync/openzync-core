@@ -254,6 +254,7 @@ class OrganizationService:
             invitee_name=pending_admin.name or admin_email.split("@")[0],
             invitee_email=admin_email,
             raw_token=raw_token,
+            locale=pending_admin.locale,
         )
 
         logger.info(

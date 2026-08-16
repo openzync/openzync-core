@@ -485,6 +485,7 @@ class AuthRepository:
         email: str | None = None,
         password_hash: str | None = None,
         must_change_password: bool | None = None,
+        locale: str | None = None,
     ) -> User:
         """Update a dashboard user's profile fields and flush.
 
@@ -498,6 +499,7 @@ class AuthRepository:
                 ``external_id`` is also updated to match.
             password_hash: New bcrypt hash (``None`` = no change).
             must_change_password: New flag value (``None`` = no change).
+            locale: New BCP-47 locale tag (``None`` = no change).
 
         Returns:
             The updated User instance.
@@ -520,6 +522,8 @@ class AuthRepository:
             user.password_hash = password_hash
         if must_change_password is not None:
             user.must_change_password = must_change_password
+        if locale is not None:
+            user.locale = locale
 
         await self._db.flush()
         await self._db.refresh(user)

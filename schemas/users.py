@@ -12,6 +12,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
+from core.locales import ALLOWED_LOCALES
+
 
 class CreateUserRequest(BaseModel):
     """Request body for ``POST /v1/users``.
@@ -55,6 +57,25 @@ class CreateUserRequest(BaseModel):
         description="Dashboard role — 'admin' or 'member'. Defaults to 'member'.",
         examples=["member"],
     )
+    locale: str = Field(
+        default="en",
+        description=(
+            "BCP-47 locale tag (lowercase) selecting the user's email "
+            "language.  Must be in the supported set."
+        ),
+        examples=["en"],
+    )
+
+    @field_validator("locale")
+    @classmethod
+    def validate_locale(cls, v: str) -> str:
+        """Reject locale tags outside the shipped set (see core.locales)."""
+        if v not in ALLOWED_LOCALES:
+            raise ValueError(
+                f"Unsupported locale '{v}'. Supported: "
+                f"{', '.join(sorted(ALLOWED_LOCALES))}."
+            )
+        return v
 
     @field_validator("email")
     @classmethod
@@ -112,6 +133,25 @@ class UpdateUserRequest(BaseModel):
         description="New dashboard role — 'admin' or 'member'. Absent = no change.",
         examples=["admin"],
     )
+    locale: str | None = Field(
+        default=None,
+        description=(
+            "New BCP-47 locale tag. Absent = no change. Must be in the "
+            "supported set."
+        ),
+        examples=["en"],
+    )
+
+    @field_validator("locale")
+    @classmethod
+    def validate_locale(cls, v: str | None) -> str | None:
+        """Reject locale tags outside the shipped set (see core.locales)."""
+        if v is not None and v not in ALLOWED_LOCALES:
+            raise ValueError(
+                f"Unsupported locale '{v}'. Supported: "
+                f"{', '.join(sorted(ALLOWED_LOCALES))}."
+            )
+        return v
 
     @field_validator("email")
     @classmethod
@@ -166,6 +206,11 @@ class UserResponse(BaseModel):
             "(``invite_token_hash`` is not NULL) — the user cannot log in "
             "until the invite is accepted."
         ),
+    )
+    locale: str = Field(
+        default="en",
+        description="BCP-47 locale tag selecting the user's email language.",
+        examples=["en"],
     )
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)

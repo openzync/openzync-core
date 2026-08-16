@@ -86,6 +86,7 @@ def _make_pending_user(
     user.organization_id = org_id
     user.email = email
     user.name = name
+    user.locale = "en"
     user.created_at = created_at or datetime.now(UTC)
     return user
 

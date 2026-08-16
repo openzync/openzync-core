@@ -80,6 +80,7 @@ async def create_user(
         email=body.email,
         metadata=body.metadata,
         role=body.role,
+        locale=body.locale,
     )
 
 
