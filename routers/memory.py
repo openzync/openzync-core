@@ -35,7 +35,7 @@ from fastapi import (
 from pydantic import ValidationError
 
 from core.audit import audit_action
-from dependencies.auth import get_current_user_id
+from dependencies.auth import get_current_user_id, require_permission
 from dependencies.project_auth import require_project_membership
 from dependencies.services import get_memory_service
 from schemas.memory import IngestMemoryRequest, IngestMemoryResponse
@@ -77,6 +77,7 @@ async def ingest_messages(
     blobs: list[UploadFile] = File(default=[], description="Binary file attachments (blob_0, blob_1, ...)"),
     service: MemoryService = Depends(get_memory_service),
     _: None = Depends(require_project_membership),
+    _perm: None = Depends(require_permission("project:write")),
     created_by: UUID = Depends(get_current_user_id),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
 ) -> IngestMemoryResponse:
@@ -212,6 +213,7 @@ async def delete_project_memory(
     request: Request,
     service: MemoryService = Depends(get_memory_service),
     _: None = Depends(require_project_membership),
+    _perm: None = Depends(require_permission("project:write")),
 ) -> None:
     """Delete all memory for a project.
 

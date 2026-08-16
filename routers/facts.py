@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import audit_action
-from dependencies.auth import get_current_user_id
+from dependencies.auth import get_current_user_id, require_permission
 from dependencies.db import get_db
 from dependencies.project_auth import require_project_membership
 from dependencies.services import get_fact_service
@@ -79,6 +79,7 @@ async def ingest_facts(
     payload: FactBatchRequest,
     service: FactService = Depends(get_fact_service),
     _: None = Depends(require_project_membership),
+    _perm: None = Depends(require_permission("project:write")),
     created_by: UUID = Depends(get_current_user_id),
 ) -> FactBatchResponse:
     """Ingest a batch of fact triples into a project's knowledge graph.
@@ -138,6 +139,7 @@ async def list_facts_at_time(
     ),
     repo: FactRepository = Depends(_get_fact_repository),
     _: None = Depends(require_project_membership),
+    _perm: None = Depends(require_permission("project:read")),
 ) -> PaginatedFactsResponse:
     """List facts valid at an effective-at timestamp.
 
@@ -208,6 +210,7 @@ async def retract_fact(
     payload: FactRetractRequest | None = None,
     service: FactService = Depends(get_fact_service),  # noqa: B008
     _: None = Depends(require_project_membership),  # noqa: B008
+    _perm: None = Depends(require_permission("project:write")),  # noqa: B008
 ) -> FactResponse:
     """Retract a fact, recording its invalidation lineage.
 
@@ -270,6 +273,7 @@ async def get_fact_history(
     ),  # noqa: B008
     service: FactService = Depends(get_fact_service),  # noqa: B008
     _: None = Depends(require_project_membership),  # noqa: B008
+    _perm: None = Depends(require_permission("project:read")),  # noqa: B008
 ) -> FactHistoryResponse:
     """Fetch a fact and its invalidation lineage.
 

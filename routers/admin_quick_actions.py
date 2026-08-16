@@ -13,7 +13,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from dependencies.auth import require_org_admin
+from dependencies.auth import require_permission
 from dependencies.services import get_quick_actions_service
 from services.quick_actions_service import QuickActionsService
 
@@ -41,7 +41,7 @@ class QuickActionsResponse(BaseModel):
 )
 async def list_quick_actions(
     service: QuickActionsService = Depends(get_quick_actions_service),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("members:read")),
 ) -> QuickActionsResponse:
     """Return a prioritized list of quick actions based on org state.
 

@@ -18,9 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import audit_action
 from core.redis import get_redis
-from dependencies.auth import get_current_user_id, require_org_id
+from dependencies.auth import get_current_user_id, require_org_id, require_permission
 from dependencies.db import get_db
-from dependencies.project_auth import require_project_owner
+from dependencies.project_auth import require_project_membership
 from repositories.api_key_repository import ApiKeyRepository
 from schemas.api_keys import (
     ApiKeyCreatedResponse,
@@ -56,7 +56,8 @@ def _get_service(
 async def list_api_keys(
     project_id: UUID,
     service: ApiKeyService = Depends(_get_service),
-    _: None = Depends(require_project_owner),
+    _: None = Depends(require_project_membership),
+    _perm: None = Depends(require_permission("project:manage")),
     org_id: str = Depends(require_org_id),
 ) -> ApiKeyListResponse:
     """List non-revoked API keys for the project.
@@ -96,7 +97,8 @@ async def create_api_key(
     project_id: UUID,
     payload: CreateApiKeyRequest,
     service: ApiKeyService = Depends(_get_service),
-    _: None = Depends(require_project_owner),
+    _: None = Depends(require_project_membership),
+    _perm: None = Depends(require_permission("project:manage")),
     org_id: str = Depends(require_org_id),
     user_id: UUID = Depends(get_current_user_id),
 ) -> ApiKeyCreatedResponse:
@@ -149,7 +151,8 @@ async def revoke_api_key(
     project_id: UUID,
     key_id: UUID,
     service: ApiKeyService = Depends(_get_service),
-    _: None = Depends(require_project_owner),
+    _: None = Depends(require_project_membership),
+    _perm: None = Depends(require_permission("project:manage")),
     org_id: str = Depends(require_org_id),
 ) -> None:
     """Revoke (soft-delete) a project-scoped API key.

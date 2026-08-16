@@ -18,7 +18,7 @@ from starlette.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import audit_action
-from dependencies.auth import require_org_admin
+from dependencies.auth import require_permission
 from dependencies.db import get_db
 from repositories.prompt_template_repository import PromptTemplateRepository
 from schemas.custom_instructions import (
@@ -55,7 +55,7 @@ router = APIRouter(
 )
 async def list_prompt_templates(
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:read")),
 ) -> PromptTemplateListResponse:
     """List all prompt template names with override status.
 
@@ -75,7 +75,7 @@ async def list_prompt_templates(
 )
 async def list_system_prompts(
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:read")),
 ) -> SystemPromptGroupsResponse:
     """List all system-default prompt templates grouped by base name.
 
@@ -97,7 +97,7 @@ async def list_system_prompts(
 async def import_system_prompt(
     body: ImportPromptRequest,
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:write")),
 ) -> PromptTemplateDetail:
     """Import a system-default prompt template into the organisation.
 
@@ -128,7 +128,7 @@ async def import_system_prompt(
 async def set_prompt_type_default(
     name: str,
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:write")),
 ) -> PromptTemplateDetail:
     """Mark a prompt template as the active default for its type.
 
@@ -155,7 +155,7 @@ async def set_prompt_type_default(
 async def get_prompt_template(
     name: str,
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:read")),
 ) -> PromptTemplateDetail:
     """Get the active template for an organization.
 
@@ -179,7 +179,7 @@ async def get_prompt_template(
 async def list_prompt_template_versions(
     name: str,
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:read")),
 ) -> PromptTemplateVersionsResponse:
     """List all versions of a named template for this org.
 
@@ -215,7 +215,7 @@ async def set_prompt_template(
     body: SetPromptTemplateRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:write")),
 ) -> PromptTemplateDetail:
     """Create a new org-specific version of a prompt template.
 
@@ -258,7 +258,7 @@ async def rollback_prompt_template(
     name: str,
     version: int,
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:write")),
 ) -> PromptTemplateDetail:
     """Rollback to a previous version of a prompt template.
 
@@ -289,7 +289,7 @@ async def rollback_prompt_template(
 async def delete_prompt_template_override(
     name: str,
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:write")),
 ) -> Response:
     """Delete all org-specific versions of a prompt template.
 
@@ -343,7 +343,7 @@ async def delete_prompt_template_override(
 )
 async def list_custom_instructions(
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:read")),
 ) -> CustomInstructionsResponse:
     """List all extraction custom instructions for the organization."""
     from repositories.custom_instruction_repository import (
@@ -369,7 +369,7 @@ async def list_custom_instructions(
 async def set_custom_instructions(
     body: SetCustomInstructionsRequest,
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:write")),
 ) -> CustomInstructionsResponse:
     """Replace all extraction custom instructions for the organization.
 
@@ -400,7 +400,7 @@ async def set_custom_instructions(
 @audit_action("instruction.delete", "instruction", "Instructions deleted")
 async def clear_custom_instructions(
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:write")),
 ) -> Response:
     """Clear all extraction custom instructions for the organization.
 

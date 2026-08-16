@@ -17,6 +17,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from dependencies.auth import require_permission
 from dependencies.db import get_db
 from dependencies.project_auth import require_project_membership
 from repositories.session_repository import SessionRepository
@@ -50,7 +51,10 @@ def _get_extraction_service(
 @router.get(
     "",
     response_model=StructuredExtractionListResponse,
-    dependencies=[Depends(require_project_membership)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:read")),
+    ],
 )
 async def list_structured_extractions(
     request: Request,
@@ -75,7 +79,10 @@ async def list_structured_extractions(
 @router.get(
     "/{episode_id}",
     response_model=StructuredExtractionResponse,
-    dependencies=[Depends(require_project_membership)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:read")),
+    ],
 )
 async def get_episode_extraction(
     request: Request,

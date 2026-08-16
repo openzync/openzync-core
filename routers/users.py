@@ -20,9 +20,9 @@ from starlette.responses import Response
 from core.audit import audit_action
 from core.exceptions import RateLimitError, ValidationError
 from dependencies.auth import (
-    require_org_admin,
-    require_org_admin_or_self,
     require_org_id,
+    require_permission,
+    require_permission_or_self,
 )
 from dependencies.db import get_db
 from repositories.user_repository import UserRepository
@@ -64,7 +64,7 @@ async def get_user_service(
 @audit_action("user.create", "user", "User created")
 async def create_user(
     body: CreateUserRequest,
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("members:write")),
     service: UserService = Depends(get_user_service),
 ) -> UserResponse:
     """Create a new user.
@@ -148,7 +148,7 @@ async def update_user(
     body: UpdateUserRequest,
     request: Request,
     service: UserService = Depends(get_user_service),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("members:write")),
 ) -> UserResponse:
     """Update user fields.
 
@@ -156,9 +156,9 @@ async def update_user(
     - Set a metadata key to ``null`` to remove it.
     - Send ``name: null`` or ``email: null`` to clear those fields.
     - At least one field must be provided.
-    - ``role`` may only be changed by an org admin (JWT) — API keys are
-      rejected upstream by ``require_org_admin`` (401), and you cannot
-      change your own role.
+    - ``role`` may only be changed by a member with write access (JWT) —
+      API keys are rejected upstream by ``require_permission("members:write")``
+      (401), and you cannot change your own role.
 
     Uses ``model_dump(exclude_unset=True)`` so that ``None`` means
     "set to null" and an absent key means "do not update."
@@ -183,7 +183,7 @@ async def delete_user(
     user_id: UUID,
     request: Request,
     service: UserService = Depends(get_user_service),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("members:write")),
 ) -> Response:
     """Delete a user and all associated data.
 
@@ -229,7 +229,7 @@ async def get_user_summary_service(
 async def get_user_summary(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_org_admin_or_self),
+    org_id: str = Depends(require_permission_or_self("members:read")),
 ) -> UserSummaryResponse:
     """Get the current summary for a user.
 
@@ -258,13 +258,14 @@ async def get_user_summary(
 async def trigger_user_summary(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("members:write")),
 ) -> UserSummaryTriggerResponse:
     """Trigger generation of a user summary.
 
-    Enqueues an ARQ background job.  Admin-gated (``require_org_admin``):
-    this mutates another user's data and enqueues paid LLM work.  Rate-
-    limited to once per 5 minutes per user (enforced via Redis).
+    Enqueues an ARQ background job.  Permission-gated
+    (``require_permission("members:write")``): this mutates another user's
+    data and enqueues paid LLM work.  Rate-limited to once per 5 minutes
+    per user (enforced via Redis).
     """
     try:
         return await service.trigger_generation(
@@ -281,7 +282,7 @@ async def trigger_user_summary(
 async def list_user_summary_instructions(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_org_admin_or_self),
+    org_id: str = Depends(require_permission_or_self("members:read")),
 ) -> CustomInstructionsResponse:
     """List custom instructions for a user's summary generation.
 
@@ -305,11 +306,12 @@ async def set_user_summary_instructions(
     user_id: UUID,
     body: SetCustomInstructionsRequest,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("members:write")),
 ) -> CustomInstructionsResponse:
     """Replace all summary instructions for a user.
 
-    Admin-gated (``require_org_admin``): mutates another user's data.
+    Permission-gated (``require_permission("members:write")``): mutates
+    another user's data.
     """
     instructions_data = [i.model_dump() for i in body.instructions]
     instructions = await service.set_instructions(
@@ -327,11 +329,12 @@ async def set_user_summary_instructions(
 async def delete_user_summary_instructions(
     user_id: UUID,
     service: UserSummaryService = Depends(get_user_summary_service),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("members:write")),
 ) -> Response:
     """Clear all summary instructions for a user.
 
-    Admin-gated (``require_org_admin``): mutates another user's data.
+    Permission-gated (``require_permission("members:write")``): mutates
+    another user's data.
     """
     await service.delete_instructions(org_id=UUID(org_id), user_id=user_id)
     return Response(status_code=204)

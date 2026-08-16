@@ -10,7 +10,27 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from core.rbac import ALL_PERMISSIONS
+
+
+def _normalize_permissions(v: list[str]) -> list[str]:
+    """Validate, dedupe, and sort a permission list (fail-closed).
+
+    Args:
+        v: Raw permission strings from the request/ORM.
+
+    Returns:
+        Deduplicated, sorted permission strings.
+
+    Raises:
+        ValueError: If any string is not in ``ALL_PERMISSIONS``.
+    """
+    unknown = [p for p in v if p not in ALL_PERMISSIONS]
+    if unknown:
+        raise ValueError(f"Unknown permissions: {sorted(unknown)}")
+    return sorted(set(v))
 
 
 class CreateApiKeyRequest(BaseModel):
@@ -23,6 +43,21 @@ class CreateApiKeyRequest(BaseModel):
         description="Human-readable label for the new API key.",
         examples=["Production Key", "CI/CD Key"],
     )
+    permissions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Explicit permission strings using the same vocabulary as "
+            "users. Empty = wildcard via role. Member defaults are seeded "
+            "by the service layer, not here."
+        ),
+        examples=[["project:read", "project:write"]],
+    )
+
+    @field_validator("permissions")
+    @classmethod
+    def validate_permissions(cls, v: list[str]) -> list[str]:
+        """Reject unknown permission strings; dedupe and sort."""
+        return _normalize_permissions(v)
 
 
 class ApiKeyResponse(BaseModel):
@@ -43,8 +78,8 @@ class ApiKeyResponse(BaseModel):
         description="UUID of the user who created this key. "
         "``None`` for keys created before this field was added.",
     )
-    scopes: list[str] = Field(
-        ..., description="Permission scopes.", examples=[["read", "write"]]
+    permissions: list[str] = Field(
+        ..., description="Permission strings.", examples=[["project:read", "project:write"]]
     )
     is_revoked: bool = Field(
         ..., description="Whether the key has been revoked."
@@ -59,6 +94,12 @@ class ApiKeyResponse(BaseModel):
         default=None,
         description="Full API key string — only populated on creation.",
     )
+
+    @field_validator("permissions")
+    @classmethod
+    def validate_permissions(cls, v: list[str]) -> list[str]:
+        """Reject unknown permission strings; dedupe and sort."""
+        return _normalize_permissions(v)
 
     model_config = ConfigDict(from_attributes=True)
 

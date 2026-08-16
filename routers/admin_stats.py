@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies.auth import require_org_admin
+from dependencies.auth import require_permission
 from dependencies.db import get_db
 from models.api_key import ApiKey
 from models.episode import Episode
@@ -42,7 +42,7 @@ router = APIRouter(
 )
 async def get_org_stats(
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("members:read")),
 ) -> OrgStatsResponse:
     """Get aggregate statistics for the authenticated organization.
 
@@ -92,7 +92,7 @@ async def get_usage_stats(
         description="Number of days to look back.",
     ),
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("members:read")),
 ) -> list[UsageStatsResponse]:
     """Get daily usage statistics for the organization.
 

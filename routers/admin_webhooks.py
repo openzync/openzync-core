@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from starlette.responses import Response
 
 from core.audit import audit_action
-from dependencies.auth import require_org_admin
+from dependencies.auth import require_permission
 from dependencies.services import get_webhook_service
 from schemas.webhook import (
     CreateWebhookRequest,
@@ -52,7 +52,7 @@ async def list_event_types() -> dict:
 @router.get("")
 async def list_webhooks(
     service: WebhookService = Depends(get_webhook_service),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:read")),
 ) -> dict:
     """List all webhook endpoints for the authenticated organization."""
     endpoints = await service.list_endpoints(uuid.UUID(org_id))
@@ -66,7 +66,7 @@ async def list_webhooks(
 async def get_webhook(
     endpoint_id: uuid.UUID,
     service: WebhookService = Depends(get_webhook_service),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:read")),
 ) -> dict:
     """Get a single webhook endpoint by ID."""
     endpoint = await service.get_endpoint(endpoint_id, uuid.UUID(org_id))
@@ -83,7 +83,7 @@ async def get_webhook(
 async def create_webhook(
     body: CreateWebhookRequest,
     service: WebhookService = Depends(get_webhook_service),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:write")),
 ) -> WebhookSecretResponse:
     """Create a new webhook endpoint.
 
@@ -113,7 +113,7 @@ async def update_webhook(
     endpoint_id: uuid.UUID,
     body: UpdateWebhookRequest,
     service: WebhookService = Depends(get_webhook_service),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:write")),
 ) -> dict:
     """Update a webhook endpoint's name, URL, events, or active status."""
     updates: dict = body.model_dump(exclude_none=True)
@@ -136,7 +136,7 @@ async def update_webhook(
 async def delete_webhook(
     endpoint_id: uuid.UUID,
     service: WebhookService = Depends(get_webhook_service),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("configuration:write")),
 ) -> Response:
     """Delete a webhook endpoint."""
     deleted = await service.delete_endpoint(endpoint_id, uuid.UUID(org_id))
