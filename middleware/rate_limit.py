@@ -98,6 +98,8 @@ async def _get_org_rate_limit(
             max_req = int(quota_data.get("rate_limit_max", FALLBACK_ORG_RATE_LIMIT))
             window = int(quota_data.get("rate_limit_window", FALLBACK_ORG_WINDOW))
             return max_req, window
+        # Org has no quota hash configured — fall back to defaults.
+        return FALLBACK_ORG_RATE_LIMIT, FALLBACK_ORG_WINDOW
     except Exception as exc:
         logger.error("rate_limit.config_read_failed", exc_info=True)
         raise RateLimitUnavailableError(
