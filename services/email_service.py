@@ -34,7 +34,13 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from jinja2 import Environment, FileSystemLoader, Template, select_autoescape
+from jinja2 import (
+    Environment,
+    FileSystemLoader,
+    Template,
+    TemplateNotFound,
+    select_autoescape,
+)
 
 from core.email import EmailConfig, build_email_message
 from core.exceptions import ExternalServiceError
@@ -47,9 +53,13 @@ logger = logging.getLogger(__name__)
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "prompts" / "email"
 """Directory containing per-locale Jinja2 email template directories."""
 
+# Default extensions (html/htm/xml) never match *.html.jinja2, so the stock
+# select_autoescape would leave every HTML email template unescaped — an XSS
+# vector for user-controlled values (org_name, inviter_name, name, ...).
+# Match the full double suffix; .txt/.subject templates stay raw on purpose.
 _env = Environment(
     loader=FileSystemLoader(str(_TEMPLATE_DIR)),
-    autoescape=select_autoescape(),
+    autoescape=select_autoescape(("html.jinja2", "htm.jinja2")),
 )
 
 
@@ -70,17 +80,19 @@ def _load_template(locale: str, template_name: str, kind: str) -> tuple[Template
     Raises:
         TemplateNotFound: If neither the requested locale nor English have
             the template.
-    """
-    from jinja2 import TemplateNotFound
 
+    Note:
+        ``TemplateSyntaxError`` (and any other load error) propagates
+        intentionally — a broken template must fail loudly, never fall back
+        to a different locale.
+    """
     candidates = [locale, DEFAULT_LOCALE] if locale != DEFAULT_LOCALE else [locale]
-    last_error: Exception | None = None
     for cand in candidates:
         try:
             return _env.get_template(f"{cand}/{template_name}.{kind}.jinja2"), cand
-        except Exception as exc:  # loader failures fall back — en is the floor
-            last_error = exc
-    raise TemplateNotFound(template_name) from last_error
+        except TemplateNotFound:
+            continue
+    raise TemplateNotFound(template_name)
 
 
 async def render_email_template(

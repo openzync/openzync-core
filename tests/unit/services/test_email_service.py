@@ -4,6 +4,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from jinja2 import TemplateNotFound
 
 from core.email import EmailConfig
 from core.exceptions import ExternalServiceError
@@ -56,7 +57,7 @@ class TestRenderEmailTemplate:
         """A locale without its own template falls back to the en variant."""
         mock_env = MagicMock()
         mock_env.get_template.side_effect = [
-            FileNotFoundError("no de template"),
+            TemplateNotFound("de/welcome.html.jinja2"),
             MagicMock(render=MagicMock(return_value="<html>en fallback</html>")),
         ]
 
@@ -74,7 +75,9 @@ class TestRenderEmailTemplate:
     async def test_template_not_found_raises_error(self) -> None:
         """Missing template raises ExternalServiceError."""
         with patch("services.email_service._env") as mock_env:
-            mock_env.get_template.side_effect = FileNotFoundError("missing")
+            mock_env.get_template.side_effect = TemplateNotFound(
+                "en/welcome.html.jinja2"
+            )
 
             with pytest.raises(ExternalServiceError, match="Email template.*not found"):
                 await render_email_template("nonexistent")
@@ -110,7 +113,9 @@ class TestRenderTextTemplate:
     async def test_missing_text_template_returns_empty(self) -> None:
         """No .txt.jinja2 template returns empty fallback string."""
         with patch("services.email_service._env") as mock_env:
-            mock_env.get_template.side_effect = FileNotFoundError("missing")
+            mock_env.get_template.side_effect = TemplateNotFound(
+                "en/welcome.txt.jinja2"
+            )
 
             result = await render_text_template("welcome")
             assert result == ""
@@ -139,7 +144,9 @@ class TestRenderSubjectTemplate:
     async def test_subject_missing_raises(self) -> None:
         """A missing subject template is loud — never an empty subject."""
         with patch("services.email_service._env") as mock_env:
-            mock_env.get_template.side_effect = FileNotFoundError("missing")
+            mock_env.get_template.side_effect = TemplateNotFound(
+                "en/welcome.subject.jinja2"
+            )
 
             with pytest.raises(
                 ExternalServiceError, match="subject template.*not found"
@@ -201,6 +208,33 @@ class TestRealTemplateRendering:
 
         assert html.strip()
         assert 'lang="en"' in html  # effective locale injected for the lang attr
+
+    async def test_html_autoescapes_user_controlled_values(self) -> None:
+        """User-controlled values are escaped in HTML, untouched in plain text.
+
+        Regression for a shipping blocker: ``select_autoescape`` never fired
+        for ``*.html.jinja2`` templates, so ``org_name`` etc. rendered raw
+        into HTML emails (XSS via ``<img onerror=...>``).
+        """
+        payload: dict[str, object] = {
+            "org_name": "<img src=x onerror=alert(1)>",
+            "invitee_name": "<b>bold</b>",
+            "inviter_name": "Bob",
+            "link": "https://app.openzync.tech/invite/abc123",
+            "expiry_hours": 72,
+        }
+        html = await render_email_template("invite", payload, locale="en")
+        text = await render_text_template("invite", payload, locale="en")
+
+        # HTML body: markup escaped, so it can never execute.
+        assert "<img src=x onerror=alert(1)>" not in html
+        assert "&lt;img src=x onerror=alert(1)&gt;" in html
+        assert "<b>bold</b>" not in html
+        assert "&lt;b&gt;bold&lt;/b&gt;" in html
+
+        # Plain text is not HTML — raw values are correct, not double-escaped.
+        assert "<img src=x onerror=alert(1)>" in text
+        assert "<b>bold</b>" in text
 
     async def test_missing_en_template_raises(self) -> None:
         """A missing English template is a loud ExternalServiceError — never
