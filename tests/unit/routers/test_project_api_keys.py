@@ -28,6 +28,21 @@ KEY_ID = UUID("00000000-0000-0000-0000-000000000010")
 
 
 @pytest.fixture(autouse=True)
+def _stub_permission_gate() -> None:
+    """Stub the permission gate for every test in this file.
+
+    The router gates with ``require_permission("project:manage")`` — a
+    closure created at router import time that cannot be keyed in
+    ``dependency_overrides``.  Patching ``dependencies.auth._check_permission``
+    (the shared decision function) stubs the gate while keeping the
+    ``require_org_id`` chain intact.  The real gate matrix is covered by
+    ``test_admin_gate_matrix.py``.
+    """
+    with patch("dependencies.auth._check_permission", new=AsyncMock()):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _init_settings() -> None:
     """Initialise the Settings singleton with dummy values."""
     from core.config import Settings, set_settings
@@ -50,7 +65,7 @@ def _make_api_key_response(overrides: dict | None = None) -> dict:
         "prefix": "oz_live_",
         "project_id": PROJECT_ID,
         "created_by": USER_ID,
-        "scopes": ["read", "write"],
+        "permissions": ["project:read", "project:write"],
         "is_revoked": False,
         "last_used_at": None,
         "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
@@ -77,7 +92,6 @@ class TestProjectApiKeysRouter:
         from dependencies.db import get_db
         from core.redis import get_redis
         from dependencies.auth import require_org_id, get_current_user_id
-        from dependencies.project_auth import require_project_owner
         from routers.project_api_keys import _get_service, router
 
         app = FastAPI()
@@ -85,7 +99,6 @@ class TestProjectApiKeysRouter:
 
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_redis] = lambda: AsyncMock()
-        app.dependency_overrides[require_project_owner] = lambda: None
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
         app.dependency_overrides[get_current_user_id] = lambda: USER_ID
         app.dependency_overrides[_get_service] = lambda: mock_instance
@@ -122,7 +135,6 @@ class TestProjectApiKeysRouter:
         from dependencies.db import get_db
         from core.redis import get_redis
         from dependencies.auth import require_org_id, get_current_user_id
-        from dependencies.project_auth import require_project_owner
         from routers.project_api_keys import _get_service, router
 
         app = FastAPI()
@@ -130,7 +142,6 @@ class TestProjectApiKeysRouter:
 
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_redis] = lambda: AsyncMock()
-        app.dependency_overrides[require_project_owner] = lambda: None
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
         app.dependency_overrides[get_current_user_id] = lambda: USER_ID
         app.dependency_overrides[_get_service] = lambda: mock_instance
@@ -171,7 +182,6 @@ class TestProjectApiKeysRouter:
         from dependencies.db import get_db
         from core.redis import get_redis
         from dependencies.auth import require_org_id, get_current_user_id
-        from dependencies.project_auth import require_project_owner
         from routers.project_api_keys import _get_service, router
 
         app = FastAPI()
@@ -179,7 +189,6 @@ class TestProjectApiKeysRouter:
 
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_redis] = lambda: AsyncMock()
-        app.dependency_overrides[require_project_owner] = lambda: None
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
         app.dependency_overrides[get_current_user_id] = lambda: USER_ID
         app.dependency_overrides[_get_service] = lambda: mock_instance
@@ -218,7 +227,6 @@ class TestProjectApiKeysRouter:
         from dependencies.db import get_db
         from core.redis import get_redis
         from dependencies.auth import require_org_id, get_current_user_id
-        from dependencies.project_auth import require_project_owner
         from routers.project_api_keys import _get_service, router
 
         app = FastAPI()
@@ -226,7 +234,6 @@ class TestProjectApiKeysRouter:
 
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_redis] = lambda: AsyncMock()
-        app.dependency_overrides[require_project_owner] = lambda: None
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
         app.dependency_overrides[get_current_user_id] = lambda: USER_ID
         app.dependency_overrides[_get_service] = lambda: mock_instance
@@ -263,7 +270,6 @@ class TestProjectApiKeysRouter:
         from dependencies.db import get_db
         from core.redis import get_redis
         from dependencies.auth import require_org_id, get_current_user_id
-        from dependencies.project_auth import require_project_owner
         from routers.project_api_keys import _get_service, router
 
         app = FastAPI()
@@ -271,7 +277,6 @@ class TestProjectApiKeysRouter:
 
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_redis] = lambda: AsyncMock()
-        app.dependency_overrides[require_project_owner] = lambda: None
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
         app.dependency_overrides[get_current_user_id] = lambda: USER_ID
         app.dependency_overrides[_get_service] = lambda: mock_instance
@@ -306,7 +311,6 @@ class TestProjectApiKeysRouter:
         from dependencies.db import get_db
         from core.redis import get_redis
         from dependencies.auth import require_org_id, get_current_user_id
-        from dependencies.project_auth import require_project_owner
         from routers.project_api_keys import _get_service, router
 
         app = FastAPI()
@@ -314,7 +318,6 @@ class TestProjectApiKeysRouter:
 
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_redis] = lambda: AsyncMock()
-        app.dependency_overrides[require_project_owner] = lambda: None
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
         app.dependency_overrides[get_current_user_id] = lambda: USER_ID
         app.dependency_overrides[_get_service] = lambda: mock_instance

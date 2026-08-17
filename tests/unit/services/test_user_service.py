@@ -118,6 +118,7 @@ class TestUserService:
             email="alice@example.com",
             metadata={"source": "onboarding"},
             role="member",
+            permissions=["project:read", "project:write"],
         )
 
     @pytest.mark.asyncio
@@ -240,6 +241,7 @@ class TestUserService:
             name="Alice",
             email="alice@example.com",
             metadata=None,
+            permissions=["project:read", "project:write"],
         )
 
     @pytest.mark.asyncio
@@ -720,6 +722,166 @@ class TestUserServiceRoleGuards:
             )
 
         mock_invalidate.assert_awaited_once_with(_mock_redis, self.MEMBER_ID)
+
+
+@pytest.mark.unit
+class TestUserServicePermissionSeeding:
+    """Permission seeding + cache invalidation on the unified RBAC model.
+
+    Observed contract:
+    - ``create_user`` with role ``member`` → member defaults
+      (``project:read``, ``project:write``).
+    - ``create_user`` with role ``admin`` → ``[]`` (wildcard via role).
+    - A role change keeps the stored grants (role alone never touches the
+      permission array) and invalidates the cached permission set.
+    - A permissions update replaces the set and invalidates the cache.
+    """
+
+    ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+    ADMIN_ID = UUID("00000000-0000-0000-0000-000000000010")
+    MEMBER_ID = UUID("00000000-0000-0000-0000-000000000012")
+
+    def _make_service(
+        self, with_redis: bool = False,
+    ) -> tuple[UserService, AsyncMock, AsyncMock | None]:
+        """Build a ``UserService`` with mocked repo and optional Redis."""
+        mock_repo = AsyncMock()
+        mock_redis = AsyncMock() if with_redis else None
+        service = UserService(repo=mock_repo, redis=mock_redis)
+        return service, mock_repo, mock_redis
+
+    def _make_user(
+        self, role: str = "member", permissions: list[str] | None = None,
+    ) -> MagicMock:
+        """Build a User ORM mock with the fields ``_user_to_dict`` reads."""
+        user = MagicMock()
+        user.id = self.MEMBER_ID
+        user.organization_id = self.ORG_ID
+        user.external_id = "user_x"
+        user.name = "A User"
+        user.email = "a@example.com"
+        user.metadata_ = {}
+        user.role = role
+        user.permissions = permissions or []
+        user.is_active = True
+        user.is_deleted = False
+        user.created_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        user.updated_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        return user
+
+    @pytest.mark.asyncio
+    async def test_create_member_seeds_default_permissions(self) -> None:
+        """``create_user`` with the default member role seeds member defaults."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.exists_by_external_id.return_value = False
+        mock_repo.create.return_value = self._make_user(
+            role="member", permissions=["project:read", "project:write"],
+        )
+
+        await service.create_user(
+            organization_id=self.ORG_ID,
+            external_id="user_x",
+        )
+
+        mock_repo.create.assert_awaited_once_with(
+            organization_id=self.ORG_ID,
+            external_id="user_x",
+            name=None,
+            email=None,
+            metadata=None,
+            role="member",
+            permissions=["project:read", "project:write"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_create_admin_seeds_empty_permissions(self) -> None:
+        """``create_user`` with role admin seeds ``[]`` (wildcard via role)."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.exists_by_external_id.return_value = False
+        mock_repo.create.return_value = self._make_user(role="admin")
+
+        await service.create_user(
+            organization_id=self.ORG_ID,
+            external_id="user_x",
+            role="admin",
+        )
+
+        mock_repo.create.assert_awaited_once_with(
+            organization_id=self.ORG_ID,
+            external_id="user_x",
+            name=None,
+            email=None,
+            metadata=None,
+            role="admin",
+            permissions=[],
+        )
+
+    @pytest.mark.asyncio
+    async def test_role_change_keeps_grants_and_invalidates_permissions_cache(
+        self,
+    ) -> None:
+        """A role change alone never touches the permission array, but the
+        cached permission set is invalidated (admin = wildcard changes the
+        effective set)."""
+        service, mock_repo, mock_redis = self._make_service(with_redis=True)
+        mock_repo.get_by_uuid.return_value = self._make_user(
+            role="member", permissions=["project:read", "project:write"],
+        )
+        mock_repo.update.return_value = self._make_user(
+            role="admin", permissions=["project:read", "project:write"],
+        )
+
+        with (
+            patch(
+                "services.user_service.invalidate_role", new=AsyncMock(),
+            ) as mock_invalidate_role,
+            patch(
+                "services.user_service.invalidate_permissions", new=AsyncMock(),
+            ) as mock_invalidate_perms,
+        ):
+            await service.update_user(
+                organization_id=self.ORG_ID,
+                user_id=self.MEMBER_ID,
+                update_fields={"role": "admin"},
+                actor_user_id=self.ADMIN_ID,
+            )
+
+        # The repo receives ONLY the role change — grants survive untouched.
+        mock_repo.update.assert_awaited_once_with(
+            organization_id=self.ORG_ID,
+            user_id=self.MEMBER_ID,
+            update_fields={"role": "admin"},
+        )
+        mock_invalidate_role.assert_awaited_once_with(mock_redis, self.MEMBER_ID)
+        mock_invalidate_perms.assert_awaited_once_with(mock_redis, self.MEMBER_ID)
+
+    @pytest.mark.asyncio
+    async def test_permissions_update_replaces_set_and_invalidates_cache(
+        self,
+    ) -> None:
+        """A permissions update replaces the stored set and invalidates the
+        cached permission set (grant takes effect immediately)."""
+        service, mock_repo, mock_redis = self._make_service(with_redis=True)
+        mock_repo.update.return_value = self._make_user(
+            role="member", permissions=["configuration:read"],
+        )
+
+        with patch(
+            "services.user_service.invalidate_permissions", new=AsyncMock(),
+        ) as mock_invalidate_perms:
+            await service.update_user(
+                organization_id=self.ORG_ID,
+                user_id=self.MEMBER_ID,
+                update_fields={"permissions": ["configuration:read"]},
+                actor_user_id=self.ADMIN_ID,
+            )
+
+        mock_repo.update.assert_awaited_once_with(
+            organization_id=self.ORG_ID,
+            user_id=self.MEMBER_ID,
+            update_fields={"permissions": ["configuration:read"]},
+        )
+        mock_invalidate_perms.assert_awaited_once_with(mock_redis, self.MEMBER_ID)
 
 
 class TestUserServiceSuperadminSurface:

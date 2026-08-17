@@ -5,7 +5,7 @@ Tests ``GET /v1/admin/quick-actions`` endpoint.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -14,7 +14,6 @@ from httpx import ASGITransport, AsyncClient
 
 from dependencies.auth import (
     get_dashboard_user,
-    require_org_admin,
     require_org_id,
 )
 from dependencies.services import get_quick_actions_service
@@ -22,6 +21,21 @@ from routers.admin_quick_actions import router
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
+
+
+@pytest.fixture(autouse=True)
+def _stub_permission_gate() -> None:
+    """Stub the permission gate for every test in this file.
+
+    The router gates with ``require_permission("members:read")`` — a
+    closure created at router import time that cannot be keyed in
+    ``dependency_overrides``.  Patching ``dependencies.auth._check_permission``
+    (the shared decision function) stubs the gate while keeping the
+    ``require_org_id`` chain intact.  The real gate matrix is covered by
+    ``test_admin_gate_matrix.py``.
+    """
+    with patch("dependencies.auth._check_permission", new=AsyncMock()):
+        yield
 
 
 def _create_app() -> tuple[FastAPI, dict[str, AsyncMock]]:
@@ -39,8 +53,10 @@ def _create_app() -> tuple[FastAPI, dict[str, AsyncMock]]:
 
     mocks["quick_actions_service"] = AsyncMock()
 
+    from dependencies.db import get_db
+
+    app.dependency_overrides[get_db] = lambda: AsyncMock()
     app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
-    app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
     app.dependency_overrides[get_quick_actions_service] = lambda: mocks["quick_actions_service"]
 

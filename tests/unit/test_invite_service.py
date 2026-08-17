@@ -166,6 +166,8 @@ class TestInviteService:
         assert create_kwargs["email"] == "alice@acme.com"
         assert create_kwargs["role"] == "member"
         assert create_kwargs["password_hash"] is None
+        # Invited members are seeded with the member defaults.
+        assert create_kwargs["permissions"] == ["project:read", "project:write"]
         # sha256("raw-token") — the token is stored hashed, never plaintext
         assert create_kwargs["invite_token_hash"] == (
             "34d328009b123fbbb0dc93f18b3e6de1ecf7b1a5783c33dff7ffe1926f09e943"

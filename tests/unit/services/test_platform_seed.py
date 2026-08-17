@@ -78,6 +78,8 @@ class TestEnsurePlatformRoot:
         assert root.role == "superadmin"
         assert root.must_change_password is True
         assert root.external_id == ROOT_EXTERNAL_ID
+        # Superadmin = wildcard via role — the permission array stays empty.
+        assert root.permissions == []
 
     @pytest.mark.asyncio
     async def test_existing_org_reconciles_namespace_and_root(self) -> None:

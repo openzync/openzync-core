@@ -9,7 +9,7 @@ from models.api_key import ApiKey
 
 
 class TestApiKeyModel:
-    """Cover ApiKey fields — hash, prefix, scopes, revocation, timestamps."""
+    """Cover ApiKey fields — hash, prefix, permissions, revocation, timestamps."""
 
     @pytest.mark.unit
     def test_required_fields(self) -> None:
@@ -30,11 +30,12 @@ class TestApiKeyModel:
         assert key.prefix == "oz_live_"
 
     @pytest.mark.unit
-    def test_default_scopes_configured(self) -> None:
-        """Default scopes is ['read', 'write'] (server_default)."""
-        col = ApiKey.__table__.columns["scopes"]
+    def test_default_permissions_configured(self) -> None:
+        """Default permissions is ['project:read', 'project:write'] (server_default)."""
+        col = ApiKey.__table__.columns["permissions"]
         assert col.server_default is not None
-        assert "read" in str(col.server_default.arg)
+        assert "project:read" in str(col.server_default.arg)
+        assert "project:write" in str(col.server_default.arg)
 
     @pytest.mark.unit
     def test_nullable_fields(self) -> None:

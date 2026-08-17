@@ -21,7 +21,8 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from core.exceptions import NotFoundError, register_exception_handlers
-from dependencies.auth import require_org_admin
+from dependencies.auth import _check_permission as real_check_permission
+from dependencies.auth import require_org_id
 from routers.admin_org_code import _get_org_service, router
 from services.organization_service import OrgCodeInfo
 
@@ -31,8 +32,24 @@ OLD_CODE = "K7M2Q9X4"
 NEW_CODE = "ZZZ2Q9X4"
 
 
+@pytest.fixture(autouse=True)
+def _stub_permission_gate() -> None:
+    """Stub the permission gate for every test in this file.
+
+    The router gates with ``require_permission("configuration:read")`` /
+    ``require_permission("configuration:write")`` — closures created at
+    router import time that cannot be keyed in ``dependency_overrides``.
+    Patching ``dependencies.auth._check_permission`` (the shared decision
+    function both factories call) stubs the gate while keeping the
+    ``require_org_id`` chain intact.  The real gate matrix is covered by
+    ``test_admin_gate_matrix.py``.
+    """
+    with patch("dependencies.auth._check_permission", new=AsyncMock()):
+        yield
+
+
 def _make_app() -> tuple[FastAPI, AsyncMock]:
-    """Admin-gated app: ``require_org_admin`` resolved as an org admin.
+    """Admin-gated app: the permission gate stubbed, service mocked.
 
     The router now delegates to ``OrganizationService`` (N5 layering) — the
     service dependency is overridden with a mock.
@@ -40,7 +57,10 @@ def _make_app() -> tuple[FastAPI, AsyncMock]:
     app = FastAPI()
     register_exception_handlers(app)
     service_mock = AsyncMock()
-    app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
+    from dependencies.db import get_db
+
+    app.dependency_overrides[get_db] = lambda: AsyncMock()
+    app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
     app.dependency_overrides[_get_org_service] = lambda: service_mock
     app.include_router(router)
     return app, service_mock
@@ -93,11 +113,21 @@ async def test_get_org_code_admin_200() -> None:
 async def test_get_org_code_member_403() -> None:
     """GET /admin/org/org-code returns 403 for a JWT member (role check)."""
     app = _make_member_app()
-    from dependencies.auth import _ensure_org_admin  # noqa: F401  (module import)
 
-    # Patch the role lookup at the dependency layer — the member role denies.
-    with patch(
-        "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+    # Restore the REAL gate (the autouse fixture stubs it) and patch the
+    # role + permission lookups — the member role with no explicit
+    # permissions denies.
+    with (
+        patch(
+            "dependencies.auth._check_permission", new=real_check_permission,
+        ),
+        patch(
+            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+        ),
+        patch(
+            "dependencies.auth.get_effective_permissions",
+            new=AsyncMock(return_value=frozenset()),
+        ),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -218,8 +248,17 @@ async def test_regenerate_org_code_member_403() -> None:
     """POST regenerate returns 403 for a JWT member."""
     app = _make_member_app()
 
-    with patch(
-        "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+    with (
+        patch(
+            "dependencies.auth._check_permission", new=real_check_permission,
+        ),
+        patch(
+            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+        ),
+        patch(
+            "dependencies.auth.get_effective_permissions",
+            new=AsyncMock(return_value=frozenset()),
+        ),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:

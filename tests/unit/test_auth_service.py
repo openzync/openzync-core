@@ -202,7 +202,14 @@ class TestAuthService:
             name="Acme Corp", plan="free"
         )
         mock_repo.seed_prompts_for_org.assert_awaited_once_with(self.ORG_ID)
-        mock_repo.create_dashboard_user.assert_awaited_once()
+        mock_repo.create_dashboard_user.assert_awaited_once_with(
+            organization_id=self.ORG_ID,
+            email="admin@acme.com",
+            password_hash=ANY,
+            name="admin",
+            role="admin",
+            permissions=[],  # admin = wildcard via role
+        )
         mock_otp.generate_and_send.assert_awaited_once_with(
             email="admin@acme.com", purpose="signup"
         )

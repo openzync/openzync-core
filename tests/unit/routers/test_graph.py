@@ -6,7 +6,7 @@ list edges, list communities.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
@@ -47,6 +47,22 @@ def _init_settings() -> None:
     set_settings(settings)
 
 
+
+@pytest.fixture(autouse=True)
+def _stub_permission_gate() -> None:
+    """Stub the permission gate for every test in this file.
+
+    The router gates with ``require_permission("project:read")`` /
+    ``require_permission("project:write")`` — closures created at router
+    import time that cannot be keyed in ``dependency_overrides``.  Patching
+    ``dependencies.auth._check_permission`` (the shared decision function)
+    stubs the gate while keeping the ``require_org_id`` chain intact.  The
+    real gate matrix is covered by ``test_admin_gate_matrix.py``.
+    """
+    with patch("dependencies.auth._check_permission", new=AsyncMock()):
+        yield
+
+
 class TestGraphRouter:
     """Full HTTP-adapter tests for the graph router."""
 
@@ -62,6 +78,9 @@ class TestGraphRouter:
         self.app = FastAPI()
         self.app.include_router(router)
 
+        from dependencies.db import get_db
+
+        self.app.dependency_overrides[get_db] = lambda: AsyncMock()
         self.app.dependency_overrides[require_project_membership] = lambda: None
         self.app.dependency_overrides[get_graph_service] = lambda: self.graph_service
 

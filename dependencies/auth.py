@@ -335,8 +335,16 @@ def require_permission_or_self(required_permission: str):
         Raises:
             HTTPException: 401/403/503 via :func:`_check_permission`.
         """
+        # Self-bypass is JWT-session only: API keys carry the key's
+        # ``created_by`` in state.user_id, and must not reach org-scoped
+        # personal endpoints via the creator's identity.
+        auth_type: str | None = getattr(request.state, "auth_type", None)
         actor_user_id: str | None = getattr(request.state, "user_id", None)
-        if actor_user_id is not None and str(user_id) == actor_user_id:
+        if (
+            auth_type == "jwt"
+            and actor_user_id is not None
+            and str(user_id) == actor_user_id
+        ):
             return org_id
         await _check_permission(request, org_id, db, required_permission)
         return org_id
@@ -408,17 +416,32 @@ async def get_dashboard_user(
         )
 
     # ── Must-change-password gate (JWT dashboard sessions only) ──────────
+    # Fail closed: absent Redis (or a lookup error inside
+    # get_must_change_password, which degrades to "must change") must never
+    # let a session through that the DB would have blocked.
     path = request.url.path
     if (request.method, path) not in MUST_CHANGE_PASSWORD_EXEMPT_PATHS:
         redis = getattr(request.app.state, "redis", None)
-        if redis is not None:
-            must_change = await get_must_change_password(
-                redis,
-                db,
-                UUID(org_id),
-                UUID(user_id),
+        if redis is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "type": "https://errors.openzync.tech/service_unavailable",
+                    "title": "Service Unavailable",
+                    "status": 503,
+                    "detail": (
+                        "The authorization cache is not configured. "
+                        "Contact the administrator."
+                    ),
+                },
             )
-            if must_change:
+        must_change = await get_must_change_password(
+            redis,
+            db,
+            UUID(org_id),
+            UUID(user_id),
+        )
+        if must_change:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail={

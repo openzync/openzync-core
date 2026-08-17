@@ -22,6 +22,21 @@ PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
 
 
 @pytest.fixture(autouse=True)
+def _stub_permission_gate() -> None:
+    """Stub the permission gate for every test in this file.
+
+    The router gates with ``require_permission("project:read")`` /
+    ``require_permission("project:manage")`` — closures created at router
+    import time that cannot be keyed in ``dependency_overrides``.  Patching
+    ``dependencies.auth._check_permission`` (the shared decision function)
+    stubs the gate while keeping the ``require_org_id`` chain intact.  The
+    real gate matrix is covered by ``test_admin_gate_matrix.py``.
+    """
+    with patch("dependencies.auth._check_permission", new=AsyncMock()):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _init_settings() -> None:
     """Initialise the Settings singleton with dummy values."""
     from core.config import Settings, set_settings
@@ -80,17 +95,17 @@ class TestProjectsRouter:
 
         from dependencies.db import get_db
 
+        from dependencies.auth import require_org_id
         from routers.projects import (
             _get_project_service,
             require_project_membership,
-            require_project_owner,
             router,
         )
 
         app = FastAPI()
         app.include_router(router)
 
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         db_mock = AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
 
@@ -128,7 +143,7 @@ class TestProjectsRouter:
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
 
         @app.middleware("http")
@@ -160,7 +175,7 @@ class TestProjectsRouter:
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
 
         @app.middleware("http")
@@ -195,7 +210,7 @@ class TestProjectsRouter:
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
 
         @app.middleware("http")
@@ -229,7 +244,7 @@ class TestProjectsRouter:
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
 
         @app.middleware("http")
@@ -261,7 +276,7 @@ class TestProjectsRouter:
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
 
         @app.middleware("http")
@@ -292,7 +307,7 @@ class TestProjectsRouter:
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
         app.dependency_overrides[require_project_membership] = lambda: None
 
@@ -332,7 +347,7 @@ class TestProjectsRouter:
         app = FastAPI()
         app.include_router(router)
         register_exception_handlers(app)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
         app.dependency_overrides[require_project_membership] = lambda: None
 
@@ -360,13 +375,14 @@ class TestProjectsRouter:
         )
 
         from dependencies.db import get_db
-        from routers.projects import _get_project_service, require_project_owner, router
+        from dependencies.auth import require_org_id
+        from routers.projects import _get_project_service, router
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_project_owner] = lambda: None
+        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -398,13 +414,14 @@ class TestProjectsRouter:
         )
 
         from dependencies.db import get_db
-        from routers.projects import _get_project_service, require_project_owner, router
+        from dependencies.auth import require_org_id
+        from routers.projects import _get_project_service, router
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_project_owner] = lambda: None
+        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -433,13 +450,14 @@ class TestProjectsRouter:
         mock_instance.archive_project.return_value = None
 
         from dependencies.db import get_db
-        from routers.projects import _get_project_service, require_project_owner, router
+        from dependencies.auth import require_org_id
+        from routers.projects import _get_project_service, router
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_project_owner] = lambda: None
+        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -465,13 +483,14 @@ class TestProjectsRouter:
         mock_instance.add_member.return_value = _make_member_response()
 
         from dependencies.db import get_db
-        from routers.projects import _get_project_service, require_project_owner, router
+        from dependencies.auth import require_org_id
+        from routers.projects import _get_project_service, router
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_project_owner] = lambda: None
+        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -501,13 +520,14 @@ class TestProjectsRouter:
         mock_project_service.return_value = mock_instance
 
         from dependencies.db import get_db
-        from routers.projects import _get_project_service, require_project_owner, router
+        from dependencies.auth import require_org_id
+        from routers.projects import _get_project_service, router
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_project_owner] = lambda: None
+        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -538,7 +558,7 @@ class TestProjectsRouter:
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
         app.dependency_overrides[require_project_membership] = lambda: None
 
@@ -568,13 +588,14 @@ class TestProjectsRouter:
         mock_instance.remove_member.return_value = None
 
         from dependencies.db import get_db
-        from routers.projects import _get_project_service, require_project_owner, router
+        from dependencies.auth import require_org_id
+        from routers.projects import _get_project_service, router
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_project_owner] = lambda: None
+        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -603,13 +624,14 @@ class TestProjectsRouter:
         )
 
         from dependencies.db import get_db
-        from routers.projects import _get_project_service, require_project_owner, router
+        from dependencies.auth import require_org_id
+        from routers.projects import _get_project_service, router
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_project_owner] = lambda: None
+        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -639,13 +661,14 @@ class TestProjectsRouter:
         mock_project_service.return_value = mock_instance
 
         from dependencies.db import get_db
-        from routers.projects import _get_project_service, require_project_owner, router
+        from dependencies.auth import require_org_id
+        from routers.projects import _get_project_service, router
 
         app = FastAPI()
         app.include_router(router)
-        app.dependency_overrides[get_db] = AsyncMock
+        app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[_get_project_service] = lambda: mock_instance
-        app.dependency_overrides[require_project_owner] = lambda: None
+        app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):

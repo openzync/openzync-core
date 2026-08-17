@@ -8,7 +8,7 @@ dependency guard-clause behaviour.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
@@ -112,6 +112,22 @@ def _make_fact_response(overrides: dict | None = None) -> dict:
     return base
 
 
+
+@pytest.fixture(autouse=True)
+def _stub_permission_gate() -> None:
+    """Stub the permission gate for every test in this file.
+
+    The router gates with ``require_permission("project:read")`` /
+    ``require_permission("project:write")`` — closures created at router
+    import time that cannot be keyed in ``dependency_overrides``.  Patching
+    ``dependencies.auth._check_permission`` (the shared decision function)
+    stubs the gate while keeping the ``require_org_id`` chain intact.  The
+    real gate matrix is covered by ``test_admin_gate_matrix.py``.
+    """
+    with patch("dependencies.auth._check_permission", new=AsyncMock()):
+        yield
+
+
 class TestSessionsRouter:
     """Full HTTP-adapter tests for the sessions router."""
 
@@ -133,6 +149,9 @@ class TestSessionsRouter:
 
         self.app.dependency_overrides[get_session_service] = lambda: self.session_service
         self.app.dependency_overrides[get_fact_service] = lambda: self.fact_service
+        from dependencies.db import get_db
+
+        self.app.dependency_overrides[get_db] = lambda: AsyncMock()
         self.app.dependency_overrides[require_project_membership] = lambda: None
         self.app.dependency_overrides[get_current_user_id] = lambda: USER_ID
         self.app.dependency_overrides[get_current_org_id] = lambda: ORG_ID

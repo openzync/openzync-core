@@ -33,6 +33,22 @@ def _init_settings() -> None:
     set_settings(settings)
 
 
+
+@pytest.fixture(autouse=True)
+def _stub_permission_gate() -> None:
+    """Stub the permission gate for every test in this file.
+
+    The router gates with ``require_permission("project:read")`` — a
+    closure created at router import time that cannot be keyed in
+    ``dependency_overrides``.  Patching ``dependencies.auth._check_permission``
+    (the shared decision function) stubs the gate while keeping the
+    ``require_org_id`` chain intact.  The real gate matrix is covered by
+    ``test_admin_gate_matrix.py``.
+    """
+    with patch("dependencies.auth._check_permission", new=AsyncMock()):
+        yield
+
+
 class TestSearchRouter:
     """Full HTTP-adapter tests for the search router."""
 

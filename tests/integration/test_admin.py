@@ -2,40 +2,87 @@
 
 Endpoint: ``POST /admin/organizations``
 
-This is the bootstrap endpoint that creates a new organization.  It **must**
-be publicly accessible (no auth required) since callers do not yet have any
-credentials when they first call it.  Under the current contract it returns
-only the org ID + name — **no** API key is generated and **no** default
-project is auto-created (first-use auth flows through ``POST /v1/auth/signup``).
+This is the platform operator's org-bootstrap endpoint.  It is gated behind
+the platform ``superadmin`` role (``require_superadmin``) — it is **not**
+publicly accessible.  Under the current contract it returns only the org ID
++ name — **no** API key is generated and **no** default project is
+auto-created (first-use auth flows through ``POST /v1/auth/signup``).
 
 Tests:
-    - ``test_create_organization_returns_key`` — happy path
+    - ``test_create_organization_no_key_no_default_project`` — happy path
     - ``test_create_org_invalid_plan`` — plan validation → 422
     - ``test_create_org_missing_name`` — required field validation → 422
 """
 
 from __future__ import annotations
 
-from uuid import UUID
+from datetime import timedelta
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
 
+from core.config import PLATFORM_ORG_ID, get_settings
+from repositories.user_repository import UserRepository
 from tests.integration.conftest import asgi_transport
+from utils.crypto import create_jwt_token
 
 
 class TestAdminBootstrap:
-    """Validate ``POST /admin/organizations``."""
+    """Validate ``POST /admin/organizations`` (superadmin-gated)."""
 
     # ═════════════════════════════════════════════════════════════════════
     # Helpers
     # ═════════════════════════════════════════════════════════════════════
 
     @pytest.fixture
-    async def anon_client(self, app: pytest.fixture) -> AsyncClient:  # noqa: ARG002
-        """Return an unauthenticated HTTP client."""
+    async def superadmin_client(self, app: pytest.fixture) -> AsyncClient:  # noqa: ARG002
+        """Return a superadmin-authenticated HTTP client.
+
+        ``POST /admin/organizations`` is gated by ``require_superadmin`` —
+        a JWT session in the platform org whose DB role is ``superadmin``.
+        We seed that user directly (test infra) and mint a JWT.
+        """
+        from sqlalchemy import text
+
+        async with app.state.db_session_factory() as session:
+            # Ensure the platform org exists (the superadmin must belong to it).
+            await session.execute(
+                text(
+                    "INSERT INTO organizations (id, name, plan, org_code) "
+                    "VALUES (:id, 'SYSTEM', 'free', 'platform') "
+                    "ON CONFLICT (id) DO NOTHING"
+                ),
+                {"id": PLATFORM_ORG_ID},
+            )
+            user = await UserRepository(session).create(
+                organization_id=PLATFORM_ORG_ID,
+                external_id=f"superadmin_{uuid4().hex[:8]}",
+                role="superadmin",
+            )
+            # Clear the must-change-password gate so the dashboard session
+            # is usable (the seeded root is the only user with that flag).
+            await session.execute(
+                text("UPDATE users SET must_change_password = false WHERE id = :id"),
+                {"id": user.id},
+            )
+            await session.commit()
+        user_id = user.id
+
+        jwt_token = create_jwt_token(
+            data={
+                "sub": str(user_id),
+                "org_id": str(PLATFORM_ORG_ID),
+                "role": "superadmin",
+                "type": "access",
+            },
+            secret=get_settings().SECRET_KEY,
+            expires_delta=timedelta(hours=1),
+        )
+
         transport = asgi_transport(app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
+            client.headers["Authorization"] = f"Bearer {jwt_token}"
             yield client
 
     # ═════════════════════════════════════════════════════════════════════
@@ -44,7 +91,7 @@ class TestAdminBootstrap:
 
     @pytest.mark.asyncio
     async def test_create_organization_no_key_no_default_project(
-        self, anon_client: AsyncClient, app: pytest.fixture
+        self, superadmin_client: AsyncClient, app: pytest.fixture
     ) -> None:
         """A valid request creates an org — with no API key, no default project.
 
@@ -56,7 +103,7 @@ class TestAdminBootstrap:
         And the new org must have zero projects until one is created
         explicitly (no auto-created default project).
         """
-        response = await anon_client.post(
+        response = await superadmin_client.post(
             "/admin/organizations",
             json={"name": "Test Org", "plan": "free"},
         )
@@ -100,14 +147,14 @@ class TestAdminBootstrap:
 
     @pytest.mark.asyncio
     async def test_create_org_invalid_plan(
-        self, anon_client: AsyncClient
+        self, superadmin_client: AsyncClient
     ) -> None:
         """An invalid ``plan`` value should return 422.
 
         Accepted values are typically ``free``, ``pro``, ``enterprise``.
         A value like ``invalid`` should fail Pydantic validation.
         """
-        response = await anon_client.post(
+        response = await superadmin_client.post(
             "/admin/organizations",
             json={"name": "Test Org", "plan": "invalid"},
         )
@@ -129,14 +176,14 @@ class TestAdminBootstrap:
 
     @pytest.mark.asyncio
     async def test_create_org_missing_name(
-        self, anon_client: AsyncClient
+        self, superadmin_client: AsyncClient
     ) -> None:
         """Omitting the required ``name`` field should return 422.
 
         ``name`` is a required field on the request schema — the endpoint
         must reject requests that omit it.
         """
-        response = await anon_client.post(
+        response = await superadmin_client.post(
             "/admin/organizations",
             json={"plan": "free"},  # missing "name"
         )

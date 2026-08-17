@@ -79,7 +79,7 @@ class TestAuthMiddleware:
                 "org_id": getattr(request.state, "org_id", None),
                 "user_id": getattr(request.state, "user_id", None),
                 "role": getattr(request.state, "role", None),
-                "api_key_scopes": getattr(request.state, "api_key_scopes", []),
+                "api_key_permissions": getattr(request.state, "api_key_permissions", []),
                 "api_key_project_id": getattr(
                     request.state, "api_key_project_id", None
                 ),

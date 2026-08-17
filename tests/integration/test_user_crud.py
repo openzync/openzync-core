@@ -56,6 +56,25 @@ class TestUserCrud:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             yield client
 
+    @pytest.fixture
+    async def admin_client(
+        self, isolated_app: pytest.fixture, isolated_org_and_key: dict,
+    ) -> AsyncClient:
+        """JWT-authenticated client — user mutations require ``members:write``.
+
+        ``POST/PATCH/DELETE /v1/users`` are gated by
+        ``require_permission("members:write")`` — only an admin JWT
+        (wildcard) can mutate users, not the project-scoped API key.
+        """
+        from tests.integration.conftest import asgi_transport
+
+        transport = asgi_transport(isolated_app)  # type: ignore[arg-type]
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            client.headers["Authorization"] = (
+                f"Bearer {isolated_org_and_key['jwt']}"
+            )
+            yield client
+
     @staticmethod
     def _assert_user_response_shape(body: dict) -> None:
         """Validate that ``body`` matches the ``UserResponse`` schema.
@@ -85,12 +104,12 @@ class TestUserCrud:
     # ═════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_create_user(self, isolated_auth_client: AsyncClient) -> None:
+    async def test_create_user(self, admin_client: AsyncClient) -> None:
         """POST /v1/users → 201 with a valid UserResponse.
 
         All optional fields should be reflected in the response.
         """
-        response = await isolated_auth_client.post(
+        response = await admin_client.post(
             "/v1/users",
             json={
                 "external_id": "user_001",
@@ -116,7 +135,7 @@ class TestUserCrud:
 
     @pytest.mark.asyncio
     async def test_create_duplicate_external_id(
-        self, isolated_auth_client: AsyncClient
+        self, admin_client: AsyncClient
     ) -> None:
         """POST /v1/users with the same external_id → 409 Conflict.
 
@@ -124,14 +143,14 @@ class TestUserCrud:
         prevent duplicate user creation.
         """
         # Create the first user
-        resp1 = await isolated_auth_client.post(
+        resp1 = await admin_client.post(
             "/v1/users",
             json={"external_id": "dup_user"},
         )
         assert resp1.status_code == 201, f"First creation failed: {resp1.text}"
 
         # Attempt to create a second user with the same external_id
-        response = await isolated_auth_client.post(
+        response = await admin_client.post(
             "/v1/users",
             json={"external_id": "dup_user"},
         )
@@ -150,14 +169,16 @@ class TestUserCrud:
     # ═════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_get_user(self, isolated_auth_client: AsyncClient) -> None:
+    async def test_get_user(
+        self, admin_client: AsyncClient, isolated_auth_client: AsyncClient,
+    ) -> None:
         """GET /v1/users/{id} → 200 with UserResponseWithStats.
 
         ``UserResponseWithStats`` extends ``UserResponse`` with:
         ``message_count``, ``fact_count``, ``session_count``.
         """
         # Seed a user
-        created = await isolated_auth_client.post(
+        created = await admin_client.post(
             "/v1/users",
             json={"external_id": "get_test", "name": "Bob"},
         )
@@ -203,14 +224,16 @@ class TestUserCrud:
     # ═════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_update_user(self, isolated_auth_client: AsyncClient) -> None:
+    async def test_update_user(
+        self, admin_client: AsyncClient, isolated_auth_client: AsyncClient,
+    ) -> None:
         """PATCH /v1/users/{id} with partial data → 200, fields updated.
 
         Only the provided fields should change; unprovided fields
         should remain at their previous values.
         """
         # Create a user
-        created = await isolated_auth_client.post(
+        created = await admin_client.post(
             "/v1/users",
             json={
                 "external_id": "update_test",
@@ -222,7 +245,7 @@ class TestUserCrud:
         user_id = created.json()["id"]
 
         # Patch only the name
-        response = await isolated_auth_client.patch(
+        response = await admin_client.patch(
             f"/v1/users/{user_id}",
             json={"name": "Updated Name"},
         )
@@ -240,7 +263,7 @@ class TestUserCrud:
 
     @pytest.mark.asyncio
     async def test_update_user_metadata_merge(
-        self, isolated_auth_client: AsyncClient
+        self, admin_client: AsyncClient, isolated_auth_client: AsyncClient,
     ) -> None:
         """PATCH metadata is deep-merged, not replaced.
 
@@ -249,7 +272,7 @@ class TestUserCrud:
         - New keys in the PATCH body are added.
         """
         # Create user with initial metadata
-        created = await isolated_auth_client.post(
+        created = await admin_client.post(
             "/v1/users",
             json={
                 "external_id": "merge_test",
@@ -264,7 +287,7 @@ class TestUserCrud:
         user_id = created.json()["id"]
 
         # Patch with new metadata
-        patch_resp = await isolated_auth_client.patch(
+        patch_resp = await admin_client.patch(
             f"/v1/users/{user_id}",
             json={
                 "metadata": {
@@ -302,7 +325,9 @@ class TestUserCrud:
     # ═════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_delete_user(self, isolated_auth_client: AsyncClient) -> None:
+    async def test_delete_user(
+        self, admin_client: AsyncClient, isolated_auth_client: AsyncClient,
+    ) -> None:
         """DELETE /v1/users/{id} → 204, subsequent GET → 404.
 
         Verify the soft-delete lifecycle:
@@ -310,7 +335,7 @@ class TestUserCrud:
         - Immediately fetching the same user returns 404 (soft-deleted).
         """
         # Create user
-        created = await isolated_auth_client.post(
+        created = await admin_client.post(
             "/v1/users",
             json={"external_id": "del_test"},
         )
@@ -318,7 +343,7 @@ class TestUserCrud:
         user_id = created.json()["id"]
 
         # Delete
-        delete_resp = await isolated_auth_client.delete(f"/v1/users/{user_id}")
+        delete_resp = await admin_client.delete(f"/v1/users/{user_id}")
         assert delete_resp.status_code == 204, (
             f"Expected 204, got {delete_resp.status_code}: {delete_resp.text}"
         )
@@ -334,7 +359,9 @@ class TestUserCrud:
     # ═════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_list_users_paginated(self, isolated_auth_client: AsyncClient) -> None:
+    async def test_list_users_paginated(
+        self, admin_client: AsyncClient, isolated_auth_client: AsyncClient,
+    ) -> None:
         """GET /v1/users with cursor-based pagination.
 
         Each test gets a fixture user (``fixture_user``) created by the
@@ -343,7 +370,7 @@ class TestUserCrud:
         """
         # Seed 4 users (fixture user brings total to 5)
         for i in range(4):
-            resp = await isolated_auth_client.post(
+            resp = await admin_client.post(
                 "/v1/users",
                 json={"external_id": f"paginate_user_{i}"},
             )
@@ -388,13 +415,15 @@ class TestUserCrud:
     # ═════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_list_users_search(self, isolated_auth_client: AsyncClient) -> None:
+    async def test_list_users_search(
+        self, admin_client: AsyncClient, isolated_auth_client: AsyncClient,
+    ) -> None:
         """GET /v1/users?search=alice filters by external_id, name, or email.
 
         The search should match against multiple fields via ILIKE.
         """
         # Seed users with distinct identifiers
-        await isolated_auth_client.post(
+        await admin_client.post(
             "/v1/users",
             json={
                 "external_id": "alice_smith",
@@ -402,7 +431,7 @@ class TestUserCrud:
                 "email": "alice@test.com",
             },
         )
-        await isolated_auth_client.post(
+        await admin_client.post(
             "/v1/users",
             json={
                 "external_id": "bob_jones",
@@ -453,7 +482,7 @@ class TestUserCrud:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {tenant_a['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_a['jwt']}"
             user_resp = await cli.post("/v1/users", json={"external_id": "org_a_fixture"})
             assert user_resp.status_code == 201
             user_id_a = UUID(user_resp.json()["id"])
@@ -463,7 +492,7 @@ class TestUserCrud:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_b['jwt']}"
             user_resp = await cli.post("/v1/users", json={"external_id": "org_b_fixture"})
             assert user_resp.status_code == 201
             user_id_b = UUID(user_resp.json()["id"])
@@ -473,7 +502,7 @@ class TestUserCrud:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {tenant_a['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_a['jwt']}"
             isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_a
 
             create_resp = await cli.post(

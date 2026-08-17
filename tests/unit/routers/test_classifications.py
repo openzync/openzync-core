@@ -7,7 +7,7 @@ and ``GET /.../classifications/{episode_id}``.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
@@ -30,6 +30,22 @@ EPISODE_ID = UUID("00000000-0000-0000-0000-000000000005")
 def mock_class_service() -> AsyncMock:
     """Return a fresh AsyncMock for the ClassificationService."""
     return AsyncMock()
+
+
+
+@pytest.fixture(autouse=True)
+def _stub_permission_gate() -> None:
+    """Stub the permission gate for every test in this file.
+
+    The router gates with ``require_permission("project:read")`` /
+    ``require_permission("project:write")`` — closures created at router
+    import time that cannot be keyed in ``dependency_overrides``.  Patching
+    ``dependencies.auth._check_permission`` (the shared decision function)
+    stubs the gate while keeping the ``require_org_id`` chain intact.  The
+    real gate matrix is covered by ``test_admin_gate_matrix.py``.
+    """
+    with patch("dependencies.auth._check_permission", new=AsyncMock()):
+        yield
 
 
 def _create_app(mock_service: AsyncMock) -> FastAPI:

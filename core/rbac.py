@@ -70,10 +70,15 @@ An empty permission array is a wildcard — the role (admin/superadmin)
 grants everything.  Non-admin roles carry an explicit subset.
 """
 
-MEMBER_DEFAULT_PERMISSIONS: frozenset[str] = frozenset(
-    {"project:read", "project:write"}
+MEMBER_DEFAULT_PERMISSIONS: tuple[str, ...] = (
+    "project:read",
+    "project:write",
 )
-"""Default permission set seeded for ``member``-role users."""
+"""Default permission set seeded for ``member``-role users.
+
+A tuple (not a set) so the seeding sites' ``list(...)`` yields a
+deterministic, canonical order.
+"""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

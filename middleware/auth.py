@@ -40,6 +40,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 # same frozenset used by dependencies.auth.get_dashboard_user, so the
 # middleware gate and the dependency gate can never drift.  Import is safe:
 # dependencies.auth does not import this middleware module.
+from core.exceptions import RateLimitError  # noqa: E402
 from dependencies.auth import MUST_CHANGE_PASSWORD_EXEMPT_PATHS  # noqa: E402
 from repositories.api_key_repository import ApiKeyRepository
 from utils.crypto import compute_lookup_hash, verify_api_key
@@ -514,7 +515,8 @@ class AuthMiddleware:
 
     It sets the following keys on ``scope["state"]``:
     - ``org_id`` — the authenticated organization's UUID (or ``None``).
-    - ``user_id`` — the authenticated user's UUID (JWT only; ``None`` for API key).
+    - ``user_id`` — the JWT user's UUID, or the API key's ``created_by``
+      user UUID (``None`` if either is absent).
     - ``role`` — user role string (JWT only; ``None`` for API key).
     - ``auth_type`` — ``"jwt"`` or ``"api_key"``.
     - ``api_key_permissions`` — list of permission strings (or ``[]``).
@@ -688,17 +690,18 @@ class AuthMiddleware:
             client_ip: str = client_raw[0] if client_raw is not None else "unknown"
             try:
                 await _check_auth_miss_rate_limit(redis, client_ip)
-            except Exception as exc:
-                if "Too many authentication attempts" in str(exc):
-                    # This is a legitimate rate-limit response, handle it
-                    await _send_rfc7807(
-                        send,
-                        status=429,
-                        title="Too Many Requests",
-                        detail="Too many authentication attempts. Try again later.",
-                        path=path,
-                    )
-                    return
+            except RateLimitError:
+                # Legitimate rate-limit response — the IP exceeded the
+                # allowed auth-miss rate, reject with 429.
+                await _send_rfc7807(
+                    send,
+                    status=429,
+                    title="Too Many Requests",
+                    detail="Too many authentication attempts. Try again later.",
+                    path=path,
+                )
+                return
+            except Exception:
                 logger.error("auth.auth_miss_rate_check_failed", exc_info=True)
                 # Non-critical — proceed without miss-rate limiting
 

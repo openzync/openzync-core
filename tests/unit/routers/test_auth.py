@@ -41,7 +41,7 @@ def _create_app() -> tuple[FastAPI, dict[str, AsyncMock]]:
         request.state.org_id = str(ORG_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
-        request.state.api_key_scopes = ["admin", "admin:write"]
+        request.state.api_key_permissions = ["admin", "admin:write"]
         response = await call_next(request)
         return response
 

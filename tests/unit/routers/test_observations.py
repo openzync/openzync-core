@@ -7,7 +7,7 @@ filters (subject_entity_id, observation_type, limit).
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
@@ -28,6 +28,22 @@ MOCK_GRAPH_BACKEND = AsyncMock()
 """Shared mock GraphBackend instance reused across all tests and DI resolution."""
 
 
+
+@pytest.fixture(autouse=True)
+def _stub_permission_gate() -> None:
+    """Stub the permission gate for every test in this file.
+
+    The router gates with ``require_permission("project:read")`` /
+    ``require_permission("project:write")`` — closures created at router
+    import time that cannot be keyed in ``dependency_overrides``.  Patching
+    ``dependencies.auth._check_permission`` (the shared decision function)
+    stubs the gate while keeping the ``require_org_id`` chain intact.  The
+    real gate matrix is covered by ``test_admin_gate_matrix.py``.
+    """
+    with patch("dependencies.auth._check_permission", new=AsyncMock()):
+        yield
+
+
 def _create_app() -> FastAPI:
     """Build a minimal FastAPI app with only the observations router."""
     app = FastAPI()
@@ -40,6 +56,9 @@ def _create_app() -> FastAPI:
         response = await call_next(request)
         return response
 
+    from dependencies.db import get_db
+
+    app.dependency_overrides[get_db] = lambda: AsyncMock()
     app.dependency_overrides[require_project_membership] = lambda: None
     app.dependency_overrides[get_graph_backend_for_project] = lambda: MOCK_GRAPH_BACKEND
 

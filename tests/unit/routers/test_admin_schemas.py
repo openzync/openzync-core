@@ -32,9 +32,10 @@ NOW = datetime.now(timezone.utc)
 def _mock_org_admin_role(monkeypatch) -> None:
     """Resolve the org-admin role check for every test in this file.
 
-    The router gates reads with ``require_scope("admin")`` and writes with
-    ``require_org_admin``; both funnel into ``core.rbac.get_org_role`` via
-    ``dependencies.auth._ensure_org_admin``.  Patching the role lookup to
+    The router gates reads with ``require_permission("configuration:read")``
+    and writes with ``require_permission("configuration:write")``; both JWT
+    paths funnel into ``core.rbac.get_org_role`` via
+    ``dependencies.auth._check_permission``.  Patching the role lookup to
     return ``"admin"`` keeps the full dependency chain exercised (JWT state,
     Redis on app state, DB session) while mocking only the role source of
     truth.  RBAC itself is unit-tested in ``dependencies/test_rbac.py``.
@@ -73,12 +74,11 @@ def _build_app() -> FastAPI:
     app.state.redis = AsyncMock()
     app.include_router(router)
 
-    from dependencies.auth import require_org_admin, require_org_id
+    from dependencies.auth import require_org_id
     from dependencies.db import get_db
 
     app.dependency_overrides = {}
     app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
-    app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
     app.dependency_overrides[get_db] = lambda: AsyncMock(spec=AsyncSession)
 
     @app.middleware("http")
@@ -86,7 +86,7 @@ def _build_app() -> FastAPI:
         request.state.org_id = str(ORG_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
-        request.state.api_key_scopes = ["admin", "admin:write"]
+        request.state.api_key_permissions = []
         response = await call_next(request)
         return response
 
