@@ -216,11 +216,18 @@ jobs:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           BAO_STATIC_SEAL_KEY: ${{ secrets.BAO_STATIC_SEAL_KEY }}
           OZ_WEBHOOK_SIGNING_SECRET: ${{ secrets.OZ_WEBHOOK_SIGNING_SECRET }}
+          OZ_SMTP_HOST: ${{ secrets.OZ_SMTP_HOST }}
+          OZ_SMTP_PORT: ${{ secrets.OZ_SMTP_PORT }}
+          OZ_SMTP_USERNAME: ${{ secrets.OZ_SMTP_USERNAME }}
+          OZ_SMTP_PASSWORD: ${{ secrets.OZ_SMTP_PASSWORD }}
+          OZ_SMTP_FROM_ADDR: ${{ secrets.OZ_SMTP_FROM_ADDR }}
+          OZ_SMTP_USE_TLS: ${{ secrets.OZ_SMTP_USE_TLS }}
+          OZ_SMTP_START_TLS: ${{ secrets.OZ_SMTP_START_TLS }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: GHCR_PAT,OZ_DATABASE_URL,OZ_SECRET_KEY,VPS_HOST,BAO_STATIC_SEAL_KEY,OZ_WEBHOOK_SIGNING_SECRET
+          envs: GHCR_PAT,OZ_DATABASE_URL,OZ_SECRET_KEY,VPS_HOST,BAO_STATIC_SEAL_KEY,OZ_WEBHOOK_SIGNING_SECRET,OZ_SMTP_HOST,OZ_SMTP_PORT,OZ_SMTP_USERNAME,OZ_SMTP_PASSWORD,OZ_SMTP_FROM_ADDR,OZ_SMTP_USE_TLS,OZ_SMTP_START_TLS
           script: |
             set -e
             # Log in to ghcr.io so Docker can pull our private images
@@ -253,6 +260,13 @@ jobs:
             OZ_EMBEDDING_DIM=768
             BAO_STATIC_SEAL_KEY=$BAO_STATIC_SEAL_KEY
             OZ_WEBHOOK_SIGNING_SECRET=$OZ_WEBHOOK_SIGNING_SECRET
+            OZ_SMTP_HOST=$OZ_SMTP_HOST
+            OZ_SMTP_PORT=$OZ_SMTP_PORT
+            OZ_SMTP_USERNAME=$OZ_SMTP_USERNAME
+            OZ_SMTP_PASSWORD=$OZ_SMTP_PASSWORD
+            OZ_SMTP_FROM_ADDR=$OZ_SMTP_FROM_ADDR
+            OZ_SMTP_USE_TLS=$OZ_SMTP_USE_TLS
+            OZ_SMTP_START_TLS=$OZ_SMTP_START_TLS
             ENVEOF
 
             # ── Deploy backend: pull → migrate → restart ───────────────────

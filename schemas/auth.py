@@ -424,6 +424,14 @@ class DashboardUserResponse(BaseModel):
             "dashboard (seeded root credential)."
         ),
     )
+    permissions: list[str] = Field(
+        ...,
+        description=(
+            "The user's effective permission set. Empty only if the user "
+            "literally has no permissions — admin/superadmin roles receive "
+            "the full vocabulary here, unlike their stored (empty) array."
+        ),
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

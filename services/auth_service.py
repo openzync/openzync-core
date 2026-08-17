@@ -31,7 +31,11 @@ from core.exceptions import (
     ValidationError,
 )
 from core.org_codes import normalize_org_code
-from core.rbac import MEMBER_DEFAULT_PERMISSIONS, invalidate_must_change_password
+from core.rbac import (
+    ALL_PERMISSIONS,
+    MEMBER_DEFAULT_PERMISSIONS,
+    invalidate_must_change_password,
+)
 from core.system_config import get_system_config
 from repositories.auth_repository import AuthRepository  # noqa: TC001
 from repositories.organization_repository import (  # noqa: TC001
@@ -61,6 +65,7 @@ if TYPE_CHECKING:
     from redis.asyncio import Redis as AsyncRedis
 
     from core.openbao import OpenBaoClient
+    from models.user import User
     from services.email_service import EmailService
     from services.otp_service import OtpService
 
@@ -1228,6 +1233,25 @@ class AuthService:
 
     # ── Profile ──────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _effective_permissions(user: User) -> list[str]:
+        """Return the user's effective permission set for the dashboard profile.
+
+        Admin/superadmin roles are wildcards (their stored ``permissions``
+        array is empty) — mirror the allow-all branch of
+        ``require_permission`` (dependencies/auth.py) by expanding to the
+        full vocabulary.  All other roles surface their stored set.
+
+        Args:
+            user: The loaded dashboard user.
+
+        Returns:
+            Sorted effective permission strings.
+        """
+        if user.role in ("admin", "superadmin"):
+            return sorted(ALL_PERMISSIONS)
+        return sorted(user.permissions or [])
+
     async def get_profile(self, user_id: uuid.UUID) -> DashboardUserResponse:
         """Get the dashboard user's own profile.
 
@@ -1252,6 +1276,7 @@ class AuthService:
             is_email_verified=user.is_email_verified,
             mfa_enabled=user.mfa_enabled,
             must_change_password=bool(user.must_change_password),
+            permissions=self._effective_permissions(user),
         )
 
     async def update_profile(
@@ -1362,6 +1387,7 @@ class AuthService:
             is_email_verified=user.is_email_verified,
             mfa_enabled=user.mfa_enabled,
             must_change_password=bool(user.must_change_password),
+            permissions=self._effective_permissions(user),
         )
 
     @staticmethod
