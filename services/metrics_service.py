@@ -13,13 +13,19 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from datetime import datetime, timedelta, timezone
+
 import httpx
 
 from core.exceptions import MetricsUnavailableError
 from schemas.admin_metrics import (
+    ErrorTimeseriesPoint,
     LatencyPercentiles,
+    LatencyTimeseriesPoint,
     MetricsSummaryResponse,
     QueueDepth,
+    RetrievalTimeseries,
+    TimeseriesPoint,
 )
 
 logger = logging.getLogger(__name__)
@@ -89,6 +95,31 @@ QUEUE_QUERIES: list[tuple[str, str]] = [
 
 ALL_QUERIES = LATENCY_QUERIES + RATE_QUERIES + COUNTER_QUERIES + QUEUE_QUERIES
 
+# ── Range query definitions (for time-series charts) ─────────────────────────
+# These use [5m] rate windows and are queried over 24h with 1h step.
+
+RETRIEVAL_RANGE_QUERIES: dict[str, str] = {
+    "context": 'sum(rate(openzync_context_latency_seconds_count[5m]))',
+    "graph": 'sum(rate(openzync_graph_search_latency_seconds_count[5m]))',
+}
+
+ERROR_RANGE_QUERIES: dict[str, str] = {
+    "4xx": 'sum(increase(openzync_http_requests_total{status="4xx"}[1h]))',
+    "5xx": 'sum(increase(openzync_http_requests_total{status="5xx"}[1h]))',
+}
+
+CONTEXT_LATENCY_RANGE_QUERIES: dict[str, str] = {
+    "p50": 'histogram_quantile(0.50, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000',
+    "p95": 'histogram_quantile(0.95, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000',
+    "p99": 'histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000',
+}
+
+GRAPH_LATENCY_RANGE_QUERIES: dict[str, str] = {
+    "p50": 'histogram_quantile(0.50, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
+    "p95": 'histogram_quantile(0.95, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
+    "p99": 'histogram_quantile(0.99, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
+}
+
 
 class MetricsService:
     """Aggregate metrics from Prometheus for the admin dashboard."""
@@ -138,7 +169,94 @@ class MetricsService:
                 "Prometheus is unreachable."
             ) from exc
 
-        return self._build_response(results)
+        # ── Range queries for time-series charts ────────────────────────────
+        now = datetime.now(timezone.utc)
+        start_iso = (now - timedelta(hours=24)).isoformat()
+        end_iso = now.isoformat()
+
+        async def _range_task(name: str, promql: str) -> tuple[str, list[dict]]:
+            vals = await self._fetch_range(promql, start_iso, end_iso)
+            return name, vals
+
+        range_tasks = [
+            _range_task(f"retrieval_{k}", v)
+            for k, v in RETRIEVAL_RANGE_QUERIES.items()
+        ] + [
+            _range_task(f"error_{k}", v) for k, v in ERROR_RANGE_QUERIES.items()
+        ] + [
+            _range_task(f"ctx_lat_{k}", v)
+            for k, v in CONTEXT_LATENCY_RANGE_QUERIES.items()
+        ] + [
+            _range_task(f"graph_lat_{k}", v)
+            for k, v in GRAPH_LATENCY_RANGE_QUERIES.items()
+        ]
+
+        range_completed = await asyncio.gather(*range_tasks, return_exceptions=True)
+
+        range_results: dict[str, list[dict]] = {}
+        for item in range_completed:
+            if isinstance(item, Exception):
+                logger.warning("metrics.range_query_failed", exc_info=True)
+                continue
+            name, vals = item
+            range_results[name] = vals
+
+        # Build time-series response objects
+        retrieval_ts = RetrievalTimeseries(
+            context_retrievals=[
+                TimeseriesPoint(timestamp=p["timestamp"], value=p["value"])
+                for p in range_results.get("retrieval_context", [])
+            ],
+            graph_retrievals=[
+                TimeseriesPoint(timestamp=p["timestamp"], value=p["value"])
+                for p in range_results.get("retrieval_graph", [])
+            ],
+        )
+
+        # Align error 4xx/5xx by timestamp
+        error_4xx = {
+            p["timestamp"]: p["value"] for p in range_results.get("error_4xx", [])
+        }
+        error_5xx = {
+            p["timestamp"]: p["value"] for p in range_results.get("error_5xx", [])
+        }
+        all_error_ts = sorted(set(error_4xx) | set(error_5xx))
+        error_ts = [
+            ErrorTimeseriesPoint(
+                date=ts,
+                count_4xx=int(error_4xx.get(ts, 0)),
+                count_5xx=int(error_5xx.get(ts, 0)),
+            )
+            for ts in all_error_ts
+        ]
+
+        # Align latency p50/p95/p99 by timestamp
+        def _build_latency_ts(
+            p50_key: str, p95_key: str, p99_key: str
+        ) -> list[LatencyTimeseriesPoint]:
+            p50 = {p["timestamp"]: p["value"] for p in range_results.get(p50_key, [])}
+            p95 = {p["timestamp"]: p["value"] for p in range_results.get(p95_key, [])}
+            p99 = {p["timestamp"]: p["value"] for p in range_results.get(p99_key, [])}
+            all_ts = sorted(set(p50) | set(p95) | set(p99))
+            return [
+                LatencyTimeseriesPoint(
+                    date=ts,
+                    p50=round(p50.get(ts, 0.0), 1),
+                    p95=round(p95.get(ts, 0.0), 1),
+                    p99=round(p99.get(ts, 0.0), 1),
+                )
+                for ts in all_ts
+            ]
+
+        ctx_lat_ts = _build_latency_ts("ctx_lat_p50", "ctx_lat_p95", "ctx_lat_p99")
+        graph_lat_ts = _build_latency_ts("graph_lat_p50", "graph_lat_p95", "graph_lat_p99")
+
+        response = self._build_response(results)
+        response.retrieval_timeseries = retrieval_ts
+        response.error_timeseries = error_ts
+        response.context_latency_timeseries = ctx_lat_ts
+        response.graph_latency_timeseries = graph_lat_ts
+        return response
 
     async def _fetch_value(self, promql: str) -> float:
         """Execute a PromQL instant query and return the scalar value."""
@@ -171,6 +289,54 @@ class MetricsService:
             raise MetricsUnavailableError(
                 "Unexpected Prometheus response format."
             ) from exc
+
+    async def _fetch_range(
+        self, promql: str, start: str, end: str, step: str = "1h"
+    ) -> list[dict[str, str | float]]:
+        """Execute a PromQL range query and return the result series.
+
+        Args:
+            promql: The PromQL query string.
+            start: ISO start timestamp.
+            end: ISO end timestamp.
+            step: Resolution step (default 1h).
+
+        Returns:
+            List of ``{"timestamp": ..., "value": ...}`` dicts.
+            Empty list on failure or no data.
+        """
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(
+                    f"{self._base_url}/api/v1/query_range",
+                    params={
+                        "query": promql,
+                        "start": start,
+                        "end": end,
+                        "step": step,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+        except (httpx.RequestError, httpx.HTTPStatusError) as exc:
+            logger.warning("metrics.range_query_failed", extra={"error": str(exc)})
+            return []
+
+        if data.get("status") != "success":
+            logger.warning(
+                "metrics.range_api_error", extra={"error": data.get("error", "")}
+            )
+            return []
+
+        results = data["data"]["result"]
+        if not results:
+            return []
+
+        # Return the first series' values: [[timestamp, value], ...]
+        return [
+            {"timestamp": str(v[0]), "value": float(v[1])}
+            for v in results[0].get("values", [])
+        ]
 
     def _build_response(
         self, results: dict[str, float]
