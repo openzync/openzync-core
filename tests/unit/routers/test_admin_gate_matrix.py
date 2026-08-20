@@ -141,7 +141,7 @@ ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [
     ("GET", "/v1/admin/stats/usage", {}, {}),
     # metrics (real prefix /metrics — see routers/admin_metrics.py)
     ("GET", "/metrics/summary", {}, {}),
-    ("GET", "/metrics/query", {}, {"query": "up"}),
+    ("GET", "/metrics/query", {}, {"query": "episodes_per_day"}),
     ("GET", "/metrics/targets", {}, {}),
     # quick actions
     ("GET", "/v1/admin/quick-actions", {}, {}),
