@@ -17,6 +17,37 @@ class LatencyPercentiles(BaseModel):
     p99: float = Field(0.0, description="99th percentile latency in ms")
 
 
+class TimeseriesPoint(BaseModel):
+    """Single point in a time-series."""
+
+    timestamp: str = Field(..., description="ISO timestamp")
+    value: float = Field(..., description="Metric value")
+
+
+class RetrievalTimeseries(BaseModel):
+    """Retrieval rate time-series for the dashboard chart."""
+
+    context_retrievals: list[TimeseriesPoint] = Field(default_factory=list)
+    graph_retrievals: list[TimeseriesPoint] = Field(default_factory=list)
+
+
+class ErrorTimeseriesPoint(BaseModel):
+    """Daily error count for the error chart."""
+
+    date: str = Field(..., description="Date in YYYY-MM-DD format")
+    count_4xx: int = Field(0, description="4xx error count")
+    count_5xx: int = Field(0, description="5xx error count")
+
+
+class LatencyTimeseriesPoint(BaseModel):
+    """Daily latency percentiles for the latency chart."""
+
+    date: str = Field(..., description="Date in YYYY-MM-DD format")
+    p50: float = Field(0.0, description="50th percentile in ms")
+    p95: float = Field(0.0, description="95th percentile in ms")
+    p99: float = Field(0.0, description="99th percentile in ms")
+
+
 class QueueDepth(BaseModel):
     """ARQ worker queue depths."""
 
@@ -68,6 +99,24 @@ class MetricsSummaryResponse(BaseModel):
     queue_depth: QueueDepth | None = Field(None, description="Worker queue depth")
     total_requests: int = Field(0, description="Total HTTP requests ever")
     active_requests: int = Field(0, description="Currently in-flight requests")
+
+    # ── Time-series (from Prometheus range queries) ─────────────────────────
+    retrieval_timeseries: RetrievalTimeseries = Field(
+        default_factory=RetrievalTimeseries,
+        description="Retrieval rate over the last 24h",
+    )
+    error_timeseries: list[ErrorTimeseriesPoint] = Field(
+        default_factory=list,
+        description="Hourly 4xx/5xx error counts over the last 24h",
+    )
+    context_latency_timeseries: list[LatencyTimeseriesPoint] = Field(
+        default_factory=list,
+        description="Context latency percentiles over the last 24h",
+    )
+    graph_latency_timeseries: list[LatencyTimeseriesPoint] = Field(
+        default_factory=list,
+        description="Graph search latency percentiles over the last 24h",
+    )
 
     # ── Health ─────────────────────────────────────────────────────────────
     status: str = Field("ok", description="ok or degraded")

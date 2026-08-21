@@ -174,7 +174,9 @@ class ContextService:
             cached = await self._cache.get(cache_key)
             if cached is not None:
                 elapsed = (time.monotonic() - start) * 1000
-                context_latency_seconds.labels(type="warm").observe(elapsed / 1000)
+                context_latency_seconds.labels(type="warm", org_id=str(self._org_id)).observe(
+                    elapsed / 1000
+                )
                 logger.debug(
                     "context.assembled",
                     org_id=str(self._org_id),
@@ -294,7 +296,9 @@ class ContextService:
             await self._cache.set(cache_key, context_str)
 
         elapsed = (time.monotonic() - start) * 1000
-        context_latency_seconds.labels(type="cold").observe(elapsed / 1000)
+        context_latency_seconds.labels(type="cold", org_id=str(self._org_id)).observe(
+            elapsed / 1000
+        )
         logger.debug(
             "context.assembled",
             org_id=str(self._org_id),
