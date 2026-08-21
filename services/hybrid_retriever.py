@@ -270,7 +270,9 @@ class HybridRetriever:
                 )
                 raise SearchLegFailedError(leg_name="reranker", original_error=str(exc)) from exc
 
-        graph_search_latency_seconds.observe(time.monotonic() - _search_start)
+        graph_search_latency_seconds.labels(org_id=str(self._org_id)).observe(
+            time.monotonic() - _search_start
+        )
 
         return {
             "episodes": merged_episodes,

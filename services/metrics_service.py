@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-
-from datetime import datetime, timedelta, timezone
+import re
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -37,39 +37,39 @@ logger = logging.getLogger(__name__)
 LATENCY_QUERIES: list[tuple[str, str]] = [
     (
         "overall_p50",
-        'histogram_quantile(0.50, sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)) * 1000',
+        "histogram_quantile(0.50, sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "overall_p95",
-        'histogram_quantile(0.95, sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)) * 1000',
+        "histogram_quantile(0.95, sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "overall_p99",
-        'histogram_quantile(0.99, sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)) * 1000',
+        "histogram_quantile(0.99, sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "context_p50",
-        'histogram_quantile(0.50, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000',
+        "histogram_quantile(0.50, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "context_p95",
-        'histogram_quantile(0.95, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000',
+        "histogram_quantile(0.95, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "context_p99",
-        'histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000',
+        "histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "graph_search_p50",
-        'histogram_quantile(0.50, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
+        "histogram_quantile(0.50, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "graph_search_p95",
-        'histogram_quantile(0.95, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
+        "histogram_quantile(0.95, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "graph_search_p99",
-        'histogram_quantile(0.99, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
+        "histogram_quantile(0.99, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000",
     ),
 ]
 
@@ -99,8 +99,8 @@ ALL_QUERIES = LATENCY_QUERIES + RATE_QUERIES + COUNTER_QUERIES + QUEUE_QUERIES
 # These use [5m] rate windows and are queried over 24h with 1h step.
 
 RETRIEVAL_RANGE_QUERIES: dict[str, str] = {
-    "context": 'sum(rate(openzync_context_latency_seconds_count[5m]))',
-    "graph": 'sum(rate(openzync_graph_search_latency_seconds_count[5m]))',
+    "context": "sum(rate(openzync_context_latency_seconds_count[5m]))",
+    "graph": "sum(rate(openzync_graph_search_latency_seconds_count[5m]))",
 }
 
 ERROR_RANGE_QUERIES: dict[str, str] = {
@@ -109,16 +109,64 @@ ERROR_RANGE_QUERIES: dict[str, str] = {
 }
 
 CONTEXT_LATENCY_RANGE_QUERIES: dict[str, str] = {
-    "p50": 'histogram_quantile(0.50, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000',
-    "p95": 'histogram_quantile(0.95, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000',
-    "p99": 'histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000',
+    "p50": "histogram_quantile(0.50, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000",
+    "p95": "histogram_quantile(0.95, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000",
+    "p99": "histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000",
 }
 
 GRAPH_LATENCY_RANGE_QUERIES: dict[str, str] = {
-    "p50": 'histogram_quantile(0.50, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
-    "p95": 'histogram_quantile(0.95, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
-    "p99": 'histogram_quantile(0.99, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
+    "p50": "histogram_quantile(0.50, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000",
+    "p95": "histogram_quantile(0.95, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000",
+    "p99": "histogram_quantile(0.99, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000",
 }
+
+# ── Org-filter helpers ────────────────────────────────────────────────────────
+
+# Queue depth is global infra — never org-filtered.
+_ORG_FILTER_EXCLUDED = ("openzync_worker_queue_depth",)
+
+
+def _is_org_scoped(org_id: str | None) -> bool:
+    """Return True when PromQL should be scoped to an org."""
+    return bool(org_id) and org_id != "anonymous"
+
+
+def _inject_org_filter(promql: str, org_id: str) -> str:
+    """Inject ``{org_id="..."}`` into every openzync_* selector.
+
+    Selectors that already have a label set get ``,org_id="..."`` appended
+    inside the braces. Bare metrics (``metric[`` or ``metric)``) get a new
+    ``{org_id="..."}`` selector. Metrics in ``_ORG_FILTER_EXCLUDED`` are left
+    untouched — queue depth is global infra, not per-org (cardinality + no
+    org label on that metric).
+
+    This keeps the canonical ``*_QUERIES`` constants global-readable and
+    builds filtered copies on the fly — no duplication of query lists.
+    """
+    if any(excluded in promql for excluded in _ORG_FILTER_EXCLUDED):
+        return promql
+
+    org_label = f'org_id="{org_id}"'
+
+    # 1) selectors already with braces: metric{labels} -> metric{labels,org_id="..."}
+    def _with_braces(m: re.Match[str]) -> str:
+        metric = m.group(1)
+        inner = m.group(2).strip()
+        if inner:
+            return f"{metric}{{{inner},{org_label}}}"
+        return f"{metric}{{{org_label}}}"
+
+    promql = re.sub(r"(openzync_[a-z_]+)\{([^}]*)\}", _with_braces, promql)
+
+    # 2) bare metrics (no braces) -> metric[ or metric) etc.
+    # Use lookahead for [ or ) so we don't partial-match a filtered metric
+    # (e.g. openzync_...{...} would otherwise backtrack and inject inside).
+    promql = re.sub(
+        r"(openzync_[a-z_]+)(?=\[|\)|,|\s|$)",
+        lambda m: f"{m.group(1)}{{{org_label}}}",
+        promql,
+    )
+    return promql
 
 
 class MetricsService:
@@ -127,8 +175,14 @@ class MetricsService:
     def __init__(self, prometheus_url: str) -> None:
         self._base_url = prometheus_url.rstrip("/")
 
-    async def get_summary(self) -> MetricsSummaryResponse:
+    async def get_summary(self, org_id: str | None = None) -> MetricsSummaryResponse:
         """Run all PromQL queries and assemble the response.
+
+        Args:
+            org_id: Organization to scope Prometheus queries to. When ``None``
+                or ``"anonymous"`` the original global queries are used
+                (backward compat for health checks). The admin route always
+                passes a real org_id.
 
         Returns:
             A fully populated ``MetricsSummaryResponse``.
@@ -139,19 +193,46 @@ class MetricsService:
         """
         results: dict[str, float] = {}
 
+        # Build org-scoped instant queries (queue stays global — see _inject_org_filter).
+        if _is_org_scoped(org_id):
+            assert org_id is not None  # narrowed by _is_org_scoped
+            effective_all = [
+                (name, _inject_org_filter(promql, org_id))
+                for name, promql in ALL_QUERIES
+            ]
+            effective_retrieval = {
+                k: _inject_org_filter(v, org_id)
+                for k, v in RETRIEVAL_RANGE_QUERIES.items()
+            }
+            effective_error = {
+                k: _inject_org_filter(v, org_id) for k, v in ERROR_RANGE_QUERIES.items()
+            }
+            effective_ctx_lat = {
+                k: _inject_org_filter(v, org_id)
+                for k, v in CONTEXT_LATENCY_RANGE_QUERIES.items()
+            }
+            effective_graph_lat = {
+                k: _inject_org_filter(v, org_id)
+                for k, v in GRAPH_LATENCY_RANGE_QUERIES.items()
+            }
+        else:
+            effective_all = ALL_QUERIES
+            effective_retrieval = RETRIEVAL_RANGE_QUERIES
+            effective_error = ERROR_RANGE_QUERIES
+            effective_ctx_lat = CONTEXT_LATENCY_RANGE_QUERIES
+            effective_graph_lat = GRAPH_LATENCY_RANGE_QUERIES
+
         async def _query(name: str, promql: str) -> tuple[str, float]:
             val = await self._fetch_value(promql)
             return name, val
 
-        tasks = [_query(name, promql) for name, promql in ALL_QUERIES]
+        tasks = [_query(name, promql) for name, promql in effective_all]
         completed = await asyncio.gather(*tasks, return_exceptions=True)
 
         for item in completed:
             if isinstance(item, Exception):
                 logger.error("metrics.prometheus_query_failed", exc_info=True)
-                raise MetricsUnavailableError(
-                    "Prometheus query failed."
-                ) from item
+                raise MetricsUnavailableError("Prometheus query failed.") from item
             name, val = item
             results[name] = val
 
@@ -165,12 +246,10 @@ class MetricsService:
                     )
         except httpx.RequestError as exc:
             logger.error("metrics.prometheus_unreachable", exc_info=True)
-            raise MetricsUnavailableError(
-                "Prometheus is unreachable."
-            ) from exc
+            raise MetricsUnavailableError("Prometheus is unreachable.") from exc
 
         # ── Range queries for time-series charts ────────────────────────────
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         start_iso = (now - timedelta(hours=24)).isoformat()
         end_iso = now.isoformat()
 
@@ -178,18 +257,12 @@ class MetricsService:
             vals = await self._fetch_range(promql, start_iso, end_iso)
             return name, vals
 
-        range_tasks = [
-            _range_task(f"retrieval_{k}", v)
-            for k, v in RETRIEVAL_RANGE_QUERIES.items()
-        ] + [
-            _range_task(f"error_{k}", v) for k, v in ERROR_RANGE_QUERIES.items()
-        ] + [
-            _range_task(f"ctx_lat_{k}", v)
-            for k, v in CONTEXT_LATENCY_RANGE_QUERIES.items()
-        ] + [
-            _range_task(f"graph_lat_{k}", v)
-            for k, v in GRAPH_LATENCY_RANGE_QUERIES.items()
-        ]
+        range_tasks = (
+            [_range_task(f"retrieval_{k}", v) for k, v in effective_retrieval.items()]
+            + [_range_task(f"error_{k}", v) for k, v in effective_error.items()]
+            + [_range_task(f"ctx_lat_{k}", v) for k, v in effective_ctx_lat.items()]
+            + [_range_task(f"graph_lat_{k}", v) for k, v in effective_graph_lat.items()]
+        )
 
         range_completed = await asyncio.gather(*range_tasks, return_exceptions=True)
 
@@ -249,7 +322,9 @@ class MetricsService:
             ]
 
         ctx_lat_ts = _build_latency_ts("ctx_lat_p50", "ctx_lat_p95", "ctx_lat_p99")
-        graph_lat_ts = _build_latency_ts("graph_lat_p50", "graph_lat_p95", "graph_lat_p99")
+        graph_lat_ts = _build_latency_ts(
+            "graph_lat_p50", "graph_lat_p95", "graph_lat_p99"
+        )
 
         response = self._build_response(results)
         response.retrieval_timeseries = retrieval_ts
@@ -338,11 +413,8 @@ class MetricsService:
             for v in results[0].get("values", [])
         ]
 
-    def _build_response(
-        self, results: dict[str, float]
-    ) -> MetricsSummaryResponse:
+    def _build_response(self, results: dict[str, float]) -> MetricsSummaryResponse:
         """Map raw PromQL results into the response model."""
-
         # Queue depth — may not exist (worker not running)
         qd = None
         if "queue_high" in results or "queue_low" in results:

@@ -197,16 +197,16 @@ def create_app() -> FastAPI:
     # (outermost → innermost).  Registration order is the reverse.
     #
     # Runtime order (outermost → innermost):
-    #   0. MetricsMiddleware    — RED metrics (wraps everything including 404)
-    #   1. CORSMiddleware       — intercept OPTIONS preflight immediately
-    #   2. LoggingMiddleware    — log request/response lifecycle
-    #   3. TracingMiddleware    — OpenTelemetry span management
-    #   4. AuthMiddleware       — extract/validate JWT & API key, set org_id
-    #   5. RateLimitMiddleware  — per-IP / per-org sliding window
-    #   6. AuditMiddleware      — record request to audit_logs (post-response)
-    #   7. GZipMiddleware       — compress responses >= 1 KB
-    #   8. TrustedHostMiddleware — prevent host-header attacks
-    #   9. RequestIDMiddleware   — assign request_id (innermost, closest to router)
+    #   0. CORSMiddleware
+    #   1. LoggingMiddleware
+    #   2. TracingMiddleware
+    #   3. AuthMiddleware       — sets org_id
+    #   4. MetricsMiddleware    — reads org_id (moved inside Auth to be org-scoped)
+    #   5. RateLimitMiddleware  — reads org_id
+    #   6. AuditMiddleware
+    #   7. GZipMiddleware
+    #   8. TrustedHostMiddleware
+    #   9. RequestIDMiddleware
 
     # Runtime 9 (innermost) — Request ID: spans every downstream component.
     app.add_middleware(RequestIDMiddleware)
@@ -233,16 +233,21 @@ def create_app() -> FastAPI:
     # (Registered later = executes earlier; see LIFO note above.)
     app.add_middleware(RateLimitMiddleware)
 
-    # Runtime 4 — Auth: extract/validate JWT & API key, set request state.
+    # Runtime 4 — Metrics: registered BEFORE Auth so it runs AFTER Auth,
+    # giving it access to org_id for org-scoped RED metrics.
+    # (Moved inside Auth — previously outermost, could not see org_id.)
+    app.add_middleware(MetricsMiddleware)
+
+    # Runtime 3 — Auth: extract/validate JWT & API key, set request state.
     app.add_middleware(AuthMiddleware)
 
-    # Runtime 3 — Tracing
+    # Runtime 2 — Tracing
     app.add_middleware(TracingMiddleware)
 
-    # Runtime 2 — Structured logging
+    # Runtime 1 — Structured logging
     app.add_middleware(LoggingMiddleware)
 
-    # Runtime 1 — CORS: intercepts OPTIONS preflight BEFORE AuthMiddleware
+    # Runtime 0 (outermost) — CORS: intercepts OPTIONS preflight BEFORE AuthMiddleware
     # rejects them.
     app.add_middleware(
         CORSMiddleware,
@@ -251,10 +256,6 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-
-    # Runtime 0 (outermost) — Metrics: registered LAST so it wraps everything
-    # including the 404 handler for unknown routes (see MetricsMiddleware).
-    app.add_middleware(MetricsMiddleware)
 
     # ── Routers ──────────────────────────────────────────────────────────
     # Health must live at ROOT (not /v1) — Helm/NGINX probes target /health

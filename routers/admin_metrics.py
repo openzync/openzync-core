@@ -81,8 +81,8 @@ async def get_metrics_summary(
         db, org_uuid
     )
 
-    # ── Prometheus metrics ───────────────────────────────────────────────
-    perf = await prom.get_summary()
+    # ── Prometheus metrics (org-scoped) ──────────────────────────────────
+    perf = await prom.get_summary(org_id=str(org_uuid))
 
     # Overwrite DB fields into the response
     perf.episodes = episode_stats
@@ -390,79 +390,77 @@ async def _top_users_by_messages(
     )
 
 
-# ── Prometheus query handlers (global, not org-scoped) ────────────────────
+# ── Prometheus query handlers (org-scoped via org_id label) ───────────────
 
 
 async def _error_rate_by_day(
     db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
 ) -> dict:
-    promql = 'sum(increase(openzync_http_requests_total{status="5xx"}[1d]))'
+    promql = f'sum(increase(openzync_http_requests_total{{status="5xx",org_id="{org_uuid}"}}[1d]))'
     rows = await _prom_range(promql, days)
-    resp = _result(
-        "error_rate_by_day", False, ["timestamp", "value"], rows, {"days": days}
+    return _result(
+        "error_rate_by_day", True, ["timestamp", "value"], rows, {"days": days}
     )
-    resp["warning"] = "Global metric — not scoped to your organization"
-    return resp
 
 
 async def _latency_percentiles(
     db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
 ) -> dict:
     queries = {
-        "overall_p50": 'histogram_quantile(0.50, sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)) * 1000',
-        "overall_p95": 'histogram_quantile(0.95, sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)) * 1000',
-        "overall_p99": 'histogram_quantile(0.99, sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)) * 1000',
-        "context_p50": 'histogram_quantile(0.50, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000',
-        "context_p95": 'histogram_quantile(0.95, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000',
-        "context_p99": 'histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000',
-        "graph_p50": 'histogram_quantile(0.50, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
-        "graph_p95": 'histogram_quantile(0.95, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
-        "graph_p99": 'histogram_quantile(0.99, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000',
+        "overall_p50": f'histogram_quantile(0.50, sum(rate(openzync_http_request_duration_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
+        "overall_p95": f'histogram_quantile(0.95, sum(rate(openzync_http_request_duration_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
+        "overall_p99": f'histogram_quantile(0.99, sum(rate(openzync_http_request_duration_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
+        "context_p50": f'histogram_quantile(0.50, sum(rate(openzync_context_latency_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
+        "context_p95": f'histogram_quantile(0.95, sum(rate(openzync_context_latency_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
+        "context_p99": f'histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
+        "graph_p50": f'histogram_quantile(0.50, sum(rate(openzync_graph_search_latency_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
+        "graph_p95": f'histogram_quantile(0.95, sum(rate(openzync_graph_search_latency_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
+        "graph_p99": f'histogram_quantile(0.99, sum(rate(openzync_graph_search_latency_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
     }
     rows = []
     for name, promql in queries.items():
         val = await _prom_instant(promql)
         rows.append([name, round(val, 1)])
-    resp = _result(
-        "latency_percentiles", False, ["metric", "value_ms"], rows, {}
+    return _result(
+        "latency_percentiles", True, ["metric", "value_ms"], rows, {}
     )
-    resp["warning"] = "Global metric — not scoped to your organization"
-    return resp
 
 
 async def _queue_depth_over_time(
     db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
 ) -> dict:
-    high_rows = await _prom_range(
-        'openzync_worker_queue_depth{queue_name="high"}', days
-    )
-    low_rows = await _prom_range(
-        'openzync_worker_queue_depth{queue_name="low"}', days
-    )
-    rows = [["high", r[0], r[1]] for r in high_rows] + [
-        ["low", r[0], r[1]] for r in low_rows
+    # Was Prometheus, now DB: pending enrichments (enrichment_status != 63) per day
+    conditions = [
+        Episode.organization_id == org_uuid,
+        Episode.is_deleted.is_(False),
+        Episode.enrichment_status != 63,
+        Episode.created_at >= func.now() - text(f"interval '{days} days'"),
     ]
-    resp = _result(
-        "queue_depth_over_time",
-        False,
-        ["queue", "timestamp", "depth"],
-        rows,
-        {"days": days},
+    if project_id:
+        conditions.append(Episode.project_id == UUID(project_id))
+    stmt = (
+        select(
+            func.date_trunc("day", Episode.created_at).label("date"),
+            func.count(Episode.id).label("count"),
+        )
+        .select_from(Episode)
+        .where(*conditions)
+        .group_by(text("date"))
+        .order_by(text("date DESC"))
     )
-    resp["warning"] = "Global metric — not scoped to your organization"
-    return resp
+    result = await db.execute(stmt)
+    rows = [[str(r.date), r.count] for r in result]
+    return _result("queue_depth_over_time", True, ["date", "count"], rows, {"days": days})
 
 
 async def _context_retrieval_rate(
     db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
 ) -> dict:
-    promql = "sum(rate(openzync_context_latency_seconds_count[5m]))"
+    promql = f'sum(rate(openzync_context_latency_seconds_count{{org_id="{org_uuid}"}}[5m]))'
     rows = await _prom_range(promql, days)
-    resp = _result(
-        "context_retrieval_rate", False, ["timestamp", "rate"], rows, {"days": days}
+    return _result(
+        "context_retrieval_rate", True, ["timestamp", "rate"], rows, {"days": days}
     )
-    resp["warning"] = "Global metric — not scoped to your organization"
-    return resp
 
 
 # ── Dispatch ──────────────────────────────────────────────────────────────
@@ -491,10 +489,10 @@ AVAILABLE_QUERY_LIST: list[dict] = [
     {"name": "enrichment_progress", "description": "Enrichment status breakdown", "category": "ingestion", "org_scoped": True, "params": []},
     {"name": "top_projects_by_episodes", "description": "Projects ranked by episode count", "category": "projects", "org_scoped": True, "params": ["limit"]},
     {"name": "top_users_by_messages", "description": "Users ranked by message count", "category": "users", "org_scoped": True, "params": ["limit"]},
-    {"name": "error_rate_by_day", "description": "Daily 5xx error counts", "category": "performance", "org_scoped": False, "params": ["days"]},
-    {"name": "latency_percentiles", "description": "Current p50/p95/p99 latency", "category": "performance", "org_scoped": False, "params": []},
-    {"name": "queue_depth_over_time", "description": "Worker queue depth over time", "category": "performance", "org_scoped": False, "params": ["days"]},
-    {"name": "context_retrieval_rate", "description": "Context assembly request rate", "category": "performance", "org_scoped": False, "params": ["days"]},
+    {"name": "error_rate_by_day", "description": "Daily 5xx error counts", "category": "performance", "org_scoped": True, "params": ["days"]},
+    {"name": "latency_percentiles", "description": "Current p50/p95/p99 latency", "category": "performance", "org_scoped": True, "params": []},
+    {"name": "queue_depth_over_time", "description": "Pending enrichments per day (org backlog)", "category": "performance", "org_scoped": True, "params": ["days"]},
+    {"name": "context_retrieval_rate", "description": "Context assembly request rate", "category": "performance", "org_scoped": True, "params": ["days"]},
 ]
 
 
@@ -520,9 +518,8 @@ async def run_org_query(
 ) -> dict:
     """Run a predefined metric query scoped to the authenticated org.
 
-    DB queries (episodes_per_day, etc.) are fully org-scoped.
-    Prometheus queries (error_rate_by_day, etc.) are global and return
-    a warning about cross-org data.
+    All queries are org-scoped (Prometheus handlers filter by org_id label;
+    queue_depth_over_time is DB-backed pending enrichments per day).
 
     Raises:
         HTTPException: 422 if the query name is unknown.
