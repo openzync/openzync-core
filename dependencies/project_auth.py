@@ -1,10 +1,9 @@
 """Project auth dependency — verifies the authenticated user is a project member.
 
 Provides ``require_project_membership`` which can be used as a FastAPI
-``Depends`` to guard any project-scoped endpoint.  Supports two modes:
-
-- **Default**: requires the user to have *any* role in the project.
-- **``require_owner``**: additionally checks that the user's role is ``"owner"``.
+``Depends`` to guard any project-scoped endpoint.  Requires the user to
+have *any* role in the project (JWT) or the API key to be scoped to the
+project.
 
 Usage::
 
@@ -30,7 +29,6 @@ from sqlalchemy.ext.asyncio import (
 
 from dependencies.db import get_db
 from repositories.project_repository import ProjectRepository
-from repositories.user_repository import UserRepository
 
 
 async def require_project_membership(
@@ -119,75 +117,3 @@ async def require_project_membership(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not a member of this project",
         )
-
-
-async def require_project_owner(
-    request: Request,
-    project_id: UUID = Path(...),
-    db: AsyncSession = Depends(get_db),
-) -> None:
-    """Verify the authenticated user is an owner of the given project.
-
-    Requires project membership **and** then passes only if
-    ``member.role == "owner"`` **or** the authenticated user's org role is
-    ``"admin"`` (verified against the DB, not the JWT ``role`` claim).  An
-    org admin who has NOT been added to the project is denied — the check
-    is fail-closed and org-scoped.
-
-    **Note**: API key auth is NOT supported for owner-level operations.
-    Only JWT-authenticated dashboard users can perform owner-gated actions
-    (creating/revoking API keys, managing members).
-
-    Raises:
-        HTTPException 401: If the user is not authenticated.
-        HTTPException 403: If the user is not a project member/owner, or
-            not an org admin.
-        HTTPException 404: If the project does not exist.
-    """
-    auth_type: str | None = getattr(request.state, "auth_type", None)
-    if auth_type == "api_key":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="API key authentication is not supported for this operation. "
-            "Use a JWT dashboard session.",
-        )
-
-    user_id: str | None = getattr(request.state, "user_id", None)
-    if user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-        )
-
-    repo = ProjectRepository(db)
-    project = await repo.get_by_id(
-        organization_id=request.state.org_id,
-        project_id=project_id,
-    )
-    if project is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Project not found",
-        )
-
-    member = await repo.get_member(
-        project_id=project_id,
-        user_id=UUID(user_id),
-    )
-    if member is None:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not a member of this project",
-        )
-    if member.role != "owner":
-        # Org admins can perform owner-level project actions — verify the
-        # user's org role rather than trusting the JWT ``role`` claim.
-        user = await UserRepository(db).get_by_uuid(
-            UUID(request.state.org_id),
-            UUID(user_id),
-        )
-        if user is None or user.role != "admin":
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Project owner access required",
-            )

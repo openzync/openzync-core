@@ -14,8 +14,9 @@ from fastapi import APIRouter, Depends, Path, Query, Request, status
 
 from core.audit import audit_action
 from core.exceptions import NotFoundError, ValidationError
+from dependencies.auth import require_permission
 from dependencies.db import get_db
-from dependencies.project_auth import require_project_membership, require_project_owner
+from dependencies.project_auth import require_project_membership
 from repositories.project_repository import ProjectRepository
 from schemas.projects import (
     AddMemberRequest,
@@ -101,7 +102,10 @@ async def list_projects(
 @router.get(
     "/{project_id}",
     response_model=ProjectResponse,
-    dependencies=[Depends(require_project_membership)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:read")),
+    ],
 )
 async def get_project(
     project_id: UUID = Path(...),
@@ -121,7 +125,10 @@ async def get_project(
 @router.patch(
     "/{project_id}",
     response_model=ProjectResponse,
-    dependencies=[Depends(require_project_owner)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:manage")),
+    ],
 )
 @audit_action("project.update", "project", "Project updated")
 async def update_project(
@@ -147,7 +154,10 @@ async def update_project(
 @router.delete(
     "/{project_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_project_owner)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:manage")),
+    ],
 )
 @audit_action("project.delete", "project", "Project deleted")
 async def archive_project(
@@ -172,7 +182,10 @@ async def archive_project(
     "/{project_id}/members",
     response_model=ProjectMemberResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_project_owner)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:manage")),
+    ],
 )
 @audit_action("project.member.add", "project_member", "Member added")
 async def add_member(
@@ -193,7 +206,10 @@ async def add_member(
 @router.get(
     "/{project_id}/members",
     response_model=list[ProjectMemberResponse],
-    dependencies=[Depends(require_project_membership)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:read")),
+    ],
 )
 async def list_members(
     project_id: UUID = Path(...),
@@ -209,7 +225,10 @@ async def list_members(
 @router.delete(
     "/{project_id}/members/{user_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    dependencies=[Depends(require_project_owner)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:manage")),
+    ],
 )
 @audit_action("project.member.remove", "project_member", "Member removed")
 async def remove_member(
@@ -230,7 +249,10 @@ async def remove_member(
 @router.patch(
     "/{project_id}/members/{user_id}",
     response_model=ProjectMemberResponse,
-    dependencies=[Depends(require_project_owner)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:manage")),
+    ],
 )
 @audit_action("project.member.update", "project_member", "Member role updated")
 async def update_member_role(

@@ -12,6 +12,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from core.rbac import ALL_PERMISSIONS
 from dependencies.auth import get_dashboard_user
 from dependencies.services import get_auth_service, get_auth_throttle
 from routers.auth import router
@@ -40,7 +41,7 @@ def _create_app() -> tuple[FastAPI, dict[str, AsyncMock]]:
         request.state.org_id = str(ORG_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
-        request.state.api_key_scopes = ["admin", "admin:write"]
+        request.state.api_key_permissions = ["admin", "admin:write"]
         response = await call_next(request)
         return response
 
@@ -730,6 +731,7 @@ async def test_get_me_success() -> None:
         organization_id=ORG_ID,
         is_email_verified=True,
         mfa_enabled=False,
+        permissions=sorted(ALL_PERMISSIONS),
     )
 
     transport = ASGITransport(app=app)
@@ -758,6 +760,7 @@ async def test_update_me_success() -> None:
         organization_id=ORG_ID,
         is_email_verified=True,
         mfa_enabled=False,
+        permissions=sorted(ALL_PERMISSIONS),
     )
 
     transport = ASGITransport(app=app)

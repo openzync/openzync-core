@@ -178,10 +178,15 @@ class TestAdminSchemasCRUD:
     @pytest.mark.asyncio
     async def test_list_schemas_filtered_by_type(
         self,
-        isolated_auth_client: AsyncClient,
+        admin_client: AsyncClient,
     ) -> None:
-        """GET /v1/admin/schemas?type=classification — filtered."""
-        list_resp = await isolated_auth_client.get(
+        """GET /v1/admin/schemas?type=classification — filtered.
+
+        ``GET /v1/admin/schemas`` is gated by
+        ``require_permission("configuration:read")`` — the project-scoped
+        API key lacks it, so we use the admin JWT client.
+        """
+        list_resp = await admin_client.get(
             "/v1/admin/schemas",
             params={"type": "classification"},
         )
@@ -362,7 +367,7 @@ class TestAdminSchemasCRUD:
 
         # Org B: list schemas — should see 0 (org_a_schema is scoped to Org A)
         async with AsyncClient(transport=transport, base_url="http://test") as cli:
-            cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_b['jwt']}"
             list_b = await cli.get("/v1/admin/schemas")
             assert list_b.status_code == 200
             body_b = list_b.json()

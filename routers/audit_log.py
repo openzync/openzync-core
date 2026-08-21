@@ -13,7 +13,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies.auth import require_org_admin
+from dependencies.auth import require_permission
 from dependencies.db import get_db
 from schemas.audit_log import AuditLogFilter, AuditLogListResponse, AuditLogResponse
 from services.audit_log_service import AuditLogService
@@ -36,7 +36,7 @@ router = APIRouter(
 )
 async def list_audit_logs(
     db: AsyncSession = Depends(get_db),
-    org_id: str = Depends(require_org_admin),
+    org_id: str = Depends(require_permission("members:read")),
     action: str | None = Query(None, description="Filter by action (exact match)"),
     actor_id: str | None = Query(None, description="Filter by actor ID"),
     actor_type: str | None = Query(None, description="Filter by actor type (user, api_key, system)"),
@@ -54,8 +54,8 @@ async def list_audit_logs(
 ) -> AuditLogListResponse:
     """Get paginated audit log entries for the admin dashboard.
 
-    Admin-gated (``require_org_admin``): only org admins may read the
-    org-wide audit trail.
+    Permission-gated (``require_permission("members:read")``): only members
+    with read access may view the org-wide audit trail.
 
     Args:
         db: Database session.

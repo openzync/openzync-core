@@ -125,6 +125,7 @@ class TestJoinOrganization:
             password_hash="hashed",
             name="alice",
             role="member",  # join NEVER creates an admin
+            permissions=["project:read", "project:write"],
         )
         mock_otp.generate_and_send.assert_awaited_once_with(
             email="alice@acme.com", purpose="signup"

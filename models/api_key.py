@@ -40,7 +40,10 @@ class ApiKey(TimestampMixin, Base):
         prefix: First few characters for identification — one of
             ``oz_live_`` or ``oz_test_``.
         name: Optional human-readable label for this key.
-        scopes: Array of permission scopes (defaults to ``['read', 'write']``).
+        permissions: Array of permission strings using the same vocabulary
+            as ``users.permissions`` (defaults to the member defaults
+            ``['project:read', 'project:write']``).  Empty = wildcard via
+            role.
         last_used_at: Timestamp of most recent usage (updated on each request).
         expires_at: Optional expiration timestamp.
         is_revoked: Soft revocation flag.
@@ -89,11 +92,15 @@ class ApiKey(TimestampMixin, Base):
         nullable=False,
     )
     name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    scopes: Mapped[list[str]] = mapped_column(
+    permissions: Mapped[list[str]] = mapped_column(
         ARRAY(String),
         nullable=False,
-        default=["read", "write"],
-        server_default="{read,write}",
+        default=["project:read", "project:write"],
+        server_default="{project:read,project:write}",
+        comment=(
+            "Permission strings — same vocabulary as users.permissions; "
+            "empty = wildcard via role."
+        ),
     )
     last_used_at: Mapped[datetime | None] = mapped_column(nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(nullable=True)

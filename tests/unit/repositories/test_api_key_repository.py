@@ -41,7 +41,7 @@ class TestApiKeyRepository:
         key.key_hash = overrides.get("key_hash", "def456")
         key.salt = overrides.get("salt", "salt123")
         key.prefix = overrides.get("prefix", "oz_test_")
-        key.scopes = overrides.get("scopes", ["read", "write"])
+        key.permissions = overrides.get("permissions", ["project:read", "project:write"])
         key.is_revoked = overrides.get("is_revoked", False)
         key.last_used_at = overrides.get("last_used_at", None)
         key.created_at = overrides.get("created_at", None)
@@ -178,7 +178,7 @@ class TestApiKeyRepository:
             salt="salt123",
             prefix="oz_test_",
             name="Test Key",
-            scopes=["read", "write"],
+            permissions=["project:read", "project:write"],
             project_id=self.PROJECT_ID,
             created_by=uuid4(),
         )

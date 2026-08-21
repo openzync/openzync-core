@@ -17,7 +17,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Response
 
 from core.audit import audit_action
-from dependencies.auth import get_dashboard_user, require_org_admin
+from dependencies.auth import get_dashboard_user, require_permission
 from dependencies.services import get_invite_service
 from schemas.auth import InviteRequest, InviteResponse
 from services.invite_service import InviteService  # noqa: TC001
@@ -42,7 +42,7 @@ router = APIRouter(
 @audit_action("admin.user_invite", "user", "Admin invited user")
 async def invite_user(
     payload: InviteRequest,
-    org_id: str = Depends(require_org_admin),  # noqa: B008
+    org_id: str = Depends(require_permission("members:write")),  # noqa: B008
     user_id: str = Depends(get_dashboard_user),  # noqa: B008
     service: InviteService = Depends(get_invite_service),  # noqa: B008
 ) -> InviteResponse:
@@ -81,7 +81,7 @@ async def invite_user(
 @audit_action("admin.user_invite_revoke", "user", "Admin revoked user invite")
 async def revoke_invite(
     user_id: UUID,
-    org_id: str = Depends(require_org_admin),  # noqa: B008
+    org_id: str = Depends(require_permission("members:write")),  # noqa: B008
     service: InviteService = Depends(get_invite_service),  # noqa: B008
 ) -> Response:
     """Revoke a pending invite (admin-gated).

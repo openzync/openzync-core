@@ -37,7 +37,7 @@ def _build_app(state_overrides: dict | None = None) -> FastAPI:
         "org_id": str(ORG_ID),
         "auth_type": "api_key",
         "api_key_project_id": str(PROJECT_ID),
-        "api_key_scopes": ["read", "write"],
+        "api_key_permissions": ["read", "write"],
     }
     if state_overrides:
         merged_state.update(state_overrides)

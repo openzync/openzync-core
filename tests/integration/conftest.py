@@ -252,12 +252,13 @@ async def async_client(app: Any) -> AsyncGenerator[AsyncClient, None]:
 async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict:
     """Bootstrap a full tenant under the current API contract.
 
-    The org bootstrap (``POST /admin/organizations``) no longer generates
-    an API key and no longer auto-creates a default project.  A working
-    tenant therefore needs the full dashboard flow, which we drive through
-    the real API:
+    The org bootstrap (``POST /admin/organizations``) is now gated behind
+    the platform ``superadmin`` role, so it is no longer usable as a
+    public tenant-bootstrap path.  A working tenant is therefore created
+    directly through the DB (test infra — there is no public "create org"
+    endpoint that runs before auth exists):
 
-    1. Bootstrap the org via the admin endpoint (public, no auth).
+    1. Insert the org row directly (fixture infra).
     2. Insert a user row directly (fixture infra — there is no public
        "create user" endpoint that runs before auth exists).
     3. Mint a JWT for that user (signed with the test app's SECRET_KEY).
@@ -276,13 +277,21 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
     from repositories.user_repository import UserRepository
     from utils.crypto import create_jwt_token
 
-    resp = await client.post(
-        "/admin/organizations",
-        json={"name": org_name, "plan": "free"},
-    )
-    assert resp.status_code == 201, f"Admin bootstrap failed: {resp.text}"
-    data = resp.json()
-    org_id = UUID(data["organization_id"])
+    # ── Insert the org row directly (test infra, not a public API) ────
+    from sqlalchemy import text as _sql
+
+    async with (
+        app.state.db_session_factory() as session,
+        session.begin(),
+    ):
+        org_id = uuid4()
+        await session.execute(
+            _sql(
+                "INSERT INTO organizations (id, name, plan, org_code) "
+                "VALUES (:id, :name, 'free', :code)"
+            ),
+            {"id": org_id, "name": org_name, "code": f"boot_{uuid4().hex[:8]}"},
+        )
 
     # ── Insert the user row directly (test infra, not a public API) ───
     async with (
@@ -292,6 +301,7 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
         user = await UserRepository(session).create(
             organization_id=org_id,
             external_id=f"bootstrap_{uuid4().hex[:8]}",
+            role="admin",
         )
     user_id = user.id
 

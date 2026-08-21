@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING
 
 from core.config import get_settings
 from core.exceptions import ConflictError, ExternalServiceError, NotFoundError
+from core.rbac import MEMBER_DEFAULT_PERMISSIONS
 from repositories.organization_repository import (  # noqa: TC001
     OrganizationRepository,
 )
@@ -234,6 +235,7 @@ class InviteService:
             name=payload.name,
             email=payload.email,
             role="member",
+            permissions=list(MEMBER_DEFAULT_PERMISSIONS),
             password_hash=None,
             invite_token_hash=token_hash,
         )

@@ -39,7 +39,7 @@ class TestApiKeyService:
         key.project_id = kwargs.get("project_id", self.PROJECT_ID)
         key.name = kwargs.get("name", "Test Key")
         key.prefix = kwargs.get("prefix", "oz_test_")
-        key.scopes = kwargs.get("scopes", ["read", "write"])
+        key.permissions = kwargs.get("permissions", ["project:read", "project:write"])
         key.is_revoked = kwargs.get("is_revoked", False)
         key.lookup_hash = kwargs.get("lookup_hash", "abc123")
         key.key_hash = kwargs.get("key_hash", "def456")
@@ -75,7 +75,7 @@ class TestApiKeyService:
         assert call_kwargs["organization_id"] == self.ORG_ID
         assert call_kwargs["project_id"] == self.PROJECT_ID
         assert call_kwargs["name"] == "CI/CD Key"
-        assert call_kwargs["scopes"] == ["read", "write"]
+        assert call_kwargs["permissions"] == ["project:read", "project:write"]
 
     async def test_create_project_key_with_default_scopes(self) -> None:
         """Ensure default scopes are applied when none specified."""

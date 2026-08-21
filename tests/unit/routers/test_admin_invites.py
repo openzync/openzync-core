@@ -25,7 +25,8 @@ from core.exceptions import (
     NotFoundError,
     register_exception_handlers,
 )
-from dependencies.auth import get_dashboard_user, require_org_admin
+from dependencies.auth import _check_permission as real_check_permission
+from dependencies.auth import get_dashboard_user, require_org_id
 from dependencies.services import get_invite_service
 from routers.admin_invites import router
 from schemas.auth import InviteResponse
@@ -35,12 +36,30 @@ USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 INVITEE_ID = UUID("00000000-0000-0000-0000-000000000003")
 
 
+@pytest.fixture(autouse=True)
+def _stub_permission_gate() -> None:
+    """Stub the permission gate for every test in this file.
+
+    The router gates with ``require_permission("members:write")`` — a
+    closure created at router import time that cannot be keyed in
+    ``dependency_overrides``.  Patching ``dependencies.auth._check_permission``
+    (the shared decision function) stubs the gate while keeping the
+    ``require_org_id`` chain intact.  The real gate matrix is covered by
+    ``test_admin_gate_matrix.py``.
+    """
+    with patch("dependencies.auth._check_permission", new=AsyncMock()):
+        yield
+
+
 def _make_app() -> tuple[FastAPI, AsyncMock]:
     """Admin-gated app: admin gate dependencies + invite service mocked."""
     app = FastAPI()
     register_exception_handlers(app)
     service_mock = AsyncMock()
-    app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
+    from dependencies.db import get_db
+
+    app.dependency_overrides[get_db] = lambda: AsyncMock()
+    app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
     app.dependency_overrides[get_invite_service] = lambda: service_mock
     app.include_router(router)
@@ -108,8 +127,17 @@ async def test_invite_member_403() -> None:
     """POST invite returns 403 for a JWT member (role check)."""
     app = _make_member_app()
 
-    with patch(
-        "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+    with (
+        patch(
+            "dependencies.auth._check_permission", new=real_check_permission,
+        ),
+        patch(
+            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+        ),
+        patch(
+            "dependencies.auth.get_effective_permissions",
+            new=AsyncMock(return_value=frozenset()),
+        ),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -224,8 +252,17 @@ async def test_revoke_member_403() -> None:
     """DELETE invite returns 403 for a JWT member."""
     app = _make_member_app()
 
-    with patch(
-        "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+    with (
+        patch(
+            "dependencies.auth._check_permission", new=real_check_permission,
+        ),
+        patch(
+            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+        ),
+        patch(
+            "dependencies.auth.get_effective_permissions",
+            new=AsyncMock(return_value=frozenset()),
+        ),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:

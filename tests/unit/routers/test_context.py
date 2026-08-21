@@ -24,6 +24,22 @@ USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
 
 
+
+@pytest.fixture(autouse=True)
+def _stub_permission_gate() -> None:
+    """Stub the permission gate for every test in this file.
+
+    The router gates with ``require_permission("project:read")`` /
+    ``require_permission("project:write")`` — closures created at router
+    import time that cannot be keyed in ``dependency_overrides``.  Patching
+    ``dependencies.auth._check_permission`` (the shared decision function)
+    stubs the gate while keeping the ``require_org_id`` chain intact.  The
+    real gate matrix is covered by ``test_admin_gate_matrix.py``.
+    """
+    with patch("dependencies.auth._check_permission", new=AsyncMock()):
+        yield
+
+
 def _create_app() -> FastAPI:
     """Build a minimal FastAPI app with only the context router and overridden deps."""
     app = FastAPI()

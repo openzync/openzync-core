@@ -184,6 +184,7 @@ async def _create_root_user(db: AsyncSession, password: str) -> User:  # noqa: F
         email="root",
         name="Platform Root",
         role="superadmin",
+        permissions=[],  # superadmin = wildcard via role
         password_hash=hash_password(password),
         is_email_verified=True,
         must_change_password=True,

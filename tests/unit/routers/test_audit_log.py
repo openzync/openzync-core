@@ -25,6 +25,21 @@ LOG_ID = UUID("00000000-0000-0000-0000-000000000003")
 NOW = datetime.now(timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def _stub_permission_gate() -> None:
+    """Stub the permission gate for every test in this file.
+
+    The router gates with ``require_permission("members:read")`` — a
+    closure created at router import time that cannot be keyed in
+    ``dependency_overrides``.  Patching ``dependencies.auth._check_permission``
+    (the shared decision function) stubs the gate while keeping the
+    ``require_org_id`` chain intact.  The real gate matrix is covered by
+    ``test_admin_gate_matrix.py``.
+    """
+    with patch("dependencies.auth._check_permission", new=AsyncMock()):
+        yield
+
+
 def _stub_audit_log_entry(
     overrides: dict | None = None,
 ) -> MagicMock:
@@ -51,13 +66,13 @@ def _build_app(mock_service: AsyncMock) -> FastAPI:
     app = FastAPI()
     app.include_router(router)
 
-    from dependencies.auth import require_org_admin
+    from dependencies.auth import require_org_id
     from dependencies.db import get_db
 
     app.dependency_overrides = {}
     app.dependency_overrides[get_db] = lambda: mock_service._db  # not used directly
-    # Admin-gated: the endpoint is org-wide (IPs, actors, resources, bodies).
-    app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
+    # Permission-gated: the endpoint is org-wide (IPs, actors, resources, bodies).
+    app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
 
     @app.middleware("http")
     async def _mock_auth(request: Request, call_next):

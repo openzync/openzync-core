@@ -21,6 +21,7 @@ from starlette.responses import Response
 
 from core.audit import audit_action
 from core.exceptions import NotFoundError
+from dependencies.auth import require_permission
 from dependencies.project_auth import require_project_membership
 from dependencies.services import get_graph_service
 from schemas.graph import (
@@ -49,7 +50,10 @@ router = APIRouter(
 @router.get(
     "/nodes",
     response_model=GraphNodesListResponse,
-    dependencies=[Depends(require_project_membership)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:read")),
+    ],
     summary="List entity nodes",
     description="List entity nodes in the project's knowledge graph with "
     "optional type filtering and cursor-based pagination.",
@@ -109,7 +113,10 @@ async def list_graph_nodes(
 @router.get(
     "/nodes/{node_id}",
     response_model=GraphNodeDetailResponse,
-    dependencies=[Depends(require_project_membership)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:read")),
+    ],
     summary="Get entity node with incident edges",
     description="Retrieve a single entity node and all its incident "
     "edges from the knowledge graph.",
@@ -149,7 +156,10 @@ async def get_graph_node(
 @router.delete(
     "/nodes/{node_id}",
     status_code=204,
-    dependencies=[Depends(require_project_membership)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:write")),
+    ],
     summary="Delete entity node",
     description="Delete an entity node and all its incident edges "
     "from the knowledge graph.",
@@ -189,7 +199,10 @@ async def delete_graph_node(
 @router.get(
     "/edges",
     response_model=GraphEdgesListResponse,
-    dependencies=[Depends(require_project_membership)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:read")),
+    ],
     summary="List relationship edges",
     description="List relationship edges for a specific entity with "
     "optional predicate filtering.",
@@ -280,7 +293,10 @@ async def list_graph_edges(
 @router.get(
     "/communities",
     response_model=GraphCommunitiesListResponse,
-    dependencies=[Depends(require_project_membership)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:read")),
+    ],
     summary="List community summaries",
     description="List community summary nodes for the project's knowledge "
     "graph.  Community detection runs as a scheduled background task — "

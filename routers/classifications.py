@@ -17,6 +17,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from dependencies.auth import require_permission
 from dependencies.db import get_db
 from dependencies.project_auth import require_project_membership
 from repositories.dialog_classification_repository import (
@@ -50,7 +51,10 @@ def _get_classification_service(
 @router.get(
     "",
     response_model=ClassificationListResponse,
-    dependencies=[Depends(require_project_membership)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:read")),
+    ],
 )
 async def list_classifications(
     request: Request,
@@ -78,7 +82,10 @@ async def list_classifications(
 @router.get(
     "/{episode_id}",
     response_model=ClassificationResponse,
-    dependencies=[Depends(require_project_membership)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:read")),
+    ],
 )
 async def get_episode_classification(
     request: Request,

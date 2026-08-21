@@ -14,6 +14,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 
+from dependencies.auth import require_permission
 from dependencies.project_auth import require_project_membership
 from dependencies.services import get_graph_backend_for_project
 from packages.graph_backend.interface import GraphBackend
@@ -40,7 +41,10 @@ def _get_observation_query_service(
 @router.get(
     "",
     response_model=ObservationListResponse,
-    dependencies=[Depends(require_project_membership)],
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:read")),
+    ],
     summary="List observations",
     description=(
         "List observations for a project with optional type and entity "

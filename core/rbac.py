@@ -1,17 +1,23 @@
-"""Org-level RBAC — role lookup with fail-closed caching.
+"""Org-level RBAC — role and permission lookup with fail-closed caching.
 
 ``get_org_role`` is the single source of truth for a user's role within
 their organization.  Roles are cached in Redis for 60 seconds (cache-aside)
 and the lookup **fails closed**: any infrastructure error (Redis or DB)
 returns ``"member"`` so a transient outage can never elevate a user.
 
-Roles are invalidated on role change / user deletion via
-:func:`invalidate_role` so a stale cache entry cannot outlive the
-authorization decision that produced it.
+``get_effective_permissions`` is the single source of truth for a
+non-admin user's explicit permission set (the ``users.permissions``
+column).  It uses the same cache-aside pattern and **fails closed** to an
+empty set (deny) on any read-path error.
+
+Roles and permissions are invalidated on change / user deletion via
+:func:`invalidate_role` and :func:`invalidate_permissions` so a stale
+cache entry cannot outlive the authorization decision that produced it.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -41,6 +47,39 @@ PWD_FLAG_CACHE_PREFIX: str = "rbac:pwd:flag:"  # noqa: S105  — a Redis key pre
 PWD_FLAG_CACHE_TTL: int = 60
 """TTL in seconds for cached must-change-password lookups."""
 
+RBAC_PERMS_CACHE_PREFIX: str = "rbac:perms:"
+"""Redis key prefix for cached user permission sets."""
+
+RBAC_PERMS_CACHE_TTL: int = 60
+"""TTL in seconds for cached permission lookups."""
+
+ALL_PERMISSIONS: frozenset[str] = frozenset(
+    {
+        "project:read",
+        "project:write",
+        "project:manage",
+        "configuration:read",
+        "configuration:write",
+        "members:read",
+        "members:write",
+    }
+)
+"""The full permission vocabulary shared by users and API keys.
+
+An empty permission array is a wildcard — the role (admin/superadmin)
+grants everything.  Non-admin roles carry an explicit subset.
+"""
+
+MEMBER_DEFAULT_PERMISSIONS: tuple[str, ...] = (
+    "project:read",
+    "project:write",
+)
+"""Default permission set seeded for ``member``-role users.
+
+A tuple (not a set) so the seeding sites' ``list(...)`` yields a
+deterministic, canonical order.
+"""
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Helpers
@@ -57,6 +96,18 @@ def _role_cache_key(user_id: UUID) -> str:
         The namespaced Redis key string.
     """
     return f"{RBAC_ROLE_CACHE_PREFIX}{user_id}"
+
+
+def _perms_cache_key(user_id: UUID) -> str:
+    """Build the Redis key for a user's cached permission set.
+
+    Args:
+        user_id: The user's UUID.
+
+    Returns:
+        The namespaced Redis key string.
+    """
+    return f"{RBAC_PERMS_CACHE_PREFIX}{user_id}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -144,6 +195,97 @@ async def invalidate_role(redis: Redis, user_id: UUID) -> None:
     except Exception:
         logger.error(
             "rbac.role_cache_invalidate_failed",
+            extra={"user_id": str(user_id)},
+            exc_info=True,
+        )
+
+
+async def get_effective_permissions(
+    redis: Redis,
+    db: AsyncSession,
+    org_id: UUID,
+    user_id: UUID,
+) -> frozenset[str]:
+    """Return the user's effective permission set (fail-closed).
+
+    Cache-aside with a 60 s TTL, mirroring :func:`get_org_role`.  The
+    permission list is cached as a JSON array string (sorted) and decoded
+    back into a frozenset on a cache hit.
+
+    **Fails closed**: any Redis or DB *read* error returns an empty
+    frozenset (deny) and logs with org/user context — an outage can never
+    grant permissions.  A cache-*write* failure after a successful DB read
+    does NOT degrade: the permissions were already verified against the
+    source of truth, and the write is only an optimization.
+
+    Args:
+        redis: Async Redis client (from ``request.app.state.redis``).
+        db: Request-scoped async DB session.
+        org_id: The organization UUID the user belongs to.
+        user_id: The user's UUID.
+
+    Returns:
+        The user's permission strings as a frozenset.  Empty for unknown,
+        inactive, or soft-deleted users, and on read-path infrastructure
+        failures.
+    """
+    cache_key = _perms_cache_key(user_id)
+    try:
+        cached = await redis.get(cache_key)
+        if cached is not None:
+            raw = cached.decode() if isinstance(cached, bytes) else cached
+            return frozenset(json.loads(raw))
+    except Exception:
+        logger.error(
+            "rbac.perms_cache_read_failed",
+            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            exc_info=True,
+        )
+
+    try:
+        user = await UserRepository(db).get_by_uuid(org_id, user_id)
+    except Exception:
+        logger.error(
+            "rbac.perms_db_lookup_failed",
+            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            exc_info=True,
+        )
+        return frozenset()
+
+    if user is None or not user.is_active or user.is_deleted:
+        return frozenset()
+
+    permissions = frozenset(user.permissions or [])
+    try:
+        await redis.setex(
+            cache_key,
+            RBAC_PERMS_CACHE_TTL,
+            json.dumps(sorted(permissions)),
+        )
+    except Exception:
+        logger.error(
+            "rbac.perms_cache_write_failed",
+            extra={"org_id": str(org_id), "user_id": str(user_id)},
+            exc_info=True,
+        )
+    return permissions
+
+
+async def invalidate_permissions(redis: Redis, user_id: UUID) -> None:
+    """Delete the cached permission set for a user.
+
+    Called after a permission change or user deletion so the next lookup
+    re-reads the source of truth.  Failures are logged, never swallowed.
+
+    Args:
+        redis: Async Redis client.
+        user_id: The user's UUID.
+    """
+    try:
+        await redis.delete(_perms_cache_key(user_id))
+    except Exception:
+        logger.error(
+            "rbac.perms_cache_invalidate_failed",
             extra={"user_id": str(user_id)},
             exc_info=True,
         )

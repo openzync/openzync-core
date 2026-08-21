@@ -1,37 +1,39 @@
 """Admin-gate matrix contract test — every admin-gated endpoint, real wiring.
 
 Closes the structural test hole where 7 of 8 admin-router suites override
-``require_org_admin`` with a pass-through lambda: those suites would pass
-even if a gate were deleted from an endpoint.  This suite never overrides
-the gate.  It builds the app with the **real** ``require_org_admin`` /
-``require_scope`` / ``require_org_admin_or_self`` dependency chain and
-instead patches the infrastructure underneath it:
+the gate with a pass-through stub: those suites would pass even if a gate
+were deleted from an endpoint.  This suite never overrides the gate.  It
+builds the app with the **real** ``require_permission`` /
+``require_permission_or_self`` dependency chain and instead patches the
+infrastructure underneath it:
 
 - ``dependencies.auth.get_org_role`` -> ``"member"`` (the role lookup that
   the real gate consults; see the same patch pattern in
   ``test_admin_org_code.py::_make_member_app`` and
-  ``test_rbac.py::TestRequireOrgAdmin``),
-- ``app.state.redis`` (required by ``_ensure_org_admin``),
+  ``test_rbac.py::TestRequirePermission``),
+- ``dependencies.auth.get_effective_permissions`` -> empty frozenset (a
+  member with no explicit grants is denied),
+- ``app.state.redis`` (required by ``_check_permission``),
 - ``get_db`` (request-scoped session, mocked).
 
 Contract asserted per endpoint:
-- member JWT  -> 403  (role check denies)
+- member JWT  -> 403  (permission check denies)
 - no auth     -> 401  (``require_org_id`` denies)
 
 Plus:
-- member ON SELF for the ``require_org_admin_or_self`` endpoints -> 200.
+- member ON SELF for the ``require_permission_or_self`` endpoints -> 200.
 - admin role on one representative endpoint -> 200 (proves the 403s come
-  from the role check, not from a broken harness).
+  from the permission check, not from a broken harness).
 - a coverage guard: the matrix is diffed against every route that actually
-  declares an admin gate, so a NEW admin endpoint added without a matrix
-  entry fails this suite.
+  declares a permission gate, so a NEW admin endpoint added without a
+  matrix entry fails this suite.
 
 Excluded by design (documented public / non-admin routes — verified against
 router sources):
 - ``GET /v1/admin/webhooks/events``  — no auth, public event-type listing.
 - ``GET /admin/org/config/defaults`` — no auth, seeded onboarding defaults.
 - ``GET /v1/users``, ``GET /v1/users/{user_id}`` — ``require_org_id`` only
-  (any authenticated caller), not admin-gated.
+  (any authenticated caller), not permission-gated.
 - ``GET /v1/auth/registration-status`` — PUBLIC by design (registration
   policy drives the signup UI).
 """
@@ -48,8 +50,8 @@ from httpx import ASGITransport, AsyncClient
 from core.config import PLATFORM_ORG_ID
 from core.exceptions import register_exception_handlers
 from dependencies.auth import (
-    require_org_admin,
-    require_org_admin_or_self,
+    require_permission,
+    require_permission_or_self,
     require_superadmin,
 )
 from dependencies.db import get_db
@@ -164,7 +166,7 @@ ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [
         {"user_id": str(OTHER_USER_ID)},
         {},
     ),
-    # users — require_org_admin_or_self: member on ANOTHER user
+    # users — require_permission_or_self: member on ANOTHER user
     ("GET", "/v1/users/{user_id}/summary", {"user_id": str(OTHER_USER_ID)}, {}),
     ("GET", "/v1/users/{user_id}/summary-instructions", {"user_id": str(OTHER_USER_ID)}, {}),
     # platform superadmin — POST /admin/organizations (re-gated bootstrap)
@@ -198,7 +200,7 @@ def _make_app(
     auth_user_id: str | None = None,
     auth_role: str = "member",
 ) -> FastAPI:
-    """Build the app with the real admin-gate dependency chain.
+    """Build the app with the real permission-gate dependency chain.
 
     ``authenticated=True`` adds middleware that sets a member JWT session
     on ``request.state`` (same pattern as
@@ -232,7 +234,7 @@ def _make_app(
             request.state.user_id = auth_user_id or str(MEMBER_USER_ID)
             request.state.auth_type = "jwt"
             request.state.role = auth_role
-            request.state.api_key_scopes = []
+            request.state.api_key_permissions = []
             return await call_next(request)
 
     for router in ALL_ROUTERS:
@@ -259,12 +261,18 @@ async def test_member_jwt_denied_403(
     path_params: dict,
     query_params: dict,
 ) -> None:
-    """A member JWT gets 403 on every admin-gated endpoint (real gate)."""
+    """A member JWT gets 403 on every permission-gated endpoint (real gate)."""
     app = _make_app(authenticated=True)
     path = _request_path(path_template, path_params)
 
-    with patch(
-        "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+    with (
+        patch(
+            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+        ),
+        patch(
+            "dependencies.auth.get_effective_permissions",
+            new=AsyncMock(return_value=frozenset()),
+        ),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -277,7 +285,7 @@ async def test_member_jwt_denied_403(
 
     assert resp.status_code == 403, (
         f"{method} {path} returned {resp.status_code} for a member JWT — "
-        "admin gate missing or bypassed"
+        "permission gate missing or bypassed"
     )
 
 
@@ -315,12 +323,12 @@ async def test_unauthenticated_denied_401(
     )
 
 
-# ── require_org_admin_or_self: member ON SELF -> 200 ──────────────────────────
+# ── require_permission_or_self: member ON SELF -> 200 ──────────────────────────
 
 
 @pytest.mark.asyncio
 async def test_member_self_summary_200() -> None:
-    """A member may read their OWN summary (or_self passes without role)."""
+    """A member may read their OWN summary (or_self passes without permission)."""
     app = _make_app(authenticated=True)
     service = AsyncMock()
     service.get_summary.return_value = UserSummaryResponse(
@@ -328,8 +336,14 @@ async def test_member_self_summary_200() -> None:
     )
     app.dependency_overrides[get_user_summary_service] = lambda: service
 
-    with patch(
-        "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+    with (
+        patch(
+            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+        ),
+        patch(
+            "dependencies.auth.get_effective_permissions",
+            new=AsyncMock(return_value=frozenset()),
+        ),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -346,8 +360,14 @@ async def test_member_self_summary_instructions_200() -> None:
     service.get_instructions.return_value = []
     app.dependency_overrides[get_user_summary_service] = lambda: service
 
-    with patch(
-        "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+    with (
+        patch(
+            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+        ),
+        patch(
+            "dependencies.auth.get_effective_permissions",
+            new=AsyncMock(return_value=frozenset()),
+        ),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -423,27 +443,21 @@ async def test_superadmin_role_passes_bootstrap_201() -> None:
 
 
 def _admin_gate_on_route(route) -> bool:
-    """True if the route declares an admin gate dependency.
+    """True if the route declares a permission-gate dependency.
 
-    Detects ``require_org_admin``, ``require_org_admin_or_self``,
-    ``require_superadmin``, and ``require_scope("admin...")`` closures
-    directly on the route.
+    Detects ``require_permission("...")`` / ``require_permission_or_self("...")``
+    closures (named ``_permission_checker`` / ``_permission_or_self_checker``)
+    and ``require_superadmin`` directly on the route.
     """
     for dep in route.dependant.dependencies:
         call = dep.call
-        if call in (require_org_admin, require_org_admin_or_self, require_superadmin):
+        if call in (require_superadmin,):
             return True
-        if getattr(call, "__name__", "") == "_scope_checker":
-            scope = next(
-                (
-                    cell.cell_contents
-                    for cell in call.__closure__  # type: ignore[attr-defined]
-                    if isinstance(cell.cell_contents, str)
-                ),
-                "",
-            )
-            if scope.startswith("admin"):
-                return True
+        if getattr(call, "__name__", "") in (
+            "_permission_checker",
+            "_permission_or_self_checker",
+        ):
+            return True
     return False
 
 
@@ -460,8 +474,8 @@ def _introspect_gated_routes() -> set[tuple[str, str]]:
 def test_matrix_covers_every_admin_gated_route() -> None:
     """The matrix and the routers' real gates agree exactly.
 
-    Fails if a new admin-gated endpoint is added without a matrix entry,
-    or if a matrix entry points at a route that is no longer gated.
+    Fails if a new permission-gated endpoint is added without a matrix
+    entry, or if a matrix entry points at a route that is no longer gated.
     """
     matrix = {
         (method, path_template)
@@ -472,10 +486,10 @@ def test_matrix_covers_every_admin_gated_route() -> None:
     missing_from_matrix = gated - matrix
     stale_matrix_entries = matrix - gated
     assert not missing_from_matrix, (
-        "admin-gated endpoints NOT covered by the matrix: "
+        "permission-gated endpoints NOT covered by the matrix: "
         f"{sorted(missing_from_matrix)}"
     )
     assert not stale_matrix_entries, (
-        "matrix entries with no admin-gated route (endpoint removed or "
+        "matrix entries with no permission-gated route (endpoint removed or "
         f"gate deleted): {sorted(stale_matrix_entries)}"
     )

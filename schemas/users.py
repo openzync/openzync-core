@@ -12,6 +12,26 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_serializer
 
+from core.rbac import ALL_PERMISSIONS
+
+
+def _normalize_permissions(v: list[str]) -> list[str]:
+    """Validate, dedupe, and sort a permission list (fail-closed).
+
+    Args:
+        v: Raw permission strings from the request/ORM.
+
+    Returns:
+        Deduplicated, sorted permission strings.
+
+    Raises:
+        ValueError: If any string is not in ``ALL_PERMISSIONS``.
+    """
+    unknown = [p for p in v if p not in ALL_PERMISSIONS]
+    if unknown:
+        raise ValueError(f"Unknown permissions: {sorted(unknown)}")
+    return sorted(set(v))
+
 
 class CreateUserRequest(BaseModel):
     """Request body for ``POST /v1/users``.
@@ -55,6 +75,21 @@ class CreateUserRequest(BaseModel):
         description="Dashboard role — 'admin' or 'member'. Defaults to 'member'.",
         examples=["member"],
     )
+    permissions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Explicit permission strings. Empty = wildcard via role "
+            "(admin) or no permissions (member). Member defaults are "
+            "seeded by the service layer, not here."
+        ),
+        examples=[["project:read", "project:write"]],
+    )
+
+    @field_validator("permissions")
+    @classmethod
+    def validate_permissions(cls, v: list[str]) -> list[str]:
+        """Reject unknown permission strings; dedupe and sort."""
+        return _normalize_permissions(v)
 
     @field_validator("email")
     @classmethod
@@ -112,6 +147,23 @@ class UpdateUserRequest(BaseModel):
         description="New dashboard role — 'admin' or 'member'. Absent = no change.",
         examples=["admin"],
     )
+    permissions: list[str] | None = Field(
+        default=None,
+        description=(
+            "Explicit permission strings to replace the current set. "
+            "Absent = no change. Empty list = no permissions (member) or "
+            "wildcard (admin)."
+        ),
+        examples=[["project:read", "project:write"]],
+    )
+
+    @field_validator("permissions")
+    @classmethod
+    def validate_permissions(cls, v: list[str] | None) -> list[str] | None:
+        """Reject unknown permission strings; dedupe and sort."""
+        if v is None:
+            return None
+        return _normalize_permissions(v)
 
     @field_validator("email")
     @classmethod
@@ -152,6 +204,14 @@ class UserResponse(BaseModel):
         description="Dashboard role — 'admin' or 'member'.",
         examples=["member"],
     )
+    permissions: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Explicit permission strings. Empty = wildcard via role "
+            "(admin/superadmin)."
+        ),
+        examples=[["project:read", "project:write"]],
+    )
     organization_id: UUID = Field(..., description="Tenant organization UUID.")
     created_at: datetime = Field(..., description="User creation timestamp (UTC).")
     updated_at: datetime = Field(..., description="Last update timestamp (UTC).")
@@ -167,6 +227,12 @@ class UserResponse(BaseModel):
             "until the invite is accepted."
         ),
     )
+
+    @field_validator("permissions")
+    @classmethod
+    def validate_permissions(cls, v: list[str]) -> list[str]:
+        """Reject unknown permission strings; dedupe and sort."""
+        return _normalize_permissions(v)
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

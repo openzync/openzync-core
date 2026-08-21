@@ -18,7 +18,11 @@ from uuid import UUID
 
 from core.events import EventType
 from core.exceptions import ConflictError, NotFoundError, ValidationError
-from core.rbac import invalidate_role
+from core.rbac import (
+    MEMBER_DEFAULT_PERMISSIONS,
+    invalidate_permissions,
+    invalidate_role,
+)
 from models.user import User
 from repositories.user_repository import UserRepository
 from schemas.users import UserListResponse, UserResponse, UserResponseWithStats
@@ -70,6 +74,37 @@ class UserService:
             return
         await invalidate_role(self._redis, user_id)
 
+    async def _invalidate_permissions_cache(self, user_id: UUID) -> None:
+        """Invalidate the cached permission set for a user after a change.
+
+        Args:
+            user_id: The user whose cached permissions must be dropped.
+        """
+        if self._redis is None:
+            logger.error(
+                "user_service.perms_cache_missing_redis",
+                extra={"user_id": str(user_id)},
+            )
+            return
+        await invalidate_permissions(self._redis, user_id)
+
+    @staticmethod
+    def _permissions_for_role(role: str | None) -> list[str]:
+        """Seed permissions for a newly created user based on their role.
+
+        Admin/superadmin → empty array (wildcard via role).  Member (or
+        unset) → member defaults.
+
+        Args:
+            role: The user's dashboard role.
+
+        Returns:
+            The permission list to persist.
+        """
+        if role in ("admin", "superadmin"):
+            return []
+        return list(MEMBER_DEFAULT_PERMISSIONS)
+
     # ── Create ──────────────────────────────────────────────────────────────
 
     async def create_user(
@@ -115,6 +150,7 @@ class UserService:
             email=email,
             metadata=metadata,
             role=role,
+            permissions=self._permissions_for_role(role),
         )
 
         if self._webhook_service:
@@ -143,6 +179,7 @@ class UserService:
             "email": user.email,
             "metadata": dict(user.metadata_) if user.metadata_ else {},
             "role": user.role,
+            "permissions": list(user.permissions or []),
             "is_active": user.is_active,
             "is_deleted": user.is_deleted,
             "is_pending_invite": user.invite_token_hash is not None,
@@ -202,6 +239,8 @@ class UserService:
                 name=name,
                 email=email,
                 metadata=metadata,
+                # No role passed → repo defaults to "member" → member defaults.
+                permissions=self._permissions_for_role(None),
             )
             is_new = True
         except IntegrityError:
@@ -285,11 +324,17 @@ class UserService:
         - The target's cached role is invalidated after the change so the
           RBAC cache cannot outlive the decision.
 
+        When ``permissions`` is provided, it replaces the current set
+        (grants survive a role change — a role change alone never touches
+        the permission array).  The cached permission set is invalidated
+        after any role or permissions change.
+
         Args:
             organization_id: Tenant scope (must match the user's org).
             user_id: The internal OpenZync user UUID.
             update_fields: Only the fields the client explicitly set.
-                Valid keys: ``name``, ``email``, ``metadata``, ``role``.
+                Valid keys: ``name``, ``email``, ``metadata``, ``role``,
+                ``permissions``.
             actor_user_id: The authenticated user performing the update.
 
         Returns:
@@ -333,6 +378,10 @@ class UserService:
 
         if "role" in update_fields:
             await self._invalidate_role_cache(user_id)
+        if "role" in update_fields or "permissions" in update_fields:
+            # A role change alters effective permissions (admin = wildcard),
+            # so both caches must drop.
+            await self._invalidate_permissions_cache(user_id)
 
         return UserResponse.model_validate(self._user_to_dict(user))
 
@@ -372,6 +421,7 @@ class UserService:
                 f"User {user_id} not found in organization {organization_id}."
             )
         await self._invalidate_role_cache(user_id)
+        await self._invalidate_permissions_cache(user_id)
         return user
 
     # ── Delete ──────────────────────────────────────────────────────────────
@@ -434,6 +484,7 @@ class UserService:
             )
 
         await self._invalidate_role_cache(user_id)
+        await self._invalidate_permissions_cache(user_id)
 
         # TODO(phase2): Enqueue GDPR purge task for 30 days later
         # from workers.gdpr_jobs import schedule_user_purge

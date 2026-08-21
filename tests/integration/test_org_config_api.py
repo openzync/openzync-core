@@ -28,6 +28,26 @@ from schemas.organization_config import OrgConfigBase, UpdateOrgConfigRequest
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 
+@pytest.fixture
+async def jwt_client(
+    app: Any, org_and_key: dict,
+) -> AsyncClient:
+    """JWT-authenticated client — org config reads require ``configuration:read``.
+
+    ``GET /admin/org/config`` is gated by
+    ``require_permission("configuration:read")`` — the project-scoped API
+    key lacks it, so config reads use the admin JWT (wildcard).
+    """
+    from tests.integration.conftest import asgi_transport
+
+    transport = asgi_transport(app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers["Authorization"] = (
+            f"Bearer {org_and_key['jwt']}"
+        )
+        yield client
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # GET /admin/org/config
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -37,10 +57,10 @@ class TestGetOrgConfig:
     """Validate reading the stored org config."""
 
     async def test_returns_stored_config(
-        self, auth_client: AsyncClient, org_and_key: dict
+        self, jwt_client: AsyncClient, org_and_key: dict
     ) -> None:
         """GET should return the stored config (no env defaults)."""
-        resp = await auth_client.get("/admin/org/config")
+        resp = await jwt_client.get("/admin/org/config")
         assert resp.status_code == 200
         data = resp.json()
 
@@ -133,13 +153,13 @@ class TestCacheInvalidation:
 
     async def test_get_warms_cache(
         self,
-        auth_client: AsyncClient,
+        jwt_client: AsyncClient,
         org_and_key: dict,
         app: Any,
     ) -> None:
         """A GET request should warm the Redis cache."""
         # Fetch once to warm cache
-        await auth_client.get("/admin/org/config")
+        await jwt_client.get("/admin/org/config")
 
         # Verify cache exists
         redis = app.state.redis
@@ -165,7 +185,7 @@ class TestCacheInvalidation:
 
         transport = asgi_transport(app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            headers = {"Authorization": f"Bearer {org_and_key['api_key']}"}
+            headers = {"Authorization": f"Bearer {org_and_key['jwt']}"}
             await client.get("/admin/org/config", headers=headers)
 
         cached_before = await redis.get(cache_key)

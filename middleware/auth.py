@@ -7,7 +7,7 @@ Dual-mode authentication flow:
 2. Compute unsalted lookup hash via ``compute_lookup_hash``.
 3. Check Redis cache at ``auth:key:{lookup_hash}`` (TTL: 300 s).
 4. On miss, query ``api_keys`` table, verify salted hash.
-5. Set ``request.state.org_id``, ``request.state.api_key_scopes``.
+5. Set ``request.state.org_id``, ``request.state.api_key_permissions``.
 6. Set PostgreSQL RLS context.
 
 **JWT mode** (for dashboard users):
@@ -40,6 +40,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 # same frozenset used by dependencies.auth.get_dashboard_user, so the
 # middleware gate and the dependency gate can never drift.  Import is safe:
 # dependencies.auth does not import this middleware module.
+from core.exceptions import RateLimitError  # noqa: E402
 from dependencies.auth import MUST_CHANGE_PASSWORD_EXEMPT_PATHS  # noqa: E402
 from repositories.api_key_repository import ApiKeyRepository
 from utils.crypto import compute_lookup_hash, verify_api_key
@@ -272,7 +273,7 @@ async def _cache_key_in_redis(
     Args:
         redis: Async Redis client.
         lookup_hash: Unsalted SHA-256 hex digest of the API key.
-        data: Auth data dict (``org_id``, ``scopes``) to cache.
+        data: Auth data dict (``org_id``, ``permissions``) to cache.
         ttl: TTL in seconds (default: 300).
     """
     cache_key = f"{AUTH_CACHE_PREFIX}{lookup_hash}"
@@ -359,8 +360,8 @@ async def _query_key_from_db(
         lookup_hash: Unsalted SHA-256 hex digest of the API key.
 
     Returns:
-        Dict with ``id``, ``org_id``, ``scopes``, ``key_hash``, ``salt``,
-        ``is_revoked``, ``expires_at`` if found, or ``None``.
+        Dict with ``id``, ``org_id``, ``permissions``, ``key_hash``,
+        ``salt``, ``is_revoked``, ``expires_at`` if found, or ``None``.
     """
     async with db_factory() as session, session.begin():
         repo = ApiKeyRepository(session)
@@ -374,7 +375,7 @@ async def _query_key_from_db(
         "org_id": str(api_key.organization_id),
         "project_id": str(api_key.project_id) if api_key.project_id else None,
         "created_by": str(api_key.created_by) if api_key.created_by else None,
-        "scopes": list(api_key.scopes),
+        "permissions": list(api_key.permissions),
         "key_hash": api_key.key_hash,
         "salt": api_key.salt,
         "is_revoked": api_key.is_revoked,
@@ -482,8 +483,10 @@ def _verify_jwt_and_set_state(
     state["org_id"] = org_id
     state["user_id"] = user_id
     state["role"] = role
-    state["api_key_scopes"] = ["read", "write", "admin"]
-    # JWT users get full scopes — fine-grained RBAC can be added later.
+    # Informational only — JWT sessions are not API keys, and nothing reads
+    # this key for JWT.  JWT permission checks are done in dependencies.auth
+    # via get_org_role / get_effective_permissions, never from this state key.
+    state["api_key_permissions"] = []
 
     return None
 
@@ -512,10 +515,11 @@ class AuthMiddleware:
 
     It sets the following keys on ``scope["state"]``:
     - ``org_id`` — the authenticated organization's UUID (or ``None``).
-    - ``user_id`` — the authenticated user's UUID (JWT only; ``None`` for API key).
+    - ``user_id`` — the JWT user's UUID, or the API key's ``created_by``
+      user UUID (``None`` if either is absent).
     - ``role`` — user role string (JWT only; ``None`` for API key).
     - ``auth_type`` — ``"jwt"`` or ``"api_key"``.
-    - ``api_key_scopes`` — list of permission strings (or ``[]``).
+    - ``api_key_permissions`` — list of permission strings (or ``[]``).
     - ``api_key_project_id`` — optional project UUID string this API key is
       restricted to (``None`` means org-wide access).
     """
@@ -547,7 +551,7 @@ class AuthMiddleware:
             "user_id": None,
             "role": None,
             "auth_type": None,
-            "api_key_scopes": [],
+            "api_key_permissions": [],
             "api_key_project_id": None,
         }
 
@@ -652,7 +656,7 @@ class AuthMiddleware:
                     scope["state"]["auth_type"] = "api_key"
                     scope["state"]["org_id"] = cached["org_id"]
                     scope["state"]["user_id"] = cached.get("created_by")
-                    scope["state"]["api_key_scopes"] = cached["scopes"]
+                    scope["state"]["api_key_permissions"] = cached["permissions"]
                     scope["state"]["api_key_project_id"] = cached.get("project_id")
                     await self.app(scope, receive, send)
                     return
@@ -686,17 +690,18 @@ class AuthMiddleware:
             client_ip: str = client_raw[0] if client_raw is not None else "unknown"
             try:
                 await _check_auth_miss_rate_limit(redis, client_ip)
-            except Exception as exc:
-                if "Too many authentication attempts" in str(exc):
-                    # This is a legitimate rate-limit response, handle it
-                    await _send_rfc7807(
-                        send,
-                        status=429,
-                        title="Too Many Requests",
-                        detail="Too many authentication attempts. Try again later.",
-                        path=path,
-                    )
-                    return
+            except RateLimitError:
+                # Legitimate rate-limit response — the IP exceeded the
+                # allowed auth-miss rate, reject with 429.
+                await _send_rfc7807(
+                    send,
+                    status=429,
+                    title="Too Many Requests",
+                    detail="Too many authentication attempts. Try again later.",
+                    path=path,
+                )
+                return
+            except Exception:
                 logger.error("auth.auth_miss_rate_check_failed", exc_info=True)
                 # Non-critical — proceed without miss-rate limiting
 
@@ -785,13 +790,13 @@ class AuthMiddleware:
 
         # ── Set request state ────────────────────────────────────────────
         org_id_val: str = key_data["org_id"]
-        scopes: list[str] = key_data["scopes"]
+        permissions: list[str] = key_data["permissions"]
         created_by: str | None = key_data.get("created_by")
 
         scope["state"]["auth_type"] = "api_key"
         scope["state"]["org_id"] = org_id_val
         scope["state"]["user_id"] = created_by  # None if key has no creator
-        scope["state"]["api_key_scopes"] = scopes
+        scope["state"]["api_key_permissions"] = permissions
         scope["state"]["api_key_project_id"] = key_data.get("project_id")
 
         # ═ Update last_used timestamp (fire-and-forget) ═══════════════════
@@ -810,7 +815,7 @@ class AuthMiddleware:
                     lookup_hash,
                     {
                         "org_id": org_id_val,
-                        "scopes": scopes,
+                        "permissions": permissions,
                         "project_id": key_data.get("project_id"),
                         "created_by": created_by,
                     },

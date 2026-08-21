@@ -12,7 +12,7 @@ Tests cover all CRUD endpoints under ``/v1/admin/webhooks``:
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -26,6 +26,21 @@ USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 ENDPOINT_ID = UUID("00000000-0000-0000-0000-000000000003")
 
 
+@pytest.fixture(autouse=True)
+def _stub_permission_gate() -> None:
+    """Stub the permission gate for every test in this file.
+
+    The router gates with ``require_permission("configuration:read")`` /
+    ``require_permission("configuration:write")`` — closures created at
+    router import time that cannot be keyed in ``dependency_overrides``.
+    Patching ``dependencies.auth._check_permission`` (the shared decision
+    function) stubs the gate while keeping the ``require_org_id`` chain
+    intact.  The real gate matrix is covered by ``test_admin_gate_matrix.py``.
+    """
+    with patch("dependencies.auth._check_permission", new=AsyncMock()):
+        yield
+
+
 def _build_app(mock_service: AsyncMock) -> FastAPI:
     """Create a minimal FastAPI app with the webhook router and overridden deps."""
     app = FastAPI()
@@ -35,12 +50,13 @@ def _build_app(mock_service: AsyncMock) -> FastAPI:
         return mock_service
 
     app.dependency_overrides = {}  # reset
-    from dependencies.auth import get_dashboard_user, require_org_admin, require_org_id
+    from dependencies.auth import get_dashboard_user, require_org_id
+    from dependencies.db import get_db
     from dependencies.services import get_webhook_service
 
     app.dependency_overrides[get_webhook_service] = _mock_webhook_service
+    app.dependency_overrides[get_db] = lambda: AsyncMock()
     app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
-    app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
 
     @app.middleware("http")
@@ -48,7 +64,7 @@ def _build_app(mock_service: AsyncMock) -> FastAPI:
         request.state.org_id = str(ORG_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
-        request.state.api_key_scopes = ["admin", "admin:write"]
+        request.state.api_key_permissions = []
         response = await call_next(request)
         return response
 

@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from core.audit import audit_action
-from dependencies.auth import require_org_admin
+from dependencies.auth import require_permission
 from dependencies.db import get_db
 from repositories.organization_repository import OrganizationRepository
 from schemas.auth import OrgCodeResponse, UpdateOrgJoinRequest
@@ -51,7 +51,7 @@ def _get_org_service(
     ),
 )
 async def get_org_code(
-    org_id: str = Depends(require_org_admin),  # noqa: B008
+    org_id: str = Depends(require_permission("configuration:read")),  # noqa: B008
     service: OrganizationService = Depends(_get_org_service),  # noqa: B008
 ) -> OrgCodeResponse:
     """Return the organization's current join code and registration state.
@@ -91,7 +91,7 @@ async def get_org_code(
 )
 async def set_join_enabled(
     payload: UpdateOrgJoinRequest,
-    org_id: str = Depends(require_org_admin),  # noqa: B008
+    org_id: str = Depends(require_permission("configuration:write")),  # noqa: B008
     service: OrganizationService = Depends(_get_org_service),  # noqa: B008
 ) -> OrgCodeResponse:
     """Toggle whether the organization accepts new members via org-code join.
@@ -131,7 +131,7 @@ async def set_join_enabled(
     "Organization join code regenerated",
 )
 async def regenerate_org_code(
-    org_id: str = Depends(require_org_admin),  # noqa: B008
+    org_id: str = Depends(require_permission("configuration:write")),  # noqa: B008
     service: OrganizationService = Depends(_get_org_service),  # noqa: B008
 ) -> OrgCodeResponse:
     """Generate and persist a new join code (rotating the old one).

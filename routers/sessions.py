@@ -23,7 +23,7 @@ from core.audit import audit_action
 from dependencies.project_auth import require_project_membership
 from dependencies.request import get_current_org_id, get_project_id
 from dependencies.services import get_fact_service, get_session_service
-from dependencies.auth import get_current_user_id
+from dependencies.auth import get_current_user_id, require_permission
 from schemas.common import PaginatedResponse
 from schemas.facts import FactResponse
 from schemas.sessions import (
@@ -63,6 +63,7 @@ async def create_session(
     body: CreateSessionRequest,
     service: SessionService = Depends(get_session_service),
     _: None = Depends(require_project_membership),
+    _perm: None = Depends(require_permission("project:write")),
     created_by: UUID = Depends(get_current_user_id),
     org_id: UUID = Depends(get_current_org_id),
     project_id: UUID = Depends(get_project_id),
@@ -97,6 +98,7 @@ async def create_session(
 async def list_sessions(
     service: SessionService = Depends(get_session_service),
     _: None = Depends(require_project_membership),
+    _perm: None = Depends(require_permission("project:read")),
     org_id: UUID = Depends(get_current_org_id),
     project_id: UUID = Depends(get_project_id),
     limit: int = Query(
@@ -146,6 +148,7 @@ async def get_session(
     session_id: UUID,
     service: SessionService = Depends(get_session_service),
     _: None = Depends(require_project_membership),
+    _perm: None = Depends(require_permission("project:read")),
     org_id: UUID = Depends(get_current_org_id),
     project_id: UUID = Depends(get_project_id),
 ) -> SessionResponse:
@@ -177,6 +180,7 @@ async def get_session_messages(
     session_id: UUID,
     service: SessionService = Depends(get_session_service),
     _: None = Depends(require_project_membership),
+    _perm: None = Depends(require_permission("project:read")),
     org_id: UUID = Depends(get_current_org_id),
     project_id: UUID = Depends(get_project_id),
     limit: int = Query(
@@ -223,6 +227,7 @@ async def get_session_facts(
     service: SessionService = Depends(get_session_service),
     fact_service: FactService = Depends(get_fact_service),
     _: None = Depends(require_project_membership),
+    _perm: None = Depends(require_permission("project:read")),
     org_id: UUID = Depends(get_current_org_id),
     project_id: UUID = Depends(get_project_id),
     limit: int = Query(
@@ -279,6 +284,7 @@ async def delete_session(
     session_id: UUID,
     service: SessionService = Depends(get_session_service),
     _: None = Depends(require_project_membership),
+    _perm: None = Depends(require_permission("project:write")),
     org_id: UUID = Depends(get_current_org_id),
     project_id: UUID = Depends(get_project_id),
 ) -> Response:

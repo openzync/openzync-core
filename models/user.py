@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, func, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from models.base import Base, TimestampMixin
@@ -58,6 +58,16 @@ class User(TimestampMixin, Base):
         nullable=False,
         default="member",
         server_default="member",
+    )
+    permissions: Mapped[list[str]] = mapped_column(
+        ARRAY(String),
+        nullable=False,
+        default=list,
+        server_default="{}",
+        comment=(
+            "Permission strings; empty = wildcard via role (admin/superadmin); "
+            "non-admin = member defaults ∪ optional grants."
+        ),
     )
     password_hash: Mapped[str | None] = mapped_column(
         Text,

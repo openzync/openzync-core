@@ -70,110 +70,301 @@ class TestRequireOrgId:
         assert exc.value.status_code == 401
 
 
-class TestRequireScope:
-    """require_scope: dependency factory checking API key scopes."""
+class TestRequirePermission:
+    """require_permission: permission-based gate for JWT users and API keys.
+
+    Contract (observed against the live server):
+    - JWT admin/superadmin role → wildcard, any permission passes.
+    - JWT member WITH the permission → passes.
+    - JWT member WITHOUT → 403.
+    - API key with the permission → passes.
+    - API key without → 403.
+    - Redis not configured on app.state → 503.
+    """
 
     ORG_ID_STR = "00000000-0000-0000-0000-000000000001"
+    USER_ID_STR = "00000000-0000-0000-0000-000000000002"
 
-    @pytest.mark.asyncio
-    async def test_jwt_member_level_scope_passes_without_role_check(self) -> None:
-        """auth_type=jwt + member-level scope → passes without a role lookup.
-
-        The role gate only applies to ``admin``-prefixed scopes; member-level
-        scopes (``read``, ``write``, ``sessions:read``) pass for any
-        authenticated JWT user without touching the DB or Redis.
-        """
-        from dependencies.auth import require_scope
-
-        checker = require_scope("sessions:read")
+    def _jwt_request(self) -> MagicMock:
+        """JWT session with Redis configured on app state."""
         request = MagicMock(spec=Request)
         request.state.auth_type = "jwt"
-        request.state.user_id = str(
-            UUID("00000000-0000-0000-0000-000000000002")
-        )
+        request.state.user_id = self.USER_ID_STR
+        request.app.state.redis = AsyncMock()
+        return request
 
-        result = await checker(request, self.ORG_ID_STR, db=MagicMock())
+    @pytest.mark.asyncio
+    async def test_jwt_admin_role_allows_any_permission(self) -> None:
+        """JWT + admin role → wildcard: passes without a permission lookup."""
+        from dependencies.auth import require_permission
+
+        checker = require_permission("configuration:write")
+        request = self._jwt_request()
+
+        with (
+            patch(
+                "dependencies.auth.get_org_role",
+                new=AsyncMock(return_value="admin"),
+            ),
+            patch(
+                "dependencies.auth.get_effective_permissions",
+                new=AsyncMock(side_effect=AssertionError("must not be called")),
+            ),
+        ):
+            result = await checker(request, self.ORG_ID_STR, db=MagicMock())
         assert result == self.ORG_ID_STR
 
     @pytest.mark.asyncio
-    async def test_jwt_admin_scope_requires_role_check(self) -> None:
-        """auth_type=jwt + admin:write scope → role-checked, denied for members.
+    async def test_jwt_superadmin_role_allows_any_permission(self) -> None:
+        """JWT + superadmin role → wildcard: passes."""
+        from dependencies.auth import require_permission
 
-        Admin-prefixed scopes on a JWT session are gated on the org ``admin``
-        role (DB-verified via ``core.rbac.get_org_role``) — a member raises 403.
-        """
-        from unittest.mock import AsyncMock, patch
-
-        from dependencies.auth import require_scope
-
-        checker = require_scope("admin:write")
-        request = MagicMock(spec=Request)
-        request.state.auth_type = "jwt"
-        request.state.user_id = str(
-            UUID("00000000-0000-0000-0000-000000000002")
-        )
-        request.app.state.redis = AsyncMock()
+        checker = require_permission("members:write")
+        request = self._jwt_request()
 
         with patch(
-            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member")
-        ), pytest.raises(HTTPException) as exc:
-            await checker(request, self.ORG_ID_STR, db=MagicMock())
-        assert exc.value.status_code == 403
+            "dependencies.auth.get_org_role",
+            new=AsyncMock(return_value="superadmin"),
+        ):
+            result = await checker(request, self.ORG_ID_STR, db=MagicMock())
+        assert result == self.ORG_ID_STR
 
     @pytest.mark.asyncio
-    async def test_api_key_with_valid_scope_passes(self) -> None:
-        """API key with correct scope → returns org_id."""
-        from dependencies.auth import require_scope
+    async def test_jwt_member_with_permission_passes(self) -> None:
+        """JWT member whose explicit permissions contain the required one → passes."""
+        from dependencies.auth import require_permission
 
-        checker = require_scope("sessions:read")
+        checker = require_permission("project:write")
+        request = self._jwt_request()
+
+        with (
+            patch(
+                "dependencies.auth.get_org_role",
+                new=AsyncMock(return_value="member"),
+            ),
+            patch(
+                "dependencies.auth.get_effective_permissions",
+                new=AsyncMock(return_value=frozenset({"project:read", "project:write"})),
+            ),
+        ):
+            result = await checker(request, self.ORG_ID_STR, db=MagicMock())
+        assert result == self.ORG_ID_STR
+
+    @pytest.mark.asyncio
+    async def test_jwt_member_without_permission_raises_403(self) -> None:
+        """JWT member lacking the permission → 403 with the permission named."""
+        from dependencies.auth import require_permission
+
+        checker = require_permission("configuration:read")
+        request = self._jwt_request()
+
+        with (
+            patch(
+                "dependencies.auth.get_org_role",
+                new=AsyncMock(return_value="member"),
+            ),
+            patch(
+                "dependencies.auth.get_effective_permissions",
+                new=AsyncMock(return_value=frozenset({"project:read"})),
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await checker(request, self.ORG_ID_STR, db=MagicMock())
+        assert exc.value.status_code == 403
+        assert "configuration:read" in exc.value.detail["detail"]
+
+    @pytest.mark.asyncio
+    async def test_api_key_with_permission_passes(self) -> None:
+        """API key whose permission list contains the required one → passes."""
+        from dependencies.auth import require_permission
+
+        checker = require_permission("project:read")
         request = MagicMock(spec=Request)
         request.state.auth_type = "api_key"
-        request.state.api_key_scopes = ["sessions:read", "sessions:write"]
+        request.state.api_key_permissions = ["project:read", "project:write"]
 
         result = await checker(request, self.ORG_ID_STR)
         assert result == self.ORG_ID_STR
 
     @pytest.mark.asyncio
-    async def test_api_key_without_scope_raises_403(self) -> None:
-        """API key missing the required scope → raises 403."""
-        from dependencies.auth import require_scope
+    async def test_api_key_without_permission_raises_403(self) -> None:
+        """API key missing the permission → 403 naming key + available set."""
+        from dependencies.auth import require_permission
 
-        checker = require_scope("admin:write")
+        checker = require_permission("project:write")
         request = MagicMock(spec=Request)
         request.state.auth_type = "api_key"
-        request.state.api_key_scopes = ["sessions:read"]
+        request.state.api_key_permissions = ["project:read"]
 
         with pytest.raises(HTTPException) as exc:
             await checker(request, self.ORG_ID_STR)
         assert exc.value.status_code == 403
-        assert "admin:write" in exc.value.detail["detail"]
+        assert "project:write" in exc.value.detail["detail"]
+        assert "project:read" in exc.value.detail["detail"]
 
     @pytest.mark.asyncio
-    async def test_api_key_empty_scopes_raises_403(self) -> None:
-        """API key with empty scopes → raises 403."""
-        from dependencies.auth import require_scope
+    async def test_api_key_empty_permissions_raises_403(self) -> None:
+        """API key with an empty permission list → 403."""
+        from dependencies.auth import require_permission
 
-        checker = require_scope("any:scope")
+        checker = require_permission("project:read")
         request = MagicMock(spec=Request)
         request.state.auth_type = "api_key"
-        request.state.api_key_scopes = []
+        request.state.api_key_permissions = []
 
         with pytest.raises(HTTPException) as exc:
             await checker(request, self.ORG_ID_STR)
         assert exc.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_auth_type_none_raises_403(self) -> None:
-        """auth_type not set → defaults to api_key check → raises 403."""
-        from dependencies.auth import require_scope
+    async def test_auth_type_none_without_user_id_raises_401(self) -> None:
+        """auth_type unset → JWT branch → missing user_id → 401."""
+        from dependencies.auth import require_permission
 
-        checker = require_scope("any:scope")
+        checker = require_permission("project:read")
         request = MagicMock(spec=Request)
         request.state.auth_type = None
-        request.state.api_key_scopes = []
+        request.state.user_id = None
 
         with pytest.raises(HTTPException) as exc:
             await checker(request, self.ORG_ID_STR)
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_jwt_missing_user_id_raises_401(self) -> None:
+        """JWT session without a user id → 401 (never a silent grant)."""
+        from dependencies.auth import require_permission
+
+        checker = require_permission("project:read")
+        request = self._jwt_request()
+        request.state.user_id = None
+
+        with pytest.raises(HTTPException) as exc:
+            await checker(request, self.ORG_ID_STR, db=MagicMock())
+        assert exc.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_missing_redis_on_app_state_raises_503(self) -> None:
+        """Redis not configured on app.state → 503 (explicit, never silent)."""
+        from dependencies.auth import require_permission
+
+        checker = require_permission("project:read")
+        request = self._jwt_request()
+        request.app.state.redis = None
+
+        with pytest.raises(HTTPException) as exc:
+            await checker(request, self.ORG_ID_STR, db=MagicMock())
+        assert exc.value.status_code == 503
+
+    @pytest.mark.asyncio
+    async def test_infra_failure_fails_closed_to_403(self) -> None:
+        """Role lookup fails closed to member + empty perms → 403 deny."""
+        from dependencies.auth import require_permission
+
+        checker = require_permission("project:read")
+        request = self._jwt_request()
+
+        with (
+            patch(
+                "dependencies.auth.get_org_role",
+                new=AsyncMock(return_value="member"),
+            ),
+            patch(
+                "dependencies.auth.get_effective_permissions",
+                new=AsyncMock(return_value=frozenset()),
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await checker(request, self.ORG_ID_STR, db=MagicMock())
+        assert exc.value.status_code == 403
+
+
+class TestRequirePermissionOrSelf:
+    """require_permission_or_self: self always passes; others need the permission."""
+
+    ORG_ID_STR = "00000000-0000-0000-0000-000000000001"
+    USER_ID_STR = "00000000-0000-0000-0000-000000000002"
+    OTHER_USER_ID_STR = "00000000-0000-0000-0000-000000000003"
+
+    def _jwt_request(self, user_id: str) -> MagicMock:
+        """JWT session with Redis configured on app state."""
+        request = MagicMock(spec=Request)
+        request.state.auth_type = "jwt"
+        request.state.user_id = user_id
+        request.app.state.redis = AsyncMock()
+        return request
+
+    @pytest.mark.asyncio
+    async def test_self_passes_without_permission(self) -> None:
+        """Acting on one's OWN user id → passes with no permission lookup."""
+        from dependencies.auth import require_permission_or_self
+
+        checker = require_permission_or_self("members:read")
+        request = self._jwt_request(self.USER_ID_STR)
+
+        with patch(
+            "dependencies.auth._check_permission",
+            new=AsyncMock(side_effect=AssertionError("must not be called")),
+        ):
+            result = await checker(
+                request,
+                UUID(self.USER_ID_STR),
+                self.ORG_ID_STR,
+                db=MagicMock(),
+            )
+        assert result == self.ORG_ID_STR
+
+    @pytest.mark.asyncio
+    async def test_non_self_with_permission_passes(self) -> None:
+        """Acting on ANOTHER user with members:read → passes."""
+        from dependencies.auth import require_permission_or_self
+
+        checker = require_permission_or_self("members:read")
+        request = self._jwt_request(self.USER_ID_STR)
+
+        with (
+            patch(
+                "dependencies.auth.get_org_role",
+                new=AsyncMock(return_value="member"),
+            ),
+            patch(
+                "dependencies.auth.get_effective_permissions",
+                new=AsyncMock(return_value=frozenset({"members:read"})),
+            ),
+        ):
+            result = await checker(
+                request,
+                UUID(self.OTHER_USER_ID_STR),
+                self.ORG_ID_STR,
+                db=MagicMock(),
+            )
+        assert result == self.ORG_ID_STR
+
+    @pytest.mark.asyncio
+    async def test_non_self_without_permission_raises_403(self) -> None:
+        """Acting on ANOTHER user without members:read → 403."""
+        from dependencies.auth import require_permission_or_self
+
+        checker = require_permission_or_self("members:read")
+        request = self._jwt_request(self.USER_ID_STR)
+
+        with (
+            patch(
+                "dependencies.auth.get_org_role",
+                new=AsyncMock(return_value="member"),
+            ),
+            patch(
+                "dependencies.auth.get_effective_permissions",
+                new=AsyncMock(return_value=frozenset({"project:read"})),
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await checker(
+                request,
+                UUID(self.OTHER_USER_ID_STR),
+                self.ORG_ID_STR,
+                db=MagicMock(),
+            )
         assert exc.value.status_code == 403
 
 
@@ -186,15 +377,18 @@ class TestGetDashboardUser:
     def _jwt_request(self, path: str = "/v1/admin/stats/org", method: str = "GET"):
         """Build a JWT-authenticated request mock.
 
-        ``app.state.redis`` is disabled by default so the must-change
-        gate is skipped unless a test opts in explicitly.
+        ``app.state.redis`` is mocked with the must-change flag reading
+        False so the (fail-closed) gate passes; ``_flag_request`` opts
+        into a True flag.
         """
         request = MagicMock(spec=Request)
         request.state.auth_type = "jwt"
         request.state.user_id = self.USER_ID_STR
         request.url.path = path
         request.method = method
-        request.app.state.redis = None
+        redis = AsyncMock()
+        redis.get.return_value = b"0"  # cached must_change_password = False
+        request.app.state.redis = redis
         return request
 
     @pytest.mark.asyncio

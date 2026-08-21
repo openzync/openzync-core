@@ -15,9 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.auth import (
     get_dashboard_user,
-    require_org_admin,
     require_org_id,
-    require_scope,
 )
 from dependencies.db import get_db
 from routers.admin_org_config import router, _get_config_service
@@ -36,11 +34,12 @@ USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 def _mock_org_admin_role(monkeypatch) -> None:
     """Resolve the org-admin role lookup for every test in this file.
 
-    GET is gated by ``require_org_admin`` and PATCH/PUT by
-    ``require_scope("admin:write")``; both JWT paths funnel into
-    ``core.rbac.get_org_role`` via ``dependencies.auth._ensure_org_admin``.
-    Patching the role lookup to ``"admin"`` keeps the JWT/db/redis dependency
-    chain intact while mocking only the role source of truth.
+    GET is gated by ``require_permission("configuration:read")`` and
+    PATCH/PUT by ``require_permission("configuration:write")``; both JWT
+    paths funnel into ``core.rbac.get_org_role`` via
+    ``dependencies.auth._check_permission``.  Patching the role lookup to
+    ``"admin"`` keeps the JWT/db/redis dependency chain intact while mocking
+    only the role source of truth.
     """
 
     async def _fake_get_org_role(redis, db, org_id, user_id) -> str:
@@ -60,13 +59,12 @@ def _create_app() -> tuple[FastAPI, AsyncMock]:
         request.state.org_id = str(ORG_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "jwt"
-        request.state.api_key_scopes = ["admin", "admin:write"]
+        request.state.api_key_permissions = []
         response = await call_next(request)
         return response
 
     app.dependency_overrides[get_db] = lambda: db_mock
     app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
-    app.dependency_overrides[require_org_admin] = lambda: str(ORG_ID)
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
 
     app.include_router(router)
@@ -306,10 +304,11 @@ async def test_get_config_401_unauthenticated() -> None:
 
 @pytest.mark.asyncio
 async def test_patch_config_requires_scope() -> None:
-    """PATCH /admin/org/config returns 403 without admin:write scope."""
+    """PATCH /admin/org/config returns 403 without configuration:write."""
     app = FastAPI()
-    # require_scope("admin:write") resolves get_db even for API keys — the
-    # dependency is resolved eagerly by FastAPI before the scope check runs.
+    # require_permission("configuration:write") resolves get_db even for API
+    # keys — the dependency is resolved eagerly by FastAPI before the
+    # permission check runs.
     from dependencies.db import get_db
 
     app.dependency_overrides[get_db] = lambda: AsyncMock(spec=AsyncSession)
@@ -319,13 +318,13 @@ async def test_patch_config_requires_scope() -> None:
         request.state.org_id = str(ORG_ID)
         request.state.user_id = str(USER_ID)
         request.state.auth_type = "api_key"
-        request.state.api_key_scopes = ["read"]  # No admin:write
+        request.state.api_key_permissions = ["project:read"]  # No configuration:write
         response = await call_next(request)
         return response
 
     app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
-    # require_scope("admin:write") will check scopes and find only ["read"]
-    # Since auth_type is "api_key", it will check scopes and fail with 403
+    # require_permission("configuration:write") will check the key's
+    # permission list and find only ["project:read"] → 403.
     app.include_router(router)
 
     transport = ASGITransport(app=app)
@@ -335,9 +334,7 @@ async def test_patch_config_requires_scope() -> None:
             json={"llm_backend": "openai"},
         )
 
-    # The require_scope("admin:write") will find the scope missing for api_key auth
-    # and raise 403
-    assert resp.status_code in (401, 403)
+    assert resp.status_code == 403
 
 
 def _raise_401():

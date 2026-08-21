@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import GraphBackendUnavailableError
+from dependencies.auth import require_permission
 from dependencies.db import get_db
 from dependencies.org_config import get_org_config
 from dependencies.project_auth import require_project_membership
@@ -71,6 +72,7 @@ async def search_memory(
     ),
     db: AsyncSession = Depends(get_db),
     _: None = Depends(require_project_membership),
+    _perm: None = Depends(require_permission("project:read")),
     org_config: OrgConfigBase = Depends(get_org_config),
 ) -> dict:
     """Hybrid search across a project's memory.

@@ -1,28 +1,31 @@
 """FastAPI dependencies for authentication and authorization.
 
-Provides six levels of auth dependency:
+Provides the following auth dependencies:
 
 1. ``get_org_id`` — Optional auth.  Returns the org ID if authenticated,
    ``None`` otherwise.  Works with both API keys and JWT tokens.
 
 2. ``require_org_id`` — Mandatory auth.  Raises 401 if not authenticated.
 
-3. ``require_scope(scope_name)`` — Dependency factory.  Checks that the
-   authenticated API key has a specific scope.  Raises 403 if missing.
-   For JWT-authenticated users, **admin-prefixed scopes** (``admin``,
-   ``admin:write``, ...) additionally require the org ``admin`` role,
-   verified against the DB (with a 60 s Redis cache) via
-   ``core.rbac.get_org_role``.  Member-level scopes pass for any
-   authenticated JWT user.
+3. ``require_permission(permission)`` — Dependency factory.  Requires the
+   authenticated principal to hold a specific permission string.  API keys
+   are checked against ``request.state.api_key_permissions``; JWT users
+   against their org role (``admin``/``superadmin`` are wildcard) or their
+   explicit ``permissions`` column (Redis-cached, fail-closed).  Raises
+   403 if missing.
 
-4. ``get_dashboard_user`` — Returns ``request.state.user_id`` if the
+4. ``require_permission_or_self(permission)`` — Dependency factory.  The
+   authenticated user may always access their own sub-resource; otherwise
+   the same permission check as ``require_permission`` applies.
+
+5. ``get_dashboard_user`` — Returns ``request.state.user_id`` if the
    request is authenticated via JWT (dashboard session), ``None`` otherwise.
-
-5. ``require_org_admin`` — Requires a JWT dashboard session AND the org
-   ``admin`` role.  Raises 401 for API-key auth, 403 for members.
 
 6. ``get_current_user_id`` — Returns the authenticated user's UUID.
    Works with both JWT and API-key auth.  Raises 401 if not authenticated.
+
+7. ``require_superadmin`` — Requires a JWT dashboard session AND the
+   platform ``superadmin`` role.
 
 All dependencies rely on ``request.state`` attributes set by
 :class:`AuthMiddleware <openzync.middleware.auth.AuthMiddleware>`.
@@ -39,7 +42,7 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from core.config import PLATFORM_ORG_ID
-from core.rbac import get_must_change_password, get_org_role
+from core.rbac import get_effective_permissions, get_must_change_password, get_org_role
 from dependencies.db import get_db
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -136,85 +139,50 @@ async def require_org_id(
     return org_id
 
 
-def require_scope(required_scope: str):
-    """Dependency factory that checks for a specific API key scope.
+# ═══════════════════════════════════════════════════════════════════════════════
+# Permission-based authorization
+# ═══════════════════════════════════════════════════════════════════════════════
 
-    For API-key authenticated requests, the key's scopes are checked and a
-    403 raised if the required scope is missing.
 
-    For JWT-authenticated dashboard users:
-    - **Admin-prefixed scopes** (``admin``, ``admin:write``, ...) require
-      the org ``admin`` role — verified via ``core.rbac.get_org_role``
-      (Redis-cached for 60 s, fail-closed to member).  A member is denied
-      with 403.
-    - **Member-level scopes** (e.g. ``sessions:read``) pass for any
-      authenticated JWT user.
+async def _check_permission(
+    request: Request,
+    org_id: str,
+    db: AsyncSession,
+    required_permission: str,
+) -> None:
+    """Raise 403 unless the authenticated principal holds the permission.
 
-    Use this to protect endpoints that require elevated permissions:
+    Dispatches on ``request.state.auth_type``:
 
-    .. code-block:: python
+    - **API key**: the key's permission list
+      (``request.state.api_key_permissions``) must contain the required
+      permission.
+    - **JWT (dashboard user)**: the org ``admin``/``superadmin`` roles are
+      wildcard (implicitly hold every permission); any other role must
+      carry the permission in their explicit ``permissions`` column
+      (Redis-cached for 60 s, fail-closed to deny).
 
-        @router.post("/admin/orgs")
-        async def admin_action(
-            org_id: str = Depends(require_scope("admin:write")),
-        ):
-            ...
+    Shared by :func:`require_permission` and
+    :func:`require_permission_or_self` so both enforce the same decision.
 
     Args:
-        required_scope: The scope string the API key must possess (e.g.
-            ``"admin:write"``, ``"sessions:read"``).
+        request: The incoming HTTP request.
+        org_id: The authenticated organization ID.
+        db: Request-scoped async DB session (role/permission lookups).
+        required_permission: The permission string the principal must hold.
 
-    Returns:
-        A dependency callable that returns the ``org_id`` if the scope is
-        present, or raises 403.
+    Raises:
+        HTTPException: 401 if a JWT session is missing a user id.
+        HTTPException: 503 if Redis is not configured on app state.
+        HTTPException: 403 if the principal lacks the permission.
     """
+    auth_type: str | None = getattr(request.state, "auth_type", None)
 
-    async def _scope_checker(
-        request: Request,
-        org_id: str = Depends(require_org_id),  # noqa: B008
-        db: AsyncSession = Depends(get_db),  # noqa: B008
-    ) -> str:
-        """Inner dependency that performs the scope check.
-
-        Args:
-            request: The incoming HTTP request.
-            org_id: The authenticated organization ID.
-            db: Request-scoped async DB session (role lookup).
-
-        Returns:
-            The ``org_id`` if scope check passes.
-
-        Raises:
-            HTTPException: 401 if a JWT session is missing a user id.
-            HTTPException: 403 if the required scope is missing or the
-                JWT user is not an org admin.
-        """
-        auth_type: str | None = getattr(request.state, "auth_type", None)
-
-        if auth_type == "jwt":
-            # Admin-prefixed scopes are gated on the org admin role —
-            # members are denied even though the middleware grants them
-            # the raw scope strings.
-            if required_scope.startswith("admin"):
-                user_id: str | None = getattr(request.state, "user_id", None)
-                if user_id is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail={
-                            "type": "https://errors.openzync.tech/authentication_error",
-                            "title": "Invalid Session",
-                            "status": 401,
-                            "detail": (
-                                "The JWT token does not contain a valid "
-                                "user identifier."
-                            ),
-                        },
-                    )
-                await _ensure_org_admin(request, org_id, user_id, db)
-            return org_id
-
-        scopes: list[str] = getattr(request.state, "api_key_scopes", [])
-        if required_scope not in scopes:
+    if auth_type == "api_key":
+        key_permissions: list[str] = getattr(
+            request.state, "api_key_permissions", []
+        )
+        if required_permission not in key_permissions:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail={
@@ -222,14 +190,166 @@ def require_scope(required_scope: str):
                     "title": "Insufficient Permissions",
                     "status": 403,
                     "detail": (
-                        f"Your API key does not have the required scope: "
-                        f"'{required_scope}'.  Available scopes: {scopes}"
+                        f"Your API key does not have the required permission: "
+                        f"'{required_permission}'.  "
+                        f"Available permissions: {key_permissions}"
                     ),
                 },
             )
+        return
+
+    # JWT (dashboard user)
+    user_id: str | None = getattr(request.state, "user_id", None)
+    if user_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "type": "https://errors.openzync.tech/authentication_error",
+                "title": "Invalid Session",
+                "status": 401,
+                "detail": "The JWT token does not contain a valid user identifier.",
+            },
+        )
+
+    redis = getattr(request.app.state, "redis", None)
+    if redis is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "type": "https://errors.openzync.tech/service_unavailable",
+                "title": "Service Unavailable",
+                "status": 503,
+                "detail": (
+                    "The authorization cache is not configured. "
+                    "Contact the administrator."
+                ),
+            },
+        )
+
+    role = await get_org_role(redis, db, UUID(org_id), UUID(user_id))
+    if role in ("admin", "superadmin"):
+        return
+
+    permissions = await get_effective_permissions(
+        redis, db, UUID(org_id), UUID(user_id)
+    )
+    if required_permission not in permissions:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "type": "https://errors.openzync.tech/authorization_error",
+                "title": "Insufficient Permissions",
+                "status": 403,
+                "detail": (
+                    f"This action requires the '{required_permission}' permission."
+                ),
+            },
+        )
+
+
+def require_permission(required_permission: str):
+    """Dependency factory requiring a specific permission string.
+
+    Works for both API keys (``request.state.api_key_permissions``) and
+    JWT dashboard users (org ``admin``/``superadmin`` roles are wildcard,
+    otherwise the user's explicit ``permissions`` column).  Fails closed:
+    any lookup error denies with 403.
+
+    Use this to protect endpoints that require elevated permissions:
+
+    .. code-block:: python
+
+        @router.post("/orgs/{org_id}/config")
+        async def update_config(
+            org_id: str = Depends(require_permission("configuration:write")),
+        ):
+            ...
+
+    Args:
+        required_permission: The permission string the principal must hold
+            (e.g. ``"configuration:write"``, ``"members:read"``).
+
+    Returns:
+        A dependency callable that returns the ``org_id`` if the permission
+        is held, or raises 401/403/503.
+    """
+
+    async def _permission_checker(
+        request: Request,
+        org_id: str = Depends(require_org_id),  # noqa: B008
+        db: AsyncSession = Depends(get_db),  # noqa: B008
+    ) -> str:
+        """Inner dependency that performs the permission check.
+
+        Args:
+            request: The incoming HTTP request.
+            org_id: The authenticated organization ID.
+            db: Request-scoped async DB session (role/permission lookups).
+
+        Returns:
+            The ``org_id`` if the permission check passes.
+
+        Raises:
+            HTTPException: 401/403/503 via :func:`_check_permission`.
+        """
+        await _check_permission(request, org_id, db, required_permission)
         return org_id
 
-    return _scope_checker
+    return _permission_checker
+
+
+def require_permission_or_self(required_permission: str):
+    """Dependency factory requiring the permission, or acting on oneself.
+
+    The authenticated user may always access their **own** sub-resource
+    (``str(user_id) == request.state.user_id``); otherwise the same
+    permission check as :func:`require_permission` applies.  Intended for
+    per-user sub-resources (e.g. ``GET /users/{user_id}/summary``).
+
+    Args:
+        required_permission: The permission string required for acting on
+            another user's resource.
+
+    Returns:
+        A dependency callable that returns the ``org_id``.
+    """
+
+    async def _permission_or_self_checker(
+        request: Request,
+        user_id: UUID = Path(...),  # noqa: B008
+        org_id: str = Depends(require_org_id),  # noqa: B008
+        db: AsyncSession = Depends(get_db),  # noqa: B008
+    ) -> str:
+        """Inner dependency that performs the self-or-permission check.
+
+        Args:
+            request: The incoming HTTP request.
+            user_id: The target user's UUID (path param).
+            org_id: The authenticated organization ID.
+            db: Request-scoped async DB session (role/permission lookups).
+
+        Returns:
+            The ``org_id`` if the caller is the target user or holds the
+            required permission.
+
+        Raises:
+            HTTPException: 401/403/503 via :func:`_check_permission`.
+        """
+        # Self-bypass is JWT-session only: API keys carry the key's
+        # ``created_by`` in state.user_id, and must not reach org-scoped
+        # personal endpoints via the creator's identity.
+        auth_type: str | None = getattr(request.state, "auth_type", None)
+        actor_user_id: str | None = getattr(request.state, "user_id", None)
+        if (
+            auth_type == "jwt"
+            and actor_user_id is not None
+            and str(user_id) == actor_user_id
+        ):
+            return org_id
+        await _check_permission(request, org_id, db, required_permission)
+        return org_id
+
+    return _permission_or_self_checker
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -296,17 +416,32 @@ async def get_dashboard_user(
         )
 
     # ── Must-change-password gate (JWT dashboard sessions only) ──────────
+    # Fail closed: absent Redis (or a lookup error inside
+    # get_must_change_password, which degrades to "must change") must never
+    # let a session through that the DB would have blocked.
     path = request.url.path
     if (request.method, path) not in MUST_CHANGE_PASSWORD_EXEMPT_PATHS:
         redis = getattr(request.app.state, "redis", None)
-        if redis is not None:
-            must_change = await get_must_change_password(
-                redis,
-                db,
-                UUID(org_id),
-                UUID(user_id),
+        if redis is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "type": "https://errors.openzync.tech/service_unavailable",
+                    "title": "Service Unavailable",
+                    "status": 503,
+                    "detail": (
+                        "The authorization cache is not configured. "
+                        "Contact the administrator."
+                    ),
+                },
             )
-            if must_change:
+        must_change = await get_must_change_password(
+            redis,
+            db,
+            UUID(org_id),
+            UUID(user_id),
+        )
+        if must_change:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail={
@@ -321,121 +456,6 @@ async def get_dashboard_user(
                 )
 
     return user_id
-
-
-async def _ensure_org_admin(
-    request: Request,
-    org_id: str,
-    user_id: str,
-    db: AsyncSession,
-) -> None:
-    """Raise 403 unless the JWT user holds the org ``admin`` role.
-
-    Shared by :func:`require_org_admin` and the JWT branch of
-    :func:`require_scope` so both paths enforce the same role check.
-
-    Args:
-        request: The incoming HTTP request (for ``app.state.redis``).
-        org_id: The authenticated organization ID.
-        user_id: The authenticated dashboard user's UUID string.
-        db: Request-scoped async DB session (role lookup).
-
-    Raises:
-        HTTPException: 503 if Redis is not configured on app state.
-        HTTPException: 403 if the user is not an org admin.
-    """
-    redis = getattr(request.app.state, "redis", None)
-    if redis is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "type": "https://errors.openzync.tech/service_unavailable",
-                "title": "Service Unavailable",
-                "status": 503,
-                "detail": (
-                    "The authorization cache is not configured. "
-                    "Contact the administrator."
-                ),
-            },
-        )
-    role = await get_org_role(redis, db, UUID(org_id), UUID(user_id))
-    if role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
-                "type": "https://errors.openzync.tech/authorization_error",
-                "title": "Insufficient Permissions",
-                "status": 403,
-                "detail": (
-                    "This action requires the organization admin role."
-                ),
-            },
-        )
-
-
-async def require_org_admin(
-    request: Request,
-    org_id: str = Depends(require_org_id),  # noqa: B008
-    user_id: str = Depends(get_dashboard_user),  # noqa: B008
-    db: AsyncSession = Depends(get_db),  # noqa: B008
-) -> str:
-    """Require a JWT-authenticated dashboard user with the org admin role.
-
-    Raises 401 for API-key authentication or a missing user id (via
-    :func:`get_dashboard_user`), 403 for org members.  The role is
-    verified against the DB (Redis-cached for 60 s, fail-closed) rather
-    than trusting the JWT ``role`` claim.
-
-    Args:
-        request: The incoming HTTP request.
-        org_id: The authenticated organization ID (from ``require_org_id``).
-        user_id: The dashboard user's UUID string (from ``get_dashboard_user``).
-        db: Request-scoped async DB session.
-
-    Returns:
-        The authenticated organization UUID string.
-
-    Raises:
-        HTTPException: 401 if not a JWT-authenticated session.
-        HTTPException: 403 if the user is not an org admin.
-    """
-    await _ensure_org_admin(request, org_id, user_id, db)
-    return org_id
-
-
-async def require_org_admin_or_self(
-    request: Request,
-    user_id: UUID = Path(...),  # noqa: B008
-    org_id: str = Depends(require_org_id),  # noqa: B008
-    actor_user_id: str = Depends(get_dashboard_user),  # noqa: B008
-    db: AsyncSession = Depends(get_db),  # noqa: B008
-) -> str:
-    """Require the target user themself, or an org admin.
-
-    Intended for per-user sub-resources (e.g. ``GET /users/{user_id}/summary``):
-    the authenticated user may access their **own** data, and org admins may
-    access any user's.  A member attempting to read another user's data is
-    denied with 403; API-key auth is rejected with 401 (via
-    :func:`get_dashboard_user`).
-
-    Args:
-        request: The incoming HTTP request.
-        user_id: The target user's UUID (path param).
-        org_id: The authenticated organization ID (from ``require_org_id``).
-        actor_user_id: The dashboard user's UUID string (from ``get_dashboard_user``).
-        db: Request-scoped async DB session.
-
-    Returns:
-        The authenticated organization UUID string.
-
-    Raises:
-        HTTPException: 401 if not a JWT-authenticated session.
-        HTTPException: 403 if the caller is not the target user and not an
-            org admin.
-    """
-    if str(user_id) != actor_user_id:
-        await _ensure_org_admin(request, org_id, actor_user_id, db)
-    return org_id
 
 
 async def get_current_user_id(

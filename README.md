@@ -146,6 +146,25 @@ All endpoints are prefixed with `/v1`.
 | `GET /health` | Liveness probe |
 | `GET /ready` | Readiness probe (checks DB + Redis) |
 
+### Permissions
+
+Authorization uses a single org-scoped permission vocabulary (see [ADR-007](../openzync-docs/adr/007-unified-org-permission-model.rst)), enforced identically for JWT users and API keys via the `require_permission` dependency.
+
+| Permission | Grants |
+|---|---|
+| `project:read` | Read projects and their memory, context, search, and graph data |
+| `project:write` | Write project data (ingest, sessions, facts) |
+| `project:manage` | Project lifecycle — create, archive, delete, project settings |
+| `configuration:read` | Read org/project configuration |
+| `configuration:write` | Modify org/project configuration |
+| `members:read` | List org/project members |
+| `members:write` | Add/remove members and change member permissions |
+
+- **Admin wildcard** — org `admin` / platform `superadmin` roles are represented by an empty permissions array (`[]` = all permissions).
+- **Member defaults** — every new user gets `{project:read, project:write}` materialized in `users.permissions`; optional grants are appended.
+- **Roles are DB-verified** (never JWT claims), cached 60s in Redis, fail-closed (infra error = deny).
+- ⚠️ **BREAKING** — API-key `scopes` are renamed to `permissions` and carry the same strings as users. Legacy values (`read`, `write`, `admin`, `admin:write`) are remapped by migration. SDK/MCP consumers that create or inspect keys by scope name must update.
+
 For detailed API docs, run the server and visit `/docs` (Swagger UI) or see the [routers directory](./routers) for endpoint listings.
 
 ---
