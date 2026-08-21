@@ -541,7 +541,7 @@ services:
     image: prom/prometheus:v2.53.0
     ports: ["9090:9090"]
     volumes:
-      - ./prometheus:/etc/prometheus:ro
+      - ./prometheus:/etc/prometheus:ro,z
       - prometheus-data:/prometheus
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -558,8 +558,8 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"        # read-only — was Admin before audit
       GF_SECURITY_ADMIN_PASSWORD: admin            # dev-only; set via env in production
     volumes:
-      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
-      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro,z
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro,z
     logging: *default-logging
     restart: unless-stopped
 
@@ -571,7 +571,7 @@ services:
       - "4317:4317"
       - "12345:12345"
     volumes:
-      - ./alloy:/etc/alloy:ro
+      - ./alloy:/etc/alloy:ro,z
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command:

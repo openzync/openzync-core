@@ -282,7 +282,7 @@ class AuditMiddleware:
             actor_id = user_id
             actor_type = "user"
         elif auth_type == "api_key":
-            actor_id = org_id
+            actor_id = state.get("api_key_id") or org_id
             actor_type = "api_key"
         else:
             actor_id = "anonymous"

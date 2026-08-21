@@ -211,22 +211,14 @@ sync_env() {
 import sys
 
 path, api_role, api_secret, worker_role, worker_secret = sys.argv[1:]
-repl = {
-    "OZ_OPENBAO_ROLE_ID=": f"OZ_OPENBAO_ROLE_ID={api_role}\n",
-    "OZ_OPENBAO_SECRET_ID=": f"OZ_OPENBAO_SECRET_ID={api_secret}\n",
-    "OZ_OPENBAO_WORKER_ROLE_ID=": f"OZ_OPENBAO_WORKER_ROLE_ID={worker_role}\n",
-    "OZ_OPENBAO_WORKER_SECRET_ID=": f"OZ_OPENBAO_WORKER_SECRET_ID={worker_secret}\n",
-}
-with open(path) as f:
-    lines = f.readlines()
 with open(path, "w") as f:
-    for line in lines:
-        for prefix, new_line in repl.items():
-            if line.startswith(prefix):
-                line = new_line
-                break
-        f.write(line)
-print(f"  Synced {len(repl)} OZ_OPENBAO_* keys in {path}")
+    f.write("# Bootstrap creds — app reads runtime config from OpenBao\n")
+    f.write("OZ_OPENBAO_ADDR=http://localhost:8200\n")
+    f.write(f"OZ_OPENBAO_ROLE_ID={api_role}\n")
+    f.write(f"OZ_OPENBAO_SECRET_ID={api_secret}\n")
+    f.write(f"OZ_OPENBAO_WORKER_ROLE_ID={worker_role}\n")
+    f.write(f"OZ_OPENBAO_WORKER_SECRET_ID={worker_secret}\n")
+print(f"  Wrote 5 keys to {path}")
 PY
     chmod 600 "$SECRETS_FILE"
 }

@@ -658,6 +658,7 @@ class AuthMiddleware:
                     scope["state"]["user_id"] = cached.get("created_by")
                     scope["state"]["api_key_permissions"] = cached["permissions"]
                     scope["state"]["api_key_project_id"] = cached.get("project_id")
+                    scope["state"]["api_key_id"] = cached.get("api_key_id")
                     await self.app(scope, receive, send)
                     return
             except Exception:
@@ -798,6 +799,7 @@ class AuthMiddleware:
         scope["state"]["user_id"] = created_by  # None if key has no creator
         scope["state"]["api_key_permissions"] = permissions
         scope["state"]["api_key_project_id"] = key_data.get("project_id")
+        scope["state"]["api_key_id"] = key_data["id"]
 
         # ═ Update last_used timestamp (fire-and-forget) ═══════════════════
         try:
@@ -818,6 +820,7 @@ class AuthMiddleware:
                         "permissions": permissions,
                         "project_id": key_data.get("project_id"),
                         "created_by": created_by,
+                        "api_key_id": key_data["id"],
                     },
                 )
             except Exception:
