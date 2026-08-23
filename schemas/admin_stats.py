@@ -47,6 +47,9 @@ class UsageStatsResponse(BaseModel):
         date: The date (YYYY-MM-DD) for this data point.
         message_count: Number of messages processed on this date.
         session_count: Number of sessions created on this date.
+        episode_count: Number of episodes created on this date.
+        user_count: Number of users created on this date.
+        entity_count: Number of graph entities created on this date.
     """
 
     date: str = Field(
@@ -57,4 +60,13 @@ class UsageStatsResponse(BaseModel):
     )
     session_count: int = Field(
         ..., description="Sessions created on this date."
+    )
+    episode_count: int = Field(
+        0, description="Episodes created on this date."
+    )
+    user_count: int = Field(
+        0, description="Users created on this date."
+    )
+    entity_count: int = Field(
+        0, description="Graph entities created on this date."
     )

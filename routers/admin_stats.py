@@ -20,6 +20,7 @@ from dependencies.db import get_db
 from models.api_key import ApiKey
 from models.episode import Episode
 from models.fact import Fact
+from models.graph_entity import GraphEntity
 from models.session import Session
 from models.user import User
 from schemas.admin_stats import OrgStatsResponse, UsageStatsResponse
@@ -127,7 +128,13 @@ async def get_usage_stats(
     daily_counts: dict[str, dict[str, int]] = {}
     for row in result:
         date_str = str(row.date.date()) if hasattr(row.date, "date") else str(row.date)
-        daily_counts.setdefault(date_str, {"message_count": 0, "session_count": 0})
+        daily_counts.setdefault(date_str, {
+            "message_count": 0,
+            "session_count": 0,
+            "episode_count": 0,
+            "user_count": 0,
+            "entity_count": 0,
+        })
         daily_counts[date_str]["message_count"] = row.count
 
     # Daily session counts
@@ -150,14 +157,106 @@ async def get_usage_stats(
     result = await db.execute(session_stmt)
     for row in result:
         date_str = str(row.date.date()) if hasattr(row.date, "date") else str(row.date)
-        daily_counts.setdefault(date_str, {"message_count": 0, "session_count": 0})
+        daily_counts.setdefault(date_str, {
+            "message_count": 0,
+            "session_count": 0,
+            "episode_count": 0,
+            "user_count": 0,
+            "entity_count": 0,
+        })
         daily_counts[date_str]["session_count"] = row.count
+
+    # Daily episode counts
+    episode_stmt = (
+        select(
+            func.date_trunc("day", Episode.created_at).label("date"),
+            func.count(Episode.id).label("count"),
+        )
+        .select_from(Episode)
+        .where(
+            Episode.organization_id == org_uuid,
+            Episode.is_deleted.is_(False),
+            Episode.created_at >= func.now() - text(f"interval '{days} days'"),
+        )
+        .group_by(text("date"))
+        .order_by(text("date DESC"))
+    )
+
+    result = await db.execute(episode_stmt)
+    for row in result:
+        date_str = str(row.date.date()) if hasattr(row.date, "date") else str(row.date)
+        daily_counts.setdefault(date_str, {
+            "message_count": 0,
+            "session_count": 0,
+            "episode_count": 0,
+            "user_count": 0,
+            "entity_count": 0,
+        })
+        daily_counts[date_str]["episode_count"] = row.count
+
+    # Daily user counts
+    user_stmt = (
+        select(
+            func.date_trunc("day", User.created_at).label("date"),
+            func.count(User.id).label("count"),
+        )
+        .select_from(User)
+        .where(
+            User.organization_id == org_uuid,
+            User.is_deleted.is_(False),
+            User.created_at >= func.now() - text(f"interval '{days} days'"),
+        )
+        .group_by(text("date"))
+        .order_by(text("date DESC"))
+    )
+
+    result = await db.execute(user_stmt)
+    for row in result:
+        date_str = str(row.date.date()) if hasattr(row.date, "date") else str(row.date)
+        daily_counts.setdefault(date_str, {
+            "message_count": 0,
+            "session_count": 0,
+            "episode_count": 0,
+            "user_count": 0,
+            "entity_count": 0,
+        })
+        daily_counts[date_str]["user_count"] = row.count
+
+    # Daily graph entity counts — no is_deleted on graph_entities table
+    entity_stmt = (
+        select(
+            func.date_trunc("day", GraphEntity.created_at).label("date"),
+            func.count(GraphEntity.id).label("count"),
+        )
+        .select_from(GraphEntity)
+        .where(
+            GraphEntity.organization_id == org_uuid,
+            GraphEntity.created_at >= func.now() - text(f"interval '{days} days'"),
+        )
+        .group_by(text("date"))
+        .order_by(text("date DESC"))
+    )
+
+    result = await db.execute(entity_stmt)
+    for row in result:
+        date_str = str(row.date.date()) if hasattr(row.date, "date") else str(row.date)
+        daily_counts.setdefault(date_str, {
+            "message_count": 0,
+            "session_count": 0,
+            "episode_count": 0,
+            "user_count": 0,
+            "entity_count": 0,
+        })
+        daily_counts[date_str]["entity_count"] = row.count
 
     return [
         UsageStatsResponse(
             date=date_str,
             message_count=counts["message_count"],
             session_count=counts["session_count"],
+            episode_count=counts["episode_count"],
+            user_count=counts["user_count"],
+            entity_count=counts["entity_count"],
         )
         for date_str, counts in sorted(daily_counts.items(), reverse=True)
     ]
