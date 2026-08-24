@@ -327,9 +327,19 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
     project_id = UUID(proj_resp.json()["id"])
 
     # ── Create a project-scoped API key (owner-gated, JWT only) ─────────
+    # ``members:read`` is granted explicitly because suites drive
+    # GET /v1/users* through this key; the default key permissions
+    # (project:read, project:write) no longer satisfy that gate.
     key_resp = await client.post(
         f"/v1/projects/{project_id}/api-keys",
-        json={"name": "test-key"},
+        json={
+            "name": "test-key",
+            "permissions": [
+                "project:read",
+                "project:write",
+                "members:read",
+            ],
+        },
     )
     assert key_resp.status_code == 201, f"API key creation failed: {key_resp.text}"
     api_key = key_resp.json()["raw_key"]

@@ -32,8 +32,6 @@ Excluded by design (documented public / non-admin routes — verified against
 router sources):
 - ``GET /v1/admin/webhooks/events``  — no auth, public event-type listing.
 - ``GET /admin/org/config/defaults`` — no auth, seeded onboarding defaults.
-- ``GET /v1/users``, ``GET /v1/users/{user_id}`` — ``require_org_id`` only
-  (any authenticated caller), not permission-gated.
 - ``GET /v1/auth/registration-status`` — PUBLIC by design (registration
   policy drives the signup UI).
 """
@@ -153,6 +151,8 @@ ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [
     ("DELETE", "/v1/admin/schemas/{schema_id}", {"schema_id": str(SCHEMA_ID)}, {}),
     # users — admin-gated mutations
     ("POST", "/v1/users", {}, {}),
+    ("GET", "/v1/users", {}, {}),
+    ("GET", "/v1/users/{user_id}", {"user_id": str(OTHER_USER_ID)}, {}),
     ("PATCH", "/v1/users/{user_id}", {"user_id": str(OTHER_USER_ID)}, {}),
     ("DELETE", "/v1/users/{user_id}", {"user_id": str(OTHER_USER_ID)}, {}),
     ("POST", "/v1/users/{user_id}/summary", {"user_id": str(OTHER_USER_ID)}, {}),

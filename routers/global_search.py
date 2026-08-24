@@ -12,7 +12,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from dependencies.auth import get_current_user_id, require_org_id
+from dependencies.auth import get_current_user_id, require_org_id, require_permission
 from dependencies.db import get_db
 from schemas.search import GlobalSearchResponse
 from services.global_search_service import GlobalSearchService
@@ -39,6 +39,7 @@ async def global_search(
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_org_id),
     user_id: UUID = Depends(get_current_user_id),
+    _: None = Depends(require_permission("project:read")),
 ) -> GlobalSearchResponse:
     """Search across the organization for projects, users, and sessions.
 
