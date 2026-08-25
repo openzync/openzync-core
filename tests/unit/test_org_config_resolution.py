@@ -212,10 +212,11 @@ class TestUpdateOrgConfig:
             org_id, update, bao_client=mock_bao_client, redis=mock_redis
         )
 
-        # write_org_config should have been called WITHOUT llm_backend
+        # llm_backend must reach write_org_config as None so the client's
+        # None→delete branch removes the stale KV secret
         mock_bao_client.write_org_config.assert_awaited_once_with(
             org_id,
-            {"llm_model": "llama3"},
+            {"llm_backend": None, "llm_model": "llama3"},
         )
         # Other fields preserved
         assert resolved.llm_model == "llama3"
