@@ -629,6 +629,3 @@ async def get_graph_backend_for_project(
         )
 
     return graph_backend
-
-
-
