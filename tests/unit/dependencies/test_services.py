@@ -733,3 +733,34 @@ class TestGetGraphBackendForProject:
             await get_graph_backend_for_project(request, org_config, db)
 
         dispatcher.resolve_and_create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unconfigured_backend_raises_not_none(self) -> None:
+        """resolve_and_create → None (unset/'none') → raises, not returns None."""
+        from core.exceptions import GraphBackendUnavailableError
+        from dependencies.services import get_graph_backend_for_project
+
+        dispatcher = MagicMock()
+        dispatcher.resolve_and_create.return_value = None
+
+        request = MagicMock(spec=Request)
+        request.state.org_id = ORG_ID_STR
+        request.app.state.graph_backend_dispatcher = dispatcher
+        request.app.state.surreal_connection_pool = None
+        request.app.state.falkordb_client = None
+
+        org_config = MagicMock()
+        org_config.graph_backend = "none"
+        org_config.falkordb_url = None
+
+        db = AsyncMock(spec=AsyncSession)
+
+        # A disabled backend must raise (→ 503), not return None — a None
+        # backend leaks into routers and crashes on first use.
+        with pytest.raises(
+            GraphBackendUnavailableError,
+            match="No graph backend is configured for org",
+        ):
+            await get_graph_backend_for_project(request, org_config, db)
+
+        dispatcher.resolve_and_create.assert_called_once()
