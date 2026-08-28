@@ -79,31 +79,50 @@ The system follows an OpenBao-zero-fallback architecture (see [ADR-003](docs/adr
 **Prerequisites:** Docker, Docker Compose v2, and ~3 GB of free disk space.
 
 ```bash
-# 1. Clone, set up .env with all required bootstrap secrets
+# 1. Clone, set up .env with bootstrap secrets
 git clone https://github.com/openzync/openzync-core.git
 cd openzync-core
 cp .env.example .env
 
-# Generate and append all four required secrets
+# Generate bootstrap secrets (POSTGRES_PASSWORD is only needed for Option A)
 echo "BAO_STATIC_SEAL_KEY=$(openssl rand -hex 32)" >> .env
-echo "POSTGRES_PASSWORD=$(openssl rand -base64 32)" >> .env
+echo "POSTGRES_PASSWORD=$(openssl rand -base64 32)" >> .env  # Option A only — not used by Option B
 echo "OZ_SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" >> .env
 echo "OZ_WEBHOOK_SIGNING_SECRET=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" >> .env
 
-# 2. Bring up the entire stack — OpenBao, Postgres, migrations, api, worker
-docker compose -f infra/docker-compose.backend.yml up -d
+# 2. Bring up the stack — choose ONE option (both validated 3/3 cycles)
+# ── Option A: Local one-box (self-contained, with pgvector) ──────────────
+docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db up -d --build
+# Self-creates postgres (pgvector), auto-generates migrator/app passwords.
 
-# The first boot takes ~60 seconds:
-#   • 0-10s  OpenBao starts
-#   • 10-30s OpenBao is initialised + unsealed; system secrets + AppRole credentials written
-#   • 30-40s Postgres starts + creates DB and least-privilege roles
-#   • 40-50s Alembic migrations run (as openzync_migrator)
-#   • 50-55s Database credentials merged into the OpenBao system secret
-#   • 55-60s api and worker start (OpenBao Agent sidecar authenticates + renders secrets)
+# ── Option B: External Postgres (production / CI) ────────────────────────
+# Add to .env — host.docker.internal is REQUIRED inside containers;
+# localhost:5432 fails (separate netns). extra_hosts is already in compose
+# for api/worker, so no compose edit is needed.
+echo "OZ_DATABASE_URL=postgresql+asyncpg://openzync:pass@host.docker.internal:5432/openzync" >> .env
+# Make host Postgres reachable from containers (pick one):
+#   socat TCP-LISTEN:5432,bind=0.0.0.0,fork TCP:[::1]:5432 &
+#   # or set host postgresql.conf: listen_addresses = '*'
+docker compose --env-file .env -f infra/docker-compose.backend.yml up -d  # no --profile
+# No postgres/migrate/write-db containers in this mode.
+
+# Timelines (first boot, cold volumes):
+#   Option A: ~41-48s to health 200 + ready database:true
+#     • 0-10s  OpenBao starts
+#     • 10-30s OpenBao initialised + unsealed; system secrets + AppRole credentials written
+#     • 30-40s Postgres starts + creates DB and least-privilege roles
+#     • 40-50s Alembic migrations run (as openzync_migrator)
+#     • 50-55s Database credentials merged into the OpenBao system secret
+#     • 55-60s api and worker start (OpenBao Agent sidecar authenticates + renders secrets)
+#   Option B: ~21-39s (no postgres phases; OpenBao → agents → api/worker → redis)
 
 # 3. Verify
-curl -s http://localhost:8000/v1/health
-curl -s http://localhost:8000/v1/ready
+curl -s http://localhost:8000/v1/health   # expect 200
+curl -s http://localhost:8000/v1/ready    # expect database:true, redis:true
+# Option B: `docker compose -f infra/docker-compose.backend.yml ps` shows no
+# postgres / postgres-init / postgres-migrate / openbao-write-db / write-db —
+# only openbao, openbao-init, openbao-agent-*, api, worker, redis.
+# Health/ready still gate on DB via OZ_DATABASE_URL.
 
 # 4. Sign up (returns a confirmation — tokens issued after email verification)
 curl -X POST http://localhost:8000/v1/auth/signup \
