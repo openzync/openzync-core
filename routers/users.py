@@ -20,7 +20,6 @@ from starlette.responses import Response
 from core.audit import audit_action
 from core.exceptions import RateLimitError, ValidationError
 from dependencies.auth import (
-    require_org_id,
     require_permission,
     require_permission_or_self,
 )
@@ -85,7 +84,9 @@ async def create_user(
 
 @router.get("", response_model=UserListResponse)
 async def list_users(
-    org_id: str = Depends(require_org_id),
+    # ⚠️ BREAKING: listing members now requires ``members:read`` —
+    # previously any authenticated principal could enumerate the org.
+    org_id: str = Depends(require_permission("members:read")),
     service: UserService = Depends(get_user_service),
     limit: int = Query(
         default=50,
@@ -131,7 +132,9 @@ async def list_users(
 async def get_user(
     user_id: UUID,
     service: UserService = Depends(get_user_service),
-    org_id: str = Depends(require_org_id),
+    # ⚠️ BREAKING: reading another member's record now requires
+    # ``members:read``; a JWT user may still fetch their own record.
+    org_id: str = Depends(require_permission_or_self("members:read")),
 ) -> UserResponseWithStats:
     """Get a user by internal UUID.
 

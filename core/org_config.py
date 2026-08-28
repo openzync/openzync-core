@@ -148,12 +148,12 @@ async def update_org_config(
     # 1. Read existing config from OpenBao
     existing = await bao_client.read_org_config(org_id)
 
-    # 2. Deep merge: provided keys override, None values remove
+    # 2. Merge: provided keys override.  None values are kept in the dict on
+    #    purpose — write_org_config deletes the KV secret for any key whose
+    #    value is None.  Popping the key here used to skip that delete branch,
+    #    leaving the stale secret in OpenBao forever.
     for key, value in update_dict.items():
-        if value is None:
-            existing.pop(key, None)
-        else:
-            existing[key] = value
+        existing[key] = value
 
     # 3. Write to OpenBao (authoritative store)
     await bao_client.write_org_config(org_id, existing)

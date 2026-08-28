@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
 import pytest
@@ -404,12 +404,15 @@ class TestAuthMiddleware:
         """mcp=False JWT → GET /v1/users passes the middleware (200)."""
         token = self._create_jwt(mcp=False)
         app = self._create_users_app()
-        transport = ASGITransport(app=app)
-        async with AsyncClient(transport=transport, base_url="http://test") as c:
-            resp = await c.get(
-                "/v1/users",
-                headers={"Authorization": f"Bearer {token}"},
-            )
+        # GET /v1/users is permission-gated (members:read); this test pins
+        # the *middleware* contract, so stub the downstream RBAC gate.
+        with patch("dependencies.auth._check_permission", new=AsyncMock()):
+            transport = ASGITransport(app=app)
+            async with AsyncClient(transport=transport, base_url="http://test") as c:
+                resp = await c.get(
+                    "/v1/users",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
 
         assert resp.status_code == 200, resp.text
         assert resp.json() == {"data": [], "next_cursor": None, "has_more": False}

@@ -523,7 +523,9 @@ async def get_graph_backend_for_project(
 
     Raises:
         GraphBackendUnavailableError: If the selected backend is
-            unreachable (e.g. SurrealDB connection fails).
+            unreachable (e.g. SurrealDB connection fails), or if no
+            graph backend is configured for this org (graph_backend
+            unset or ``"none"``).
     """
     dispatcher: GraphBackendDispatcher = request.app.state.graph_backend_dispatcher
 
@@ -594,7 +596,7 @@ async def get_graph_backend_for_project(
         )
 
     try:
-        return dispatcher.resolve_and_create(
+        graph_backend = dispatcher.resolve_and_create(
             org_config, db, surreal=surreal, falkordb_client=falkordb_client,
         )
     except GraphBackendUnavailableError:
@@ -612,5 +614,18 @@ async def get_graph_backend_for_project(
             f"{org_id}: {exc}"
         ) from exc
 
+    # resolve_and_create returns None when graph_backend is unset or "none"
+    # for this org — fail loud with a 503 instead of leaking a None backend
+    # that 500s downstream callers (e.g. ObservationQueryService).
+    if graph_backend is None:
+        logger.error(
+            "graph_backend.not_configured",
+            extra={"org_id": str(org_id), "backend": org_config.graph_backend},
+        )
+        raise GraphBackendUnavailableError(
+            f"No graph backend is configured for org {org_id} "
+            "(graph_backend is unset or 'none') — graph features are "
+            "disabled for this org."
+        )
 
-
+    return graph_backend

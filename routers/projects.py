@@ -47,6 +47,9 @@ async def _get_project_service(db: AsyncSession = Depends(get_db)) -> ProjectSer
 async def create_project(
     request: Request,
     payload: CreateProjectRequest,
+    # ⚠️ BREAKING: non-manager members (no ``project:manage``) now get 403
+    # when creating projects — previously any authenticated principal could.
+    _: None = Depends(require_permission("project:manage")),
     service: ProjectService = Depends(_get_project_service),
 ) -> ProjectResponse:
     """Create a new project.
@@ -73,6 +76,7 @@ async def list_projects(
     request: Request,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    _: None = Depends(require_permission("project:read")),
     service: ProjectService = Depends(_get_project_service),
 ) -> list[ProjectResponse]:
     """List non-archived projects in the organisation.

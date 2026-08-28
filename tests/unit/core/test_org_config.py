@@ -415,6 +415,89 @@ class TestUpdateOrgConfig:
             {"llm_backend": "anthropic", "llm_temperature": 0.7, "llm_model": "claude-3"},
         )
 
+    @pytest.mark.asyncio
+    async def test_null_update_marks_key_for_deletion(
+        self,
+        mock_redis: AsyncMock,
+        mock_bao: AsyncMock,
+    ) -> None:
+        """A null update hands the key to ``write_org_config`` as ``None``.
+
+        The client's delete branch (pinned by
+        ``test_openbao.py::test_write_org_config_deletes_none_values``) then
+        removes the stale KV secret.  Popping the key from the payload
+        instead would skip that branch and leave the old value in OpenBao.
+        """
+        mock_bao.read_org_config.return_value = {
+            "llm_backend": "openai",
+            "llm_model": "gpt-4",
+        }
+
+        await update_org_config(
+            ORG_ID,
+            UpdateOrgConfigRequest(llm_backend=None),
+            bao_client=mock_bao,
+            redis=mock_redis,
+        )
+
+        mock_bao.write_org_config.assert_awaited_once_with(
+            ORG_ID,
+            {"llm_backend": None, "llm_model": "gpt-4"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_null_update_leaves_other_keys_untouched(
+        self,
+        mock_redis: AsyncMock,
+        mock_bao: AsyncMock,
+    ) -> None:
+        """Deleting one key does not alter unrelated stored keys."""
+        mock_bao.read_org_config.return_value = {
+            "llm_backend": "openai",
+            "llm_model": "gpt-4",
+            "llm_temperature": 0.7,
+        }
+
+        await update_org_config(
+            ORG_ID,
+            UpdateOrgConfigRequest(llm_backend=None),
+            bao_client=mock_bao,
+            redis=mock_redis,
+        )
+
+        mock_bao.write_org_config.assert_awaited_once_with(
+            ORG_ID,
+            {"llm_backend": None, "llm_model": "gpt-4", "llm_temperature": 0.7},
+        )
+
+    @pytest.mark.asyncio
+    async def test_absent_keys_preserved_not_deleted(
+        self,
+        mock_redis: AsyncMock,
+        mock_bao: AsyncMock,
+    ) -> None:
+        """Keys omitted from the payload keep their stored values.
+
+        Omitting a key is not deletion: absent keys never enter the payload
+        as ``None``, so ``write_org_config`` can never delete them.
+        """
+        mock_bao.read_org_config.return_value = {
+            "llm_backend": "openai",
+            "llm_model": "gpt-4",
+        }
+
+        await update_org_config(
+            ORG_ID,
+            UpdateOrgConfigRequest(llm_temperature=0.9),
+            bao_client=mock_bao,
+            redis=mock_redis,
+        )
+
+        mock_bao.write_org_config.assert_awaited_once_with(
+            ORG_ID,
+            {"llm_backend": "openai", "llm_model": "gpt-4", "llm_temperature": 0.9},
+        )
+
 
 @pytest.mark.unit
 class TestCacheKey:

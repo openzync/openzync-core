@@ -216,3 +216,35 @@ async def test_list_observations_422_invalid_limit() -> None:
         )
 
     assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_list_observations_503_no_graph_backend() -> None:
+    """Org config without a graph backend → 503 problem+json (not a bare 500)."""
+    from core.exceptions import (
+        GraphBackendUnavailableError,
+        register_exception_handlers,
+    )
+
+    async def _raise_no_graph_backend() -> None:
+        raise GraphBackendUnavailableError(
+            f"No graph backend is configured for org {ORG_ID} "
+            "(graph_backend is unset or 'none') — graph features are "
+            "disabled for this org."
+        )
+
+    app = _create_app()
+    register_exception_handlers(app)
+    app.dependency_overrides[get_graph_backend_for_project] = (
+        _raise_no_graph_backend
+    )
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get(f"/v1/projects/{PROJECT_ID}/observations")
+
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["type"] == "https://errors.openzync.tech/graph_backend_unavailable"
+    assert body["status"] == 503
+    assert "No graph backend is configured" in body["detail"]

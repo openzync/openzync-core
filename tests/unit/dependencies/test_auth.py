@@ -294,6 +294,14 @@ class TestRequirePermissionOrSelf:
         request.app.state.redis = AsyncMock()
         return request
 
+    def _api_key_request(self, user_id: str) -> MagicMock:
+        """API-key principal carrying its creator's id in state.user_id."""
+        request = MagicMock(spec=Request)
+        request.state.auth_type = "api_key"
+        request.state.user_id = user_id
+        request.state.api_key_permissions = []
+        return request
+
     @pytest.mark.asyncio
     async def test_self_passes_without_permission(self) -> None:
         """Acting on one's OWN user id → passes with no permission lookup."""
@@ -366,6 +374,29 @@ class TestRequirePermissionOrSelf:
                 db=MagicMock(),
             )
         assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_api_key_matching_user_id_still_requires_permission(self) -> None:
+        """API key whose creator matches the path user → 403 (no self-bypass).
+
+        Self-bypass is JWT-session only: an API key carries its creator's
+        id in ``state.user_id`` but must not reach org-scoped personal
+        endpoints via that identity.
+        """
+        from dependencies.auth import require_permission_or_self
+
+        checker = require_permission_or_self("members:read")
+        request = self._api_key_request(self.USER_ID_STR)
+
+        with pytest.raises(HTTPException) as exc:
+            await checker(
+                request,
+                UUID(self.USER_ID_STR),
+                self.ORG_ID_STR,
+                db=MagicMock(),
+            )
+        assert exc.value.status_code == 403
+        assert "members:read" in exc.value.detail["detail"]
 
 
 class TestGetDashboardUser:
