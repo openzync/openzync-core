@@ -85,6 +85,15 @@ async def ensure_platform_root(
     password = settings.OZ_ROOT_PASSWORD
 
     org_repo = OrganizationRepository(db)
+    # RLS requires app.bypass_rls + app.org_id to be set before any
+    # org-scoped query, otherwise current_setting('app.org_id') errors
+    # with "unrecognized configuration parameter" when the GUC is unset
+    # (the RLS policy does current_setting('app.org_id') without missing_ok).
+    await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+    await db.execute(
+        text("SELECT set_config('app.org_id', :org_id, true)"),
+        {"org_id": str(PLATFORM_ORG_ID)},
+    )
     existing = await org_repo.get_by_id(PLATFORM_ORG_ID)
     if existing is not None:
         # No-op path — reconcile what a crashed first boot may have missed.

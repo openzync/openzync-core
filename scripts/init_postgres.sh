@@ -112,6 +112,12 @@ if [ "${_DB_FRESH}" -eq 1 ]; then
         -c "CREATE DATABASE \"${DB_NAME}\";"
 fi
 
+# ── 7b. Ensure pgvector extension exists (requires superuser, idempotent) ─────
+log "Ensuring pgvector extension 'vector' exists in database '${DB_NAME}' ..."
+psql -h "${POSTGRES_HOST}" -p "${POSTGRES_PORT}" -U postgres -d "${DB_NAME}" \
+    -v ON_ERROR_STOP=1 \
+    -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
 # ── 8. CREATE / ALTER role openzync_migrator (idempotent) ───────────────────
 log "Ensuring role '${MIGRATOR_USER}' exists with fresh password ..."
 psql -h "${POSTGRES_HOST}" -p "${POSTGRES_PORT}" -U postgres -d postgres \

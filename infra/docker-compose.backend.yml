@@ -187,8 +187,8 @@ services:
       # Shared init volume — every downstream step reads or writes files
       # here (unseal keys, AppRole creds, db-creds.json, write markers).
       - openbao-init-data:/bao-init
-      - ./openbao/policies:/policies:ro
-      - ../scripts/init_openbao.sh:/init_openbao.sh:ro
+      - ./openbao/policies:/policies:ro,z
+      - ../scripts/init_openbao.sh:/init_openbao.sh:ro,z
     entrypoint: ["/bin/sh", "/init_openbao.sh"]
     logging: *default-logging
     restart: "no"
@@ -243,8 +243,8 @@ services:
       POSTGRES_SUPERUSER_PASSWORD: "${POSTGRES_PASSWORD:-}"
     volumes:
       - openbao-init-data:/bao-init
-      - ../scripts/init_postgres.sh:/init_postgres.sh:ro
-    entrypoint: ["/bin/bash", "/init_postgres.sh"]
+      - ../scripts/init_postgres.sh:/init_postgres.sh:ro,z
+    entrypoint: ["/bin/sh", "-c", "if ! command -v python3 >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq python3; fi; exec /bin/bash /init_postgres.sh"]
     logging: *default-logging
     restart: "no"
 
@@ -269,8 +269,8 @@ services:
       OZ_ENVIRONMENT: development   # suppress any prod-only startup checks
     volumes:
       - openbao-init-data:/bao-init:ro
-      - ../scripts/entrypoint_migrate.sh:/entrypoint_migrate.sh:ro
-    entrypoint: ["/bin/sh", "/entrypoint_migrate.sh"]
+      - ../scripts/entrypoint_migrate.sh:/entrypoint_migrate.sh:ro,z
+    entrypoint: ["/bin/bash", "/entrypoint_migrate.sh"]
     command: ["alembic", "upgrade", "head"]
     logging: *default-logging
     restart: "no"
@@ -289,9 +289,12 @@ services:
     depends_on:
       postgres-migrate:
         condition: service_completed_successfully
+    environment:
+      BAO_ADDR: "http://openbao:8200"
+      BAO_SKIP_VERIFY: "true"
     volumes:
       - openbao-init-data:/bao-init
-      - ../scripts/write_db_to_openbao.sh:/write_db_to_openbao.sh:ro
+      - ../scripts/write_db_to_openbao.sh:/write_db_to_openbao.sh:ro,z
     entrypoint: ["/bin/bash", "/write_db_to_openbao.sh"]
     logging: *default-logging
     restart: "no"
@@ -320,7 +323,7 @@ services:
     volumes:
       - openbao-init-data:/openbao-bootstrap:ro
       - api-secrets:/openbao/agent:rw
-      - ./openbao/agent/api.hcl:/etc/bao/agent.hcl:ro
+      - ./openbao/agent/api.hcl:/etc/bao/agent.hcl:ro,z
     healthcheck:
       # Healthy once system.env exists AND contains OZ_SECRET_KEY= (the
       # key every system secret must have after openbao-init completes).
@@ -385,7 +388,7 @@ services:
     volumes:
       - openbao-init-data:/openbao-bootstrap:ro
       - worker-secrets:/openbao/agent:rw
-      - ./openbao/agent/worker.hcl:/etc/bao/agent.hcl:ro
+      - ./openbao/agent/worker.hcl:/etc/bao/agent.hcl:ro,z
     healthcheck:
       test: ["CMD-SHELL", "test -s /openbao/agent/system.env && grep -q '^OZ_SECRET_KEY=' /openbao/agent/system.env"]
       interval: 5s
@@ -429,7 +432,7 @@ services:
   # must pass before the app containers can start.
   redis:
     image: redis:7-alpine
-    ports: ["127.0.0.1:6379:6379"]
+    ports: ["127.0.0.1:6380:6379"]
     volumes:
       - redis-data:/data
     healthcheck:

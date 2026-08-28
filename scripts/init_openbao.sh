@@ -164,16 +164,54 @@ log "Authenticated with root token."
 # without manual marker deletion.
 # 'bao namespace create' errors with "namespace already exists" if re-run.
 log "Creating namespace 'system' ..."
-bao namespace create system 2>/dev/null \
-    || log "Namespace 'system' already exists — continuing."
+# Retry on transient Raft/namespace race after fresh init (namespace not
+# yet visible to leader). Previous swallow-all-errors masked real failures
+# that then caused KV put to 404 "namespace not found".
+_retry_ns=0
+until bao namespace create system 2>"/tmp/ns_err.$$"; do
+    _err=$(cat "/tmp/ns_err.$$" 2>/dev/null || true)
+    if echo "${_err}" | grep -q "already exists"; then
+        log "Namespace 'system' already exists — continuing."
+        break
+    fi
+    _retry_ns=$((_retry_ns+1))
+    if [ "${_retry_ns}" -ge 5 ]; then
+        log "FATAL: failed to create namespace 'system' after 5 attempts: ${_err}"
+        cat "/tmp/ns_err.$$" >&2
+        exit 1
+    fi
+    log "RETRY ${_retry_ns}/5 namespace create transient: ${_err} — sleeping 2s"
+    sleep 2
+done
+# If loop succeeded via `until` (exit 0), log already-created case handled above;
+# if it succeeded on first try, emit success.
+if [ "${_retry_ns}" -eq 0 ] && [ ! -s "/tmp/ns_err.$$" ]; then
+    log "Namespace 'system' created."
+fi
+rm -f "/tmp/ns_err.$$"
 
 # ── 8. Enable KV v2 secrets engine at system/config ─────────────────────────
 log "Enabling KV v2 at system/config ..."
-bao secrets enable \
-    -namespace=system/ \
-    -path=config \
-    kv-v2 2>/dev/null \
-    || log "KV v2 already mounted at system/config — continuing."
+_retry_kv=0
+until bao secrets enable -namespace=system/ -path=config kv-v2 2>"/tmp/kv_err.$$"; do
+    _err=$(cat "/tmp/kv_err.$$" 2>/dev/null || true)
+    if echo "${_err}" | grep -q "already.*mounted\|already exists\|path is already in use"; then
+        log "KV v2 already mounted at system/config — continuing."
+        break
+    fi
+    _retry_kv=$((_retry_kv+1))
+    if [ "${_retry_kv}" -ge 5 ]; then
+        log "FATAL: failed to enable KV v2 after 5 attempts: ${_err}"
+        cat "/tmp/kv_err.$$" >&2
+        exit 1
+    fi
+    log "RETRY ${_retry_kv}/5 KV enable transient: ${_err} — sleeping 2s"
+    sleep 2
+done
+if [ "${_retry_kv}" -eq 0 ] && [ ! -s "/tmp/kv_err.$$" ]; then
+    log "KV v2 enabled at system/config."
+fi
+rm -f "/tmp/kv_err.$$"
 
 # ── 9. Write combined system secret from environment variables ───────────────
 # Writes a SINGLE flat object at system/config/system (logical KV v2 path).
@@ -254,16 +292,37 @@ python3 <<- 'PYEOF'
 	for k, v in secret_data.items():
 	    cmd.append(f"{k}={v}")
 
-	result = subprocess.run(
-	    cmd,
-	    capture_output=True, text=True,
-	    env={**os.environ, "BAO_TOKEN": BAO_TOKEN},
-	)
-	if result.returncode != 0:
+	# Retry on transient KV upgrade race: fresh KV mount briefly returns
+	# 400 "Upgrading from non-versioned to versioned data" for ~1s.
+	result = None
+	for _attempt in range(5):
+	    result = subprocess.run(
+	        cmd,
+	        capture_output=True, text=True,
+	        env={**os.environ, "BAO_TOKEN": BAO_TOKEN},
+	    )
+	    if result.returncode == 0:
+	        break
+	    _err = result.stderr.strip()
+	    _transient = (
+	        "Upgrading from non-versioned" in _err
+	        or "unavailable for a brief period" in _err
+	        or "namespace not found" in _err
+	        or "Code: 404" in _err
+	        or "Code: 500" in _err
+	        or "Code: 503" in _err
+	    )
+	    if _transient and _attempt < 4:
+	        print(f"  RETRY {_attempt+1}/5 transient KV upgrade race, sleeping 2s: {_err}", file=sys.stderr)
+	        import time as _time; _time.sleep(2)
+	        continue
 	    print(
-	        f"  FATAL: failed to write system secret: {result.stderr.strip()}",
+	        f"  FATAL: failed to write system secret: {_err}",
 	        file=sys.stderr,
 	    )
+	    sys.exit(1)
+	if result is None or result.returncode != 0:
+	    print(f"  FATAL: failed to write system secret after retries", file=sys.stderr)
 	    sys.exit(1)
 
 	print(f"  Wrote {len(secret_data)} keys to {SECRET_PATH}:")

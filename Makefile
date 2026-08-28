@@ -108,17 +108,27 @@ migrate-downgrade:
 # ── Docker ────────────────────────────────────────────────────────────────────
 
 docker-up:
-	docker compose -f infra/docker-compose.backend.yml up -d
+	docker compose --env-file .env -f infra/docker-compose.backend.yml up -d
+
+docker-up-local:
+	docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db up -d
 
 docker-down:
-	docker compose -f infra/docker-compose.backend.yml down
+	docker compose --env-file .env -f infra/docker-compose.backend.yml down
+
+docker-down-local:
+	docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db down
 
 docker-logs:
-	docker compose -f infra/docker-compose.backend.yml logs -f
+	docker compose --env-file .env -f infra/docker-compose.backend.yml logs -f
 
 docker-reset:
-	docker compose -f infra/docker-compose.backend.yml down -v
-	docker compose -f infra/docker-compose.backend.yml up -d
+	docker compose --env-file .env -f infra/docker-compose.backend.yml down -v
+	docker compose --env-file .env -f infra/docker-compose.backend.yml up -d
+
+docker-reset-local:
+	docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db down -v
+	docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db up -d
 
 # ── Documentation ─────────────────────────────────────────────────────────────
 

@@ -80,6 +80,7 @@ print(
 PYEOF
 )
 export DATABASE_URL
+export OZ_DATABASE_URL="${DATABASE_URL}"
 
 # Sanity: print the URL with the password redacted.
 log "DATABASE_URL set: $(echo "$DATABASE_URL" | sed 's|://[^:]*:[^@]*@|://***:***@|')"

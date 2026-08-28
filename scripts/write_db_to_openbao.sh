@@ -36,7 +36,7 @@ ROOT_TOKEN_FILE="${BAO_INIT_DIR}/root-token"
 WRITE_MARKER="${BAO_INIT_DIR}/db-creds-written"
 BAO_ADDR="${BAO_ADDR:-http://openbao:8200}"
 NAMESPACE="system/"
-KV_SECRET_PATH="config/data/system"
+KV_SECRET_PATH="config/system"
 
 # ── Logging helper ───────────────────────────────────────────────────────────
 log() { echo "[write_db_to_openbao] $(date -Iseconds) $*"; }
@@ -95,7 +95,7 @@ log "Waiting for OpenBao at ${BAO_ADDR} to become reachable ..."
 _i=1
 while [ "${_i}" -le 60 ]; do
     _output=$(bao status -format=json 2>&1) || true
-    if echo "${_output}" | python3 -c "import sys; json.load(sys.stdin)" >/dev/null 2>&1; then
+    if echo "${_output}" | python3 -c "import sys, json; json.load(sys.stdin)" >/dev/null 2>&1; then
         log "OpenBao is reachable."
         break
     fi
@@ -161,7 +161,7 @@ import sys
 
 CREDS_FILE = "/bao-init/db-creds.json"
 NAMESPACE = "system/"
-SECRET_PATH = "config/data/system"
+SECRET_PATH = "config/system"
 
 # ── 1. Read the db-creds.json (written by init_postgres.sh) ─────────────────
 with open(CREDS_FILE) as f:
@@ -207,6 +207,9 @@ else:
     print("[merge] Read existing system secret with " + str(len(existing)) + " keys (version " + str(version) + ")")
 
 # ── 3. Merge: add/overwrite database_url ───────────────────────────────────
+existing["OZ_DATABASE_URL"] = database_url
+existing["DATABASE_URL"] = database_url
+# Keep old lowercase for backwards compat during transition, but primary is OZ_*
 existing["database_url"] = database_url
 print("[merge] Merged system secret now has " + str(len(existing)) + " keys")
 
@@ -243,11 +246,11 @@ if result.returncode != 0:
 
 parsed = json.loads(result.stdout)
 written = parsed.get("data", {}).get("data", {})
-if "database_url" not in written:
-    sys.exit("FATAL: database_url not present in verified secret")
-if written["database_url"] != database_url:
+if "OZ_DATABASE_URL" not in written:
+    sys.exit("FATAL: OZ_DATABASE_URL not present in verified secret")
+if written["OZ_DATABASE_URL"] != database_url:
     sys.exit("FATAL: written database_url does not match the constructed one")
-print("[merge] Read-back verification succeeded — database_url is in the secret (version " + str(parsed.get("data", {}).get("metadata", {}).get("version", "unknown")) + ")")
+print("[merge] Read-back verification succeeded — OZ_DATABASE_URL is in the secret (version " + str(parsed.get("data", {}).get("metadata", {}).get("version", "unknown")) + ")")
 PYEOF
 
 # ── 9. Write marker file (only after every step succeeded) ──────────────────
