@@ -2,8 +2,8 @@ apiVersion: v2
 name: openzync
 description: OpenZync — Long-term memory for AI agents (Helm chart)
 type: application
-version: 0.1.0
-appVersion: "1.0.0"
+version: 0.2.0
+appVersion: "1.0.0rc1"
 kubeVersion: ">=1.25.0-0"
 home: https://openzync.tech
 sources:
