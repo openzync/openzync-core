@@ -365,6 +365,8 @@ services:
       - api-secrets:/run/secrets:ro   # RO — the app must never write secrets
       - openbao-init-data:/openbao-bootstrap:ro  # AppRole credentials for runtime auth
     ports: ["127.0.0.1:8000:8000"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     deploy:
       resources:
         limits: { cpus: "1", memory: "2G" }
@@ -421,6 +423,8 @@ services:
     volumes:
       - worker-secrets:/run/secrets:ro
       - openbao-init-data:/openbao-bootstrap:ro  # AppRole credentials for runtime auth
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     deploy:
       resources:
         limits: { cpus: "0.5", memory: "1G" }
