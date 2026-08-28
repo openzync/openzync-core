@@ -1,6 +1,7 @@
 """Pydantic schemas for admin dashboard statistics.
 
-All response models aggregate data across an entire organization.
+All response models aggregate data across an entire organization,
+windowed by days/from/to and optional project_id.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ class OrgStatsResponse(BaseModel):
 
     Provides a quick snapshot of the organization's data volume
     across episodes, sessions, facts, extractions, observations,
-    and classifications.
+    and classifications — windowed by days/from/to and optional project_id.
     """
 
     organization_id: UUID = Field(..., description="The organization UUID.")
@@ -37,6 +38,9 @@ class OrgStatsResponse(BaseModel):
 
 class UsageStatsResponse(BaseModel):
     """Daily usage statistics for the dashboard.
+
+    Windowed by days/from/to and optional project_id. One row per
+    calendar day (YYYY-MM-DD) within the requested window.
 
     Attributes:
         date: The date (YYYY-MM-DD) for this data point.
