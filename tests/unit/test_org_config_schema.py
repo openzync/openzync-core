@@ -21,12 +21,12 @@ class TestOrgConfigBase:
 
     def test_defaults_are_none(self) -> None:
         """Every field in OrgConfigBase should default to None,
-        except ``graph_backend`` which defaults to ``"postgres"``.
+        except ``graph_backend`` which defaults to ``"falkordb"``.
         """
         cfg = OrgConfigBase()
         for field_name in OrgConfigBase.model_fields:
             if field_name == "graph_backend":
-                assert getattr(cfg, field_name) == "postgres"
+                assert getattr(cfg, field_name) == "falkordb"
                 continue
             assert getattr(cfg, field_name) is None, (
                 f"Expected {field_name} to be None, got {getattr(cfg, field_name)!r}"
@@ -47,7 +47,7 @@ class TestOrgConfigBase:
         assert cfg.llm_backend == "openai"
         assert cfg.embedding_dim == 1536
         assert cfg.llm_model is None  # not set
-        assert cfg.graph_backend == "postgres"  # default when not provided
+        assert cfg.graph_backend == "falkordb"  # default when not provided
 
 
 class TestOrgConfigBaseToDict:
@@ -184,12 +184,12 @@ class TestOrgConfigResponse:
 
     def test_response_stored_all_none_when_empty(self) -> None:
         """Response with empty stored config should have all-None fields,
-        except ``graph_backend`` which defaults to ``"postgres"``.
+        except ``graph_backend`` which defaults to ``"falkordb"``.
         """
         resp = OrgConfigResponse(stored=OrgConfigBase())
         dumped = resp.stored.model_dump()
         for field_name, value in dumped.items():
             if field_name == "graph_backend":
-                assert value == "postgres"
+                assert value == "falkordb"
             else:
                 assert value is None, f"Expected {field_name} to be None, got {value!r}"

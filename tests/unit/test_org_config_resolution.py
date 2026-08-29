@@ -110,18 +110,23 @@ class TestGetOrgConfig:
         mock_bao_client: AsyncMock,
         mock_redis: AsyncMock,
     ) -> None:
-        """An empty OpenBao config should result in all-None fields (no env defaults)."""
+        """An empty OpenBao config should default graph_backend to falkordb (new org default)."""
         mock_bao_client.read_org_config.return_value = {}
 
         config = await get_org_config(
             org_id, redis=mock_redis, bao_client=mock_bao_client
         )
 
-        # Every field should be None — no env-var fallback
+        # Every field except graph_backend should be None — graph defaults to falkordb
         for field_name in OrgConfigBase.model_fields:
-            assert getattr(config, field_name) is None, (
-                f"Expected {field_name} to be None, got {getattr(config, field_name)!r}"
-            )
+            if field_name == "graph_backend":
+                assert getattr(config, field_name) == "falkordb", (
+                    f"Expected {field_name} to be 'falkordb', got {getattr(config, field_name)!r}"
+                )
+            else:
+                assert getattr(config, field_name) is None, (
+                    f"Expected {field_name} to be None, got {getattr(config, field_name)!r}"
+                )
 
     async def test_skip_cache_flag(
         self,

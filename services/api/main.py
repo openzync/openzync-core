@@ -111,22 +111,31 @@ def create_app() -> FastAPI:
         app.state.surreal_connection_pool = SurrealConnectionPool()
         logger.info("surreal_pool.initialised")
 
-        # Init FalkorDB client (optional — requires falkordb server running).
-        try:
-            from falkordb.asyncio import FalkorDB
-
-            falkordb_pool = BlockingConnectionPool.from_url(
-                settings.FALKORDB_URL,
-                max_connections=settings.FALKORDB_MAX_CONNECTIONS,
-                socket_timeout=settings.FALKORDB_SOCKET_TIMEOUT,
-                socket_keepalive=True,
-                decode_responses=True,
-            )
-            app.state.falkordb_client = FalkorDB(connection_pool=falkordb_pool)
-            logger.info("falkordb_pool.initialised")
-        except Exception:
-            logger.warning("falkordb_pool.initialisation_failed — FalkorDB is optional")
+        # Init FalkorDB client — required (default graph backend is falkordb).
+        # Only skips when FALKORDB_URL is explicitly unset (graph_backend=none).
+        if not getattr(settings, "FALKORDB_URL", None):
+            logger.warning("falkordb_pool.skipped — FALKORDB_URL not set, falkordb backends will 503")
             app.state.falkordb_client = None
+        else:
+            try:
+                from falkordb.asyncio import FalkorDB
+
+                falkordb_pool = BlockingConnectionPool.from_url(
+                    settings.FALKORDB_URL,
+                    max_connections=settings.FALKORDB_MAX_CONNECTIONS,
+                    socket_timeout=settings.FALKORDB_SOCKET_TIMEOUT,
+                    socket_keepalive=True,
+                    decode_responses=True,
+                )
+                app.state.falkordb_client = FalkorDB(connection_pool=falkordb_pool)
+                logger.info("falkordb_pool.initialised", extra={"url": settings.FALKORDB_URL})
+            except Exception as exc:
+                logger.error(
+                    "falkordb_pool.initialisation_failed — FalkorDB is required (default graph)",
+                    exc_info=True,
+                    extra={"url": settings.FALKORDB_URL, "error": str(exc)},
+                )
+                raise
 
         # ── Init OpenBao client for runtime config + Transit operations ────
         # The bootstrap client in asgi.py loads system settings and is closed.

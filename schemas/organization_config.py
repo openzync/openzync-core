@@ -152,9 +152,10 @@ class OrgConfigBase(BaseModel):
 
     # ── Graph ──────────────────────────────────────────────────────────────
     graph_backend: str | None = Field(
-        default="postgres",
-        description="Graph backend (postgres, surrealdb, none). Defaults to "
-        "postgres — the only backend present in the default stack. "
+        default="falkordb",
+        description="Graph backend (falkordb, postgres, surrealdb, none). Defaults to "
+        "falkordb — FalkorDB is the default graph engine. "
+        "'postgres' is deprecated and kept for rollback only. "
         "'none' disables the graph.",
     )
     graph_search_type: str | None = Field(

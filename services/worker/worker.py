@@ -485,31 +485,35 @@ async def main() -> NoReturn:
 
     # ── FalkorDB client ──────────────────────────────────────────────────
     # Single app-level connection pool shared across all worker tasks.
-    # FalkorDB is optional — only used when the per-org config selects it.
+    # FalkorDB is required — default graph backend is falkordb.
     falkordb_client: FalkorDB | None = None  # type: ignore[name-defined]
-    try:
-        from falkordb.asyncio import FalkorDB
-        from redis.asyncio import BlockingConnectionPool
+    if not getattr(settings, "FALKORDB_URL", None):
+        logger.warning("falkordb_pool.skipped — FALKORDB_URL not set, falkordb backends will 503")
+    else:
+        try:
+            from falkordb.asyncio import FalkorDB
+            from redis.asyncio import BlockingConnectionPool
 
-        falkordb_pool = BlockingConnectionPool.from_url(
-            settings.FALKORDB_URL,
-            max_connections=settings.FALKORDB_MAX_CONNECTIONS,
-            socket_timeout=settings.FALKORDB_SOCKET_TIMEOUT,
-            socket_keepalive=True,
-            decode_responses=True,
-        )
-        falkordb_client = FalkorDB(connection_pool=falkordb_pool)
-        logger.info(
-            "falkordb_pool.initialised",
-            url=settings.FALKORDB_URL,
-            max_connections=settings.FALKORDB_MAX_CONNECTIONS,
-        )
-    except Exception:
-        logger.warning(
-            "falkordb_pool.init_failed",
-            exc_info=True,
-            message="FalkorDB is unavailable — graph backend will fall back to Postgres.",
-        )
+            falkordb_pool = BlockingConnectionPool.from_url(
+                settings.FALKORDB_URL,
+                max_connections=settings.FALKORDB_MAX_CONNECTIONS,
+                socket_timeout=settings.FALKORDB_SOCKET_TIMEOUT,
+                socket_keepalive=True,
+                decode_responses=True,
+            )
+            falkordb_client = FalkorDB(connection_pool=falkordb_pool)
+            logger.info(
+                "falkordb_pool.initialised",
+                url=settings.FALKORDB_URL,
+                max_connections=settings.FALKORDB_MAX_CONNECTIONS,
+            )
+        except Exception as exc:
+            logger.error(
+                "falkordb_pool.init_failed — FalkorDB is required (default graph)",
+                exc_info=True,
+                extra={"url": settings.FALKORDB_URL, "error": str(exc)},
+            )
+            raise
 
     # Build the shared context dict passed to all ARQ tasks.
     worker_ctx: dict[str, Any] = {

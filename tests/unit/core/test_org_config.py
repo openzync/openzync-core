@@ -160,14 +160,17 @@ class TestGetOrgConfig:
         mock_redis: AsyncMock,
         mock_bao: AsyncMock,
     ) -> None:
-        """When no org config exists in OpenBao, every field is ``None``."""
+        """When no org config exists, every field is ``None`` except graph_backend→falkordb."""
         mock_bao.read_org_config.return_value = {}
 
         config = await get_org_config(ORG_ID, redis=mock_redis, bao_client=mock_bao)
 
-        # All fields should be None (not defaults)
+        # All fields except graph_backend should be None — new org defaults to falkordb
         for field_name in OrgConfigBase.model_fields:
-            assert getattr(config, field_name) is None, f"{field_name} should be None"
+            if field_name == "graph_backend":
+                assert getattr(config, field_name) == "falkordb", f"{field_name} should be falkordb"
+            else:
+                assert getattr(config, field_name) is None, f"{field_name} should be None"
 
     @pytest.mark.asyncio
     async def test_no_bao_client_raises(

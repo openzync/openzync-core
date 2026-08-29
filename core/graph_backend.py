@@ -156,6 +156,14 @@ class GraphBackendDispatcher:
                 f"via PATCH /admin/org/config."
             )
 
+        # Deprecation: postgres is a pseudo-graph (CTE + pg_trgm).
+        # Kept for rollback only — new orgs default to falkordb.
+        if backend_name == "postgres":
+            logger.warning(
+                "graph_backend.deprecated_postgres — use falkordb; postgres is rollback-only",
+                extra={"backend": backend_name},
+            )
+
         # Backend-specific kwargs — each backend receives only the
         # arguments it needs.  No ``db=db`` is passed unconditionally
         # because SurrealGraphBackend does not accept it.

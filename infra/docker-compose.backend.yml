@@ -21,13 +21,16 @@
 #                │                           │
 #                └─────────► redis ◄─────────┘
 #
-# With --profile local-db:
+  # With --profile local-db:
 #
 #   postgres ─► postgres-init ─► postgres-migrate ─► openbao-write-db
 #                                                         │
 #                ┌────────────────────────────────────────┘
 #                ▼
 #        openbao-agent-api ── (same as default graph above)
+#
+# Default stack always includes falkordb (graph is falkordb by default).
+# SurrealDB stays optional under --profile alt-graph.
 #
 # One-shot services (exit 0, restart: no) sit on the critical path. Restart-
 # loop services (openbao, postgres, api, worker, agent sidecars, redis) come
@@ -58,9 +61,8 @@
 #   --profile llm            (Ollama)
 #   --profile observability  (Prometheus + Grafana + Alloy)
 #   --profile local-db       (Postgres + init + migrate + write-db to OpenBao)
-#   --profile alt-graph      (SurrealDB + FalkorDB graph backends — optional;
-#                             system-level URLs flow to api/worker via the
-#                             OpenBao system secret, see "Optional env vars")
+#   --profile alt-graph      (SurrealDB — optional extra graph backend;
+#                             FalkorDB is now part of the default stack)
 #
 # Required env vars (no defaults — compose will refuse to start if absent):
 #   BAO_STATIC_SEAL_KEY      64-char hex (openssl rand -hex 32)
@@ -78,7 +80,7 @@
 #   OZ_JWT_ACCESS_TOKEN_TTL_MINUTES=30
 #   OZ_JWT_REFRESH_TOKEN_TTL_DAYS=7
 #   OZ_PROMETHEUS_URL=http://prometheus:9090
-#   OZ_FALKORDB_URL=redis://redis:6379
+#   OZ_FALKORDB_URL=redis://falkordb:6379  (required — FalkorDB is default graph)
 #   OZ_FALKORDB_MAX_CONNECTIONS=20
 #   OZ_FALKORDB_SOCKET_TIMEOUT=30
 #   OZ_SURREALDB_URL=          (empty default; key absent from the system
@@ -86,10 +88,10 @@
 #   OZ_RATE_LIMIT_IP_MAX=10
 #   OZ_RATE_LIMIT_WINDOW_SEC=60
 #
-# With --profile alt-graph, point the graph backends at the local services:
+# SurrealDB still needs --profile alt-graph:
 #   OZ_SURREALDB_URL=ws://surrealdb:8000/rpc \
-#   OZ_FALKORDB_URL=redis://falkordb:6379 \
 #     docker compose --profile alt-graph up -d
+# FalkorDB is always on — no profile needed.
 # ──────────────────────────────────────────────────────────────────────────────
 
 # ── Logging defaults ─────────────────────────────────────────────────────────
@@ -169,7 +171,7 @@ services:
       OZ_SMTP_USE_TLS: "${OZ_SMTP_USE_TLS:-false}"
       OZ_SMTP_START_TLS: "${OZ_SMTP_START_TLS:-true}"
       OZ_PROMETHEUS_URL: "${OZ_PROMETHEUS_URL:-http://prometheus:9090}"
-      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-redis://redis:6379}"
+      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-redis://falkordb:6379}"
       OZ_FALKORDB_MAX_CONNECTIONS: "${OZ_FALKORDB_MAX_CONNECTIONS:-20}"
       OZ_FALKORDB_SOCKET_TIMEOUT: "${OZ_FALKORDB_SOCKET_TIMEOUT:-30}"
       # SurrealDB system URL — empty by default so the key is skipped by
@@ -608,13 +610,12 @@ services:
     logging: *default-logging
     restart: unless-stopped
 
-  # ── FalkorDB (graph backend — property-graph over RESP) — OPTIONAL ──────────
-  # Activate with --profile alt-graph. Wire the app to it via
-  #   OZ_FALKORDB_URL=redis://falkordb:6379
+  # ── FalkorDB (graph backend — property-graph over RESP) — DEFAULT ──────────
+  # Always on — default graph backend is falkordb.
+  # Wire the app via OZ_FALKORDB_URL=redis://falkordb:6379 (written to OpenBao).
   # Host port 6380 — the stack's redis already owns host 6379 (the CI
   # workflow also publishes falkordb on 6380).
   falkordb:
-    profiles: [alt-graph]
     image: falkordb/falkordb:v4.20.1-alpine
     container_name: openzync-falkordb
     ports: ["127.0.0.1:6380:6379"]

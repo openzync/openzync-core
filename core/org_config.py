@@ -93,12 +93,18 @@ async def get_org_config(
     # 2. Fetch from OpenBao
     raw = await bao_client.read_org_config(org_id)
     # When no config has been stored yet, raw is {} and **raw would apply
-    # Pydantic defaults (e.g. graph_backend → "postgres") even though the
-    # field was never explicitly set.  We want *every* field to be None
-    # when OpenBao has no record, so escalate all fields explicitly.
+    # Pydantic defaults — but we want new orgs to default to falkordb
+    # (not disabled).  Only graph_backend gets a synthetic default; all
+    # other fields stay None until explicitly set.
     if not raw:
-        org_config = OrgConfigBase(**{name: None for name in OrgConfigBase.model_fields})
+        defaults = {name: None for name in OrgConfigBase.model_fields}
+        defaults["graph_backend"] = "falkordb"
+        org_config = OrgConfigBase(**defaults)
     else:
+        # Existing org but graph_backend never set → default to falkordb
+        # (postgres is now deprecated opt-in only).
+        if not raw.get("graph_backend"):
+            raw = {**raw, "graph_backend": "falkordb"}
         org_config = OrgConfigBase(**raw)
 
     # 3. Write to cache (best-effort)
