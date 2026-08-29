@@ -7,7 +7,7 @@
 # secret auto-generated, stored in OpenBao, and rendered at runtime to the
 # api/worker via OpenBao Agent sidecars.
 #
-# Service graph (default profile — no local database, Supabase/CloudSQL):
+# Service graph (default — falkordb always on; no local database, Supabase/CloudSQL):
 #
 #   openbao ─► openbao-init ───────────────────────────────────┐
 #                                                              │
@@ -357,11 +357,13 @@ services:
       # comes from the OpenBao system secret (sourced from system.env by the
       # entrypoint AFTER container env), which wins over these parity entries.
       OZ_SURREALDB_URL: "${OZ_SURREALDB_URL:-}"
-      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-}"
+      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-}"  # parity — OpenBao system.env wins
     depends_on:
       openbao-agent-api:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      falkordb:
         condition: service_healthy
     volumes:
       - api-secrets:/run/secrets:ro   # RO — the app must never write secrets
@@ -416,11 +418,13 @@ services:
       # Parity entries only — authoritative values come from the OpenBao
       # system secret via the worker sidecar (sourced after container env).
       OZ_SURREALDB_URL: "${OZ_SURREALDB_URL:-}"
-      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-}"
+      OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-}"  # parity — OpenBao system.env wins
     depends_on:
       openbao-agent-worker:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      falkordb:
         condition: service_healthy
     volumes:
       - worker-secrets:/run/secrets:ro
@@ -613,12 +617,12 @@ services:
   # ── FalkorDB (graph backend — property-graph over RESP) — DEFAULT ──────────
   # Always on — default graph backend is falkordb.
   # Wire the app via OZ_FALKORDB_URL=redis://falkordb:6379 (written to OpenBao).
-  # Host port 6380 — the stack's redis already owns host 6379 (the CI
-  # workflow also publishes falkordb on 6380).
+  # Host port 6381 — redis owns host 6380 (falkordb was 6380 under alt-graph,
+  # moved to 6381 when promoted to default to avoid host-port collision).
   falkordb:
     image: falkordb/falkordb:v4.20.1-alpine
     container_name: openzync-falkordb
-    ports: ["127.0.0.1:6380:6379"]
+    ports: ["127.0.0.1:6381:6379"]
     environment:
       REDIS_ARGS: "--appendonly yes"
     volumes:

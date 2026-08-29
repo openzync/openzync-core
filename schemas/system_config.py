@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class OrgCreationPolicy(StrEnum):
@@ -82,6 +82,19 @@ class SystemConfigUpdate(BaseModel):
     reranker_top_n: int | None = Field(default=None, ge=1, le=100)
     context_cache_ttl: int | None = Field(default=None, ge=1)
 
+    @field_validator("graph_backend", mode="before")
+    @classmethod
+    def _reject_postgres(cls, v: str | None) -> str | None:
+        """Hard-reject `postgres` — removed in v1.1.0, returns 410 Gone."""
+        if v == "postgres":
+            from core.exceptions import GoneError
+
+            raise GoneError(
+                "PostgreSQL graph backend deprecated — gone, removed in v1.1.0. "
+                "Migrate to `falkordb` (410)."
+            )
+        return v
+
 
 class SystemConfigResponse(BaseModel):
     """System config as exposed to the platform UI.
@@ -116,6 +129,19 @@ class SystemConfigResponse(BaseModel):
     reranker_top_k: int | None = None
     reranker_top_n: int | None = None
     context_cache_ttl: int | None = None
+
+    @field_validator("graph_backend", mode="before")
+    @classmethod
+    def _reject_postgres(cls, v: str | None) -> str | None:
+        """Hard-reject `postgres` — removed in v1.1.0, returns 410 Gone."""
+        if v == "postgres":
+            from core.exceptions import GoneError
+
+            raise GoneError(
+                "PostgreSQL graph backend deprecated — gone, removed in v1.1.0. "
+                "Migrate to `falkordb` (410)."
+            )
+        return v
 
 
 # ── Whitelist helpers ─────────────────────────────────────────────────────────

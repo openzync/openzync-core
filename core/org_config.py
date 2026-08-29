@@ -102,7 +102,7 @@ async def get_org_config(
         org_config = OrgConfigBase(**defaults)
     else:
         # Existing org but graph_backend never set → default to falkordb
-        # (postgres is now deprecated opt-in only).
+        # (postgres removed in v1.1.0 → 410 Gone).
         if not raw.get("graph_backend"):
             raw = {**raw, "graph_backend": "falkordb"}
         org_config = OrgConfigBase(**raw)

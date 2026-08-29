@@ -121,7 +121,7 @@ config:
   embeddingDim: 768
 
   # Graph backend
-  graphBackend: "postgres"
+  graphBackend: "falkordb"
   graphMaxTraversalDepth: 2
 
   # Context

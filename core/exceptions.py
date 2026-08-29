@@ -15,6 +15,7 @@ from typing import Any
 
 import structlog
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 logger = structlog.get_logger(__name__)
@@ -397,6 +398,20 @@ class SearchLegFailedError(ServiceUnavailableError):
         )
 
 
+class GoneError(AppError, ValueError):
+    """Resource is gone — used for hard-removed backends (e.g. postgres graph)."""
+
+    status_code: int = 410
+    code: str = "gone"
+
+    def __init__(
+        self,
+        message: str = "The requested resource is gone.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RFC 7807 Problem Details
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -457,6 +472,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         EdgeNotFoundError: 404,
         EpisodeNotFoundError: 404,
         GraphTimeoutError: 504,
+        GoneError: 410,
         # ── Infrastructure failures (503) ────────────────────────────────
         ServiceUnavailableError: 503,
         CacheUnavailableError: 503,
@@ -486,3 +502,23 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
         return _to_problem_json(request, exc)
+
+    # ── Pydantic Validation → 410 unwrapping ─────────────────────────────
+    # Field validators raise ``GoneError`` (AppError + ValueError). Pydantic
+    # wraps ``ValueError`` as ``ValidationError`` → FastAPI converts to
+    # ``RequestValidationError`` (422). This handler unwraps the original
+    # ``GoneError`` from ``exc.errors()[*].ctx.error`` and returns 410
+    # Problem JSON so the client sees 410, not 422.
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        for err in exc.errors():
+            ctx = err.get("ctx") or {}
+            inner = ctx.get("error")
+            if isinstance(inner, GoneError):
+                return _to_problem_json(request, inner)
+        # Fallback to FastAPI's default 422 behaviour.
+        from fastapi.exception_handlers import request_validation_exception_handler
+
+        return await request_validation_exception_handler(request, exc)

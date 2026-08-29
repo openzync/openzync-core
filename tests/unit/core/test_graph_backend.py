@@ -62,15 +62,14 @@ class TestInitDispatcher:
         assert "falkordb" in disp._registry
 
     def test_init_dispatcher_creates_postgres_instance(self) -> None:
-        """resolve_and_create with 'postgres' returns a PostgresGraphBackend."""
+        """resolve_and_create with 'postgres' is hard-blocked — deprecated, removal v1.1.0."""
         from core.graph_backend import init_dispatcher
-        from packages.graph_backend.postgres import PostgresGraphBackend
 
         disp = init_dispatcher()
         mock_db = MagicMock()
         cfg = MagicMock(graph_backend="postgres", graph_max_traversal_depth=None)
-        backend = disp.resolve_and_create(cfg, mock_db)
-        assert isinstance(backend, PostgresGraphBackend)
+        with pytest.raises(ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"):
+            disp.resolve_and_create(cfg, mock_db)
 
     def test_init_dispatcher_creates_surrealdb_instance(self) -> None:
         """resolve_and_create with 'surrealdb' returns a SurrealGraphBackend."""
@@ -154,7 +153,7 @@ class TestCreateAllBackendsSkipping:
     """
 
     def test_skips_surrealdb_when_surreal_is_none(self) -> None:
-        """SurrealDB backend is skipped when surreal is None."""
+        """SurrealDB backend is skipped when surreal is None — postgres is gone (410)."""
         from core.graph_backend import GraphBackendDispatcher
 
         disp = GraphBackendDispatcher()
@@ -166,12 +165,12 @@ class TestCreateAllBackendsSkipping:
         mock_db = MagicMock()
         backends = disp.create_all_backends(mock_db, surreal=None)
 
-        assert len(backends) == 1  # only postgres
-        pg_cls.assert_called_once_with(db=mock_db)
+        assert len(backends) == 0  # postgres is gone, surreal skipped
+        pg_cls.assert_not_called()
         sd_cls.assert_not_called()
 
     def test_skips_falkordb_when_client_is_none(self) -> None:
-        """FalkorDB backend is skipped when falkordb_client is None."""
+        """FalkorDB backend is skipped when falkordb_client is None — postgres is gone."""
         from core.graph_backend import GraphBackendDispatcher
 
         disp = GraphBackendDispatcher()
@@ -183,12 +182,12 @@ class TestCreateAllBackendsSkipping:
         mock_db = MagicMock()
         backends = disp.create_all_backends(mock_db, falkordb_client=None)
 
-        assert len(backends) == 1  # only postgres
-        pg_cls.assert_called_once_with(db=mock_db)
+        assert len(backends) == 0  # postgres is gone, falkor skipped
+        pg_cls.assert_not_called()
         fd_cls.assert_not_called()
 
     def test_creates_postgres_when_surreal_and_falkor_are_none(self) -> None:
-        """Postgres is always created, even when other clients are None."""
+        """Postgres is gone (410) — no backend created when others are None."""
         from core.graph_backend import GraphBackendDispatcher
 
         disp = GraphBackendDispatcher()
@@ -202,11 +201,11 @@ class TestCreateAllBackendsSkipping:
         mock_db = MagicMock()
         backends = disp.create_all_backends(mock_db, surreal=None, falkordb_client=None)
 
-        assert len(backends) == 1
-        pg_cls.assert_called_once_with(db=mock_db)
+        assert len(backends) == 0
+        pg_cls.assert_not_called()
 
     def test_creates_all_three_when_clients_provided(self) -> None:
-        """All three backends created when surreal and falkordb_client given."""
+        """All three backends created when surreal and falkordb_client given — postgres skipped (410)."""
         from core.graph_backend import GraphBackendDispatcher
 
         disp = GraphBackendDispatcher()
@@ -227,13 +226,13 @@ class TestCreateAllBackendsSkipping:
             falkordb_client=mock_client,
         )
 
-        assert len(backends) == 3
-        pg_cls.assert_called_once_with(db=mock_db)
+        assert len(backends) == 2
+        pg_cls.assert_not_called()
         sd_cls.assert_called_once_with(surreal=mock_surreal)
         fd_cls.assert_called_once_with(client=mock_client)
 
     def test_skips_surrealdb_only(self) -> None:
-        """Only SurrealDB is skipped; Postgres and FalkorDB are created."""
+        """Only SurrealDB is skipped; Postgres is gone, FalkorDB is created."""
         from core.graph_backend import GraphBackendDispatcher
 
         disp = GraphBackendDispatcher()
@@ -248,8 +247,8 @@ class TestCreateAllBackendsSkipping:
         mock_client = MagicMock()
         backends = disp.create_all_backends(mock_db, surreal=None, falkordb_client=mock_client)
 
-        assert len(backends) == 2
-        pg_cls.assert_called_once_with(db=mock_db)
+        assert len(backends) == 1
+        pg_cls.assert_not_called()
         fd_cls.assert_called_once_with(client=mock_client)
         sd_cls.assert_not_called()
 
@@ -317,7 +316,7 @@ class TestBackendSpecificKwargsIsolation:
     """
 
     def test_postgres_does_not_get_surreal_or_client(self) -> None:
-        """Postgres only receives db, not surreal or client."""
+        """Postgres creation is hard-blocked — deprecated, raises even if kwargs look valid."""
         from core.graph_backend import GraphBackendDispatcher
 
         disp = GraphBackendDispatcher()
@@ -329,8 +328,9 @@ class TestBackendSpecificKwargsIsolation:
         mock_client = MagicMock()
         cfg = MagicMock(graph_backend="postgres", graph_max_traversal_depth=2)
 
-        disp.resolve_and_create(cfg, mock_db, surreal=mock_surreal, falkordb_client=mock_client)
-        pg_cls.assert_called_once_with(db=mock_db, max_traversal_depth=2)
+        with pytest.raises(ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"):
+            disp.resolve_and_create(cfg, mock_db, surreal=mock_surreal, falkordb_client=mock_client)
+        pg_cls.assert_not_called()
 
     def test_surrealdb_does_not_get_db_or_client(self) -> None:
         """SurrealDB only receives surreal, not db or client."""

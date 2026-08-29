@@ -153,9 +153,9 @@ class OrgConfigBase(BaseModel):
     # ── Graph ──────────────────────────────────────────────────────────────
     graph_backend: str | None = Field(
         default="falkordb",
-        description="Graph backend (falkordb, postgres, surrealdb, none). Defaults to "
+        description="Graph backend (falkordb, surrealdb, none). Defaults to "
         "falkordb — FalkorDB is the default graph engine. "
-        "'postgres' is deprecated and kept for rollback only. "
+        "'postgres' was removed in v1.1.0 (410 Gone). "
         "'none' disables the graph.",
     )
     graph_search_type: str | None = Field(
@@ -386,7 +386,11 @@ class UpdateOrgConfigRequest(BaseModel):
     embedding_backend: str | None = None
     embedding_model: str | None = None
     embedding_dim: int | None = Field(default=None, ge=64, le=4096)
-    graph_backend: str | None = None
+    graph_backend: str | None = Field(
+        default=None,
+        description="Graph backend (falkordb, surrealdb, none). "
+        "`postgres` was removed in v1.1.0 (410 Gone) — hard-rejected on write.",
+    )
     graph_search_type: str | None = None
     graph_max_traversal_depth: int | None = Field(default=None, ge=1, le=10)
     surrealdb_url: str | None = None
@@ -395,6 +399,19 @@ class UpdateOrgConfigRequest(BaseModel):
     surrealdb_namespace: str | None = None
     surrealdb_database: str | None = None
     falkordb_url: str | None = None
+
+    @field_validator("graph_backend", mode="before")
+    @classmethod
+    def _reject_postgres(cls, v: str | None) -> str | None:
+        """Hard-reject `postgres` — removed in v1.1.0, returns 410 Gone."""
+        if v == "postgres":
+            from core.exceptions import GoneError
+
+            raise GoneError(
+                "PostgreSQL graph backend deprecated — gone, removed in v1.1.0. "
+                "Migrate to `falkordb` (410)."
+            )
+        return v
     context_cache_ttl: int | None = Field(default=None, ge=1)
     audit_log_response_body: bool | None = None
     reranker_backend: str | None = None

@@ -9,7 +9,7 @@
 #
 # Credentials: All database passwords use GitLab CI/CD masked variables.
 #   $CI_DB_PASSWORD  — set in CI/CD Settings → CI/CD → Variables (masked).
-#                      Defaults to 'postgres' for ephemeral CI containers only.
+#                      Defaults to 'falkordb' for ephemeral CI containers only.
 #   NEVER hardcode credentials in this file.
 # ──────────────────────────────────────────────────────────────────────────────
 

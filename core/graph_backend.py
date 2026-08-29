@@ -19,9 +19,10 @@ Usage::
     # Per-request (SurrealDB):
     backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
 
-    The default backend is ``"postgres"`` (set in
+    The default backend is ``"falkordb"`` (set in
 :class:`~schemas.organization_config.OrgConfigBase`); ``"none"``
-disables the graph entirely in the per-org config.
+disables the graph entirely. ``"postgres"`` was removed in v1.1.0
+and now returns HTTP 410 Gone.
 
 To add a new backend in the future:
 
@@ -35,7 +36,7 @@ No callers change.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -112,8 +113,6 @@ class GraphBackendDispatcher:
 
         Currently supported backends:
 
-        - **``"postgres"``**: Creates a :class:`PostgresGraphBackend`.
-          Receives ``db`` and ``graph_max_traversal_depth``.
         - **``"surrealdb"``**: Creates a :class:`SurrealGraphBackend`.
           Receives ``surreal`` and ``graph_max_traversal_depth``.
         - **``"falkordb"``**: Creates a :class:`FalkorGraphBackend`.
@@ -123,8 +122,8 @@ class GraphBackendDispatcher:
         Args:
             org_config: The resolved per-org configuration.  May be ``None``
                 (treated as graph disabled).
-            db: A request-scoped ``AsyncSession``.  Required for PostgreSQL
-                backends.
+            db: A request-scoped ``AsyncSession``.  Kept for signature
+                compatibility but not used by current backends.
             surreal: An optional ``AsyncSurreal`` instance from the per-org
                 connection pool.  Passed only to the SurrealDB backend.
                 May be ``None``. Raises ``GraphBackendUnavailableError``
@@ -139,6 +138,7 @@ class GraphBackendDispatcher:
             features are disabled for this org.
 
         Raises:
+            GoneError: If ``graph_backend`` is ``"postgres"`` (removed in v1.1.0).
             ValueError: If the backend name from ``org_config`` is not
                 registered and is not ``"none"``.
         """
@@ -156,26 +156,23 @@ class GraphBackendDispatcher:
                 f"via PATCH /admin/org/config."
             )
 
-        # Deprecation: postgres is a pseudo-graph (CTE + pg_trgm).
-        # Kept for rollback only — new orgs default to falkordb.
+        # Hard reject: postgres removed in v1.1.0 → 410 Gone.
         if backend_name == "postgres":
-            logger.warning(
-                "graph_backend.deprecated_postgres — use falkordb; postgres is rollback-only",
+            logger.error(
+                "graph_backend.deprecated_postgres_blocked",
                 extra={"backend": backend_name},
+            )
+            from core.exceptions import GoneError
+
+            raise GoneError(
+                "PostgreSQL graph backend deprecated — gone, removed in v1.1.0, "
+                "migrate to falkordb (410)"
             )
 
         # Backend-specific kwargs — each backend receives only the
-        # arguments it needs.  No ``db=db`` is passed unconditionally
-        # because SurrealGraphBackend does not accept it.
-        kwargs: dict = {}
-        if backend_name == "postgres":
-            kwargs["db"] = db
-            if (
-                org_config is not None
-                and org_config.graph_max_traversal_depth is not None
-            ):
-                kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
-        elif backend_name == "surrealdb":
+        # arguments it needs.
+        kwargs: dict[str, Any] = {}
+        if backend_name == "surrealdb":
             if surreal is not None:
                 kwargs["surreal"] = surreal
             if (
@@ -219,8 +216,8 @@ class GraphBackendDispatcher:
         backends are registered.
 
         Args:
-            db: A request-scoped ``AsyncSession``.  Only passed to the
-                Postgres backend.
+            db: A request-scoped ``AsyncSession`` (unused — kept for
+                signature compatibility).
             org_config: Optional per-org config for backend-specific kwargs
                 such as ``graph_max_traversal_depth``.
             surreal: An optional ``AsyncSurreal`` instance from the per-org
@@ -234,15 +231,10 @@ class GraphBackendDispatcher:
         """
         instances: list[GraphBackend] = []
         for backend_name, cls in self._registry.items():
-            kwargs: dict = {}
             if backend_name == "postgres":
-                kwargs["db"] = db
-                if (
-                    org_config is not None
-                    and org_config.graph_max_traversal_depth is not None
-                ):
-                    kwargs["max_traversal_depth"] = org_config.graph_max_traversal_depth
-            elif backend_name == "surrealdb":
+                continue
+            kwargs: dict[str, Any] = {}
+            if backend_name == "surrealdb":
                 if surreal is None:
                     continue
                 kwargs["surreal"] = surreal

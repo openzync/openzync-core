@@ -18,7 +18,7 @@ RegistrationMode = Literal[
 ]
 """Allowed registration modes for the platform."""
 
-GraphBackendName = Literal["postgres", "falkordb", "surrealdb"]
+GraphBackendName = Literal["falkordb", "surrealdb", "none"]
 """Allowed default graph backends for newly created organizations."""
 
 
@@ -27,8 +27,8 @@ class DefaultBackends(BaseModel):
 
     Attributes:
         llm: Free-form LLM backend descriptor (``None`` = system default).
-        graph: Graph backend name — one of ``postgres``, ``falkordb``,
-            ``surrealdb``.
+        graph: Graph backend name — one of ``falkordb``, ``surrealdb``,
+            ``none``.
     """
 
     llm: dict[str, Any] | None = Field(
@@ -36,7 +36,7 @@ class DefaultBackends(BaseModel):
         description="LLM backend descriptor, or null for the system default.",
     )
     graph: GraphBackendName = Field(
-        default="postgres",
+        default="falkordb",
         description="Default graph backend for new organizations.",
     )
 

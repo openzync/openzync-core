@@ -249,7 +249,7 @@ jobs:
             OZ_LOG_LEVEL=INFO
             OZ_CORS_ORIGINS=http://$VPS_HOST,http://localhost:3100,https://app.openzync.tech
             OZ_HOSTS_ALLOWED=$VPS_HOST,localhost,127.0.0.1,app.openzync.tech
-            OZ_GRAPH_BACKEND=postgres
+            OZ_GRAPH_BACKEND=falkordb
             OZ_CONTEXT_CACHE_TTL=30
             OZ_RATE_LIMIT_IP_MAX=60
             OZ_RATE_LIMIT_WINDOW_SEC=60

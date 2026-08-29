@@ -172,6 +172,18 @@ class TestUpdateOrgConfigRequest:
         with pytest.raises(Exception, match="Input should be less than or equal to 10"):
             UpdateOrgConfigRequest(graph_max_traversal_depth=20)
 
+    def test_postgres_graph_backend_hard_rejected(self) -> None:
+        """postgres graph_backend is hard-rejected — deprecated, removal v1.1.0."""
+        with pytest.raises(Exception, match=r"PostgreSQL graph backend.*v1\.1\.0.*410"):
+            UpdateOrgConfigRequest(graph_backend="postgres")
+
+    def test_falkordb_and_surrealdb_allowed(self) -> None:
+        """falkordb and surrealdb graph_backends are still allowed."""
+        assert UpdateOrgConfigRequest(graph_backend="falkordb").graph_backend == "falkordb"
+        assert UpdateOrgConfigRequest(graph_backend="surrealdb").graph_backend == "surrealdb"
+        assert UpdateOrgConfigRequest(graph_backend="none").graph_backend == "none"
+        assert UpdateOrgConfigRequest(graph_backend=None).graph_backend is None
+
 
 class TestOrgConfigResponse:
     """Validate the response schema."""

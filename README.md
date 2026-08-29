@@ -50,7 +50,7 @@ Built for developers who need persistent, queryable agent memory without vendor 
 - **MCP server** — expose agent memory tools to any MCP-compatible client (Claude Desktop, Cursor, etc.)
 - **OpenBao-zero-fallback** — all runtime config auto-generated and stored in OpenBao; only 4 bootstrap secrets in `.env`
 - **Async enrichment pipeline** — ARQ background workers extract entities, facts, embeddings, and classifications
-- **Multi-graph backends** — PostgreSQL-native (default), FalkorDB, or SurrealDB
+- **Multi-graph backends** — FalkorDB (default), SurrealDB, or PostgreSQL-native (deprecated — will be removed in v1.1.0)
 - **Observability** — Prometheus metrics, structured logging (structlog), Grafana dashboards
 
 ---
@@ -62,9 +62,11 @@ flowchart LR
     Client["Client<br/>(SDK / UI)"] --> API["FastAPI API<br/>:8000"]
     API --> Services["Services Layer<br/>(business logic)"]
     Services --> PG[("PostgreSQL 15<br/>+ pgvector")]
+    Services --> FK[("FalkorDB<br/>(default graph)")]
     Services -->|enqueue jobs| Redis[("Redis 7<br/>queues + cache")]
     Workers["ARQ Workers<br/>(enrichment +<br/>graph sync)"] --> Redis
     Workers --> PG
+    Workers --> FK
     API -->|serve| Client
 ```
 
@@ -91,9 +93,13 @@ echo "OZ_SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48
 echo "OZ_WEBHOOK_SIGNING_SECRET=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" >> .env
 
 # 2. Bring up the stack — choose ONE option (both validated 3/3 cycles)
+# FalkorDB is the default graph backend in BOTH options — installed via
+# `docker compose -f infra/docker-compose.backend.yml up -d` (host port 6381).
+# PostgreSQL graph backend is deprecated and will be removed in v1.1.0 — migrate to FalkorDB.
 # ── Option A: Local one-box (self-contained, with pgvector) ──────────────
 docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db up -d --build
 # Self-creates postgres (pgvector), auto-generates migrator/app passwords.
+# FalkorDB is always-on (default profile) — no --profile needed.
 
 # ── Option B: External Postgres (production / CI) ────────────────────────
 # Add to .env — host.docker.internal is REQUIRED inside containers;
@@ -108,13 +114,13 @@ docker compose --env-file .env -f infra/docker-compose.backend.yml up -d  # no -
 
 # Timelines (first boot, cold volumes):
 #   Option A: ~41-48s to health 200 + ready database:true
-#     • 0-10s  OpenBao starts
+#     • 0-10s  OpenBao + FalkorDB start (FalkorDB default graph, port 6381)
 #     • 10-30s OpenBao initialised + unsealed; system secrets + AppRole credentials written
 #     • 30-40s Postgres starts + creates DB and least-privilege roles
 #     • 40-50s Alembic migrations run (as openzync_migrator)
 #     • 50-55s Database credentials merged into the OpenBao system secret
 #     • 55-60s api and worker start (OpenBao Agent sidecar authenticates + renders secrets)
-#   Option B: ~21-39s (no postgres phases; OpenBao → agents → api/worker → redis)
+#   Option B: ~21-39s (no postgres phases; FalkorDB + OpenBao → agents → api/worker → redis)
 
 # 3. Verify
 curl -s http://localhost:8000/v1/health   # expect 200
@@ -192,7 +198,7 @@ For detailed API docs, run the server and visit `/docs` (Swagger UI) or see the 
 
 1. **Ingest** — `POST /v1/projects/{project_id}/memory` accepts messages and persists them as episodes in PostgreSQL.
 2. **Enrich** — ARQ workers consume episodes asynchronously: extract entities, facts, and classifications; generate embeddings.
-3. **Graph sync** — entities and relationships are synced to the graph backend (PostgreSQL-native by default), with temporal edges linking episodes to entities.
+3. **Graph sync** — entities and relationships are synced to the graph backend (FalkorDB by default; PostgreSQL-native is deprecated and will be removed in v1.1.0), with temporal edges linking episodes to entities.
 4. **Retrieve** — hybrid search combines cosine similarity (pgvector), BM25 full-text, and graph BFS traversal. Results are fused via RRF and assembled into a structured prompt context.
 5. **Community detection** — Label Propagation groups related entities into communities. Runs via nightly cron or event-driven after graph sync (controlled by `OZ_AUTO_RUN_COMMUNITY_DETECTION`).
 
