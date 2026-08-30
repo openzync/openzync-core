@@ -137,7 +137,9 @@ class PIIDetector:
         min_confidence: float = 0.7,
         use_ner: bool = True,
     ) -> None:
-        self._enabled_types = set(enabled_types or DEFAULT_PII_TYPES)
+        self._enabled_types = set(
+            enabled_types if enabled_types is not None else DEFAULT_PII_TYPES
+        )
         self._min_confidence = min_confidence
         self._use_ner = use_ner
         self._nlp = None  # Lazy-loaded spaCy pipeline

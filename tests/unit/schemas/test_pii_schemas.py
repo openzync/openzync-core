@@ -62,6 +62,7 @@ class TestPIIConfigSchema:
             "credit_card",
             "ip_address",
             "api_key",
+            "crypto_wallet",
         ]
 
     def test_default_enabled_types_is_fresh_list_per_instance(self) -> None:
@@ -71,7 +72,7 @@ class TestPIIConfigSchema:
 
         config_a.enabled_types.append("extra_type")
         assert "extra_type" not in config_b.enabled_types
-        assert len(config_b.enabled_types) == 6
+        assert len(config_b.enabled_types) == 7
 
     def test_custom_mode(self) -> None:
         """PIIConfig accepts a custom mode."""
