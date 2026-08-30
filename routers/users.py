@@ -159,6 +159,8 @@ async def update_user(
     - ``role`` may only be changed by a member with write access (JWT) —
       API keys are rejected upstream by ``require_permission("members:write")``
       (401), and you cannot change your own role.
+    - Superadmin role cannot be changed via this endpoint (422 — use the
+      superadmin console).
 
     Uses ``model_dump(exclude_unset=True)`` so that ``None`` means
     "set to null" and an absent key means "do not update."
@@ -197,8 +199,9 @@ async def delete_user(
     If you re-create a user with the same ``external_id`` within the 30-day
     grace period, it will be treated as a new user.
 
-    Admin-gated (JWT org admin only).  You cannot delete your own account
-    or the organization's last admin.
+    Admin-gated (JWT org admin only).  You cannot delete your own account,
+    the organization's last admin (422), or a superadmin account (422 —
+    use the superadmin console).
     """
     await service.delete_user(
         organization_id=UUID(org_id),
