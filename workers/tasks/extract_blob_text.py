@@ -358,10 +358,47 @@ async def extract_blob_text(
             # ── Extract text based on MIME type ─────────────────────────
             extracted_text = await _dispatch_extraction(mime_type, data)
 
+            # ── PII redaction (fail-open, never crash worker) ─────────
+            if extracted_text is not None:
+                try:
+                    result = await db.execute(
+                        text(
+                            "SELECT quotas->'pii' AS pii_config "
+                            "FROM organizations WHERE id = :org_id"
+                        ),
+                        {"org_id": UUID(org_id)},
+                    )
+                    row = result.one_or_none()
+                    pii_config = row[0] if row is not None else None
+                    if not isinstance(pii_config, dict):
+                        pii_config = {}
+
+                    if pii_config.get("mode", "off") != "off":
+                        from core.exceptions import ValidationError
+                        from services.pii_service import PIIService
+
+                        pii_service = PIIService(pii_config)
+                        try:
+                            redacted, _, _ = await pii_service.process_message(
+                                extracted_text
+                            )
+                            extracted_text = redacted
+                        except ValidationError:
+                            mask_cfg = {**pii_config, "mode": "mask"}
+                            mask_service = PIIService(mask_cfg)
+                            redacted, _, _ = await mask_service.process_message(
+                                extracted_text
+                            )
+                            extracted_text = redacted
+                            log.info("extract_blob_text.pii_blocked_redacted")
+                except Exception:
+                    log.warning(
+                        "extract_blob_text.pii_redaction_failed",
+                        exc_info=True,
+                    )
+
             if extracted_text:
-                await blob_repo.update_extracted_text(
-                    UUID(blob_id), extracted_text
-                )
+                await blob_repo.update_extracted_text(UUID(blob_id), extracted_text)
                 log.info(
                     "extract_blob_text.extraction_done",
                     extracted_length=len(extracted_text),

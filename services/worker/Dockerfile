@@ -29,7 +29,8 @@ WORKDIR /app
 # Install build dependencies and the package itself.
 # NOTE: README.md must be copied too — hatchling validates it exists at build time.
 COPY pyproject.toml README.md .
-RUN pip install --no-cache-dir --user -e ".[llm]"
+RUN pip install --no-cache-dir --user -e ".[llm]" \
+    && pip install --no-cache-dir --user https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
 
 # ──────────────────────────────────────────────────────────────────────────────
 

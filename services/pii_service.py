@@ -37,6 +37,7 @@ DEFAULT_PII_TYPES: list[str] = [
     "credit_card",
     "ip_address",
     "api_key",
+    "crypto_wallet",
 ]
 
 REDACTION_LABELS: dict[str, str] = {
@@ -196,8 +197,7 @@ class PIIDetector:
 
     # ── Layer 1: Regex ────────────────────────────────────────────────────
 
-    @staticmethod
-    def _scan_regex(text: str) -> list[PIIDetection]:
+    def _scan_regex(self, text: str) -> list[PIIDetection]:
         """Run all enabled regex patterns against *text*.
 
         Args:
@@ -208,6 +208,8 @@ class PIIDetector:
         """
         results: list[PIIDetection] = []
         for pii_type, pattern in _PATTERNS.items():
+            if pii_type not in self._enabled_types:
+                continue
             for match in pattern.finditer(text):
                 results.append(
                     PIIDetection(
