@@ -103,11 +103,13 @@ class MemoryService:
         blob_repo: EpisodeBlobRepository | None = None,
         idempotency_service: IdempotencyService | None = None,
         dedup_repo: IngestDedupRepository | None = None,
+        bao_client: Any | None = None,
     ) -> None:
         self._db = db
         self._redis = redis_client
         self._webhook_service = webhook_service
         self._idem = idempotency_service or IdempotencyService(redis_client)
+        self._bao_client = bao_client
 
         # Repositories (injected or auto-created)
         self._episode_repo = episode_repo or EpisodeRepository(db)
@@ -531,14 +533,14 @@ class MemoryService:
 
     # ── PII Config ────────────────────────────────────────────────────────────
 
-    # ── PII Config ────────────────────────────────────────────────────────────
-
     async def _get_org_pii_config(self, org_id: UUID) -> dict:
-        """Fetch PII configuration for an org from their quotas JSONB.
+        """Fetch PII configuration for an org — OpenBao first, quotas fallback.
 
-        The PII config lives at ``organizations.quotas -> 'pii'``.  We use a
-        raw ``text()`` query instead of a full repository to avoid scope creep —
-        this is the only org-level query that ``MemoryService`` needs.
+        Read-through: first try ``core.org_config.get_org_config`` via OpenBao.
+        If ``pii_mode`` is not ``None``, construct the PII dict from the four
+        org-config fields (only non-None values included). Otherwise fallback
+        to the legacy ``organizations.quotas -> 'pii'`` path for backward
+        compat with orgs that still store PII in quotas.
 
         Args:
             org_id: The organization UUID.
@@ -547,6 +549,57 @@ class MemoryService:
             The PII config dict (possibly empty).  Returns ``{}`` if the
             organization does not exist or has no PII config.
         """
+        # ── Try OpenBao org_config first ─────────────────────────────────
+        try:
+            from core.org_config import get_org_config
+
+            org_cfg = None
+            if self._bao_client is not None:
+                org_cfg = await get_org_config(
+                    org_id, redis=None, bao_client=self._bao_client
+                )
+            else:
+                # Lazy temporary client — mirrors _process_blobs pattern.
+                # Fail-open: any error falls through to quotas fallback.
+                try:
+                    from core.config import BootstrapSettings
+                    from core.openbao import OpenBaoClient
+
+                    bootstrap = BootstrapSettings()
+                    async with OpenBaoClient(
+                        bootstrap.OPENBAO_ADDR,
+                        bootstrap.OPENBAO_ROLE_ID,
+                        bootstrap.OPENBAO_SECRET_ID,
+                        timeout=10.0,
+                    ) as _tmp_bao:
+                        org_cfg = await get_org_config(
+                            org_id, redis=None, bao_client=_tmp_bao
+                        )
+                except Exception:
+                    logger.warning(
+                        "memory.org_pii_config_fetch_failed",
+                        extra={"org_id": str(org_id)},
+                        exc_info=True,
+                    )
+                    org_cfg = None
+
+            if org_cfg is not None and org_cfg.pii_mode is not None:
+                pii: dict[str, Any] = {"mode": org_cfg.pii_mode}
+                if org_cfg.pii_sensitivity is not None:
+                    pii["sensitivity"] = org_cfg.pii_sensitivity
+                if org_cfg.pii_enabled_types is not None:
+                    pii["enabled_types"] = org_cfg.pii_enabled_types
+                if org_cfg.pii_min_confidence is not None:
+                    pii["min_confidence"] = org_cfg.pii_min_confidence
+                return pii
+        except Exception:
+            logger.warning(
+                "memory.org_pii_config_fetch_failed",
+                extra={"org_id": str(org_id)},
+                exc_info=True,
+            )
+
+        # ── Fallback: legacy quotas->'pii' ────────────────────────────────
         return await self._org_repo.get_pii_config(org_id)
 
     # ── ARQ Task Enqueue ─────────────────────────────────────────────────────
@@ -712,7 +765,9 @@ class MemoryService:
                 timeout=10.0,
             ) as _tmp_bao:
                 org_cfg = await get_org_config(
-                    org_id, redis=None, bao_client=_tmp_bao,
+                    org_id,
+                    redis=None,
+                    bao_client=_tmp_bao,
                 )
                 org_storage = org_cfg.to_blob_storage_config()
                 if org_storage:

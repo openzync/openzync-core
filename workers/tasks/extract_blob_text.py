@@ -359,19 +359,45 @@ async def extract_blob_text(
             extracted_text = await _dispatch_extraction(mime_type, data)
 
             # ── PII redaction (fail-open, never crash worker) ─────────
+            # Read-through: try OpenBao org_config first, fallback to quotas.
             if extracted_text is not None:
                 try:
-                    result = await db.execute(
-                        text(
-                            "SELECT quotas->'pii' AS pii_config "
-                            "FROM organizations WHERE id = :org_id"
-                        ),
-                        {"org_id": UUID(org_id)},
-                    )
-                    row = result.one_or_none()
-                    pii_config = row[0] if row is not None else None
-                    if not isinstance(pii_config, dict):
-                        pii_config = {}
+                    pii_config: dict = {}
+                    org_cfg = None
+                    if bao_client is not None:
+                        try:
+                            from core.org_config import get_org_config
+
+                            org_cfg = await get_org_config(
+                                UUID(org_id), redis=None, bao_client=bao_client
+                            )
+                        except Exception:
+                            logger.warning(
+                                "extract_blob_text.org_pii_config_fetch_failed",
+                                org_id=org_id,
+                                exc_info=True,
+                            )
+                    if org_cfg is not None and org_cfg.pii_mode is not None:
+                        pii_config = {"mode": org_cfg.pii_mode}
+                        if org_cfg.pii_sensitivity is not None:
+                            pii_config["sensitivity"] = org_cfg.pii_sensitivity
+                        if org_cfg.pii_enabled_types is not None:
+                            pii_config["enabled_types"] = org_cfg.pii_enabled_types
+                        if org_cfg.pii_min_confidence is not None:
+                            pii_config["min_confidence"] = org_cfg.pii_min_confidence
+                    else:
+                        # Fallback: legacy quotas->'pii'
+                        result = await db.execute(
+                            text(
+                                "SELECT quotas->'pii' AS pii_config "
+                                "FROM organizations WHERE id = :org_id"
+                            ),
+                            {"org_id": UUID(org_id)},
+                        )
+                        row = result.one_or_none()
+                        pii_config = row[0] if row is not None else None
+                        if not isinstance(pii_config, dict):
+                            pii_config = {}
 
                     if pii_config.get("mode", "mask") != "off":
                         from core.exceptions import ValidationError

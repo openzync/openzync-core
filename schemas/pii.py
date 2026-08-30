@@ -61,6 +61,7 @@ class PIIConfig(BaseModel):
             "credit_card",
             "ip_address",
             "api_key",
+            "crypto_wallet",
         ],
         description="Which PII types to scan for. "
         "Defaults to all regex-supported types.",

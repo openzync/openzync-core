@@ -22,17 +22,21 @@ logger = logging.getLogger(__name__)
 # and cannot be set through org_config when the corresponding system
 # setting is active.
 
-SYSTEM_MANAGED_SURREALDB_FIELDS: frozenset[str] = frozenset({
-    "surrealdb_url",
-    "surrealdb_user",
-    "surrealdb_pass",
-    "surrealdb_namespace",
-    "surrealdb_database",
-})
+SYSTEM_MANAGED_SURREALDB_FIELDS: frozenset[str] = frozenset(
+    {
+        "surrealdb_url",
+        "surrealdb_user",
+        "surrealdb_pass",
+        "surrealdb_namespace",
+        "surrealdb_database",
+    }
+)
 
-SYSTEM_MANAGED_FALKORDB_FIELDS: frozenset[str] = frozenset({
-    "falkordb_url",
-})
+SYSTEM_MANAGED_FALKORDB_FIELDS: frozenset[str] = frozenset(
+    {
+        "falkordb_url",
+    }
+)
 
 
 class PromptCachingOrgConfig(BaseModel):
@@ -262,7 +266,9 @@ class OrgConfigBase(BaseModel):
         description="S3 bucket for blob storage.",
     )
     max_blob_size_mb: int | None = Field(
-        default=None, ge=1, le=500,
+        default=None,
+        ge=1,
+        le=500,
         description="Max upload size per blob in MB (default 50). Overrides the system default.",
     )
 
@@ -273,6 +279,51 @@ class OrgConfigBase(BaseModel):
         "'vision' (LLM vision API), 'none' (store only, no extraction). "
         "Default 'none'.",
     )
+
+    # ── PII ──────────────────────────────────────────────────────────────────
+    pii_mode: str | None = Field(
+        default=None,
+        pattern=r"^(off|mask|block)$",
+        description="PII mode: off|mask|block. Defaults to mask when unset.",
+    )
+    pii_sensitivity: str | None = Field(
+        default=None,
+        pattern=r"^(low|medium|high)$",
+        description="low=regex only, medium=regex+NER, high=regex+NER+LLM.",
+    )
+    pii_enabled_types: list[str] | None = Field(
+        default=None,
+        description="Subset of PII types to scan; None means all defaults.",
+    )
+    pii_min_confidence: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+    )
+
+    @field_validator("pii_enabled_types", mode="before")
+    @classmethod
+    def _validate_pii_types(cls, v: list[str] | None) -> list[str] | None:
+        """Validate PII enabled types against known set."""
+        if v is None:
+            return v
+        allowed = {
+            "email",
+            "phone",
+            "ssn",
+            "credit_card",
+            "ip_address",
+            "api_key",
+            "crypto_wallet",
+            "name",
+            "address",
+            "organization",
+            "date",
+        }
+        invalid = [t for t in v if t not in allowed]
+        if invalid:
+            raise ValueError(f"Invalid PII types: {invalid}. Allowed: {sorted(allowed)}")
+        return v
 
     # ── Helpers for downstream callers ───────────────────────────────────────
 
@@ -412,6 +463,7 @@ class UpdateOrgConfigRequest(BaseModel):
                 "Migrate to `falkordb` (410)."
             )
         return v
+
     context_cache_ttl: int | None = Field(default=None, ge=1)
     audit_log_response_body: bool | None = None
     reranker_backend: str | None = None
@@ -427,6 +479,49 @@ class UpdateOrgConfigRequest(BaseModel):
     s3_bucket_name: str | None = None
     max_blob_size_mb: int | None = Field(default=None, ge=1, le=500)
     image_extraction: str | None = None
+    pii_mode: str | None = Field(
+        default=None,
+        pattern=r"^(off|mask|block)$",
+        description="PII mode: off|mask|block. Defaults to mask when unset.",
+    )
+    pii_sensitivity: str | None = Field(
+        default=None,
+        pattern=r"^(low|medium|high)$",
+        description="low=regex only, medium=regex+NER, high=regex+NER+LLM.",
+    )
+    pii_enabled_types: list[str] | None = Field(
+        default=None,
+        description="Subset of PII types to scan; None means all defaults.",
+    )
+    pii_min_confidence: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+    )
+
+    @field_validator("pii_enabled_types", mode="before")
+    @classmethod
+    def _validate_pii_types_update(cls, v: list[str] | None) -> list[str] | None:
+        """Validate PII enabled types against known set (update request)."""
+        if v is None:
+            return v
+        allowed = {
+            "email",
+            "phone",
+            "ssn",
+            "credit_card",
+            "ip_address",
+            "api_key",
+            "crypto_wallet",
+            "name",
+            "address",
+            "organization",
+            "date",
+        }
+        invalid = [t for t in v if t not in allowed]
+        if invalid:
+            raise ValueError(f"Invalid PII types: {invalid}. Allowed: {sorted(allowed)}")
+        return v
 
 
 class OrgConfigResponse(BaseModel):

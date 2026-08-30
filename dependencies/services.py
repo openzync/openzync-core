@@ -315,7 +315,9 @@ async def get_memory_service(
     """Dependency that yields an initialised MemoryService.
 
     Wires up all repositories and Redis with the request-scoped DB session.
-    The Redis client is read from ``request.app.state.redis``.
+    The Redis client is read from ``request.app.state.redis``. The OpenBao
+    client (if available) is passed through so PII config can be read from
+    org_config with a fallback to quotas.
     """
     redis_client = getattr(request.app.state, "redis", None)
     if redis_client is None:
@@ -323,6 +325,7 @@ async def get_memory_service(
             "Redis client not found on app.state. "
             "Ensure init_redis() was called during the application lifespan."
         )
+    bao_client = getattr(request.app.state, "openbao_client", None)
     return MemoryService(
         db=db,
         redis_client=redis_client,
@@ -333,6 +336,7 @@ async def get_memory_service(
         org_repo=OrganizationRepository(db),
         webhook_service=webhook,
         blob_repo=EpisodeBlobRepository(db),
+        bao_client=bao_client,
     )
 
 
@@ -365,7 +369,8 @@ async def get_graph_service(
             try:
                 settings = get_settings()
                 surreal = await pool.get_or_create(
-                    org_id, org_config,
+                    org_id,
+                    org_config,
                     system_url=settings.SURREALDB_URL,
                 )
             except Exception as exc:
@@ -428,7 +433,10 @@ async def get_graph_service(
 
     try:
         graph_backend = dispatcher.resolve_and_create(
-            org_config, db, surreal=surreal, falkordb_client=falkordb_client,
+            org_config,
+            db,
+            surreal=surreal,
+            falkordb_client=falkordb_client,
         )
     except GraphBackendUnavailableError:
         raise
@@ -538,7 +546,8 @@ async def get_graph_backend_for_project(
                 from core.config import get_settings
 
                 surreal = await pool.get_or_create(
-                    org_id, org_config,
+                    org_id,
+                    org_config,
                     system_url=get_settings().SURREALDB_URL,
                 )
             except Exception as exc:
@@ -597,7 +606,10 @@ async def get_graph_backend_for_project(
 
     try:
         graph_backend = dispatcher.resolve_and_create(
-            org_config, db, surreal=surreal, falkordb_client=falkordb_client,
+            org_config,
+            db,
+            surreal=surreal,
+            falkordb_client=falkordb_client,
         )
     except GraphBackendUnavailableError:
         raise
