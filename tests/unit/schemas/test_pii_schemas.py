@@ -52,9 +52,9 @@ class TestPIIConfigSchema:
         """PIIConfig with no arguments uses all defaults."""
         config = PIIConfig()
 
-        assert config.mode is PIIMode.OFF
+        assert config.mode is PIIMode.MASK
         assert config.min_confidence == 0.7
-        assert config.sensitivity == "medium"
+        assert config.sensitivity == "low"
         assert config.enabled_types == [
             "email",
             "phone",

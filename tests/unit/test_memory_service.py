@@ -87,6 +87,7 @@ class TestMemoryService:
         with (
             patch.object(service, "_enqueue_arq_tasks"),
             patch.object(service, "_invalidate_context_cache"),
+            # {} now defaults to mask — no PII so still accepted
             patch.object(service, "_get_org_pii_config", return_value={}),
         ):
             result = await service.ingest(
@@ -114,7 +115,8 @@ class TestMemoryService:
         with (
             patch.object(service, "_enqueue_arq_tasks"),
             patch.object(service, "_invalidate_context_cache"),
-            patch.object(service, "_get_org_pii_config", return_value={}),
+            # explicit off — preserves off-specific coverage; {} now defaults to mask
+            patch.object(service, "_get_org_pii_config", return_value={"mode": "off"}),
         ):
             result = await service.ingest(
                 org_id=self.ORG_ID,

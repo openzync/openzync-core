@@ -373,7 +373,7 @@ async def extract_blob_text(
                     if not isinstance(pii_config, dict):
                         pii_config = {}
 
-                    if pii_config.get("mode", "off") != "off":
+                    if pii_config.get("mode", "mask") != "off":
                         from core.exceptions import ValidationError
                         from services.pii_service import PIIService
 

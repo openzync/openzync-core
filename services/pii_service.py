@@ -465,10 +465,10 @@ class PIIService:
     ) -> None:
         config = config or {}
 
-        self._mode: str = config.get("mode", "off")
+        self._mode: str = config.get("mode", "mask")
         enabled_types: list[str] | None = config.get("enabled_types")
         min_confidence: float = config.get("min_confidence", 0.7)
-        sensitivity: str = config.get("sensitivity", "medium")
+        sensitivity: str = config.get("sensitivity", "low")
 
         # Sensitivity → use_ner mapping
         use_ner = sensitivity in ("medium", "high")

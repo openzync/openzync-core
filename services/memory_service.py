@@ -297,9 +297,9 @@ class MemoryService:
         # ── Step 7: PII detection & redaction ─────────────────────────────
         pii_config_raw = await self._get_org_pii_config(org_id)
         pii_mode = (
-            pii_config_raw.get("mode", "off")
+            pii_config_raw.get("mode", "mask")
             if isinstance(pii_config_raw, dict)
-            else "off"
+            else "mask"
         )
 
         if pii_mode != "off":

@@ -52,7 +52,7 @@ class PIIConfig(BaseModel):
             ``medium`` (regex + NER), ``high`` (regex + NER + LLM fallback).
     """
 
-    mode: PIIMode = PIIMode.OFF
+    mode: PIIMode = PIIMode.MASK
     enabled_types: list[str] = Field(
         default_factory=lambda: [
             "email",
@@ -73,7 +73,7 @@ class PIIConfig(BaseModel):
         "Detections below this threshold are discarded.",
     )
     sensitivity: str = Field(
-        default="medium",
+        default="low",
         pattern=r"^(low|medium|high)$",
         description="Sensitivity level: "
         "low=regex only, medium=regex+NER, high=regex+NER+LLM.",

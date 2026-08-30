@@ -334,24 +334,28 @@ class TestPIIService:
         assert not blocked
 
     def test_process_message_empty_config_defaults_to_off(self) -> None:
-        """Empty config defaults to mode='off'."""
+        """Empty config defaults to mode='mask'."""
         service = PIIService({})
-        assert service.mode == "off"
+        assert service.mode == "mask"
         result, detections, blocked = asyncio.run(
             service.process_message("test@example.com")
         )
-        assert result == "test@example.com"
-        assert detections == []
+        assert "[REDACTED:EMAIL]" in result
+        assert "test@example.com" not in result
+        assert len(detections) >= 1
+        assert not blocked
 
     def test_process_message_handles_none_config(self) -> None:
-        """None config defaults to mode='off'."""
+        """None config defaults to mode='mask'."""
         service = PIIService(None)
-        assert service.mode == "off"
+        assert service.mode == "mask"
         result, detections, blocked = asyncio.run(
             service.process_message("test@example.com")
         )
-        assert result == "test@example.com"
-        assert detections == []
+        assert "[REDACTED:EMAIL]" in result
+        assert "test@example.com" not in result
+        assert len(detections) >= 1
+        assert not blocked
 
     def test_constructor_with_custom_types(self) -> None:
         """Custom enabled_types and sensitivity are accepted."""
