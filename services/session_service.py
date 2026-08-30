@@ -41,6 +41,7 @@ class SessionService:
     ) -> None:
         self._repo = repo
         self._webhook_service = webhook_service
+        self._db = repo._db  # for blob loading in get_messages
 
     # ── Create ──────────────────────────────────────────────────────────────
 

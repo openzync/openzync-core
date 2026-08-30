@@ -15,7 +15,7 @@
 #   make docker-down      # Stop infrastructure containers
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: dev openbao-dev install lint test test-all test-coverage test-coverage-ci test-coverage-report test-coverage-html migrate migrate-new docker-up docker-down docs-install docs-build docs-watch docs-clean docs-apidoc clean
+.PHONY: dev install lint test test-all test-coverage test-coverage-ci test-coverage-report test-coverage-html migrate migrate-new docker-up docker-down docs-install docs-build docs-watch docs-clean docs-apidoc clean
 
 # ── Variables ─────────────────────────────────────────────────────────────────
 
@@ -27,13 +27,9 @@ PIP ?= pip3
 
 # Brings up persistent dev OpenBao (auto-bootstraps + syncs .env), then
 # starts the API server with the bootstrap credentials loaded.
-dev: openbao-dev
+dev:
+	@bash scripts/dev_openbao_up.sh
 	@set -a && source .env && set +a && uvicorn services.api.asgi:app --reload --port $(PORT)
-
-# Dev OpenBao — persistent (raft + static seal), idempotent bootstrap,
-# writes fresh AppRole credentials into .env. Safe to re-run.
-openbao-dev:
-	@bash scripts/dev_openbao.sh
 
 # ── Installation ──────────────────────────────────────────────────────────────
 

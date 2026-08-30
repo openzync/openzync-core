@@ -146,6 +146,18 @@ ensure_openbao() {
     ensure_volume "$OPENBAO_DATA_VOL"
     ensure_volume "$OPENBAO_INIT_VOL"
     if ! container_exists "$OPENBAO_CONTAINER"; then
+        # Fail fast if another process/container holds :8200 (e.g. the compose
+        # stack's openzync-openbao) — docker's "port is already allocated"
+        # error is cryptic and leaves a stuck Created container behind.
+        if ss -tlnp 2>/dev/null | grep -q ':8200' \
+            && ! docker ps --format '{{.Names}}' | grep -qx "$OPENBAO_CONTAINER"; then
+            cat >&2 <<'EOF'
+[dev_openbao] FATAL: port 127.0.0.1:8200 is already in use.
+Likely cause: the compose stack's openzync-openbao container is holding it.
+Fix: docker stop openzync-openbao
+EOF
+            exit 1
+        fi
         log "Creating OpenBao container ${OPENBAO_CONTAINER} ..."
         # Image drops to openbao (UID 100) via su-exec; chown the volume first
         # (same convention as infra/docker-compose.backend.yml openbao service).
