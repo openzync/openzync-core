@@ -15,13 +15,14 @@
 #   make docker-down      # Stop infrastructure containers
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: dev install lint test test-all test-coverage test-coverage-ci test-coverage-report test-coverage-html migrate migrate-new docker-up docker-down docs-install docs-build docs-watch docs-clean docs-apidoc clean
+.PHONY: dev install lint test test-all test-coverage test-coverage-ci test-coverage-report test-coverage-html migrate migrate-new docker-up docker-down docs-install docs-build docs-watch docs-clean docs-apidoc changelog-check changelog-build clean
 
 # ── Variables ─────────────────────────────────────────────────────────────────
 
 PORT ?= 8000
 PYTHON ?= python3
 PIP ?= pip3
+VERSION ?= 0.0.0
 
 # ── Development server ────────────────────────────────────────────────────────
 
@@ -145,6 +146,20 @@ docs-apidoc:
 	  core/ routers/ models/ schemas/ services/ repositories/ \
 	  middleware/ dependencies/ workers/ utils/ packages/ \
 	  --force --module-first
+
+# ── Changelog (towncrier) ─────────────────────────────────────────────────────
+
+changelog-check:
+	@base=$$(git remote show origin 2>/dev/null | sed -n 's/.*HEAD branch: //p'); \
+	if [ -z "$$base" ]; then base=main; fi; \
+	if git rev-parse --verify origin/$$base >/dev/null 2>&1; then ref=origin/$$base; \
+	elif git rev-parse --verify origin/main >/dev/null 2>&1; then ref=origin/main; \
+	else ref=origin/master; fi; \
+	echo "Checking fragments against $$ref..."; \
+	towncrier check --compare-with $$ref --config pyproject.toml
+
+changelog-build:
+	towncrier build --version "$(VERSION)" --yes --config pyproject.toml
 
 # ── Housekeeping ──────────────────────────────────────────────────────────────
 

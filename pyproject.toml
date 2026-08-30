@@ -75,6 +75,7 @@ dev = [
     "mypy>=1.10.0",
     "pre-commit>=3.7.0",
     "openai>=1.30.0",
+    "towncrier>=24",
 ]
 llm = [
     "openai>=1.30.0",
@@ -99,7 +100,7 @@ all = [
 
 [tool.hatch.version]
 source = "vcs"
-fallback-version = "0.0.0"
+fallback-version = "1.0.0rc1"  # latest tag v1.0.0rc1 without leading v; used when building outside git repo
 raw-options = { search_parent_directories = true, local_scheme = "no-local-version" }
 
 [tool.hatch.build.targets.sdist]
@@ -217,6 +218,55 @@ exclude_lines = [
 fail_under = 74
 show_missing = true
 skip_covered = false
+
+[tool.towncrier]
+directory = "changelog.d"
+filename = "CHANGELOG.md"
+template = "changelog.d/template.j2"
+start_string = "<!-- towncrier release notes start -->\n"
+title_format = "## [{version}] - {project_date}"
+underlines = ["", "", ""]
+orphan_prefix = "trivial"
+
+[[tool.towncrier.type]]
+directory = "breaking"
+name = "Breaking Changes"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "feature"
+name = "Added"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "bugfix"
+name = "Fixed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "change"
+name = "Changed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "removal"
+name = "Removed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "doc"
+name = "Docs"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "internal"
+name = "Internal"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "misc"
+name = "Misc"
+showcontent = false
 
 [tool.coverage.html]
 directory = "htmlcov"

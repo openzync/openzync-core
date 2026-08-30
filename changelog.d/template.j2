@@ -1,0 +1,20 @@
+{% for section, _ in sections.items() %}
+{% if section %}
+
+{{ section }}
+{% endif %}
+{% for category, val in definitions.items() if category in sections[section] %}
+### {{ definitions[category]['name'] }}
+
+{% for text, values in sections[section][category].items() %}
+{% set issues = values | join(", ") %}
+{% if text and issues %}
+- {{ text }} ({{ issues }})
+{% elif text %}
+- {{ text }}
+{% elif issues %}
+- {{ issues }}
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% endfor %}
