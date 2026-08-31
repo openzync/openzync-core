@@ -957,3 +957,133 @@ class TestUserServiceSuperadminSurface:
             )
 
         mock_invalidate.assert_awaited_once_with(ANY, self.USER_ID)
+
+
+@pytest.mark.unit
+class TestUserServiceSuperadminImmortalGuard:
+    """Superadmin immortal guard — Option A tenant-API blocks.
+
+    Guards (observed contract in ``services/user_service.py``):
+
+    - ``delete_user``: self-delete (422) → superadmin (422) → last-admin (422)
+    - ``update_user``: self-role (422) → superadmin demote (422) → last-admin demote (422)
+    """
+
+    ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+    SUPERADMIN_ID = UUID("00000000-0000-0000-0000-000000000020")
+    ADMIN_ID = UUID("00000000-0000-0000-0000-000000000010")
+    OTHER_ADMIN_ID = UUID("00000000-0000-0000-0000-000000000011")
+    MEMBER_ID = UUID("00000000-0000-0000-0000-000000000012")
+
+    def _make_service(
+        self, with_redis: bool = False,
+    ) -> tuple[UserService, AsyncMock, AsyncMock | None]:
+        """Build ``UserService`` with mocked repo and optional Redis."""
+        mock_repo = AsyncMock()
+        mock_redis = AsyncMock() if with_redis else None
+        service = UserService(repo=mock_repo, redis=mock_redis)
+        return service, mock_repo, mock_redis
+
+    def _make_user(
+        self, role: str = "member", user_id: UUID | None = None,
+    ) -> MagicMock:
+        """Build a User ORM mock with the fields ``_user_to_dict`` reads."""
+        user = MagicMock()
+        user.id = user_id or self.SUPERADMIN_ID
+        user.organization_id = self.ORG_ID
+        user.external_id = "user_x"
+        user.name = "A User"
+        user.email = "a@example.com"
+        user.metadata_ = {}
+        user.role = role
+        user.permissions = []
+        user.is_active = True
+        user.is_deleted = False
+        user.created_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        user.updated_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        return user
+
+    @pytest.mark.asyncio
+    async def test_delete_superadmin_blocked_returns_validation_error(self) -> None:
+        """Deleting a superadmin via the tenant API → ValidationError."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.get_by_uuid.return_value = self._make_user(
+            role="superadmin", user_id=self.SUPERADMIN_ID,
+        )
+
+        with pytest.raises(ValidationError) as exc:
+            await service.delete_user(
+                organization_id=self.ORG_ID,
+                user_id=self.SUPERADMIN_ID,
+                actor_user_id=self.ADMIN_ID,
+            )
+
+        assert "Superadmin accounts cannot be deleted" in str(exc.value)
+        mock_repo.soft_delete.assert_not_awaited()
+        mock_repo.count_active_admins.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_superadmin_demote_blocked(self) -> None:
+        """Demoting a superadmin (superadmin → member) via tenant API → ValidationError."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.get_by_uuid.return_value = self._make_user(
+            role="superadmin", user_id=self.SUPERADMIN_ID,
+        )
+
+        with pytest.raises(ValidationError) as exc:
+            await service.update_user(
+                organization_id=self.ORG_ID,
+                user_id=self.SUPERADMIN_ID,
+                update_fields={"role": "member"},
+                actor_user_id=self.ADMIN_ID,
+            )
+
+        assert "Superadmin role cannot be changed" in str(exc.value)
+        mock_repo.update.assert_not_awaited()
+        mock_repo.count_active_admins.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_update_superadmin_same_role_allowed(self) -> None:
+        """Patching a superadmin with the same role (superadmin → superadmin) is not blocked."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.get_by_uuid.return_value = self._make_user(
+            role="superadmin", user_id=self.SUPERADMIN_ID,
+        )
+        mock_repo.update.return_value = self._make_user(
+            role="superadmin", user_id=self.SUPERADMIN_ID,
+        )
+
+        result = await service.update_user(
+            organization_id=self.ORG_ID,
+            user_id=self.SUPERADMIN_ID,
+            update_fields={"role": "superadmin"},
+            actor_user_id=self.ADMIN_ID,
+        )
+
+        assert isinstance(result, UserResponse)
+        assert result.role == "superadmin"
+        mock_repo.update.assert_awaited_once_with(
+            organization_id=self.ORG_ID,
+            user_id=self.SUPERADMIN_ID,
+            update_fields={"role": "superadmin"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_delete_admin_still_blocks_last_admin(self) -> None:
+        """Regression: deleting the last admin is still blocked (last-admin guard intact)."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.get_by_uuid.return_value = self._make_user(
+            role="admin", user_id=self.ADMIN_ID,
+        )
+        mock_repo.count_active_admins.return_value = 1
+
+        with pytest.raises(ValidationError) as exc:
+            await service.delete_user(
+                organization_id=self.ORG_ID,
+                user_id=self.ADMIN_ID,
+                actor_user_id=self.OTHER_ADMIN_ID,
+            )
+
+        assert "last admin" in str(exc.value).lower()
+        mock_repo.soft_delete.assert_not_awaited()
+        mock_repo.count_active_admins.assert_awaited_once_with(self.ORG_ID)

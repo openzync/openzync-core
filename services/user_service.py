@@ -319,6 +319,7 @@ class UserService:
 
         When ``role`` is being changed:
         - You cannot change your own role.
+        - A superadmin's role cannot be changed via this endpoint (422).
         - A demotion (admin -> member) is rejected if the target is the
           organization's last active admin.
         - The target's cached role is invalidated after the change so the
@@ -341,8 +342,8 @@ class UserService:
             The updated :class:`UserResponse`.
 
         Raises:
-            ValidationError: If the actor changes their own role or demotes
-                the last admin.
+            ValidationError: If the actor changes their own role, demotes
+                the last admin, or attempts to change a superadmin's role.
             NotFoundError: No user with this UUID in this organization.
         """
         if "role" in update_fields:
@@ -354,6 +355,10 @@ class UserService:
             new_role = update_fields["role"]
             if user_id == actor_user_id:
                 raise ValidationError("You cannot change your own role.")
+            if target.role == "superadmin" and new_role != "superadmin":
+                raise ValidationError(
+                    "Superadmin role cannot be changed via this endpoint."
+                )
             if target.role == "admin" and new_role != "admin":
                 admin_count = await self._repo.count_active_admins(
                     organization_id
@@ -439,9 +444,10 @@ class UserService:
         GET/list queries). Enqueues a GDPR purge worker task that will
         hard-delete after the configured delay (default 30 days).
 
-        Guards: you cannot delete your own account, and the last active
-        admin of an organization cannot be deleted.  The deleted user's
-        cached role is invalidated.
+        Guards (in order): you cannot delete your own account (422),
+        superadmin accounts cannot be deleted via this endpoint (422), and
+        the last active admin of an organization cannot be deleted (422).
+        The deleted user's cached role is invalidated.
 
         Args:
             organization_id: Tenant scope (must match the user's org).
@@ -449,8 +455,8 @@ class UserService:
             actor_user_id: The authenticated user performing the deletion.
 
         Raises:
-            ValidationError: If the actor deletes their own account or the
-                last admin.
+            ValidationError: If the actor deletes their own account, the
+                target is a superadmin, or the target is the last admin.
             NotFoundError: No user with this UUID in this organization.
 
         .. todo::
@@ -464,6 +470,11 @@ class UserService:
         if user is None:
             raise NotFoundError(
                 f"User {user_id} not found in organization {organization_id}"
+            )
+        if user.role == "superadmin":
+            raise ValidationError(
+                "Superadmin accounts cannot be deleted via this endpoint. "
+                "Use the superadmin console."
             )
         if user.role == "admin":
             admin_count = await self._repo.count_active_admins(organization_id)
