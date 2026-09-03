@@ -9,7 +9,7 @@
 global:
   environment: production
   logLevel: INFO
-  imageRegistry: ghcr.io/rohnsha0
+  imageRegistry: ghcr.io/openzync # GHCR images are public — no pull auth needed since 2026-08-31
 
 # ── API service ───────────────────────────────────────────────────────────────
 api:

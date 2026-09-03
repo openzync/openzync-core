@@ -148,6 +148,13 @@ curl -X POST http://localhost:8000/v1/projects/{project_id}/memory \
   -d '{"session_id":"default","messages":[{"role":"user","content":"Hello world"}]}'
 ```
 
+> **GHCR — public since 2026-08-31:** `ghcr.io/openzync/openzync-core/api:latest` and `ghcr.io/openzync/openzync-core/worker:latest` are **public** — no `docker login` required.
+> ```bash
+> docker pull ghcr.io/openzync/openzync-core/api:latest
+> docker compose --env-file .env -f infra/docker-compose.backend.yml pull api worker  # unauthenticated
+> ```
+> `ghcr.io/openzync/openzync-blog-engine` stays **private**.
+
 **That's it.** No `make migrate`, no manual secret copy-paste, no `.env` full of OZ_* keys. The database password is auto-generated and stored in OpenBao. The api and worker fetch their config from OpenBao at startup.
 
 See [the deployment documentation](./infra) for production setup (Docker Compose and Helm charts).

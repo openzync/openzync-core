@@ -345,6 +345,7 @@ services:
     build:
       context: ..
       dockerfile: services/api/Dockerfile
+    # public on ghcr.io — docker pull needs no auth since 2026-08-31
     image: ghcr.io/openzync/openzync-core/api:latest
     container_name: openzync-api
     environment:
@@ -411,6 +412,7 @@ services:
     build:
       context: ..
       dockerfile: services/worker/Dockerfile
+    # public on ghcr.io — docker pull needs no auth since 2026-08-31
     image: ghcr.io/openzync/openzync-core/worker:latest
     container_name: openzync-worker
     environment:

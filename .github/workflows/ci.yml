@@ -164,7 +164,7 @@ jobs:
 
 
   # ═════════════════════════════════════════════════════════════════════════════
-  # DEPLOY  (VPS — tags only)
+  # DEPLOY  (VPS — tags only) — images are public on ghcr.io since 2026-08-31, no registry login needed
   # ═════════════════════════════════════════════════════════════════════════════
   deploy:
     if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
@@ -210,7 +210,6 @@ jobs:
       - name: Extract and run deployment
         uses: appleboy/ssh-action@v1.0.3
         env:
-          GHCR_PAT: ${{ secrets.GHCR_PAT }}
           OZ_DATABASE_URL: ${{ secrets.OZ_DATABASE_URL }}
           OZ_SECRET_KEY: ${{ secrets.OZ_SECRET_KEY }}
           VPS_HOST: ${{ secrets.VPS_HOST }}
@@ -227,11 +226,10 @@ jobs:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          envs: GHCR_PAT,OZ_DATABASE_URL,OZ_SECRET_KEY,VPS_HOST,BAO_STATIC_SEAL_KEY,OZ_WEBHOOK_SIGNING_SECRET,OZ_SMTP_HOST,OZ_SMTP_PORT,OZ_SMTP_USERNAME,OZ_SMTP_PASSWORD,OZ_SMTP_FROM_ADDR,OZ_SMTP_USE_TLS,OZ_SMTP_START_TLS
+          envs: OZ_DATABASE_URL,OZ_SECRET_KEY,VPS_HOST,BAO_STATIC_SEAL_KEY,OZ_WEBHOOK_SIGNING_SECRET,OZ_SMTP_HOST,OZ_SMTP_PORT,OZ_SMTP_USERNAME,OZ_SMTP_PASSWORD,OZ_SMTP_FROM_ADDR,OZ_SMTP_USE_TLS,OZ_SMTP_START_TLS
           script: |
             set -e
-            # Log in to ghcr.io so Docker can pull our private images
-            echo "$GHCR_PAT" | docker login ghcr.io -u rohnsha0 --password-stdin
+            # Images are public on ghcr.io since 2026-08-31 — no docker login needed
             cd /home/deploy/openzync
 
             # Remove stale infra dir — may be root-owned from prior docker bind-mounts
