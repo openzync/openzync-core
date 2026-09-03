@@ -32,7 +32,7 @@ from typing import Any, NoReturn
 
 import structlog
 from aiohttp import web
-from arq.connections import ArqRedis, RedisSettings
+from arq.connections import ArqRedis, RedisSettings, create_pool
 from arq.cron import CronJob, cron
 from arq.worker import Worker as ArqWorker
 from prometheus_client import Counter, Gauge, Histogram
@@ -356,20 +356,23 @@ async def health_check(request: web.Request) -> web.Response:
 
     Used by Kubernetes liveness / readiness probes and Docker HEALTHCHECK.
 
+    The pool is read live from the worker (``app["high_worker"].pool``) —
+    never snapshotted at startup, because ARQ only assigns ``worker.pool``
+    inside ``async_run()``, which starts after the health server.  When no
+    pool exists yet, Redis is PINGed via a fresh client so the probe
+    reflects Redis reachability instead of startup ordering.
+
     Returns:
         HTTP 200 with ``{"status": "ok", "redis_connected": true}``
-        HTTP 503 if Redis is unreachable or no pool is configured.
+        HTTP 503 if Redis is unreachable.
     """
-    pool: ArqRedis | None = request.app.get("redis_pool")
+    pool: ArqRedis | None = None
+    worker = request.app.get("high_worker")
+    if worker is not None:
+        pool = worker.pool
+
     if pool is None:
-        return web.json_response(
-            {
-                "status": "unhealthy",
-                "redis_connected": False,
-                "error": "No Redis pool in application context",
-            },
-            status=503,
-        )
+        return await _ping_redis_fresh()
 
     try:
         await pool.execute_command("PING")
@@ -386,6 +389,31 @@ async def health_check(request: web.Request) -> web.Response:
             },
             status=503,
         )
+
+
+async def _ping_redis_fresh() -> web.Response:
+    """PING Redis via a fresh client when the worker pool is not ready yet.
+
+    Covers the startup window where the health server is already serving
+    but ``high_worker.async_run()`` has not assigned ``worker.pool``.
+
+    Returns:
+        HTTP 200 when Redis answers, HTTP 503 otherwise.
+    """
+    fresh: ArqRedis | None = None
+    try:
+        fresh = await create_pool(RedisSettings.from_dsn(str(settings.REDIS_URL)))
+        await fresh.execute_command("PING")
+        return web.json_response({"status": "ok", "redis_connected": True})
+    except Exception as exc:
+        logger.error("health_check.failed", error=str(exc))
+        return web.json_response(
+            {"status": "unhealthy", "redis_connected": False, "error": str(exc)},
+            status=503,
+        )
+    finally:
+        if fresh is not None:
+            await fresh.close()
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -642,8 +670,10 @@ async def main() -> NoReturn:
     logger.info("worker.signal_handlers_registered")
 
     # ── Health check web server ────────────────────────────────────────
+    # Store the worker itself, not worker.pool: ARQ assigns .pool inside
+    # async_run() (after this server starts), so health_check reads it live.
     health_app = web.Application()
-    health_app["redis_pool"] = high_worker.pool
+    health_app["high_worker"] = high_worker
     health_app.router.add_get("/ready", health_check)
     health_app.router.add_get("/health", health_check)
 

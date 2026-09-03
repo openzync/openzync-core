@@ -27,6 +27,7 @@ from typing import Any
 from uuid import UUID
 
 from prometheus_client import Counter
+from sqlalchemy import text
 
 from middleware.metrics import METRICS_REGISTRY
 from workers.tasks.base import with_retry
@@ -96,6 +97,14 @@ async def _expire_graph_edges(
         raise RuntimeError("db_session_factory missing from ARQ ctx")
 
     async with session_factory() as db:
+        # Single-org task: scope RLS to this org before any org-scoped
+        # query.  The policies call current_setting('app.org_id') without
+        # missing_ok, which raises UndefinedObjectError when the GUC is
+        # unset on the worker's session.
+        await db.execute(
+            text("SELECT set_config('app.org_id', :org_id, true)"),
+            {"org_id": str(org_id)},
+        )
         backend = await _resolve_backend(ctx, org_id, db)
         if backend is None:
             logger.info(

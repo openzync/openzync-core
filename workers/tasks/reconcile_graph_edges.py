@@ -108,6 +108,10 @@ async def reconcile_graph_edges(ctx: dict[str, Any]) -> str:
     now = datetime.now(timezone.utc)
     stale_edges: list[dict[str, Any]] = []
     async with session_factory() as db:
+        # Cross-org cron scan: bypass RLS so every org is visible.  The
+        # policies call current_setting('app.org_id') without missing_ok,
+        # which raises UndefinedObjectError when the GUC is unset.
+        await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
         result = await db.execute(
             text(STALE_EDGES_SQL),
             # Scan and enqueue share the same instant: ``now`` is also the

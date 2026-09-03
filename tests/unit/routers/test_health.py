@@ -132,3 +132,82 @@ async def test_readiness_both_degraded() -> None:
     assert body["status"] == "degraded"
     assert body["checks"]["database"] is False
     assert body["checks"]["redis"] is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 5x-boot live contract — root paths, exact payloads (verified 2026-09-03)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.asyncio
+async def test_health_exact_live_contract() -> None:
+    """GET /health returns the exact live payload incl. the shipped version.
+
+    Live: ``200 {"status":"ok","service":"openzync-api","version":"1.0.0rc1"}``.
+    ``__version__`` is patched to the observed build version so the test
+    pins the contract shape without coupling to the installed dist version.
+    """
+    import routers.health as health_module
+
+    app = _create_app()
+    transport = ASGITransport(app=app)
+    with patch.object(health_module, "__version__", "1.0.0rc1"):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/health")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "status": "ok",
+        "service": "openzync-api",
+        "version": "1.0.0rc1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_readiness_exact_live_contract() -> None:
+    """GET /ready returns the exact live payload when all deps are healthy.
+
+    Live: ``200 {"status":"ok","checks":{"database":true,"redis":true}}``.
+    """
+    app = _create_app()
+    transport = ASGITransport(app=app)
+
+    with (
+        patch("routers.health._check_db_health", return_value=True),
+        patch("routers.health._check_redis_health", return_value=True),
+    ):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/ready")
+
+    assert resp.status_code == 200
+    assert resp.json() == {
+        "status": "ok",
+        "checks": {"database": True, "redis": True},
+    }
+
+
+@pytest.mark.asyncio
+async def test_health_paths_live_at_root_not_v1() -> None:
+    """Probes live at ``/health`` and ``/ready`` — never under ``/v1``.
+
+    Helm/NGINX probes target the root paths (see ``main.py`` router
+    registration); the versioned prefix must 404.
+    """
+    app = _create_app()
+    transport = ASGITransport(app=app)
+
+    with (
+        patch("routers.health._check_db_health", return_value=True),
+        patch("routers.health._check_redis_health", return_value=True),
+    ):
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            assert (await client.get("/health")).status_code == 200
+            assert (await client.get("/ready")).status_code == 200
+            assert (await client.get("/v1/health")).status_code == 404
+            assert (await client.get("/v1/ready")).status_code == 404
+
+
+def test_health_router_has_no_prefix() -> None:
+    """The health router itself declares root paths (no ``prefix="/v1"``)."""
+    paths = sorted({getattr(route, "path", "") for route in router.routes})
+    assert paths == ["/health", "/ready"]

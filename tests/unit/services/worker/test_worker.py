@@ -461,11 +461,11 @@ class TestHealthCheck:
 
     @staticmethod
     def _make_app_with_pool(pool: object) -> "web.Application":
-        """Create an aiohttp Application with a pre-configured redis_pool.
+        """Create an aiohttp Application with a stub worker holding the pool.
 
         aiohttp 3.x emits ``NotAppKeyWarning`` for string-keyed items.
         We suppress it since the production code also uses string keys
-        (``request.app.get("redis_pool")``) and migrating to
+        (``request.app.get("high_worker")``) and migrating to
         ``web.AppKey`` would break source-test consistency.
         """
         import warnings
@@ -474,9 +474,25 @@ class TestHealthCheck:
         from aiohttp.web_exceptions import NotAppKeyWarning
 
         app = web.Application()
+        worker = MagicMock()
+        worker.pool = pool
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=NotAppKeyWarning)
-            app["redis_pool"] = pool
+            app["high_worker"] = worker
+        return app
+
+    @staticmethod
+    def _make_app_with_worker(worker: object):
+        """Create an aiohttp Application holding a pre-built worker stub."""
+        import warnings
+
+        from aiohttp import web
+        from aiohttp.web_exceptions import NotAppKeyWarning
+
+        app = web.Application()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=NotAppKeyWarning)
+            app["high_worker"] = worker
         return app
 
     @pytest.mark.asyncio
@@ -520,19 +536,162 @@ class TestHealthCheck:
         assert b"unhealthy" in (resp.body if isinstance(resp.body, bytes) else str(resp.body).encode())
 
     @pytest.mark.asyncio
-    async def test_unhealthy_when_no_redis_pool(self) -> None:
-        """Returns 503 when redis_pool is missing from app context."""
+    async def test_unhealthy_when_pool_not_ready_and_redis_down(self) -> None:
+        """Returns 503 when the pool is not ready and Redis is unreachable."""
         from aiohttp import web
 
         from services.worker.worker import health_check
+        from services.worker.worker_settings import WorkerSettings
 
         app = web.Application()
         request = MagicMock(spec=web.Request)
         request.app = app
 
-        resp = await health_check(request)
+        worker_settings = WorkerSettings(
+            DATABASE_URL="postgresql+asyncpg://localhost/test",
+            REDIS_URL="redis://localhost:6379/0",
+        )
+        with (
+            patch("services.worker.worker_settings._settings", worker_settings),
+            patch(
+                "services.worker.worker.create_pool",
+                new=AsyncMock(side_effect=OSError("connection refused")),
+            ),
+        ):
+            resp = await health_check(request)
         assert resp.status == 503
-        assert b"No Redis pool" in resp.body
+        assert b"unhealthy" in (
+            resp.body if isinstance(resp.body, bytes) else str(resp.body).encode()
+        )
+
+    @pytest.mark.asyncio
+    async def test_healthy_via_fresh_client_when_pool_not_ready(self) -> None:
+        """Returns 200 when worker.pool is None but Redis PINGs via a client."""
+        from aiohttp import web
+
+        from services.worker.worker import health_check
+        from services.worker.worker_settings import WorkerSettings
+
+        fresh = MagicMock()
+        fresh.execute_command = AsyncMock(return_value=b"PONG")
+        fresh.close = AsyncMock()
+
+        worker = MagicMock()
+        worker.pool = None
+        app = self._make_app_with_worker(worker)
+
+        request = MagicMock(spec=web.Request)
+        request.app = app
+
+        worker_settings = WorkerSettings(
+            DATABASE_URL="postgresql+asyncpg://localhost/test",
+            REDIS_URL="redis://localhost:6379/0",
+        )
+        with (
+            patch("services.worker.worker_settings._settings", worker_settings),
+            patch(
+                "services.worker.worker.create_pool",
+                new=AsyncMock(return_value=fresh),
+            ),
+        ):
+            resp = await health_check(request)
+        assert resp.status == 200
+        body = resp.body if isinstance(resp.body, bytes) else str(resp.body).encode()
+        assert b"ok" in body
+        fresh.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_reads_pool_live_from_worker(self) -> None:
+        """Pool assigned after app creation is picked up (no startup snap)."""
+        from aiohttp import web
+
+        from services.worker.worker import health_check
+
+        pool = MagicMock()
+        pool.execute_command = AsyncMock(return_value=b"PONG")
+
+        worker = MagicMock()
+        worker.pool = None
+        app = self._make_app_with_worker(worker)
+        # ARQ assigns worker.pool in async_run(), after the health server
+        # starts — mutate after app creation to prove the lookup is live.
+        worker.pool = pool
+
+        request = MagicMock(spec=web.Request)
+        request.app = app
+
+        resp = await health_check(request)
+        assert resp.status == 200
+
+    @pytest.mark.asyncio
+    async def test_missing_worker_key_falls_back_to_fresh_client(self) -> None:
+        """No ``high_worker`` key at all (pre-startup) → fresh PING → 200."""
+        from aiohttp import web
+
+        from services.worker.worker import health_check
+        from services.worker.worker_settings import WorkerSettings
+
+        fresh = MagicMock()
+        fresh.execute_command = AsyncMock(return_value=b"PONG")
+        fresh.close = AsyncMock()
+
+        app = web.Application()  # no "high_worker" — server up, workers not built
+        request = MagicMock(spec=web.Request)
+        request.app = app
+
+        worker_settings = WorkerSettings(
+            DATABASE_URL="postgresql+asyncpg://localhost/test",
+            REDIS_URL="redis://localhost:6379/0",
+        )
+        with (
+            patch("services.worker.worker_settings._settings", worker_settings),
+            patch(
+                "services.worker.worker.create_pool",
+                new=AsyncMock(return_value=fresh),
+            ) as mock_create_pool,
+        ):
+            resp = await health_check(request)
+
+        assert resp.status == 200
+        body = resp.body if isinstance(resp.body, bytes) else str(resp.body).encode()
+        assert b"ok" in body
+        mock_create_pool.assert_awaited_once()
+        fresh.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_fresh_client_closed_when_ping_fails(self) -> None:
+        """Fresh client is closed even when its PING raises (``finally``)."""
+        from aiohttp import web
+
+        from services.worker.worker import health_check
+        from services.worker.worker_settings import WorkerSettings
+
+        fresh = MagicMock()
+        fresh.execute_command = AsyncMock(side_effect=OSError("down"))
+        fresh.close = AsyncMock()
+
+        worker = MagicMock()
+        worker.pool = None
+        app = self._make_app_with_worker(worker)
+
+        request = MagicMock(spec=web.Request)
+        request.app = app
+
+        worker_settings = WorkerSettings(
+            DATABASE_URL="postgresql+asyncpg://localhost/test",
+            REDIS_URL="redis://localhost:6379/0",
+        )
+        with (
+            patch("services.worker.worker_settings._settings", worker_settings),
+            patch(
+                "services.worker.worker.create_pool",
+                new=AsyncMock(return_value=fresh),
+            ),
+        ):
+            resp = await health_check(request)
+
+        assert resp.status == 503
+        fresh.close.assert_awaited_once()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

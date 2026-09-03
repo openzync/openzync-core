@@ -71,7 +71,10 @@ class TestExpireGraphEdgesTask:
         """Backend resolved → expiry called with the exact triple, commit, summary."""
         db = _make_db()
         backend = _backend(count=2)
-        with patch("workers.backend.resolve_graph_backend", new=AsyncMock(return_value=backend)):
+        with patch(
+            "workers.backend.resolve_graph_backend",
+            new=AsyncMock(return_value=backend),
+        ):
             result = await expire_graph_edges(ctx=_ctx(db), **_TASK_ARGS)
 
         assert result == f"expired 2 edge(s) for {SRC_ENTITY}->{TGT_ENTITY} reports_to"
@@ -171,3 +174,45 @@ class TestExpireGraphEdgesTask:
         assert record.fact_id == str(FACT_ID)
         assert record.error == "backend down"
         assert record.error_type == "RuntimeError"
+
+
+class TestExpireGraphEdgesRls:
+    """Per-org RLS scoping — ``app.org_id`` is set before any org query.
+
+    Same root cause as the cron scans (``current_setting('app.org_id')``
+    without ``missing_ok`` raises ``UndefinedObjectError`` on the worker
+    session), but the fix differs by design: this is a single-org task, so
+    it scopes RLS to the task org instead of bypassing it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_org_id_set_before_backend_resolution(self) -> None:
+        """First statement scopes RLS with the exact task org UUID."""
+        db = _make_db()
+        backend = _backend(count=1)
+        with patch(
+            "workers.backend.resolve_graph_backend",
+            new=AsyncMock(return_value=backend),
+        ):
+            await expire_graph_edges(ctx=_ctx(db), **_TASK_ARGS)
+
+        calls = db.execute.await_args_list
+        assert len(calls) >= 1
+        first = calls[0]
+        assert "app.org_id" in str(first.args[0])
+        assert first.args[1] == {"org_id": str(ORG_ID)}
+        backend.expire_relationships_matching.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_single_org_task_never_bypasses_rls(self) -> None:
+        """Scoping, not bypassing — no ``app.bypass_rls`` on this path."""
+        db = _make_db()
+        backend = _backend(count=1)
+        with patch(
+            "workers.backend.resolve_graph_backend",
+            new=AsyncMock(return_value=backend),
+        ):
+            await expire_graph_edges(ctx=_ctx(db), **_TASK_ARGS)
+
+        all_sql = " ".join(str(call.args[0]) for call in db.execute.await_args_list)
+        assert "app.bypass_rls" not in all_sql

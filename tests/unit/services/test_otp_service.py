@@ -6,11 +6,13 @@ Tests use mocked Redis and EmailService — no real infrastructure required.
 from __future__ import annotations
 
 import inspect
+import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.exceptions import RateLimitError, ValidationError
+from core.exceptions import ExternalServiceError, RateLimitError, ValidationError
 from middleware.auth_throttle import AuthThrottle
 from services.otp_service import OtpService
 
@@ -253,6 +255,119 @@ class TestOtpService:
         """``invalidate`` deletes hash, attempts, and cooldown keys."""
         await otp_service.invalidate(email="test@example.com", purpose="signup")
         mock_redis.delete.assert_awaited_once()
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TestOtpDevCodeLogging — P5 dev-only OTP visibility (5x-boot follow-up)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.unit
+class TestOtpDevCodeLogging:
+    """``otp.dev_code`` is logged only when ``ENVIRONMENT == "development"``.
+
+    Local development has no SMTP, so the plaintext code is logged (with a
+    masked email) to let signup be exercised without an inbox.  Production
+    and test never log it.  Email delivery failure still raises
+    ``ExternalServiceError`` loudly — no silent fallback.
+    """
+
+    async def _send_dev_otp(
+        self,
+        otp_service: OtpService,
+        mock_redis: AsyncMock,
+        environment: str,
+    ) -> None:
+        """Drive one ``generate_and_send`` under the given environment."""
+        mock_redis.exists.side_effect = [0, 0, 0, 0]  # no cooldowns
+        mock_redis.get.return_value = None  # under the hourly send cap
+        with (
+            patch(
+                "services.otp_service.get_settings",
+                return_value=SimpleNamespace(ENVIRONMENT=environment),
+            ),
+            patch(
+                "services.email_service.render_email_template",
+                new=AsyncMock(return_value="<html>code</html>"),
+            ),
+            patch(
+                "services.email_service.render_text_template",
+                new=AsyncMock(return_value="code"),
+            ),
+        ):
+            await otp_service.generate_and_send(
+                email="Dev@Example.com",
+                purpose="signup",
+            )
+
+    async def test_development_logs_dev_code_with_masked_email(
+        self,
+        otp_service: OtpService,
+        mock_redis: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Development logs ``otp.dev_code`` with a masked (never raw) email."""
+        caplog.set_level(logging.INFO, logger="services.otp_service")
+
+        await self._send_dev_otp(otp_service, mock_redis, "development")
+
+        dev_records = [r for r in caplog.records if r.getMessage() == "otp.dev_code"]
+        assert len(dev_records) == 1
+        record = dev_records[0]
+        assert getattr(record, "email", None) == "d**v@example.com"
+        assert getattr(record, "email", None) != "dev@example.com"
+        otp_value = getattr(record, "otp", None)
+        assert isinstance(otp_value, str)
+        assert len(otp_value) == 6
+        assert otp_value.isdigit()
+
+    @pytest.mark.parametrize("environment", ["production", "test"])
+    async def test_non_development_never_logs_otp(
+        self,
+        environment: str,
+        otp_service: OtpService,
+        mock_redis: AsyncMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Production and test emit no ``otp.dev_code`` record at all."""
+        caplog.set_level(logging.INFO, logger="services.otp_service")
+
+        await self._send_dev_otp(otp_service, mock_redis, environment)
+
+        assert "otp.dev_code" not in caplog.text
+        assert all(getattr(r, "otp", None) is None for r in caplog.records)
+
+    async def test_smtp_failure_raises_loudly_no_fallback(
+        self,
+        otp_service: OtpService,
+        mock_redis: AsyncMock,
+        mock_email_service: MagicMock,
+    ) -> None:
+        """Email delivery failure raises ``ExternalServiceError`` — never swallowed."""
+        mock_redis.exists.side_effect = [0, 0, 0, 0]
+        mock_redis.get.return_value = None
+        mock_email_service.send_email = AsyncMock(
+            side_effect=ExternalServiceError("Failed to send email: boom"),
+        )
+        with (
+            patch(
+                "services.otp_service.get_settings",
+                return_value=SimpleNamespace(ENVIRONMENT="production"),
+            ),
+            patch(
+                "services.email_service.render_email_template",
+                new=AsyncMock(return_value="<html>code</html>"),
+            ),
+            patch(
+                "services.email_service.render_text_template",
+                new=AsyncMock(return_value="code"),
+            ),
+            pytest.raises(ExternalServiceError, match="Failed to send email"),
+        ):
+            await otp_service.generate_and_send(
+                email="test@example.com",
+                purpose="signup",
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

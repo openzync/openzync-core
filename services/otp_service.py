@@ -26,6 +26,7 @@ import secrets
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
+from core.config import get_settings
 from core.exceptions import RateLimitError, ValidationError
 
 if TYPE_CHECKING:
@@ -188,6 +189,16 @@ class OtpService:
         await pipe.incr(_send_count_key(email_key))
         await pipe.expire(_send_count_key(email_key), 3600)
         await pipe.execute()
+
+        # ── Dev-only OTP visibility ────────────────────────────────────
+        # Local development has no SMTP; log the code so signup can be
+        # exercised without an inbox.  Production and test never log it —
+        # the email path below still raises on delivery failure (loud).
+        if get_settings().ENVIRONMENT == "development":
+            logger.info(
+                "otp.dev_code",
+                extra={"email": _mask_email(email_key), "otp": otp},
+            )
 
         # ── Send via email service ───────────────────────────────────────
         await self._send_otp_email(email_key, purpose, otp)

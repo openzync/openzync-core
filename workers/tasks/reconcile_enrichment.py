@@ -174,12 +174,16 @@ async def _repair_missing_fact_embeddings(
     Returns:
         Number of ``embed_fact`` jobs enqueued.
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, text
 
     from models.fact import Fact
 
     rows: list[dict[str, Any]] = []
     async with session_factory() as db:
+        # Cross-org cron scan: bypass RLS so every org is visible.  The
+        # policies call current_setting('app.org_id') without missing_ok,
+        # which raises UndefinedObjectError when the GUC is unset.
+        await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
         result = await db.execute(
             select(
                 Fact.id,
@@ -326,7 +330,7 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
     )
 
     # ── Query stale episodes ─────────────────────────────────────────────
-    from sqlalchemy import select
+    from sqlalchemy import select, text
 
     from models.episode import Episode
 
@@ -335,6 +339,9 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
     stale_episodes: list[dict[str, Any]] = []
 
     async with session_factory() as db:
+        # Cross-org cron scan: bypass RLS so every org is visible (same
+        # reason as the fact-embedding pass above).
+        await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
         result = await db.execute(
             select(
                 Episode.id,

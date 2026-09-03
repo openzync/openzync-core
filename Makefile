@@ -15,7 +15,7 @@
 #   make docker-down      # Stop infrastructure containers
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: dev install lint test test-all test-coverage test-coverage-ci test-coverage-report test-coverage-html migrate migrate-new docker-up docker-down docs-install docs-build docs-watch docs-clean docs-apidoc changelog-check changelog-build clean
+.PHONY: dev install lint test test-all test-coverage test-coverage-ci test-coverage-report test-coverage-html migrate migrate-new docker-up docker-up-local docker-down docker-down-local docker-logs docker-logs-local docker-reset docker-reset-local docs-install docs-build docs-watch docs-clean docs-apidoc changelog-check changelog-build clean
 
 # ── Variables ─────────────────────────────────────────────────────────────────
 
@@ -105,10 +105,10 @@ migrate-downgrade:
 # ── Docker ────────────────────────────────────────────────────────────────────
 
 docker-up:
-	docker compose --env-file .env -f infra/docker-compose.backend.yml up -d
+	docker compose --env-file .env -f infra/docker-compose.backend.yml up -d --build
 
 docker-up-local:
-	docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db up -d
+	docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db up -d --build
 
 docker-down:
 	docker compose --env-file .env -f infra/docker-compose.backend.yml down
@@ -116,16 +116,20 @@ docker-down:
 docker-down-local:
 	docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db down
 
+# Option A (local-db) needs --profile local-db to include profiled services; use docker-logs-local for that.
 docker-logs:
 	docker compose --env-file .env -f infra/docker-compose.backend.yml logs -f
 
+docker-logs-local:
+	docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db logs -f
+
 docker-reset:
 	docker compose --env-file .env -f infra/docker-compose.backend.yml down -v
-	docker compose --env-file .env -f infra/docker-compose.backend.yml up -d
+	docker compose --env-file .env -f infra/docker-compose.backend.yml up -d --build
 
 docker-reset-local:
 	docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db down -v
-	docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db up -d
+	docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db up -d --build
 
 # ── Documentation ─────────────────────────────────────────────────────────────
 

@@ -301,3 +301,51 @@ class TestReconcileEnrichment:
         result = await reconcile_enrichment(ctx)
 
         assert "Re-enqueued" in result
+
+
+@pytest.mark.unit
+class TestReconcileEnrichmentRls:
+    """Cron RLS regression — both cross-org scans bypass RLS before querying.
+
+    The policies call ``current_setting('app.org_id')`` without
+    ``missing_ok``, which raises ``UndefinedObjectError`` when the GUC is
+    unset on the worker session (every tick failed at boot).  The fix sets
+    ``app.bypass_rls`` at the top of each scan session — fact-embedding
+    repair pass and stale-episode pass — and these tests pin that ordering.
+    """
+
+    @pytest.mark.asyncio
+    async def test_bypass_rls_precedes_both_scans(self) -> None:
+        """Each scan session opens with ``set_config('app.bypass_rls')``."""
+        session_factory = MagicMock()
+        db = AsyncMock()
+        db.__aenter__.return_value = db
+        db.__aexit__.return_value = None
+        result = MagicMock()
+        result.all.return_value = []  # empty so no org-config I/O is attempted
+        db.execute.return_value = result
+        session_factory.return_value = db
+
+        arq_redis = AsyncMock()
+        arq_redis.zcard.return_value = 0
+
+        ctx: dict = {
+            "db_session_factory": session_factory,
+            "redis": arq_redis,
+            "_queue_name": "OpenZync:development:queue:low",
+        }
+
+        from workers.tasks.reconcile_enrichment import reconcile_enrichment
+
+        summary = await reconcile_enrichment(ctx)
+
+        assert summary == "No stale episodes found"
+        stmts = [str(call.args[0]) for call in db.execute.await_args_list]
+        # Fact-embedding pass then episode pass, each opening with the bypass.
+        assert len(stmts) == 4
+        assert "app.bypass_rls" in stmts[0]
+        assert "facts" in stmts[1]
+        assert "app.bypass_rls" in stmts[2]
+        assert "episodes" in stmts[3]
+        # The bypass removes any need for the per-org GUC on these scans.
+        assert "app.org_id" not in " ".join(stmts)

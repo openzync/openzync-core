@@ -165,3 +165,50 @@ class TestReconcileGraphEdges:
 
         assert summary == "Enqueued 1 edge expiries (from 2 stale)"
         assert enqueued == ["00000000-0000-0000-0000-000000000101"]
+
+
+class TestReconcileGraphEdgesRls:
+    """Cron RLS regression — cross-org scan bypasses RLS before querying.
+
+    The policies call ``current_setting('app.org_id')`` without
+    ``missing_ok``, which raises ``UndefinedObjectError`` when the GUC is
+    unset on the worker session (every tick failed at boot).  The fix sets
+    ``app.bypass_rls`` first; these tests pin that ordering.
+    """
+
+    @pytest.mark.asyncio
+    async def test_bypass_rls_set_before_scan(self) -> None:
+        """First statement is ``set_config('app.bypass_rls')``, then the scan."""
+        db = _make_db([_edge_row()])
+        redis = AsyncMock()
+        redis.enqueue_job = AsyncMock(return_value="job-1")
+        ctx = {
+            "db_session_factory": _factory(db),
+            "redis": redis,
+            "_queue_name": QUEUE,
+        }
+
+        await reconcile_graph_edges(ctx)
+
+        calls = db.execute.await_args_list
+        assert len(calls) >= 2
+        assert "app.bypass_rls" in str(calls[0].args[0])
+        assert "graph_relationships" in str(calls[1].args[0])
+
+    @pytest.mark.asyncio
+    async def test_bypass_rls_set_even_with_no_stale_edges(self) -> None:
+        """The bypass is unconditional — set even when the scan finds nothing."""
+        db = _make_db([])
+        redis = AsyncMock()
+        ctx = {
+            "db_session_factory": _factory(db),
+            "redis": redis,
+            "_queue_name": QUEUE,
+        }
+
+        summary = await reconcile_graph_edges(ctx)
+
+        assert summary == "No stale edges found"
+        calls = db.execute.await_args_list
+        assert len(calls) >= 1
+        assert "app.bypass_rls" in str(calls[0].args[0])
