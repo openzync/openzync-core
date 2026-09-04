@@ -2,7 +2,7 @@
 # OpenBao Server Configuration — Host-Dev (Shamir seal, single node)
 # ──────────────────────────────────────────────────────────────────────────────
 # Host-reachable variant used by the standalone dev container
-# (openzync-dev-openbao) and scripts/dev_openbao_up.sh.
+# (openzync-dev-openbao) and scripts/dev_preflight.sh.
 #
 # Deliberate differences from config.hcl (compose static-seal variant):
 #   - NO `seal` block → defaults to Shamir, required by `bao operator init`

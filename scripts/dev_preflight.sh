@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────────────────
-# OpenZync — Host-Dev OpenBao + Postgres bring-up
+# OpenZync — Host-Dev preflight (postgres + redis + falkordb + mailpit + openbao)
 # ──────────────────────────────────────────────────────────────────────────────
 # The daily dev dependency script. Idempotent — safe to run every morning.
 #
 # Usage:
-#   scripts/dev_openbao_up.sh [up|down|status]   (default: up)
+#   scripts/dev_preflight.sh [up|down|status]   (default: up)
 #
-#   up      ensure postgres + openbao containers, run the full OpenBao
-#           bootstrap (scripts/init_openbao.sh — regenerates AppRole
-#           secret_ids every run), re-sync .env with fresh credentials.
-#   down    stop both containers (data volumes are preserved).
-#   status  one-line health check.
+#   up      ensure postgres + redis + falkordb + mailpit + openbao
+#           containers, run the full OpenBao bootstrap
+#           (scripts/init_openbao.sh — regenerates AppRole secret_ids every
+#           run), re-sync .env with fresh credentials.
+#   down    stop the dev containers (data volumes are preserved).
+#   status  one-line health check per dependency.
 #
 # Secrets:
 #   - Unseal keys / root token / AppRole ids live in the
 #     openzync-dev-openbao-init volume (written by init_openbao.sh).
 #   - Stable OZ_SECRET_KEY / OZ_WEBHOOK_SIGNING_SECRET / postgres password
-#     persist in scripts/.dev_openbao_secrets.env (0600). Generated on first
+#     persist in scripts/.dev_preflight_secrets.env (0600). Generated on first
 #     run; reused afterwards so JWTs and encrypted payloads survive restarts.
 #   - .env is re-synced from /bao-init after EVERY bootstrap because the
 #     init script mints fresh AppRole secret_ids each run.
@@ -26,7 +27,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENV_FILE="${REPO_ROOT}/.env"
-SECRETS_FILE="${REPO_ROOT}/scripts/.dev_openbao_secrets.env"
+SECRETS_FILE="${REPO_ROOT}/scripts/.dev_preflight_secrets.env"
 CONFIG_FILE="${REPO_ROOT}/infra/openbao/config.dev.hcl"
 POLICIES_DIR="${REPO_ROOT}/infra/openbao/policies"
 INIT_SCRIPT="${REPO_ROOT}/scripts/init_openbao.sh"
@@ -38,11 +39,18 @@ OPENBAO_DATA_VOL="openzync-dev-openbao-data"
 OPENBAO_INIT_VOL="openzync-dev-openbao-init"
 POSTGRES_CONTAINER="openzync-dev-postgres"
 POSTGRES_IMAGE="pgvector/pgvector:pg15"   # postgres 15 + pgvector (app uses vector extension)
+REDIS_CONTAINER="openzync-dev-redis"
+REDIS_IMAGE="redis:7-alpine"
+REDIS_DATA_VOL="openzync-dev-redis-data"
+FALKORDB_CONTAINER="openzync-dev-falkordb"
+FALKORDB_IMAGE="falkordb/falkordb:v4.20.1-alpine"   # pinned — :latest breaks repro
+FALKORDB_DATA_VOL="openzync-dev-falkordb-data"
 BAO_ADDR="http://127.0.0.1:8200"
 
-log() { echo "[dev_openbao] $(date -Iseconds) $*"; }
+log() { echo "[dev_preflight] $(date -Iseconds) $*"; }
 
 container_exists() { docker ps -a --format '{{.Names}}' | grep -qx "$1"; }
+container_running() { docker ps --format '{{.Names}}' | grep -qx "$1"; }
 
 ensure_volume() { docker volume inspect "$1" >/dev/null 2>&1 || docker volume create "$1" >/dev/null; }
 
@@ -52,6 +60,16 @@ wait_postgres() {
         sleep 1
     done
     log "FATAL: postgres did not become ready within 30s."
+    exit 1
+}
+
+wait_redis_port() {
+    local container="$1"
+    for _ in $(seq 1 30); do
+        docker exec "$container" redis-cli PING >/dev/null 2>&1 && return 0
+        sleep 1
+    done
+    log "FATAL: redis ${container} did not become ready within 30s."
     exit 1
 }
 
@@ -97,9 +115,17 @@ EOF
 }
 
 # ── 2. Postgres container (owned by this script so the password lives only
-#      in .dev_openbao_secrets.env, never in a hardcoded script). ─────────────
+#      in .dev_preflight_secrets.env, never in a hardcoded script). ─────────────
 ensure_postgres() {
-    if ! container_exists "$POSTGRES_CONTAINER"; then
+    if container_running "$POSTGRES_CONTAINER"; then
+        log "Postgres already running — skipping."
+        docker exec "$POSTGRES_CONTAINER" pg_isready -U postgres -h localhost >/dev/null 2>&1 \
+            || log "WARN: postgres running but pg_isready failed."
+    elif container_exists "$POSTGRES_CONTAINER"; then
+        log "Starting postgres container ${POSTGRES_CONTAINER} ..."
+        docker start "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+        wait_postgres
+    else
         if ! grep -q '^OZ_DATABASE_URL=' "$SECRETS_FILE"; then
             local pw
             pw="$(python3 -c 'import secrets;print(secrets.token_urlsafe(24))')"
@@ -118,9 +144,6 @@ ensure_postgres() {
             -c "CREATE ROLE openzync LOGIN PASSWORD '${pw}';" \
             -c "CREATE DATABASE openzync OWNER openzync;" >/dev/null
         log "Role 'openzync' + database 'openzync' created."
-    else
-        docker start "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
-        wait_postgres
     fi
     # Re-source: first run appends OZ_DATABASE_URL to the secrets file after
     # gen_secrets already sourced it.
@@ -128,9 +151,76 @@ ensure_postgres() {
     set -a; source "$SECRETS_FILE"; set +a
 }
 
-# ── 2b. Mailpit (SMTP sink + web UI; local dev only) ──────────────────────────
+# ── 3. Redis cache/queue (host :6379 — what OZ_REDIS_URL points at) ──────────
+ensure_redis() {
+    if container_running "$REDIS_CONTAINER"; then
+        log "Redis already running — skipping."
+        docker exec "$REDIS_CONTAINER" redis-cli PING >/dev/null 2>&1 \
+            || log "WARN: redis running but PING failed."
+    elif container_exists "$REDIS_CONTAINER"; then
+        log "Starting redis container ${REDIS_CONTAINER} ..."
+        docker start "$REDIS_CONTAINER" >/dev/null
+        wait_redis_port "$REDIS_CONTAINER"
+    else
+        # Fail fast if another process holds :6379 (e.g. a local redis-server
+        # or the compose stack) — same guard style as openbao :8200 below.
+        if ss -tlnp 2>/dev/null | grep -q ':6379' \
+            && ! container_running "$REDIS_CONTAINER"; then
+            cat >&2 <<'EOF'
+[dev_preflight] FATAL: port 127.0.0.1:6379 is already in use.
+Likely cause: a local redis-server or another redis container is holding it.
+Fix: sudo systemctl stop redis-server  # or: docker stop <container>
+EOF
+            exit 1
+        fi
+        ensure_volume "$REDIS_DATA_VOL"
+        log "Creating redis container ${REDIS_CONTAINER} ..."
+        docker run -d --name "$REDIS_CONTAINER" --restart unless-stopped \
+            -p 127.0.0.1:6379:6379 \
+            -v "$REDIS_DATA_VOL:/data" \
+            "$REDIS_IMAGE" >/dev/null
+        wait_redis_port "$REDIS_CONTAINER"
+    fi
+}
+
+# ── 4. FalkorDB graph backend (RESP on host :6380 → container :6379) ─────────
+ensure_falkordb() {
+    if container_running "$FALKORDB_CONTAINER"; then
+        log "FalkorDB already running — skipping."
+        docker exec "$FALKORDB_CONTAINER" redis-cli PING >/dev/null 2>&1 \
+            || log "WARN: falkordb running but PING failed."
+    elif container_exists "$FALKORDB_CONTAINER"; then
+        log "Starting FalkorDB container ${FALKORDB_CONTAINER} ..."
+        docker start "$FALKORDB_CONTAINER" >/dev/null
+        wait_redis_port "$FALKORDB_CONTAINER"
+    else
+        # Fail fast if another process holds :6380 — same guard style as :8200.
+        if ss -tlnp 2>/dev/null | grep -q ':6380' \
+            && ! container_running "$FALKORDB_CONTAINER"; then
+            cat >&2 <<'EOF'
+[dev_preflight] FATAL: port 127.0.0.1:6380 is already in use.
+Likely cause: another falkordb/redis container is holding it.
+Fix: docker stop <container>
+EOF
+            exit 1
+        fi
+        ensure_volume "$FALKORDB_DATA_VOL"
+        log "Creating FalkorDB container ${FALKORDB_CONTAINER} ..."
+        docker run -d --name "$FALKORDB_CONTAINER" --restart unless-stopped \
+            -p 127.0.0.1:6380:6379 \
+            -e REDIS_ARGS="--appendonly yes" \
+            -v "$FALKORDB_DATA_VOL:/data" \
+            "$FALKORDB_IMAGE" >/dev/null
+        wait_redis_port "$FALKORDB_CONTAINER"
+    fi
+}
+
+# ── 5. Mailpit (SMTP sink + web UI; local dev only) ──────────────────────────
 ensure_mailpit() {
-    if container_exists mailpit; then
+    if container_running mailpit; then
+        log "Mailpit already running — skipping."
+    elif container_exists mailpit; then
+        log "Starting mailpit ..."
         docker start mailpit >/dev/null 2>&1 || true
     else
         log "Creating mailpit container ..."
@@ -141,18 +231,25 @@ ensure_mailpit() {
     fi
 }
 
-# ── 3. OpenBao server container (Shamir-sealed, config.dev.hcl) ───────────────
+# ── 6. OpenBao server container (Shamir-sealed, config.dev.hcl) ───────────────
 ensure_openbao() {
     ensure_volume "$OPENBAO_DATA_VOL"
     ensure_volume "$OPENBAO_INIT_VOL"
-    if ! container_exists "$OPENBAO_CONTAINER"; then
+    if container_running "$OPENBAO_CONTAINER"; then
+        log "OpenBao already running — skipping."
+        curl -sf "${BAO_ADDR}/v1/sys/health" >/dev/null 2>&1 \
+            || log "WARN: openbao running but health check failed (may still be sealed)."
+    elif container_exists "$OPENBAO_CONTAINER"; then
+        log "Starting OpenBao container ${OPENBAO_CONTAINER} ..."
+        docker start "$OPENBAO_CONTAINER" >/dev/null 2>&1 || true
+    else
         # Fail fast if another process/container holds :8200 (e.g. the compose
         # stack's openzync-openbao) — docker's "port is already allocated"
         # error is cryptic and leaves a stuck Created container behind.
         if ss -tlnp 2>/dev/null | grep -q ':8200' \
             && ! docker ps --format '{{.Names}}' | grep -qx "$OPENBAO_CONTAINER"; then
             cat >&2 <<'EOF'
-[dev_openbao] FATAL: port 127.0.0.1:8200 is already in use.
+[dev_preflight] FATAL: port 127.0.0.1:8200 is already in use.
 Likely cause: the compose stack's openzync-openbao container is holding it.
 Fix: docker stop openzync-openbao
 EOF
@@ -169,12 +266,10 @@ EOF
             -p 127.0.0.1:8201:8201 \
             "$OPENBAO_IMAGE" -- /bin/sh -c \
             "chown -R openbao:openbao /vault/data 2>/dev/null; exec /usr/local/bin/docker-entrypoint.sh server -config=/vault/config.hcl" >/dev/null
-    else
-        docker start "$OPENBAO_CONTAINER" >/dev/null 2>&1 || true
     fi
 }
 
-# ── 4. Full bootstrap (idempotent — always re-run) ────────────────────────────
+# ── 7. Full bootstrap (idempotent — always re-run) ────────────────────────────
 bootstrap() {
     log "Running init_openbao.sh bootstrap ..."
     docker run --rm --network host --entrypoint /bin/sh \
@@ -212,7 +307,7 @@ bootstrap() {
         "$OPENBAO_INIT_IMAGE" /init_openbao.sh
 }
 
-# ── 5. Re-sync .env with fresh AppRole credentials from the init volume ───────
+# ── 8. Re-sync .env with fresh AppRole credentials from the init volume ───────
 sync_env() {
     local api_role api_secret worker_role worker_secret
     api_role="$(docker run --rm --entrypoint /bin/sh -v "$OPENBAO_INIT_VOL:/bao-init" "$OPENBAO_IMAGE" -c 'cat /bao-init/api-role_id')"
@@ -232,22 +327,25 @@ with open(path, "w") as f:
     f.write(f"OZ_OPENBAO_WORKER_SECRET_ID={worker_secret}\n")
 print(f"  Wrote 5 keys to {path}")
 PY
-    chmod 600 "$SECRETS_FILE"
+    chmod 600 "$ENV_FILE"
 }
 
 up() {
     gen_secrets
     ensure_postgres
+    ensure_redis
+    ensure_falkordb
     ensure_mailpit
     ensure_openbao
+    # Unconditional every run: secret_ids rotate on each bootstrap, so .env must re-sync.
     bootstrap
     sync_env
     log "Done. Dev deps up. API: uvicorn services.api.asgi:app --reload"
 }
 
 down() {
-    for c in "$OPENBAO_CONTAINER" "$POSTGRES_CONTAINER"; do
-        container_exists "$c" && { log "Stopping ${c} ..."; docker stop "$c" >/dev/null; }
+    for c in "$OPENBAO_CONTAINER" "$POSTGRES_CONTAINER" "$REDIS_CONTAINER" "$FALKORDB_CONTAINER" mailpit; do
+        container_exists "$c" && { log "Stopping ${c} ..."; docker stop "$c" >/dev/null || true; }
     done
 }
 
@@ -261,6 +359,16 @@ status() {
         echo "Postgres: UP"
     else
         echo "Postgres: DOWN"
+    fi
+    if container_exists "$REDIS_CONTAINER" && container_running "$REDIS_CONTAINER"; then
+        echo "Redis: UP (127.0.0.1:6379)"
+    else
+        echo "Redis: DOWN"
+    fi
+    if container_exists "$FALKORDB_CONTAINER" && container_running "$FALKORDB_CONTAINER"; then
+        echo "FalkorDB: UP (127.0.0.1:6380)"
+    else
+        echo "FalkorDB: DOWN"
     fi
     if container_exists mailpit && docker ps --format '{{.Names}}' | grep -qx mailpit; then
         echo "Mailpit: UP (SMTP 127.0.0.1:1025, UI http://127.0.0.1:8025)"

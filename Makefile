@@ -26,10 +26,11 @@ VERSION ?= 0.0.0
 
 # ── Development server ────────────────────────────────────────────────────────
 
-# Brings up persistent dev OpenBao (auto-bootstraps + syncs .env), then
-# starts the API server with the bootstrap credentials loaded.
+# Runs the dev preflight (postgres+redis+falkordb+mailpit+openbao,
+# auto-bootstraps OpenBao + syncs .env), then starts the API server
+# with the bootstrap credentials loaded.
 dev:
-	@bash scripts/dev_openbao_up.sh
+	@bash scripts/dev_preflight.sh
 	@set -a && source .env && set +a && uvicorn services.api.asgi:app --reload --port $(PORT)
 
 # ── Installation ──────────────────────────────────────────────────────────────
