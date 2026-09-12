@@ -7,6 +7,7 @@ Supported backends
 ------------------
 * :class:`OllamaBackend` — local LLMs via Ollama (no API key required)
 * :class:`OpenAIBackend` — OpenAI API (GPT-4o, GPT-4o-mini, etc.)
+* :class:`OpenAILikeBackend` — any OpenAI-compatible HTTP endpoint
 * :class:`AzureBackend` — Azure OpenAI service
 * :class:`AnthropicBackend` — Anthropic API (Claude models)
 """
@@ -690,10 +691,195 @@ class AnthropicBackend(LLMBackend):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# OpenAI-compatible (generic)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class OpenAILikeBackend(LLMBackend):
+    """LLM backend for any OpenAI-compatible HTTP endpoint.
+
+    Uses the official ``openai`` library with ``AsyncOpenAI`` pointed at a
+    custom ``base_url`` (self-hosted vLLM, Ollama OpenAI endpoint, OpenRouter,
+    LiteLLM proxy, …).  API key is optional — providers without auth use the
+    ``"not-needed"`` placeholder.
+
+    Handles 429 rate limits with exponential backoff (up to 3 retries).
+    Embeddings report their actual dimensionality.
+    """
+
+    DEFAULT_MODEL: ClassVar[str] = "gpt-4o-mini"
+    DEFAULT_EMBED_MODEL: ClassVar[str] = "text-embedding-3-small"
+    DEFAULT_EMBED_DIM: ClassVar[int] = 1536
+    MAX_RETRIES: ClassVar[int] = 3
+
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str | None = None,
+        model: str | None = None,
+    ) -> None:
+        if not base_url:
+            raise ValueError("OpenAI-like backend requires a base_url")
+
+        from openai import AsyncOpenAI
+
+        self._client = AsyncOpenAI(
+            base_url=base_url.rstrip("/"),
+            api_key=api_key or "not-needed",
+        )
+        self._chat_model: str = model or self.DEFAULT_MODEL
+        self._embed_model: str = self.DEFAULT_EMBED_MODEL
+        self._embedding_dim: int = self.DEFAULT_EMBED_DIM
+
+    # ── LLMBackend ─────────────────────────────────────────────────────────
+
+    @property
+    def model_name(self) -> str:
+        return self._chat_model
+
+    @property
+    def embedding_dim(self) -> int:
+        return self._embedding_dim
+
+    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
+        """Send a chat completion request.
+
+        Supported kwargs: ``temperature``, ``max_tokens``, ``top_p``,
+        ``frequency_penalty``, ``presence_penalty``, ``stop``, ``model``.
+        """
+        model = kwargs.pop("model", self._chat_model)
+        temperature = kwargs.pop("temperature", 0.0)
+
+        last_exception: Exception | None = None
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                start = time.monotonic()
+                response = await self._client.chat.completions.create(
+                    model=model,
+                    messages=messages,  # type: ignore[arg-type]
+                    temperature=temperature,
+                    **kwargs,
+                )
+                elapsed = time.monotonic() - start
+
+                choice = response.choices[0]
+                content = choice.message.content
+                if content is None:
+                    if (
+                        choice.message.tool_calls
+                        and choice.message.tool_calls[0].function
+                        and choice.message.tool_calls[0].function.arguments
+                    ):
+                        tool_call = choice.message.tool_calls[0]
+                        content = tool_call.function.arguments
+                        logger.info(
+                            "llm.tool_call_extracted",
+                            extra={
+                                "function": tool_call.function.name,
+                                "model": model,
+                                "tool_calls_count": len(choice.message.tool_calls),
+                                "args_length": len(tool_call.function.arguments),
+                            },
+                        )
+                    else:
+                        raise ValueError(
+                            "OpenAI-like response content is None and no tool calls present"
+                        )
+                usage_data = response.usage
+                usage = TokenUsage(
+                    prompt_tokens=usage_data.prompt_tokens if usage_data else 0,
+                    completion_tokens=usage_data.completion_tokens if usage_data else 0,
+                )
+
+                logger.info(
+                    "llm.chat_completed",
+                    extra={
+                        "provider": "openai_like",
+                        "model": model,
+                        "duration_ms": round(elapsed * 1000),
+                        "prompt_tokens": usage.prompt_tokens,
+                        "completion_tokens": usage.completion_tokens,
+                    },
+                )
+
+                return ChatResponse(content=content, model=model, usage=usage)
+
+            except Exception as exc:
+                last_exception = exc
+                # Retry on 429 (rate limit) or 5xx server errors.
+                if hasattr(exc, "status_code") and exc.status_code in (429, 500, 502, 503):
+                    wait = 2**attempt  # exponential backoff: 2, 4, 8s
+                    logger.warning(
+                        "openai_like.retrying",
+                        extra={
+                            "attempt": attempt,
+                            "status": getattr(exc, "status_code", None),
+                            "wait_seconds": wait,
+                        },
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                # Non-retryable error — raise immediately.
+                logger.error(
+                    "openai_like.chat_error",
+                    extra={"error": str(exc), "model": model},
+                )
+                raise
+
+        # All retries exhausted.
+        logger.error(
+            "openai_like.chat_retries_exhausted",
+            extra={"model": model, "last_error": str(last_exception)},
+        )
+        raise RuntimeError(f"OpenAI-like chat failed after {self.MAX_RETRIES} retries: {last_exception}") from last_exception
+
+    async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:
+        """Generate embeddings via the OpenAI-compatible embeddings API.
+
+        Supported kwargs:
+            ``model`` — override the embedding model.
+        """
+        model = kwargs.pop("model", self._embed_model)
+
+        try:
+            response = await self._client.embeddings.create(
+                model=model,
+                input=texts,
+            )
+        except Exception as exc:
+            logger.error(
+                "openai_like.embed_error",
+                extra={"error": str(exc), "model": model},
+            )
+            raise
+
+        embeddings = [item.embedding for item in response.data]
+        dim = len(embeddings[0]) if embeddings else self.DEFAULT_EMBED_DIM
+        self._embedding_dim = dim
+
+        logger.info(
+            "llm.embed_completed",
+            extra={
+                "provider": "openai_like",
+                "model": model,
+                "num_texts": len(texts),
+                "dim": dim,
+            },
+        )
+
+        return EmbeddingResponse(
+            embeddings=embeddings,
+            model=model,
+            dim=dim,
+        )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Auto-registration with the global registry
 # ═══════════════════════════════════════════════════════════════════════════════
 
 LLMBackendRegistry.register("ollama", OllamaBackend)
 LLMBackendRegistry.register("openai", OpenAIBackend)
+LLMBackendRegistry.register("openai_like", OpenAILikeBackend)
 LLMBackendRegistry.register("azure", AzureBackend)
 LLMBackendRegistry.register("anthropic", AnthropicBackend)

@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
 
-LlmBackend = Literal["ollama", "openai", "azure", "anthropic"]
+LlmBackend = Literal["ollama", "openai", "openai_like", "azure", "anthropic"]
 
 # ── System-managed field sets ──────────────────────────────────────────────
 # These fields are overridden at the system level (via OpenBao / env vars)
@@ -87,7 +87,7 @@ class OrgConfigBase(BaseModel):
     # ── LLM ────────────────────────────────────────────────────────────────
     llm_backend: LlmBackend | None = Field(
         default=None,
-        description="LLM provider (ollama, openai, azure, anthropic).",
+        description="LLM provider (ollama, openai, openai_like, azure, anthropic).",
     )
     llm_model: str | None = Field(
         default=None,
@@ -123,6 +123,11 @@ class OrgConfigBase(BaseModel):
     ollama_base_url: str | None = Field(
         default=None,
         description="Base URL for a local Ollama instance.",
+    )
+    openai_like_base_url: str | None = Field(
+        default=None,
+        description="Base URL for any OpenAI-compatible endpoint "
+        "(self-hosted vLLM, OpenRouter, LiteLLM proxy, …).",
     )
     llm_fact_invalidation_enabled: bool | None = Field(
         default=None,
@@ -339,8 +344,11 @@ class OrgConfigBase(BaseModel):
             d["llm_backend"] = self.llm_backend
         if self.openai_api_key is not None:
             d["openai_api_key"] = self.openai_api_key
+        if self.openai_like_base_url is not None:
+            d["openai_like_base_url"] = self.openai_like_base_url
         if self.llm_model is not None:
             d["openai_model"] = self.llm_model
+            d["llm_model"] = self.llm_model
             d["azure_deployment"] = self.llm_model
             d["anthropic_model"] = self.llm_model
             d["model"] = self.llm_model
@@ -422,6 +430,7 @@ class UpdateOrgConfigRequest(BaseModel):
     azure_openai_key: str | None = None
     anthropic_api_key: str | None = None
     ollama_base_url: str | None = None
+    openai_like_base_url: str | None = None
     llm_fact_invalidation_enabled: bool | None = Field(
         default=None,
         description="Enable LLM-driven fact invalidation during episode "

@@ -41,6 +41,7 @@ class LLMProvider(str, Enum):
 
     OLLAMA = "ollama"
     OPENAI = "openai"
+    OPENAI_LIKE = "openai_like"
     AZURE = "azure"
     ANTHROPIC = "anthropic"
 
@@ -579,7 +580,8 @@ async def resolve_backend(
         provider: Explicit override.  If provided, org config is skipped.
         org_config: Optional dict with per-organisation LLM settings.
             Supported keys: ``llm_backend``, ``ollama_base_url``,
-            ``openai_api_key``, ``openai_model``, ``azure_endpoint``,
+            ``openai_api_key``, ``openai_model``, ``openai_like_base_url``,
+            ``llm_model``, ``azure_endpoint``,
             ``azure_api_key``, ``azure_deployment``, ``anthropic_api_key``,
             ``anthropic_model``.
 
@@ -626,8 +628,8 @@ async def _create_backend(provider: str, config: dict | None = None) -> LLMBacke
     in *config* or the function raises :class:`LLMConfigurationError`.
 
     Args:
-        provider: One of ``"ollama"``, ``"openai"``, ``"azure"``,
-            ``"anthropic"``.
+        provider: One of ``"ollama"``, ``"openai"``, ``"openai_like"``,
+            ``"azure"``, ``"anthropic"``.
         config: Optional dict with provider-specific overrides (API keys,
             model names, endpoints).  Required fields vary by provider.
 
@@ -656,6 +658,17 @@ async def _create_backend(provider: str, config: dict | None = None) -> LLMBacke
         api_key: str = config["openai_api_key"]
         model: str | None = config.get("openai_model")
         instance = backend_cls(api_key=api_key, model=model)
+    elif provider == "openai_like":
+        if config is None or not config.get("openai_like_base_url"):
+            raise LLMConfigurationError(
+                "OpenAI-like backend requires openai_like_base_url in per-org "
+                "configuration.  Set it via PATCH /admin/org/config."
+            )
+        instance = backend_cls(
+            base_url=config["openai_like_base_url"],
+            api_key=config.get("openai_api_key"),
+            model=config.get("llm_model"),
+        )
     elif provider == "azure":
         if config is None or not config.get("azure_endpoint"):
             raise LLMConfigurationError(
