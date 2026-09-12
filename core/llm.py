@@ -43,7 +43,6 @@ class LLMProvider(str, Enum):
     OPENAI = "openai"
     AZURE = "azure"
     ANTHROPIC = "anthropic"
-    OPENROUTER = "openrouter"
 
 
 @dataclass
@@ -73,7 +72,6 @@ class PromptCachingConfig:
     Each backend interprets the fields relevant to it:
     - Anthropic: enabled, anthropic_min_tokens, anthropic_cache_ttl
     - OpenAI/Azure: enabled (automatic prefix caching needs no config)
-    - OpenRouter: enabled, session_id (for sticky routing)
     - Ollama: ignored (no caching support)
     """
 
@@ -130,7 +128,7 @@ def build_cache_config(
         org_config: Optional per-org config dict (from DB JSONB column).
             May contain a ``"prompt_caching"`` key with ``enabled``,
             ``anthropic_min_tokens``, ``anthropic_cache_ttl``.
-        session_id: Optional session ID for OpenRouter sticky routing.
+        session_id: Optional session ID for provider-side sticky routing.
 
     Returns:
         A ``PromptCachingConfig`` instance.
@@ -629,7 +627,7 @@ async def _create_backend(provider: str, config: dict | None = None) -> LLMBacke
 
     Args:
         provider: One of ``"ollama"``, ``"openai"``, ``"azure"``,
-            ``"anthropic"``, ``"openrouter"``.
+            ``"anthropic"``.
         config: Optional dict with provider-specific overrides (API keys,
             model names, endpoints).  Required fields vary by provider.
 
@@ -687,15 +685,6 @@ async def _create_backend(provider: str, config: dict | None = None) -> LLMBacke
             )
         api_key = config["anthropic_api_key"]
         model = config.get("anthropic_model")
-        instance = backend_cls(api_key=api_key, model=model)
-    elif provider == "openrouter":
-        if config is None or not config.get("api_key"):
-            raise LLMConfigurationError(
-                "OpenRouter backend requires api_key in per-org "
-                "configuration.  Set it via PATCH /admin/org/config."
-            )
-        api_key = config["api_key"]
-        model = config.get("model")
         instance = backend_cls(api_key=api_key, model=model)
     else:
         raise ValueError(f"Unknown provider: {provider}")

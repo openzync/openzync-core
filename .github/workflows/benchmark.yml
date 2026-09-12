@@ -7,7 +7,7 @@
 # This workflow runs the full LongMemEval benchmark suite against a live
 # OpenZync instance.  It is NOT part of normal CI — benchmarks require:
 #   - A running OpenZync API + PostgreSQL + Redis + worker
-#   - Real LLM API access (OpenRouter for the judge, local Ollama for extraction)
+#   - Real LLM API access (OpenAI for the judge, local Ollama for extraction)
 #   - 10-30 minutes of wall-clock time
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -52,7 +52,7 @@ env:
   OPENZYNC_BASE_URL: ${{ vars.OPENZYNC_BASE_URL || 'http://localhost:8000' }}
   BENCH_EMAIL: ${{ secrets.BENCH_EMAIL }}
   BENCH_PASSWORD: ${{ secrets.BENCH_PASSWORD }}
-  OZ_OPENROUTER_API_KEY: ${{ secrets.OZ_OPENROUTER_API_KEY }}
+  OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
 jobs:
   longmemeval:

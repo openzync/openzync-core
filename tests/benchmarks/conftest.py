@@ -16,13 +16,13 @@ from typing import TYPE_CHECKING
 import httpx
 import pytest
 
-from core.llm_backends import OpenRouterBackend
+from core.llm_backends import OpenAIBackend
 
 if TYPE_CHECKING:
     from collections.abc import Generator
 
 # ── Load local .env file (if available) ───────────────────────────────────────
-# This allows benchmark credentials (BENCH_EMAIL, OZ_OPENROUTER_API_KEY, etc.)
+# This allows benchmark credentials (BENCH_EMAIL, OPENAI_API_KEY, etc.)
 # to be set in tests/benchmarks/.env without polluting the root .env.
 try:
     from dotenv import load_dotenv
@@ -101,32 +101,30 @@ def pytest_collection_modifyitems(
 
 
 @pytest.fixture(scope="session")
-def openrouter_backend() -> Generator[OpenRouterBackend, None, None]:
-    """Create an OpenRouter LLM backend for benchmark evaluation.
+def openai_backend() -> Generator[OpenAIBackend, None, None]:
+    """Create an OpenAI LLM backend for benchmark evaluation.
 
-    Reads ``OZ_OPENROUTER_API_KEY`` from the environment.  Skips all
+    Reads ``OPENAI_API_KEY`` from the environment.  Skips all
     dependent tests if the key is not set.
 
     Yields:
-        A configured ``OpenRouterBackend`` instance pointed at the
-        non-free ``openai/gpt-oss-120b`` model for reliable throughput.
+        A configured ``OpenAIBackend`` instance using the default
+        chat model for reliable throughput.
 
     Raises:
-        pytest.skip: If ``OZ_OPENROUTER_API_KEY`` is not set.
+        pytest.skip: If ``OPENAI_API_KEY`` is not set.
     """
-    api_key = os.environ.get("OZ_OPENROUTER_API_KEY")
+    api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        logger.warning("OZ_OPENROUTER_API_KEY not set — skipping benchmark tests")
-        pytest.skip("OZ_OPENROUTER_API_KEY not set — cannot run benchmark")
+        logger.warning("OPENAI_API_KEY not set — skipping benchmark tests")
+        pytest.skip("OPENAI_API_KEY not set — cannot run benchmark")
         # The yield below is unreachable but satisfies the type checker.
         # Generator return type allows the early skip via exception.
         yield None  # type: ignore[func-returns-value]
         return
 
-    # Use the non-free model for reliable benchmark results.
-    # The :free tier may have degraded availability or rate limits
-    # that would skew benchmark measurements.
-    backend = OpenRouterBackend(api_key=api_key, model="openai/gpt-oss-120b")
+    # Use the default model for reliable benchmark results.
+    backend = OpenAIBackend(api_key=api_key)
     yield backend
 
 

@@ -18,6 +18,10 @@ from enum import StrEnum
 
 from pydantic import BaseModel, Field, field_validator
 
+from schemas.organization_config import (  # noqa: TC001 — runtime import: pydantic resolves field types
+    LlmBackend,
+)
+
 
 class OrgCreationPolicy(StrEnum):
     """Platform policy controlling how new organizations are created."""
@@ -66,7 +70,7 @@ class SystemConfigUpdate(BaseModel):
     )
 
     # ── Non-secret system-level defaults (mirror OrgConfigBase keys) ──────
-    llm_backend: str | None = None
+    llm_backend: LlmBackend | None = None
     llm_model: str | None = None
     llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     llm_max_tokens: int | None = Field(default=None, ge=1)
@@ -114,7 +118,7 @@ class SystemConfigResponse(BaseModel):
         description="Channels gated by the approvals policy.",
     )
 
-    llm_backend: str | None = None
+    llm_backend: LlmBackend | None = None
     llm_model: str | None = None
     llm_temperature: float | None = None
     llm_max_tokens: int | None = None

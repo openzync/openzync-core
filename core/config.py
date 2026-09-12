@@ -278,8 +278,7 @@ class Settings(BaseModel):
         description=(
             "Master switch for provider-side prompt caching. "
             "When True, Anthropic gets cache_control markers on system prompts, "
-            "OpenAI/Azure get automatic prefix caching, "
-            "and OpenRouter gets session_id for sticky routing."
+            "and OpenAI/Azure get automatic prefix caching."
         ),
         validation_alias="OZ_PROMPT_CACHING_ENABLED",
     )
