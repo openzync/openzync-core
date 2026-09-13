@@ -201,7 +201,7 @@ services:
   # subsequent restarts use the password stored in postgres-data.
   postgres:
     profiles: [local-db]
-    image: pgvector/pgvector:pg15
+    image: pgvector/pg15-py
     container_name: openzync-postgres
     ports: ["127.0.0.1:5432:5432"]
     environment:
@@ -228,7 +228,7 @@ services:
   # the superuser is left untouched (so subsequent restarts still work).
   postgres-init:
     profiles: [local-db]
-    image: pgvector/pgvector:pg15
+    image: pgvector/pg15-py
     container_name: openzync-postgres-init
     depends_on:
       postgres:

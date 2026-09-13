@@ -384,6 +384,26 @@ class FactInvalidationService:
                 self._name_identity_of_fact(candidate)
             ].append(candidate)
 
+        # ── 1b. Tombstone scan (ADR 005: retracted --> [*], terminal) ────
+        # Every entry may collide with a hard-retracted row (valid_to +
+        # invalid_at both set) — including identities that also have live
+        # candidates, whose 2a/2b gates still consult the tombstone
+        # bucket.  One query for the whole batch (no N+1), bucketed by
+        # NAME identity so the cross-form match applies.
+        # Superseded/expired-only rows (invalid_at NULL) never match —
+        # re-assertion after supersession still inserts.
+        tombstones_by_identity: dict[NameIdentity, list[Fact]] = defaultdict(list)
+        tombstone_keys = sorted({k for e in entries for k in e["match_keys"]}, key=repr)
+        if tombstone_keys:
+            for tombstone in await self._fact_repo.find_retracted_by_match_keys(
+                org_id=org_id,
+                project_id=project_id,
+                match_keys=tombstone_keys,
+            ):
+                tombstones_by_identity[self._name_identity_of_fact(tombstone)].append(
+                    tombstone
+                )
+
         # Identities occurring once are batch-safe (one INSERT statement);
         # repeated NAME identities need sequential handling so the second
         # occurrence supersedes the first inside the batch.
@@ -427,6 +447,22 @@ class FactInvalidationService:
             if any(c.content == entry["row"]["content"] for c in conflicts):
                 skipped_count += 1
                 continue  # identical content — idempotent skip, no truncation
+            if any(
+                self._candidate_conflicts(entry, t)
+                for t in tombstones_by_identity.get(entry["name_identity"], ())
+            ):
+                skipped_count += 1
+                logger.info(
+                    "fact_invalidation.tombstone_skip",
+                    extra={
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                        "subject": entry["row"]["subject"],
+                        "predicate": entry["row"]["predicate"],
+                        "object": entry["row"]["object"],
+                    },
+                )
+                continue  # retracted tombstone wins — no insert, no event
             for c in conflicts:
                 await self._fact_repo.set_valid_to(c.id, now)
                 closed_ids.add(c.id)
@@ -467,6 +503,22 @@ class FactInvalidationService:
             if any(c.content == entry["row"]["content"] for c in conflicts):
                 skipped_count += 1
                 continue
+            if any(
+                self._candidate_conflicts(entry, t)
+                for t in tombstones_by_identity.get(name_identity, ())
+            ):
+                skipped_count += 1
+                logger.info(
+                    "fact_invalidation.tombstone_skip",
+                    extra={
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                        "subject": entry["row"]["subject"],
+                        "predicate": entry["row"]["predicate"],
+                        "object": entry["row"]["object"],
+                    },
+                )
+                continue  # retracted tombstone wins — no insert, no event
             old_facts: list[Fact] = []
             for c in conflicts:
                 await self._fact_repo.set_valid_to(c.id, now)

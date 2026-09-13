@@ -328,6 +328,22 @@ class FactService:
             )
             return fact
 
+        from services.fact_invalidation_service import FactInvalidationService
+
+        # ADR 005: retracted --> [*] is terminal — a concurrent ingest of
+        # the same triple must not slip in between this retraction and its
+        # commit. Take the same sup:-namespaced NAME-identity lock the
+        # ingest path holds (never a UUID-keyed lock, so string-form and
+        # entity-form writers of one triple serialize on one key).
+        _name_identity = FactInvalidationService._name_identity_of_fact(fact)
+        await self._fact_repo.lock_conflict_identities(
+            [
+                FactInvalidationService._lock_key_for_identity(
+                    fact.organization_id, fact.project_id, _name_identity
+                )
+            ]
+        )
+
         await self._fact_repo.set_invalid_at(fact.id, at_time)
         # The primitive is an UPDATE, not an attribute set — reload the
         # row so the returned/serialized fact reflects invalid_at.
@@ -344,10 +360,7 @@ class FactService:
         )
 
         from services.cache_service import CacheService
-        from services.fact_invalidation_service import (
-            PURGE_ONLY_CACHE_TTL,
-            FactInvalidationService,
-        )
+        from services.fact_invalidation_service import PURGE_ONLY_CACHE_TTL
 
         invalidation = FactInvalidationService(
             db=self._db,

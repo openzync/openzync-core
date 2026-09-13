@@ -50,7 +50,7 @@ fi
 # ── 2. Build DATABASE_URL via python3 (defence-in-depth: never interpolate
 #       the password via the shell) ──────────────────────────────────────────
 log "Reading migrator credentials from ${CREDS_FILE} ..."
-DATABASE_URL=$(python3 <<'PYEOF'
+OZ_DATABASE_URL=$(python3 <<'PYEOF'
 import json
 import sys
 
@@ -79,11 +79,11 @@ print(
 )
 PYEOF
 )
-export DATABASE_URL
-export OZ_DATABASE_URL="${DATABASE_URL}"
+DATABASE_URL="${OZ_DATABASE_URL}"
+export DATABASE_URL OZ_DATABASE_URL
 
 # Sanity: print the URL with the password redacted.
-log "DATABASE_URL set: $(echo "$DATABASE_URL" | sed 's|://[^:]*:[^@]*@|://***:***@|')"
+log "DATABASE_URL set: $(echo "$OZ_DATABASE_URL" | sed 's|://[^:]*:[^@]*@|://***:***@|')"
 
 # ── 3. Exec the CMD (e.g. `alembic upgrade head`) as PID 1 ──────────────────
 # exec replaces the shell so the child process receives SIGTERM directly

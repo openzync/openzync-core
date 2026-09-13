@@ -573,6 +573,64 @@ class FactRepository:
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
 
+    async def find_retracted_by_match_keys(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        match_keys: list[tuple[UUID | str, str, UUID | str]],
+    ) -> list[Fact]:
+        """Return hard-retracted facts matching any tombstone identity.
+
+        Byte-mirror of :meth:`find_conflicting_active_for_update` with two
+        differences: the effective-at predicate is replaced by
+        ``Fact.invalid_at IS NOT NULL``, and rows are not locked
+        (tombstones only gate inserts — they are never updated here).
+        String keys compare case-insensitively; entity UUID keys exactly.
+
+        A retracted row is terminal per ADR 005
+        (``retracted --> [*]``) — a later re-assertion of the same triple
+        must skip the insert.  Rows carrying both ``valid_to`` and
+        ``invalid_at`` are tombstones and match; superseded/expired-only
+        rows (``invalid_at`` NULL) never match.
+
+        Args:
+            org_id: Tenant scope for multi-tenant isolation.
+            project_id: Project scope.
+            match_keys: One identity per incoming fact (deduplicated by
+                the caller before calling).
+
+        Returns:
+            All matching hard-retracted ``Fact`` rows, without locking.
+        """
+        from sqlalchemy import and_, func, select
+
+        if not match_keys:
+            return []
+
+        key_conditions = []
+        for subject_key, predicate, object_key in match_keys:
+            key_conditions.append(
+                and_(
+                    Fact.subject_entity_id == subject_key
+                    if isinstance(subject_key, UUID)
+                    else func.lower(Fact.subject) == subject_key.lower(),
+                    Fact.predicate == predicate,
+                    Fact.object_entity_id == object_key
+                    if isinstance(object_key, UUID)
+                    else func.lower(Fact.object) == object_key.lower(),
+                )
+            )
+
+        stmt = (
+            select(Fact)
+            .where(Fact.organization_id == org_id)
+            .where(Fact.project_id == project_id)
+            .where(Fact.invalid_at.is_not(None))
+            .where(or_(*key_conditions))
+        )
+        result = await self._db.execute(stmt)
+        return list(result.scalars().all())
+
     async def set_valid_to(self, fact_id: UUID, now: datetime) -> None:
         """Close a fact's validity range by setting ``valid_to``.
 

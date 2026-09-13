@@ -573,6 +573,7 @@ class TestEmbedQuery:
         mock_resolve.assert_awaited_once_with(
             provider="openai",
             org_config={"provider": "openai"},
+            mode="embedding",
         )
         mock_backend.embed.assert_awaited_once_with(
             ["test"],

@@ -156,6 +156,17 @@ class OrgConfigBase(BaseModel):
         le=4096,
         description="Output dimensionality of the embedding model.",
     )
+    embedding_api_key: str | None = Field(
+        default=None,
+        description="API key for the embedding provider (optional — "
+        "endpoints without auth use a placeholder).",
+    )
+    embedding_openai_like_base_url: str | None = Field(
+        default=None,
+        description="Base URL for the embedding OpenAI-compatible endpoint. "
+        "Required when embedding_backend is openai_like; never falls back "
+        "to openai_like_base_url (LLM) and vice versa.",
+    )
 
     # ── Graph ──────────────────────────────────────────────────────────────
     graph_backend: str | None = Field(
@@ -346,6 +357,12 @@ class OrgConfigBase(BaseModel):
             d["openai_api_key"] = self.openai_api_key
         if self.openai_like_base_url is not None:
             d["openai_like_base_url"] = self.openai_like_base_url
+        if self.embedding_api_key is not None:
+            d["embedding_api_key"] = self.embedding_api_key
+        if self.embedding_openai_like_base_url is not None:
+            d["embedding_openai_like_base_url"] = self.embedding_openai_like_base_url
+        if self.embedding_model is not None:
+            d["embedding_model"] = self.embedding_model
         if self.llm_model is not None:
             d["openai_model"] = self.llm_model
             d["llm_model"] = self.llm_model
@@ -383,6 +400,10 @@ class OrgConfigBase(BaseModel):
             d["embedding_model"] = self.embedding_model
         if self.embedding_dim is not None:
             d["embedding_dim"] = self.embedding_dim
+        if self.embedding_api_key is not None:
+            d["embedding_api_key"] = self.embedding_api_key
+        if self.embedding_openai_like_base_url is not None:
+            d["embedding_openai_like_base_url"] = self.embedding_openai_like_base_url
         return d
 
     def to_blob_storage_config(self) -> dict[str, Any]:
@@ -440,6 +461,8 @@ class UpdateOrgConfigRequest(BaseModel):
     embedding_backend: str | None = None
     embedding_model: str | None = None
     embedding_dim: int | None = Field(default=None, ge=64, le=4096)
+    embedding_api_key: str | None = None
+    embedding_openai_like_base_url: str | None = None
     graph_backend: str | None = Field(
         default=None,
         description="Graph backend (falkordb, surrealdb, none). "
@@ -525,6 +548,53 @@ class UpdateOrgConfigRequest(BaseModel):
         if invalid:
             raise ValueError(f"Invalid PII types: {invalid}. Allowed: {sorted(allowed)}")
         return v
+
+
+ConfigTestDomain = Literal["llm", "embeddings", "graph", "blob"]
+"""Domain selector for ``POST /admin/org/config/test``."""
+
+
+class TestOrgConfigRequest(BaseModel):
+    """Request body for ``POST /admin/org/config/test``.
+
+    ``config`` is a partial candidate — same shape as
+    :class:`UpdateOrgConfigRequest`, only explicitly provided fields
+    overlay the stored config in-memory.  Nothing is persisted.
+    """
+
+    domain: ConfigTestDomain = Field(
+        description="Which connection family to probe (llm, embeddings, graph, blob).",
+    )
+    config: UpdateOrgConfigRequest = Field(
+        description="Partial candidate config overlaid on the stored "
+        "config in-memory for this probe only.",
+    )
+
+
+class ProbeResult(BaseModel):
+    """Outcome of a single connection probe."""
+
+    ok: bool = Field(description="Whether the probe succeeded.")
+    latency_ms: int = Field(
+        ge=0, description="Wall-clock probe latency in milliseconds."
+    )
+    detail: str = Field(
+        max_length=500,
+        description="Human-readable outcome (truncated, secrets redacted).",
+    )
+
+
+class TestOrgConfigResponse(BaseModel):
+    """Response for ``POST /admin/org/config/test``.
+
+    Per-probe failures are reported inline with ``ok: false`` — the
+    endpoint still returns 200.  Only invalid payloads (422) or a
+    down secrets backend (503) change the status code.
+    """
+
+    results: dict[str, ProbeResult] = Field(
+        description="Probe outcomes keyed by probe name.",
+    )
 
 
 class OrgConfigResponse(BaseModel):

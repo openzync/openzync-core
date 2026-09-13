@@ -326,6 +326,7 @@ class HybridRetriever:
                 if self._org_config
                 else None,
                 org_config=org_config_dict,
+                mode="embedding",
             )
             response = await backend.embed(
                 [query],

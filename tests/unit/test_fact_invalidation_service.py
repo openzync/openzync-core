@@ -31,6 +31,7 @@ from services.fact_invalidation_service import (
     FactInvalidationService,
     normalize_identity_term,
 )
+from services.fact_service import FactService
 from services.graph_edge_sync_service import GraphEdgeSyncService
 
 pytestmark = pytest.mark.unit
@@ -40,6 +41,10 @@ PROJECT_ID = UUID("00000000-0000-0000-0000-000000000002")
 USER_ID = UUID("00000000-0000-0000-0000-000000000003")
 FACT_1_ID = UUID("00000000-0000-0000-0000-000000000100")
 FACT_2_ID = UUID("00000000-0000-0000-0000-000000000101")
+ENTRY_SUBJECT_ENTITY_ID = UUID("00000000-0000-0000-0000-000000000210")
+ENTRY_OBJECT_ENTITY_ID = UUID("00000000-0000-0000-0000-000000000211")
+OTHER_SUBJECT_ENTITY_ID = UUID("00000000-0000-0000-0000-000000000212")
+OTHER_OBJECT_ENTITY_ID = UUID("00000000-0000-0000-0000-000000000213")
 
 NOW = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 
@@ -1425,3 +1430,241 @@ class TestRetractionWebhook:
         assert "reason" not in payload, (
             "the retraction webhook payload carries no reason"
         )
+
+
+class TestTombstoneWins:
+    """ADR 005 terminal state — a hard-retracted triple stays retracted.
+
+    ``ingest_with_supersession`` consults
+    ``find_retracted_by_match_keys`` (paths 2a batch / 2b sequential) and
+    skips re-assertion of a tombstoned SPO: ``skipped_count += 1``, no
+    insert, no event, no lineage row.  Superseded-only rows (``valid_to``
+    set, ``invalid_at`` None) never match the tombstone gate — re-assertion
+    after supersession still inserts.
+    """
+
+    @pytest.mark.asyncio
+    async def test_batch_reassert_after_hard_retraction_is_skipped(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Path 2a — re-asserting a hard-retracted SPO inserts nothing."""
+        tombstone = _fact(
+            content="Alice likes hiking (retracted)",
+            invalid_at=NOW,
+        )
+        mock_repo.find_conflicting_active_for_update.return_value = []
+        mock_repo.find_retracted_by_match_keys.return_value = [tombstone]
+
+        result = await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[_triple(content="Alice likes hiking v2")],
+            now=NOW,
+        )
+
+        assert result.skipped_count == 1
+        assert result.inserted_count == 0
+        assert result.superseded_count == 0
+        assert result.created == []
+        mock_repo.find_retracted_by_match_keys.assert_awaited_once()
+        mock_repo.set_valid_to.assert_not_awaited()
+        mock_repo.batch_create.assert_not_awaited()
+        mock_repo.batch_create_or_skip.assert_not_awaited()
+        mock_repo.set_superseded_by.assert_not_awaited()
+        mock_repo.record_invalidation_event.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_repeated_identity_reassert_after_hard_retraction_both_skipped(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Path 2b — the same tombstoned SPO twice skips twice, inserts zero."""
+        tombstone = _fact(
+            content="Alice likes hiking (retracted)",
+            invalid_at=NOW,
+        )
+        mock_repo.find_conflicting_active_for_update.return_value = []
+        mock_repo.find_retracted_by_match_keys.return_value = [tombstone]
+
+        result = await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[
+                _triple(content="Alice likes hiking v2"),
+                _triple(content="Alice likes hiking v3"),
+            ],
+            now=NOW,
+        )
+
+        assert result.skipped_count == 2
+        assert result.inserted_count == 0
+        assert result.superseded_count == 0
+        assert result.created == []
+        mock_repo.set_valid_to.assert_not_awaited()
+        mock_repo.batch_create.assert_not_awaited()
+        mock_repo.batch_create_or_skip.assert_not_awaited()
+        mock_repo.set_superseded_by.assert_not_awaited()
+        mock_repo.record_invalidation_event.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_superseded_only_row_still_supersedes(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Regression guard — a superseded-only row (``valid_to`` set,
+        ``invalid_at`` None) is not a tombstone: normal supersede proceeds."""
+        superseded = _fact(
+            content="Alice likes hiking",
+            valid_to=NOW,
+            invalid_at=None,
+        )
+        mock_repo.find_conflicting_active_for_update.return_value = [superseded]
+        mock_repo.find_retracted_by_match_keys.return_value = []
+        mock_repo.batch_create.return_value = [
+            _fact(id=FACT_2_ID, content="Alice loves hiking")
+        ]
+
+        result = await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[_triple(content="Alice loves hiking")],
+            now=NOW,
+        )
+
+        assert result.superseded_count == 1
+        assert result.inserted_count == 1
+        assert result.skipped_count == 0
+        mock_repo.set_valid_to.assert_awaited_once_with(FACT_1_ID, NOW)
+        mock_repo.batch_create.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_live_and_tombstone_coexistence_tombstone_wins(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Path 2a — a live candidate that fails ``_candidate_conflicts``
+        (both sides entity-resolved with different UUIDs) does not save
+        the insert: the name-matching tombstone still gates it."""
+        live_candidate = _fact(
+            content="Alice likes hiking",
+            subject_entity_id=OTHER_SUBJECT_ENTITY_ID,
+            object_entity_id=OTHER_OBJECT_ENTITY_ID,
+        )
+        tombstone = _fact(
+            content="Alice likes hiking (retracted)",
+            invalid_at=NOW,
+        )
+        mock_repo.find_conflicting_active_for_update.return_value = [live_candidate]
+        mock_repo.find_retracted_by_match_keys.return_value = [tombstone]
+
+        result = await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[
+                _triple(
+                    content="Alice likes hiking v2",
+                    subject_entity_id=ENTRY_SUBJECT_ENTITY_ID,
+                    object_entity_id=ENTRY_OBJECT_ENTITY_ID,
+                )
+            ],
+            now=NOW,
+        )
+
+        assert result.skipped_count == 1
+        assert result.inserted_count == 0
+        assert result.superseded_count == 0
+        assert result.created == []
+        mock_repo.set_valid_to.assert_not_awaited()
+        mock_repo.batch_create.assert_not_awaited()
+        mock_repo.batch_create_or_skip.assert_not_awaited()
+        mock_repo.set_superseded_by.assert_not_awaited()
+        mock_repo.record_invalidation_event.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_live_and_tombstone_both_non_matching_inserts(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Negative — a live row and a retracted row of other triples do
+        not gate the insert: normal insert proceeds."""
+        mock_repo.find_conflicting_active_for_update.return_value = [
+            _fact(
+                subject="Bob",
+                object="tea",
+                content="Bob likes tea",
+            )
+        ]
+        mock_repo.find_retracted_by_match_keys.return_value = [
+            _fact(
+                subject="Carol",
+                object="coffee",
+                content="Carol likes coffee (retracted)",
+                invalid_at=NOW,
+            )
+        ]
+        mock_repo.batch_create.return_value = [
+            _fact(id=FACT_2_ID, content="Alice likes hiking v2")
+        ]
+
+        result = await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[_triple(content="Alice likes hiking v2")],
+            now=NOW,
+        )
+
+        assert result.skipped_count == 0
+        assert result.inserted_count == 1
+        assert result.superseded_count == 0
+        mock_repo.set_valid_to.assert_not_awaited()
+        mock_repo.batch_create.assert_awaited_once()
+        mock_repo.record_invalidation_event.assert_not_awaited()
+
+
+class TestRetractAcquiresSupLock:
+    """retract_fact serializes on the ingest path's sup: NAME-identity lock.
+
+    ADR 005 terminal state is race-safe only when the retraction holds
+    the same ``sup:``-namespaced advisory lock the ingest path takes — a
+    concurrent ingest of the same triple must not slip in between the
+    retraction and its commit.  The key is the normalized NAME form,
+    never entity UUIDs, so string-form and entity-form writers of one
+    triple serialize on one key.
+    """
+
+    @pytest.mark.asyncio
+    async def test_retract_acquires_sup_namespaced_name_lock(
+        self, mock_db: AsyncMock, mock_repo: AsyncMock
+    ) -> None:
+        """retract_fact awaits lock_conflict_identities once with the sup:
+        NAME-identity key, after the idempotency gate, before set_invalid_at.
+        """
+        fact = _fact()
+        fact.organization_id = ORG_ID
+        fact.project_id = PROJECT_ID
+        mock_repo.get_by_id.return_value = fact
+
+        service = FactService(
+            db=mock_db,
+            redis_client=None,  # type: ignore[arg-type]
+            fact_repo=mock_repo,
+        )
+        result = await service.retract_fact(
+            FACT_1_ID,
+            organization_id=ORG_ID,
+            project_id=PROJECT_ID,
+            reason="user correction",
+            at_time=NOW,
+        )
+
+        expected_key = FactInvalidationService._lock_key_for_identity(
+            ORG_ID,
+            PROJECT_ID,
+            FactInvalidationService._name_identity_of_fact(fact),
+        )
+        assert expected_key == f"sup:{ORG_ID}:{PROJECT_ID}:alice:likes:hiking"
+        mock_repo.lock_conflict_identities.assert_awaited_once_with([expected_key])
+        mock_repo.set_invalid_at.assert_awaited_once_with(FACT_1_ID, NOW)
+        mock_repo.record_invalidation_event.assert_awaited_once()
+        assert result is fact

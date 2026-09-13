@@ -10,7 +10,9 @@ only manage their own org's config.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 import yaml
@@ -18,15 +20,22 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from core.audit import audit_action
 from core.config import get_settings
+from core.exceptions import RateLimitError
+from core.openbao_exceptions import OpenBaoError
 from dependencies.auth import require_permission
 from schemas.organization_config import (
     SYSTEM_MANAGED_FALKORDB_FIELDS,
     SYSTEM_MANAGED_SURREALDB_FIELDS,
     OrgConfigBase,
     OrgConfigResponse,
+    TestOrgConfigRequest,
+    TestOrgConfigResponse,
     UpdateOrgConfigRequest,
 )
+from services.org_config_connection_service import OrgConfigConnectionService
 from services.org_config_service import OrgConfigService
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/admin/org/config",
@@ -71,6 +80,55 @@ def _get_config_service(
         )
     redis = getattr(request.app.state, "redis", None)
     return OrgConfigService(bao_client=bao_client, redis=redis)
+
+
+def _get_connection_service(
+    request: Request,
+) -> OrgConfigConnectionService:
+    """Build a request-scoped OrgConfigConnectionService (503 if OpenBao down)."""
+    bao_client = getattr(request.app.state, "openbao_client", None)
+    if bao_client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="OpenBao client not available — secrets backend not initialised",
+        )
+    redis = getattr(request.app.state, "redis", None)
+    return OrgConfigConnectionService(bao_client=bao_client, redis=redis)
+
+
+#: Max config-test probes per org per window (fail-open on Redis errors).
+_TEST_THROTTLE_LIMIT = 10
+_TEST_THROTTLE_WINDOW_S = 60
+
+
+async def _check_config_test_throttle(redis: Any | None, org_id: str) -> None:
+    """Enforce a per-org fixed-window throttle (~10/min) for config tests.
+
+    Fail-open on Redis errors — throttling is protective, not load-bearing.
+    Exceeding the allowance raises :class:`RateLimitError` (HTTP 429).
+    """
+    if redis is None:
+        return
+    key = f"org_config:test:{org_id}"
+    try:
+        count = await redis.incr(key)
+        if count == 1:
+            await redis.expire(key, _TEST_THROTTLE_WINDOW_S)
+    except Exception:
+        logger.error(
+            "org_config.test_throttle_failed",
+            extra={"org_id": org_id},
+            exc_info=True,
+        )
+        return
+    if count > _TEST_THROTTLE_LIMIT:
+        raise RateLimitError(
+            "Too many config test requests — try again in a minute.",
+            detail={
+                "limit": _TEST_THROTTLE_LIMIT,
+                "window_s": _TEST_THROTTLE_WINDOW_S,
+            },
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -213,3 +271,43 @@ async def replace_org_config(
                 ),
             )
     return await service.update_config(UUID(_org_id), body)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POST /test — Probe candidate connections without persisting
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@router.post(
+    "/test",
+    response_model=TestOrgConfigResponse,
+)
+@audit_action("config.test", "org_config")
+async def test_org_config(
+    body: TestOrgConfigRequest,
+    request: Request,
+    _org_id: str = Depends(require_permission("configuration:write")),  # noqa: B008
+    service: OrgConfigConnectionService = Depends(  # noqa: B008
+        _get_connection_service
+    ),
+) -> TestOrgConfigResponse:
+    """Probe live connectivity for a candidate config without saving it.
+
+    Overlays ``body.config`` on the stored config in-memory and probes
+    the requested domain.  Probe failures return 200 with ``ok: false``
+    entries — only malformed payloads (422) or a down secrets backend
+    (503) change the status code.
+
+    Requires ``configuration:write``.  Throttled to ~10 requests/min
+    per org.  The candidate and probe details carry no secrets beyond
+    action metadata in the audit log.
+    """
+    redis = getattr(request.app.state, "redis", None)
+    await _check_config_test_throttle(redis, _org_id)
+    try:
+        return await service.test_connections(UUID(_org_id), body.domain, body.config)
+    except OpenBaoError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Secrets backend unavailable — cannot load stored config",
+        ) from exc

@@ -68,7 +68,9 @@ class _FakeEmbedBackend:
         )
 
 
-async def _fake_resolve_backend(provider=None, org_config=None) -> _FakeEmbedBackend:
+async def _fake_resolve_backend(
+    provider=None, org_config=None, mode=None
+) -> _FakeEmbedBackend:
     return _FakeEmbedBackend()
 
 

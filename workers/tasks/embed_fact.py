@@ -137,7 +137,9 @@ async def embed_fact(
 
     # ── 1. Resolve the embedding backend ──────────────────────────────────
     llm = await resolve_backend(
-        provider=_embedding_backend, org_config=_org_config_dict,
+        provider=_embedding_backend,
+        org_config=_org_config_dict,
+        mode="embedding",
     )
 
     # ── 2. Generate embedding ────────────────────────────────────────────
