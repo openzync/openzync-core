@@ -12,12 +12,11 @@ Revision ID: 99a299513d53
 Revises: 0006
 Create Date: 2026-06-07 10:29:21.689192
 """
-
 from collections.abc import Sequence
 
 # revision identifiers, used by Alembic.
-revision: str = "99a299513d53"
-down_revision: str | None = "0006"
+revision: str = '99a299513d53'
+down_revision: str | None = '0006'
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

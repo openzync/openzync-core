@@ -274,17 +274,13 @@ class TestGraphBackendEnrichmentPipeline:
         # get_entities_for_session traverses session→episodes→entity links.
         # Since we don't have actual episodes in the DB, it returns empty.
         session_entities = await backend.get_entities_for_session(
-            ORG_ID,
-            PROJ_ID,
-            SESSION_ID,
+            ORG_ID, PROJ_ID, SESSION_ID,
         )
         assert isinstance(session_entities, list)
 
         # Let's also test co-occurring pairs — entities linked to same episode
         pairs = await backend.get_co_occurring_entity_pairs(
-            ORG_ID,
-            PROJ_ID,
-            min_co_count=1,
+            ORG_ID, PROJ_ID, min_co_count=1,
         )
         assert len(pairs) >= 1
         pair_names = set()
@@ -295,19 +291,14 @@ class TestGraphBackendEnrichmentPipeline:
 
         # ── Step 5: Search ───────────────────────────────────────────────
         search_results = await backend.search_entities(
-            ORG_ID,
-            PROJ_ID,
-            query="john",
+            ORG_ID, PROJ_ID, query="john",
         )
         assert len(search_results) >= 1
         assert any("john" in r["name"] for r in search_results)
 
         # ── Step 6: Bulk Search for Dedup ─────────────────────────────────
         bulk_results = await backend.bulk_search_entities(
-            ORG_ID,
-            PROJ_ID,
-            query="Acme",
-            fuzzy_threshold=0.3,
+            ORG_ID, PROJ_ID, query="Acme", fuzzy_threshold=0.3,
         )
         assert len(bulk_results) >= 1
 
@@ -368,9 +359,7 @@ class TestGraphBackendEnrichmentPipeline:
 
         # Retrieve observation with filter
         obs_result = await backend.get_observations(
-            ORG_ID,
-            PROJ_ID,
-            subject_entity_id=person_id,
+            ORG_ID, PROJ_ID, subject_entity_id=person_id,
         )
         assert len(obs_result["items"]) >= 1
         assert obs_result["items"][0]["observation_type"] == "leadership"
@@ -386,9 +375,7 @@ class TestGraphBackendEnrichmentPipeline:
 
         # ── Step 10: Retrieve Graph (Search + Traverse) ──────────────────
         graph_result = await backend.retrieve_graph(
-            ORG_ID,
-            PROJ_ID,
-            query="john",
+            ORG_ID, PROJ_ID, query="john",
         )
         assert len(graph_result) >= 1
         # Distance 0 = directly matched
@@ -396,9 +383,7 @@ class TestGraphBackendEnrichmentPipeline:
 
         # ── Step 11: Get Entity With Edges ───────────────────────────────
         person_with_edges = await backend.get_entity_with_edges(
-            ORG_ID,
-            PROJ_ID,
-            person_id,
+            ORG_ID, PROJ_ID, person_id,
         )
         assert person_with_edges is not None
         assert person_with_edges["node"]["id"] == str(person_id)
@@ -406,10 +391,7 @@ class TestGraphBackendEnrichmentPipeline:
 
         # ── Step 12: Traverse from person ────────────────────────────────
         traversal = await backend.traverse(
-            ORG_ID,
-            PROJ_ID,
-            person_id,
-            max_depth=2,
+            ORG_ID, PROJ_ID, person_id, max_depth=2,
         )
         assert len(traversal) >= 2  # person + connected nodes
         traversed_ids = {n["id"] for n in traversal}
@@ -444,24 +426,15 @@ class TestGraphBackendEnrichmentPipeline:
 
         # Lists
         assert await backend.list_entities(ORG_ID, alt_project) == {
-            "items": [],
-            "next_cursor": None,
-            "has_more": False,
+            "items": [], "next_cursor": None, "has_more": False,
         }
         assert await backend.get_all_entities(ORG_ID, alt_project) == []
         assert await backend.get_all_relationships(ORG_ID, alt_project) == []
-        assert (
-            await backend.get_co_occurring_entity_pairs(
-                ORG_ID, alt_project, min_co_count=1
-            )
-            == []
-        )
+        assert await backend.get_co_occurring_entity_pairs(ORG_ID, alt_project, min_co_count=1) == []
 
         # Search
         assert await backend.search_entities(ORG_ID, alt_project, query="test") == []
-        assert (
-            await backend.bulk_search_entities(ORG_ID, alt_project, query="test") == []
-        )
+        assert await backend.bulk_search_entities(ORG_ID, alt_project, query="test") == []
 
         # Traversal
         assert await backend.traverse(ORG_ID, alt_project, uuid4()) == []
@@ -469,47 +442,29 @@ class TestGraphBackendEnrichmentPipeline:
 
         # Observations
         assert await backend.get_observations(ORG_ID, alt_project) == {
-            "items": [],
-            "next_cursor": None,
-            "has_more": False,
+            "items": [], "next_cursor": None, "has_more": False,
         }
-        assert (
-            await backend.get_entity_appearance_timestamps(ORG_ID, alt_project, uuid4())
-            == []
-        )
-        assert (
-            await backend.get_relationship_ids_between(
-                ORG_ID, alt_project, uuid4(), uuid4()
-            )
-            == []
-        )
+        assert await backend.get_entity_appearance_timestamps(ORG_ID, alt_project, uuid4()) == []
+        assert await backend.get_relationship_ids_between(ORG_ID, alt_project, uuid4(), uuid4()) == []
 
     async def test_merge_entities_with_rewiring(self, backend: Any) -> None:
         """Merge entities correctly rewires relationships."""
         # Create canonical + two duplicates
         canonical = await backend.create_entity(
-            org_id=ORG_ID,
-            project_id=PROJ_ID,
-            name="Canonical",
-            entity_type="Organization",
+            org_id=ORG_ID, project_id=PROJ_ID,
+            name="Canonical", entity_type="Organization",
         )
         dup_a = await backend.create_entity(
-            org_id=ORG_ID,
-            project_id=PROJ_ID,
-            name="Dup A",
-            entity_type="Organization",
+            org_id=ORG_ID, project_id=PROJ_ID,
+            name="Dup A", entity_type="Organization",
         )
         dup_b = await backend.create_entity(
-            org_id=ORG_ID,
-            project_id=PROJ_ID,
-            name="Dup B",
-            entity_type="Organization",
+            org_id=ORG_ID, project_id=PROJ_ID,
+            name="Dup B", entity_type="Organization",
         )
         unrelated = await backend.create_entity(
-            org_id=ORG_ID,
-            project_id=PROJ_ID,
-            name="Unrelated",
-            entity_type="Person",
+            org_id=ORG_ID, project_id=PROJ_ID,
+            name="Unrelated", entity_type="Person",
         )
 
         canonical_id = UUID(canonical["id"])
@@ -519,17 +474,14 @@ class TestGraphBackendEnrichmentPipeline:
 
         # Create relationships from duplicates to unrelated
         await backend.create_relationship(
-            org_id=ORG_ID,
-            project_id=PROJ_ID,
-            source_id=dup_a_id,
-            target_id=unrelated_id,
+            org_id=ORG_ID, project_id=PROJ_ID,
+            source_id=dup_a_id, target_id=unrelated_id,
             relationship_type="related_to",
         )
 
         # Merge both duplicates into canonical
         merge_result = await backend.merge_entities(
-            org_id=ORG_ID,
-            project_id=PROJ_ID,
+            org_id=ORG_ID, project_id=PROJ_ID,
             canonical_id=canonical_id,
             merged_ids=[dup_a_id, dup_b_id],
         )
@@ -547,18 +499,15 @@ class TestGraphBackendEnrichmentPipeline:
     async def test_observations_with_all_filters(self, backend: Any) -> None:
         """Observation retrieval with various filter combinations."""
         entity = await backend.create_entity(
-            org_id=ORG_ID,
-            project_id=PROJ_ID,
-            name="ObsTest",
-            entity_type="Test",
+            org_id=ORG_ID, project_id=PROJ_ID,
+            name="ObsTest", entity_type="Test",
         )
         eid = UUID(entity["id"])
 
         # Create observations of different types
         for i, obs_type in enumerate(["type_a", "type_b", "type_c"]):
             await backend.upsert_observation(
-                org_id=ORG_ID,
-                project_id=PROJ_ID,
+                org_id=ORG_ID, project_id=PROJ_ID,
                 subject_entity_id=eid,
                 observation_type=obs_type,
                 content=f"Observation {i}",
@@ -572,26 +521,20 @@ class TestGraphBackendEnrichmentPipeline:
 
         # Filter by type
         filtered = await backend.get_observations(
-            ORG_ID,
-            PROJ_ID,
-            observation_type="type_a",
+            ORG_ID, PROJ_ID, observation_type="type_a",
         )
         assert len(filtered["items"]) == 1
         assert filtered["items"][0]["observation_type"] == "type_a"
 
         # Filter by subject
         subject_filtered = await backend.get_observations(
-            ORG_ID,
-            PROJ_ID,
-            subject_entity_id=eid,
+            ORG_ID, PROJ_ID, subject_entity_id=eid,
         )
         assert len(subject_filtered["items"]) == 3
 
         # Pagination
         paginated = await backend.get_observations(
-            ORG_ID,
-            PROJ_ID,
-            limit=2,
+            ORG_ID, PROJ_ID, limit=2,
         )
         assert len(paginated["items"]) == 2
         # With 3 items and limit=2, has_more should be True

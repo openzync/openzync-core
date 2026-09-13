@@ -1,5 +1,4 @@
 """Unit tests for cleanup_orphan_blobs task."""
-
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -33,10 +32,7 @@ class TestCleanupOrphanBlobs:
         return factory
 
     def _ctx(self, db: AsyncMock) -> dict:
-        return {
-            "db_engine": MagicMock(),
-            "db_session_factory": self._make_session_factory(db),
-        }
+        return {"db_engine": MagicMock(), "db_session_factory": self._make_session_factory(db)}
 
     @pytest.mark.asyncio
     async def test_orphans_detected_and_deleted(self) -> None:
@@ -44,13 +40,8 @@ class TestCleanupOrphanBlobs:
         blobs = [self._make_blob() for _ in range(3)]
 
         with (
-            patch(
-                "workers.tasks.cleanup_orphan_blobs.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "repositories.episode_blob_repository.EpisodeBlobRepository"
-            ) as mock_repo_cls,
+            patch("workers.tasks.cleanup_orphan_blobs.with_retry", lambda **kw: lambda f: f),
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
             patch("asyncio.sleep", AsyncMock()),
         ):
@@ -80,13 +71,8 @@ class TestCleanupOrphanBlobs:
     async def test_no_orphans(self) -> None:
         """No orphaned blobs → no-op returns 0."""
         with (
-            patch(
-                "workers.tasks.cleanup_orphan_blobs.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "repositories.episode_blob_repository.EpisodeBlobRepository"
-            ) as mock_repo_cls,
+            patch("workers.tasks.cleanup_orphan_blobs.with_retry", lambda **kw: lambda f: f),
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
         ):
             mock_repo = AsyncMock()
             mock_repo.get_orphaned_blobs.return_value = []
@@ -108,13 +94,8 @@ class TestCleanupOrphanBlobs:
         blobs = [self._make_blob()]
 
         with (
-            patch(
-                "workers.tasks.cleanup_orphan_blobs.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "repositories.episode_blob_repository.EpisodeBlobRepository"
-            ) as mock_repo_cls,
+            patch("workers.tasks.cleanup_orphan_blobs.with_retry", lambda **kw: lambda f: f),
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
         ):
             mock_repo = AsyncMock()
@@ -132,9 +113,7 @@ class TestCleanupOrphanBlobs:
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 
             result = await cleanup_orphan_blobs(
-                ctx=self._ctx(db),
-                org_id=_ORG_ID,
-                episode_id=_EPISODE_ID,
+                ctx=self._ctx(db), org_id=_ORG_ID, episode_id=_EPISODE_ID,
             )
 
             assert result == 1
@@ -146,13 +125,8 @@ class TestCleanupOrphanBlobs:
         blobs = [self._make_blob()]
 
         with (
-            patch(
-                "workers.tasks.cleanup_orphan_blobs.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "repositories.episode_blob_repository.EpisodeBlobRepository"
-            ) as mock_repo_cls,
+            patch("workers.tasks.cleanup_orphan_blobs.with_retry", lambda **kw: lambda f: f),
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
         ):
             mock_repo = AsyncMock()
@@ -177,13 +151,8 @@ class TestCleanupOrphanBlobs:
     async def test_blobs_refrenced_by_episodes_not_deleted(self) -> None:
         """Blobs referenced by non-deleted episodes are not returned as orphans."""
         with (
-            patch(
-                "workers.tasks.cleanup_orphan_blobs.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "repositories.episode_blob_repository.EpisodeBlobRepository"
-            ) as mock_repo_cls,
+            patch("workers.tasks.cleanup_orphan_blobs.with_retry", lambda **kw: lambda f: f),
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
         ):
             mock_repo = AsyncMock()
             mock_repo.get_orphaned_blobs.return_value = []
@@ -203,9 +172,7 @@ class TestCleanupOrphanBlobs:
     @pytest.mark.asyncio
     async def test_db_error_propagates(self) -> None:
         """Database errors are not silently swallowed."""
-        with patch(
-            "workers.tasks.cleanup_orphan_blobs.with_retry", lambda **kw: lambda f: f
-        ):
+        with patch("workers.tasks.cleanup_orphan_blobs.with_retry", lambda **kw: lambda f: f):
             db = AsyncMock()
             db.__aenter__.return_value = db
             db.__aexit__.return_value = None
@@ -224,13 +191,8 @@ class TestCleanupOrphanBlobs:
         blobs = [self._make_blob()]
 
         with (
-            patch(
-                "workers.tasks.cleanup_orphan_blobs.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "repositories.episode_blob_repository.EpisodeBlobRepository"
-            ) as mock_repo_cls,
+            patch("workers.tasks.cleanup_orphan_blobs.with_retry", lambda **kw: lambda f: f),
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
             patch("asyncio.sleep", AsyncMock()),
         ):
@@ -249,9 +211,7 @@ class TestCleanupOrphanBlobs:
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 
             result = await cleanup_orphan_blobs(
-                ctx=self._ctx(db),
-                org_id=_ORG_ID,
-                trace_id="test-trace-001",
+                ctx=self._ctx(db), org_id=_ORG_ID, trace_id="test-trace-001",
             )
 
             assert result == len(blobs)
@@ -266,13 +226,8 @@ class TestCleanupOrphanBlobs:
         blobs = [self._make_blob()]
 
         with (
-            patch(
-                "workers.tasks.cleanup_orphan_blobs.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "repositories.episode_blob_repository.EpisodeBlobRepository"
-            ) as mock_repo_cls,
+            patch("workers.tasks.cleanup_orphan_blobs.with_retry", lambda **kw: lambda f: f),
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
             patch("core.org_config.get_org_config") as mock_cfg,
             patch("core.config.BootstrapSettings") as mock_bs,
@@ -288,9 +243,7 @@ class TestCleanupOrphanBlobs:
             mock_svc_cls.return_value = mock_svc
 
             org_cfg = MagicMock()
-            org_cfg.to_blob_storage_config.return_value = {
-                "bucket_name": "custom-bucket"
-            }
+            org_cfg.to_blob_storage_config.return_value = {"bucket_name": "custom-bucket"}
             mock_cfg.return_value = org_cfg
 
             mock_bao = MagicMock()
@@ -311,8 +264,7 @@ class TestCleanupOrphanBlobs:
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 
             result = await cleanup_orphan_blobs(
-                ctx=ctx,
-                org_id=_ORG_ID,
+                ctx=ctx, org_id=_ORG_ID,
             )
 
             assert result == len(blobs)
@@ -326,13 +278,8 @@ class TestCleanupOrphanBlobs:
         blobs = [self._make_blob()]
 
         with (
-            patch(
-                "workers.tasks.cleanup_orphan_blobs.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "repositories.episode_blob_repository.EpisodeBlobRepository"
-            ) as mock_repo_cls,
+            patch("workers.tasks.cleanup_orphan_blobs.with_retry", lambda **kw: lambda f: f),
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
             patch("core.db.init_db_engine") as mock_init_engine,
             patch("core.db.get_async_session") as mock_get_session,
@@ -360,8 +307,7 @@ class TestCleanupOrphanBlobs:
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 
             result = await cleanup_orphan_blobs(
-                ctx={},
-                org_id=_ORG_ID,
+                ctx={}, org_id=_ORG_ID,
             )
 
             assert result == len(blobs)
@@ -374,13 +320,8 @@ class TestCleanupOrphanBlobs:
         blobs = [self._make_blob()]
 
         with (
-            patch(
-                "workers.tasks.cleanup_orphan_blobs.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "repositories.episode_blob_repository.EpisodeBlobRepository"
-            ) as mock_repo_cls,
+            patch("workers.tasks.cleanup_orphan_blobs.with_retry", lambda **kw: lambda f: f),
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
             patch("core.org_config.get_org_config") as mock_cfg,
             patch("asyncio.sleep", AsyncMock()),
@@ -394,9 +335,7 @@ class TestCleanupOrphanBlobs:
             mock_svc_cls.return_value = mock_svc
 
             org_cfg = MagicMock()
-            org_cfg.to_blob_storage_config.return_value = {
-                "bucket_name": "custom-bucket"
-            }
+            org_cfg.to_blob_storage_config.return_value = {"bucket_name": "custom-bucket"}
             mock_cfg.return_value = org_cfg
 
             db = AsyncMock()
@@ -412,8 +351,7 @@ class TestCleanupOrphanBlobs:
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 
             result = await cleanup_orphan_blobs(
-                ctx=ctx,
-                org_id=_ORG_ID,
+                ctx=ctx, org_id=_ORG_ID,
             )
 
             assert result == len(blobs)
@@ -430,18 +368,10 @@ class TestCleanupOrphanBlobs:
         blobs = [self._make_blob()]
 
         with (
-            patch(
-                "workers.tasks.cleanup_orphan_blobs.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "repositories.episode_blob_repository.EpisodeBlobRepository"
-            ) as mock_repo_cls,
+            patch("workers.tasks.cleanup_orphan_blobs.with_retry", lambda **kw: lambda f: f),
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
             patch("services.blob_storage_service.BlobStorageService") as mock_svc_cls,
-            patch(
-                "core.config.BootstrapSettings",
-                side_effect=Exception("Bootstrap failed"),
-            ),
+            patch("core.config.BootstrapSettings", side_effect=Exception("Bootstrap failed")),
             patch("asyncio.sleep", AsyncMock()),
         ):
             mock_repo = AsyncMock()
@@ -464,8 +394,7 @@ class TestCleanupOrphanBlobs:
             from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 
             result = await cleanup_orphan_blobs(
-                ctx=ctx,
-                org_id=_ORG_ID,
+                ctx=ctx, org_id=_ORG_ID,
             )
 
             assert result == len(blobs)
@@ -531,8 +460,7 @@ class TestCleanupOrphanBlobs:
             mock_repo = AsyncMock()
             mock_repo.get_orphaned_blobs.side_effect = [blobs_1, blobs_2]
             mock_repo.delete_by_ids.side_effect = [
-                blobs_1,
-                Exception("S3 unavailable"),
+                blobs_1, Exception("S3 unavailable"),
             ]
             mock_repo_cls.return_value = mock_repo
 
@@ -590,8 +518,7 @@ class TestCleanupOrphanBlobs:
         ):
             mock_repo = AsyncMock()
             mock_repo.get_orphaned_blobs.side_effect = [
-                Exception("org 1 fail"),
-                Exception("org 2 fail"),
+                Exception("org 1 fail"), Exception("org 2 fail"),
             ] * 2
             mock_repo_cls.return_value = mock_repo
 
@@ -692,12 +619,10 @@ class TestCleanupOrphanBlobs:
         ):
             mock_repo = AsyncMock()
             mock_repo.get_orphaned_blobs.side_effect = [
-                blobs_1,
-                [self._make_blob()],
+                blobs_1, [self._make_blob()],
             ]
             mock_repo.delete_by_ids.side_effect = [
-                blobs_1,
-                Exception("mid-org DB error"),
+                blobs_1, Exception("mid-org DB error"),
             ]
             mock_repo_cls.return_value = mock_repo
 

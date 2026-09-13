@@ -225,7 +225,9 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
                     continue
 
                 # 2. Fetch relationships via backend
-                relationships = await backend.get_all_relationships(org_id, project_id)
+                relationships = await backend.get_all_relationships(
+                    org_id, project_id
+                )
 
                 # 3. Build graph and detect communities
                 graph = build_entity_graph(entities, relationships)
@@ -324,7 +326,9 @@ async def _create_community(
 
     # Build entity name map
     entity_map = {e["id"]: e for e in all_entities}
-    member_names = [entity_map[eid]["name"] for eid in entity_ids if eid in entity_map]
+    member_names = [
+        entity_map[eid]["name"] for eid in entity_ids if eid in entity_map
+    ]
     community_name = (
         f"Community: {', '.join(member_names[:3])}"
         f"{'...' if len(member_names) > 3 else ''}"
@@ -343,7 +347,9 @@ async def _create_community(
         prompt = _build_community_prompt(context_entities, context_rels)
         bao_client = ctx.get("openbao_client") if isinstance(ctx, dict) else None
         if bao_client is not None:
-            org_cfg = await get_org_config(org_id, redis=None, bao_client=bao_client)
+            org_cfg = await get_org_config(
+                org_id, redis=None, bao_client=bao_client
+            )
         else:
             from core.config import BootstrapSettings
             from core.openbao import OpenBaoClient
@@ -355,7 +361,9 @@ async def _create_community(
                 bootstrap.OPENBAO_SECRET_ID,
                 timeout=10.0,
             ) as _tmp_bao:
-                org_cfg = await get_org_config(org_id, redis=None, bao_client=_tmp_bao)
+                org_cfg = await get_org_config(
+                    org_id, redis=None, bao_client=_tmp_bao
+                )
         llm_config_dict = org_cfg.to_llm_config_dict()
         llm = await resolve_llm_backend(org_config=llm_config_dict)
         start = time.monotonic()
@@ -378,7 +386,8 @@ async def _create_community(
             extra={"error": str(exc)},
         )
         summary = (
-            f"Community of {len(member_names)} entities: {', '.join(member_names)}"
+            f"Community of {len(member_names)} entities: "
+            f"{', '.join(member_names)}"
         )
     else:
         # Chat succeeded — record usage in the shared session (commits with
@@ -455,8 +464,7 @@ def _build_community_prompt(
     for e in entities:
         parts.append(
             "- {} ({}): {}".format(
-                e.get("name", "?"),
-                e.get("type", "?"),
+                e.get("name", "?"), e.get("type", "?"),
                 e.get("summary", "")[:100],
             )
         )

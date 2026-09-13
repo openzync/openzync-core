@@ -69,10 +69,7 @@ class ApiKey(TimestampMixin, Base):
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
-        comment=(
-            "The user who created this API key — used for attribution "
-            "in API-key-authenticated requests."
-        ),
+        comment="The user who created this API key — used for attribution in API-key-authenticated requests.",
     )
     lookup_hash: Mapped[str] = mapped_column(
         Text,

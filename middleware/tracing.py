@@ -24,12 +24,11 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Any
+from typing import Any
+
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core.config import get_settings
-
-if TYPE_CHECKING:
-    from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +61,9 @@ def _init_tracer() -> Any | None:
 
     otlp_endpoint: str = os.getenv("OZ_OTLP_ENDPOINT", "")
     if not otlp_endpoint:
-        logger.info("OZ_OTLP_ENDPOINT not set — OpenTelemetry tracing is disabled.")
+        logger.info(
+            "OZ_OTLP_ENDPOINT not set — OpenTelemetry tracing is disabled."
+        )
         _tracer = None
         return None
 

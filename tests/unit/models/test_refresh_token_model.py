@@ -1,5 +1,4 @@
 """Tests for ``RefreshToken`` model."""
-
 from __future__ import annotations
 
 import uuid

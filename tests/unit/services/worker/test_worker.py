@@ -18,13 +18,9 @@ from __future__ import annotations
 import asyncio
 import signal
 import sys
-from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-if TYPE_CHECKING:
-    from aiohttp import web
 
 
 @pytest.fixture(autouse=True)
@@ -161,18 +157,14 @@ class TestOnJobEnd:
         ):
             await on_job_end(ctx)
 
-            mock_total.labels.assert_called_once_with(
-                task_type="enrich", status="success"
-            )
+            mock_total.labels.assert_called_once_with(task_type="enrich", status="success")
             mock_total.labels.return_value.inc.assert_called_once()
 
             mock_dur.labels.assert_called_once_with(task_type="enrich")
             mock_dur.labels.return_value.observe.assert_called_once_with(3.5)
 
             mock_org.labels.assert_called_once_with(
-                org_id="org-1",
-                task_type="enrich",
-                status="success",
+                org_id="org-1", task_type="enrich", status="success",
             )
             mock_org.labels.return_value.inc.assert_called_once()
 
@@ -188,13 +180,9 @@ class TestOnJobEnd:
         ):
             await on_job_end({})
 
-            mock_total.labels.assert_called_once_with(
-                task_type="unknown", status="success"
-            )
+            mock_total.labels.assert_called_once_with(task_type="unknown", status="success")
             mock_org.labels.assert_called_once_with(
-                org_id="unknown",
-                task_type="unknown",
-                status="success",
+                org_id="unknown", task_type="unknown", status="success",
             )
 
 
@@ -260,10 +248,7 @@ class TestCreateArqWorker:
         async def dummy_task(_ctx: object) -> str:
             return "done"
 
-        with (
-            self._default_patches(),
-            patch("services.worker.worker.ArqWorker") as mock_aw_cls,
-        ):
+        with self._default_patches(), patch("services.worker.worker.ArqWorker") as mock_aw_cls:
             create_arq_worker(
                 queue_name="high",
                 functions=[dummy_task],
@@ -290,10 +275,7 @@ class TestCreateArqWorker:
 
         shared_ctx = {"db_engine": "fake"}
 
-        with (
-            self._default_patches(),
-            patch("services.worker.worker.ArqWorker") as mock_aw_cls,
-        ):
+        with self._default_patches(), patch("services.worker.worker.ArqWorker") as mock_aw_cls:
             create_arq_worker(
                 queue_name="high",
                 functions=[dummy_task],
@@ -314,10 +296,7 @@ class TestCreateArqWorker:
         async def dummy_task(_ctx: object) -> str:
             return "done"
 
-        with (
-            self._default_patches(),
-            patch("services.worker.worker.ArqWorker") as mock_aw_cls,
-        ):
+        with self._default_patches(), patch("services.worker.worker.ArqWorker") as mock_aw_cls:
             create_arq_worker(
                 queue_name="high",
                 functions=[dummy_task],
@@ -340,10 +319,7 @@ class TestCreateArqWorker:
 
         cron_job = cron(dummy_task, minute=0)
 
-        with (
-            self._default_patches(),
-            patch("services.worker.worker.ArqWorker") as mock_aw_cls,
-        ):
+        with self._default_patches(), patch("services.worker.worker.ArqWorker") as mock_aw_cls:
             create_arq_worker(
                 queue_name="low",
                 functions=[dummy_task],
@@ -366,10 +342,7 @@ class TestCreateArqWorker:
         async def dummy_task(_ctx: object) -> str:
             return "done"
 
-        with (
-            self._default_patches(),
-            patch("services.worker.worker.ArqWorker") as mock_aw_cls,
-        ):
+        with self._default_patches(), patch("services.worker.worker.ArqWorker") as mock_aw_cls:
             create_arq_worker(
                 queue_name="high",
                 functions=[dummy_task],
@@ -560,9 +533,7 @@ class TestHealthCheck:
 
         resp = await health_check(request)
         assert resp.status == 503
-        assert b"unhealthy" in (
-            resp.body if isinstance(resp.body, bytes) else str(resp.body).encode()
-        )
+        assert b"unhealthy" in (resp.body if isinstance(resp.body, bytes) else str(resp.body).encode())
 
     @pytest.mark.asyncio
     async def test_unhealthy_when_pool_not_ready_and_redis_down(self) -> None:
@@ -743,15 +714,8 @@ class TestTaskRegistry:
         assert "enrich_episode" in names
         assert "embed_episode" in names
         assert "embed_fact" in names
-        assert not (
-            {
-                "classify_dialog",
-                "extract_entities",
-                "extract_facts",
-                "extract_structured",
-            }
-            & names
-        )
+        assert not ({"classify_dialog", "extract_entities",
+                     "extract_facts", "extract_structured"} & names)
 
     def test_low_queue_has_expected_tasks(self) -> None:
         """Low-priority queue contains batch / scheduled tasks."""
@@ -797,11 +761,7 @@ class TestSetupLogging:
 
         with (
             patch("services.worker.worker.structlog.configure") as mock_cfg,
-            patch(
-                "services.worker.worker.settings.STRUCTLOG_FORMAT",
-                "console",
-                create=True,
-            ),
+            patch("services.worker.worker.settings.STRUCTLOG_FORMAT", "console", create=True),
         ):
             setup_logging()
 
@@ -815,9 +775,7 @@ class TestSetupLogging:
 
         with (
             patch("services.worker.worker.structlog.configure") as mock_cfg,
-            patch(
-                "services.worker.worker.settings.STRUCTLOG_FORMAT", "json", create=True
-            ),
+            patch("services.worker.worker.settings.STRUCTLOG_FORMAT", "json", create=True),
         ):
             setup_logging()
 
@@ -932,8 +890,7 @@ class TestMain:
             cron_jobs = calls[1].kwargs["cron_jobs"]
 
             matches = [
-                job
-                for job in cron_jobs
+                job for job in cron_jobs
                 if getattr(job, "job_id", None) == "orphaned_blob_cleanup"
             ]
             assert len(matches) == 1
@@ -974,8 +931,7 @@ class TestMain:
             cron_jobs = calls[1].kwargs["cron_jobs"]
 
             matches = [
-                job
-                for job in cron_jobs
+                job for job in cron_jobs
                 if getattr(job, "job_id", None) == "nightly_community_detection"
             ]
             assert len(matches) == 1
@@ -1147,9 +1103,7 @@ def _patch_main_deps() -> dict:
 
     _bcp_orig = _redis_asyncio.BlockingConnectionPool  # save for restore
     _bcp_mock = MagicMock()
-    _bcp_mock.from_url = MagicMock(
-        side_effect=ImportError("test env — falkordb disabled")
-    )
+    _bcp_mock.from_url = MagicMock(side_effect=ImportError("test env — falkordb disabled"))
     _redis_asyncio.BlockingConnectionPool = _bcp_mock  # type: ignore[assignment]
     mocks["_bcp_orig"] = _bcp_orig
 
@@ -1225,9 +1179,7 @@ def _patch_main_deps() -> dict:
 
     # ── asyncio.get_running_loop ─────────────────────────────────────────
     _loop = MagicMock()
-    loop_patch = patch(
-        "services.worker.worker.asyncio.get_running_loop", return_value=_loop
-    )
+    loop_patch = patch("services.worker.worker.asyncio.get_running_loop", return_value=_loop)
     loop_patch.start()
     _patchers.append(loop_patch)
     mocks["loop"] = _loop

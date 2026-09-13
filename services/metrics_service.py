@@ -37,48 +37,39 @@ logger = logging.getLogger(__name__)
 LATENCY_QUERIES: list[tuple[str, str]] = [
     (
         "overall_p50",
-        "histogram_quantile(0.50, sum(rate(openzync_http_request_duration_seconds"
-        "_bucket[5m])) by (le)) * 1000",
+        "histogram_quantile(0.50, sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "overall_p95",
-        "histogram_quantile(0.95, sum(rate(openzync_http_request_duration_seconds"
-        "_bucket[5m])) by (le)) * 1000",
+        "histogram_quantile(0.95, sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "overall_p99",
-        "histogram_quantile(0.99, sum(rate(openzync_http_request_duration_seconds"
-        "_bucket[5m])) by (le)) * 1000",
+        "histogram_quantile(0.99, sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "context_p50",
-        "histogram_quantile(0.50, sum(rate(openzync_context_latency_seconds"
-        "_bucket[5m])) by (le)) * 1000",
+        "histogram_quantile(0.50, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "context_p95",
-        "histogram_quantile(0.95, sum(rate(openzync_context_latency_seconds"
-        "_bucket[5m])) by (le)) * 1000",
+        "histogram_quantile(0.95, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "context_p99",
-        "histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds"
-        "_bucket[5m])) by (le)) * 1000",
+        "histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "graph_search_p50",
-        "histogram_quantile(0.50, sum(rate(openzync_graph_search_latency_seconds"
-        "_bucket[5m])) by (le)) * 1000",
+        "histogram_quantile(0.50, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "graph_search_p95",
-        "histogram_quantile(0.95, sum(rate(openzync_graph_search_latency_seconds"
-        "_bucket[5m])) by (le)) * 1000",
+        "histogram_quantile(0.95, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000",
     ),
     (
         "graph_search_p99",
-        "histogram_quantile(0.99, sum(rate(openzync_graph_search_latency_seconds"
-        "_bucket[5m])) by (le)) * 1000",
+        "histogram_quantile(0.99, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000",
     ),
 ]
 
@@ -88,8 +79,7 @@ RATE_QUERIES: list[tuple[str, str]] = [
     ("rate_5xx", 'sum(rate(openzync_http_requests_total{status="5xx"}[5m]))'),
     (
         "error_rate_pct",
-        "(sum(rate(openzync_http_requests_total{status=\"5xx\"}[5m])) / "
-        "(sum(rate(openzync_http_requests_total[5m])) or vector(1))) * 100",
+        '(sum(rate(openzync_http_requests_total{status="5xx"}[5m])) / (sum(rate(openzync_http_requests_total[5m])) or vector(1))) * 100',
     ),
 ]
 
@@ -119,33 +109,15 @@ ERROR_RANGE_QUERIES: dict[str, str] = {
 }
 
 CONTEXT_LATENCY_RANGE_QUERIES: dict[str, str] = {
-    "p50": (
-        "histogram_quantile(0.50, sum(rate(openzync_context_latency_seconds"
-        "_bucket[5m])) by (le)) * 1000"
-    ),
-    "p95": (
-        "histogram_quantile(0.95, sum(rate(openzync_context_latency_seconds"
-        "_bucket[5m])) by (le)) * 1000"
-    ),
-    "p99": (
-        "histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds"
-        "_bucket[5m])) by (le)) * 1000"
-    ),
+    "p50": "histogram_quantile(0.50, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000",
+    "p95": "histogram_quantile(0.95, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000",
+    "p99": "histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds_bucket[5m])) by (le)) * 1000",
 }
 
 GRAPH_LATENCY_RANGE_QUERIES: dict[str, str] = {
-    "p50": (
-        "histogram_quantile(0.50, sum(rate(openzync_graph_search_latency_seconds"
-        "_bucket[5m])) by (le)) * 1000"
-    ),
-    "p95": (
-        "histogram_quantile(0.95, sum(rate(openzync_graph_search_latency_seconds"
-        "_bucket[5m])) by (le)) * 1000"
-    ),
-    "p99": (
-        "histogram_quantile(0.99, sum(rate(openzync_graph_search_latency_seconds"
-        "_bucket[5m])) by (le)) * 1000"
-    ),
+    "p50": "histogram_quantile(0.50, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000",
+    "p95": "histogram_quantile(0.95, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000",
+    "p99": "histogram_quantile(0.99, sum(rate(openzync_graph_search_latency_seconds_bucket[5m])) by (le)) * 1000",
 }
 
 # ── Org-filter helpers ────────────────────────────────────────────────────────
@@ -221,7 +193,7 @@ class MetricsService:
         """
         results: dict[str, float] = {}
 
-        # Org-scoped instant queries (queue stays global; see _inject_org_filter).
+        # Build org-scoped instant queries (queue stays global — see _inject_org_filter).
         if _is_org_scoped(org_id):
             assert org_id is not None  # narrowed by _is_org_scoped
             effective_all = [

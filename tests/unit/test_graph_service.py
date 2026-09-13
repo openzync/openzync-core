@@ -119,19 +119,12 @@ class TestGraphService:
         entity_id = uuid4()
         mock_backend = AsyncMock()
         mock_backend.get_entities_for_session.return_value = [
-            {
-                "id": entity_id,
-                "name": "SessionEntity",
-                "entity_type": "person",
-                "summary": "A person",
-            },
+            {"id": entity_id, "name": "SessionEntity", "entity_type": "person", "summary": "A person"},
         ]
         service = GraphService(graph_backend=mock_backend)
 
         result = await service.get_entities(
-            self.ORG_ID,
-            self.PROJECT_ID,
-            session_id=uuid4(),
+            self.ORG_ID, self.PROJECT_ID, session_id=uuid4(),
         )
 
         assert len(result["items"]) == 1
@@ -147,21 +140,14 @@ class TestGraphService:
         mock_backend = AsyncMock()
         mock_backend.get_entities_for_session.return_value = [
             {"id": uuid4(), "name": "Alice", "entity_type": "person", "summary": ""},
-            {
-                "id": uuid4(),
-                "name": "Org",
-                "entity_type": "organization",
-                "summary": "",
-            },
+            {"id": uuid4(), "name": "Org", "entity_type": "organization", "summary": ""},
             {"id": uuid4(), "name": "Bob", "entity_type": "person", "summary": ""},
         ]
         service = GraphService(graph_backend=mock_backend)
 
         result = await service.get_entities(
-            self.ORG_ID,
-            self.PROJECT_ID,
-            entity_type="person",
-            session_id=uuid4(),
+            self.ORG_ID, self.PROJECT_ID,
+            entity_type="person", session_id=uuid4(),
         )
 
         assert len(result["items"]) == 2
@@ -176,9 +162,7 @@ class TestGraphService:
         entity_id = uuid4()
         expected = {
             "node": {"id": str(entity_id), "name": "TestEntity"},
-            "edges": [
-                {"id": "e1", "source_id": str(entity_id), "target_id": str(uuid4())}
-            ],
+            "edges": [{"id": "e1", "source_id": str(entity_id), "target_id": str(uuid4())}],
         }
         mock_backend = AsyncMock()
         mock_backend.get_entity_with_edges.return_value = expected
@@ -188,9 +172,7 @@ class TestGraphService:
 
         assert result == expected
         mock_backend.get_entity_with_edges.assert_awaited_once_with(
-            org_id=self.ORG_ID,
-            project_id=self.PROJECT_ID,
-            entity_id=entity_id,
+            org_id=self.ORG_ID, project_id=self.PROJECT_ID, entity_id=entity_id,
         )
 
     # ── delete_entity ──────────────────────────────────────────────────────
@@ -221,9 +203,7 @@ class TestGraphService:
         """Single subject_id, delegates to list_entity_edges."""
         subject_id = uuid4()
         expected = {
-            "items": [
-                {"id": "e1", "source_id": str(subject_id), "target_id": str(uuid4())}
-            ],
+            "items": [{"id": "e1", "source_id": str(subject_id), "target_id": str(uuid4())}],
             "next_cursor": None,
             "has_more": False,
         }
@@ -231,18 +211,12 @@ class TestGraphService:
         mock_backend.list_entity_edges.return_value = expected
         service = GraphService(graph_backend=mock_backend)
 
-        result = await service.get_edges(
-            self.ORG_ID, self.PROJECT_ID, subject_id=subject_id
-        )
+        result = await service.get_edges(self.ORG_ID, self.PROJECT_ID, subject_id=subject_id)
 
         assert result == expected
         mock_backend.list_entity_edges.assert_awaited_once_with(
-            org_id=self.ORG_ID,
-            project_id=self.PROJECT_ID,
-            entity_id=subject_id,
-            predicate=None,
-            limit=50,
-            cursor=None,
+            org_id=self.ORG_ID, project_id=self.PROJECT_ID,
+            entity_id=subject_id, predicate=None, limit=50, cursor=None,
         )
 
     @pytest.mark.asyncio
@@ -252,19 +226,13 @@ class TestGraphService:
         eid_b = uuid4()
         mock_backend = AsyncMock()
         mock_backend.list_entity_edges.side_effect = [
-            {
-                "items": [{"id": "e1"}, {"id": "e2"}],
-                "next_cursor": None,
-                "has_more": False,
-            },
+            {"items": [{"id": "e1"}, {"id": "e2"}], "next_cursor": None, "has_more": False},
             {"items": [{"id": "e3"}], "next_cursor": None, "has_more": False},
         ]
         service = GraphService(graph_backend=mock_backend)
 
         result = await service.get_edges(
-            self.ORG_ID,
-            self.PROJECT_ID,
-            subject_ids=[eid_a, eid_b],
+            self.ORG_ID, self.PROJECT_ID, subject_ids=[eid_a, eid_b],
         )
 
         assert len(result["items"]) == 3
@@ -281,23 +249,13 @@ class TestGraphService:
         mock_backend = AsyncMock()
         # Both subjects return a shared edge "e2"
         mock_backend.list_entity_edges.side_effect = [
-            {
-                "items": [{"id": "e1"}, {"id": "e2"}],
-                "next_cursor": None,
-                "has_more": False,
-            },
-            {
-                "items": [{"id": "e2"}, {"id": "e3"}],
-                "next_cursor": None,
-                "has_more": False,
-            },
+            {"items": [{"id": "e1"}, {"id": "e2"}], "next_cursor": None, "has_more": False},
+            {"items": [{"id": "e2"}, {"id": "e3"}], "next_cursor": None, "has_more": False},
         ]
         service = GraphService(graph_backend=mock_backend)
 
         result = await service.get_edges(
-            self.ORG_ID,
-            self.PROJECT_ID,
-            subject_ids=[eid_a, eid_b],
+            self.ORG_ID, self.PROJECT_ID, subject_ids=[eid_a, eid_b],
         )
 
         # e2 should appear only once
@@ -306,9 +264,7 @@ class TestGraphService:
         assert len(result["items"]) == 3
 
     @pytest.mark.asyncio
-    async def test_get_edges_without_subject(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    async def test_get_edges_without_subject(self, caplog: pytest.LogCaptureFixture) -> None:
         """No subject_id or subject_ids — returns empty result with warning log."""
         mock_backend = AsyncMock()
         service = GraphService(graph_backend=mock_backend)
@@ -328,26 +284,18 @@ class TestGraphService:
         subject_id = uuid4()
         mock_backend = AsyncMock()
         mock_backend.list_entity_edges.return_value = {
-            "items": [],
-            "next_cursor": None,
-            "has_more": False,
+            "items": [], "next_cursor": None, "has_more": False,
         }
         service = GraphService(graph_backend=mock_backend)
 
         await service.get_edges(
-            self.ORG_ID,
-            self.PROJECT_ID,
-            subject_id=subject_id,
-            predicate="knows",
+            self.ORG_ID, self.PROJECT_ID,
+            subject_id=subject_id, predicate="knows",
         )
 
         mock_backend.list_entity_edges.assert_awaited_once_with(
-            org_id=self.ORG_ID,
-            project_id=self.PROJECT_ID,
-            entity_id=subject_id,
-            predicate="knows",
-            limit=50,
-            cursor=None,
+            org_id=self.ORG_ID, project_id=self.PROJECT_ID,
+            entity_id=subject_id, predicate="knows", limit=50, cursor=None,
         )
 
     # ── get_communities ────────────────────────────────────────────────────
@@ -386,10 +334,8 @@ class TestGraphService:
         assert result[0]["name"] == "Tech Cluster"
         assert result[0]["member_count"] == 42
         mock_backend.list_entities.assert_awaited_once_with(
-            org_id=self.ORG_ID,
-            project_id=self.PROJECT_ID,
-            entity_type="community",
-            limit=200,
+            org_id=self.ORG_ID, project_id=self.PROJECT_ID,
+            entity_type="community", limit=200,
         )
 
     @pytest.mark.asyncio

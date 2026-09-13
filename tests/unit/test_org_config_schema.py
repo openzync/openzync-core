@@ -156,21 +156,15 @@ class TestUpdateOrgConfigRequest:
 
     def test_embedding_dim_validation(self) -> None:
         """embedding_dim must be between 64 and 4096."""
-        with pytest.raises(
-            Exception, match="Input should be greater than or equal to 64"
-        ):
+        with pytest.raises(Exception, match="Input should be greater than or equal to 64"):
             UpdateOrgConfigRequest(embedding_dim=16)
 
-        with pytest.raises(
-            Exception, match="Input should be less than or equal to 4096"
-        ):
+        with pytest.raises(Exception, match="Input should be less than or equal to 4096"):
             UpdateOrgConfigRequest(embedding_dim=8192)
 
     def test_graph_max_traversal_depth_validation(self) -> None:
         """graph_max_traversal_depth must be between 1 and 10."""
-        with pytest.raises(
-            Exception, match="Input should be greater than or equal to 1"
-        ):
+        with pytest.raises(Exception, match="Input should be greater than or equal to 1"):
             UpdateOrgConfigRequest(graph_max_traversal_depth=0)
 
         with pytest.raises(Exception, match="Input should be less than or equal to 10"):
@@ -183,13 +177,8 @@ class TestUpdateOrgConfigRequest:
 
     def test_falkordb_and_surrealdb_allowed(self) -> None:
         """falkordb and surrealdb graph_backends are still allowed."""
-        assert (
-            UpdateOrgConfigRequest(graph_backend="falkordb").graph_backend == "falkordb"
-        )
-        assert (
-            UpdateOrgConfigRequest(graph_backend="surrealdb").graph_backend
-            == "surrealdb"
-        )
+        assert UpdateOrgConfigRequest(graph_backend="falkordb").graph_backend == "falkordb"
+        assert UpdateOrgConfigRequest(graph_backend="surrealdb").graph_backend == "surrealdb"
         assert UpdateOrgConfigRequest(graph_backend="none").graph_backend == "none"
         assert UpdateOrgConfigRequest(graph_backend=None).graph_backend is None
 

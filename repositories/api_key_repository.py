@@ -6,18 +6,14 @@ No business logic — pure query construction and execution.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import uuid
+from collections.abc import Sequence
 
 from sqlalchemy import func, select
 from sqlalchemy import update as sa_update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.api_key import ApiKey
-
-if TYPE_CHECKING:
-    import uuid
-    from collections.abc import Sequence
-
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class ApiKeyRepository:
@@ -61,7 +57,7 @@ class ApiKeyRepository:
         key_id: uuid.UUID,
         project_id: uuid.UUID | None = None,
     ) -> ApiKey | None:
-        """Get one API key by ID, scoped to org with optional project.
+        """Get a single API key by ID, scoped to the organization and optionally project.
 
         Args:
             organization_id: Tenant scope.
@@ -190,6 +186,8 @@ class ApiKeyRepository:
             key_id: The API key UUID to update.
         """
         await self._db.execute(
-            sa_update(ApiKey).where(ApiKey.id == key_id).values(last_used_at=func.now())
+            sa_update(ApiKey)
+            .where(ApiKey.id == key_id)
+            .values(last_used_at=func.now())
         )
         await self._db.flush()

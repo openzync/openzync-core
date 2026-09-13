@@ -20,20 +20,17 @@ logged at ERROR but do not fail the operation (stale cache expires via TTL).
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
+from uuid import UUID
 
+import redis.asyncio
+
+from core.openbao import OpenBaoClient
 from core.openbao_exceptions import OpenBaoConnectionError
 from schemas.organization_config import (
     OrgConfigBase,
     UpdateOrgConfigRequest,
 )
-
-if TYPE_CHECKING:
-    from uuid import UUID
-
-    import redis.asyncio
-
-    from core.openbao import OpenBaoClient
 
 logger = logging.getLogger(__name__)
 
@@ -113,9 +110,7 @@ async def get_org_config(
     # 3. Write to cache (best-effort)
     if not skip_cache and redis is not None:
         try:
-            await redis.setex(
-                cache_key, ORG_CONFIG_CACHE_TTL, org_config.model_dump_json()
-            )
+            await redis.setex(cache_key, ORG_CONFIG_CACHE_TTL, org_config.model_dump_json())
         except Exception:
             logger.error(
                 "org_config.cache_write_failed",
@@ -182,9 +177,7 @@ async def update_org_config(
             )
 
     # 5. Re-read from OpenBao (cache is cold — forces fresh read)
-    return await get_org_config(
-        org_id, redis=redis, bao_client=bao_client, skip_cache=True
-    )
+    return await get_org_config(org_id, redis=redis, bao_client=bao_client, skip_cache=True)
 
 
 def build_cache_key(org_id: UUID) -> str:

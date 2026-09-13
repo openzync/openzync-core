@@ -63,7 +63,9 @@ class _FakeEmbedResponse:
 
 class _FakeEmbedBackend:
     async def embed(self, texts, model=None) -> _FakeEmbedResponse:
-        return _FakeEmbedResponse(embeddings=[[0.0] * 1536 for _ in texts])
+        return _FakeEmbedResponse(
+            embeddings=[[0.0] * 1536 for _ in texts]
+        )
 
 
 async def _fake_resolve_backend(provider=None, org_config=None) -> _FakeEmbedBackend:
@@ -114,11 +116,7 @@ class TestSearchFacts:
                 "session_id": isolated_search_session,
                 "facts": [
                     {"subject": "Alice", "predicate": "likes", "object": "hiking"},
-                    {
-                        "subject": "Bob",
-                        "predicate": "enjoys",
-                        "object": "mountain biking",
-                    },
+                    {"subject": "Bob", "predicate": "enjoys", "object": "mountain biking"},
                 ],
             },
         )
@@ -128,15 +126,11 @@ class TestSearchFacts:
             f"/v1/projects/{isolated_project_id}/search",
             params={"query": "hiking", "types": "facts"},
         )
-        assert resp.status_code == 200, (
-            f"Expected 200, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
         body = resp.json()
         assert "results" in body
         # Should find the hiking fact
-        hiking_results = [
-            r for r in body["results"] if "hiking" in r.get("content", "")
-        ]
+        hiking_results = [r for r in body["results"] if "hiking" in r.get("content", "")]
         assert len(hiking_results) >= 1, (
             f"Expected at least 1 fact about hiking, got {len(hiking_results)}. "
             f"Results: {body['results']}"
@@ -205,10 +199,7 @@ class TestSearchFacts:
                     {
                         "session_id": isolated_search_session,
                         "messages": [
-                            {
-                                "role": "user",
-                                "content": "I love mountain hiking in Colorado",
-                            },
+                            {"role": "user", "content": "I love mountain hiking in Colorado"},
                         ],
                     }
                 ),
@@ -235,5 +226,6 @@ class TestSearchFacts:
         body = resp.json()
         assert "results" in body
         assert len(body["results"]) >= 1, (
-            f"Expected at least 1 result, got {len(body['results'])}. Body: {body}"
+            f"Expected at least 1 result, got {len(body['results'])}. "
+            f"Body: {body}"
         )

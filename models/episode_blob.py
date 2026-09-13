@@ -62,9 +62,7 @@ class EpisodeBlob(TimestampMixin, Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4,
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -93,9 +91,7 @@ class EpisodeBlob(TimestampMixin, Base):
     )
 
     # ── Storage metadata ────────────────────────────────────────────────
-    storage_backend: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="s3"
-    )
+    storage_backend: Mapped[str] = mapped_column(String(16), nullable=False, default="s3")
     storage_key: Mapped[str] = mapped_column(Text, nullable=False)
 
     # ── File metadata ───────────────────────────────────────────────────

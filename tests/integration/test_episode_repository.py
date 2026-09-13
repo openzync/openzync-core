@@ -22,7 +22,9 @@ class TestEpisodeRepository:
     ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
     PROJECT_ID = UUID("00000000-0000-0000-0000-000000000002")
 
-    async def _seed_user_and_session(self, db: AsyncSession) -> tuple[UUID, UUID]:
+    async def _seed_user_and_session(
+        self, db: AsyncSession
+    ) -> tuple[UUID, UUID]:
         user_repo = UserRepository(db)
         session_repo = SessionRepository(db)
         user = await user_repo.create(

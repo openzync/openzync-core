@@ -36,7 +36,9 @@ class TestProjectAuthEnforcement:
 
     async def test_create_requires_auth(self, async_client: AsyncClient) -> None:
         """POST /v1/projects returns 401 without auth."""
-        resp = await async_client.post("/v1/projects", json={"name": "Not Allowed"})
+        resp = await async_client.post(
+            "/v1/projects", json={"name": "Not Allowed"}
+        )
         assert resp.status_code == 401
 
     async def test_get_requires_auth(self, async_client: AsyncClient) -> None:
@@ -46,7 +48,9 @@ class TestProjectAuthEnforcement:
         )
         assert resp.status_code == 401
 
-    async def test_member_list_requires_auth(self, async_client: AsyncClient) -> None:
+    async def test_member_list_requires_auth(
+        self, async_client: AsyncClient
+    ) -> None:
         """GET /v1/projects/{id}/members returns 401 without auth."""
         resp = await async_client.get(
             "/v1/projects/00000000-0000-0000-0000-000000000001/members"

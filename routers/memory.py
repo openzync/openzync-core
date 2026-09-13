@@ -65,14 +65,8 @@ router = APIRouter(
         202: {"description": "Accepted — messages queued for processing."},
         401: {"description": "Missing or invalid authentication."},
         403: {"description": "Not a member of this project."},
-        413: {
-            "description": "Content exceeds 64KB limit per message or blob size limit."
-        },
-        422: {
-            "description": (
-                "Validation error (e.g., empty messages list, invalid blob refs)."
-            )
-        },
+        413: {"description": "Content exceeds 64KB limit per message or blob size limit."},
+        422: {"description": "Validation error (e.g., empty messages list, invalid blob refs)."},
     },
 )
 @audit_action("memory.ingest", "episode", "Messages ingested")
@@ -80,9 +74,7 @@ async def ingest_messages(
     request: Request,
     response: Response,
     data: str = Form(..., description="JSON payload: IngestMemoryRequest"),
-    blobs: list[UploadFile] = File(
-        default=[], description="Binary file attachments (blob_0, blob_1, ...)"
-    ),
+    blobs: list[UploadFile] = File(default=[], description="Binary file attachments (blob_0, blob_1, ...)"),
     service: MemoryService = Depends(get_memory_service),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:write")),
@@ -106,8 +98,7 @@ async def ingest_messages(
         Content-Disposition: form-data; name="data"
         Content-Type: application/json
 
-        {"session_id": "abc", "messages": [{"role": "user", "content": "See attached",
-        "blobs": [{"blob_id": 0, "mime_type": "image/png", "file_name": "shot.png"}]}]}
+        {"session_id": "abc", "messages": [{"role": "user", "content": "See attached", "blobs": [{"blob_id": 0, "mime_type": "image/png", "file_name": "shot.png"}]}]}
         --boundary
         Content-Disposition: form-data; name="blob_0"; filename="shot.png"
         Content-Type: image/png
@@ -159,7 +150,7 @@ async def ingest_messages(
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail=f"blob_id out of range: max is {max_allowed} "
-                f"but referenced IDs include {referenced_ids}",
+                       f"but referenced IDs include {referenced_ids}",
             )
 
         # Every uploaded file must be referenced by at least one message

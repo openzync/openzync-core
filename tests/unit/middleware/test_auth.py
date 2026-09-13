@@ -79,9 +79,7 @@ class TestAuthMiddleware:
                 "org_id": getattr(request.state, "org_id", None),
                 "user_id": getattr(request.state, "user_id", None),
                 "role": getattr(request.state, "role", None),
-                "api_key_permissions": getattr(
-                    request.state, "api_key_permissions", []
-                ),
+                "api_key_permissions": getattr(request.state, "api_key_permissions", []),
                 "api_key_project_id": getattr(
                     request.state, "api_key_project_id", None
                 ),
@@ -372,8 +370,8 @@ class TestAuthMiddleware:
         )
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_user_service] = lambda: service
-        app.dependency_overrides[require_org_id] = lambda: (
-            "00000000-0000-0000-0000-000000000001"
+        app.dependency_overrides[require_org_id] = (
+            lambda: "00000000-0000-0000-0000-000000000001"
         )
         app.include_router(router)
         app.add_middleware(AuthMiddleware)

@@ -8,10 +8,13 @@ and ``EpisodeBlobRepository`` (message attachments).
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
+from uuid import UUID
 
 from core.events import EventType
 from core.exceptions import ConflictError, NotFoundError, ValidationError
+from repositories.episode_blob_repository import EpisodeBlobRepository
+from repositories.session_repository import SessionRepository
 from schemas.common import PaginatedResponse
 from schemas.mappers import episode_to_dict, session_to_dict, session_to_list_dict
 from schemas.sessions import (
@@ -19,13 +22,7 @@ from schemas.sessions import (
     SessionListResponse,
     SessionResponse,
 )
-
-if TYPE_CHECKING:
-    from uuid import UUID
-
-    from repositories.episode_blob_repository import EpisodeBlobRepository
-    from repositories.session_repository import SessionRepository
-    from services.webhook_service import WebhookService
+from services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
 
@@ -146,11 +143,7 @@ class SessionService:
             raise NotFoundError(f"Session {session_id} not found")
 
         stats = await self._repo.get_stats(session_id)
-        observation_count = (
-            await self._repo.get_observation_count(org_id, project_id)
-            if project_id
-            else 0
-        )
+        observation_count = await self._repo.get_observation_count(org_id, project_id) if project_id else 0
 
         return SessionResponse.model_validate(
             session_to_dict(
@@ -178,10 +171,13 @@ class SessionService:
         Raises:
             NotFoundError: Session not found or soft-deleted.
         """
-        session = await self._repo.get_by_external_id(org_id, project_id, external_id)
+        session = await self._repo.get_by_external_id(
+            org_id, project_id, external_id
+        )
         if session is None:
             raise NotFoundError(
-                f"Session external_id={external_id!r} not found in project {project_id}"
+                f"Session external_id={external_id!r} not found "
+                f"in project {project_id}"
             )
 
         stats = await self._repo.get_stats(session.id)
@@ -260,9 +256,7 @@ class SessionService:
 
         # Batch-load message and fact counts — one query instead of N+1.
         session_ids = [s.id for s in sessions]
-        stats = (
-            await self._repo.batch_get_stats(session_ids, org_id) if session_ids else {}
-        )
+        stats = await self._repo.batch_get_stats(session_ids, org_id) if session_ids else {}
 
         items = [
             SessionListResponse.model_validate(

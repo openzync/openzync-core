@@ -1,5 +1,4 @@
 """Unit tests for RequestIDMiddleware."""
-
 from __future__ import annotations
 
 import uuid

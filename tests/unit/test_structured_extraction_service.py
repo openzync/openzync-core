@@ -19,8 +19,7 @@ class TestStructuredExtractionService:
         mock_session_repo = AsyncMock()
 
         mock_session_repo.get_by_uuid.return_value = MagicMock(
-            id=uuid4(),
-            is_deleted=False,
+            id=uuid4(), is_deleted=False,
         )
 
         service = StructuredExtractionService(
@@ -38,8 +37,7 @@ class TestStructuredExtractionService:
         mock_repo.get_by_session.return_value = []
 
         result = await service.get_session_extractions(
-            org_id=self.ORG_ID,
-            session_id=uuid4(),
+            org_id=self.ORG_ID, session_id=uuid4(),
         )
         assert len(result.items) == 0
         assert result.total == 0

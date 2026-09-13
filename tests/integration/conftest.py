@@ -49,17 +49,13 @@ def asgi_transport(app: Any) -> ASGITransport:
     This wrapper injects the app reference so the middleware can find
     the Redis client.
     """
-
     async def _asgi_with_scope(
-        scope: dict,
-        receive: Any,
-        send: Any,
+        scope: dict, receive: Any, send: Any,
     ) -> None:
         scope["app"] = app
         await app(scope, receive, send)
 
     return ASGITransport(app=_asgi_with_scope)
-
 
 # Module-level container registry.
 # SQLAlchemy AsyncEngine uses __slots__ and rejects arbitrary attributes,
@@ -569,7 +565,9 @@ async def isolated_auth_client(
     """HTTP client pre-authenticated, backed by the isolated app."""
     transport = asgi_transport(isolated_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        client.headers["Authorization"] = f"Bearer {isolated_org_and_key['api_key']}"
+        client.headers["Authorization"] = (
+            f"Bearer {isolated_org_and_key['api_key']}"
+        )
         yield client
 
 

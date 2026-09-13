@@ -108,9 +108,7 @@ async def _reembed_table(
                     logger.warning("Empty embedding for %s/%s", table, row_id)
                     continue
                 await db.execute(
-                    text(
-                        f"UPDATE {table} SET embedding = :emb, updated_at = now() {update_extra} WHERE id = :rid"
-                    ),
+                    text(f"UPDATE {table} SET embedding = :emb, updated_at = now() {update_extra} WHERE id = :rid"),
                     {"emb": embedding, "rid": row_id},
                 )
                 count += 1
@@ -125,42 +123,19 @@ async def _reembed_table(
 
 @click.command()
 @click.argument("project_id", type=str)
-@click.option(
-    "--db-url",
-    default="postgresql+asyncpg://openzep@localhost:5432/openzep",
-    show_default=True,
-)
+@click.option("--db-url", default="postgresql+asyncpg://openzep@localhost:5432/openzep", show_default=True)
 @click.option("--ollama-url", default="http://localhost:11434", show_default=True)
 @click.option("--model", default="nomic-embed-text", show_default=True)
-@click.option(
-    "--concurrency", default=10, show_default=True, help="Parallel Ollama requests."
-)
+@click.option("--concurrency", default=10, show_default=True, help="Parallel Ollama requests.")
 @click.option("--batch-size", default=200, show_default=True)
-def main(
-    project_id: str,
-    db_url: str,
-    ollama_url: str,
-    model: str,
-    concurrency: int,
-    batch_size: int,
-) -> None:
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
-    )
+def main(project_id: str, db_url: str, ollama_url: str, model: str, concurrency: int, batch_size: int) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     pid = uuid.UUID(project_id)
 
     start = time.monotonic()
     fact_count = asyncio.run(
-        _reembed_table(
-            pid,
-            "facts",
-            db_url,
-            ollama_url,
-            model,
-            concurrency,
-            batch_size,
-            where_extra="AND invalid_at IS NULL",
-        )
+        _reembed_table(pid, "facts", db_url, ollama_url, model, concurrency, batch_size,
+                       where_extra="AND invalid_at IS NULL")
     )
     elapsed = time.monotonic() - start
     logger.info("Done — re-embedded %d facts in %.1fs", fact_count, elapsed)

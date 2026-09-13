@@ -8,20 +8,16 @@ scope).  All tenant isolation is enforced at the repository layer.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from uuid import UUID
 
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.arq import ARQPool
 from core.exceptions import CacheUnavailableError, RateLimitError
 from repositories.custom_instruction_repository import CustomInstructionRepository
 from repositories.user_repository import UserRepository
 from schemas.user_summary import UserSummaryResponse, UserSummaryTriggerResponse
-
-if TYPE_CHECKING:
-    from uuid import UUID
-
-    from redis.asyncio import Redis
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from core.arq import ARQPool
 
 logger = logging.getLogger(__name__)
 

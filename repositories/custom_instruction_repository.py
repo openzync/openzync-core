@@ -6,16 +6,12 @@ Follows the ``WebhookRepository`` pattern — thin data access with
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import uuid
 
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.custom_instruction import CustomInstruction
-
-if TYPE_CHECKING:
-    import uuid
-
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class CustomInstructionRepository:
@@ -55,9 +51,7 @@ class CustomInstructionRepository:
             conditions.append(CustomInstruction.target_id.is_(None))
 
         result = await self._db.execute(
-            select(CustomInstruction)
-            .where(*conditions)
-            .order_by(CustomInstruction.name)
+            select(CustomInstruction).where(*conditions).order_by(CustomInstruction.name)
         )
         return list(result.scalars().all())
 
@@ -94,7 +88,9 @@ class CustomInstructionRepository:
         else:
             delete_conditions.append(CustomInstruction.target_id.is_(None))
 
-        await self._db.execute(delete(CustomInstruction).where(*delete_conditions))
+        await self._db.execute(
+            delete(CustomInstruction).where(*delete_conditions)
+        )
 
         # Bulk insert the new ones
         new_instructions: list[CustomInstruction] = []

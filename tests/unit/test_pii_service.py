@@ -83,7 +83,9 @@ class TestRegexPII:
     def test_detects_crypto_wallet(self) -> None:
         """Ethereum address (0x-prefixed) is detected."""
         detector = self._make_detector()
-        result = detector.detect("ETH: 0x0123456789012345678901234567890123456789")
+        result = detector.detect(
+            "ETH: 0x0123456789012345678901234567890123456789"
+        )
         assert len(result) >= 1
         assert any(f.type == "crypto_wallet" for f in result)
 
@@ -298,7 +300,9 @@ class TestPIIService:
 
     def test_process_message_mode_mask(self) -> None:
         """mode='mask' redacts PII and returns detections."""
-        service = PIIService({"mode": "mask", "sensitivity": "low"})
+        service = PIIService(
+            {"mode": "mask", "sensitivity": "low"}
+        )
         result, detections, blocked = asyncio.run(
             service.process_message("My email is test@example.com")
         )
@@ -309,13 +313,19 @@ class TestPIIService:
 
     def test_process_message_mode_block_raises(self) -> None:
         """mode='block' with PII raises ValidationError."""
-        service = PIIService({"mode": "block", "sensitivity": "low"})
+        service = PIIService(
+            {"mode": "block", "sensitivity": "low"}
+        )
         with pytest.raises(ValidationError, match="PII"):
-            asyncio.run(service.process_message("My email is test@example.com"))
+            asyncio.run(
+                service.process_message("My email is test@example.com")
+            )
 
     def test_process_message_block_mode_no_pii_passes(self) -> None:
         """mode='block' with no PII passes through unchanged."""
-        service = PIIService({"mode": "block", "sensitivity": "low"})
+        service = PIIService(
+            {"mode": "block", "sensitivity": "low"}
+        )
         result, detections, blocked = asyncio.run(
             service.process_message("Hello, how are you?")
         )
@@ -395,16 +405,14 @@ class TestNERPII:
 
     def test_detects_name_with_ner(self) -> None:
         """NER detects PERSON entity as 'name' type."""
-        mock_nlp = self._make_mock_nlp(
-            [
-                {
-                    "label_": "PERSON",
-                    "text": "John Doe",
-                    "start_char": 11,
-                    "end_char": 19,
-                },
-            ]
-        )
+        mock_nlp = self._make_mock_nlp([
+            {
+                "label_": "PERSON",
+                "text": "John Doe",
+                "start_char": 11,
+                "end_char": 19,
+            },
+        ])
         with patch.object(PIIDetector, "_get_nlp", return_value=mock_nlp):
             detector = PIIDetector(
                 use_ner=True,
@@ -419,16 +427,14 @@ class TestNERPII:
 
     def test_detects_organization_with_ner(self) -> None:
         """NER detects ORG entity as 'organization' type."""
-        mock_nlp = self._make_mock_nlp(
-            [
-                {
-                    "label_": "ORG",
-                    "text": "Acme Corp",
-                    "start_char": 10,
-                    "end_char": 19,
-                },
-            ]
-        )
+        mock_nlp = self._make_mock_nlp([
+            {
+                "label_": "ORG",
+                "text": "Acme Corp",
+                "start_char": 10,
+                "end_char": 19,
+            },
+        ])
         with patch.object(PIIDetector, "_get_nlp", return_value=mock_nlp):
             detector = PIIDetector(
                 use_ner=True,
@@ -442,16 +448,14 @@ class TestNERPII:
 
     def test_detects_location_with_ner(self) -> None:
         """NER detects GPE entity as 'address' type."""
-        mock_nlp = self._make_mock_nlp(
-            [
-                {
-                    "label_": "GPE",
-                    "text": "Paris",
-                    "start_char": 14,
-                    "end_char": 19,
-                },
-            ]
-        )
+        mock_nlp = self._make_mock_nlp([
+            {
+                "label_": "GPE",
+                "text": "Paris",
+                "start_char": 14,
+                "end_char": 19,
+            },
+        ])
         with patch.object(PIIDetector, "_get_nlp", return_value=mock_nlp):
             detector = PIIDetector(
                 use_ner=True,
@@ -465,16 +469,14 @@ class TestNERPII:
 
     def test_detects_date_with_ner(self) -> None:
         """NER detects DATE entity as 'date' type."""
-        mock_nlp = self._make_mock_nlp(
-            [
-                {
-                    "label_": "DATE",
-                    "text": "next Monday",
-                    "start_char": 17,
-                    "end_char": 28,
-                },
-            ]
-        )
+        mock_nlp = self._make_mock_nlp([
+            {
+                "label_": "DATE",
+                "text": "next Monday",
+                "start_char": 17,
+                "end_char": 28,
+            },
+        ])
         with patch.object(PIIDetector, "_get_nlp", return_value=mock_nlp):
             detector = PIIDetector(
                 use_ner=True,
@@ -490,28 +492,20 @@ class TestNERPII:
 
     def test_ner_skips_unmapped_labels(self) -> None:
         """Labels not in NER_LABEL_MAP (e.g. 'LAW') are skipped."""
-        mock_nlp = self._make_mock_nlp(
-            [
-                {
-                    "label_": "LAW",  # Not in NER_LABEL_MAP → skipped
-                    "text": "Some Law",
-                    "start_char": 0,
-                    "end_char": 9,
-                },
-            ]
-        )
+        mock_nlp = self._make_mock_nlp([
+            {
+                "label_": "LAW",  # Not in NER_LABEL_MAP → skipped
+                "text": "Some Law",
+                "start_char": 0,
+                "end_char": 9,
+            },
+        ])
         with patch.object(PIIDetector, "_get_nlp", return_value=mock_nlp):
             detector = PIIDetector(
                 use_ner=True,
                 min_confidence=0.0,
-                enabled_types=[
-                    "email",
-                    "phone",
-                    "name",
-                    "address",
-                    "organization",
-                    "date",
-                ],
+                enabled_types=["email", "phone", "name", "address",
+                               "organization", "date"],
             )
             results = detector.detect("Some Law reference")
 
@@ -519,16 +513,14 @@ class TestNERPII:
 
     def test_ner_skips_disabled_types(self) -> None:
         """Entity types not in enabled_types are skipped."""
-        mock_nlp = self._make_mock_nlp(
-            [
-                {
-                    "label_": "PERSON",  # Maps to 'name'
-                    "text": "Jane Doe",
-                    "start_char": 0,
-                    "end_char": 8,
-                },
-            ]
-        )
+        mock_nlp = self._make_mock_nlp([
+            {
+                "label_": "PERSON",  # Maps to 'name'
+                "text": "Jane Doe",
+                "start_char": 0,
+                "end_char": 8,
+            },
+        ])
         with patch.object(PIIDetector, "_get_nlp", return_value=mock_nlp):
             # Only "email" is enabled — PERSON → "name" is filtered out
             detector = PIIDetector(
@@ -548,7 +540,6 @@ class TestNERPII:
         We patch ``_get_nlp`` to raise ExternalServiceError directly, matching
         what the real ``_get_nlp`` does when ``import spacy`` fails.
         """
-
         def _raise_import_error() -> MagicMock:
             raise ExternalServiceError(
                 "PII NER model (spaCy) is not installed. "
@@ -556,9 +547,7 @@ class TestNERPII:
             )
 
         with patch.object(
-            PIIDetector,
-            "_get_nlp",
-            side_effect=_raise_import_error,
+            PIIDetector, "_get_nlp", side_effect=_raise_import_error,
         ):
             detector = PIIDetector(use_ner=True)
             detector._nlp = None  # Force re-load attempt
@@ -568,7 +557,6 @@ class TestNERPII:
 
     def test_ner_model_load_failed_raises(self) -> None:
         """ExternalServiceError when NER model fails to load."""
-
         def _raise_os_error() -> MagicMock:
             raise ExternalServiceError(
                 "PII NER model (en_core_web_sm) failed to load. "
@@ -576,9 +564,7 @@ class TestNERPII:
             )
 
         with patch.object(
-            PIIDetector,
-            "_get_nlp",
-            side_effect=_raise_os_error,
+            PIIDetector, "_get_nlp", side_effect=_raise_os_error,
         ):
             detector = PIIDetector(use_ner=True)
             detector._nlp = None  # Force re-load attempt

@@ -83,13 +83,10 @@ async def test_get_defaults_success() -> None:
 
     with (
         patch("routers.admin_org_config.DEFAULTS_PATH") as mock_path,
-        patch(
-            "routers.admin_org_config.yaml.safe_load",
-            return_value={
-                "llm_backend": "ollama",
-                "llm_model": "llama3",
-            },
-        ),
+        patch("routers.admin_org_config.yaml.safe_load", return_value={
+            "llm_backend": "ollama",
+            "llm_model": "llama3",
+        }),
     ):
         mock_path.is_file.return_value = True
         mock_path.open.return_value.__enter__.return_value = fake_yaml_content
@@ -160,9 +157,7 @@ async def test_get_org_config_with_system_managed_fields() -> None:
     mock_service.get_config_response.return_value = OrgConfigResponse(
         stored=OrgConfigBase(llm_backend="ollama"),
         system_managed_fields=[
-            "surrealdb_url",
-            "surrealdb_user",
-            "surrealdb_pass",
+            "surrealdb_url", "surrealdb_user", "surrealdb_pass",
         ],
     )
 
@@ -172,10 +167,7 @@ async def test_get_org_config_with_system_managed_fields() -> None:
 
     app.dependency_overrides[_get_config_service] = lambda: mock_service
 
-    with patch(
-        "routers.admin_org_config._get_system_managed_fields",
-        return_value=system_fields,
-    ):
+    with patch("routers.admin_org_config._get_system_managed_fields", return_value=system_fields):
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             resp = await client.get("/admin/org/config")
 

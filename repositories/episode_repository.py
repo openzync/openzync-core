@@ -16,16 +16,14 @@ from __future__ import annotations
 
 import base64
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID, uuid4
 
 import orjson
 from sqlalchemy import func, or_, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.episode import Episode
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 # ╠ This file contains NO business logic — only query construction.
 # ╠ If you find yourself writing an ``if`` statement that makes a
@@ -90,15 +88,13 @@ class EpisodeRepository:
             params[f"user_id_{i}"] = user_id
             params[f"role_{i}"] = msg["role"]
             params[f"content_{i}"] = msg["content"]
-            params[f"metadata_{i}"] = orjson.dumps(msg.get("metadata", {})).decode(
-                "utf-8"
-            )
+            params[f"metadata_{i}"] = orjson.dumps(msg.get("metadata", {})).decode("utf-8")
             params[f"created_at_{i}"] = msg.get("created_at") or now
             params[f"seq_{i}"] = seq
 
             placeholders = (
-                f"(:id_{i}, :org_id_{i}, :project_id_{i}, :session_id_{i}, "
-                f":user_id_{i}, :role_{i}, :content_{i}, :metadata_{i}, "
+                f"(:id_{i}, :org_id_{i}, :project_id_{i}, :session_id_{i}, :user_id_{i}, "
+                f":role_{i}, :content_{i}, :metadata_{i}, "
                 f":created_at_{i}, :seq_{i})"
             )
             values.append(placeholders)
@@ -109,7 +105,7 @@ class EpisodeRepository:
                 id, organization_id, project_id, session_id, user_id,
                 role, content, metadata, created_at, sequence_number
             )
-            VALUES {", ".join(values)}
+            VALUES {', '.join(values)}
             RETURNING
                 id, organization_id, session_id, user_id,
                 role, content, metadata, embedding, token_count,
@@ -132,9 +128,7 @@ class EpisodeRepository:
                 user_id=mapping["user_id"],
                 role=mapping["role"],
                 content=mapping["content"],
-                metadata_=mapping["metadata"]
-                if mapping["metadata"] is not None
-                else {},
+                metadata_=mapping["metadata"] if mapping["metadata"] is not None else {},
                 embedding=mapping["embedding"],
                 token_count=mapping["token_count"],
                 sequence_number=mapping["sequence_number"],
@@ -184,9 +178,9 @@ class EpisodeRepository:
                 )
             )
 
-        query = query.order_by(Episode.sequence_number.asc(), Episode.id.asc()).limit(
-            effective_limit
-        )
+        query = query.order_by(
+            Episode.sequence_number.asc(), Episode.id.asc()
+        ).limit(effective_limit)
 
         result = await self._db.execute(query)
         rows: list[Episode] = list(result.scalars().all())
@@ -236,9 +230,9 @@ class EpisodeRepository:
                 )
             )
 
-        query = query.order_by(Episode.created_at.desc(), Episode.id.asc()).limit(
-            effective_limit
-        )
+        query = query.order_by(
+            Episode.created_at.desc(), Episode.id.asc()
+        ).limit(effective_limit)
 
         result = await self._db.execute(query)
         rows: list[Episode] = list(result.scalars().all())
@@ -344,7 +338,9 @@ class EpisodeRepository:
 
     # ── Update Enrichment Status ─────────────────────────────────────────────
 
-    async def update_enrichment_status(self, episode_id: UUID, bitmask: int) -> None:
+    async def update_enrichment_status(
+        self, episode_id: UUID, bitmask: int
+    ) -> None:
         """Set the enrichment_status bitmask for an episode.
 
         Uses an atomic ``UPDATE ... SET enrichment_status = :bitmask``
@@ -362,7 +358,9 @@ class EpisodeRepository:
             {"bitmask": bitmask, "id": episode_id},
         )
 
-    async def apply_enrichment_bits(self, episode_id: UUID, bitmask: int) -> None:
+    async def apply_enrichment_bits(
+        self, episode_id: UUID, bitmask: int
+    ) -> None:
         """Atomically OR a bitmask into the enrichment_status.
 
         Uses ``SET enrichment_status = enrichment_status | :bitmask`` so
@@ -440,11 +438,7 @@ class EpisodeRepository:
                 LIMIT :limit
                 """
             ),
-            {
-                "embedding": embedding,
-                "project_id": project_id,
-                "limit": effective_limit,
-            },
+            {"embedding": embedding, "project_id": project_id, "limit": effective_limit},
         )
         return [
             {
@@ -496,12 +490,7 @@ class EpisodeRepository:
                 LIMIT :limit
                 """
             ),
-            {
-                "query": query,
-                "project_id": project_id,
-                "org_id": org_id,
-                "limit": effective_limit,
-            },
+            {"query": query, "project_id": project_id, "org_id": org_id, "limit": effective_limit},
         )
         return [
             {

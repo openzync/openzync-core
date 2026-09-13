@@ -49,7 +49,9 @@ class OrgRequestCreate(BaseModel):
         """Reject the reserved ``SYSTEM`` name (case-insensitive)."""
         stripped = v.strip()
         if stripped.upper() == _RESERVED_ORG_NAME:
-            raise ValueError(f"Organization name '{v}' is reserved and cannot be used.")
+            raise ValueError(
+                f"Organization name '{v}' is reserved and cannot be used."
+            )
         if not stripped:
             raise ValueError("organization_name must not be empty")
         return stripped

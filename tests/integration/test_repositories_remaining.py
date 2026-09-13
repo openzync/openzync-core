@@ -43,13 +43,10 @@ async def _seed_user_and_session(engine) -> tuple[UUID, UUID]:
         user_repo = UserRepository(db)
         session_repo = SessionRepository(db)
         user = await user_repo.create(
-            organization_id=ORG_ID,
-            external_id="repo_test_user",
+            organization_id=ORG_ID, external_id="repo_test_user",
         )
         session = await session_repo.create(
-            organization_id=ORG_ID,
-            project_id=PROJECT_ID,
-            created_by=user.id,
+            organization_id=ORG_ID, project_id=PROJECT_ID, created_by=user.id,
             external_id="repo_test_session",
         )
         return user.id, session.id
@@ -81,11 +78,8 @@ class TestApiKeyRepository:
             key = await repo.create(
                 organization_id=ORG_ID,
                 project_id=PROJECT_ID,
-                key_hash="hash123",
-                salt="salty",
-                prefix="oz_test_",
-                lookup_hash="lookup123",
-                name="Test Key",
+                key_hash="hash123", salt="salty", prefix="oz_test_",
+                lookup_hash="lookup123", name="Test Key",
             )
             assert key.id is not None
             assert key.prefix == "oz_test_"
@@ -112,11 +106,8 @@ class TestApiKeyRepository:
             key = await repo.create(
                 organization_id=ORG_ID,
                 project_id=PROJECT_ID,
-                key_hash="h2",
-                salt="s2",
-                prefix="oz_test_",
-                lookup_hash="l2",
-                name="Key 2",
+                key_hash="h2", salt="s2",
+                prefix="oz_test_", lookup_hash="l2", name="Key 2",
             )
             found = await repo.get_by_id(ORG_ID, key.id)
             assert found is not None
@@ -128,8 +119,7 @@ class TestApiKeyRepository:
 
             # Not found with wrong project_id
             not_found = await repo.get_by_id(
-                ORG_ID,
-                key.id,
+                ORG_ID, key.id,
                 project_id=UUID("00000000-0000-0000-0000-000000000099"),
             )
             assert not_found is None
@@ -146,11 +136,8 @@ class TestApiKeyRepository:
             key = await repo.create(
                 organization_id=ORG_ID,
                 project_id=PROJECT_ID,
-                key_hash="h3",
-                salt="s3",
-                prefix="oz_test_",
-                lookup_hash="l3",
-                name="Key 3",
+                key_hash="h3", salt="s3",
+                prefix="oz_test_", lookup_hash="l3", name="Key 3",
             )
             revoked = await repo.revoke(ORG_ID, key.id)
             assert revoked is not None
@@ -160,15 +147,11 @@ class TestApiKeyRepository:
             key2 = await repo.create(
                 organization_id=ORG_ID,
                 project_id=PROJECT_ID,
-                key_hash="h4",
-                salt="s4",
-                prefix="oz_test_",
-                lookup_hash="l4",
-                name="Key 4",
+                key_hash="h4", salt="s4",
+                prefix="oz_test_", lookup_hash="l4", name="Key 4",
             )
             not_revoked = await repo.revoke(
-                ORG_ID,
-                key2.id,
+                ORG_ID, key2.id,
                 project_id=UUID("00000000-0000-0000-0000-000000000099"),
             )
             assert not_revoked is None
@@ -184,16 +167,11 @@ class TestApiKeyRepository:
             key = await repo.create(
                 organization_id=ORG_ID,
                 project_id=PROJECT_ID,
-                key_hash="h5",
-                salt="s5",
-                prefix="oz_test_",
-                lookup_hash="l5",
-                name="Key 5",
+                key_hash="h5", salt="s5",
+                prefix="oz_test_", lookup_hash="l5", name="Key 5",
             )
             revoked = await repo.revoke(
-                ORG_ID,
-                key.id,
-                project_id=PROJECT_ID,
+                ORG_ID, key.id, project_id=PROJECT_ID,
             )
             assert revoked is not None
             assert revoked.is_revoked is True
@@ -210,8 +188,7 @@ class TestAuthRepository:
         async with AsyncSession(engine) as db:
             repo = AuthRepository(db)
             user = await repo.create_dashboard_user(
-                email="test@openzync.tech",
-                password_hash="hash",
+                email="test@openzync.tech", password_hash="hash",
                 organization_id=ORG_ID,
             )
             assert user.id is not None
@@ -221,8 +198,7 @@ class TestAuthRepository:
         async with AsyncSession(engine) as db:
             repo = AuthRepository(db)
             await repo.create_dashboard_user(
-                email="findme@openzync.tech",
-                password_hash="hash",
+                email="findme@openzync.tech", password_hash="hash",
                 organization_id=ORG_ID,
             )
             user = await repo.find_user_by_email("findme@openzync.tech")
@@ -233,10 +209,8 @@ class TestAuthRepository:
         async with AsyncSession(engine) as db:
             repo = AuthRepository(db)
             token = await repo.create_refresh_token(
-                user_id=str(uuid4()),
-                organization_id=ORG_ID,
-                token_hash="tok_hash",
-                expires_at=datetime.now(),
+                user_id=str(uuid4()), organization_id=ORG_ID,
+                token_hash="tok_hash", expires_at=datetime.now(),
             )
             assert token.id is not None
 
@@ -244,10 +218,8 @@ class TestAuthRepository:
         async with AsyncSession(engine) as db:
             repo = AuthRepository(db)
             token = await repo.create_refresh_token(
-                user_id=str(uuid4()),
-                organization_id=ORG_ID,
-                token_hash="revoke_hash",
-                expires_at=datetime.now(),
+                user_id=str(uuid4()), organization_id=ORG_ID,
+                token_hash="revoke_hash", expires_at=datetime.now(),
             )
             assert token.is_revoked is False
 
@@ -256,7 +228,6 @@ class TestAuthRepository:
             from sqlalchemy import select
 
             from models.refresh_token import RefreshToken
-
             result = await db.execute(
                 select(RefreshToken).where(RefreshToken.id == token.id)
             )
@@ -276,14 +247,10 @@ class TestFactRepository:
         async with AsyncSession(engine) as db:
             repo = FactRepository(db)
             fact = await repo.create(
-                user_id=user_id,
-                organization_id=ORG_ID,
+                user_id=user_id, organization_id=ORG_ID,
                 project_id=PROJECT_ID,
-                content="Python is great",
-                subject="Python",
-                predicate="is",
-                obj="great",
-                confidence=0.95,
+                content="Python is great", subject="Python",
+                predicate="is", obj="great", confidence=0.95,
             )
             assert fact.id is not None
             assert fact.content == "Python is great"
@@ -293,13 +260,9 @@ class TestFactRepository:
         async with AsyncSession(engine) as db:
             repo = FactRepository(db)
             await repo.create(
-                user_id=user_id,
-                organization_id=ORG_ID,
+                user_id=user_id, organization_id=ORG_ID,
                 project_id=PROJECT_ID,
-                content="Delete me",
-                subject="X",
-                predicate="is",
-                obj="Y",
+                content="Delete me", subject="X", predicate="is", obj="Y",
             )
             deleted = await repo.soft_delete_by_project(PROJECT_ID)
             assert deleted >= 1
@@ -309,9 +272,7 @@ class TestFactRepository:
         async with AsyncSession(engine) as db:
             repo = FactRepository(db)
             facts, cursor = await repo.list_by_session(
-                ORG_ID,
-                session_id,
-                limit=10,
+                ORG_ID, session_id, limit=10,
             )
             assert isinstance(facts, list)
 
@@ -327,12 +288,8 @@ class TestExtractionSchemaRepository:
         async with AsyncSession(engine) as db:
             repo = ExtractionSchemaRepository(db)
             schema = await repo.create(
-                org_id=ORG_ID,
-                name="test-schema",
-                json_schema={
-                    "type": "object",
-                    "properties": {"name": {"type": "string"}},
-                },
+                org_id=ORG_ID, name="test-schema",
+                json_schema={"type": "object", "properties": {"name": {"type": "string"}}},
             )
             assert schema.id is not None
 
@@ -350,13 +307,11 @@ class TestExtractionSchemaRepository:
         async with AsyncSession(engine) as db:
             repo = ExtractionSchemaRepository(db)
             schema = await repo.create(
-                org_id=ORG_ID,
-                name="update-schema",
+                org_id=ORG_ID, name="update-schema",
                 json_schema={"type": "object"},
             )
             updated = await repo.update(
-                schema,
-                prompt_template="new template",
+                schema, prompt_template="new template",
             )
             assert updated is not None
             assert updated.prompt_template == "new template"
@@ -373,8 +328,7 @@ class TestStructuredExtractionRepository:
         async with AsyncSession(engine) as db:
             repo = StructuredExtractionRepository(db)
             results = await repo.get_by_session(
-                ORG_ID,
-                uuid4(),
+                ORG_ID, uuid4(),
             )
             assert isinstance(results, list)
 
@@ -396,8 +350,7 @@ class TestDialogClassificationRepository:
         async with AsyncSession(engine) as db:
             repo = DialogClassificationRepository(db)
             results = await repo.get_by_session(
-                ORG_ID,
-                session_id=uuid4(),
+                ORG_ID, session_id=uuid4(),
             )
             assert isinstance(results, list)
 

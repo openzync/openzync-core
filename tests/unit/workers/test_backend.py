@@ -73,8 +73,7 @@ class TestResolveGraphBackend:
 
         ctx: dict = {}
         with pytest.raises(
-            GraphBackendUnavailableError,
-            match="graph_backend_dispatcher",
+            GraphBackendUnavailableError, match="graph_backend_dispatcher",
         ):
             await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
 
@@ -124,10 +123,7 @@ class TestResolveGraphBackend:
         mock_dispatcher: MagicMock,
     ) -> None:
         """Dispatcher resolves a backend → returns it directly."""
-        with patch(
-            "workers.backend._resolve_org_config",
-            AsyncMock(return_value=mock_org_config),
-        ):
+        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=mock_org_config)):
             from workers.backend import resolve_graph_backend
 
             ctx = {"graph_backend_dispatcher": mock_dispatcher}
@@ -199,10 +195,7 @@ class TestResolveGraphBackend:
         """``falkordb_client`` in ctx → forwarded to dispatcher."""
         falkordb_client = MagicMock()
 
-        with patch(
-            "workers.backend._resolve_org_config",
-            AsyncMock(return_value=mock_org_config),
-        ):
+        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=mock_org_config)):
             from workers.backend import resolve_graph_backend
 
             ctx = {
@@ -261,9 +254,7 @@ class TestResolveGraphBackend:
                 "graph_backend_dispatcher": mock_dispatcher,
                 "surreal_connection_pool": pool,
             }
-            with pytest.raises(
-                GraphBackendUnavailableError, match="SurrealDB connection failed"
-            ):
+            with pytest.raises(GraphBackendUnavailableError, match="SurrealDB connection failed"):
                 await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
 
     # ── Dispatcher resolution failure ─────────────────────────────────────
@@ -277,10 +268,7 @@ class TestResolveGraphBackend:
         """Dispatcher raises ``ValueError`` → ``GraphBackendUnavailableError`` (unknown backend)."""
         mock_dispatcher.resolve_and_create.side_effect = ValueError("kaboom")
 
-        with patch(
-            "workers.backend._resolve_org_config",
-            AsyncMock(return_value=mock_org_config),
-        ):
+        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=mock_org_config)):
             from workers.backend import resolve_graph_backend
 
             ctx = {"graph_backend_dispatcher": mock_dispatcher}
@@ -301,10 +289,7 @@ class TestResolveGraphBackend:
         """Dispatcher returns ``None`` for a configured backend → raises."""
         mock_dispatcher.resolve_and_create.return_value = None
 
-        with patch(
-            "workers.backend._resolve_org_config",
-            AsyncMock(return_value=mock_org_config),
-        ):
+        with patch("workers.backend._resolve_org_config", AsyncMock(return_value=mock_org_config)):
             from workers.backend import resolve_graph_backend
 
             ctx = {"graph_backend_dispatcher": mock_dispatcher}
@@ -362,9 +347,7 @@ class TestResolveOrgConfig:
             ctx = {"openbao_client": bao_client, "redis": MagicMock()}
             result = await _resolve_org_config(ctx, self.ORG_ID, mock_db)
 
-        mock_get.assert_awaited_once_with(
-            self.ORG_ID, redis=ctx["redis"], bao_client=bao_client
-        )
+        mock_get.assert_awaited_once_with(self.ORG_ID, redis=ctx["redis"], bao_client=bao_client)
         assert result is mock_org_config
         assert result.graph_backend == "postgres"
 
@@ -383,10 +366,7 @@ class TestResolveOrgConfig:
         mock_bao_client.__aexit__.return_value = None
 
         with (
-            patch(
-                "core.org_config.get_org_config",
-                AsyncMock(return_value=mock_org_config),
-            ),
+            patch("core.org_config.get_org_config", AsyncMock(return_value=mock_org_config)),
             patch("core.config.BootstrapSettings") as mock_bootstrap,
             patch("core.openbao.OpenBaoClient", return_value=mock_bao_client),
         ):
@@ -408,17 +388,13 @@ class TestResolveOrgConfig:
         redis_client = MagicMock()
         bao_client = MagicMock()
 
-        with patch(
-            "core.org_config.get_org_config", AsyncMock(return_value=mock_org_config)
-        ) as mock_get:
+        with patch("core.org_config.get_org_config", AsyncMock(return_value=mock_org_config)) as mock_get:
             from workers.backend import _resolve_org_config
 
             ctx = {"openbao_client": bao_client, "redis": redis_client}
             result = await _resolve_org_config(ctx, self.ORG_ID, mock_db)
 
-        mock_get.assert_awaited_once_with(
-            self.ORG_ID, redis=redis_client, bao_client=bao_client
-        )
+        mock_get.assert_awaited_once_with(self.ORG_ID, redis=redis_client, bao_client=bao_client)
         assert result is mock_org_config
 
     # ── Primary path: fallthrough on ImportError ──────────────────────────
@@ -433,12 +409,8 @@ class TestResolveOrgConfig:
         expected = OrgConfigBase(graph_backend="postgres")
 
         with (
-            patch(
-                "core.org_config.get_org_config", side_effect=ImportError("no module")
-            ),
-            patch(
-                "repositories.organization_repository.OrganizationRepository"
-            ) as mock_repo_cls,
+            patch("core.org_config.get_org_config", side_effect=ImportError("no module")),
+            patch("repositories.organization_repository.OrganizationRepository") as mock_repo_cls,
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
@@ -462,18 +434,12 @@ class TestResolveOrgConfig:
         expected = OrgConfigBase(graph_backend="surrealdb")
 
         with (
-            patch(
-                "core.org_config.get_org_config", side_effect=RuntimeError("bao down")
-            ),
-            patch(
-                "repositories.organization_repository.OrganizationRepository"
-            ) as mock_repo_cls,
+            patch("core.org_config.get_org_config", side_effect=RuntimeError("bao down")),
+            patch("repositories.organization_repository.OrganizationRepository") as mock_repo_cls,
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
-            mock_repo.get_config = AsyncMock(
-                return_value={"graph_backend": "surrealdb"}
-            )
+            mock_repo.get_config = AsyncMock(return_value={"graph_backend": "surrealdb"})
 
             from workers.backend import _resolve_org_config
 
@@ -493,12 +459,8 @@ class TestResolveOrgConfig:
         from schemas.organization_config import OrgConfigBase
 
         with (
-            patch(
-                "core.org_config.get_org_config", side_effect=ImportError("no module")
-            ),
-            patch(
-                "repositories.organization_repository.OrganizationRepository"
-            ) as mock_repo_cls,
+            patch("core.org_config.get_org_config", side_effect=ImportError("no module")),
+            patch("repositories.organization_repository.OrganizationRepository") as mock_repo_cls,
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
@@ -521,20 +483,13 @@ class TestResolveOrgConfig:
         from schemas.organization_config import OrgConfigBase
 
         with (
-            patch(
-                "core.org_config.get_org_config", side_effect=ImportError("no module")
-            ),
-            patch(
-                "repositories.organization_repository.OrganizationRepository"
-            ) as mock_repo_cls,
+            patch("core.org_config.get_org_config", side_effect=ImportError("no module")),
+            patch("repositories.organization_repository.OrganizationRepository") as mock_repo_cls,
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
             mock_repo.get_config = AsyncMock(
-                return_value={
-                    "graph_backend": "postgres",
-                    "graph_max_traversal_depth": 5,
-                },
+                return_value={"graph_backend": "postgres", "graph_max_traversal_depth": 5},
             )
 
             from workers.backend import _resolve_org_config
@@ -554,12 +509,8 @@ class TestResolveOrgConfig:
     ) -> None:
         """Primary raises, DB fallback also raises → returns ``None``."""
         with (
-            patch(
-                "core.org_config.get_org_config", side_effect=ImportError("no module")
-            ),
-            patch(
-                "repositories.organization_repository.OrganizationRepository"
-            ) as mock_repo_cls,
+            patch("core.org_config.get_org_config", side_effect=ImportError("no module")),
+            patch("repositories.organization_repository.OrganizationRepository") as mock_repo_cls,
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
@@ -578,13 +529,8 @@ class TestResolveOrgConfig:
     ) -> None:
         """Generic exception in primary, then DB fallback fails → returns ``None``."""
         with (
-            patch(
-                "core.org_config.get_org_config",
-                side_effect=RuntimeError("bao timeout"),
-            ),
-            patch(
-                "repositories.organization_repository.OrganizationRepository"
-            ) as mock_repo_cls,
+            patch("core.org_config.get_org_config", side_effect=RuntimeError("bao timeout")),
+            patch("repositories.organization_repository.OrganizationRepository") as mock_repo_cls,
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo

@@ -16,10 +16,7 @@ Usage::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
+from collections.abc import Callable
 
 
 def audit_action(action: str, resource: str, display: str | None = None) -> Callable:
@@ -39,9 +36,9 @@ def audit_action(action: str, resource: str, display: str | None = None) -> Call
         display = action.replace("_", " ").replace(".", " ").title()
 
     def decorator(func: Callable) -> Callable:
-        func._audit_action = action  # type: ignore[attr-defined]
+        func._audit_action = action      # type: ignore[attr-defined]
         func._audit_resource = resource  # type: ignore[attr-defined]
-        func._audit_display = display  # type: ignore[attr-defined]
+        func._audit_display = display    # type: ignore[attr-defined]
         return func
 
     return decorator

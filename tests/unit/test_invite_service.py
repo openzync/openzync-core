@@ -143,8 +143,7 @@ class TestInviteService:
         mock_repo.create.return_value = _make_pending_user()
 
         with patch(
-            "services.invite_service.secrets.token_urlsafe",
-            return_value="raw-token",
+            "services.invite_service.secrets.token_urlsafe", return_value="raw-token",
         ):
             result = await service.invite_user(
                 admin_user_id=ADMIN_ID,
@@ -291,8 +290,7 @@ class TestInviteService:
         mock_repo.create.return_value = _make_pending_user()
 
         with pytest.raises(
-            ExternalServiceError,
-            match="Email service is not configured",
+            ExternalServiceError, match="Email service is not configured",
         ):
             await service.invite_user(
                 admin_user_id=ADMIN_ID,

@@ -113,9 +113,7 @@ class TestSurrealPoolGetOrCreate:
         org_id = uuid4()
         org_config = _make_org_config(url=None)
 
-        with pytest.raises(
-            ServiceUnavailableError, match="Failed to connect to SurrealDB"
-        ):
+        with pytest.raises(ServiceUnavailableError, match="Failed to connect to SurrealDB"):
             await pool.get_or_create(org_id, org_config)
 
     @pytest.mark.asyncio
@@ -132,9 +130,7 @@ class TestSurrealPoolGetOrCreate:
             mock_surreal.connect.side_effect = Exception("Connection refused")
             mock_surreal_cls.return_value = mock_surreal
 
-            with pytest.raises(
-                ServiceUnavailableError, match="SurrealDB connection failed"
-            ):
+            with pytest.raises(ServiceUnavailableError, match="SurrealDB connection failed"):
                 await pool.get_or_create(org_id, org_config)
 
     @pytest.mark.asyncio
@@ -157,9 +153,7 @@ class TestSurrealPoolGetOrCreate:
             mock_surreal_cls.return_value = mock_surreal
 
             result = await pool.get_or_create(
-                org_id,
-                org_config,
-                system_url="ws://system:8000/rpc",
+                org_id, org_config, system_url="ws://system:8000/rpc",
             )
 
             assert result is mock_surreal
@@ -235,7 +229,6 @@ class TestSurrealPoolGetOrCreate:
             first_used = pool._pool[org_id]["last_used"]
 
             import time
-
             time.sleep(0.001)
             await pool.get_or_create(org_id, org_config)
 

@@ -112,6 +112,7 @@ def _make_fact_response(overrides: dict | None = None) -> dict:
     return base
 
 
+
 @pytest.fixture(autouse=True)
 def _stub_permission_gate() -> None:
     """Stub the permission gate for every test in this file.
@@ -145,9 +146,7 @@ class TestSessionsRouter:
         self.app = FastAPI()
         self.app.include_router(router)
 
-        self.app.dependency_overrides[get_session_service] = lambda: (
-            self.session_service
-        )
+        self.app.dependency_overrides[get_session_service] = lambda: self.session_service
         self.app.dependency_overrides[get_fact_service] = lambda: self.fact_service
         from dependencies.db import get_db
 
@@ -167,10 +166,8 @@ class TestSessionsRouter:
 
     async def test_create_session_success(self) -> None:
         """POST .../sessions → 201 with SessionResponse."""
-        self.session_service.create_session.return_value = (
-            SessionResponse.model_validate(
-                _make_session_response(),
-            )
+        self.session_service.create_session.return_value = SessionResponse.model_validate(
+            _make_session_response(),
         )
 
         transport = ASGITransport(app=self.app)

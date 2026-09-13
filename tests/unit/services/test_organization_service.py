@@ -8,7 +8,6 @@ New contract (ADR): ``create_organization`` no longer creates an
 ``ApiKey`` or a default ``Project``; ``CreateOrgResponse`` carries only
 the org ID and name.
 """
-
 from __future__ import annotations
 
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -49,7 +48,9 @@ class TestOrganizationService:
         mock_db = AsyncMock()
         mock_repo.session = mock_db
 
-        service = OrganizationService(repo=mock_repo, bao_client=bao_client)
+        service = OrganizationService(
+            repo=mock_repo, bao_client=bao_client
+        )
         return service, mock_repo, mock_db
 
     def _make_org_mock(self) -> MagicMock:
@@ -82,9 +83,7 @@ class TestOrganizationService:
             patch("services.organization_service.Organization") as mock_org_cls,
             # Project is no longer imported by the service — create=True lets
             # us assert the NEW contract: it is never constructed.
-            patch(
-                "services.organization_service.Project", create=True
-            ) as mock_proj_cls,
+            patch("services.organization_service.Project", create=True) as mock_proj_cls,
             patch(
                 "repositories.prompt_template_repository.PromptTemplateRepository",
             ) as mock_pt_repo_cls,
@@ -111,9 +110,7 @@ class TestOrganizationService:
         # project and no API key are auto-created.  ``org_code`` is a freshly
         # generated join code (feature: org-code join flow).
         mock_org_cls.assert_called_once_with(
-            name="Test Org",
-            plan="free",
-            org_code=ANY,
+            name="Test Org", plan="free", org_code=ANY,
         )
         mock_proj_cls.assert_not_called()
 
@@ -157,7 +154,9 @@ class TestOrganizationService:
 
         assert result.organization_id == self.ORG_ID
         mock_pt_repo_cls.assert_called_once_with(mock_db)
-        mock_pt_repo.seed_default_prompts.assert_awaited_once_with(self.ORG_ID)
+        mock_pt_repo.seed_default_prompts.assert_awaited_once_with(
+            self.ORG_ID
+        )
 
     @pytest.mark.asyncio
     async def test_create_organization_with_bao_client_bootstraps_namespace(
@@ -203,7 +202,9 @@ class TestOrganizationService:
         """``create_organization`` logs the OpenBao bootstrap failure but
         still returns a successful ``CreateOrgResponse``."""
         mock_bao = AsyncMock()
-        mock_bao.create_org_namespace.side_effect = RuntimeError("OpenBao unreachable")
+        mock_bao.create_org_namespace.side_effect = RuntimeError(
+            "OpenBao unreachable"
+        )
         service, mock_repo, mock_db = self._make_service(bao_client=mock_bao)
         payload = self._make_payload()
 
@@ -302,8 +303,7 @@ class TestOrganizationService:
         assert info.org_code == "ZZZ2Q9X4"
         assert info.join_enabled is True
         mock_repo.set_org_code.assert_awaited_once_with(
-            self.ORG_ID,
-            "ZZZ2Q9X4",
+            self.ORG_ID, "ZZZ2Q9X4",
         )
 
     @pytest.mark.asyncio
@@ -332,8 +332,7 @@ class TestOrganizationService:
         assert info.org_code == "ZZZ2Q9X4"
         assert info.join_enabled is False
         mock_repo.set_org_code.assert_awaited_once_with(
-            self.ORG_ID,
-            "ZZZ2Q9X4",
+            self.ORG_ID, "ZZZ2Q9X4",
         )
 
     # ── _load_org_defaults ───────────────────────────────────────────────────
@@ -393,11 +392,15 @@ class TestOrganizationService:
         service, mock_repo, _ = self._make_service()
         mock_repo.list_all.return_value = ([], 0)
 
-        orgs, total = await service.list_all_orgs(status="pending", page=2, limit=20)
+        orgs, total = await service.list_all_orgs(
+            status="pending", page=2, limit=20
+        )
 
         assert orgs == []
         assert total == 0
-        mock_repo.list_all.assert_awaited_once_with(status="pending", page=2, limit=20)
+        mock_repo.list_all.assert_awaited_once_with(
+            status="pending", page=2, limit=20
+        )
 
     @pytest.mark.asyncio
     async def test_list_org_members_returns_users_for_existing_org(
@@ -413,7 +416,9 @@ class TestOrganizationService:
             "services.organization_service.UserRepository",
             return_value=mock_user_repo,
         ):
-            users, total = await service.list_org_members(self.ORG_ID, page=1, limit=50)
+            users, total = await service.list_org_members(
+                self.ORG_ID, page=1, limit=50
+            )
 
         assert len(users) == 1
         assert total == 1

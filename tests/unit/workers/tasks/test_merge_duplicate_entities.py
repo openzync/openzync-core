@@ -1,5 +1,4 @@
 """Unit tests for merge_duplicate_entities task."""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -15,9 +14,7 @@ _ORG_ID = str(uuid4())
 class TestMergeDuplicateEntities:
     """merge_duplicate_entities task tests."""
 
-    def _make_db(
-        self, org_ids: list | None = None, project_ids: list | None = None
-    ) -> AsyncMock:
+    def _make_db(self, org_ids: list | None = None, project_ids: list | None = None) -> AsyncMock:
         db = AsyncMock()
         db.__aenter__.return_value = db
         db.__aexit__.return_value = None
@@ -30,9 +27,7 @@ class TestMergeDuplicateEntities:
         db.execute.side_effect = [org_result, project_result]
         return db
 
-    def _make_entities(
-        self, count: int = 3, names: list[str] | None = None
-    ) -> list[dict]:
+    def _make_entities(self, count: int = 3, names: list[str] | None = None) -> list[dict]:
         if names is None:
             names = [f"Entity_{i}" for i in range(count)]
         now = datetime.now(UTC).isoformat()
@@ -57,10 +52,7 @@ class TestMergeDuplicateEntities:
     @pytest.mark.asyncio
     async def test_no_eligible_orgs(self) -> None:
         """No organizations exist → returns skipped."""
-        with patch(
-            "workers.tasks.merge_duplicate_entities.with_retry",
-            lambda **kw: lambda f: f,
-        ):
+        with patch("workers.tasks.merge_duplicate_entities.with_retry", lambda **kw: lambda f: f):
             db = AsyncMock()
             db.__aenter__.return_value = db
             db.__aexit__.return_value = None
@@ -82,14 +74,8 @@ class TestMergeDuplicateEntities:
         mock_backend.bulk_search_entities.return_value = []
 
         with (
-            patch(
-                "workers.tasks.merge_duplicate_entities.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "workers.tasks.merge_duplicate_entities.resolve_graph_backend",
-                return_value=mock_backend,
-            ),
+            patch("workers.tasks.merge_duplicate_entities.with_retry", lambda **kw: lambda f: f),
+            patch("workers.tasks.merge_duplicate_entities.resolve_graph_backend", return_value=mock_backend),
             patch("asyncio.sleep", AsyncMock()),
         ):
             db = self._make_db()
@@ -108,20 +94,12 @@ class TestMergeDuplicateEntities:
         mock_backend.get_all_entities.return_value = entities
         mock_backend.bulk_search_entities.return_value = []
         mock_backend.merge_entities.return_value = {
-            "rewired_count": 2,
-            "deleted_count": 1,
-            "merged_count": 1,
+            "rewired_count": 2, "deleted_count": 1, "merged_count": 1,
         }
 
         with (
-            patch(
-                "workers.tasks.merge_duplicate_entities.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "workers.tasks.merge_duplicate_entities.resolve_graph_backend",
-                return_value=mock_backend,
-            ),
+            patch("workers.tasks.merge_duplicate_entities.with_retry", lambda **kw: lambda f: f),
+            patch("workers.tasks.merge_duplicate_entities.resolve_graph_backend", return_value=mock_backend),
             patch("services.audit_log_service.AuditLogService") as mock_audit_cls,
             patch("asyncio.sleep", AsyncMock()),
         ):
@@ -144,14 +122,8 @@ class TestMergeDuplicateEntities:
         mock_backend.get_all_entities.return_value = self._make_entities(1)
 
         with (
-            patch(
-                "workers.tasks.merge_duplicate_entities.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "workers.tasks.merge_duplicate_entities.resolve_graph_backend",
-                return_value=mock_backend,
-            ),
+            patch("workers.tasks.merge_duplicate_entities.with_retry", lambda **kw: lambda f: f),
+            patch("workers.tasks.merge_duplicate_entities.resolve_graph_backend", return_value=mock_backend),
             patch("asyncio.sleep", AsyncMock()),
         ):
             db = self._make_db()
@@ -166,14 +138,8 @@ class TestMergeDuplicateEntities:
     async def test_backend_unavailable(self) -> None:
         """Graph backend unavailable → gracefully skips."""
         with (
-            patch(
-                "workers.tasks.merge_duplicate_entities.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "workers.tasks.merge_duplicate_entities.resolve_graph_backend",
-                return_value=None,
-            ),
+            patch("workers.tasks.merge_duplicate_entities.with_retry", lambda **kw: lambda f: f),
+            patch("workers.tasks.merge_duplicate_entities.resolve_graph_backend", return_value=None),
         ):
             db = self._make_db()
             from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
@@ -187,14 +153,8 @@ class TestMergeDuplicateEntities:
     async def test_all_orgs_fail(self) -> None:
         """All orgs fail → raises RuntimeError."""
         with (
-            patch(
-                "workers.tasks.merge_duplicate_entities.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "workers.tasks.merge_duplicate_entities.resolve_graph_backend",
-                side_effect=Exception("Backend down"),
-            ),
+            patch("workers.tasks.merge_duplicate_entities.with_retry", lambda **kw: lambda f: f),
+            patch("workers.tasks.merge_duplicate_entities.resolve_graph_backend", side_effect=Exception("Backend down")),
         ):
             db = self._make_db()
             from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
@@ -205,10 +165,7 @@ class TestMergeDuplicateEntities:
     @pytest.mark.asyncio
     async def test_db_error_propagates(self) -> None:
         """Database error during org query propagates."""
-        with patch(
-            "workers.tasks.merge_duplicate_entities.with_retry",
-            lambda **kw: lambda f: f,
-        ):
+        with patch("workers.tasks.merge_duplicate_entities.with_retry", lambda **kw: lambda f: f):
             db = AsyncMock()
             db.__aenter__.return_value = db
             db.__aexit__.return_value = None
@@ -227,20 +184,12 @@ class TestMergeDuplicateEntities:
         mock_backend.get_all_entities.return_value = entities
         mock_backend.bulk_search_entities.return_value = []
         mock_backend.merge_entities.return_value = {
-            "rewired_count": 3,
-            "deleted_count": 2,
-            "merged_count": 2,
+            "rewired_count": 3, "deleted_count": 2, "merged_count": 2,
         }
 
         with (
-            patch(
-                "workers.tasks.merge_duplicate_entities.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "workers.tasks.merge_duplicate_entities.resolve_graph_backend",
-                return_value=mock_backend,
-            ),
+            patch("workers.tasks.merge_duplicate_entities.with_retry", lambda **kw: lambda f: f),
+            patch("workers.tasks.merge_duplicate_entities.resolve_graph_backend", return_value=mock_backend),
             patch("services.audit_log_service.AuditLogService") as mock_audit_cls,
             patch("asyncio.sleep", AsyncMock()),
         ):

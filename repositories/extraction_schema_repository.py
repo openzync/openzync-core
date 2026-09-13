@@ -6,16 +6,12 @@ organization's UUID.  RLS ensures cross-tenant isolation at the database level.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.extraction_schema import ExtractionSchema
-
-if TYPE_CHECKING:
-    from uuid import UUID
-
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class ExtractionSchemaRepository:
@@ -34,7 +30,9 @@ class ExtractionSchemaRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_by_name(self, org_id: UUID, name: str) -> ExtractionSchema | None:
+    async def get_by_name(
+        self, org_id: UUID, name: str
+    ) -> ExtractionSchema | None:
         """Fetch a single schema by name within an organization."""
         result = await self._db.execute(
             select(ExtractionSchema).where(
@@ -121,19 +119,21 @@ class ExtractionSchemaRepository:
         schema.is_active = False
         await self._db.flush()
 
-    async def count_for_org(self, org_id: UUID, schema_type: str | None = None) -> int:
+    async def count_for_org(
+        self, org_id: UUID, schema_type: str | None = None
+    ) -> int:
         """Count schemas for an org, optionally filtered by type."""
-        query = (
-            select(func.count())
-            .select_from(ExtractionSchema)
-            .where(ExtractionSchema.organization_id == org_id)
+        query = select(func.count()).select_from(ExtractionSchema).where(
+            ExtractionSchema.organization_id == org_id
         )
         if schema_type is not None:
             query = query.where(ExtractionSchema.type == schema_type)
         result = await self._db.execute(query)
         return result.scalar_one()
 
-    async def get_classification_labels(self, org_id: UUID) -> list[dict]:
+    async def get_classification_labels(
+        self, org_id: UUID
+    ) -> list[dict]:
         """Fetch all active classification schema JSON definitions.
 
         Used by the ``classify_dialog`` worker to determine label sets.

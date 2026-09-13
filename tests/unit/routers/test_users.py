@@ -125,8 +125,7 @@ class TestUsersRouter:
 
     @patch("routers.users.UserService")
     async def test_create_user_422_missing_external_id(
-        self,
-        mock_user_service: AsyncMock,
+        self, mock_user_service: AsyncMock,
     ) -> None:
         """POST /v1/users without external_id → 422."""
         mock_instance = AsyncMock()
@@ -159,8 +158,7 @@ class TestUsersRouter:
 
     @patch("routers.users.UserService")
     async def test_create_user_422_invalid_email(
-        self,
-        mock_user_service: AsyncMock,
+        self, mock_user_service: AsyncMock,
     ) -> None:
         """POST /v1/users with invalid email → 422."""
         mock_instance = AsyncMock()
@@ -245,13 +243,11 @@ class TestUsersRouter:
         mock_instance = AsyncMock()
         mock_user_service.return_value = mock_instance
         mock_instance.get_user.return_value = UserResponseWithStats.model_validate(
-            _make_user_response(
-                {
-                    "message_count": 10,
-                    "fact_count": 5,
-                    "session_count": 3,
-                }
-            ),
+            _make_user_response({
+                "message_count": 10,
+                "fact_count": 5,
+                "session_count": 3,
+            }),
         )
 
         from dependencies.auth import require_org_id
@@ -399,8 +395,7 @@ class TestUsersRouter:
 
     @patch("routers.users.UserSummaryService")
     async def test_get_user_summary_success(
-        self,
-        mock_summary_service: AsyncMock,
+        self, mock_summary_service: AsyncMock,
     ) -> None:
         """GET /v1/users/{id}/summary → 200 with UserSummaryResponse."""
         mock_instance = AsyncMock()
@@ -435,8 +430,7 @@ class TestUsersRouter:
 
         # We need to ensure that core.arq.get_arq exists during import
         try:
-            from core.arq import get_arq  # noqa: F401  # existence check only; import is the assertion
-
+            from core.arq import get_arq
             _has_arq = True
         except (ImportError, AttributeError):
             _has_arq = False
@@ -452,8 +446,7 @@ class TestUsersRouter:
 
     @patch("routers.users.UserSummaryService")
     async def test_get_user_summary_404_not_found(
-        self,
-        mock_summary_service: AsyncMock,
+        self, mock_summary_service: AsyncMock,
     ) -> None:
         """GET /v1/users/{id}/summary when no summary exists → 404."""
         mock_instance = AsyncMock()
@@ -489,8 +482,7 @@ class TestUsersRouter:
 
     @patch("routers.users.UserSummaryService")
     async def test_trigger_user_summary_success(
-        self,
-        mock_summary_service: AsyncMock,
+        self, mock_summary_service: AsyncMock,
     ) -> None:
         """POST /v1/users/{id}/summary → 202 with UserSummaryTriggerResponse."""
         mock_instance = AsyncMock()
@@ -528,8 +520,7 @@ class TestUsersRouter:
 
     @patch("routers.users.UserSummaryService")
     async def test_trigger_user_summary_rate_limited(
-        self,
-        mock_summary_service: AsyncMock,
+        self, mock_summary_service: AsyncMock,
     ) -> None:
         """POST /v1/users/{id}/summary when rate-limited → 429."""
         from core.exceptions import RateLimitError, register_exception_handlers
@@ -568,8 +559,7 @@ class TestUsersRouter:
 
     @patch("routers.users.UserSummaryService")
     async def test_list_summary_instructions_success(
-        self,
-        mock_summary_service: AsyncMock,
+        self, mock_summary_service: AsyncMock,
     ) -> None:
         """GET /v1/users/{id}/summary-instructions → 200 with instructions."""
         mock_instance = AsyncMock()
@@ -613,8 +603,7 @@ class TestUsersRouter:
 
     @patch("routers.users.UserSummaryService")
     async def test_set_summary_instructions_success(
-        self,
-        mock_summary_service: AsyncMock,
+        self, mock_summary_service: AsyncMock,
     ) -> None:
         """PUT /v1/users/{id}/summary-instructions → 201."""
         mock_instance = AsyncMock()
@@ -660,8 +649,7 @@ class TestUsersRouter:
 
     @patch("routers.users.UserSummaryService")
     async def test_delete_summary_instructions_success(
-        self,
-        mock_summary_service: AsyncMock,
+        self, mock_summary_service: AsyncMock,
     ) -> None:
         """DELETE /v1/users/{id}/summary-instructions → 204."""
         mock_instance = AsyncMock()
@@ -707,8 +695,7 @@ class TestUsersRouterRoleChanges:
 
     @patch("routers.users.UserService")
     async def test_update_role_admin_200(
-        self,
-        mock_user_service: AsyncMock,
+        self, mock_user_service: AsyncMock,
     ) -> None:
         """PATCH with ``role`` as an org admin → 200 with updated role."""
         mock_instance = AsyncMock()
@@ -752,8 +739,7 @@ class TestUsersRouterRoleChanges:
 
     @patch("routers.users.UserService")
     async def test_update_role_member_403(
-        self,
-        mock_user_service: AsyncMock,
+        self, mock_user_service: AsyncMock,
     ) -> None:
         """PATCH with ``role`` as a JWT member → 403 (real role check)."""
         from dependencies.db import get_db
@@ -779,8 +765,7 @@ class TestUsersRouterRoleChanges:
 
         with (
             patch(
-                "dependencies.auth._check_permission",
-                new=real_check_permission,
+                "dependencies.auth._check_permission", new=real_check_permission,
             ),
             patch(
                 "dependencies.auth.get_org_role",
@@ -805,8 +790,7 @@ class TestUsersRouterRoleChanges:
 
     @patch("routers.users.UserService")
     async def test_update_role_api_key_403(
-        self,
-        mock_user_service: AsyncMock,
+        self, mock_user_service: AsyncMock,
     ) -> None:
         """API-key auth → 403 (key lacks members:write, before the handler runs).
 
@@ -840,13 +824,10 @@ class TestUsersRouterRoleChanges:
         # Restore the REAL gate (the autouse fixture stubs it) so the API-key
         # permission check is what decides the outcome.
         with patch(
-            "dependencies.auth._check_permission",
-            new=real_check_permission,
+            "dependencies.auth._check_permission", new=real_check_permission,
         ):
             transport = ASGITransport(app=app)
-            async with AsyncClient(
-                transport=transport, base_url="http://test"
-            ) as client:
+            async with AsyncClient(transport=transport, base_url="http://test") as client:
                 response = await client.patch(
                     f"/v1/users/{USER_ID}",
                     json={"role": "admin"},

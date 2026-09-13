@@ -54,9 +54,7 @@ class TestContextFormatter:
         """Episodes appear in the formatted text."""
         result = format_text(
             [self._sample_episode(content="Test conversation")],
-            [],
-            [],
-            [],
+            [], [], [],
         )
         assert "Test conversation" in result
         assert "Episode" in result or "episode" in result.lower()
@@ -66,8 +64,7 @@ class TestContextFormatter:
         result = format_text(
             [],
             [self._sample_fact(content="Python is great")],
-            [],
-            [],
+            [], [],
         )
         assert "Python" in result
         assert "great" in result
@@ -75,8 +72,7 @@ class TestContextFormatter:
     def test_format_text_includes_entities(self) -> None:
         """Entities appear with name and type."""
         result = format_text(
-            [],
-            [],
+            [], [],
             [self._sample_entity(name="OpenZync", type="Project")],
             [],
         )

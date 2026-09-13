@@ -31,19 +31,13 @@ class BlobMetadata(BaseModel):
     """
 
     blob_id: int = Field(
-        ...,
-        ge=0,
-        description="Index into the uploaded blobs list (blob_<id> field).",
+        ..., ge=0, description="Index into the uploaded blobs list (blob_<id> field).",
     )
     mime_type: str = Field(
-        ...,
-        max_length=128,
-        description="Client-declared MIME type.",
+        ..., max_length=128, description="Client-declared MIME type.",
     )
     file_name: str = Field(
-        ...,
-        max_length=512,
-        description="Original filename.",
+        ..., max_length=512, description="Original filename.",
     )
 
     @field_validator("mime_type")

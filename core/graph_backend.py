@@ -38,10 +38,11 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession
 
-    from packages.graph_backend.interface import GraphBackend
+from packages.graph_backend.interface import GraphBackend
+
+if TYPE_CHECKING:
     from schemas.organization_config import OrgConfigBase
 
 logger = logging.getLogger(__name__)
@@ -70,9 +71,7 @@ class GraphBackendDispatcher:
         backend = dispatcher.resolve_and_create(org_config, db, surreal=surreal)
 
         # Per-request (FalkorDB):
-        backend = dispatcher.resolve_and_create(
-            org_config, db, falkordb_client=falkordb
-        )
+        backend = dispatcher.resolve_and_create(org_config, db, falkordb_client=falkordb)
     """
 
     def __init__(self) -> None:

@@ -3,8 +3,8 @@
 Endpoints:
     GET /v1/projects/{project_id}/sessions/{session_id}/structured-extractions
         — List extractions for all episodes in a session.
-    GET /v1/projects/{project_id}/sessions/{session_id}/
-        structured-extractions/{episode_id} — Get extraction for one episode.
+    GET /v1/projects/{project_id}/sessions/{session_id}/structured-extractions/{episode_id}
+        — Get extraction for a specific episode.
 
 Every endpoint is guarded by ``require_project_membership`` for unified
 authentication and project authorization.

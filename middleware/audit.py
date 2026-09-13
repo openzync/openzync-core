@@ -20,19 +20,17 @@ from __future__ import annotations
 import logging
 import re
 import uuid
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
 import orjson
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core.audit import get_audit_metadata
 from core.config import get_settings
 from core.exceptions import DatabaseUnavailableError
 from services.pii_service import PIIDetector, PIIRedactor
 from services.worker.worker_settings import get_queue_name
-
-if TYPE_CHECKING:
-    from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
@@ -86,8 +84,7 @@ async def _resolve_audit_body_capture(
                     return bool(org_val)
         except Exception:
             logger.warning("audit.org_config_cache_read_failed", exc_info=True)
-            # Fall through to OpenBao — a cache miss is acceptable,
-            # OpenBao is authoritative
+            # Fall through to OpenBao — cache miss is acceptable, OpenBao is authoritative
 
     # Cache miss — resolve from OpenBao (post-response so user doesn't wait).
     try:
@@ -112,11 +109,7 @@ async def _resolve_audit_body_capture(
                 config = await get_org_config(
                     UUID(org_id), redis=redis, bao_client=_bao, skip_cache=True
                 )
-        return (
-            bool(config.audit_log_response_body)
-            if config.audit_log_response_body is not None
-            else False
-        )
+        return bool(config.audit_log_response_body) if config.audit_log_response_body is not None else False
     except Exception as exc:
         logger.error("audit.org_config_db_resolve_failed", exc_info=True)
         raise DatabaseUnavailableError(
@@ -126,17 +119,15 @@ async def _resolve_audit_body_capture(
 
 # ── Exempt paths (no audit for internal noise) ────────────────────────────────
 
-EXEMPT_PATHS: frozenset = frozenset(
-    {
-        "/health",
-        "/ready",
-        "/metrics",
-        "/docs",
-        "/openapi.json",
-        "/redoc",
-        "/favicon.ico",
-    }
-)
+EXEMPT_PATHS: frozenset = frozenset({
+    "/health",
+    "/ready",
+    "/metrics",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+    "/favicon.ico",
+})
 
 # Routes whose responses carry one-time secrets that must never be persisted:
 #
@@ -159,17 +150,14 @@ EXEMPT_PATHS: frozenset = frozenset(
 # itself (action, actor, status) is still logged.  Add any new secret-bearing
 # route here.  ``POST /v1/auth/invites/info`` is deliberately NOT listed: its
 # response (org name, invitee email/name) contains no secrets.
-WEBHOOK_SECRET_RESPONSE_ROUTES: frozenset[tuple[str, str]] = frozenset(
-    {
-        ("POST", "/v1/admin/webhooks"),
-        ("POST", "/admin/org/org-code/regenerate"),
-        ("PATCH", "/admin/org/org-code"),
-        ("PATCH", "/admin/org/config"),
-        ("PUT", "/admin/org/config"),
-        ("POST", "/v1/auth/invites/accept"),
-    }
-)
-
+WEBHOOK_SECRET_RESPONSE_ROUTES: frozenset[tuple[str, str]] = frozenset({
+    ("POST", "/v1/admin/webhooks"),
+    ("POST", "/admin/org/org-code/regenerate"),
+    ("PATCH", "/admin/org/org-code"),
+    ("PATCH", "/admin/org/config"),
+    ("PUT", "/admin/org/config"),
+    ("POST", "/v1/auth/invites/accept"),
+})
 
 def _resolve_action(
     method: str,
@@ -203,11 +191,7 @@ def _resolve_action(
                 continue
             route_path: str | None = getattr(route, "path", None)
             if route_path is not None:
-                match = (
-                    route.path_regex.match(path)
-                    if hasattr(route, "path_regex")
-                    else None
-                )
+                match = route.path_regex.match(path) if hasattr(route, "path_regex") else None
                 if match is not None:
                     meta = get_audit_metadata(route.endpoint)
                     if meta is not None:
@@ -224,8 +208,8 @@ def _resolve_action(
 class AuditMiddleware:
     """Raw ASGI middleware that enqueues an audit job for every non-exempt request.
 
-    Operates in the **post-response** phase so that ``scope["state"]`` is fully
-    populated by :class:`AuthMiddleware <openzync.middleware.auth.AuthMiddleware>`.
+    Operates in the **post-response** phase so that ``scope["state"]``
+    is fully populated by :class:`AuthMiddleware <openzync.middleware.auth.AuthMiddleware>`.
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -306,10 +290,8 @@ class AuditMiddleware:
 
         # ── IP address ─────────────────────────────────────────────────────
         forwarded = headers.get(b"x-forwarded-for", b"").decode()
-        ip_address: str = (
-            forwarded.split(",")[0].strip()
-            if forwarded
-            else (scope["client"][0] if scope.get("client") else "unknown")
+        ip_address: str = forwarded.split(",")[0].strip() if forwarded else (
+            scope["client"][0] if scope.get("client") else "unknown"
         )
 
         # ── Details payload ────────────────────────────────────────────────
@@ -333,15 +315,9 @@ class AuditMiddleware:
             _capture_body = False
         if _capture_body and body_chunks:
             try:
-                raw_text = b"".join(body_chunks).decode("utf-8", errors="replace")[
-                    :10_000
-                ]
+                raw_text = b"".join(body_chunks).decode("utf-8", errors="replace")[:10_000]
                 detections = _pii_detector.detect(raw_text)
-                redacted = (
-                    _pii_redactor.apply(raw_text, detections)
-                    if detections
-                    else raw_text
-                )
+                redacted = _pii_redactor.apply(raw_text, detections) if detections else raw_text
                 details["response_body"] = redacted
             except Exception:
                 logger.warning("audit.body_read_failed", exc_info=True)

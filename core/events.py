@@ -22,10 +22,8 @@ Usage::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar, NamedTuple
-
-if TYPE_CHECKING:
-    from collections.abc import Mapping
+from collections.abc import Mapping
+from typing import ClassVar, NamedTuple
 
 
 class EventType(str):
@@ -70,106 +68,23 @@ class EventMeta(NamedTuple):
 
 # All known events — used by the create-webhook UI and the event registry.
 EVENT_REGISTRY: list[EventMeta] = [
-    EventMeta(
-        EventType.SESSION_CREATED,
-        "Session Created",
-        "Session",
-        "Fired when a new conversation session is created",
-    ),
-    EventMeta(
-        EventType.SESSION_CLOSED,
-        "Session Closed",
-        "Session",
-        "Fired when a session is closed",
-    ),
-    EventMeta(
-        EventType.MESSAGE_ADDED,
-        "Message Added",
-        "Message",
-        "Fired when a message is added to a session",
-    ),
-    EventMeta(
-        EventType.EPISODE_PROCESSED,
-        "Episode Processed",
-        "Graph",
-        "Fired when an episode finishes processing into the graph",
-    ),
-    EventMeta(
-        EventType.INGEST_BATCH_COMPLETED,
-        "Ingest Batch Completed",
-        "Graph",
-        "Fired when a batch ingestion operation completes",
-    ),
-    EventMeta(
-        EventType.INGEST_EPISODE_COMPLETED,
-        "Ingest Episode Completed",
-        "Graph",
-        "Fired when a single-episode ingestion completes",
-    ),
-    EventMeta(
-        EventType.GRAPH_ENTITY_CREATED,
-        "Graph Entity Created",
-        "Graph",
-        "Fired when a new graph entity (node) is created",
-    ),
-    EventMeta(
-        EventType.GRAPH_ENTITY_UPDATED,
-        "Graph Entity Updated",
-        "Graph",
-        "Fired when a graph entity is updated",
-    ),
-    EventMeta(
-        EventType.GRAPH_EDGE_CREATED,
-        "Graph Edge Created",
-        "Graph",
-        "Fired when a relationship edge is created between entities",
-    ),
-    EventMeta(
-        EventType.FACT_EXTRACTED,
-        "Fact Extracted",
-        "Fact",
-        "Fired when a fact (triple) is extracted",
-    ),
-    EventMeta(
-        EventType.FACT_DELETED, "Fact Deleted", "Fact", "Fired when a fact is deleted"
-    ),
-    EventMeta(
-        EventType.FACT_SUPERSEDED,
-        "Fact Superseded",
-        "Fact",
-        "Fired when a conflicting newer fact invalidates an existing active fact"
-        " (valid_to set)",
-    ),
-    EventMeta(
-        EventType.FACT_RETRACTED,
-        "Fact Retracted",
-        "Fact",
-        "Fired when a fact is manually retracted",
-    ),
-    EventMeta(
-        EventType.FACT_INVALIDATED,
-        "Fact Invalidated",
-        "Fact",
-        "Fired when an LLM-driven invalidation retires an active fact",
-    ),
-    EventMeta(
-        EventType.CLASSIFICATION_CREATED,
-        "Classification Created",
-        "Classification",
-        "Fired when a dialog classification is created",
-    ),
-    EventMeta(
-        EventType.EXTRACTION_CREATED,
-        "Extraction Created",
-        "Extraction",
-        "Fired when a structured extraction is created",
-    ),
-    EventMeta(
-        EventType.USER_CREATED,
-        "User Created",
-        "User",
-        "Fired when a new user is created",
-    ),
+    EventMeta(EventType.SESSION_CREATED, "Session Created", "Session", "Fired when a new conversation session is created"),
+    EventMeta(EventType.SESSION_CLOSED, "Session Closed", "Session", "Fired when a session is closed"),
+    EventMeta(EventType.MESSAGE_ADDED, "Message Added", "Message", "Fired when a message is added to a session"),
+    EventMeta(EventType.EPISODE_PROCESSED, "Episode Processed", "Graph", "Fired when an episode finishes processing into the graph"),
+    EventMeta(EventType.INGEST_BATCH_COMPLETED, "Ingest Batch Completed", "Graph", "Fired when a batch ingestion operation completes"),
+    EventMeta(EventType.INGEST_EPISODE_COMPLETED, "Ingest Episode Completed", "Graph", "Fired when a single-episode ingestion completes"),
+    EventMeta(EventType.GRAPH_ENTITY_CREATED, "Graph Entity Created", "Graph", "Fired when a new graph entity (node) is created"),
+    EventMeta(EventType.GRAPH_ENTITY_UPDATED, "Graph Entity Updated", "Graph", "Fired when a graph entity is updated"),
+    EventMeta(EventType.GRAPH_EDGE_CREATED, "Graph Edge Created", "Graph", "Fired when a relationship edge is created between entities"),
+    EventMeta(EventType.FACT_EXTRACTED, "Fact Extracted", "Fact", "Fired when a fact (triple) is extracted"),
+    EventMeta(EventType.FACT_DELETED, "Fact Deleted", "Fact", "Fired when a fact is deleted"),
+    EventMeta(EventType.FACT_SUPERSEDED, "Fact Superseded", "Fact", "Fired when a conflicting newer fact invalidates an existing active fact (valid_to set)"),
+    EventMeta(EventType.FACT_RETRACTED, "Fact Retracted", "Fact", "Fired when a fact is manually retracted"),
+    EventMeta(EventType.FACT_INVALIDATED, "Fact Invalidated", "Fact", "Fired when an LLM-driven invalidation retires an active fact"),
+    EventMeta(EventType.CLASSIFICATION_CREATED, "Classification Created", "Classification", "Fired when a dialog classification is created"),
+    EventMeta(EventType.EXTRACTION_CREATED, "Extraction Created", "Extraction", "Fired when a structured extraction is created"),
+    EventMeta(EventType.USER_CREATED, "User Created", "User", "Fired when a new user is created"),
 ]
 
 

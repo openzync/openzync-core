@@ -493,7 +493,9 @@ class UserRepository:
 
     # ── Soft Delete ─────────────────────────────────────────────────────────
 
-    async def soft_delete(self, organization_id: UUID, user_id: UUID) -> User | None:
+    async def soft_delete(
+        self, organization_id: UUID, user_id: UUID
+    ) -> User | None:
         """Set ``is_deleted = True`` on the user.
 
         Called on the DELETE endpoint as part of the GDPR two-phase
@@ -522,7 +524,9 @@ class UserRepository:
 
     # ── Hard Delete ─────────────────────────────────────────────────────────
 
-    async def hard_delete(self, organization_id: UUID, user_id: UUID) -> bool:
+    async def hard_delete(
+        self, organization_id: UUID, user_id: UUID
+    ) -> bool:
         """Permanently remove a user row.
 
         Used by the GDPR purge worker after the 30-day grace period.
@@ -624,9 +628,9 @@ class UserRepository:
             query = query.where(User.created_at < created_before)
 
         # Consistent ordering for cursor stability
-        query = query.order_by(User.created_at.asc(), User.id.asc()).limit(
-            effective_limit
-        )
+        query = query.order_by(
+            User.created_at.asc(), User.id.asc()
+        ).limit(effective_limit)
 
         result = await self._db.execute(query)
         rows = result.scalars().all()
@@ -666,9 +670,12 @@ class UserRepository:
         effective_limit = min(max(limit, 1), 200)
         effective_page = max(page, 1)
 
-        total_stmt = select(func.count(User.id)).where(
-            User.organization_id == organization_id,
-            User.is_deleted.is_(False),
+        total_stmt = (
+            select(func.count(User.id))
+            .where(
+                User.organization_id == organization_id,
+                User.is_deleted.is_(False),
+            )
         )
         total = (await self._db.execute(total_stmt)).scalar() or 0
 
@@ -723,7 +730,9 @@ class UserRepository:
             .label("session_count")
         )
 
-        stmt = select(msg_subq, fact_subq, session_subq).where(User.id == user_id)
+        stmt = select(msg_subq, fact_subq, session_subq).where(
+            User.id == user_id
+        )
 
         result = await self._db.execute(stmt)
         row = result.one_or_none()

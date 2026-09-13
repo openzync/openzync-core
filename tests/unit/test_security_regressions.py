@@ -16,7 +16,6 @@ secrets, H3 idempotency) are covered by the fix's own suites — see
 ``middleware/test_rate_limit.py``, ``routers/test_admin.py``,
 ``services/test_webhook_service.py``, ``test_idempotency_service.py``.
 """
-
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
@@ -129,7 +128,9 @@ class TestH5EnumerationClosed:
     ) -> None:
         """passwordless_login is indistinguishable for unknown accounts."""
         service._repo.find_user_by_email.return_value = None
-        with pytest.raises(AuthenticationError, match="Invalid or expired login code"):
+        with pytest.raises(
+            AuthenticationError, match="Invalid or expired login code"
+        ):
             await service.passwordless_login(
                 VerifyOtpRequest(email="nobody@acme.com", otp="123456")
             )
@@ -140,7 +141,9 @@ class TestH5EnumerationClosed:
     ) -> None:
         """reset_password is indistinguishable for unknown accounts."""
         service._repo.find_user_by_email.return_value = None
-        with pytest.raises(AuthenticationError, match="Invalid or expired reset code"):
+        with pytest.raises(
+            AuthenticationError, match="Invalid or expired reset code"
+        ):
             await service.reset_password(
                 ResetPasswordRequest(
                     email="nobody@acme.com",

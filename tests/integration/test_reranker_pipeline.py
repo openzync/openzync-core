@@ -84,43 +84,19 @@ def sample_search_results() -> dict[str, Any]:
     """
     return {
         "episode_vector": [
-            {
-                "id": "ep-1",
-                "content": "Python is a programming language",
-                "score": 0.92,
-            },
-            {
-                "id": "ep-2",
-                "content": "FastAPI is a Python web framework",
-                "score": 0.75,
-            },
+            {"id": "ep-1", "content": "Python is a programming language", "score": 0.92},
+            {"id": "ep-2", "content": "FastAPI is a Python web framework", "score": 0.75},
             {"id": "ep-3", "content": "JavaScript runs in the browser", "score": 0.60},
         ],
         "episode_bm25": [
-            {
-                "id": "ep-1",
-                "content": "Python is a programming language",
-                "score": 0.85,
-            },
-            {
-                "id": "ep-2",
-                "content": "FastAPI is a Python web framework",
-                "score": 0.70,
-            },
+            {"id": "ep-1", "content": "Python is a programming language", "score": 0.85},
+            {"id": "ep-2", "content": "FastAPI is a Python web framework", "score": 0.70},
         ],
         "fact_vector": [
-            {
-                "id": "fact-1",
-                "content": "Guido van Rossum created Python",
-                "score": 0.88,
-            },
+            {"id": "fact-1", "content": "Guido van Rossum created Python", "score": 0.88},
         ],
         "fact_bm25": [
-            {
-                "id": "fact-1",
-                "content": "Guido van Rossum created Python",
-                "score": 0.80,
-            },
+            {"id": "fact-1", "content": "Guido van Rossum created Python", "score": 0.80},
         ],
     }
 
@@ -357,7 +333,9 @@ class TestRerankerEnabled:
         # The re-ranker should have been called with the query and episodes
         assert mock_reranker.rerank.call_count == 2  # episodes + facts
         args, _ = mock_reranker.rerank.call_args_list[0]
-        assert args[0] == "python", "Expected 'query' as the first positional argument"
+        assert args[0] == "python", (
+            "Expected 'query' as the first positional argument"
+        )
         assert isinstance(args[1], list), (
             "Expected candidates list as the second positional argument"
         )
@@ -520,23 +498,11 @@ class TestContextAssemblyWithReranker:
         # Build the retriever with mocked search legs and the mock reranker
         sample = {
             "episode_vector": [
-                {
-                    "id": "ep-1",
-                    "content": "Python is great for data science",
-                    "score": 0.92,
-                },
-                {
-                    "id": "ep-2",
-                    "content": "FastAPI makes async web apps easy",
-                    "score": 0.75,
-                },
+                {"id": "ep-1", "content": "Python is great for data science", "score": 0.92},
+                {"id": "ep-2", "content": "FastAPI makes async web apps easy", "score": 0.75},
             ],
             "episode_bm25": [
-                {
-                    "id": "ep-1",
-                    "content": "Python is great for data science",
-                    "score": 0.88,
-                },
+                {"id": "ep-1", "content": "Python is great for data science", "score": 0.88},
             ],
             "fact_vector": [],
             "fact_bm25": [],

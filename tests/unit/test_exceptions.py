@@ -81,9 +81,9 @@ class TestExceptionHierarchy:
             PayloadTooLargeError,
         ]
         for exc_cls in domain_exceptions:
-            assert issubclass(exc_cls, AppError), (
-                f"{exc_cls.__name__} is not a subclass of AppError"
-            )
+            assert issubclass(
+                exc_cls, AppError
+            ), f"{exc_cls.__name__} is not a subclass of AppError"
 
     def test_app_error_defaults(self) -> None:
         """Base AppError has 500 / internal_error."""
@@ -122,9 +122,8 @@ class TestExceptionHandlers:
 
         @app.get("/tests/episode-not-found")
         async def raise_episode_not_found() -> None:
-            raise EpisodeNotFoundError(
-                "Episode missing", detail={"episode_id": "abc-123"}
-            )
+            raise EpisodeNotFoundError("Episode missing",
+                                       detail={"episode_id": "abc-123"})
 
         register_exception_handlers(app)
         return app
@@ -136,9 +135,7 @@ class TestExceptionHandlers:
             yield ac
 
     @pytest.mark.asyncio
-    async def test_not_found_returns_404_with_problem_json(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_not_found_returns_404_with_problem_json(self, client: AsyncClient) -> None:
         """404 errors return RFC 7807 Problem Details."""
         resp = await client.get("/tests/not-found")
         assert resp.status_code == 404

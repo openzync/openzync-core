@@ -146,7 +146,8 @@ async def update_system_config(
     unknown = set(update_dict) - SYSTEM_CONFIG_WHITELIST
     if unknown:
         raise ValidationError(
-            f"These keys are not editable system config: {', '.join(sorted(unknown))}."
+            "These keys are not editable system config: "
+            f"{', '.join(sorted(unknown))}."
         )
 
     # 1. Read existing system secret (contains OZ_* keys — merge, never return)

@@ -9,19 +9,18 @@ from __future__ import annotations
 
 import hashlib
 import uuid
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import structlog
+from fastapi import UploadFile
 
 from core.blob_storage import BlobStorage, BlobStorageConfig, S3StorageError
 from core.config import get_settings
 from core.exceptions import PayloadTooLargeError, ValidationError
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-
-    from fastapi import UploadFile
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from models.episode_blob import EpisodeBlob
@@ -131,9 +130,7 @@ class BlobStorageService:
             content_hash = hashlib.sha256(data).hexdigest()
             blob_index = meta.blob_id  # use blob_id as index
             file_name = meta.file_name or upload_file.filename or "unnamed"
-            mime_type = (
-                meta.mime_type or upload_file.content_type or "application/octet-stream"
-            )
+            mime_type = meta.mime_type or upload_file.content_type or "application/octet-stream"
 
             key = storage.build_key(
                 org_id=str(org_id),
@@ -149,20 +146,18 @@ class BlobStorageService:
                 mime_type=mime_type,
             )
 
-            blob_dicts.append(
-                {
-                    "id": str(uuid.uuid4()),
-                    "storage_backend": "s3",
-                    "storage_key": key,
-                    "file_name": file_name,
-                    "mime_type": mime_type,
-                    "file_size": len(data),
-                    "content_hash": content_hash,
-                    "width": None,  # TODO(me): detect image dimensions in phase 2
-                    "height": None,
-                    "blob_index": blob_index,
-                }
-            )
+            blob_dicts.append({
+                "id": str(uuid.uuid4()),
+                "storage_backend": "s3",
+                "storage_key": key,
+                "file_name": file_name,
+                "mime_type": mime_type,
+                "file_size": len(data),
+                "content_hash": content_hash,
+                "width": None,  # TODO(me): detect image dimensions in phase 2
+                "height": None,
+                "blob_index": blob_index,
+            })
 
         if not blob_dicts:
             return []

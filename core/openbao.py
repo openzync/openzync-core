@@ -76,7 +76,7 @@ SYSTEM_KEY_MAPPING: dict[str, str] = {
     "OZ_SMTP_START_TLS": "OZ_SMTP_START_TLS",
     "OZ_ROOT_PASSWORD": "OZ_ROOT_PASSWORD",
 }
-"""Map OpenBao config key names (``OZ_`` uppercase) to env var names."""
+"""Maps OpenBao config key names (``OZ_`` uppercase) to ``OZ_`` environment variable names."""
 
 _MAX_RETRIES = 3
 """Maximum number of times to retry a request that receives a 429 (rate-limited)."""
@@ -284,10 +284,7 @@ class OpenBaoClient:
         Uses monotonic time (no API call) so this is effectively free in
         the common case. Only triggers a real auth call at ~80% of TTL.
         """
-        if (
-            self._token_expires_at is not None
-            and time.monotonic() >= self._token_expires_at
-        ):
+        if self._token_expires_at is not None and time.monotonic() >= self._token_expires_at:
             logger.info("OpenBao token near expiry \u2014 re-authenticating")
             await self._authenticate()
 
@@ -359,12 +356,10 @@ class OpenBaoClient:
                 return resp
             except OpenBaoRateLimitError:
                 if attempt < _MAX_RETRIES - 1:
-                    wait = 2**attempt
+                    wait = 2 ** attempt
                     logger.warning(
                         "Rate limited by OpenBao, retrying in %ds (attempt %d/%d)",
-                        wait,
-                        attempt + 1,
-                        _MAX_RETRIES,
+                        wait, attempt + 1, _MAX_RETRIES,
                     )
                     await asyncio.sleep(wait)
                     continue
@@ -375,12 +370,11 @@ class OpenBaoClient:
                 # 400 clears within a brief window.  Retry ONLY this message
                 # — every other 400 raises immediately (no blanket retry).
                 if _is_kv_upgrade_transient(exc) and attempt < _MAX_RETRIES - 1:
-                    wait = 2**attempt
+                    wait = 2 ** attempt
                     logger.warning(
-                        "KV v2 upgrade in progress, retrying in %ds (attempt %d/%d)",
-                        wait,
-                        attempt + 1,
-                        _MAX_RETRIES,
+                        "KV v2 upgrade in progress, retrying in %ds "
+                        "(attempt %d/%d)",
+                        wait, attempt + 1, _MAX_RETRIES,
                     )
                     await asyncio.sleep(wait)
                     continue
@@ -670,9 +664,7 @@ class OpenBaoClient:
 
         # 204 = success (created or already exists, idempotent).
         if resp.status_code == 204:
-            logger.info(
-                "KV v2 mount %r ready in namespace %r (204)", mount_path, namespace
-            )
+            logger.info("KV v2 mount %r ready in namespace %r (204)", mount_path, namespace)
             return
         # 400 with "already in use" is expected during initialisation.
         if resp.status_code == 400:
@@ -926,11 +918,7 @@ class OpenBaoClient:
             await self._request(
                 "POST",
                 path,
-                json={
-                    "type": key_type,
-                    "exportable": False,
-                    "allow_plaintext_backup": False,
-                },
+                json={"type": key_type, "exportable": False, "allow_plaintext_backup": False},
             )
         except OpenBaoError as e:
             # If key already exists, OpenBao returns an error — treat as no-op.

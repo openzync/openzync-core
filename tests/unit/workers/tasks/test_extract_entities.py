@@ -53,9 +53,7 @@ class TestProcessEntitiesOutput:
         m.flush = AsyncMock()
         return m
 
-    def _parsed(
-        self, entities: list[dict], relationships: list[dict] | None = None
-    ) -> EntityExtractionOutput:
+    def _parsed(self, entities: list[dict], relationships: list[dict] | None = None) -> EntityExtractionOutput:
         return EntityExtractionOutput(
             entities=entities,
             relationships=relationships or [],
@@ -97,9 +95,7 @@ class TestProcessEntitiesOutput:
         assert graph_backend.link_entity_to_episode.await_count == 2
         episode_repo.apply_enrichment_bits.assert_awaited_once_with(
             UUID(_EPISODE_ID),
-            __import__(
-                "workers.tasks.base", fromlist=["ENRICHMENT_ENTITIES"]
-            ).ENRICHMENT_ENTITIES,
+            __import__("workers.tasks.base", fromlist=["ENRICHMENT_ENTITIES"]).ENRICHMENT_ENTITIES,
         )
         db.flush.assert_awaited_once()
         # Returned map keys both names → their UUIDs

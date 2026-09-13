@@ -118,9 +118,7 @@ class TestDetectCoOccurrences:
         mock_db: AsyncMock,
     ) -> None:
         """No graph_episode_entities → empty list."""
-        mock_db.execute.return_value.mappings.return_value.one_or_none.return_value = {
-            "total": 0
-        }
+        mock_db.execute.return_value.mappings.return_value.one_or_none.return_value = {"total": 0}
         result = await service.detect_co_occurrences(PROJECT_ID, ORG_ID)
         assert result == []
 
@@ -131,9 +129,7 @@ class TestDetectCoOccurrences:
         mock_db: AsyncMock,
     ) -> None:
         """One pair with 5 co-occurrences (threshold=3) → one pattern."""
-        mock_db.execute.return_value.mappings.return_value.one_or_none.return_value = {
-            "total": 10
-        }
+        mock_db.execute.return_value.mappings.return_value.one_or_none.return_value = {"total": 10}
         mock_repo.get_co_occurring_entity_pairs.return_value = [_co_row(co_count=5)]
         mock_repo.get_relationship_ids_between.return_value = []
 
@@ -151,9 +147,7 @@ class TestDetectCoOccurrences:
         mock_db: AsyncMock,
     ) -> None:
         """Pair with 2 co-occurrences (threshold=3) → excluded."""
-        mock_db.execute.return_value.mappings.return_value.one_or_none.return_value = {
-            "total": 10
-        }
+        mock_db.execute.return_value.mappings.return_value.one_or_none.return_value = {"total": 10}
         mock_repo.get_co_occurring_entity_pairs.return_value = []  # no pairs above 3
         patterns = await service.detect_co_occurrences(PROJECT_ID, ORG_ID)
         assert patterns == []
@@ -165,9 +159,7 @@ class TestDetectCoOccurrences:
         mock_db: AsyncMock,
     ) -> None:
         """Multiple pairs returned in descending co_order."""
-        mock_db.execute.return_value.mappings.return_value.one_or_none.return_value = {
-            "total": 20
-        }
+        mock_db.execute.return_value.mappings.return_value.one_or_none.return_value = {"total": 20}
         mock_repo.get_co_occurring_entity_pairs.return_value = [
             _co_row(ENTITY_A_ID, "EntityA", ENTITY_B_ID, "EntityB", co_count=10),
             _co_row(ENTITY_A_ID, "EntityA", ENTITY_C_ID, "EntityC", co_count=5),
@@ -337,9 +329,7 @@ class TestDetectBehavioralPatterns:
     ) -> None:
         """No facts for the project → empty list."""
         mock_db.execute.return_value.mappings.return_value.all.return_value = []
-        patterns = await service.detect_behavioral_patterns(
-            PROJECT_ID, organization_id=ORG_ID
-        )
+        patterns = await service.detect_behavioral_patterns(PROJECT_ID, organization_id=ORG_ID)
         assert patterns == []
 
     async def test_single_entity_with_frequent_predicate(
@@ -359,9 +349,7 @@ class TestDetectBehavioralPatterns:
                 "total_facts": 8,
             },
         ]
-        patterns = await service.detect_behavioral_patterns(
-            PROJECT_ID, organization_id=ORG_ID
-        )
+        patterns = await service.detect_behavioral_patterns(PROJECT_ID, organization_id=ORG_ID)
         assert len(patterns) == 1
         assert patterns[0].entity_id == ENTITY_A_ID
         assert patterns[0].frequent_predicates == {"upgrades": 5}
@@ -400,9 +388,7 @@ class TestDetectBehavioralPatterns:
                 "total_facts": 10,
             },
         ]
-        patterns = await service.detect_behavioral_patterns(
-            PROJECT_ID, organization_id=ORG_ID
-        )
+        patterns = await service.detect_behavioral_patterns(PROJECT_ID, organization_id=ORG_ID)
         assert len(patterns) == 1
         preds = list(patterns[0].frequent_predicates.items())
         assert preds[0] == ("upgrades", 5)
@@ -419,9 +405,7 @@ class TestDetectBehavioralPatterns:
         the effective-at predicate — ``invalid_at IS NULL`` alone is not
         enough after Phase 2 fact supersession."""
         mock_db.execute.return_value.mappings.return_value.all.return_value = []
-        patterns = await service.detect_behavioral_patterns(
-            PROJECT_ID, organization_id=ORG_ID
-        )
+        patterns = await service.detect_behavioral_patterns(PROJECT_ID, organization_id=ORG_ID)
         assert patterns == []
 
         stmt, params = mock_db.execute.call_args.args

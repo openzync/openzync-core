@@ -1,5 +1,4 @@
 """Unit tests for user_summary_service — summary generation, retrieval, instructions."""
-
 from __future__ import annotations
 
 from datetime import UTC, datetime

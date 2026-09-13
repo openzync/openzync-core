@@ -56,9 +56,7 @@ class TestAuditLogRepository:
         """Creating an entry returns it with generated fields populated."""
         async with AsyncSession(engine) as db:
             repo = AuditLogRepository(db)
-            await self._seed_entry(
-                repo, action="session.create", details={"status_code": 200}
-            )
+            await self._seed_entry(repo, action="session.create", details={"status_code": 200})
 
             entries, total = await repo.list(ORG_ID)
             assert total == 1
@@ -185,15 +183,11 @@ class TestCustomInstructionRepository:
             repo = CustomInstructionRepository(db)
             target = UUID("12345678-1234-5678-1234-567812345678")
             await repo.set_by_scope(
-                ORG_ID,
-                scope="user_summary",
-                target_id=None,
+                ORG_ID, scope="user_summary", target_id=None,
                 instructions=[{"name": "org_level", "text": "Org-wide"}],
             )
             await repo.set_by_scope(
-                ORG_ID,
-                scope="user_summary",
-                target_id=target,
+                ORG_ID, scope="user_summary", target_id=target,
                 instructions=[{"name": "target_level", "text": "Per-user"}],
             )
 
@@ -210,15 +204,11 @@ class TestCustomInstructionRepository:
         async with AsyncSession(engine) as db:
             repo = CustomInstructionRepository(db)
             await repo.set_by_scope(
-                ORG_ID,
-                scope="extraction",
-                target_id=None,
+                ORG_ID, scope="extraction", target_id=None,
                 instructions=[{"name": "old", "text": "Old text"}],
             )
             await repo.set_by_scope(
-                ORG_ID,
-                scope="extraction",
-                target_id=None,
+                ORG_ID, scope="extraction", target_id=None,
                 instructions=[{"name": "new", "text": "New text"}],
             )
 
@@ -230,15 +220,11 @@ class TestCustomInstructionRepository:
         async with AsyncSession(engine) as db:
             repo = CustomInstructionRepository(db)
             await repo.set_by_scope(
-                ORG_ID,
-                scope="extraction",
-                target_id=None,
+                ORG_ID, scope="extraction", target_id=None,
                 instructions=[{"name": "gone", "text": "Bye"}],
             )
             await repo.set_by_scope(
-                ORG_ID,
-                scope="user_summary",
-                target_id=None,
+                ORG_ID, scope="user_summary", target_id=None,
                 instructions=[{"name": "kept", "text": "Hello"}],
             )
 
@@ -261,8 +247,7 @@ class TestEpisodeBlobRepository:
         session_repo = SessionRepository(db)
         episode_repo = EpisodeRepository(db)
         user = await user_repo.create(
-            organization_id=ORG_ID,
-            external_id="blob_test_user",
+            organization_id=ORG_ID, external_id="blob_test_user",
         )
         session = await session_repo.create(
             organization_id=ORG_ID,
@@ -377,7 +362,9 @@ class TestEpisodeBlobRepository:
             assert found is not None
             assert found.id == blobs[0].id
 
-            missing = await repo.get_by_id(UUID("00000000-0000-0000-0000-000000000099"))
+            missing = await repo.get_by_id(
+                UUID("00000000-0000-0000-0000-000000000099")
+            )
             assert missing is None
 
     async def test_get_by_content_hash(self, engine, db_session) -> None:
@@ -438,12 +425,9 @@ class TestEpisodeBlobRepository:
             )
 
             assert await repo.count_by_episode(chain["episode_id"]) == 2
-            assert (
-                await repo.count_by_episode(
-                    UUID("00000000-0000-0000-0000-000000000099")
-                )
-                == 0
-            )
+            assert await repo.count_by_episode(
+                UUID("00000000-0000-0000-0000-000000000099")
+            ) == 0
 
     async def test_delete_by_episode(self, engine, db_session) -> None:
         """delete_by_episode removes the rows and returns them."""
@@ -558,15 +542,11 @@ class TestPromptTemplateRepository:
         async with AsyncSession(engine) as db:
             repo = PromptTemplateRepository(db)
             await repo.set_for_org(
-                ORG_ID,
-                name="extract_facts",
-                text="facts",
+                ORG_ID, name="extract_facts", text="facts",
                 template_type="fact_extraction",
             )
             await repo.set_for_org(
-                ORG_ID,
-                name="extract_facts_alt",
-                text="facts alt",
+                ORG_ID, name="extract_facts_alt", text="facts alt",
                 template_type="fact_extraction",
             )
 
@@ -596,17 +576,13 @@ class TestPromptTemplateRepository:
         async with AsyncSession(engine) as db:
             repo = PromptTemplateRepository(db)
             await repo.set_for_org(
-                ORG_ID,
-                name="extract_facts",
-                text="v1",
+                ORG_ID, name="extract_facts", text="v1",
                 template_type="fact_extraction",
             )
             await repo.set_as_type_default(ORG_ID, "extract_facts")
 
             v2 = await repo.set_for_org(
-                ORG_ID,
-                name="extract_facts",
-                text="v2",
+                ORG_ID, name="extract_facts", text="v2",
                 template_type="fact_extraction",
             )
             assert v2.version == 2

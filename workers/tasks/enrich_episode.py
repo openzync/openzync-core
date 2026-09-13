@@ -252,10 +252,13 @@ async def enrich_episode(
                 blobs = await blob_repo.get_by_episode(uuid.UUID(episode_id))
                 blob_texts = [b for b in blobs if b.extracted_text]
                 if blob_texts:
-                    blob_parts: list[str] = ["\n\n## ATTACHED FILE CONTENTS\n"]
+                    blob_parts: list[str] = [
+                        "\n\n## ATTACHED FILE CONTENTS\n"
+                    ]
                     for b in blob_texts:
                         blob_parts.append(
-                            f"### {b.file_name} ({b.mime_type})\n{b.extracted_text}\n"
+                            f"### {b.file_name} ({b.mime_type})\n"
+                            f"{b.extracted_text}\n"
                         )
                     prompt += "".join(blob_parts)
                     blob_count = len(blob_texts)
@@ -465,7 +468,9 @@ async def enrich_episode(
                             }
                             for ename, eid in entity_name_map.items():
                                 if ename.lower() not in known_names:
-                                    known_entities.append({"name": ename, "id": eid})
+                                    known_entities.append(
+                                        {"name": ename, "id": eid}
+                                    )
                         else:
                             # Graph disabled for this org — nothing was
                             # persisted to a graph.  The bit is still set so

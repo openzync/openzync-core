@@ -25,7 +25,9 @@ from locust import FastHttpUser, between, events, task
 # Configuration from environment
 # ═══════════════════════════════════════════════════════════════════════════════
 
-API_KEY: str = os.environ.get("OZ_LOAD_TEST_API_KEY", "oz_test_" + "a" * 64)
+API_KEY: str = os.environ.get(
+    "OZ_LOAD_TEST_API_KEY", "oz_test_" + "a" * 64
+)
 """Pre-provisioned API key for load testing."""
 
 TEST_USER_ID: str = os.environ.get(
@@ -71,11 +73,9 @@ class ContextUser(FastHttpUser):
 
     def on_start(self) -> None:
         """Authenticate and warm up the cache."""
-        self.client.headers.update(
-            {
-                "Authorization": f"Bearer {API_KEY}",
-            }
-        )
+        self.client.headers.update({
+            "Authorization": f"Bearer {API_KEY}",
+        })
 
         # Warmup: populate Redis cache with a few context queries
         for q in WARMUP_QUERIES:
@@ -95,7 +95,7 @@ class ContextUser(FastHttpUser):
         """GET /context with a random query — the primary load target."""
         import random
 
-        query = random.choice(QUERIES)  # noqa: S311  # load-test traffic shaping, not crypto
+        query = random.choice(QUERIES)
 
         with self.client.get(
             f"/v1/users/{TEST_USER_ID}/context",
@@ -106,7 +106,9 @@ class ContextUser(FastHttpUser):
             if resp.status_code == 200:
                 resp.success()
             else:
-                resp.failure(f"Expected 200, got {resp.status_code}: {resp.text[:200]}")
+                resp.failure(
+                    f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+                )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

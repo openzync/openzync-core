@@ -910,7 +910,9 @@ class TestGraphEdgeSync:
         self, mock_db: AsyncMock, mock_repo: AsyncMock, backend: Any
     ) -> FactInvalidationService:
         sync = GraphEdgeSyncService(backends=[backend])
-        return FactInvalidationService(db=mock_db, fact_repo=mock_repo, graph_sync=sync)
+        return FactInvalidationService(
+            db=mock_db, fact_repo=mock_repo, graph_sync=sync
+        )
 
     @pytest.mark.asyncio
     async def test_same_key_successor_skips_expiry(
@@ -1179,7 +1181,9 @@ class TestApplyLLMInvalidations:
         result = await service.apply_llm_invalidations(
             org_id=ORG_ID,
             project_id=PROJECT_ID,
-            invalidations=[{"existing_fact_ref": "f1", "reason": "contradiction"}],
+            invalidations=[
+                {"existing_fact_ref": "f1", "reason": "contradiction"}
+            ],
             ref_to_fact={"f1": old},
             successor_by_ref={},
             now=NOW,
@@ -1202,7 +1206,9 @@ class TestApplyLLMInvalidations:
         result = await service.apply_llm_invalidations(
             org_id=ORG_ID,
             project_id=PROJECT_ID,
-            invalidations=[{"existing_fact_ref": "f1", "reason": "contradiction"}],
+            invalidations=[
+                {"existing_fact_ref": "f1", "reason": "contradiction"}
+            ],
             ref_to_fact={"f1": old},
             successor_by_ref={},
             now=NOW,
@@ -1226,7 +1232,9 @@ class TestApplyLLMInvalidations:
         old = _fact(id=FACT_1_ID)
         successor = _fact(id=FACT_2_ID)
 
-        with pytest.raises(ValidationError, match="Unknown successor fact reference"):
+        with pytest.raises(
+            ValidationError, match="Unknown successor fact reference"
+        ):
             await service.apply_llm_invalidations(
                 org_id=ORG_ID,
                 project_id=PROJECT_ID,
@@ -1275,7 +1283,9 @@ class TestApplyLLMInvalidations:
         assert result.closed_count == 1
         assert result.skipped_count == 0
         mock_repo.set_valid_to.assert_awaited_once_with(FACT_1_ID, NOW)
-        mock_repo.set_superseded_by.assert_awaited_once_with(FACT_1_ID, FACT_2_ID)
+        mock_repo.set_superseded_by.assert_awaited_once_with(
+            FACT_1_ID, FACT_2_ID
+        )
         mock_repo.record_invalidation_event.assert_awaited_once_with(
             organization_id=ORG_ID,
             project_id=PROJECT_ID,
@@ -1301,7 +1311,9 @@ class TestApplyLLMInvalidations:
         result = await service.apply_llm_invalidations(
             org_id=ORG_ID,
             project_id=PROJECT_ID,
-            invalidations=[{"existing_fact_ref": "f1", "reason": "pure contradiction"}],
+            invalidations=[
+                {"existing_fact_ref": "f1", "reason": "pure contradiction"}
+            ],
             ref_to_fact={"f1": old},
             successor_by_ref={},
             now=NOW,

@@ -1,5 +1,4 @@
 """Unit tests for reconcile_enrichment task."""
-
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -228,9 +227,7 @@ class TestReconcileEnrichment:
         arq_redis = AsyncMock()
         arq_redis.zcard.return_value = 0
         # First enqueue fails, subsequent ones succeed
-        arq_redis.enqueue_job = AsyncMock(
-            side_effect=[Exception("Queue full"), None, None, None, None]
-        )
+        arq_redis.enqueue_job = AsyncMock(side_effect=[Exception("Queue full"), None, None, None, None])
 
         ctx: dict = {
             "db_session_factory": session_factory,

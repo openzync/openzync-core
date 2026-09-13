@@ -92,8 +92,12 @@ async def test_entity_ontology_accuracy() -> None:
             )
 
             try:
-                parsed = EntityExtractionOutput.model_validate_json(response.content)
-                entities: list[dict] = [e.model_dump() for e in parsed.entities]
+                parsed = EntityExtractionOutput.model_validate_json(
+                    response.content
+                )
+                entities: list[dict] = [
+                    e.model_dump() for e in parsed.entities
+                ]
             except Exception:
                 errors.append(
                     {
@@ -159,7 +163,9 @@ async def test_entity_ontology_accuracy() -> None:
     # ── Compute metrics ─────────────────────────────────────────────────────
     type_accuracy = type_valid_count / total if total > 0 else 0.0
     entity_recall = (
-        entity_recall_correct / entity_recall_total if entity_recall_total > 0 else 0.0
+        entity_recall_correct / entity_recall_total
+        if entity_recall_total > 0
+        else 0.0
     )
 
     logger.info(

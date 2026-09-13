@@ -30,12 +30,8 @@ class WebhookEndpointResponse(BaseModel):
 class CreateWebhookRequest(BaseModel):
     """Request body for creating a new webhook endpoint."""
 
-    name: str = Field(
-        ..., min_length=1, max_length=255, description="Human-readable label"
-    )
-    url: HttpUrl = Field(
-        ..., description="Endpoint URL for webhook delivery (HTTPS recommended)"
-    )
+    name: str = Field(..., min_length=1, max_length=255, description="Human-readable label")
+    url: HttpUrl = Field(..., description="Endpoint URL for webhook delivery (HTTPS recommended)")
     events: list[str] = Field(
         default_factory=list,
         description="List of event types to subscribe to (empty = all events)",

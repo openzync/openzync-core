@@ -6,12 +6,9 @@ credential-stuffing attacks by limiting attempts per-email and per-IP.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from redis.asyncio import Redis as AsyncRedis
 
 from core.exceptions import RateLimitError
-
-if TYPE_CHECKING:
-    from redis.asyncio import Redis as AsyncRedis
 
 
 class AuthThrottle:
@@ -76,11 +73,13 @@ class AuthThrottle:
 
         if email_attempts > self._login_max_per_email:
             raise RateLimitError(
-                "Too many login attempts for this account. Try again later."
+                "Too many login attempts for this account. "
+                "Try again later."
             )
         if ip_attempts > self._login_max_per_ip:
             raise RateLimitError(
-                "Too many login attempts from this IP address. Try again later."
+                "Too many login attempts from this IP address. "
+                "Try again later."
             )
 
     async def record_login_success(self, email: str, ip: str) -> None:
@@ -151,7 +150,8 @@ class AuthThrottle:
             await self._redis.expire(key, self._signup_window_sec)
         if attempts > self._signup_max_per_ip:
             raise RateLimitError(
-                "Too many signup attempts from this IP address. Try again later."
+                "Too many signup attempts from this IP address. "
+                "Try again later."
             )
 
     async def check_verify_attempt(self, email: str, ip: str) -> None:
@@ -184,7 +184,8 @@ class AuthThrottle:
             )
         if ip_attempts > 20:
             raise RateLimitError(
-                "Too many verification attempts from this IP address. Try again later."
+                "Too many verification attempts from this IP address. "
+                "Try again later."
             )
 
     async def check_forgot_password_attempt(self, email: str, ip: str) -> None:
@@ -211,7 +212,8 @@ class AuthThrottle:
 
         if email_attempts > 3:
             raise RateLimitError(
-                "Too many password reset requests for this email. Try again later."
+                "Too many password reset requests for this email. "
+                "Try again later."
             )
         if ip_attempts > 10:
             raise RateLimitError(
@@ -247,11 +249,13 @@ class AuthThrottle:
 
         if email_attempts > 10:
             raise RateLimitError(
-                "Too many reset attempts for this email. Please request a new code."
+                "Too many reset attempts for this email. "
+                "Please request a new code."
             )
         if ip_attempts > 20:
             raise RateLimitError(
-                "Too many reset attempts from this IP address. Try again later."
+                "Too many reset attempts from this IP address. "
+                "Try again later."
             )
 
     async def record_reset_success(self, email: str, ip: str) -> None:
@@ -295,11 +299,13 @@ class AuthThrottle:
 
         if email_attempts > 5:
             raise RateLimitError(
-                "Too many login code requests for this email. Try again later."
+                "Too many login code requests for this email. "
+                "Try again later."
             )
         if ip_attempts > 10:
             raise RateLimitError(
-                "Too many login code requests from this IP address. Try again later."
+                "Too many login code requests from this IP address. "
+                "Try again later."
             )
 
     async def check_passwordless_verify(self, email: str, ip: str) -> None:
@@ -359,11 +365,13 @@ class AuthThrottle:
 
         if email_attempts > 5:
             raise RateLimitError(
-                "Too many MFA code requests for this email. Try again later."
+                "Too many MFA code requests for this email. "
+                "Try again later."
             )
         if ip_attempts > 10:
             raise RateLimitError(
-                "Too many MFA code requests from this IP address. Try again later."
+                "Too many MFA code requests from this IP address. "
+                "Try again later."
             )
 
     async def check_mfa_verify(self, email: str, ip: str) -> None:

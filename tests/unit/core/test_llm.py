@@ -25,14 +25,18 @@ class TestBuildCacheConfig:
 
     def test_explicit_null_falls_back_to_global_default(self) -> None:
         """``enabled: None`` must NOT disable caching — fall back to global."""
-        cfg = build_cache_config(org_config={"prompt_caching": {"enabled": None}})
+        cfg = build_cache_config(
+            org_config={"prompt_caching": {"enabled": None}}
+        )
         assert cfg.enabled is True
         assert cfg.anthropic_min_tokens == 1024
         assert cfg.anthropic_cache_ttl == "5m"
 
     def test_explicit_false_is_honoured(self) -> None:
         """Explicit ``enabled: False`` disables caching for the org."""
-        cfg = build_cache_config(org_config={"prompt_caching": {"enabled": False}})
+        cfg = build_cache_config(
+            org_config={"prompt_caching": {"enabled": False}}
+        )
         assert cfg.enabled is False
 
     def test_explicit_values_override_globals(self) -> None:

@@ -34,9 +34,7 @@ router = APIRouter(prefix="/v1/search", tags=["Search"])
 )
 async def global_search(
     request: Request,  # noqa: ARG001 — kept for consistency with existing patterns
-    query: str = Query(
-        ..., alias="q", min_length=1, max_length=200, description="Search query string."
-    ),
+    query: str = Query(..., alias="q", min_length=1, max_length=200, description="Search query string."),
     limit: int = Query(default=10, ge=1, le=50, description="Maximum results."),
     db: AsyncSession = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id),

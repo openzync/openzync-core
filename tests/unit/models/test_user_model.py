@@ -1,5 +1,4 @@
 """Tests for ``User`` model."""
-
 from __future__ import annotations
 
 import uuid
@@ -25,14 +24,7 @@ class TestUserModel:
     @pytest.mark.unit
     def test_defaults_configured(self) -> None:
         """metadata, role, is_active, is_deleted, is_email_verified, mfa_enabled have server_defaults."""
-        for col_name in [
-            "metadata",
-            "role",
-            "is_active",
-            "is_deleted",
-            "is_email_verified",
-            "mfa_enabled",
-        ]:
+        for col_name in ["metadata", "role", "is_active", "is_deleted", "is_email_verified", "mfa_enabled"]:
             col = User.__table__.columns[col_name]
             assert col.server_default is not None, f"{col_name} missing server_default"
 

@@ -117,7 +117,9 @@ async def test_list_org_members_returns_paginated_members() -> None:
     assert body["data"][1]["email"] == user_b.external_id
     assert body["data"][1]["role"] == "admin"
 
-    service.list_org_members.assert_awaited_once_with(ORG_ID, page=1, limit=50)
+    service.list_org_members.assert_awaited_once_with(
+        ORG_ID, page=1, limit=50
+    )
 
 
 @pytest.mark.asyncio
@@ -142,7 +144,9 @@ async def test_list_org_members_missing_org_404() -> None:
 
     assert resp.status_code == 404, resp.text
     assert "not found" in resp.json()["detail"].lower()
-    service.list_org_members.assert_awaited_once_with(ORG_ID, page=1, limit=50)
+    service.list_org_members.assert_awaited_once_with(
+        ORG_ID, page=1, limit=50
+    )
 
 
 @pytest.mark.asyncio
@@ -166,7 +170,9 @@ async def test_list_org_members_respects_pagination_params() -> None:
     assert resp.status_code == 200
     assert resp.json()["page"] == 2
     assert resp.json()["limit"] == 10
-    service.list_org_members.assert_awaited_once_with(ORG_ID, page=2, limit=10)
+    service.list_org_members.assert_awaited_once_with(
+        ORG_ID, page=2, limit=10
+    )
 
 
 def test_superadmin_gate_present_on_members_route() -> None:
@@ -295,7 +301,9 @@ async def test_list_all_orgs_filters_by_status() -> None:
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.get("/admin/system/orgs?status=pending&page=1&limit=20")
+            resp = await client.get(
+                "/admin/system/orgs?status=pending&page=1&limit=20"
+            )
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -637,7 +645,9 @@ async def test_reveal_system_setting_200_raw_value() -> None:
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/admin/system/settings/OZ_DATABASE_URL/reveal")
+            resp = await client.post(
+                "/admin/system/settings/OZ_DATABASE_URL/reveal"
+            )
 
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"key": "OZ_DATABASE_URL", "value": raw_url}

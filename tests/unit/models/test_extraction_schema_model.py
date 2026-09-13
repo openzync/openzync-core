@@ -1,5 +1,4 @@
 """Tests for ``ExtractionSchema`` model."""
-
 from __future__ import annotations
 
 import uuid
@@ -22,10 +21,7 @@ class TestExtractionSchemaModel:
         )
         assert schema.organization_id is not None
         assert schema.name == "customer_profile"
-        assert schema.json_schema == {
-            "type": "object",
-            "properties": {"name": {"type": "string"}},
-        }
+        assert schema.json_schema == {"type": "object", "properties": {"name": {"type": "string"}}}
 
     @pytest.mark.unit
     def test_defaults_configured(self) -> None:

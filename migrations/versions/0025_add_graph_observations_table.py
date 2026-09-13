@@ -29,14 +29,11 @@ Create Date: 2026-06-28
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 revision: str = "0025"
 down_revision: str | None = "0024"
@@ -65,63 +62,41 @@ def upgrade() -> None:
     #   - metadata: JSONB escape hatch for future extensibility.
     op.create_table(
         "graph_observations",
-        sa.Column(
-            "id",
-            sa.UUID(),
-            primary_key=True,
-            server_default=sa.text("gen_random_uuid()"),
-        ),
+        sa.Column("id", sa.UUID(), primary_key=True,
+                  server_default=sa.text("gen_random_uuid()")),
         sa.Column("organization_id", sa.UUID(), nullable=False),
         sa.Column("project_id", sa.UUID(), nullable=False),
         sa.Column("subject_entity_id", sa.UUID(), nullable=False),
-        sa.Column(
-            "related_entity_id",
-            sa.UUID(),
-            nullable=True,
-            comment="For pair-level observations (e.g. co-occurrence): "
-            "the other entity in the pair. NULL for entity-level "
-            "observations (temporal patterns, behavioral patterns).",
-        ),
+        sa.Column("related_entity_id", sa.UUID(), nullable=True,
+                  comment="For pair-level observations (e.g. co-occurrence): "
+                          "the other entity in the pair. NULL for entity-level "
+                          "observations (temporal patterns, behavioral patterns)."),
         sa.Column("observation_type", sa.Text(), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
-        sa.Column("supporting_fact_ids", postgresql.ARRAY(sa.UUID()), nullable=True),
-        sa.Column(
-            "supporting_relationship_ids", postgresql.ARRAY(sa.UUID()), nullable=True
-        ),
-        sa.Column("confidence", sa.Float(), nullable=False, server_default="0.0"),
+        sa.Column("supporting_fact_ids",
+                  postgresql.ARRAY(sa.UUID()), nullable=True),
+        sa.Column("supporting_relationship_ids",
+                  postgresql.ARRAY(sa.UUID()), nullable=True),
+        sa.Column("confidence", sa.Float(), nullable=False,
+                  server_default="0.0"),
         sa.Column("valid_from", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("valid_to", sa.TIMESTAMP(timezone=True), nullable=True),
-        sa.Column(
-            "observation_metadata",
-            postgresql.JSONB(),
-            nullable=True,
-            comment="Arbitrary metadata for future extensibility.",
-        ),
-        sa.Column(
-            "created_at",
-            sa.TIMESTAMP(timezone=True),
-            server_default=sa.func.now(),
-            nullable=False,
-        ),
-        sa.Column(
-            "updated_at",
-            sa.TIMESTAMP(timezone=True),
-            server_default=sa.func.now(),
-            nullable=False,
-        ),
+        sa.Column("observation_metadata", postgresql.JSONB(), nullable=True,
+                  comment="Arbitrary metadata for future extensibility."),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True),
+                  server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True),
+                  server_default=sa.func.now(), nullable=False),
         sa.ForeignKeyConstraint(
-            ["project_id"],
-            ["projects.id"],
+            ["project_id"], ["projects.id"],
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["subject_entity_id"],
-            ["graph_entities.id"],
+            ["subject_entity_id"], ["graph_entities.id"],
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["related_entity_id"],
-            ["graph_entities.id"],
+            ["related_entity_id"], ["graph_entities.id"],
             ondelete="SET NULL",
         ),
     )
@@ -131,31 +106,27 @@ def upgrade() -> None:
     # ════════════════════════════════════════════════════════════════════════════
 
     # Tenant + project scoping
-    op.create_index("idx_observations_project", "graph_observations", ["project_id"])
-    op.create_index("idx_observations_org", "graph_observations", ["organization_id"])
+    op.create_index("idx_observations_project", "graph_observations",
+                    ["project_id"])
+    op.create_index("idx_observations_org", "graph_observations",
+                    ["organization_id"])
 
     # "What observations exist about this entity?"
-    op.create_index(
-        "idx_observations_subject", "graph_observations", ["subject_entity_id"]
-    )
+    op.create_index("idx_observations_subject", "graph_observations",
+                    ["subject_entity_id"])
 
     # Filter by type within a project
-    op.create_index("idx_observations_type", "graph_observations", ["observation_type"])
+    op.create_index("idx_observations_type", "graph_observations",
+                    ["observation_type"])
 
     # Composite for common query: all co_occurrence observations in a project
-    op.create_index(
-        "idx_observations_project_type",
-        "graph_observations",
-        ["project_id", "observation_type"],
-    )
+    op.create_index("idx_observations_project_type", "graph_observations",
+                    ["project_id", "observation_type"])
 
     # Fast lookups of pair-level observations
-    op.create_index(
-        "idx_observations_pair",
-        "graph_observations",
-        ["subject_entity_id", "related_entity_id"],
-        postgresql_where=sa.text("related_entity_id IS NOT NULL"),
-    )
+    op.create_index("idx_observations_pair", "graph_observations",
+                    ["subject_entity_id", "related_entity_id"],
+                    postgresql_where=sa.text("related_entity_id IS NOT NULL"))
 
     # ── Functional unique index for dedup ─────────────────────────────────────
     # PostgreSQL's unique B-tree index treats NULL != NULL, so a plain unique
@@ -175,10 +146,8 @@ def upgrade() -> None:
             "project_id",
             "subject_entity_id",
             "observation_type",
-            sa.text(
-                "COALESCE(related_entity_id, "
-                "'00000000-0000-0000-0000-000000000000'::uuid)"
-            ),
+            sa.text("COALESCE(related_entity_id, "
+                    "'00000000-0000-0000-0000-000000000000'::uuid)"),
         ],
         unique=True,
     )
@@ -200,13 +169,15 @@ def upgrade() -> None:
 def downgrade() -> None:
     # ── 1. Drop RLS policy ────────────────────────────────────────────────────
     op.execute(
-        "DROP POLICY IF EXISTS org_isolation_graph_observations ON graph_observations"
+        "DROP POLICY IF EXISTS org_isolation_graph_observations "
+        "ON graph_observations"
     )
 
     # ── 2. Drop indexes ───────────────────────────────────────────────────────
     op.drop_index("idx_observations_dedup", table_name="graph_observations")
     op.drop_index("idx_observations_pair", table_name="graph_observations")
-    op.drop_index("idx_observations_project_type", table_name="graph_observations")
+    op.drop_index("idx_observations_project_type",
+                  table_name="graph_observations")
     op.drop_index("idx_observations_type", table_name="graph_observations")
     op.drop_index("idx_observations_subject", table_name="graph_observations")
     op.drop_index("idx_observations_org", table_name="graph_observations")

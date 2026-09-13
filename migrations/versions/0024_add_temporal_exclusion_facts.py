@@ -38,12 +38,9 @@ Create Date: 2026-06-28
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 from alembic import op
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 revision: str = "0024"
 down_revision: str | None = "0023"
@@ -87,7 +84,9 @@ def downgrade() -> None:
     # ── 1. Drop exclusion constraint ────────────────────────────────────────
     # Alembic's ``op.drop_constraint`` does not support ``type_="exclude"``,
     # so we use raw SQL for the exclusion constraint in both directions.
-    op.execute("ALTER TABLE facts DROP CONSTRAINT IF EXISTS uq_facts_temporal_excl")
+    op.execute(
+        "ALTER TABLE facts DROP CONSTRAINT IF EXISTS uq_facts_temporal_excl"
+    )
 
     # ── 2. Restore original unique constraint ────────────────────────────────
     op.create_unique_constraint(

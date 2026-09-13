@@ -1,5 +1,4 @@
 """Unit tests for compute_observations task."""
-
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -45,15 +44,9 @@ class TestComputeObservations:
         mock_episode = self._make_episode(enrichment_status=0)
 
         with (
-            patch(
-                "workers.tasks.compute_observations.with_retry",
-                lambda **kw: lambda f: f,
-            ),
+            patch("workers.tasks.compute_observations.with_retry", lambda **kw: lambda f: f),
             patch("workers.backend.resolve_graph_backend", return_value=mock_backend),
-            patch(
-                "workers.tasks.compute_observations._maybe_get_llm_backend",
-                return_value=None,
-            ),
+            patch("workers.tasks.compute_observations._maybe_get_llm_backend", return_value=None),
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
             patch("services.observation_service.ObservationService") as mock_svc_cls,
             patch("asyncio.sleep", AsyncMock()),
@@ -64,21 +57,14 @@ class TestComputeObservations:
 
             mock_svc = AsyncMock()
             mock_svc.run_full_project_scan.return_value = {
-                "cooccurrence": 3,
-                "temporal_gap": 2,
-                "behavioural": 1,
+                "cooccurrence": 3, "temporal_gap": 2, "behavioural": 1,
             }
             mock_svc_cls.return_value = mock_svc
 
             db = self._make_db()
             from workers.tasks.compute_observations import compute_observations
 
-            await compute_observations(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-            )
+            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, org_id=_ORG_ID, project_id=_PROJECT_ID)
 
             mock_repo.get_by_id.assert_called_once()
             mock_svc.run_full_project_scan.assert_called_once()
@@ -91,10 +77,7 @@ class TestComputeObservations:
         mock_episode = self._make_episode(enrichment_status=1 << 6)
 
         with (
-            patch(
-                "workers.tasks.compute_observations.with_retry",
-                lambda **kw: lambda f: f,
-            ),
+            patch("workers.tasks.compute_observations.with_retry", lambda **kw: lambda f: f),
             patch("workers.backend.resolve_graph_backend", return_value=AsyncMock()),
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
         ):
@@ -105,12 +88,7 @@ class TestComputeObservations:
             db = self._make_db()
             from workers.tasks.compute_observations import compute_observations
 
-            await compute_observations(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-            )
+            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, org_id=_ORG_ID, project_id=_PROJECT_ID)
 
             # Should NOT proceed to scan or set bit
             mock_repo.apply_enrichment_bits.assert_not_called()
@@ -119,10 +97,7 @@ class TestComputeObservations:
     async def test_episode_not_found(self) -> None:
         """Missing episode raises EpisodeNotFoundError."""
         with (
-            patch(
-                "workers.tasks.compute_observations.with_retry",
-                lambda **kw: lambda f: f,
-            ),
+            patch("workers.tasks.compute_observations.with_retry", lambda **kw: lambda f: f),
             patch("workers.backend.resolve_graph_backend", return_value=AsyncMock()),
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
         ):
@@ -134,12 +109,7 @@ class TestComputeObservations:
             from workers.tasks.compute_observations import compute_observations
 
             with pytest.raises(EpisodeNotFoundError):
-                await compute_observations(
-                    ctx=self._ctx(db),
-                    episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
-                    project_id=_PROJECT_ID,
-                )
+                await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, org_id=_ORG_ID, project_id=_PROJECT_ID)
 
     @pytest.mark.asyncio
     async def test_empty_scan(self) -> None:
@@ -148,15 +118,9 @@ class TestComputeObservations:
         mock_episode = self._make_episode(enrichment_status=0)
 
         with (
-            patch(
-                "workers.tasks.compute_observations.with_retry",
-                lambda **kw: lambda f: f,
-            ),
+            patch("workers.tasks.compute_observations.with_retry", lambda **kw: lambda f: f),
             patch("workers.backend.resolve_graph_backend", return_value=mock_backend),
-            patch(
-                "workers.tasks.compute_observations._maybe_get_llm_backend",
-                return_value=None,
-            ),
+            patch("workers.tasks.compute_observations._maybe_get_llm_backend", return_value=None),
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
             patch("services.observation_service.ObservationService") as mock_svc_cls,
             patch("asyncio.sleep", AsyncMock()),
@@ -172,12 +136,7 @@ class TestComputeObservations:
             db = self._make_db()
             from workers.tasks.compute_observations import compute_observations
 
-            await compute_observations(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-            )
+            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, org_id=_ORG_ID, project_id=_PROJECT_ID)
 
             mock_svc.run_full_project_scan.assert_called_once()
             mock_repo.apply_enrichment_bits.assert_called_once()
@@ -186,10 +145,7 @@ class TestComputeObservations:
     async def test_graph_disabled_skips(self) -> None:
         """Graph backend resolves to ``None`` (graph disabled) → no-op."""
         with (
-            patch(
-                "workers.tasks.compute_observations.with_retry",
-                lambda **kw: lambda f: f,
-            ),
+            patch("workers.tasks.compute_observations.with_retry", lambda **kw: lambda f: f),
             patch("workers.backend.resolve_graph_backend", return_value=None),
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
             patch("services.observation_service.ObservationService") as mock_svc_cls,
@@ -200,12 +156,7 @@ class TestComputeObservations:
             db = self._make_db()
             from workers.tasks.compute_observations import compute_observations
 
-            await compute_observations(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-            )
+            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, org_id=_ORG_ID, project_id=_PROJECT_ID)
 
             # ObservationService never constructed — _assert_backend would raise on None.
             mock_svc_cls.assert_not_called()
@@ -216,10 +167,7 @@ class TestComputeObservations:
     async def test_db_error_propagates(self) -> None:
         """Database errors are not silently swallowed."""
         with (
-            patch(
-                "workers.tasks.compute_observations.with_retry",
-                lambda **kw: lambda f: f,
-            ),
+            patch("workers.tasks.compute_observations.with_retry", lambda **kw: lambda f: f),
             patch("workers.backend.resolve_graph_backend", return_value=AsyncMock()),
         ):
             db = AsyncMock()
@@ -230,12 +178,7 @@ class TestComputeObservations:
             from workers.tasks.compute_observations import compute_observations
 
             with pytest.raises(Exception):
-                await compute_observations(
-                    ctx=self._ctx(db),
-                    episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
-                    project_id=_PROJECT_ID,
-                )
+                await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, org_id=_ORG_ID, project_id=_PROJECT_ID)
 
     @pytest.mark.asyncio
     async def test_observations_filtered_by_type(self) -> None:
@@ -244,15 +187,9 @@ class TestComputeObservations:
         mock_episode = self._make_episode(enrichment_status=0)
 
         with (
-            patch(
-                "workers.tasks.compute_observations.with_retry",
-                lambda **kw: lambda f: f,
-            ),
+            patch("workers.tasks.compute_observations.with_retry", lambda **kw: lambda f: f),
             patch("workers.backend.resolve_graph_backend", return_value=mock_backend),
-            patch(
-                "workers.tasks.compute_observations._maybe_get_llm_backend",
-                return_value=None,
-            ),
+            patch("workers.tasks.compute_observations._maybe_get_llm_backend", return_value=None),
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
             patch("services.observation_service.ObservationService") as mock_svc_cls,
             patch("asyncio.sleep", AsyncMock()),
@@ -268,12 +205,7 @@ class TestComputeObservations:
             db = self._make_db()
             from workers.tasks.compute_observations import compute_observations
 
-            await compute_observations(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-            )
+            await compute_observations(ctx=self._ctx(db), episode_id=_EPISODE_ID, org_id=_ORG_ID, project_id=_PROJECT_ID)
 
             mock_svc.run_full_project_scan.assert_called_once()
             mock_repo.apply_enrichment_bits.assert_called_once()
@@ -287,15 +219,9 @@ class TestComputeObservations:
         mock_episode = self._make_episode(enrichment_status=0)
 
         with (
-            patch(
-                "workers.tasks.compute_observations.with_retry",
-                lambda **kw: lambda f: f,
-            ),
+            patch("workers.tasks.compute_observations.with_retry", lambda **kw: lambda f: f),
             patch("workers.backend.resolve_graph_backend", return_value=mock_backend),
-            patch(
-                "workers.tasks.compute_observations._maybe_get_llm_backend",
-                return_value=None,
-            ),
+            patch("workers.tasks.compute_observations._maybe_get_llm_backend", return_value=None),
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
             patch("services.observation_service.ObservationService") as mock_svc_cls,
             patch("asyncio.sleep", AsyncMock()),
@@ -312,10 +238,8 @@ class TestComputeObservations:
             from workers.tasks.compute_observations import compute_observations
 
             await compute_observations(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
+                ctx=self._ctx(db), episode_id=_EPISODE_ID,
+                org_id=_ORG_ID, project_id=_PROJECT_ID,
                 trace_id="test-trace-001",
             )
 
@@ -328,15 +252,9 @@ class TestComputeObservations:
         mock_episode = self._make_episode(enrichment_status=0)
 
         with (
-            patch(
-                "workers.tasks.compute_observations.with_retry",
-                lambda **kw: lambda f: f,
-            ),
+            patch("workers.tasks.compute_observations.with_retry", lambda **kw: lambda f: f),
             patch("workers.backend.resolve_graph_backend", return_value=mock_backend),
-            patch(
-                "workers.tasks.compute_observations._maybe_get_llm_backend",
-                return_value=None,
-            ),
+            patch("workers.tasks.compute_observations._maybe_get_llm_backend", return_value=None),
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
             patch("services.observation_service.ObservationService") as mock_svc_cls,
             patch("asyncio.sleep", AsyncMock()),
@@ -366,10 +284,8 @@ class TestComputeObservations:
             from workers.tasks.compute_observations import compute_observations
 
             await compute_observations(
-                ctx=ctx,
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
+                ctx=ctx, episode_id=_EPISODE_ID,
+                org_id=_ORG_ID, project_id=_PROJECT_ID,
             )
 
             mock_svc.run_full_project_scan.assert_called_once()
@@ -384,15 +300,10 @@ class TestComputeObservations:
         mock_llm = AsyncMock()
 
         with (
-            patch(
-                "workers.tasks.compute_observations.with_retry",
-                lambda **kw: lambda f: f,
-            ),
+            patch("workers.tasks.compute_observations.with_retry", lambda **kw: lambda f: f),
             patch("workers.backend.resolve_graph_backend", return_value=mock_backend),
-            patch(
-                "workers.tasks.compute_observations._maybe_get_llm_backend",
-                return_value=mock_llm,
-            ),
+            patch("workers.tasks.compute_observations._maybe_get_llm_backend",
+                  return_value=mock_llm),
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
             patch("services.observation_service.ObservationService") as mock_svc_cls,
             patch("asyncio.sleep", AsyncMock()),
@@ -409,10 +320,8 @@ class TestComputeObservations:
             from workers.tasks.compute_observations import compute_observations
 
             await compute_observations(
-                ctx=self._ctx(db),
-                episode_id=_EPISODE_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
+                ctx=self._ctx(db), episode_id=_EPISODE_ID,
+                org_id=_ORG_ID, project_id=_PROJECT_ID,
             )
 
             mock_svc.run_full_project_scan.assert_called_once()

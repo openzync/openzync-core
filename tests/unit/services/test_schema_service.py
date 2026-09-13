@@ -3,7 +3,6 @@
 All external dependencies (the extraction schema repository) are mocked at the
 service boundary.  Private validation helpers are tested directly — pure logic.
 """
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -88,19 +87,14 @@ class TestSchemaService:
 
         payload = CreateExtractionSchemaRequest(
             name="invoice_extraction",
-            json_schema={
-                "type": "object",
-                "properties": {"amount": {"type": "number"}},
-            },
+            json_schema={"type": "object", "properties": {"amount": {"type": "number"}}},
             type="structured",
         )
         result = await service.create_schema(self.ORG_ID, payload)
 
         assert isinstance(result, ExtractionSchemaResponse)
         assert result.name == "Test Schema"
-        mock_repo.get_by_name.assert_awaited_once_with(
-            self.ORG_ID, "invoice_extraction"
-        )
+        mock_repo.get_by_name.assert_awaited_once_with(self.ORG_ID, "invoice_extraction")
         mock_repo.create.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -219,9 +213,7 @@ class TestSchemaService:
         assert result[0].name == "Schema A"
         assert result[1].name == "Schema B"
         mock_repo.get_all.assert_awaited_once_with(
-            org_id=self.ORG_ID,
-            schema_type=None,
-            is_active=None,
+            org_id=self.ORG_ID, schema_type=None, is_active=None,
         )
 
     @pytest.mark.asyncio
@@ -230,16 +222,12 @@ class TestSchemaService:
         service, mock_repo = self._make_service()
         mock_repo.get_all.return_value = [self._make_schema(name="Classification")]
 
-        result = await service.list_schemas(
-            self.ORG_ID, schema_type="classification", is_active=True
-        )
+        result = await service.list_schemas(self.ORG_ID, schema_type="classification", is_active=True)
 
         assert len(result) == 1
         assert result[0].name == "Classification"
         mock_repo.get_all.assert_awaited_once_with(
-            org_id=self.ORG_ID,
-            schema_type="classification",
-            is_active=True,
+            org_id=self.ORG_ID, schema_type="classification", is_active=True,
         )
 
     @pytest.mark.asyncio
@@ -286,15 +274,11 @@ class TestSchemaService:
         updated = self._make_schema(name="Updated")
         mock_repo.update.return_value = updated
 
-        payload = UpdateExtractionSchemaRequest(
-            name="Updated", prompt_template="New template"
-        )
+        payload = UpdateExtractionSchemaRequest(name="Updated", prompt_template="New template")
         result = await service.update_schema(self.ORG_ID, self.SCHEMA_ID, payload)
 
         assert result.name == "Updated"
-        mock_repo.update.assert_awaited_once_with(
-            original, name="Updated", prompt_template="New template"
-        )
+        mock_repo.update.assert_awaited_once_with(original, name="Updated", prompt_template="New template")
 
     @pytest.mark.asyncio
     async def test_update_schema_nothing_to_update_returns_current(self) -> None:
@@ -338,11 +322,8 @@ class TestSchemaService:
     async def test_update_schema_classification_json_schema_validated(self) -> None:
         """``update_schema`` validates classification json_schema when updating."""
         service, mock_repo = self._make_service()
-        original = self._make_schema(
-            name="Labels",
-            type="classification",
-            json_schema=self._make_classification_schema(),
-        )
+        original = self._make_schema(name="Labels", type="classification",
+                                     json_schema=self._make_classification_schema())
         mock_repo.get_by_id.return_value = original
 
         payload = UpdateExtractionSchemaRequest(
@@ -446,8 +427,7 @@ class TestSchemaService:
 
     @patch("services.schema_service.logger")
     def test_validate_json_schema_without_jsonschema_skips(
-        self,
-        mock_logger: MagicMock,
+        self, mock_logger: MagicMock,
     ) -> None:
         """``_validate_json_schema`` skips validation when jsonschema not installed."""
         service, _mock_repo = self._make_service()

@@ -8,9 +8,10 @@ for tenant isolation.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from uuid import UUID
 
 from core.exceptions import NotFoundError, ValidationError
+from repositories.project_repository import ProjectRepository
 from schemas.projects import (
     AddMemberRequest,
     CreateProjectRequest,
@@ -18,11 +19,6 @@ from schemas.projects import (
     ProjectResponse,
     UpdateProjectRequest,
 )
-
-if TYPE_CHECKING:
-    from uuid import UUID
-
-    from repositories.project_repository import ProjectRepository
 
 logger = logging.getLogger(__name__)
 
@@ -72,8 +68,7 @@ class ProjectService:
         )
         if existing is not None:
             raise ValidationError(
-                message=f"A project named '{payload.name}' already exists "
-                "in this organisation",
+                message=f"A project named '{payload.name}' already exists in this organisation",
                 detail={"name": payload.name},
             )
 
@@ -321,9 +316,7 @@ class ProjectService:
         member = await self._repo.get_member(project_id, user_id)
         if member is None:
             raise NotFoundError(
-                message=(
-                    f"Membership not found for user {user_id} in project {project_id}"
-                ),
+                message=f"Membership not found for user {user_id} in project {project_id}",
                 detail={"user_id": str(user_id), "project_id": str(project_id)},
             )
 

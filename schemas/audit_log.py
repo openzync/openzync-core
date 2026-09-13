@@ -12,21 +12,13 @@ class AuditLogResponse(BaseModel):
     """Single audit log entry returned to the frontend."""
 
     id: UUID = Field(..., description="Audit log entry ID")
-    organization_id: UUID | None = Field(
-        None, description="Organization UUID (may be null for unauthenticated actions)"
-    )
+    organization_id: UUID | None = Field(None, description="Organization UUID (may be null for unauthenticated actions)")
     actor_id: str | None = Field(None, description="Identifier of the acting entity")
-    actor_type: str | None = Field(
-        None, description="Actor category: user, api_key, or system"
-    )
+    actor_type: str | None = Field(None, description="Actor category: user, api_key, or system")
     action: str = Field(..., description="The action performed, e.g. session.create")
     resource_type: str = Field(..., description="Type of resource affected")
-    resource_id: str | None = Field(
-        None, description="Identifier of the affected resource"
-    )
-    details: dict = Field(
-        default_factory=dict, description="Action-specific JSON payload"
-    )
+    resource_id: str | None = Field(None, description="Identifier of the affected resource")
+    details: dict = Field(default_factory=dict, description="Action-specific JSON payload")
     display_name: str | None = Field(
         None,
         description="Human-readable action label (from route metadata)",
@@ -49,12 +41,8 @@ class AuditLogFilter(BaseModel):
     resource_type: str | None = Field(None, description="Filter by resource type")
     resource_id: str | None = Field(None, description="Filter by resource ID")
     status_code: int | None = Field(None, description="Filter by HTTP status code")
-    created_after: datetime | None = Field(
-        None, description="Include entries after this timestamp"
-    )
-    created_before: datetime | None = Field(
-        None, description="Include entries before this timestamp"
-    )
+    created_after: datetime | None = Field(None, description="Include entries after this timestamp")
+    created_before: datetime | None = Field(None, description="Include entries before this timestamp")
     limit: int = Field(default=50, ge=1, le=500, description="Max entries per page")
     offset: int = Field(default=0, ge=0, description="Number of entries to skip")
 

@@ -29,11 +29,11 @@ if TYPE_CHECKING:
 
     from models.session import Session
     from models.user import User
-    from services.webhook_service import WebhookService
 
 # Import for type hints only; blob uploads are processed before passing to
 # the worker, and UploadFile isn't available in the worker context.
 from fastapi import UploadFile  # noqa: TCH002 — used in method signature
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import get_arq
 from core.config import get_settings
@@ -48,6 +48,7 @@ from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
 from schemas.memory import IngestMemoryResponse, Message
 from services.idempotency_service import IdempotencyService, IdempotencyStatus
+from services.webhook_service import WebhookService
 from services.worker.worker_settings import get_queue_name
 
 logger = logging.getLogger(__name__)

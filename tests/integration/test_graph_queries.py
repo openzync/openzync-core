@@ -105,10 +105,7 @@ class TestGraphNodes:
         """GET /graph/nodes?limit=10&cursor=abc → 200 (cursor accepted gracefully)."""
         resp = await isolated_auth_client.get(
             f"/v1/projects/{isolated_project_id}/graph/nodes",
-            params={
-                "limit": 10,
-                "cursor": "eyJub2RlX2lkIjogImFiYyJ9",
-            },  # base64 {"node_id": "abc"}
+            params={"limit": 10, "cursor": "eyJub2RlX2lkIjogImFiYyJ9"},  # base64 {"node_id": "abc"}
         )
         assert resp.status_code == 200
         data = resp.json()

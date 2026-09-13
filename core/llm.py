@@ -50,8 +50,8 @@ class TokenUsage:
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    cache_read_input_tokens: int = 0  # tokens served from provider cache
-    cache_creation_input_tokens: int = 0  # tokens written to provider cache
+    cache_read_input_tokens: int = 0       # tokens served from provider cache
+    cache_creation_input_tokens: int = 0   # tokens written to provider cache
 
     @property
     def total_tokens(self) -> int:
@@ -287,9 +287,7 @@ class LLMBackend(ABC):
         messages = self._inject_schema_instr(messages, response_model)
 
         for attempt in range(retries + 1):
-            response: ChatResponse = await self._chat(
-                messages, cache_config=cache_config, **kwargs
-            )
+            response: ChatResponse = await self._chat(messages, cache_config=cache_config, **kwargs)
 
             # ── Try clean model_validate_json first ───────────────────────────
             try:
@@ -304,7 +302,9 @@ class LLMBackend(ABC):
             extracted: Any = self._extract_json(response.content)
             if extracted is not None:
                 try:
-                    response.validated_data = response_model.model_validate(extracted)
+                    response.validated_data = response_model.model_validate(
+                        extracted
+                    )
                     # Normalise content to clean JSON so callers can use
                     # ``model_validate_json()`` without pre-processing.
                     response.content = orjson.dumps(extracted).decode()
@@ -319,9 +319,7 @@ class LLMBackend(ABC):
                     f"after {retries + 1} attempt(s).",
                     model_name=self.model_name,
                     content_preview=response.content[:300],
-                    validation_error=_last_validation_error(
-                        response.content, response_model
-                    ),
+                    validation_error=_last_validation_error(response.content, response_model),
                 )
 
             messages = self._build_retry_messages(
@@ -383,10 +381,7 @@ class LLMBackend(ABC):
 
         if messages and messages[0].get("role") == "system":
             return [
-                {
-                    **messages[0],
-                    "content": f"{messages[0]['content']}\n\n{instruction}",
-                },
+                {**messages[0], "content": f"{messages[0]['content']}\n\n{instruction}"},
                 *messages[1:],
             ]
 
@@ -519,14 +514,10 @@ class LLMBackendRegistry:
         """
         if name in cls._backends:
             raise ValueError(
-                f"LLM backend '{name}' is already registered as "
-                f"{cls._backends[name].__name__}"
+                f"LLM backend '{name}' is already registered as {cls._backends[name].__name__}"
             )
         cls._backends[name] = backend_cls
-        logger.debug(
-            "llm.backend_registered",
-            extra={"backend_name": name, "cls": backend_cls.__name__},
-        )
+        logger.debug("llm.backend_registered", extra={"backend_name": name, "cls": backend_cls.__name__})
 
     @classmethod
     def get(cls, name: str) -> type[LLMBackend]:

@@ -112,8 +112,7 @@ class TestGlobalSearchRouter:
 
     @patch("routers.global_search.GlobalSearchService")
     async def test_global_search_empty_query_422(
-        self,
-        mock_search_service: AsyncMock,
+        self, mock_search_service: AsyncMock,
     ) -> None:
         """GET /v1/search without query parameter → 422."""
         mock_instance = AsyncMock()
@@ -149,8 +148,7 @@ class TestGlobalSearchRouter:
 
     @patch("routers.global_search.GlobalSearchService")
     async def test_global_search_empty_q_422(
-        self,
-        mock_search_service: AsyncMock,
+        self, mock_search_service: AsyncMock,
     ) -> None:
         """GET /v1/search?q= with empty value → 422."""
         mock_instance = AsyncMock()
@@ -186,8 +184,7 @@ class TestGlobalSearchRouter:
 
     @patch("routers.global_search.GlobalSearchService")
     async def test_global_search_empty_results(
-        self,
-        mock_search_service: AsyncMock,
+        self, mock_search_service: AsyncMock,
     ) -> None:
         """GET /v1/search?q=xyz with no matches → 200 with empty results."""
         mock_instance = AsyncMock()
@@ -227,8 +224,7 @@ class TestGlobalSearchRouter:
 
     @patch("routers.global_search.GlobalSearchService")
     async def test_global_search_with_limit(
-        self,
-        mock_search_service: AsyncMock,
+        self, mock_search_service: AsyncMock,
     ) -> None:
         """GET /v1/search with custom limit → 200."""
         mock_instance = AsyncMock()

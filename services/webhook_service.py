@@ -23,7 +23,8 @@ import hmac
 import logging
 import secrets
 import time
-from typing import TYPE_CHECKING
+import uuid
+from collections.abc import Mapping
 
 import orjson
 
@@ -31,13 +32,8 @@ from core.arq import get_arq
 from core.config import get_settings
 from middleware.metrics import webhook_emit_failures_total
 from models.webhook import WebhookEndpoint
+from repositories.webhook_repository import WebhookRepository
 from services.worker.worker_settings import get_queue_name
-
-if TYPE_CHECKING:
-    import uuid
-    from collections.abc import Mapping
-
-    from repositories.webhook_repository import WebhookRepository
 
 logger = logging.getLogger("openzync.webhooks")
 
@@ -81,17 +77,14 @@ class WebhookService:
     # ── Endpoint management ─────────────────────────────────────────────────
 
     async def list_endpoints(
-        self,
-        organization_id: uuid.UUID,
+        self, organization_id: uuid.UUID,
     ) -> list[dict]:
         """List all webhook endpoints for an organization."""
         endpoints = await self._repo.get_by_organization(organization_id)
         return [self._serialize(e) for e in endpoints]
 
     async def get_endpoint(
-        self,
-        endpoint_id: uuid.UUID,
-        organization_id: uuid.UUID,
+        self, endpoint_id: uuid.UUID, organization_id: uuid.UUID,
     ) -> dict | None:
         """Get a single webhook endpoint by ID, verifying ownership."""
         endpoint = await self._repo.get_by_id(endpoint_id)
@@ -183,8 +176,7 @@ class WebhookService:
             return None
 
         updated = await self._repo.update(
-            endpoint_id,
-            is_active=is_active,
+            endpoint_id, is_active=is_active,
         )
         return self._serialize(updated) if updated else None
 
@@ -234,8 +226,7 @@ class WebhookService:
         """
         try:
             endpoints = await self._repo.get_active_endpoints_for_event(
-                organization_id,
-                event_type,
+                organization_id, event_type,
             )
             if not endpoints:
                 return True
@@ -262,13 +253,9 @@ class WebhookService:
                     # concurrent emitters cannot race and write different secrets —
                     # the loser re-reads the winner's secret instead of overwriting.
                     signing_secret = secrets.token_urlsafe(43)
-                    if (
-                        await self._repo.set_signing_secret_if_null(
-                            ep.id,
-                            signing_secret=signing_secret,
-                        )
-                        == 0
-                    ):
+                    if await self._repo.set_signing_secret_if_null(
+                        ep.id, signing_secret=signing_secret,
+                    ) == 0:
                         refreshed = await self._repo.get_by_id(ep.id)
                         if refreshed is None or not refreshed.signing_secret:
                             logger.warning(
@@ -318,9 +305,7 @@ class WebhookService:
         if not isinstance(endpoint, WebhookEndpoint):
             raise TypeError(f"Expected WebhookEndpoint, got {type(endpoint).__name__}")
         try:
-            events_list = (
-                orjson.loads(endpoint.events.encode()) if endpoint.events else []
-            )
+            events_list = orjson.loads(endpoint.events.encode()) if endpoint.events else []
         except (orjson.JSONDecodeError, TypeError):
             logger.error(
                 "webhook.events_deserialization_failed",
@@ -340,10 +325,6 @@ class WebhookService:
                 if endpoint.last_delivery_at
                 else None
             ),
-            "created_at": endpoint.created_at.isoformat()
-            if endpoint.created_at
-            else None,
-            "updated_at": endpoint.updated_at.isoformat()
-            if endpoint.updated_at
-            else None,
+            "created_at": endpoint.created_at.isoformat() if endpoint.created_at else None,
+            "updated_at": endpoint.updated_at.isoformat() if endpoint.updated_at else None,
         }

@@ -27,11 +27,14 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from uuid import UUID
 
 import orjson
+import redis.asyncio as aioredis
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 # Single source of truth for the must-change-password exempt paths — the
 # same frozenset used by dependencies.auth.get_dashboard_user, so the
@@ -41,11 +44,6 @@ from core.exceptions import RateLimitError  # noqa: E402
 from dependencies.auth import MUST_CHANGE_PASSWORD_EXEMPT_PATHS  # noqa: E402
 from repositories.api_key_repository import ApiKeyRepository
 from utils.crypto import compute_lookup_hash, verify_api_key
-
-if TYPE_CHECKING:
-    import redis.asyncio as aioredis
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-    from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
@@ -346,7 +344,8 @@ async def _check_auth_miss_rate_limit(
         from core.exceptions import RateLimitError
 
         raise RateLimitError(
-            f"Too many authentication attempts from {client_ip}. Try again later."
+            f"Too many authentication attempts from {client_ip}. "
+            f"Try again later."
         )
 
 
@@ -626,10 +625,7 @@ class AuthMiddleware:
         # If the token doesn't have an API key prefix, try JWT first.
         if not raw_key.startswith(API_KEY_PREFIXES) and _is_jwt_token(raw_key):
             jwt_error = _verify_jwt_and_set_state(
-                scope["state"],
-                path,
-                method,
-                raw_key,
+                scope["state"], path, method, raw_key,
             )
             if jwt_error is not None:
                 await _send_rfc7807(send, **jwt_error)

@@ -7,21 +7,17 @@ The service layer handles ownership verification before returning data.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from uuid import UUID
 
 from core.exceptions import NotFoundError
+from repositories.session_repository import SessionRepository
+from repositories.structured_extraction_repository import (
+    StructuredExtractionRepository,
+)
 from schemas.structured_extractions import (
     StructuredExtractionListResponse,
     StructuredExtractionResponse,
 )
-
-if TYPE_CHECKING:
-    from uuid import UUID
-
-    from repositories.session_repository import SessionRepository
-    from repositories.structured_extraction_repository import (
-        StructuredExtractionRepository,
-    )
 
 
 class StructuredExtractionService:
@@ -65,7 +61,10 @@ class StructuredExtractionService:
 
         extractions = await self._repo.get_by_session(org_id, session_id)
         return StructuredExtractionListResponse(
-            items=[StructuredExtractionResponse.model_validate(e) for e in extractions],
+            items=[
+                StructuredExtractionResponse.model_validate(e)
+                for e in extractions
+            ],
             total=len(extractions),
         )
 

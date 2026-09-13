@@ -1,4 +1,5 @@
-"""Dialog classification model — intent, emotion, and sentiment labels.
+"""Dialog classification model — intent, emotion, and sentiment classification
+for individual episodes.
 
 Classification results are produced by the enrichment pipeline and store
 discrete labels (intent, emotion, valence, arousal) alongside confidence
@@ -37,11 +38,7 @@ class DialogClassification(TimestampMixin, Base):
     __tablename__ = "dialog_classifications"
 
     __table_args__ = (
-        UniqueConstraint(
-            "organization_id",
-            "episode_id",
-            name="uq_dialog_classifications_org_episode",
-        ),
+        UniqueConstraint("organization_id", "episode_id", name="uq_dialog_classifications_org_episode"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -53,10 +50,7 @@ class DialogClassification(TimestampMixin, Base):
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-        comment=(
-            "Denormalized for efficient project-scoped queries "
-            "without joining through episode."
-        ),
+        comment="Denormalized for efficient project-scoped queries without joining through episode.",
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("organizations.id", ondelete="CASCADE"),

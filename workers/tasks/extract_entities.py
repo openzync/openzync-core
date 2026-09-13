@@ -269,7 +269,8 @@ async def process_entities_output(
                     name=name,
                     entity_type="Custom",
                     summary=(
-                        f"Auto-created from relationship: {subject} {predicate} {obj}"
+                        f"Auto-created from relationship: "
+                        f"{subject} {predicate} {obj}"
                     ),
                 )
                 name_to_node[name] = fallback_node
@@ -331,3 +332,5 @@ async def process_entities_output(
     )
 
     return {name: node["id"] for name, node in name_to_node.items()}
+
+

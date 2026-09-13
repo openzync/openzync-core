@@ -22,16 +22,13 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING
 
 import orjson
+import redis.asyncio as aioredis
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core.config import get_settings
 from core.exceptions import RateLimitUnavailableError
-
-if TYPE_CHECKING:
-    import redis.asyncio as aioredis
-    from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
@@ -188,34 +185,26 @@ class RateLimitMiddleware:
             send: The ASGI send callable.
             path: The request path, used as the ``instance`` field.
         """
-        body = orjson.dumps(
-            {
-                "type": RFC_7807_TYPE_UNAVAILABLE,
-                "title": "Service Unavailable",
-                "status": 503,
-                "detail": (
-                    "Rate limiting is unavailable — request rejected (fail-closed)."
-                ),
-                "instance": path,
-            }
-        )
+        body = orjson.dumps({
+            "type": RFC_7807_TYPE_UNAVAILABLE,
+            "title": "Service Unavailable",
+            "status": 503,
+            "detail": "Rate limiting is unavailable — request rejected (fail-closed).",
+            "instance": path,
+        })
         headers = [
             (b"content-type", b"application/problem+json"),
             (b"content-length", str(len(body)).encode()),
         ]
-        await send(
-            {
-                "type": "http.response.start",
-                "status": 503,
-                "headers": headers,
-            }
-        )
-        await send(
-            {
-                "type": "http.response.body",
-                "body": body,
-            }
-        )
+        await send({
+            "type": "http.response.start",
+            "status": 503,
+            "headers": headers,
+        })
+        await send({
+            "type": "http.response.body",
+            "body": body,
+        })
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
@@ -237,14 +226,8 @@ class RateLimitMiddleware:
             return
 
         # ── Get Redis client (fail-closed if unavailable) ───────────────
-        app_state = (
-            scope.get("app", {}).state if hasattr(scope.get("app"), "state") else {}
-        )
-        redis: aioredis.Redis | None = (
-            getattr(app_state, "redis", None)
-            if not isinstance(app_state, dict)
-            else None
-        )
+        app_state = scope.get("app", {}).state if hasattr(scope.get("app"), "state") else {}
+        redis: aioredis.Redis | None = getattr(app_state, "redis", None) if not isinstance(app_state, dict) else None
 
         if redis is None:
             # Fallback: try scope["app"].state.redis (Starlette app state)
@@ -295,18 +278,16 @@ class RateLimitMiddleware:
 
         if not is_allowed:
             # ── Respond with 429 directly ───────────────────────────────
-            body = orjson.dumps(
-                {
-                    "type": RFC_7807_TYPE,
-                    "title": "Too Many Requests",
-                    "status": 429,
-                    "detail": (
-                        f"You have exceeded the rate limit of {max_req} requests "
-                        f"per window.  Retry after {retry_after} seconds."
-                    ),
-                    "instance": path,
-                }
-            )
+            body = orjson.dumps({
+                "type": RFC_7807_TYPE,
+                "title": "Too Many Requests",
+                "status": 429,
+                "detail": (
+                    f"You have exceeded the rate limit of {max_req} requests "
+                    f"per window.  Retry after {retry_after} seconds."
+                ),
+                "instance": path,
+            })
             headers = [
                 (b"content-type", b"application/problem+json"),
                 (b"content-length", str(len(body)).encode()),
@@ -315,32 +296,26 @@ class RateLimitMiddleware:
                 (b"X-RateLimit-Reset", str(reset_time).encode()),
                 (b"Retry-After", str(retry_after).encode()),
             ]
-            await send(
-                {
-                    "type": "http.response.start",
-                    "status": 429,
-                    "headers": headers,
-                }
-            )
-            await send(
-                {
-                    "type": "http.response.body",
-                    "body": body,
-                }
-            )
+            await send({
+                "type": "http.response.start",
+                "status": 429,
+                "headers": headers,
+            })
+            await send({
+                "type": "http.response.body",
+                "body": body,
+            })
             return
 
         # ── Allowed — wrap send to add rate-limit headers ───────────────
         async def send_wrapper(message: dict) -> None:
             if message["type"] == "http.response.start":
                 headers_list = list(message.get("headers", []))
-                headers_list.extend(
-                    [
-                        (b"X-RateLimit-Limit", str(max_req).encode()),
-                        (b"X-RateLimit-Remaining", str(remaining).encode()),
-                        (b"X-RateLimit-Reset", str(reset_time).encode()),
-                    ]
-                )
+                headers_list.extend([
+                    (b"X-RateLimit-Limit", str(max_req).encode()),
+                    (b"X-RateLimit-Remaining", str(remaining).encode()),
+                    (b"X-RateLimit-Reset", str(reset_time).encode()),
+                ])
                 message["headers"] = headers_list
             await send(message)
 

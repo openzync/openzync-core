@@ -61,7 +61,9 @@ class TestFactRepository:
 
     # ── create ─────────────────────────────────────────────────────────────────
 
-    async def test_create(self, repo: FactRepository, mock_db: AsyncMock) -> None:
+    async def test_create(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
         """create inserts and returns a new fact."""
         mock_db.add.return_value = None
         mock_db.flush.return_value = None
@@ -145,7 +147,9 @@ class TestFactRepository:
 
     # ── batch_create ───────────────────────────────────────────────────────────
 
-    async def test_batch_create(self, repo: FactRepository, mock_db: AsyncMock) -> None:
+    async def test_batch_create(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
         """batch_create inserts multiple facts."""
         facts = [
             {"subject": "Alice", "predicate": "likes", "object": "hiking"},
@@ -337,7 +341,9 @@ class TestFactRepository:
         mock_result.scalars.return_value.all.return_value = facts
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_all_active_for_project(project_id=self.PROJECT_ID)
+        result = await repo.get_all_active_for_project(
+            project_id=self.PROJECT_ID
+        )
 
         assert result == facts
 
@@ -349,7 +355,9 @@ class TestFactRepository:
         mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_all_active_for_project(project_id=self.PROJECT_ID)
+        result = await repo.get_all_active_for_project(
+            project_id=self.PROJECT_ID
+        )
 
         assert result == []
 
@@ -442,21 +450,10 @@ class TestFactRepository:
         mock_result = MagicMock()
         mock_result.fetchall.return_value = [
             (
-                str(self.FACT_ID),
-                "Alice likes hiking",
-                "Alice",
-                "likes",
-                "hiking",
-                0.95,
-                str(self.EPISODE_ID),
-                datetime.now(UTC),
-                "literal",
-                "literal",
-                None,
-                None,
-                None,
-                None,
-                None,
+                str(self.FACT_ID), "Alice likes hiking", "Alice", "likes",
+                "hiking", 0.95, str(self.EPISODE_ID),
+                datetime.now(UTC), "literal", "literal",
+                None, None, None, None, None,
             ),
         ]
         mock_db.execute.return_value = mock_result
@@ -512,15 +509,7 @@ class TestFactRepository:
         """search_by_vector returns ranked fact results."""
         mock_result = MagicMock()
         mock_result.fetchall.return_value = [
-            (
-                str(self.FACT_ID),
-                "Alice likes hiking",
-                "Alice",
-                "likes",
-                "hiking",
-                0.95,
-                0.92,
-            ),
+            (str(self.FACT_ID), "Alice likes hiking", "Alice", "likes", "hiking", 0.95, 0.92),
         ]
         mock_db.execute.return_value = mock_result
 
@@ -558,16 +547,8 @@ class TestFactRepository:
         mock_result = MagicMock()
         mock_result.fetchall.return_value = [
             (
-                str(self.FACT_ID),
-                "Alice likes hiking",
-                "Alice",
-                "likes",
-                "hiking",
-                0.95,
-                0.85,
-                None,
-                None,
-                None,
+                str(self.FACT_ID), "Alice likes hiking", "Alice", "likes",
+                "hiking", 0.95, 0.85, None, None, None,
             ),
         ]
         mock_db.execute.return_value = mock_result
@@ -601,7 +582,9 @@ class TestFactRepository:
 
     # ── get_by_id ─────────────────────────────────────────────────────────────
 
-    async def test_get_by_id(self, repo: FactRepository, mock_db: AsyncMock) -> None:
+    async def test_get_by_id(
+        self, repo: FactRepository, mock_db: AsyncMock
+    ) -> None:
         """get_by_id returns the matching fact."""
         fact = self._mock_fact()
         mock_result = MagicMock()
@@ -621,7 +604,9 @@ class TestFactRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_id(self.FACT_ID, organization_id=self.ORG_ID)
+        result = await repo.get_by_id(
+            self.FACT_ID, organization_id=self.ORG_ID
+        )
 
         assert result is None
         mock_db.execute.assert_awaited_once()

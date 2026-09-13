@@ -11,16 +11,12 @@ Revision ID: 0020
 Revises: 0019
 Create Date: 2026-06-18
 """
-
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 revision: str = "0020"
 down_revision: str | None = "0019"
@@ -48,24 +44,16 @@ def upgrade() -> None:
     op.add_column("graph_entities", sa.Column("project_id", sa.Uuid(), nullable=True))
 
     # 1e. graph_relationships — NOT NULL after backfill
-    op.add_column(
-        "graph_relationships", sa.Column("project_id", sa.Uuid(), nullable=True)
-    )
+    op.add_column("graph_relationships", sa.Column("project_id", sa.Uuid(), nullable=True))
 
     # 1f. graph_episode_entities — NOT NULL after backfill
-    op.add_column(
-        "graph_episode_entities", sa.Column("project_id", sa.Uuid(), nullable=True)
-    )
+    op.add_column("graph_episode_entities", sa.Column("project_id", sa.Uuid(), nullable=True))
 
     # 1g. structured_extractions — NOT NULL after backfill
-    op.add_column(
-        "structured_extractions", sa.Column("project_id", sa.Uuid(), nullable=True)
-    )
+    op.add_column("structured_extractions", sa.Column("project_id", sa.Uuid(), nullable=True))
 
     # 1h. dialog_classifications — NOT NULL after backfill
-    op.add_column(
-        "dialog_classifications", sa.Column("project_id", sa.Uuid(), nullable=True)
-    )
+    op.add_column("dialog_classifications", sa.Column("project_id", sa.Uuid(), nullable=True))
 
     # 1i. api_keys — nullable (backward compatible; NULL = org-wide access)
     op.add_column("api_keys", sa.Column("project_id", sa.Uuid(), nullable=True))
@@ -318,77 +306,41 @@ def upgrade() -> None:
     # STEP 13: Foreign key constraints
     # ═════════════════════════════════════════════════════════════════════
     op.create_foreign_key(
-        "fk_sessions_project_id",
-        "sessions",
-        "projects",
-        ["project_id"],
-        ["id"],
-        ondelete="CASCADE",
+        "fk_sessions_project_id", "sessions", "projects",
+        ["project_id"], ["id"], ondelete="CASCADE",
     )
     op.create_foreign_key(
-        "fk_episodes_project_id",
-        "episodes",
-        "projects",
-        ["project_id"],
-        ["id"],
-        ondelete="CASCADE",
+        "fk_episodes_project_id", "episodes", "projects",
+        ["project_id"], ["id"], ondelete="CASCADE",
     )
     op.create_foreign_key(
-        "fk_facts_project_id",
-        "facts",
-        "projects",
-        ["project_id"],
-        ["id"],
-        ondelete="CASCADE",
+        "fk_facts_project_id", "facts", "projects",
+        ["project_id"], ["id"], ondelete="CASCADE",
     )
     op.create_foreign_key(
-        "fk_graph_entities_project_id",
-        "graph_entities",
-        "projects",
-        ["project_id"],
-        ["id"],
-        ondelete="CASCADE",
+        "fk_graph_entities_project_id", "graph_entities", "projects",
+        ["project_id"], ["id"], ondelete="CASCADE",
     )
     op.create_foreign_key(
-        "fk_graph_relationships_project_id",
-        "graph_relationships",
-        "projects",
-        ["project_id"],
-        ["id"],
-        ondelete="CASCADE",
+        "fk_graph_relationships_project_id", "graph_relationships", "projects",
+        ["project_id"], ["id"], ondelete="CASCADE",
     )
     # graph_episode_entities: composite PK, FK is still important
     op.create_foreign_key(
-        "fk_graph_ep_entities_project_id",
-        "graph_episode_entities",
-        "projects",
-        ["project_id"],
-        ["id"],
-        ondelete="CASCADE",
+        "fk_graph_ep_entities_project_id", "graph_episode_entities", "projects",
+        ["project_id"], ["id"], ondelete="CASCADE",
     )
     op.create_foreign_key(
-        "fk_structured_extractions_project_id",
-        "structured_extractions",
-        "projects",
-        ["project_id"],
-        ["id"],
-        ondelete="CASCADE",
+        "fk_structured_extractions_project_id", "structured_extractions", "projects",
+        ["project_id"], ["id"], ondelete="CASCADE",
     )
     op.create_foreign_key(
-        "fk_dialog_classifications_project_id",
-        "dialog_classifications",
-        "projects",
-        ["project_id"],
-        ["id"],
-        ondelete="CASCADE",
+        "fk_dialog_classifications_project_id", "dialog_classifications", "projects",
+        ["project_id"], ["id"], ondelete="CASCADE",
     )
     op.create_foreign_key(
-        "fk_api_keys_project_id",
-        "api_keys",
-        "projects",
-        ["project_id"],
-        ["id"],
-        ondelete="SET NULL",
+        "fk_api_keys_project_id", "api_keys", "projects",
+        ["project_id"], ["id"], ondelete="SET NULL",
     )
 
     # ═════════════════════════════════════════════════════════════════════
@@ -396,8 +348,7 @@ def upgrade() -> None:
     # ═════════════════════════════════════════════════════════════════════
     op.drop_constraint("uq_sessions_user_external", "sessions", type_="unique")
     op.create_unique_constraint(
-        "uq_sessions_project_external",
-        "sessions",
+        "uq_sessions_project_external", "sessions",
         ["project_id", "external_id"],
     )
 
@@ -409,22 +360,10 @@ def upgrade() -> None:
     op.create_index("idx_episodes_project_id", "episodes", ["project_id"])
     op.create_index("idx_facts_project_id", "facts", ["project_id"])
     op.create_index("idx_graph_entities_project_id", "graph_entities", ["project_id"])
-    op.create_index(
-        "idx_graph_relationships_project_id", "graph_relationships", ["project_id"]
-    )
-    op.create_index(
-        "idx_graph_ep_entities_project_id", "graph_episode_entities", ["project_id"]
-    )
-    op.create_index(
-        "idx_structured_extractions_project_id",
-        "structured_extractions",
-        ["project_id"],
-    )
-    op.create_index(
-        "idx_dialog_classifications_project_id",
-        "dialog_classifications",
-        ["project_id"],
-    )
+    op.create_index("idx_graph_relationships_project_id", "graph_relationships", ["project_id"])
+    op.create_index("idx_graph_ep_entities_project_id", "graph_episode_entities", ["project_id"])
+    op.create_index("idx_structured_extractions_project_id", "structured_extractions", ["project_id"])
+    op.create_index("idx_dialog_classifications_project_id", "dialog_classifications", ["project_id"])
     op.create_index("idx_api_keys_project_id", "api_keys", ["project_id"])
 
     # ═════════════════════════════════════════════════════════════════════
@@ -476,25 +415,11 @@ def downgrade() -> None:
     op.drop_constraint("fk_sessions_project_id", "sessions", type_="foreignkey")
     op.drop_constraint("fk_episodes_project_id", "episodes", type_="foreignkey")
     op.drop_constraint("fk_facts_project_id", "facts", type_="foreignkey")
-    op.drop_constraint(
-        "fk_graph_entities_project_id", "graph_entities", type_="foreignkey"
-    )
-    op.drop_constraint(
-        "fk_graph_relationships_project_id", "graph_relationships", type_="foreignkey"
-    )
-    op.drop_constraint(
-        "fk_graph_ep_entities_project_id", "graph_episode_entities", type_="foreignkey"
-    )
-    op.drop_constraint(
-        "fk_structured_extractions_project_id",
-        "structured_extractions",
-        type_="foreignkey",
-    )
-    op.drop_constraint(
-        "fk_dialog_classifications_project_id",
-        "dialog_classifications",
-        type_="foreignkey",
-    )
+    op.drop_constraint("fk_graph_entities_project_id", "graph_entities", type_="foreignkey")
+    op.drop_constraint("fk_graph_relationships_project_id", "graph_relationships", type_="foreignkey")
+    op.drop_constraint("fk_graph_ep_entities_project_id", "graph_episode_entities", type_="foreignkey")
+    op.drop_constraint("fk_structured_extractions_project_id", "structured_extractions", type_="foreignkey")
+    op.drop_constraint("fk_dialog_classifications_project_id", "dialog_classifications", type_="foreignkey")
     op.drop_constraint("fk_api_keys_project_id", "api_keys", type_="foreignkey")
 
     # ── Drop indexes ───────────────────────────────────────────────────
@@ -502,25 +427,16 @@ def downgrade() -> None:
     op.drop_index("idx_episodes_project_id", table_name="episodes")
     op.drop_index("idx_facts_project_id", table_name="facts")
     op.drop_index("idx_graph_entities_project_id", table_name="graph_entities")
-    op.drop_index(
-        "idx_graph_relationships_project_id", table_name="graph_relationships"
-    )
-    op.drop_index(
-        "idx_graph_ep_entities_project_id", table_name="graph_episode_entities"
-    )
-    op.drop_index(
-        "idx_structured_extractions_project_id", table_name="structured_extractions"
-    )
-    op.drop_index(
-        "idx_dialog_classifications_project_id", table_name="dialog_classifications"
-    )
+    op.drop_index("idx_graph_relationships_project_id", table_name="graph_relationships")
+    op.drop_index("idx_graph_ep_entities_project_id", table_name="graph_episode_entities")
+    op.drop_index("idx_structured_extractions_project_id", table_name="structured_extractions")
+    op.drop_index("idx_dialog_classifications_project_id", table_name="dialog_classifications")
     op.drop_index("idx_api_keys_project_id", table_name="api_keys")
 
     # ── Restore old unique constraint on sessions ──────────────────────
     op.drop_constraint("uq_sessions_project_external", "sessions", type_="unique")
     op.create_unique_constraint(
-        "uq_sessions_user_external",
-        "sessions",
+        "uq_sessions_user_external", "sessions",
         ["user_id", "external_id"],
     )
 
@@ -537,10 +453,5 @@ def downgrade() -> None:
 
     # ── Drop RLS policies for graph tables (added in this migration) ───
     op.execute("DROP POLICY IF EXISTS org_isolation_graph_entities ON graph_entities")
-    op.execute(
-        "DROP POLICY IF EXISTS org_isolation_graph_relationships ON graph_relationships"
-    )
-    op.execute(
-        "DROP POLICY IF EXISTS org_isolation_graph_episode_entities "
-        "ON graph_episode_entities"
-    )
+    op.execute("DROP POLICY IF EXISTS org_isolation_graph_relationships ON graph_relationships")
+    op.execute("DROP POLICY IF EXISTS org_isolation_graph_episode_entities ON graph_episode_entities")

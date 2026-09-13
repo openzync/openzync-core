@@ -54,9 +54,7 @@ class InstanceSettings(Base):
     bootstrap_token_hash: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
-        comment=(
-            "SHA-256 hex digest of the one-time bootstrap token (never the plaintext)."
-        ),
+        comment="SHA-256 hex digest of the one-time bootstrap token (never the plaintext).",
     )
     default_backends: Mapped[dict] = mapped_column(
         JSONB,

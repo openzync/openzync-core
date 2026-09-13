@@ -1,5 +1,4 @@
 """Unit tests for quick_actions_service — context-aware dashboard suggestions."""
-
 from __future__ import annotations
 
 from unittest.mock import AsyncMock

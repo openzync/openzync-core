@@ -350,14 +350,12 @@ class TestWorkerSettingsFromOpenBao:
             "OZ_REDIS_URL": "redis://localhost:6379/0",
         }
 
-        with (
-            patch(
-                "services.worker.worker_settings.SYSTEM_KEY_MAPPING",
-                {},  # empty — no keys match
-            ),
-            pytest.raises(ValueError, match="Worker keys not found"),
+        with patch(
+            "services.worker.worker_settings.SYSTEM_KEY_MAPPING",
+            {},  # empty — no keys match
         ):
-            await WorkerSettings.from_openbao(mock_bao)
+            with pytest.raises(ValueError, match="Worker keys not found"):
+                await WorkerSettings.from_openbao(mock_bao)
 
     @pytest.mark.asyncio
     async def test_falkordb_url_sets_when_provided(self) -> None:

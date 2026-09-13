@@ -13,9 +13,7 @@ import orjson
 import pytest
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
-PROMPTS_DIR = (
-    Path(__file__).resolve().parent.parent.parent / "services" / "worker" / "prompts"
-)
+PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "services" / "worker" / "prompts"
 
 
 def load_prompt_text(template_name: str) -> str:
@@ -46,7 +44,9 @@ def load_golden(filename: str) -> list[dict[str, Any]]:
     """
     path = GOLDEN_DIR / filename
     if not path.exists():
-        raise FileNotFoundError(f"Golden dataset '{filename}' not found at {path}")
+        raise FileNotFoundError(
+            f"Golden dataset '{filename}' not found at {path}"
+        )
     with open(path) as f:
         return orjson.loads(f.read().encode())
 
@@ -115,7 +115,9 @@ def parse_structured_response(raw: str) -> dict | None:
         return None
 
 
-def _deep_compare_fields(predicted: dict, expected: dict, path: str = "") -> list[str]:
+def _deep_compare_fields(
+    predicted: dict, expected: dict, path: str = ""
+) -> list[str]:
     """Recursively compare predicted vs expected values.
 
     Returns a list of mismatch descriptions.  Considers None and missing
@@ -130,7 +132,9 @@ def _deep_compare_fields(predicted: dict, expected: dict, path: str = "") -> lis
         if exp_val is None:
             # Expected null — predicted should also be null or missing
             if pred_val is not None:
-                mismatches.append(f"{current_path}: expected null, got '{pred_val}'")
+                mismatches.append(
+                    f"{current_path}: expected null, got '{pred_val}'"
+                )
             continue
 
         if isinstance(exp_val, dict):
@@ -139,7 +143,9 @@ def _deep_compare_fields(predicted: dict, expected: dict, path: str = "") -> lis
                     f"{current_path}: expected dict, got {type(pred_val).__name__}"
                 )
             else:
-                mismatches.extend(_deep_compare_fields(pred_val, exp_val, current_path))
+                mismatches.extend(
+                    _deep_compare_fields(pred_val, exp_val, current_path)
+                )
         elif isinstance(exp_val, list):
             if not isinstance(pred_val, list):
                 mismatches.append(
@@ -151,10 +157,12 @@ def _deep_compare_fields(predicted: dict, expected: dict, path: str = "") -> lis
                     f"got {len(pred_val)}"
                 )
             else:
-                for i, (p_item, e_item) in enumerate(zip(pred_val, exp_val, strict=True)):
+                for i, (p_item, e_item) in enumerate(zip(pred_val, exp_val)):
                     if isinstance(e_item, dict):
                         mismatches.extend(
-                            _deep_compare_fields(p_item, e_item, f"{current_path}[{i}]")
+                            _deep_compare_fields(
+                                p_item, e_item, f"{current_path}[{i}]"
+                            )
                         )
                     else:
                         if str(p_item).strip().lower() != str(e_item).strip().lower():
@@ -172,7 +180,9 @@ def _deep_compare_fields(predicted: dict, expected: dict, path: str = "") -> lis
     return mismatches
 
 
-def evaluate_structured_match(predicted: dict, expected: dict) -> tuple[bool, str]:
+def evaluate_structured_match(
+    predicted: dict, expected: dict
+) -> tuple[bool, str]:
     """Compare predicted structured extraction against expected.
 
     For each schema key in ``expected``:
@@ -192,7 +202,9 @@ def evaluate_structured_match(predicted: dict, expected: dict) -> tuple[bool, st
 
         if exp_val is None:
             if pred_val is not None:
-                mismatches.append(f"'{schema_name}': expected null, got non-null")
+                mismatches.append(
+                    f"'{schema_name}': expected null, got non-null"
+                )
             continue
 
         if not isinstance(pred_val, dict):
@@ -202,7 +214,9 @@ def evaluate_structured_match(predicted: dict, expected: dict) -> tuple[bool, st
             )
             continue
 
-        mismatches.extend(_deep_compare_fields(pred_val, exp_val, schema_name))
+        mismatches.extend(
+            _deep_compare_fields(pred_val, exp_val, schema_name)
+        )
 
     if mismatches:
         return False, "; ".join(mismatches)
@@ -210,7 +224,9 @@ def evaluate_structured_match(predicted: dict, expected: dict) -> tuple[bool, st
     return True, "exact match"
 
 
-def evaluate_classification_match(predicted: dict, expected: dict) -> tuple[bool, str]:
+def evaluate_classification_match(
+    predicted: dict, expected: dict
+) -> tuple[bool, str]:
     """Compare predicted classification against expected labels.
 
     Returns ``(is_match, detail_string)``.  Exact match is required on
@@ -226,7 +242,9 @@ def evaluate_classification_match(predicted: dict, expected: dict) -> tuple[bool
         if not pred_val and not exp_val:
             continue
         if str(pred_val).strip().lower() != str(exp_val).strip().lower():
-            mismatches.append(f"{field}: expected '{exp_val}', got '{pred_val}'")
+            mismatches.append(
+                f"{field}: expected '{exp_val}', got '{pred_val}'"
+            )
 
     if mismatches:
         return False, "; ".join(mismatches)

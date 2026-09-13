@@ -26,12 +26,8 @@ class GraphNode(BaseModel):
     name: str = Field(..., description="Human-readable display name.")
     type: str = Field(..., description="Entity type label.")
     summary: str = Field(default="", description="Text summary or description.")
-    created_at: str | None = Field(
-        default=None, description="ISO-8601 creation timestamp."
-    )
-    metadata: dict[str, Any] = Field(
-        default_factory=dict, description="Engine-specific metadata."
-    )
+    created_at: str | None = Field(default=None, description="ISO-8601 creation timestamp.")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Engine-specific metadata.")
 
 
 class GraphEdge(BaseModel):
@@ -50,12 +46,8 @@ class GraphEdge(BaseModel):
     source_id: str = Field(..., description="UUID of the source entity.")
     target_id: str = Field(..., description="UUID of the target entity.")
     type: str = Field(..., description="Relationship label.")
-    properties: dict[str, Any] = Field(
-        default_factory=dict, description="Edge metadata."
-    )
-    created_at: str | None = Field(
-        default=None, description="ISO-8601 creation timestamp."
-    )
+    properties: dict[str, Any] = Field(default_factory=dict, description="Edge metadata.")
+    created_at: str | None = Field(default=None, description="ISO-8601 creation timestamp.")
 
 
 class GraphNodeDetail(BaseModel):
@@ -85,9 +77,7 @@ class GraphCommunity(BaseModel):
     name: str = Field(..., description="Community cluster name.")
     summary: str = Field(default="", description="LLM-generated community summary.")
     member_count: int = Field(default=0, ge=0, description="Number of member entities.")
-    created_at: str | None = Field(
-        default=None, description="ISO-8601 creation timestamp."
-    )
+    created_at: str | None = Field(default=None, description="ISO-8601 creation timestamp.")
 
 
 class PaginatedGraphNodes(BaseModel):
@@ -100,9 +90,7 @@ class PaginatedGraphNodes(BaseModel):
     """
 
     items: list[GraphNode] = Field(..., description="Entity nodes for this page.")
-    next_cursor: str | None = Field(
-        default=None, description="Cursor for the next page."
-    )
+    next_cursor: str | None = Field(default=None, description="Cursor for the next page.")
     has_more: bool = Field(default=False, description="Whether more pages exist.")
 
 
@@ -116,9 +104,7 @@ class PaginatedGraphEdges(BaseModel):
     """
 
     items: list[GraphEdge] = Field(..., description="Edges for this page.")
-    next_cursor: str | None = Field(
-        default=None, description="Cursor for the next page."
-    )
+    next_cursor: str | None = Field(default=None, description="Cursor for the next page.")
     has_more: bool = Field(default=False, description="Whether more pages exist.")
 
 

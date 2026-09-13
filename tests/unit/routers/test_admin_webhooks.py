@@ -248,7 +248,9 @@ class TestUpdateWebhook:
             "is_active": True,
         }
         payload = {"name": "updated-hook", "is_active": True}
-        response = await client.patch(f"/v1/admin/webhooks/{ENDPOINT_ID}", json=payload)
+        response = await client.patch(
+            f"/v1/admin/webhooks/{ENDPOINT_ID}", json=payload
+        )
         assert response.status_code == 200
         body = response.json()
         assert body["data"]["name"] == "updated-hook"
@@ -258,7 +260,9 @@ class TestUpdateWebhook:
         self, client: AsyncClient, mock_service: AsyncMock
     ) -> None:
         """Should return 400 when the update body has no fields."""
-        response = await client.patch(f"/v1/admin/webhooks/{ENDPOINT_ID}", json={})
+        response = await client.patch(
+            f"/v1/admin/webhooks/{ENDPOINT_ID}", json={}
+        )
         assert response.status_code == 400
         detail = response.json().get("detail", "")
         assert "no fields" in detail.lower()
@@ -269,7 +273,9 @@ class TestUpdateWebhook:
         """Should return 404 when the endpoint to update does not exist."""
         mock_service.update_endpoint.return_value = None
         payload = {"name": "ghost-hook"}
-        response = await client.patch(f"/v1/admin/webhooks/{uuid4()}", json=payload)
+        response = await client.patch(
+            f"/v1/admin/webhooks/{uuid4()}", json=payload
+        )
         assert response.status_code == 404
 
     async def test_returns_422_on_invalid_payload(

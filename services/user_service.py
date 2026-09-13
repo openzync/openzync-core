@@ -12,7 +12,9 @@ Key patterns:
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from core.events import EventType
 from core.exceptions import ConflictError, NotFoundError, ValidationError
@@ -21,17 +23,13 @@ from core.rbac import (
     invalidate_permissions,
     invalidate_role,
 )
+from models.user import User
+from repositories.user_repository import UserRepository
 from schemas.users import UserListResponse, UserResponse, UserResponseWithStats
+from services.webhook_service import WebhookService
 
 if TYPE_CHECKING:
-    from datetime import datetime
-    from uuid import UUID
-
     from redis.asyncio import Redis as AsyncRedis
-
-    from models.user import User
-    from repositories.user_repository import UserRepository
-    from services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +133,9 @@ class UserService:
             ConflictError: A user with this ``external_id`` already exists
                 in the organization.
         """
-        exists = await self._repo.exists_by_external_id(organization_id, external_id)
+        exists = await self._repo.exists_by_external_id(
+            organization_id, external_id
+        )
         if exists:
             raise ConflictError(
                 f"User with external_id '{external_id}' already exists "
@@ -220,7 +220,9 @@ class UserService:
                 the row (should never happen — indicates DB inconsistency).
         """
         # Fast path: user already exists
-        user = await self._repo.get_by_external_id(organization_id, external_id)
+        user = await self._repo.get_by_external_id(
+            organization_id, external_id
+        )
         if user is not None:
             return UserResponse.model_validate(self._user_to_dict(user))
 
@@ -242,7 +244,9 @@ class UserService:
         except IntegrityError:
             # Concurrent insert won. Rollback stale tx, then re-fetch.
             await self._repo.rollback()
-            user = await self._repo.get_by_external_id(organization_id, external_id)
+            user = await self._repo.get_by_external_id(
+                organization_id, external_id
+            )
             if user is None:
                 # Should never happen — the IntegrityError proves the
                 # row exists
@@ -353,7 +357,9 @@ class UserService:
                     "Superadmin role cannot be changed via this endpoint."
                 )
             if target.role == "admin" and new_role != "admin":
-                admin_count = await self._repo.count_active_admins(organization_id)
+                admin_count = await self._repo.count_active_admins(
+                    organization_id
+                )
                 # ⚠️ RACE CONDITION: two concurrent demotions of different
                 # admins can both pass this check when the org has exactly 2
                 # admins, leaving zero.  Acceptable for the dashboard scale;
@@ -370,9 +376,7 @@ class UserService:
             update_fields=update_fields,
         )
         if user is None:
-            raise NotFoundError(
-                f"User {user_id} not found in organization {organization_id}"
-            )
+            raise NotFoundError(f"User {user_id} not found in organization {organization_id}")
 
         if "role" in update_fields:
             await self._invalidate_role_cache(user_id)

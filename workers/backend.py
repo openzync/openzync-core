@@ -1,4 +1,4 @@
-"""Worker graph backend resolution — per-org backend for enrichment tasks.
+"""Worker-level graph backend resolution — resolves per-org backend for enrichment tasks.
 
 No silent Postgres fallback: a backend name that is configured but cannot be
 resolved raises ``GraphBackendUnavailableError`` so the misconfiguration is
@@ -21,16 +21,13 @@ Usage:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import GraphBackendUnavailableError
-
-if TYPE_CHECKING:
-    from uuid import UUID
-
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from packages.graph_backend.interface import GraphBackend
+from packages.graph_backend.interface import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +239,9 @@ async def _resolve_org_config(
                 bootstrap.OPENBAO_SECRET_ID,
                 timeout=10.0,
             ) as bao_client:
-                return await get_org_config(org_id, redis=redis, bao_client=bao_client)
+                return await get_org_config(
+                    org_id, redis=redis, bao_client=bao_client
+                )
         return await get_org_config(org_id, redis=redis, bao_client=bao_client)
     except ImportError:
         logger.debug("worker.org_config_module_not_available")
@@ -263,7 +262,9 @@ async def _resolve_org_config(
 
         # Match core.org_config behavior: empty config → all fields None
         if not raw_config:
-            return OrgConfigBase(**{name: None for name in OrgConfigBase.model_fields})
+            return OrgConfigBase(
+                **{name: None for name in OrgConfigBase.model_fields}
+            )
         return OrgConfigBase(**raw_config)
     except Exception:
         logger.error(

@@ -59,7 +59,9 @@ REDACTION_LABELS: dict[str, str] = {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 _PATTERNS: dict[str, re.Pattern] = {
-    "email": re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"),
+    "email": re.compile(
+        r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
+    ),
     "phone": re.compile(
         r"(?:\+?\d{1,3}[-.\s]?)?\(?\d{2,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}\b"
     ),
@@ -68,13 +70,15 @@ _PATTERNS: dict[str, re.Pattern] = {
     "ip_address": re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
     "api_key": re.compile(
         r"\b(?:"
-        r"sk-[a-zA-Z0-9]{20,}|"  # OpenAI sk-* keys
-        r"sk-proj-[a-zA-Z0-9]{20,}|"  # OpenAI project keys
-        r"ghp_[a-zA-Z0-9]{36,}|"  # GitHub PATs
-        r"AKIA[0-9A-Z]{16}"  # AWS access keys
+        r"sk-[a-zA-Z0-9]{20,}|"          # OpenAI sk-* keys
+        r"sk-proj-[a-zA-Z0-9]{20,}|"     # OpenAI project keys
+        r"ghp_[a-zA-Z0-9]{36,}|"          # GitHub PATs
+        r"AKIA[0-9A-Z]{16}"               # AWS access keys
         r")\b"
     ),
-    "crypto_wallet": re.compile(r"\b(0x[a-fA-F0-9]{40}|bc1[a-zA-Z0-9]{25,39})\b"),
+    "crypto_wallet": re.compile(
+        r"\b(0x[a-fA-F0-9]{40}|bc1[a-zA-Z0-9]{25,39})\b"
+    ),
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -336,11 +340,7 @@ class PIIDetector:
                 # Overlap — keep the longer span
                 prev_span = prev.end - prev.start
                 current_span = current.end - current.start
-                if (
-                    current_span > prev_span
-                    or current_span == prev_span
-                    and current.confidence > prev.confidence
-                ):
+                if current_span > prev_span or current_span == prev_span and current.confidence > prev.confidence:
                     merged[-1] = current
                 # Otherwise keep previous
             else:
@@ -360,7 +360,9 @@ class PIIDetector:
         Returns:
             Detections with confidence >= ``self._min_confidence``.
         """
-        return [d for d in detections if d.confidence >= self._min_confidence]
+        return [
+            d for d in detections if d.confidence >= self._min_confidence
+        ]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -384,12 +386,12 @@ class PIIRedactor:
 
     def __init__(self, mode: str = "mask") -> None:
         if mode not in ("mask", "block"):
-            raise ValueError(
-                f"Invalid redaction mode: {mode!r}. Expected 'mask' or 'block'."
-            )
+            raise ValueError(f"Invalid redaction mode: {mode!r}. Expected 'mask' or 'block'.")
         self._mode = mode
 
-    def apply(self, text: str, detections: list[PIIDetection]) -> str:
+    def apply(
+        self, text: str, detections: list[PIIDetection]
+    ) -> str:
         """Replace PII spans in *text* with ``[REDACTED:{type}]`` placeholders.
 
         Detections are processed in **reverse order** (by start position) to
@@ -409,18 +411,26 @@ class PIIRedactor:
                 instead of calling ``apply`` directly).
         """
         if self._mode == "block":
-            raise ValueError("PIIRedactor cannot apply redactions in 'block' mode.")
+            raise ValueError(
+                "PIIRedactor cannot apply redactions in 'block' mode."
+            )
 
         if not detections:
             return text
 
-        sorted_detections = sorted(detections, key=lambda d: d.start, reverse=True)
+        sorted_detections = sorted(
+            detections, key=lambda d: d.start, reverse=True
+        )
 
         result = text
         for detection in sorted_detections:
             label = REDACTION_LABELS.get(detection.type, detection.type.upper())
             replacement = f"[REDACTED:{label}]"
-            result = result[: detection.start] + replacement + result[detection.end :]
+            result = (
+                result[: detection.start]
+                + replacement
+                + result[detection.end :]
+            )
 
         return result
 
@@ -536,7 +546,9 @@ class PIIService:
                     "pii.masked",
                     extra={
                         "detection_count": len(detections),
-                        "duration_ms": round((time.monotonic() - start_time) * 1000, 2),
+                        "duration_ms": round(
+                            (time.monotonic() - start_time) * 1000, 2
+                        ),
                     },
                 )
 

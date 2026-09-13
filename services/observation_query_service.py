@@ -8,13 +8,10 @@ human-readable names via ``GraphBackend.resolve_entity_names()``.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from uuid import UUID
 
+from packages.graph_backend.interface import GraphBackend
 from schemas.observation import ObservationListResponse, ObservationResponse
-
-if TYPE_CHECKING:
-    from packages.graph_backend.interface import GraphBackend
 
 
 class ObservationQueryService:
@@ -88,13 +85,16 @@ class ObservationQueryService:
                 name_map = {}
 
         for item in result["items"]:
-            item["subject_entity_name"] = name_map.get(
-                str(item["subject_entity_id"]), {}
-            ).get("name")
+            item["subject_entity_name"] = (
+                name_map.get(str(item["subject_entity_id"]), {}).get("name")
+            )
             related_id = item.get("related_entity_id")
             item["related_entity_name"] = (
-                name_map.get(str(related_id), {}).get("name") if related_id else None
+                name_map.get(str(related_id), {}).get("name")
+                if related_id else None
             )
 
-        items = [ObservationResponse.model_validate(item) for item in result["items"]]
+        items = [
+            ObservationResponse.model_validate(item) for item in result["items"]
+        ]
         return ObservationListResponse(data=items, total=len(items))

@@ -1,4 +1,5 @@
-"""Extraction schema model — JSON Schema contract for structured extractions.
+"""Extraction schema model — defines the JSON Schema contract for structured
+extractions within an organization.
 
 Each organization maintains its own catalog of extraction schemas. The
 ``json_schema`` field stores a JSON Schema document that ``StructuredExtraction``
@@ -15,7 +16,7 @@ from models.base import Base, TimestampMixin
 
 
 class ExtractionSchema(TimestampMixin, Base):
-    """A named JSON Schema definition for structured or classification schemas.
+    """A named JSON Schema definition for structured extractions or classification schemas.
 
     Attributes:
         id: UUID primary key.

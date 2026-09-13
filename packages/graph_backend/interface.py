@@ -13,11 +13,9 @@ graph traversal is possible.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from datetime import datetime
-    from uuid import UUID
+from datetime import datetime
+from typing import Any
+from uuid import UUID
 
 
 class GraphBackend(ABC):
@@ -584,8 +582,7 @@ class GraphBackend(ABC):
         construction.
 
         Upsert uses a functional unique index on
-        ``(subject_entity_id, observation_type, COALESCE(related_entity_id,``
-        ``'00000000-0000-0000-0000-000000000000'))``.
+        ``(subject_entity_id, observation_type, COALESCE(related_entity_id, '00000000-0000-0000-0000-000000000000'))``.
 
         Args:
             org_id: Organisational scope.

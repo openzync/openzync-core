@@ -188,11 +188,7 @@ class TestListSchemas:
         mock_schema_service.list_schemas.return_value = [
             _stub_schema_response(),
             _stub_schema_response(
-                {
-                    "id": str(uuid4()),
-                    "name": "classification_labels",
-                    "type": "classification",
-                }
+                {"id": str(uuid4()), "name": "classification_labels", "type": "classification"}
             ),
         ]
         response = await client.get("/v1/admin/schemas")
@@ -282,7 +278,9 @@ class TestUpdateSchema:
             {"name": "updated_schema"}
         )
         payload = {"name": "updated_schema", "is_active": False}
-        response = await client.put(f"/v1/admin/schemas/{SCHEMA_ID}", json=payload)
+        response = await client.put(
+            f"/v1/admin/schemas/{SCHEMA_ID}", json=payload
+        )
         assert response.status_code == 200
         body = response.json()
         assert body["name"] == "updated_schema"
@@ -297,7 +295,9 @@ class TestUpdateSchema:
     ) -> None:
         """Should return 200 — all fields are optional in the schema."""
         mock_schema_service.update_schema.return_value = _stub_schema_response()
-        response = await client.put(f"/v1/admin/schemas/{SCHEMA_ID}", json={})
+        response = await client.put(
+            f"/v1/admin/schemas/{SCHEMA_ID}", json={}
+        )
         assert response.status_code == 200
         mock_schema_service.update_schema.assert_awaited_once()
 

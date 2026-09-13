@@ -20,7 +20,7 @@ depends_on: str | None = None
 
 
 def upgrade() -> None:
-    # Composite index for the primary query pattern: org logs, newest first.
+    # Composite index for the primary query pattern: "show me my org's logs, newest first"
     op.create_index(
         "idx_audit_logs_org_created",
         "audit_logs",

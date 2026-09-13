@@ -52,12 +52,7 @@ def _stub_audit_log_entry(
     entry.action = "session.create"
     entry.resource_type = "session"
     entry.resource_id = str(uuid4())
-    entry.details = {
-        "display_name": "Session created",
-        "status_code": 200,
-        "method": "POST",
-        "path": "/v1/sessions",
-    }
+    entry.details = {"display_name": "Session created", "status_code": 200, "method": "POST", "path": "/v1/sessions"}
     entry.ip_address = "127.0.0.1"
     entry.created_at = NOW
     if overrides:
@@ -151,12 +146,11 @@ class TestListAuditLogs:
     ) -> None:
         """Should pass the action filter to the service."""
         mock_audit_service.query_logs.return_value = ([], 0)
-        response = await client.get("/v1/admin/audit-logs?action=session.create")
-        assert response.status_code == 200
-        assert (
-            mock_audit_service.query_logs.await_args.kwargs["action"]
-            == "session.create"
+        response = await client.get(
+            "/v1/admin/audit-logs?action=session.create"
         )
+        assert response.status_code == 200
+        assert mock_audit_service.query_logs.await_args.kwargs["action"] == "session.create"
 
     async def test_filters_by_actor(
         self, client: AsyncClient, mock_audit_service: AsyncMock
@@ -198,12 +192,11 @@ class TestListAuditLogs:
     ) -> None:
         """Should pass the exclude_prefix filter."""
         mock_audit_service.query_logs.return_value = ([], 0)
-        response = await client.get("/v1/admin/audit-logs?exclude_prefix=http.,auth.")
-        assert response.status_code == 200
-        assert (
-            mock_audit_service.query_logs.await_args.kwargs["exclude_prefix"]
-            == "http.,auth."
+        response = await client.get(
+            "/v1/admin/audit-logs?exclude_prefix=http.,auth."
         )
+        assert response.status_code == 200
+        assert mock_audit_service.query_logs.await_args.kwargs["exclude_prefix"] == "http.,auth."
 
     async def test_filters_by_date_range(
         self, client: AsyncClient, mock_audit_service: AsyncMock
@@ -223,7 +216,9 @@ class TestListAuditLogs:
     ) -> None:
         """Should pass limit and offset to the service."""
         mock_audit_service.query_logs.return_value = ([], 0)
-        response = await client.get("/v1/admin/audit-logs?limit=10&offset=20")
+        response = await client.get(
+            "/v1/admin/audit-logs?limit=10&offset=20"
+        )
         assert response.status_code == 200
         kwargs = mock_audit_service.query_logs.await_args.kwargs
         assert kwargs["limit"] == 10

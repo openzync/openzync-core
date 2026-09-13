@@ -158,5 +158,4 @@ class TestSettingsSingleton:
         """Importing ``settings`` before ``init_settings`` raises ``RuntimeError``."""
         with pytest.raises(RuntimeError, match="not initialised"):
             from core.config import settings  # noqa: F811  — intentional lazy import
-
-            _ = settings  # noqa: F841  # trigger the lazy access
+            _ = settings  # noqa:  — trigger the lazy access

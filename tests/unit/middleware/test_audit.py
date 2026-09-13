@@ -1,5 +1,4 @@
 """Unit tests for AuditMiddleware."""
-
 from __future__ import annotations
 
 import asyncio
@@ -227,9 +226,7 @@ class TestAuditMiddleware:
 
         @router.post("/settings/reveal")
         @audit_action(
-            "system.settings.revealed",
-            "system_setting",
-            "System setting revealed",
+            "system.settings.revealed", "system_setting", "System setting revealed",
         )
         async def reveal_setting() -> dict:
             return {"status": "ok"}
@@ -246,9 +243,13 @@ class TestAuditMiddleware:
         await asyncio.sleep(0.02)
         assert mock_pool.enqueue.called
         assert (
-            mock_pool.enqueue.call_args.kwargs["action"] == "system.settings.revealed"
+            mock_pool.enqueue.call_args.kwargs["action"]
+            == "system.settings.revealed"
         )
-        assert mock_pool.enqueue.call_args.kwargs["resource_type"] == "system_setting"
+        assert (
+            mock_pool.enqueue.call_args.kwargs["resource_type"]
+            == "system_setting"
+        )
 
     @pytest.mark.asyncio
     async def test_audit_action_resolved_via_scope_route_unit(self) -> None:
@@ -273,9 +274,7 @@ class TestAuditMiddleware:
         # app.routes only has the _IncludedRouter placeholder.
         matched = router.routes[0]
         action, resource, display = _resolve_action(
-            "POST",
-            "/org/approve",
-            {"app": app, "route": matched},
+            "POST", "/org/approve", {"app": app, "route": matched},
         )
         assert action == "org.approved"
         assert resource == "org"
@@ -283,9 +282,7 @@ class TestAuditMiddleware:
         # Without scope['route'], the lazy-included route is invisible to the
         # app.routes scan → falls back to http.{method}.
         fallback_action, fallback_resource, _ = _resolve_action(
-            "POST",
-            "/org/approve",
-            {"app": app},
+            "POST", "/org/approve", {"app": app},
         )
         assert fallback_action == "http.post"
         assert fallback_resource == "approve"
@@ -330,11 +327,7 @@ class TestAuditMiddleware:
             scope["app"] = app
 
             await middleware._enqueue_audit(
-                scope,
-                "POST",
-                "/data",
-                200,
-                [b'{"id": 1}'],
+                scope, "POST", "/data", 200, [b'{"id": 1}'],
             )
 
             call_kwargs = mock_pool.enqueue.call_args.kwargs
@@ -373,14 +366,10 @@ class TestAuditMiddleware:
 
         secret = "whsec_super_secret_never_persist"  # noqa: S105
         with patch(
-            "middleware.audit._resolve_audit_body_capture",
-            return_value=True,
+            "middleware.audit._resolve_audit_body_capture", return_value=True,
         ):
             await middleware._enqueue_audit(
-                scope,
-                "POST",
-                "/v1/admin/webhooks",
-                201,
+                scope, "POST", "/v1/admin/webhooks", 201,
                 [f'{{"id": 1, "secret": "{secret}"}}'.encode()],
             )
 
@@ -422,18 +411,14 @@ class TestAuditMiddleware:
         access = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEifQ.signature"  # noqa: S105
         refresh = "raw-refresh-token-never-persist"  # noqa: S105
         with patch(
-            "middleware.audit._resolve_audit_body_capture",
-            return_value=True,
+            "middleware.audit._resolve_audit_body_capture", return_value=True,
         ):
             body = (
-                f'{{"access_token": "{access}", "refresh_token": "{refresh}"}}'
+                f'{{"access_token": "{access}", '
+                f'"refresh_token": "{refresh}"}}'
             ).encode()
             await middleware._enqueue_audit(
-                scope,
-                "POST",
-                "/v1/auth/invites/accept",
-                200,
-                [body],
+                scope, "POST", "/v1/auth/invites/accept", 200, [body],
             )
 
         assert mock_pool.enqueue.called  # event still audited
@@ -472,16 +457,13 @@ class TestAuditMiddleware:
 
         org_code = "K7M2Q9X4"
         with patch(
-            "middleware.audit._resolve_audit_body_capture",
-            return_value=True,
+            "middleware.audit._resolve_audit_body_capture", return_value=True,
         ):
-            body = (f'{{"org_code": "{org_code}", "join_enabled": false}}').encode()
+            body = (
+                f'{{"org_code": "{org_code}", "join_enabled": false}}'
+            ).encode()
             await middleware._enqueue_audit(
-                scope,
-                "PATCH",
-                "/admin/org/org-code",
-                200,
-                [body],
+                scope, "PATCH", "/admin/org/org-code", 200, [body],
             )
 
         assert mock_pool.enqueue.called  # event still audited
@@ -521,11 +503,7 @@ class TestAuditMiddleware:
             patch("middleware.audit._pii_detector.detect", return_value=[]),
         ):
             await middleware._enqueue_audit(
-                scope,
-                "POST",
-                "/data",
-                200,
-                [b'{"id": 1}'],
+                scope, "POST", "/data", 200, [b'{"id": 1}'],
             )
 
         details = orjson.loads(mock_pool.enqueue.call_args.kwargs["details"])

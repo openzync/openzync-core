@@ -26,8 +26,8 @@ class ClassificationResponse(BaseModel):
     arousal: str | None = None
     confidence: float
     created_at: datetime
-    message: str = ""  # Full episode.content text (populated by service layer)
-    role: str = ""  # user/assistant/system/tool (populated by service layer)
+    message: str = ""       # Full episode.content text (populated by service layer)
+    role: str = ""           # user/assistant/system/tool (populated by service layer)
 
 
 class ClassificationListResponse(BaseModel):

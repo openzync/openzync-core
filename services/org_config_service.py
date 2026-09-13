@@ -13,8 +13,10 @@ Wire-up in router::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
+from uuid import UUID
 
+from core.openbao import OpenBaoClient
 from core.org_config import (
     get_org_config,
 )
@@ -26,11 +28,6 @@ from schemas.organization_config import (
     OrgConfigResponse,
     UpdateOrgConfigRequest,
 )
-
-if TYPE_CHECKING:
-    from uuid import UUID
-
-    from core.openbao import OpenBaoClient
 
 
 class OrgConfigService:

@@ -82,7 +82,9 @@ async def generate_user_summary(
     if engine is None:
         from core.db import init_db_engine
 
-        engine = init_db_engine(str(settings.DATABASE_URL), pool_size=2, max_overflow=1)
+        engine = init_db_engine(
+            str(settings.DATABASE_URL), pool_size=2, max_overflow=1
+        )
         _own_engine = True
     else:
         _own_engine = False

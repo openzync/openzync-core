@@ -119,7 +119,9 @@ class TestExtractionSchemaRepository:
         mock_result.scalars.return_value.all.return_value = schemas
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_all(org_id=self.ORG_ID, schema_type="classification")
+        result = await repo.get_all(
+            org_id=self.ORG_ID, schema_type="classification"
+        )
 
         assert result == schemas
 
@@ -281,7 +283,7 @@ class TestExtractionSchemaRepository:
         """get_classification_labels returns JSON schemas of active classifications."""
         labels = [{"label": "support"}, {"label": "sales"}]
         mock_result = MagicMock()
-        mock_result.all.return_value = [(item,) for item in labels]
+        mock_result.all.return_value = [(l,) for l in labels]
         mock_db.execute.return_value = mock_result
 
         result = await repo.get_classification_labels(org_id=self.ORG_ID)

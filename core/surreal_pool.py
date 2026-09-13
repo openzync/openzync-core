@@ -24,14 +24,13 @@ import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 from surrealdb import AsyncSurreal
 
 from core.exceptions import GraphBackendUnavailableError
 
 if TYPE_CHECKING:
-    from uuid import UUID
-
     from schemas.organization_config import OrgConfigBase
 
 logger = logging.getLogger(__name__)
@@ -138,12 +137,10 @@ class SurrealConnectionPool:
             try:
                 surreal = AsyncSurreal(url)
                 await surreal.connect()
-                await surreal.signin(
-                    {
-                        "username": username,
-                        "password": password,
-                    }
-                )
+                await surreal.signin({
+                    "username": username,
+                    "password": password,
+                })
                 await surreal.use(namespace, database)
                 self._pool[org_id] = {
                     "surreal": surreal,

@@ -45,7 +45,9 @@ class SessionResponse(BaseModel):
     """
 
     id: UUID = Field(..., description="Internal OpenZync session UUID.")
-    project_id: UUID = Field(..., description="Project UUID this session belongs to.")
+    project_id: UUID = Field(
+        ..., description="Project UUID this session belongs to."
+    )
     created_by: UUID = Field(
         ..., description="UUID of the user who created this session."
     )
@@ -71,17 +73,18 @@ class SessionResponse(BaseModel):
     )
     observation_count: int = Field(
         default=0,
-        description=(
-            "Total number of observations in this project "
-            "(computed by graph-topology analysis)."
-        ),
+        description="Total number of observations in this project (computed by graph-topology analysis).",
     )
     closed_at: datetime | None = Field(
         default=None,
         description="Timestamp when the session was closed. Null if open.",
     )
-    created_at: datetime = Field(..., description="Session creation timestamp (UTC).")
-    updated_at: datetime = Field(..., description="Last activity timestamp (UTC).")
+    created_at: datetime = Field(
+        ..., description="Session creation timestamp (UTC)."
+    )
+    updated_at: datetime = Field(
+        ..., description="Last activity timestamp (UTC)."
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -94,7 +97,9 @@ class SessionListResponse(BaseModel):
     """
 
     id: UUID = Field(..., description="Internal OpenZync session UUID.")
-    project_id: UUID = Field(..., description="Project UUID this session belongs to.")
+    project_id: UUID = Field(
+        ..., description="Project UUID this session belongs to."
+    )
     created_by: UUID = Field(
         ..., description="UUID of the user who created this session."
     )
@@ -108,7 +113,9 @@ class SessionListResponse(BaseModel):
     fact_count: int = Field(
         default=0, description="Total number of facts extracted from this session."
     )
-    created_at: datetime = Field(..., description="Session creation timestamp (UTC).")
+    created_at: datetime = Field(
+        ..., description="Session creation timestamp (UTC)."
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -128,10 +135,7 @@ class MessageBlobResponse(BaseModel):
     file_size: int = Field(..., description="Size in bytes.")
     download_url: str | None = Field(
         default=None,
-        description=(
-            "Presigned download URL (short TTL). "
-            "Null when storage config is unavailable."
-        ),
+        description="Presigned download URL (short TTL). Null when storage config is unavailable.",
     )
 
     model_config = ConfigDict(from_attributes=True)
@@ -160,7 +164,9 @@ class MessageResponse(BaseModel):
     sequence_number: int = Field(
         ..., description="Zero-indexed position within the session."
     )
-    created_at: datetime = Field(..., description="Message creation timestamp (UTC).")
+    created_at: datetime = Field(
+        ..., description="Message creation timestamp (UTC)."
+    )
     blobs: list[MessageBlobResponse] = Field(
         default_factory=list,
         description="Blob attachments for this message (images, PDFs, etc.).",

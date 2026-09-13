@@ -130,9 +130,7 @@ class TestSurrealExpireRelationshipsMatching:
         self, backend: SurrealGraphBackend, mock_surreal: AsyncMock
     ) -> None:
         mock_surreal.query.side_effect = RuntimeError("surreal down")
-        with pytest.raises(
-            ExternalServiceError, match="Failed to expire relationships"
-        ):
+        with pytest.raises(ExternalServiceError, match="Failed to expire relationships"):
             await backend.expire_relationships_matching(
                 ORG_ID,
                 PROJ_ID,
@@ -149,9 +147,7 @@ class TestSurrealTraverseEffectiveAt:
     def _capture(self, backend: SurrealGraphBackend) -> list[tuple[str, dict]]:
         calls: list[tuple[str, dict]] = []
 
-        async def _side_effect(
-            query: str, params: dict[str, Any] | None = None
-        ) -> list[Any]:
+        async def _side_effect(query: str, params: dict[str, Any] | None = None) -> list[Any]:
             calls.append((query, params or {}))
             return []
 
@@ -166,14 +162,18 @@ class TestSurrealTraverseEffectiveAt:
 
         await backend.traverse(ORG_ID, PROJ_ID, SRC_ID, max_depth=1, as_of=T1)
 
-        expiry_queries = [q for q, _ in calls if "SELECT VALUE" in q and "->" in q]
+        expiry_queries = [
+            q for q, _ in calls if "SELECT VALUE" in q and "->" in q
+        ]
         assert expiry_queries, "neighbour-discovery query must run"
         assert "(invalid_at IS NONE OR invalid_at > $as_of)" in expiry_queries[0]
         assert "valid_from <= $as_of" in expiry_queries[0]
         assert "valid_to >= $as_of" in expiry_queries[0]
         # The concrete as_of instant is bound — SurrealDB never compares
         # against a NULL bound parameter.
-        assert any(params.get("as_of") == T1.isoformat() for _, params in calls)
+        assert any(
+            params.get("as_of") == T1.isoformat() for _, params in calls
+        )
 
     async def test_superseded_edge_not_traversed_at_t2_but_is_at_t0(
         self, backend: SurrealGraphBackend, mock_surreal: AsyncMock
@@ -186,9 +186,7 @@ class TestSurrealTraverseEffectiveAt:
         """
         calls: list[tuple[str, dict]] = []
 
-        async def _side_effect(
-            query: str, params: dict[str, Any] | None = None
-        ) -> list[Any]:
+        async def _side_effect(query: str, params: dict[str, Any] | None = None) -> list[Any]:
             calls.append((query, params or {}))
             return []
 
@@ -207,9 +205,7 @@ class TestSurrealTraverseEffectiveAt:
         # No entity match → no traverse call; match requires the search leg.
         calls: list[tuple[str, dict]] = []
 
-        async def _side_effect(
-            query: str, params: dict[str, Any] | None = None
-        ) -> list[Any]:
+        async def _side_effect(query: str, params: dict[str, Any] | None = None) -> list[Any]:
             calls.append((query, params or {}))
             if "search::score" in query:
                 return [
@@ -238,7 +234,9 @@ class TestSurrealTraverseEffectiveAt:
 
         mock_surreal.query.side_effect = _side_effect
 
-        result = await backend.retrieve_graph(ORG_ID, PROJ_ID, query="Robbie", as_of=T2)
+        result = await backend.retrieve_graph(
+            ORG_ID, PROJ_ID, query="Robbie", as_of=T2
+        )
 
         # Distance-0 match only (no neighbours mocked) — the important
         # assertion is that the neighbour fetch carried as_of=T2.
@@ -280,9 +278,7 @@ class TestSurrealListEntityEdgesFiltersExpired:
     async def test_predicate_branch_omits_expired_edges(
         self, backend: SurrealGraphBackend, mock_surreal: AsyncMock
     ) -> None:
-        query = await self._captured_query(
-            backend, mock_surreal, predicate="reports_to"
-        )
+        query = await self._captured_query(backend, mock_surreal, predicate="reports_to")
         assert "->reports_to[WHERE invalid_at IS NONE]" in query, (
             "predicate branch must filter invalid_at at the query boundary"
         )

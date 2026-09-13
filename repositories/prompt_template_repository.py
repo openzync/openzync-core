@@ -17,17 +17,13 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from typing import TYPE_CHECKING
+from uuid import UUID
 
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.prompt_manifest import load_manifest
 from models.prompt_template import PromptTemplate
-
-if TYPE_CHECKING:
-    from uuid import UUID
-
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +148,9 @@ class PromptTemplateRepository:
         )
         template = result.scalar_one_or_none()
         if template is None:
-            raise ValueError(f"Template {name!r} not found for org {org_id}")
+            raise ValueError(
+                f"Template {name!r} not found for org {org_id}"
+            )
         if template.type is None:
             raise ValueError(f"Template {name!r} has no type assigned")
 
@@ -282,7 +280,8 @@ class PromptTemplateRepository:
         target = result.scalar_one_or_none()
         if target is None:
             raise ValueError(
-                f"Version {version} of template {name!r} not found in org {org_id}",
+                f"Version {version} of template {name!r} not found "
+                f"in org {org_id}",
             )
 
         # Capture whether the old active version was the type default.
@@ -477,7 +476,8 @@ class PromptTemplateRepository:
         )
         if existing.scalar_one_or_none() is not None:
             raise ValueError(
-                f"Template {template_name!r} already imported into this organisation",
+                f"Template {template_name!r} already imported into "
+                f"this organisation",
             )
 
         text = MANIFEST.get_template_text(entry["file"])
@@ -543,29 +543,27 @@ class PromptTemplateRepository:
         groups: dict[str, list[dict]] = defaultdict(list)
         for entry in MANIFEST.templates:
             group_key = entry.get("type") or "other"
-            groups[group_key].append(
-                {
-                    "name": entry["name"],
-                    "version": 1,
-                    "type": entry.get("type"),
-                    "is_active": True,
-                    "is_default_for_type": entry.get("is_default_for_type", False),
-                    "is_system_default": entry.get("is_default_for_type", False),
-                    "description": entry.get("description"),
-                }
-            )
+            groups[group_key].append({
+                "name": entry["name"],
+                "version": 1,
+                "type": entry.get("type"),
+                "is_active": True,
+                "is_default_for_type": entry.get("is_default_for_type", False),
+                "is_system_default": entry.get("is_default_for_type", False),
+                "description": entry.get("description"),
+            })
 
         result = []
         for group_key in sorted(groups):
             templates = groups[group_key]
-            imported = sorted(t["name"] for t in templates if t["name"] in org_names)
-            result.append(
-                {
-                    "type": group_key,
-                    "templates": templates,
-                    "imported": imported,
-                }
+            imported = sorted(
+                t["name"] for t in templates if t["name"] in org_names
             )
+            result.append({
+                "type": group_key,
+                "templates": templates,
+                "imported": imported,
+            })
 
         return result
 

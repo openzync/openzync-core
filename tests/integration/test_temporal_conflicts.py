@@ -107,8 +107,7 @@ class TestRelationshipValidToUpsert:
             # First insert
             rel = await self._ensure_rel(backend, src, tgt, first_valid_to)
             assert rel["valid_to"] == (
-                expected_valid_to
-                if first_valid_to == second_valid_to
+                expected_valid_to if first_valid_to == second_valid_to
                 else (first_valid_to.isoformat() if first_valid_to else None)
             ), "First insert returned unexpected valid_to"
 
@@ -148,10 +147,7 @@ class TestRelationshipValidToUpsert:
     async def test_valid_to_expands_closed_range(self, engine) -> None:
         """Both closed: GREATEST picks the later date (2024-12)."""
         await self._run_case(
-            engine,
-            _DATE_2024_06,
-            _DATE_2024_12,
-            "2024-12-01T00:00:00+00:00",
+            engine, _DATE_2024_06, _DATE_2024_12, "2024-12-01T00:00:00+00:00",
         )
 
     # ── Case 5: Both non-NULL, new < existing ─────────────────────────
@@ -159,10 +155,7 @@ class TestRelationshipValidToUpsert:
     async def test_valid_to_does_not_shrink_closed_range(self, engine) -> None:
         """Both closed but new < existing: GREATEST keeps existing max (2024-12)."""
         await self._run_case(
-            engine,
-            _DATE_2024_12,
-            _DATE_2024_06,
-            "2024-12-01T00:00:00+00:00",
+            engine, _DATE_2024_12, _DATE_2024_06, "2024-12-01T00:00:00+00:00",
         )
 
     # ── Case 6: Both non-NULL, same value ─────────────────────────────
@@ -170,10 +163,7 @@ class TestRelationshipValidToUpsert:
     async def test_valid_to_same_value_stable(self, engine) -> None:
         """GREATEST(x, x) = x — idempotent re-upsert is a no-op."""
         await self._run_case(
-            engine,
-            _DATE_2024_06,
-            _DATE_2024_06,
-            "2024-06-01T00:00:00+00:00",
+            engine, _DATE_2024_06, _DATE_2024_06, "2024-06-01T00:00:00+00:00",
         )
 
 
@@ -262,25 +252,16 @@ class TestFactTemporalExclusion:
 
     async def test_non_overlapping_same_triple(self, engine) -> None:
         """Same triple, disjoint valid ranges — both inserted."""
-
         async def _test(db, repo):
             facts = [
-                {
-                    "subject": "A",
-                    "predicate": "knows",
-                    "object": "B",
-                    "source_episode_id": self._EPISODE_ID,
-                    "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-                    "valid_to": datetime(2024, 3, 31, tzinfo=UTC),
-                },
-                {
-                    "subject": "A",
-                    "predicate": "knows",
-                    "object": "B",
-                    "source_episode_id": self._EPISODE_ID,
-                    "valid_from": datetime(2024, 4, 1, tzinfo=UTC),
-                    "valid_to": datetime(2024, 6, 30, tzinfo=UTC),
-                },
+                {"subject": "A", "predicate": "knows", "object": "B",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 3, 31, tzinfo=UTC)},
+                {"subject": "A", "predicate": "knows", "object": "B",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 4, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
             ]
             created = await repo.batch_create(
                 organization_id=ORG_ID,
@@ -294,25 +275,16 @@ class TestFactTemporalExclusion:
 
     async def test_overlapping_same_triple_raises(self, engine) -> None:
         """Same triple, overlapping ranges — IntegrityError."""
-
         async def _test(db, repo):
             facts = [
-                {
-                    "subject": "X",
-                    "predicate": "located_in",
-                    "object": "Y",
-                    "source_episode_id": self._EPISODE_ID,
-                    "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-                    "valid_to": datetime(2024, 6, 30, tzinfo=UTC),
-                },
-                {
-                    "subject": "X",
-                    "predicate": "located_in",
-                    "object": "Y",
-                    "source_episode_id": self._EPISODE_ID,
-                    "valid_from": datetime(2024, 3, 1, tzinfo=UTC),
-                    "valid_to": datetime(2024, 9, 30, tzinfo=UTC),
-                },
+                {"subject": "X", "predicate": "located_in", "object": "Y",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
+                {"subject": "X", "predicate": "located_in", "object": "Y",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 3, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 9, 30, tzinfo=UTC)},
             ]
             with pytest.raises(IntegrityError):
                 await repo.batch_create(
@@ -326,25 +298,16 @@ class TestFactTemporalExclusion:
 
     async def test_adjacent_ranges_allowed(self, engine) -> None:
         """Adjacent ranges (end=start) are allowed — '[)' half-open."""
-
         async def _test(db, repo):
             facts = [
-                {
-                    "subject": "P",
-                    "predicate": "reports_to",
-                    "object": "Q",
-                    "source_episode_id": self._EPISODE_ID,
-                    "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-                    "valid_to": datetime(2024, 6, 1, tzinfo=UTC),
-                },
-                {
-                    "subject": "P",
-                    "predicate": "reports_to",
-                    "object": "Q",
-                    "source_episode_id": self._EPISODE_ID,
-                    "valid_from": datetime(2024, 6, 1, tzinfo=UTC),
-                    "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
-                },
+                {"subject": "P", "predicate": "reports_to", "object": "Q",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 6, 1, tzinfo=UTC)},
+                {"subject": "P", "predicate": "reports_to", "object": "Q",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 6, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 12, 31, tzinfo=UTC)},
             ]
             created = await repo.batch_create(
                 organization_id=ORG_ID,
@@ -358,25 +321,16 @@ class TestFactTemporalExclusion:
 
     async def test_different_triple_same_range(self, engine) -> None:
         """Different triple, same range — no conflict."""
-
         async def _test(db, repo):
             facts = [
-                {
-                    "subject": "A",
-                    "predicate": "knows",
-                    "object": "B",
-                    "source_episode_id": self._EPISODE_ID,
-                    "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-                    "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
-                },
-                {
-                    "subject": "C",
-                    "predicate": "knows",
-                    "object": "D",
-                    "source_episode_id": self._EPISODE_ID,
-                    "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-                    "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
-                },
+                {"subject": "A", "predicate": "knows", "object": "B",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 12, 31, tzinfo=UTC)},
+                {"subject": "C", "predicate": "knows", "object": "D",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 12, 31, tzinfo=UTC)},
             ]
             created = await repo.batch_create(
                 organization_id=ORG_ID,
@@ -390,13 +344,10 @@ class TestFactTemporalExclusion:
 
     async def test_invalidated_fact_bypasses_exclusion(self, engine) -> None:
         """Invalidated fact (invalid_at IS NOT NULL) is excluded from check."""
-
         async def _test(db, repo):
             # Insert first fact
             fact_dict = {
-                "subject": "M",
-                "predicate": "founded",
-                "object": "N",
+                "subject": "M", "predicate": "founded", "object": "N",
                 "source_episode_id": self._EPISODE_ID,
                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
                 "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
@@ -430,13 +381,10 @@ class TestFactTemporalExclusion:
 
     async def test_batch_create_on_conflict_skip(self, engine) -> None:
         """Overlapping facts with on_conflict='skip' — conflicting omitted."""
-
         async def _test(db, repo):
             # Insert first fact
             fact_dict = {
-                "subject": "R",
-                "predicate": "works_at",
-                "object": "S",
+                "subject": "R", "predicate": "works_at", "object": "S",
                 "source_episode_id": self._EPISODE_ID,
                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
                 "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
@@ -453,17 +401,11 @@ class TestFactTemporalExclusion:
                 organization_id=ORG_ID,
                 project_id=PROJECT_ID,
                 user_id=self._USER_ID,
-                facts=[
-                    fact_dict,  # conflict
-                    {
-                        "subject": "R2",
-                        "predicate": "works_at",
-                        "object": "S2",
+                facts=[fact_dict,  # conflict
+                       {"subject": "R2", "predicate": "works_at", "object": "S2",
                         "source_episode_id": self._EPISODE_ID,
                         "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-                        "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
-                    },
-                ],
+                        "valid_to": datetime(2024, 12, 31, tzinfo=UTC)}],
                 on_conflict="skip",
             )
             # Only the non-conflicting row should be returned
@@ -474,12 +416,9 @@ class TestFactTemporalExclusion:
 
     async def test_batch_create_on_conflict_error(self, engine) -> None:
         """Overlapping facts with on_conflict='error' (default) — raises."""
-
         async def _test(db, repo):
             fact_dict = {
-                "subject": "T",
-                "predicate": "manages",
-                "object": "U",
+                "subject": "T", "predicate": "manages", "object": "U",
                 "source_episode_id": self._EPISODE_ID,
                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
                 "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
@@ -504,23 +443,18 @@ class TestFactTemporalExclusion:
 
     async def test_open_ended_overlap(self, engine) -> None:
         """Open-ended fact (valid_to=NULL) conflicts with any overlapping range."""
-
         async def _test(db, repo):
             # First fact: open-ended (valid_to=NULL means "still active")
             await repo.batch_create(
                 organization_id=ORG_ID,
                 project_id=PROJECT_ID,
                 user_id=self._USER_ID,
-                facts=[
-                    {
-                        "subject": "V",
-                        "predicate": "employs",
-                        "object": "W",
-                        "source_episode_id": self._EPISODE_ID,
-                        "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-                        "valid_to": None,
-                    }
-                ],
+                facts=[{
+                    "subject": "V", "predicate": "employs", "object": "W",
+                    "source_episode_id": self._EPISODE_ID,
+                    "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                    "valid_to": None,
+                }],
             )
 
             # Second fact: same triple, overlapping range — should raise
@@ -529,16 +463,12 @@ class TestFactTemporalExclusion:
                     organization_id=ORG_ID,
                     project_id=PROJECT_ID,
                     user_id=self._USER_ID,
-                    facts=[
-                        {
-                            "subject": "V",
-                            "predicate": "employs",
-                            "object": "W",
-                            "source_episode_id": self._EPISODE_ID,
-                            "valid_from": datetime(2024, 6, 1, tzinfo=UTC),
-                            "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
-                        }
-                    ],
+                    facts=[{
+                        "subject": "V", "predicate": "employs", "object": "W",
+                        "source_episode_id": self._EPISODE_ID,
+                        "valid_from": datetime(2024, 6, 1, tzinfo=UTC),
+                        "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
+                    }],
                 )
 
         await self._run_with_session(engine, _test)
@@ -608,9 +538,7 @@ class TestTemporalQueries:
         return db
 
     async def _seed_facts(
-        self,
-        db: AsyncSession,
-        repo: FactRepository,
+        self, db: AsyncSession, repo: FactRepository,
     ) -> None:
         """Insert a known set of facts for query tests.
 
@@ -624,38 +552,22 @@ class TestTemporalQueries:
             project_id=PROJECT_ID,
             user_id=self._USER_ID,
             facts=[
-                {
-                    "subject": "QA",
-                    "predicate": "test_time",
-                    "object": "A",
-                    "source_episode_id": self._EPISODE_ID,
-                    "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-                    "valid_to": datetime(2024, 6, 30, tzinfo=UTC),
-                },
-                {
-                    "subject": "QB",
-                    "predicate": "test_time",
-                    "object": "B",
-                    "source_episode_id": self._EPISODE_ID,
-                    "valid_from": datetime(2024, 3, 1, tzinfo=UTC),
-                    "valid_to": datetime(2024, 9, 30, tzinfo=UTC),
-                },
-                {
-                    "subject": "QC",
-                    "predicate": "test_time",
-                    "object": "C",
-                    "source_episode_id": self._EPISODE_ID,
-                    "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-                    "valid_to": None,
-                },
-                {
-                    "subject": "QD",
-                    "predicate": "test_time",
-                    "object": "D",
-                    "source_episode_id": self._EPISODE_ID,
-                    "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-                    "valid_to": datetime(2024, 6, 30, tzinfo=UTC),
-                },
+                {"subject": "QA", "predicate": "test_time", "object": "A",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
+                {"subject": "QB", "predicate": "test_time", "object": "B",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 3, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 9, 30, tzinfo=UTC)},
+                {"subject": "QC", "predicate": "test_time", "object": "C",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                 "valid_to": None},
+                {"subject": "QD", "predicate": "test_time", "object": "D",
+                 "source_episode_id": self._EPISODE_ID,
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
             ],
         )
 
@@ -677,7 +589,6 @@ class TestTemporalQueries:
 
     async def test_at_time_mid_range(self, engine) -> None:
         """Timestamp falls inside a fact's valid range → returned."""
-
         async def _test(db, repo):
             await self._seed_facts(db, repo)
             ts = datetime(2024, 5, 1, tzinfo=UTC)
@@ -698,7 +609,6 @@ class TestTemporalQueries:
 
     async def test_at_time_before_range(self, engine) -> None:
         """Timestamp before a fact's valid_from → not returned."""
-
         async def _test(db, repo):
             await self._seed_facts(db, repo)
             ts = datetime(2023, 12, 1, tzinfo=UTC)
@@ -716,7 +626,6 @@ class TestTemporalQueries:
     async def test_at_time_after_range_closed(self, engine) -> None:
         """Timestamp after a closed fact's valid_to → not returned,
         but open-ended facts are still included."""
-
         async def _test(db, repo):
             await self._seed_facts(db, repo)
             ts = datetime(2024, 12, 1, tzinfo=UTC)
@@ -738,7 +647,6 @@ class TestTemporalQueries:
 
     async def test_in_range_partial_overlap(self, engine) -> None:
         """Query range partially overlaps a fact's range → returned."""
-
         async def _test(db, repo):
             await self._seed_facts(db, repo)
             start = datetime(2024, 2, 1, tzinfo=UTC)
@@ -761,7 +669,6 @@ class TestTemporalQueries:
     async def test_in_range_no_overlap(self, engine) -> None:
         """Query range does not overlap any closed fact → only open-ended
         facts are returned."""
-
         async def _test(db, repo):
             await self._seed_facts(db, repo)
             start = datetime(2025, 1, 1, tzinfo=UTC)
@@ -783,7 +690,6 @@ class TestTemporalQueries:
 
     async def test_in_range_adjacent_no_overlap(self, engine) -> None:
         """Adjacent range (end=start) does not overlap ('[)' semantics)."""
-
         async def _test(db, repo):
             await self._seed_facts(db, repo)
             # Fact QA ends at 2024-06-30.  Query [2024-06-30, 2024-12-31)

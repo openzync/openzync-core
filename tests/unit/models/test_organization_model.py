@@ -1,5 +1,4 @@
 """Tests for ``Organization`` model — tenant entity with plan, config, quotas."""
-
 from __future__ import annotations
 
 import pytest

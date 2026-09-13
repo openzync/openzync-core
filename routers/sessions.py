@@ -108,7 +108,8 @@ async def list_sessions(
     ),
     cursor: str | None = Query(
         default=None,
-        description="Opaque cursor from a previous list response for pagination.",
+        description="Opaque cursor from a previous list response for "
+        "pagination.",
     ),
     include_closed: bool = Query(
         default=False,
@@ -189,7 +190,8 @@ async def get_session_messages(
     ),
     cursor: str | None = Query(
         default=None,
-        description="Opaque cursor from a previous messages response for pagination.",
+        description="Opaque cursor from a previous messages response for "
+        "pagination.",
     ),
 ) -> PaginatedResponse[MessageResponse]:
     """Get paginated messages for a session.

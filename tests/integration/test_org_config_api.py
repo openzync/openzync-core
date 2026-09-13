@@ -29,8 +29,7 @@ pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 
 @pytest.fixture
 async def jwt_client(
-    app: Any,
-    org_and_key: dict,
+    app: Any, org_and_key: dict,
 ) -> AsyncClient:
     """JWT-authenticated client — org config reads require ``configuration:read``.
 
@@ -42,7 +41,9 @@ async def jwt_client(
 
     transport = asgi_transport(app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        client.headers["Authorization"] = f"Bearer {org_and_key['jwt']}"
+        client.headers["Authorization"] = (
+            f"Bearer {org_and_key['jwt']}"
+        )
         yield client
 
 
@@ -71,7 +72,9 @@ class TestGetOrgConfig:
         # other field stays None until explicitly set.
         stored = data["stored"]
         assert stored["graph_backend"] == "falkordb"
-        assert all(v is None for k, v in stored.items() if k != "graph_backend")
+        assert all(
+            v is None for k, v in stored.items() if k != "graph_backend"
+        )
 
     async def test_requires_auth(self, async_client: AsyncClient) -> None:
         """Unauthenticated requests should return 401."""
@@ -106,7 +109,9 @@ class TestPatchOrgConfig:
         )
         assert resp.status_code == 401
 
-    async def test_requires_admin_write_scope(self, auth_client: AsyncClient) -> None:
+    async def test_requires_admin_write_scope(
+        self, auth_client: AsyncClient
+    ) -> None:
         """PATCH with read/write key (no admin:write) should return 403."""
         resp = await auth_client.patch(
             "/admin/org/config",
@@ -131,7 +136,9 @@ class TestPutOrgConfig:
         )
         assert resp.status_code == 401
 
-    async def test_requires_admin_write_scope(self, auth_client: AsyncClient) -> None:
+    async def test_requires_admin_write_scope(
+        self, auth_client: AsyncClient
+    ) -> None:
         """PUT with read/write key (no admin:write) should return 403."""
         resp = await auth_client.put(
             "/admin/org/config",

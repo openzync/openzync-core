@@ -1,5 +1,4 @@
 """Tests for ``GraphObservation`` and ``ObservationType`` models."""
-
 from __future__ import annotations
 
 import uuid

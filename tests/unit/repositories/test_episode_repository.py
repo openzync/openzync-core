@@ -327,7 +327,9 @@ class TestEpisodeRepository:
         """update_enrichment_status executes update."""
         mock_db.execute.return_value = MagicMock()
 
-        await repo.update_enrichment_status(episode_id=self.EPISODE_ID, bitmask=7)
+        await repo.update_enrichment_status(
+            episode_id=self.EPISODE_ID, bitmask=7
+        )
 
         mock_db.execute.assert_awaited_once()
 
@@ -339,7 +341,9 @@ class TestEpisodeRepository:
         """apply_enrichment_bits ORs bits into enrichment_status."""
         mock_db.execute.return_value = MagicMock()
 
-        await repo.apply_enrichment_bits(episode_id=self.EPISODE_ID, bitmask=3)
+        await repo.apply_enrichment_bits(
+            episode_id=self.EPISODE_ID, bitmask=3
+        )
 
         mock_db.execute.assert_awaited_once()
 

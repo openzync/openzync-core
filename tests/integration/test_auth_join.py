@@ -32,10 +32,7 @@ JOIN_EMAIL = "joiner@openzync.tech"
 
 
 async def _insert_org(
-    engine,
-    *,
-    org_code: str,
-    join_enabled: bool,
+    engine, *, org_code: str, join_enabled: bool,
 ) -> None:
     """Insert an org row with a known join code (direct DB — test infra)."""
     async with engine.connect() as conn:
@@ -68,17 +65,14 @@ class TestJoinOrgCodeDisabled:
     """POST /v1/auth/join against a real DB row with join_enabled=False."""
 
     async def test_disabled_org_403_no_user_created(
-        self,
-        engine,
-        isolated_app,
+        self, engine, isolated_app,
     ) -> None:
         """Valid code for a paused org → 403, exact detail, zero users."""
         await _insert_org(engine, org_code=DISABLED_CODE, join_enabled=False)
 
         transport = asgi_transport(isolated_app)
         async with AsyncClient(
-            transport=transport,
-            base_url="http://test",
+            transport=transport, base_url="http://test",
         ) as client:
             resp = await client.post(
                 "/v1/auth/join",
@@ -91,6 +85,8 @@ class TestJoinOrgCodeDisabled:
 
         assert resp.status_code == 403
         body = resp.json()
-        assert body["detail"] == ("This organization is not accepting new members")
+        assert body["detail"] == (
+            "This organization is not accepting new members"
+        )
         # No user created — the 403 fires before any user/email write.
         assert await _user_count(engine, JOIN_EMAIL) == 0

@@ -15,12 +15,13 @@ from __future__ import annotations
 
 import base64
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
 import orjson
 import structlog
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import (
     ExternalServiceError,
@@ -29,16 +30,12 @@ from core.exceptions import (
 )
 from packages.graph_backend.interface import GraphBackend
 
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
 logger = structlog.get_logger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────
 
 MAX_TRAVERSAL_DEPTH: int = 5
 """Hard cap on BFS depth to prevent unbounded recursive queries."""
-
 
 def _build_bfs_cte(*, temporal: bool) -> str:
     """Return the recursive BFS CTE, optionally temporally filtered.
@@ -108,7 +105,6 @@ SELECT DISTINCT ON (bfs.id) bfs.id, bfs.name, bfs.entity_type,
 FROM bfs
 ORDER BY bfs.id, bfs.depth
 """
-
 
 SEARCH_ENTITIES_SQL = """
 SELECT ge.id, ge.name, ge.entity_type, ge.summary,
@@ -530,9 +526,7 @@ class PostgresGraphBackend(GraphBackend):
                         "source_id": str(source_id),
                         "target_id": str(target_id),
                         "rel_type": relationship_type,
-                        "properties": orjson.dumps(
-                            properties if properties is not None else {}
-                        ).decode("utf-8"),
+                        "properties": orjson.dumps(properties if properties is not None else {}).decode("utf-8"),
                         "fact": "",
                         "confidence": confidence if confidence is not None else 1.0,
                         "valid_from": valid_from,
@@ -958,8 +952,7 @@ class PostgresGraphBackend(GraphBackend):
                     exc_info=True,
                 )
                 raise GraphBackendUnavailableError(
-                    f"PostgreSQL graph traversal neighbour fetch failed "
-                    f"for entity {current_id}."
+                    f"PostgreSQL graph traversal neighbour fetch failed for entity {current_id}."
                 ) from exc
 
         return nodes
@@ -1086,15 +1079,13 @@ class PostgresGraphBackend(GraphBackend):
                 seen.add(entity_id_str)
 
                 # Add the matched entity itself with distance 0
-                results.append(
-                    {
-                        "id": entity_id_str,
-                        "name": entity.get("name", ""),
-                        "type": entity.get("type", ""),
-                        "summary": entity.get("summary", ""),
-                        "distance": 0,
-                    }
-                )
+                results.append({
+                    "id": entity_id_str,
+                    "name": entity.get("name", ""),
+                    "type": entity.get("type", ""),
+                    "summary": entity.get("summary", ""),
+                    "distance": 0,
+                })
 
                 # BFS up to max_depth
                 try:
@@ -1120,8 +1111,7 @@ class PostgresGraphBackend(GraphBackend):
                         exc_info=True,
                     )
                     raise GraphBackendUnavailableError(
-                        f"PostgreSQL graph traversal failed for entity {entity_id_str} "
-                        "during retrieve_graph."
+                        f"PostgreSQL graph traversal failed for entity {entity_id_str} during retrieve_graph."
                     ) from exc
 
                 for node in related:
@@ -1129,15 +1119,13 @@ class PostgresGraphBackend(GraphBackend):
                     depth = node.get("depth", 1)
                     if node_id and node_id not in seen:
                         seen.add(node_id)
-                        results.append(
-                            {
-                                "id": node_id,
-                                "name": node.get("name", ""),
-                                "type": node.get("type", ""),
-                                "summary": node.get("summary", ""),
-                                "distance": depth,
-                            }
-                        )
+                        results.append({
+                            "id": node_id,
+                            "name": node.get("name", ""),
+                            "type": node.get("type", ""),
+                            "summary": node.get("summary", ""),
+                            "distance": depth,
+                        })
 
             # Sort by distance (closest first), limit to max_results
             results.sort(key=lambda x: x.get("distance", 99))
@@ -1208,9 +1196,7 @@ class PostgresGraphBackend(GraphBackend):
             next_cursor = None
             if has_more and items:
                 last = items[-1]
-                cursor_payload = orjson.dumps(
-                    {"c": last["created_at"], "i": last["id"]}
-                )
+                cursor_payload = orjson.dumps({"c": last["created_at"], "i": last["id"]})
                 next_cursor = base64.b64encode(cursor_payload).decode()
 
             return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
@@ -1283,9 +1269,7 @@ class PostgresGraphBackend(GraphBackend):
             next_cursor = None
             if has_more and items:
                 last = items[-1]
-                cursor_payload = orjson.dumps(
-                    {"c": last["created_at"], "i": last["id"]}
-                )
+                cursor_payload = orjson.dumps({"c": last["created_at"], "i": last["id"]})
                 next_cursor = base64.b64encode(cursor_payload).decode()
 
             return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
@@ -1366,8 +1350,7 @@ class PostgresGraphBackend(GraphBackend):
                 },
             )
             raise ExternalServiceError(
-                message=f"Failed to link entity {entity_id} to episode {episode_id}: "
-                f"{exc}",
+                message=f"Failed to link entity {entity_id} to episode {episode_id}: {exc}",
                 detail={
                     "org_id": str(org_id),
                     "episode_id": str(episode_id),
@@ -1537,12 +1520,8 @@ class PostgresGraphBackend(GraphBackend):
                     "name": row.name,
                     "entity_type": row.entity_type,
                     "summary": row.summary if row.summary else "",
-                    "is_merged": bool(row.is_merged)
-                    if hasattr(row, "is_merged")
-                    else False,
-                    "created_at": row.created_at.isoformat()
-                    if row.created_at
-                    else None,
+                    "is_merged": bool(row.is_merged) if hasattr(row, "is_merged") else False,
+                    "created_at": row.created_at.isoformat() if row.created_at else None,
                 }
                 for row in result.all()
             ]
@@ -1682,7 +1661,9 @@ class PostgresGraphBackend(GraphBackend):
         try:
             async with self._db.begin_nested():
                 # Set statement timeout for CTE-heavy operations
-                await self._db.execute(text("SET LOCAL statement_timeout = '10s'"))
+                await self._db.execute(
+                    text("SET LOCAL statement_timeout = '10s'")
+                )
 
                 # 1. Rewire relationships: source_id
                 src_result = await self._db.execute(
@@ -1941,28 +1922,23 @@ class PostgresGraphBackend(GraphBackend):
                     "org_id": str(org_id),
                     "project_id": str(project_id),
                     "subject_entity_id": str(subject_entity_id),
-                    "related_entity_id": str(related_entity_id)
-                    if related_entity_id
-                    else None,
+                    "related_entity_id": str(related_entity_id) if related_entity_id else None,
                     "obs_type": observation_type,
                     "content": content,
                     "confidence": confidence,
                     "fact_ids": (
                         [str(fid) for fid in supporting_fact_ids]
-                        if supporting_fact_ids
-                        else None
+                        if supporting_fact_ids else None
                     ),
                     "rel_ids": (
                         [str(rid) for rid in supporting_relationship_ids]
-                        if supporting_relationship_ids
-                        else None
+                        if supporting_relationship_ids else None
                     ),
                     "valid_from": valid_from,
                     "valid_to": valid_to,
                     "obs_metadata": (
                         orjson.dumps(observation_metadata).decode()
-                        if observation_metadata
-                        else None
+                        if observation_metadata else None
                     ),
                 },
             )
@@ -1999,7 +1975,9 @@ class PostgresGraphBackend(GraphBackend):
         """List observations with optional filters and cursor pagination."""
         limit = min(limit, 200)
 
-        where_clause = "o.organization_id = :org_id AND o.project_id = :project_id"
+        where_clause = (
+            "o.organization_id = :org_id AND o.project_id = :project_id"
+        )
         params: dict[str, object] = {
             "org_id": str(org_id),
             "project_id": str(project_id),
@@ -2053,12 +2031,10 @@ class PostgresGraphBackend(GraphBackend):
             next_cursor = None
             if has_more and items:
                 last = items[-1]
-                cursor_payload = orjson.dumps(
-                    {
-                        "c": last["created_at"],
-                        "i": last["id"],
-                    }
-                )
+                cursor_payload = orjson.dumps({
+                    "c": last["created_at"],
+                    "i": last["id"],
+                })
                 next_cursor = base64.b64encode(cursor_payload).decode()
 
             return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
@@ -2068,9 +2044,7 @@ class PostgresGraphBackend(GraphBackend):
                 extra={
                     "org_id": str(org_id),
                     "project_id": str(project_id),
-                    "subject_entity_id": str(subject_entity_id)
-                    if subject_entity_id
-                    else None,
+                    "subject_entity_id": str(subject_entity_id) if subject_entity_id else None,
                     "observation_type": observation_type,
                     "error": str(exc),
                 },
@@ -2116,8 +2090,7 @@ class PostgresGraphBackend(GraphBackend):
                 },
             )
             raise ExternalServiceError(
-                message=f"Failed to get appearance timestamps for entity {entity_id}: "
-                f"{exc}",
+                message=f"Failed to get appearance timestamps for entity {entity_id}: {exc}",
                 detail={
                     "org_id": str(org_id),
                     "entity_id": str(entity_id),
@@ -2290,18 +2263,17 @@ class PostgresGraphBackend(GraphBackend):
             "confidence": float(row.confidence) if row.confidence is not None else 0.0,
             "supporting_fact_ids": (
                 [str(fid) for fid in row.supporting_fact_ids]
-                if row.supporting_fact_ids
-                else []
+                if row.supporting_fact_ids else []
             ),
             "supporting_relationship_ids": (
                 [str(rid) for rid in row.supporting_relationship_ids]
-                if row.supporting_relationship_ids
-                else []
+                if row.supporting_relationship_ids else []
             ),
             "valid_from": row.valid_from.isoformat() if row.valid_from else None,
             "valid_to": row.valid_to.isoformat() if row.valid_to else None,
             "observation_metadata": (
-                dict(row.observation_metadata) if row.observation_metadata else {}
+                dict(row.observation_metadata)
+                if row.observation_metadata else {}
             ),
             "created_at": row.created_at.isoformat() if row.created_at else None,
             "updated_at": row.updated_at.isoformat() if row.updated_at else None,

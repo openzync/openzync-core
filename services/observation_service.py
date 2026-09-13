@@ -56,19 +56,16 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from uuid import UUID
 
 import structlog
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import GraphBackendUnavailableError
 from models.graph_observation import ObservationType
-
-if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
-
-    from packages.graph_backend.interface import GraphBackend
+from packages.graph_backend.interface import GraphBackend
 
 logger = structlog.get_logger(__name__)
 
@@ -251,10 +248,7 @@ class ObservationService:
         # ── 1. Co-occurrence ──────────────────────────────────────────────────
         co_pairs = await self.detect_co_occurrences(project_id, organization_id)
         count = await self._persist_co_occurrences(
-            co_pairs,
-            project_id,
-            organization_id,
-            llm_backend,
+            co_pairs, project_id, organization_id, llm_backend,
         )
         counts[str(ObservationType.CO_OCCURRENCE)] = count
         logger.info(
@@ -265,14 +259,10 @@ class ObservationService:
 
         # ── 2. Temporal gaps ──────────────────────────────────────────────────
         temporal_patterns = await self.detect_temporal_gaps(
-            project_id,
-            organization_id,
+            project_id, organization_id,
         )
         count = await self._persist_temporal_patterns(
-            temporal_patterns,
-            project_id,
-            organization_id,
-            llm_backend,
+            temporal_patterns, project_id, organization_id, llm_backend,
         )
         counts[str(ObservationType.TEMPORAL_PATTERN)] = count
         logger.info(
@@ -283,14 +273,10 @@ class ObservationService:
 
         # ── 3. Behavioral patterns ────────────────────────────────────────────
         behavioral_patterns = await self.detect_behavioral_patterns(
-            project_id,
-            organization_id,
+            project_id, organization_id,
         )
         count = await self._persist_behavioral_patterns(
-            behavioral_patterns,
-            project_id,
-            organization_id,
-            llm_backend,
+            behavioral_patterns, project_id, organization_id, llm_backend,
         )
         counts[str(ObservationType.BEHAVIORAL_PATTERN)] = count
         logger.info(
@@ -355,21 +341,15 @@ class ObservationService:
                 entity_a_id=row["entity_a_id"],
                 entity_b_id=row["entity_b_id"],
             )
-            patterns.append(
-                CoOccurrencePattern(
-                    entity_a_id=UUID(row["entity_a_id"])
-                    if isinstance(row["entity_a_id"], str)
-                    else row["entity_a_id"],
-                    entity_a_name=row["entity_a_name"],
-                    entity_b_id=UUID(row["entity_b_id"])
-                    if isinstance(row["entity_b_id"], str)
-                    else row["entity_b_id"],
-                    entity_b_name=row["entity_b_name"],
-                    co_count=row["co_count"],
-                    total_episodes=total_episodes,
-                    relationship_ids=rel_ids,
-                )
-            )
+            patterns.append(CoOccurrencePattern(
+                entity_a_id=UUID(row["entity_a_id"]) if isinstance(row["entity_a_id"], str) else row["entity_a_id"],
+                entity_a_name=row["entity_a_name"],
+                entity_b_id=UUID(row["entity_b_id"]) if isinstance(row["entity_b_id"], str) else row["entity_b_id"],
+                entity_b_name=row["entity_b_name"],
+                co_count=row["co_count"],
+                total_episodes=total_episodes,
+                relationship_ids=rel_ids,
+            ))
 
         return patterns
 
@@ -472,34 +452,25 @@ class ObservationService:
             else:
                 pattern_type = "irregular"
 
-            patterns.append(
-                TemporalGapPattern(
-                    entity_id=entity_id,
-                    entity_name=entity_name,
-                    appearance_count=len(timestamps),
-                    pattern_type=pattern_type,
-                    mean_gap_hours=round(mean_gap, 1),
-                    stddev_gap_hours=round(stddev_gap, 1),
-                    min_gap_hours=round(min_gap, 1),
-                    max_gap_hours=round(max_gap, 1),
-                    span_days=round(span, 1),
-                )
-            )
+            patterns.append(TemporalGapPattern(
+                entity_id=entity_id,
+                entity_name=entity_name,
+                appearance_count=len(timestamps),
+                pattern_type=pattern_type,
+                mean_gap_hours=round(mean_gap, 1),
+                stddev_gap_hours=round(stddev_gap, 1),
+                min_gap_hours=round(min_gap, 1),
+                max_gap_hours=round(max_gap, 1),
+                span_days=round(span, 1),
+            ))
 
         # Sort by most regular pattern first (periodic first, then by mean gap)
         _PATTERN_SORT_ORDER = {
-            "periodic": 0,
-            "narrowing": 1,
-            "widening": 2,
-            "burst": 3,
-            "irregular": 4,
+            "periodic": 0, "narrowing": 1, "widening": 2,
+            "burst": 3, "irregular": 4,
         }
-        patterns.sort(
-            key=lambda p: (
-                _PATTERN_SORT_ORDER.get(p.pattern_type, 99),
-                p.mean_gap_hours,
-            )
-        )
+        patterns.sort(key=lambda p: (_PATTERN_SORT_ORDER.get(p.pattern_type, 99),
+                                     p.mean_gap_hours))
 
         return patterns
 
@@ -543,7 +514,8 @@ class ObservationService:
         for entity_id, data in entity_data.items():
             # Sort predicates by count descending
             sorted_preds = dict(
-                sorted(data["predicates"].items(), key=lambda x: x[1], reverse=True)
+                sorted(data["predicates"].items(),
+                       key=lambda x: x[1], reverse=True)
             )
             # Build hint for description
             top_pred = next(iter(sorted_preds.items()), (None, 0))
@@ -555,19 +527,18 @@ class ObservationService:
                 )
             else:
                 hint = (
-                    f"Entity '{data['entity_name']}' has no notable predicate patterns."
+                    f"Entity '{data['entity_name']}' has no notable "
+                    f"predicate patterns."
                 )
 
-            patterns.append(
-                BehavioralPattern(
-                    entity_id=entity_id,
-                    entity_name=data["entity_name"],
-                    entity_type=data["entity_type"],
-                    frequent_predicates=sorted_preds,
-                    total_facts=data["total_facts"],
-                    description_hint=hint,
-                )
-            )
+            patterns.append(BehavioralPattern(
+                entity_id=entity_id,
+                entity_name=data["entity_name"],
+                entity_type=data["entity_type"],
+                frequent_predicates=sorted_preds,
+                total_facts=data["total_facts"],
+                description_hint=hint,
+            ))
 
         # Sort by total_facts descending (most facts first)
         patterns.sort(key=lambda p: p.total_facts, reverse=True)
@@ -660,12 +631,12 @@ class ObservationService:
             )
 
         top_pred, top_count = next(iter(pattern.frequent_predicates.items()))
-        rest = list(pattern.frequent_predicates.items())[1:4]
         return (
             f"'{pattern.entity_name}' most frequently exhibits "
             f"the predicate '{top_pred}' ({top_count} out of "
             f"{pattern.total_facts} facts). "
-            f"Additional predicates: {', '.join(f'{p}({c})' for p, c in rest)}."
+            f"Additional predicates: "
+            f"{', '.join(f'{p}({c})' for p, c in list(pattern.frequent_predicates.items())[1:4])}."
         )
 
     # ═══════════════════════════════════════════════════════════════════════════
@@ -694,9 +665,7 @@ class ObservationService:
         Returns:
             Number of observations persisted (2 × number of pairs).
         """
-        assert (
-            self._backend is not None
-        )  # called from run_full_project_scan which guards
+        assert self._backend is not None  # called from run_full_project_scan which guards
         now = datetime.now(UTC)
         persisted = 0
 
@@ -711,9 +680,7 @@ class ObservationService:
                 observation_type=str(ObservationType.CO_OCCURRENCE),
                 content=desc_a,
                 confidence=min(pair.co_count / self._co_confidence_cap, 1.0),
-                supporting_relationship_ids=pair.relationship_ids
-                if pair.relationship_ids
-                else None,
+                supporting_relationship_ids=pair.relationship_ids if pair.relationship_ids else None,
                 valid_from=now,
             )
             persisted += 1
@@ -738,9 +705,7 @@ class ObservationService:
                 observation_type=str(ObservationType.CO_OCCURRENCE),
                 content=desc_b,
                 confidence=min(pair.co_count / self._co_confidence_cap, 1.0),
-                supporting_relationship_ids=pair.relationship_ids
-                if pair.relationship_ids
-                else None,
+                supporting_relationship_ids=pair.relationship_ids if pair.relationship_ids else None,
                 valid_from=now,
             )
             persisted += 1
@@ -768,9 +733,7 @@ class ObservationService:
         Returns:
             Number of observations persisted.
         """
-        assert (
-            self._backend is not None
-        )  # called from run_full_project_scan which guards
+        assert self._backend is not None  # called from run_full_project_scan which guards
         now = datetime.now(UTC)
         persisted = 0
 
@@ -778,11 +741,8 @@ class ObservationService:
             desc = self.build_temporal_description(pattern)
             # Confidence based on pattern clarity: periodic/narrowing higher
             confidence_map = {
-                "periodic": 0.85,
-                "narrowing": 0.75,
-                "widening": 0.70,
-                "burst": 0.65,
-                "irregular": 0.40,
+                "periodic": 0.85, "narrowing": 0.75, "widening": 0.70,
+                "burst": 0.65, "irregular": 0.40,
             }
             confidence = confidence_map.get(pattern.pattern_type, 0.5)
 
@@ -821,9 +781,7 @@ class ObservationService:
         Returns:
             Number of observations persisted.
         """
-        assert (
-            self._backend is not None
-        )  # called from run_full_project_scan which guards
+        assert self._backend is not None  # called from run_full_project_scan which guards
         now = datetime.now(UTC)
         persisted = 0
 
@@ -978,19 +936,16 @@ class ObservationService:
         for row in rows:
             eid_str = str(row["entity_id"])
             name_info = entity_names.get(eid_str, {})
-            output.append(
-                {
-                    "entity_id": UUID(eid_str),
-                    "entity_name": name_info.get("name", "unknown"),
-                    "entity_type": name_info.get("entity_type", "unknown"),
-                    "predicate": row["predicate"],
-                    "predicate_count": row["predicate_count"],
-                    "total_facts": row["total_facts"],
-                }
-            )
+            output.append({
+                "entity_id": UUID(eid_str),
+                "entity_name": name_info.get("name", "unknown"),
+                "entity_type": name_info.get("entity_type", "unknown"),
+                "predicate": row["predicate"],
+                "predicate_count": row["predicate_count"],
+                "total_facts": row["total_facts"],
+            })
 
         return output
-
 
 # ── Module-level helpers ─────────────────────────────────────────────────────
 
@@ -1008,7 +963,7 @@ def _stddev(values: list[float], mean: float) -> float:
     if len(values) < 2:
         return 0.0
     variance: float = sum((v - mean) ** 2 for v in values) / len(values)
-    return variance**0.5  # type: ignore[no-any-return]
+    return variance ** 0.5  # type: ignore[no-any-return]
 
 
 def _is_monotonic(gaps: list[float], *, increasing: bool) -> bool:
@@ -1029,12 +984,7 @@ def _is_monotonic(gaps: list[float], *, increasing: bool) -> bool:
     consistent = 0
     total = len(gaps) - 1
     for i in range(total):
-        if (
-            increasing
-            and gaps[i + 1] > gaps[i]
-            or not increasing
-            and gaps[i + 1] < gaps[i]
-        ):
+        if increasing and gaps[i + 1] > gaps[i] or not increasing and gaps[i + 1] < gaps[i]:
             consistent += 1
     return consistent / total >= 0.6
 

@@ -20,14 +20,12 @@ Usage::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
+from uuid import UUID
 
 import structlog
 
-if TYPE_CHECKING:
-    from uuid import UUID
-
-    from core.openbao import OpenBaoClient
+from core.openbao import OpenBaoClient
 
 logger = structlog.get_logger(__name__)
 

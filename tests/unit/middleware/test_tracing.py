@@ -1,5 +1,4 @@
 """Unit tests for TracingMiddleware."""
-
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -168,7 +167,6 @@ class TestTracingMiddleware:
         @app.get("/not-found")
         async def not_found() -> None:
             from starlette.responses import Response
-
             return Response(status_code=404)
 
         app.add_middleware(TracingMiddleware)
@@ -192,13 +190,9 @@ class TestTracingMiddleware:
 
         class _InjectState:
             """Inject scope state so TracingMiddleware can read org_id."""
-
             def __init__(self, app: ASGIApp):
                 self.app = app
-
-            async def __call__(
-                self, scope: Scope, receive: Receive, send: Send
-            ) -> None:
+            async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
                 scope["state"] = {"org_id": "org-123"}
                 await self.app(scope, receive, send)
 
@@ -255,9 +249,7 @@ class TestTracingMiddleware:
             async with AsyncClient(transport=transport, base_url="http://test") as c:
                 resp = await c.get(
                     "/test",
-                    headers={
-                        "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
-                    },
+                    headers={"traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"},
                 )
                 assert resp.status_code == 200
 

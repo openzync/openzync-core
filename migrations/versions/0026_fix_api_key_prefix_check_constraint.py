@@ -1,4 +1,4 @@
-"""Fix api_keys prefix check constraint — mg_ to oz_ prefix values, model name.
+"""Fix api_keys prefix check constraint — mg_ → oz_ prefix values, align name with model.
 
 The database constraint ``ck_api_keys_prefix`` expects ``mg_live_`` / ``mg_test_``
 prefixes, but the entire codebase (``utils.crypto.generate_api_key``,
@@ -16,13 +16,10 @@ Create Date: 2026-07-05
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 revision: str = "0026"
 down_revision: str | None = "0025"

@@ -17,8 +17,8 @@ Or via the ASGI entry point:
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import TYPE_CHECKING
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,9 +73,6 @@ from routers import (
     users,
 )
 
-if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
 logger = logging.getLogger(__name__)
 
 
@@ -117,10 +114,7 @@ def create_app() -> FastAPI:
         # Init FalkorDB client — required (default graph backend is falkordb).
         # Only skips when FALKORDB_URL is explicitly unset (graph_backend=none).
         if not getattr(settings, "FALKORDB_URL", None):
-            logger.warning(
-                "falkordb_pool.skipped — FALKORDB_URL not set, "
-                "falkordb backends will 503"
-            )
+            logger.warning("falkordb_pool.skipped — FALKORDB_URL not set, falkordb backends will 503")
             app.state.falkordb_client = None
         else:
             try:
@@ -134,13 +128,10 @@ def create_app() -> FastAPI:
                     decode_responses=True,
                 )
                 app.state.falkordb_client = FalkorDB(connection_pool=falkordb_pool)
-                logger.info(
-                    "falkordb_pool.initialised", extra={"url": settings.FALKORDB_URL}
-                )
+                logger.info("falkordb_pool.initialised", extra={"url": settings.FALKORDB_URL})
             except Exception as exc:
                 logger.error(
-                    "falkordb_pool.initialisation_failed — "
-                    "FalkorDB is required (default graph)",
+                    "falkordb_pool.initialisation_failed — FalkorDB is required (default graph)",
                     exc_info=True,
                     extra={"url": settings.FALKORDB_URL, "error": str(exc)},
                 )

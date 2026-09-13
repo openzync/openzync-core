@@ -1,5 +1,4 @@
 """Tests for ``ApiKey`` model — construction, defaults, nullables."""
-
 from __future__ import annotations
 
 import uuid

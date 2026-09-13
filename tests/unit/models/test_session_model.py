@@ -1,5 +1,4 @@
 """Tests for ``Session`` model — conversation session within a project."""
-
 from __future__ import annotations
 
 import uuid

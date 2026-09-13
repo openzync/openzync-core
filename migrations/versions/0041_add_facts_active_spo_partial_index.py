@@ -28,12 +28,9 @@ Create Date: 2026-08-02
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 from alembic import op
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 revision: str = "0041"
 down_revision: str | None = "0040"

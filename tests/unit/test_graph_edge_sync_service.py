@@ -185,10 +185,8 @@ class TestSyncRouting:
 
         service = GraphEdgeSyncService(backends=[backend])
         await service.sync_supersessions(
-            org_id=ORG_ID,
-            project_id=PROJECT_ID,
-            events=self._case1_events(),
-            at_time=AT_TIME,
+            org_id=ORG_ID, project_id=PROJECT_ID,
+            events=self._case1_events(), at_time=AT_TIME,
         )
 
         backend.expire_relationships_matching.assert_awaited_once_with(
@@ -212,10 +210,8 @@ class TestSyncRouting:
         ]
         service = GraphEdgeSyncService(backends=[backend])
         await service.sync_supersessions(
-            org_id=ORG_ID,
-            project_id=PROJECT_ID,
-            events=events,
-            at_time=AT_TIME,
+            org_id=ORG_ID, project_id=PROJECT_ID,
+            events=events, at_time=AT_TIME,
         )
         backend.expire_relationships_matching.assert_not_awaited()
 
@@ -225,10 +221,8 @@ class TestSyncRouting:
         arq = AsyncMock()
         service = GraphEdgeSyncService(backends=[external], arq_pool=arq)
         await service.sync_supersessions(
-            org_id=ORG_ID,
-            project_id=PROJECT_ID,
-            events=self._case1_events(),
-            at_time=AT_TIME,
+            org_id=ORG_ID, project_id=PROJECT_ID,
+            events=self._case1_events(), at_time=AT_TIME,
         )
 
         # The external backend itself is never called directly.
@@ -252,12 +246,12 @@ class TestSyncRouting:
         external = AsyncMock()
         arq = AsyncMock()
 
-        service = GraphEdgeSyncService(backends=[postgres, external], arq_pool=arq)
+        service = GraphEdgeSyncService(
+            backends=[postgres, external], arq_pool=arq
+        )
         await service.sync_supersessions(
-            org_id=ORG_ID,
-            project_id=PROJECT_ID,
-            events=self._case1_events(),
-            at_time=AT_TIME,
+            org_id=ORG_ID, project_id=PROJECT_ID,
+            events=self._case1_events(), at_time=AT_TIME,
         )
 
         postgres.expire_relationships_matching.assert_awaited_once()
@@ -270,12 +264,12 @@ class TestSyncRouting:
         external = AsyncMock()
         arq = AsyncMock()
 
-        service = GraphEdgeSyncService(backends=[postgres, external], arq_pool=arq)
+        service = GraphEdgeSyncService(
+            backends=[postgres, external], arq_pool=arq
+        )
         await service.sync_supersessions(
-            org_id=ORG_ID,
-            project_id=PROJECT_ID,
-            events=[],
-            at_time=AT_TIME,
+            org_id=ORG_ID, project_id=PROJECT_ID,
+            events=[], at_time=AT_TIME,
         )
         postgres.expire_relationships_matching.assert_not_awaited()
         arq.enqueue.assert_not_awaited()
@@ -284,10 +278,8 @@ class TestSyncRouting:
         """Graph disabled (no backends) → nothing happens."""
         service = GraphEdgeSyncService(backends=[])
         await service.sync_supersessions(
-            org_id=ORG_ID,
-            project_id=PROJECT_ID,
-            events=self._case1_events(),
-            at_time=AT_TIME,
+            org_id=ORG_ID, project_id=PROJECT_ID,
+            events=self._case1_events(), at_time=AT_TIME,
         )
         # No assertion needed beyond not raising — covered by early return.
 
@@ -303,8 +295,6 @@ class TestSyncRouting:
 
         with pytest.raises(RuntimeError, match="pg boom"):
             await service.sync_supersessions(
-                org_id=ORG_ID,
-                project_id=PROJECT_ID,
-                events=self._case1_events(),
-                at_time=AT_TIME,
+                org_id=ORG_ID, project_id=PROJECT_ID,
+                events=self._case1_events(), at_time=AT_TIME,
             )

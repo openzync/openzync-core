@@ -38,7 +38,6 @@ PROJECT_ID = UUID("00000000-0000-0000-0000-000000000002")
 # PostgresGraphBackend observation integration tests
 # ═══════════════════════════════════════════════════════════════════════════════
 
-
 @pytest.mark.asyncio
 class TestObservationBackend:
     """CRUD + upsert semantics against real PostgreSQL."""
@@ -56,13 +55,13 @@ class TestObservationBackend:
                     "VALUES (:id, :org_id, :proj_id, :name, 'test') "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
-                {"id": eid, "org_id": ORG_ID, "proj_id": PROJECT_ID, "name": name},
+                {"id": eid, "org_id": ORG_ID, "proj_id": PROJECT_ID,
+                 "name": name},
             )
         await db.flush()
 
-    async def _seed_entity(
-        self, db: AsyncSession, eid: UUID, name: str = "Entity"
-    ) -> None:
+    async def _seed_entity(self, db: AsyncSession, eid: UUID,
+                           name: str = "Entity") -> None:
         """Insert a single test entity."""
         await db.execute(
             sa_text(
@@ -89,7 +88,6 @@ class TestObservationBackend:
 
     async def test_upsert_inserts_new_observation(self, engine) -> None:
         """Upsert inserts a new observation row."""
-
         async def _test(db: AsyncSession, backend: PostgresGraphBackend) -> None:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
             await backend.upsert_observation(
@@ -111,7 +109,6 @@ class TestObservationBackend:
 
     async def test_upsert_idempotent_reupdate(self, engine) -> None:
         """Upsert updates on dedup key collision vs insert duplicate."""
-
         async def _test(db: AsyncSession, backend: PostgresGraphBackend) -> None:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
             # First insert
@@ -144,7 +141,6 @@ class TestObservationBackend:
     async def test_upsert_pair_and_entity_level_separate(self, engine) -> None:
         """Entity-level and pair-level observations with same entity+type
         are distinct rows (different related_entity_id)."""
-
         async def _test(db: AsyncSession, backend: PostgresGraphBackend) -> None:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
             await self._seed_entity(db, self._ENTITY_B, "Bob")
@@ -178,42 +174,33 @@ class TestObservationBackend:
 
     async def test_get_by_subject_filters_correctly(self, engine) -> None:
         """get_observations with subject_entity_id filter works."""
-
         async def _test(db: AsyncSession, backend: PostgresGraphBackend) -> None:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
             await self._seed_entity(db, self._ENTITY_B, "Bob")
 
             await backend.upsert_observation(
-                org_id=ORG_ID,
-                project_id=PROJECT_ID,
+                org_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
-                content="Alice pattern.",
-                confidence=0.8,
+                content="Alice pattern.", confidence=0.8,
                 related_entity_id=None,
             )
             await backend.upsert_observation(
-                org_id=ORG_ID,
-                project_id=PROJECT_ID,
+                org_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_B,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
-                content="Bob pattern.",
-                confidence=0.7,
+                content="Bob pattern.", confidence=0.7,
                 related_entity_id=None,
             )
 
             alice_obs = await backend.get_observations(
-                ORG_ID,
-                PROJECT_ID,
-                subject_entity_id=self._ENTITY_A,
+                ORG_ID, PROJECT_ID, subject_entity_id=self._ENTITY_A,
             )
             assert len(alice_obs["items"]) == 1
             assert alice_obs["items"][0]["content"] == "Alice pattern."
 
             bob_obs = await backend.get_observations(
-                ORG_ID,
-                PROJECT_ID,
-                subject_entity_id=self._ENTITY_B,
+                ORG_ID, PROJECT_ID, subject_entity_id=self._ENTITY_B,
             )
             assert len(bob_obs["items"]) == 1
             assert bob_obs["items"][0]["content"] == "Bob pattern."
@@ -222,40 +209,33 @@ class TestObservationBackend:
 
     async def test_get_by_type_filters_correctly(self, engine) -> None:
         """get_observations with observation_type filter works."""
-
         async def _test(db: AsyncSession, backend: PostgresGraphBackend) -> None:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
 
             await backend.upsert_observation(
-                org_id=ORG_ID,
-                project_id=PROJECT_ID,
+                org_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
-                content="Temporal",
-                confidence=0.8,
+                content="Temporal", confidence=0.8,
                 related_entity_id=None,
             )
             await backend.upsert_observation(
-                org_id=ORG_ID,
-                project_id=PROJECT_ID,
+                org_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.BEHAVIORAL_PATTERN),
-                content="Behavioral",
-                confidence=0.7,
+                content="Behavioral", confidence=0.7,
                 related_entity_id=None,
             )
 
             temporal = await backend.get_observations(
-                ORG_ID,
-                PROJECT_ID,
+                ORG_ID, PROJECT_ID,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
             )
             assert len(temporal["items"]) == 1
             assert temporal["items"][0]["content"] == "Temporal"
 
             behavioral = await backend.get_observations(
-                ORG_ID,
-                PROJECT_ID,
+                ORG_ID, PROJECT_ID,
                 observation_type=str(ObservationType.BEHAVIORAL_PATTERN),
             )
             assert len(behavioral["items"]) == 1
@@ -265,27 +245,22 @@ class TestObservationBackend:
 
     async def test_get_pair_observations_both_directions(self, engine) -> None:
         """Observations with related_entity_id can be found via subject filter."""
-
         async def _test(db: AsyncSession, backend: PostgresGraphBackend) -> None:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
             await self._seed_entity(db, self._ENTITY_B, "Bob")
 
             # Observation: Alice → Bob
             await backend.upsert_observation(
-                org_id=ORG_ID,
-                project_id=PROJECT_ID,
+                org_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.CO_OCCURRENCE),
-                content="Alice with Bob.",
-                confidence=0.8,
+                content="Alice with Bob.", confidence=0.8,
                 related_entity_id=self._ENTITY_B,
             )
 
             # Query with subject filter — should find the one above
             results = await backend.get_observations(
-                ORG_ID,
-                PROJECT_ID,
-                subject_entity_id=self._ENTITY_A,
+                ORG_ID, PROJECT_ID, subject_entity_id=self._ENTITY_A,
             )
             assert len(results["items"]) == 1
             assert results["items"][0]["subject_entity_id"] == str(self._ENTITY_A)
@@ -297,38 +272,31 @@ class TestObservationBackend:
 
     async def test_upsert_dedup_key_enforces_uniqueness(self, engine) -> None:
         """Same dedup key (subject+type+related) updates in-place, no second row."""
-
         async def _test(db: AsyncSession, backend: PostgresGraphBackend) -> None:
             await self._seed_entity(db, self._ENTITY_A, "Alice")
             await self._seed_entity(db, self._ENTITY_B, "Bob")
 
             # Upsert two distinct observations
             await backend.upsert_observation(
-                org_id=ORG_ID,
-                project_id=PROJECT_ID,
+                org_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
-                content="Obs 1",
-                confidence=0.5,
+                content="Obs 1", confidence=0.5,
                 related_entity_id=None,
             )
             await backend.upsert_observation(
-                org_id=ORG_ID,
-                project_id=PROJECT_ID,
+                org_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_B,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
-                content="Obs 2",
-                confidence=0.5,
+                content="Obs 2", confidence=0.5,
                 related_entity_id=None,
             )
             # Third upsert with same dedup key as first — update, not insert
             await backend.upsert_observation(
-                org_id=ORG_ID,
-                project_id=PROJECT_ID,
+                org_id=ORG_ID, project_id=PROJECT_ID,
                 subject_entity_id=self._ENTITY_A,
                 observation_type=str(ObservationType.TEMPORAL_PATTERN),
-                content="Obs 1 updated",
-                confidence=0.6,
+                content="Obs 1 updated", confidence=0.6,
                 related_entity_id=None,
             )
 
@@ -337,13 +305,13 @@ class TestObservationBackend:
             contents = {r["content"] for r in results["items"]}
             assert "Obs 1 updated" in contents
 
-        await self._run(engine, _test)
 
+
+        await self._run(engine, _test)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # ObservationService — full pipeline integration tests
 # ═══════════════════════════════════════════════════════════════════════════════
-
 
 @pytest.mark.asyncio
 class TestObservationServicePipeline:
@@ -395,30 +363,21 @@ class TestObservationServicePipeline:
                     "VALUES (:id, :org_id, :proj_id, :name, :etype) "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
-                {
-                    "id": eid,
-                    "org_id": ORG_ID,
-                    "proj_id": PROJECT_ID,
-                    "name": name,
-                    "etype": etype,
-                },
+                {"id": eid, "org_id": ORG_ID, "proj_id": PROJECT_ID,
+                 "name": name, "etype": etype},
             )
 
         # ── Seed a user + session for episode FK references ────────────────
-        _user_id = uuid4()
-        _session_id = uuid4()
+        _USER_ID = uuid4()
+        _SESSION_ID = uuid4()
         await db.execute(
             sa_text(
                 "INSERT INTO users (id, organization_id, external_id, name, "
                 "role, is_active) VALUES (:uid, :org_id, :eid, :name, "
                 "'member', true) ON CONFLICT (id) DO NOTHING"
             ),
-            {
-                "uid": _user_id,
-                "org_id": ORG_ID,
-                "eid": f"test-user-{_user_id}",
-                "name": "Pipeline Test User",
-            },
+            {"uid": _USER_ID, "org_id": ORG_ID,
+             "eid": f"test-user-{_USER_ID}", "name": "Pipeline Test User"},
         )
         await db.execute(
             sa_text(
@@ -427,22 +386,14 @@ class TestObservationServicePipeline:
                 "VALUES (:sid, :org_id, :proj_id, :uid, :eid, true) "
                 "ON CONFLICT (id) DO NOTHING"
             ),
-            {
-                "sid": _session_id,
-                "org_id": ORG_ID,
-                "proj_id": PROJECT_ID,
-                "uid": _user_id,
-                "eid": "test-session",
-            },
+            {"sid": _SESSION_ID, "org_id": ORG_ID, "proj_id": PROJECT_ID,
+             "uid": _USER_ID, "eid": "test-session"},
         )
 
         # ── Episodes + entity links ────────────────────────────────────────
         for idx, eid in enumerate(self._EPISODES):
             created_at = datetime(
-                2024,
-                1,
-                1 + idx * 7,
-                tzinfo=UTC,
+                2024, 1, 1 + idx * 7, tzinfo=UTC,
             )  # 7-day gaps
             await db.execute(
                 sa_text(
@@ -456,16 +407,10 @@ class TestObservationServicePipeline:
                     " :created_at, :created_at) "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
-                {
-                    "id": eid,
-                    "org_id": ORG_ID,
-                    "proj_id": PROJECT_ID,
-                    "sid": _session_id,
-                    "uid": _user_id,
-                    "content": f"Episode {idx}",
-                    "seq": idx,
-                    "created_at": created_at,
-                },
+                {"id": eid, "org_id": ORG_ID, "proj_id": PROJECT_ID,
+                 "sid": _SESSION_ID, "uid": _USER_ID,
+                 "content": f"Episode {idx}", "seq": idx,
+                 "created_at": created_at},
             )
 
             # X appears in every episode
@@ -476,46 +421,56 @@ class TestObservationServicePipeline:
                     "VALUES (:eid, :entity_id, :proj_id) "
                     "ON CONFLICT (episode_id, entity_id) DO NOTHING"
                 ),
-                {"eid": eid, "entity_id": self._ENTITY_X, "proj_id": PROJECT_ID},
+                {"eid": eid, "entity_id": self._ENTITY_X,
+                 "proj_id": PROJECT_ID},
             )
 
             # Y appears in episodes 0, 2, 4
             if idx % 2 == 0:
                 await db.execute(
                     sa_text(
-                        "INSERT INTO graph_episode_entities "
-                        "(episode_id, entity_id, project_id) "
-                        "VALUES (:eid, :entity_id, :proj_id) "
-                        "ON CONFLICT (episode_id, entity_id) DO NOTHING"
-                    ),
-                    {"eid": eid, "entity_id": self._ENTITY_Y, "proj_id": PROJECT_ID},
+                    "INSERT INTO graph_episode_entities "
+                    "(episode_id, entity_id, project_id) "
+                    "VALUES (:eid, :entity_id, :proj_id) "
+                    "ON CONFLICT (episode_id, entity_id) DO NOTHING"
+                ),
+                {"eid": eid, "entity_id": self._ENTITY_Y,
+                 "proj_id": PROJECT_ID},
                 )
 
             # Z appears in episodes 1, 3
             if idx % 2 == 1:
                 await db.execute(
                     sa_text(
-                        "INSERT INTO graph_episode_entities "
-                        "(episode_id, entity_id, project_id) "
-                        "VALUES (:eid, :entity_id, :proj_id) "
-                        "ON CONFLICT (episode_id, entity_id) DO NOTHING"
-                    ),
-                    {"eid": eid, "entity_id": self._ENTITY_Z, "proj_id": PROJECT_ID},
+                    "INSERT INTO graph_episode_entities "
+                    "(episode_id, entity_id, project_id) "
+                    "VALUES (:eid, :entity_id, :proj_id) "
+                    "ON CONFLICT (episode_id, entity_id) DO NOTHING"
+                ),
+                {"eid": eid, "entity_id": self._ENTITY_Z,
+                 "proj_id": PROJECT_ID},
                 )
 
         # ── Facts (if requested) ───────────────────────────────────────────
         if with_facts:
             fact_data = [
                 # X asked_about_pricing × 3
-                (self._ENTITY_X, "asked_about_pricing", "true", self._EPISODES[0]),
-                (self._ENTITY_X, "asked_about_pricing", "true", self._EPISODES[2]),
-                (self._ENTITY_X, "asked_about_pricing", "true", self._EPISODES[4]),
+                (self._ENTITY_X, "asked_about_pricing", "true",
+                 self._EPISODES[0]),
+                (self._ENTITY_X, "asked_about_pricing", "true",
+                 self._EPISODES[2]),
+                (self._ENTITY_X, "asked_about_pricing", "true",
+                 self._EPISODES[4]),
                 # X requested_demo × 2
-                (self._ENTITY_X, "requested_demo", "true", self._EPISODES[1]),
-                (self._ENTITY_X, "requested_demo", "true", self._EPISODES[3]),
+                (self._ENTITY_X, "requested_demo", "true",
+                 self._EPISODES[1]),
+                (self._ENTITY_X, "requested_demo", "true",
+                 self._EPISODES[3]),
                 # Y churned × 2
-                (self._ENTITY_Y, "churned", "true", self._EPISODES[0]),
-                (self._ENTITY_Y, "churned", "true", self._EPISODES[2]),
+                (self._ENTITY_Y, "churned", "true",
+                 self._EPISODES[0]),
+                (self._ENTITY_Y, "churned", "true",
+                 self._EPISODES[2]),
             ]
             for subj, pred, obj, ep_id in fact_data:
                 await db.execute(
@@ -533,18 +488,11 @@ class TestObservationServicePipeline:
                         " NOW(), NOW(), NOW()) "
                         "ON CONFLICT (id) DO NOTHING"
                     ),
-                    {
-                        "id": uuid4(),
-                        "user_id": _user_id,
-                        "org_id": ORG_ID,
-                        "proj_id": PROJECT_ID,
-                        "ep_id": ep_id,
-                        "subj_entity": subj,
-                        "subj_str": subj.hex,
-                        "pred": pred,
-                        "obj": obj,
-                        "content": f"{pred}: {obj}",
-                    },
+                    {"id": uuid4(), "user_id": _USER_ID,
+                     "org_id": ORG_ID, "proj_id": PROJECT_ID,
+                     "ep_id": ep_id, "subj_entity": subj,
+                     "subj_str": subj.hex, "pred": pred, "obj": obj,
+                     "content": f"{pred}: {obj}"},
                 )
 
         # ── Relationships (if requested) ───────────────────────────────────
@@ -559,14 +507,9 @@ class TestObservationServicePipeline:
                     " :src, :tgt, :rtype, NOW(), NOW()) "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
-                {
-                    "id": uuid4(),
-                    "org_id": ORG_ID,
-                    "proj_id": PROJECT_ID,
-                    "src": self._ENTITY_X,
-                    "tgt": self._ENTITY_Y,
-                    "rtype": "works_with",
-                },
+                {"id": uuid4(), "org_id": ORG_ID, "proj_id": PROJECT_ID,
+                 "src": self._ENTITY_X, "tgt": self._ENTITY_Y,
+                 "rtype": "works_with"},
             )
             await db.execute(
                 sa_text(
@@ -578,22 +521,15 @@ class TestObservationServicePipeline:
                     " :src, :tgt, :rtype, NOW(), NOW()) "
                     "ON CONFLICT (id) DO NOTHING"
                 ),
-                {
-                    "id": uuid4(),
-                    "org_id": ORG_ID,
-                    "proj_id": PROJECT_ID,
-                    "src": self._ENTITY_X,
-                    "tgt": self._ENTITY_Z,
-                    "rtype": "mentions",
-                },
+                {"id": uuid4(), "org_id": ORG_ID, "proj_id": PROJECT_ID,
+                 "src": self._ENTITY_X, "tgt": self._ENTITY_Z,
+                 "rtype": "mentions"},
             )
 
         await db.flush()
 
     async def _run_pipeline(
-        self,
-        engine,
-        *,
+        self, engine, *,
         with_facts: bool = True,
         with_relationships: bool = True,
     ) -> tuple[dict[str, int], list[dict[str, Any]]]:
@@ -605,8 +541,7 @@ class TestObservationServicePipeline:
         db = AsyncSession(engine, expire_on_commit=False)
         try:
             await self._seed_graph(
-                db,
-                with_facts=with_facts,
+                db, with_facts=with_facts,
                 with_relationships=with_relationships,
             )
             backend = PostgresGraphBackend(db=db)
@@ -639,7 +574,9 @@ class TestObservationServicePipeline:
 
         # Co-occurrence: X↔Y (3 co-occurrences >= 2 threshold), X↔Z (2 >= 2)
         co_count = counts.get("co_occurrence", 0)
-        assert co_count >= 2, f"Expected at least 2 co-occurrence obs, got {co_count}"
+        assert co_count >= 2, (
+            f"Expected at least 2 co-occurrence obs, got {co_count}"
+        )
 
         # Temporal: X (5 episodes >= 3), Y (3 >= 3), Z (2 < 3 threshold)
         temporal_count = counts.get("temporal_pattern", 0)
@@ -654,14 +591,19 @@ class TestObservationServicePipeline:
         )
 
         # Total observations persisted
-        assert len(obs) >= 5, f"Expected at least 5 total obs, got {len(obs)}"
+        assert len(obs) >= 5, (
+            f"Expected at least 5 total obs, got {len(obs)}"
+        )
 
     async def test_pipeline_co_occurrence_details(self, engine) -> None:
         """Verify co-occurrence observation content and confidence."""
         _, obs = await self._run_pipeline(engine)
 
-        co_obs = [o for o in obs if o["observation_type"] == "co_occurrence"]
-        assert len(co_obs) >= 2, f"Expected >= 2 co-occurrence obs, got {len(co_obs)}"
+        co_obs = [o for o in obs
+                  if o["observation_type"] == "co_occurrence"]
+        assert len(co_obs) >= 2, (
+            f"Expected >= 2 co-occurrence obs, got {len(co_obs)}"
+        )
 
         # X↔Y: 3 co-occurrences out of 5 episodes = 60%
         # X↔Z: 2 co-occurrences out of 5 episodes = 40%
@@ -681,13 +623,13 @@ class TestObservationServicePipeline:
         """Verify temporal pattern observation content."""
         _, obs = await self._run_pipeline(engine)
 
-        temporal_obs = [o for o in obs if o["observation_type"] == "temporal_pattern"]
+        temporal_obs = [o for o in obs
+                        if o["observation_type"] == "temporal_pattern"]
         assert len(temporal_obs) >= 2
 
         # X appears every 7 days — should be "periodic" or "regular intervals"
-        x_obs = [
-            o for o in temporal_obs if o["subject_entity_id"] == str(self._ENTITY_X)
-        ]
+        x_obs = [o for o in temporal_obs
+                 if o["subject_entity_id"] == str(self._ENTITY_X)]
         assert len(x_obs) == 1
         content = x_obs[0]["content"]
         # Should mention the entity name and gap pattern
@@ -701,24 +643,21 @@ class TestObservationServicePipeline:
         """Verify behavioral pattern observation content."""
         _, obs = await self._run_pipeline(engine)
 
-        behavioral_obs = [
-            o for o in obs if o["observation_type"] == "behavioral_pattern"
-        ]
+        behavioral_obs = [o for o in obs
+                          if o["observation_type"] == "behavioral_pattern"]
         assert len(behavioral_obs) >= 1, (
             f"Expected >= 1 behavioral obs, got {len(behavioral_obs)}"
         )
 
         # X has asked_about_pricing × 3 — should be the top predicate
-        x_obs = [
-            o for o in behavioral_obs if o["subject_entity_id"] == str(self._ENTITY_X)
-        ]
+        x_obs = [o for o in behavioral_obs
+                 if o["subject_entity_id"] == str(self._ENTITY_X)]
         if x_obs:
             content = x_obs[0]["content"]
             assert "asked_about_pricing" in content or "UserX" in content
 
     async def test_pipeline_without_facts_or_relationships(
-        self,
-        engine,
+        self, engine,
     ) -> None:
         """Pipeline degrades gracefully when no facts or rels exist."""
         counts, obs = await self._run_pipeline(
@@ -752,17 +691,13 @@ class TestObservationServicePipeline:
 
             # First run
             await service.run_full_project_scan(
-                PROJECT_ID,
-                ORG_ID,
-                llm_backend=None,
+                PROJECT_ID, ORG_ID, llm_backend=None,
             )
             obs_1 = await backend.get_observations(ORG_ID, PROJECT_ID)
 
             # Second run
             await service.run_full_project_scan(
-                PROJECT_ID,
-                ORG_ID,
-                llm_backend=None,
+                PROJECT_ID, ORG_ID, llm_backend=None,
             )
             obs_2 = await backend.get_observations(ORG_ID, PROJECT_ID)
 

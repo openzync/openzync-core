@@ -6,17 +6,13 @@ repository provides read-only query methods for the classification API.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.dialog_classification import DialogClassification
 from models.episode import Episode
-
-if TYPE_CHECKING:
-    from uuid import UUID
-
-    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class DialogClassificationRepository:
@@ -57,7 +53,9 @@ class DialogClassificationRepository:
         )
         return result.scalar_one_or_none()
 
-    async def count_for_session(self, org_id: UUID, session_id: UUID) -> int:
+    async def count_for_session(
+        self, org_id: UUID, session_id: UUID
+    ) -> int:
         """Count classifications for a session."""
         result = await self._db.execute(
             select(func.count())

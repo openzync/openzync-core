@@ -100,50 +100,46 @@ class TestEpisodeBlobRepository:
         ]
         mock_db.execute.return_value = MagicMock()
         mock_db.execute.return_value.fetchall.return_value = [
-            MagicMock(
-                _mapping={
-                    "id": uuid4(),
-                    "organization_id": self.ORG_ID,
-                    "project_id": self.PROJECT_ID,
-                    "session_id": self.SESSION_ID,
-                    "episode_id": self.EPISODE_ID,
-                    "created_by": self.USER_ID,
-                    "storage_backend": "s3",
-                    "storage_key": "key-1",
-                    "file_name": "img1.jpg",
-                    "mime_type": "image/jpeg",
-                    "file_size": 1024,
-                    "content_hash": "hash1",
-                    "width": None,
-                    "height": None,
-                    "extracted_text": None,
-                    "blob_index": 0,
-                    "created_at": FIXED_NOW,
-                    "updated_at": FIXED_NOW,
-                }
-            ),
-            MagicMock(
-                _mapping={
-                    "id": uuid4(),
-                    "organization_id": self.ORG_ID,
-                    "project_id": self.PROJECT_ID,
-                    "session_id": self.SESSION_ID,
-                    "episode_id": self.EPISODE_ID,
-                    "created_by": self.USER_ID,
-                    "storage_backend": "s3",
-                    "storage_key": "key-2",
-                    "file_name": "img2.jpg",
-                    "mime_type": "image/png",
-                    "file_size": 2048,
-                    "content_hash": "hash2",
-                    "width": None,
-                    "height": None,
-                    "extracted_text": None,
-                    "blob_index": 1,
-                    "created_at": FIXED_NOW,
-                    "updated_at": FIXED_NOW,
-                }
-            ),
+            MagicMock(_mapping={
+                "id": uuid4(),
+                "organization_id": self.ORG_ID,
+                "project_id": self.PROJECT_ID,
+                "session_id": self.SESSION_ID,
+                "episode_id": self.EPISODE_ID,
+                "created_by": self.USER_ID,
+                "storage_backend": "s3",
+                "storage_key": "key-1",
+                "file_name": "img1.jpg",
+                "mime_type": "image/jpeg",
+                "file_size": 1024,
+                "content_hash": "hash1",
+                "width": None,
+                "height": None,
+                "extracted_text": None,
+                "blob_index": 0,
+                "created_at": FIXED_NOW,
+                "updated_at": FIXED_NOW,
+            }),
+            MagicMock(_mapping={
+                "id": uuid4(),
+                "organization_id": self.ORG_ID,
+                "project_id": self.PROJECT_ID,
+                "session_id": self.SESSION_ID,
+                "episode_id": self.EPISODE_ID,
+                "created_by": self.USER_ID,
+                "storage_backend": "s3",
+                "storage_key": "key-2",
+                "file_name": "img2.jpg",
+                "mime_type": "image/png",
+                "file_size": 2048,
+                "content_hash": "hash2",
+                "width": None,
+                "height": None,
+                "extracted_text": None,
+                "blob_index": 1,
+                "created_at": FIXED_NOW,
+                "updated_at": FIXED_NOW,
+            }),
         ]
 
         result = await repo.batch_create(
@@ -330,7 +326,9 @@ class TestEpisodeBlobRepository:
         mock_result.scalars.return_value.all.return_value = blobs
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_orphaned_blobs(organization_id=self.ORG_ID, limit=100)
+        result = await repo.get_orphaned_blobs(
+            organization_id=self.ORG_ID, limit=100
+        )
 
         assert result == blobs
 
@@ -342,7 +340,9 @@ class TestEpisodeBlobRepository:
         mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_orphaned_blobs(organization_id=self.ORG_ID, limit=100)
+        result = await repo.get_orphaned_blobs(
+            organization_id=self.ORG_ID, limit=100
+        )
 
         assert result == []
 

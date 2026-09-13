@@ -74,12 +74,8 @@ class TestCrossTenantIsolation:
         assert resp_a.status_code == 200
         assert resp_b.status_code == 200
 
-        ids_a = {
-            u.get("external_id") or u.get("id") for u in resp_a.json().get("data", [])
-        }
-        ids_b = {
-            u.get("external_id") or u.get("id") for u in resp_b.json().get("data", [])
-        }
+        ids_a = {u.get("external_id") or u.get("id") for u in resp_a.json().get("data", [])}
+        ids_b = {u.get("external_id") or u.get("id") for u in resp_b.json().get("data", [])}
 
         assert ids_a.isdisjoint(ids_b), (
             f"Overlapping user IDs between orgs: {ids_a & ids_b}"
@@ -147,9 +143,7 @@ class TestCrossTenantIsolation:
         page = 1
 
         while True:
-            resp = await auth_client_org_a.get(
-                "/v1/users", params={"page": page, "per_page": 10}
-            )
+            resp = await auth_client_org_a.get("/v1/users", params={"page": page, "per_page": 10})
             assert resp.status_code == 200
             data = resp.json().get("data", [])
             if not data:
@@ -158,8 +152,6 @@ class TestCrossTenantIsolation:
             page += 1
 
         resp_b = await auth_client_org_b.get("/v1/users", params={"per_page": 100})
-        ids_b = {
-            u.get("external_id") or u.get("id") for u in resp_b.json().get("data", [])
-        }
+        ids_b = {u.get("external_id") or u.get("id") for u in resp_b.json().get("data", [])}
 
         assert all_ids_a.isdisjoint(ids_b), "Paginated listing leaked cross-org data!"

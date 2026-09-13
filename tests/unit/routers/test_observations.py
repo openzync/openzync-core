@@ -27,6 +27,7 @@ MOCK_GRAPH_BACKEND = AsyncMock()
 """Shared mock GraphBackend instance reused across all tests and DI resolution."""
 
 
+
 @pytest.fixture(autouse=True)
 def _stub_permission_gate() -> None:
     """Stub the permission gate for every test in this file.
@@ -233,7 +234,9 @@ async def test_list_observations_503_no_graph_backend() -> None:
 
     app = _create_app()
     register_exception_handlers(app)
-    app.dependency_overrides[get_graph_backend_for_project] = _raise_no_graph_backend
+    app.dependency_overrides[get_graph_backend_for_project] = (
+        _raise_no_graph_backend
+    )
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:

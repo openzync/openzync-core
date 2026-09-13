@@ -3,7 +3,6 @@
 The repository is mocked at the service boundary. The service's ``log_action``
 validates input before delegating to the repo.
 """
-
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch

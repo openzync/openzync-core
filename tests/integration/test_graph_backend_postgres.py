@@ -174,10 +174,8 @@ async def _create_test_episode(
             "ON CONFLICT (id) DO NOTHING"
         ),
         {
-            "id": str(uid),
-            "org_id": str(ORG_ID),
-            "ext": f"ep-user-{uid}",
-            "name": "ep-test-user",
+            "id": str(uid), "org_id": str(ORG_ID),
+            "ext": f"ep-user-{uid}", "name": "ep-test-user",
             "email": f"{uid}@test.local",
         },
     )
@@ -188,10 +186,8 @@ async def _create_test_episode(
             "ON CONFLICT (id) DO NOTHING"
         ),
         {
-            "id": str(sid),
-            "uid": str(uid),
-            "org_id": str(ORG_ID),
-            "proj_id": str(PROJ_ID),
+            "id": str(sid), "uid": str(uid),
+            "org_id": str(ORG_ID), "proj_id": str(PROJ_ID),
             "ext": f"ep-session-{sid}",
         },
     )
@@ -202,11 +198,8 @@ async def _create_test_episode(
             "ON CONFLICT (id) DO NOTHING"
         ),
         {
-            "id": str(eid),
-            "sid": str(sid),
-            "uid": str(uid),
-            "org_id": str(ORG_ID),
-            "proj_id": str(PROJ_ID),
+            "id": str(eid), "sid": str(sid), "uid": str(uid),
+            "org_id": str(ORG_ID), "proj_id": str(PROJ_ID),
         },
     )
     await db.flush()
@@ -351,18 +344,14 @@ class TestRelationships:
         src = await _create_test_entity(backend, name="ExpSrc")
         tgt = await _create_test_entity(backend, name="ExpTgt")
         rel = await _create_test_relationship(
-            backend,
-            UUID(src["id"]),
-            UUID(tgt["id"]),
+            backend, UUID(src["id"]), UUID(tgt["id"]),
         )
 
         expired = await backend.expire_relationship(ORG_ID, PROJ_ID, UUID(rel["id"]))
         assert expired is True
 
         # Double-expire returns False
-        expired_again = await backend.expire_relationship(
-            ORG_ID, PROJ_ID, UUID(rel["id"])
-        )
+        expired_again = await backend.expire_relationship(ORG_ID, PROJ_ID, UUID(rel["id"]))
         assert expired_again is False
 
     async def test_expire_relationship_not_found(self, backend: Any) -> None:
@@ -379,12 +368,9 @@ class TestRelationships:
 
         at_time = datetime.now(UTC) - timedelta(minutes=1)
         count = await backend.expire_relationships_matching(
-            ORG_ID,
-            PROJ_ID,
-            source_id=src_id,
-            target_id=tgt_id,
-            relationship_type="works_at",
-            at_time=at_time,
+            ORG_ID, PROJ_ID,
+            source_id=src_id, target_id=tgt_id,
+            relationship_type="works_at", at_time=at_time,
         )
         assert count == 1
 
@@ -403,34 +389,25 @@ class TestRelationships:
 
         at_time = datetime.now(UTC)
         first = await backend.expire_relationships_matching(
-            ORG_ID,
-            PROJ_ID,
-            source_id=src_id,
-            target_id=tgt_id,
-            relationship_type="works_at",
-            at_time=at_time,
+            ORG_ID, PROJ_ID,
+            source_id=src_id, target_id=tgt_id,
+            relationship_type="works_at", at_time=at_time,
         )
         assert first == 1
         # Idempotent replay — WHERE invalid_at IS NULL no longer matches.
         second = await backend.expire_relationships_matching(
-            ORG_ID,
-            PROJ_ID,
-            source_id=src_id,
-            target_id=tgt_id,
-            relationship_type="works_at",
-            at_time=at_time,
+            ORG_ID, PROJ_ID,
+            source_id=src_id, target_id=tgt_id,
+            relationship_type="works_at", at_time=at_time,
         )
         assert second == 0
 
     async def test_expire_relationships_matching_no_match(self, backend: Any) -> None:
         """A triple that never existed matches nothing (count 0, no error)."""
         count = await backend.expire_relationships_matching(
-            ORG_ID,
-            PROJ_ID,
-            source_id=uuid4(),
-            target_id=uuid4(),
-            relationship_type="nonexistent",
-            at_time=datetime.now(UTC),
+            ORG_ID, PROJ_ID,
+            source_id=uuid4(), target_id=uuid4(),
+            relationship_type="nonexistent", at_time=datetime.now(UTC),
         )
         assert count == 0
 
@@ -447,12 +424,9 @@ class TestRelationships:
         await _create_test_relationship(backend, src_id, other_id, rel_type="works_at")
 
         count = await backend.expire_relationships_matching(
-            ORG_ID,
-            PROJ_ID,
-            source_id=src_id,
-            target_id=tgt_id,
-            relationship_type="works_at",
-            at_time=datetime.now(UTC),
+            ORG_ID, PROJ_ID,
+            source_id=src_id, target_id=tgt_id,
+            relationship_type="works_at", at_time=datetime.now(UTC),
         )
         assert count == 1
         # The other edge (src → other) is still active.
@@ -488,9 +462,7 @@ class TestEntityEpisodeLinking:
         )
         assert result is None
 
-    async def test_link_entity_to_episode_idempotent(
-        self, backend: Any, db: AsyncSession
-    ) -> None:
+    async def test_link_entity_to_episode_idempotent(self, backend: Any, db: AsyncSession) -> None:
         """Duplicate link does not raise."""
         entity = await _create_test_entity(backend, name="LinkIdempotent")
         entity_id = UUID(entity["id"])
@@ -513,9 +485,7 @@ class TestEntityEpisodeLinking:
     async def test_get_entities_for_session_empty(self, backend: Any) -> None:
         """get_entities_for_session returns empty list when no links exist."""
         result = await backend.get_entities_for_session(
-            ORG_ID,
-            PROJ_ID,
-            uuid4(),
+            ORG_ID, PROJ_ID, uuid4(),
         )
         assert result == []
 
@@ -549,10 +519,7 @@ class TestSearch:
         await _create_test_entity(backend, name="Jonathan Doe")
 
         result = await backend.bulk_search_entities(
-            ORG_ID,
-            PROJ_ID,
-            query="john",
-            fuzzy_threshold=0.2,
+            ORG_ID, PROJ_ID, query="john", fuzzy_threshold=0.2,
         )
         assert len(result) >= 1
 
@@ -589,9 +556,7 @@ class TestPaginatedListing:
         """list_entity_edges returns incident edges for an entity."""
         src = await _create_test_entity(backend, name="EdgeSrc")
         tgt = await _create_test_entity(backend, name="EdgeTgt")
-        rel = await _create_test_relationship(
-            backend, UUID(src["id"]), UUID(tgt["id"]), rel_type="likes"
-        )
+        rel = await _create_test_relationship(backend, UUID(src["id"]), UUID(tgt["id"]), rel_type="likes")
 
         result = await backend.list_entity_edges(ORG_ID, PROJ_ID, UUID(src["id"]))
         assert len(result["items"]) == 1
@@ -606,17 +571,11 @@ class TestPaginatedListing:
         tgt_a = await _create_test_entity(backend, name="EdgePredTgtA")
         tgt_b = await _create_test_entity(backend, name="EdgePredTgtB")
         src_id = UUID(src["id"])
-        await _create_test_relationship(
-            backend, src_id, UUID(tgt_a["id"]), rel_type="likes"
-        )
-        await _create_test_relationship(
-            backend, src_id, UUID(tgt_b["id"]), rel_type="knows"
-        )
+        await _create_test_relationship(backend, src_id, UUID(tgt_a["id"]), rel_type="likes")
+        await _create_test_relationship(backend, src_id, UUID(tgt_b["id"]), rel_type="knows")
 
         # Filter by predicate
-        result = await backend.list_entity_edges(
-            ORG_ID, PROJ_ID, src_id, predicate="likes"
-        )
+        result = await backend.list_entity_edges(ORG_ID, PROJ_ID, src_id, predicate="likes")
         assert len(result["items"]) == 1
         assert result["items"][0]["type"] == "likes"
 
@@ -637,12 +596,9 @@ class TestPaginatedListing:
         assert len(active["items"]) == 1
 
         count = await backend.expire_relationships_matching(
-            ORG_ID,
-            PROJ_ID,
-            source_id=src_id,
-            target_id=tgt_id,
-            relationship_type="likes",
-            at_time=datetime.now(UTC),
+            ORG_ID, PROJ_ID,
+            source_id=src_id, target_id=tgt_id,
+            relationship_type="likes", at_time=datetime.now(UTC),
         )
         assert count == 1
 
@@ -664,10 +620,7 @@ class TestMergeEntities:
         """Empty merged_ids returns zero counts (no-op)."""
         entity = await _create_test_entity(backend, name="Canonical")
         result = await backend.merge_entities(
-            ORG_ID,
-            PROJ_ID,
-            UUID(entity["id"]),
-            [],
+            ORG_ID, PROJ_ID, UUID(entity["id"]), [],
         )
         assert result == {"rewired_count": 0, "deleted_count": 0, "merged_count": 0}
 
@@ -733,27 +686,19 @@ class TestObservations:
         eid = UUID(entity["id"])
 
         await backend.upsert_observation(
-            org_id=ORG_ID,
-            project_id=PROJ_ID,
+            org_id=ORG_ID, project_id=PROJ_ID,
             subject_entity_id=eid,
-            observation_type="type_a",
-            content="A",
-            confidence=0.5,
+            observation_type="type_a", content="A", confidence=0.5,
         )
         await backend.upsert_observation(
-            org_id=ORG_ID,
-            project_id=PROJ_ID,
+            org_id=ORG_ID, project_id=PROJ_ID,
             subject_entity_id=eid,
-            observation_type="type_b",
-            content="B",
-            confidence=0.5,
+            observation_type="type_b", content="B", confidence=0.5,
         )
 
         # Filter by type
         result = await backend.get_observations(
-            ORG_ID,
-            PROJ_ID,
-            observation_type="type_a",
+            ORG_ID, PROJ_ID, observation_type="type_a",
         )
         assert len(result["items"]) == 1
         assert result["items"][0]["observation_type"] == "type_a"
@@ -795,9 +740,7 @@ class TestTraversal:
         """retrieve_graph searches then traverses outward."""
         await _create_test_entity(backend, name="GraphSearch Me")
         result = await backend.retrieve_graph(
-            ORG_ID,
-            PROJ_ID,
-            query="graphsearch",
+            ORG_ID, PROJ_ID, query="graphsearch",
         )
         assert isinstance(result, list)
 
@@ -835,22 +778,20 @@ class TestTraversal:
 
         # At t0 the edge is effective → target reachable at distance 1.
         at_t0 = await backend.retrieve_graph(
-            ORG_ID,
-            PROJ_ID,
-            query="asofsourcealpha",
-            as_of=t0,
+            ORG_ID, PROJ_ID, query="asofsourcealpha", as_of=t0,
         )
-        t0_targets = {r["id"] for r in at_t0 if r.get("distance", 0) == 1}
+        t0_targets = {
+            r["id"] for r in at_t0 if r.get("distance", 0) == 1
+        }
         assert str(tgt_id) in t0_targets, "edge valid at t0 must be traversed"
 
         # At t2 the edge's validity has ended → target not traversable.
         at_t2 = await backend.retrieve_graph(
-            ORG_ID,
-            PROJ_ID,
-            query="asofsourcealpha",
-            as_of=t2,
+            ORG_ID, PROJ_ID, query="asofsourcealpha", as_of=t2,
         )
-        t2_targets = {r["id"] for r in at_t2 if r.get("distance", 0) == 1}
+        t2_targets = {
+            r["id"] for r in at_t2 if r.get("distance", 0) == 1
+        }
         assert str(tgt_id) not in t2_targets, "superseded edge must not be traversed"
         t2_ids = {r["id"] for r in at_t2}
         assert str(src_id) in t2_ids, "the matched source itself is still returned"
@@ -878,21 +819,16 @@ class TestTraversal:
         )
 
         count = await backend.expire_relationships_matching(
-            ORG_ID,
-            PROJ_ID,
-            source_id=src_id,
-            target_id=tgt_id,
-            relationship_type="mentions",
-            at_time=now,
+            ORG_ID, PROJ_ID,
+            source_id=src_id, target_id=tgt_id,
+            relationship_type="mentions", at_time=now,
         )
         assert count == 1
 
         # invalid_at == now: excluded only at as_of >= now; a past as-of
         # still traverses the edge (bitemporal, matches Surreal/Falkor).
         before = await backend.retrieve_graph(
-            ORG_ID,
-            PROJ_ID,
-            query="expsourcealpha",
+            ORG_ID, PROJ_ID, query="expsourcealpha",
             as_of=now - timedelta(days=1),
         )
         before_traversed = {r["id"] for r in before if r.get("distance", 0) == 1}
@@ -901,10 +837,7 @@ class TestTraversal:
         )
 
         at_now = await backend.retrieve_graph(
-            ORG_ID,
-            PROJ_ID,
-            query="expsourcealpha",
-            as_of=now,
+            ORG_ID, PROJ_ID, query="expsourcealpha", as_of=now,
         )
         at_now_traversed = {r["id"] for r in at_now if r.get("distance", 0) == 1}
         assert str(tgt_id) not in at_now_traversed, (
@@ -973,9 +906,7 @@ class TestTemporalQueries:
         """Entity with no episode links returns empty list."""
         entity = await _create_test_entity(backend, name="NoAppearances")
         result = await backend.get_entity_appearance_timestamps(
-            ORG_ID,
-            PROJ_ID,
-            UUID(entity["id"]),
+            ORG_ID, PROJ_ID, UUID(entity["id"]),
         )
         assert result == []
 
@@ -984,9 +915,6 @@ class TestTemporalQueries:
         a = await _create_test_entity(backend, name="RelA")
         b = await _create_test_entity(backend, name="RelB")
         result = await backend.get_relationship_ids_between(
-            ORG_ID,
-            PROJ_ID,
-            UUID(a["id"]),
-            UUID(b["id"]),
+            ORG_ID, PROJ_ID, UUID(a["id"]), UUID(b["id"]),
         )
         assert result == []

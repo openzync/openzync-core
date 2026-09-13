@@ -4,7 +4,6 @@ Revision ID: 0004
 Revises: 0003
 Create Date: 2026-06-06
 """
-
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -67,79 +66,33 @@ def upgrade() -> None:
     if not _table_exists("extraction_schemas"):
         op.create_table(
             "extraction_schemas",
-            sa.Column(
-                "id",
-                sa.Uuid(),
-                server_default=sa.text("gen_random_uuid()"),
-                nullable=False,
-            ),
+            sa.Column("id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False),
             sa.Column("organization_id", sa.Uuid(), nullable=False),
             sa.Column("name", sa.Text(), nullable=False),
             sa.Column("json_schema", postgresql.JSONB(), nullable=False),
             sa.Column("prompt_template", sa.Text(), nullable=True),
-            sa.Column(
-                "is_active",
-                sa.Boolean(),
-                server_default=sa.text("true"),
-                nullable=False,
-            ),
-            sa.Column(
-                "created_at",
-                sa.TIMESTAMP(timezone=True),
-                server_default=sa.text("now()"),
-                nullable=False,
-            ),
-            sa.Column(
-                "updated_at",
-                sa.TIMESTAMP(timezone=True),
-                server_default=sa.text("now()"),
-                nullable=False,
-            ),
-            sa.ForeignKeyConstraint(
-                ["organization_id"], ["organizations.id"], ondelete="CASCADE"
-            ),
+            sa.Column("is_active", sa.Boolean(), server_default=sa.text("true"), nullable=False),
+            sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+            sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+            sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
             sa.PrimaryKeyConstraint("id"),
-            sa.UniqueConstraint(
-                "organization_id", "name", name="uq_extraction_schemas_org_name"
-            ),
+            sa.UniqueConstraint("organization_id", "name", name="uq_extraction_schemas_org_name"),
         )
 
     # ── refresh_tokens ───────────────────────────────────────────────────
     if not _table_exists("refresh_tokens"):
         op.create_table(
             "refresh_tokens",
-            sa.Column(
-                "id",
-                sa.Uuid(),
-                server_default=sa.text("gen_random_uuid()"),
-                nullable=False,
-            ),
+            sa.Column("id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False),
             sa.Column("user_id", sa.Text(), nullable=False),
             sa.Column("organization_id", sa.Uuid(), nullable=False),
             sa.Column("token_hash", sa.Text(), nullable=False),
             sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=False),
-            sa.Column(
-                "is_revoked",
-                sa.Boolean(),
-                server_default=sa.text("false"),
-                nullable=False,
-            ),
+            sa.Column("is_revoked", sa.Boolean(), server_default=sa.text("false"), nullable=False),
             sa.Column("rotated_by", sa.Uuid(), nullable=True),
-            sa.Column(
-                "created_at",
-                sa.TIMESTAMP(timezone=True),
-                server_default=sa.text("now()"),
-                nullable=False,
-            ),
-            sa.Column(
-                "updated_at",
-                sa.TIMESTAMP(timezone=True),
-                server_default=sa.text("now()"),
-                nullable=False,
-            ),
-            sa.ForeignKeyConstraint(
-                ["organization_id"], ["organizations.id"], ondelete="CASCADE"
-            ),
+            sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+            sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+            sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
             sa.PrimaryKeyConstraint("id"),
             sa.UniqueConstraint("token_hash", name="uq_refresh_tokens_hash"),
         )
@@ -148,35 +101,17 @@ def upgrade() -> None:
     if not _table_exists("audit_logs"):
         op.create_table(
             "audit_logs",
-            sa.Column(
-                "id",
-                sa.Uuid(),
-                server_default=sa.text("gen_random_uuid()"),
-                nullable=False,
-            ),
+            sa.Column("id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False),
             sa.Column("organization_id", sa.Uuid(), nullable=True),
             sa.Column("actor_id", sa.Text(), nullable=True),
             sa.Column("actor_type", sa.Text(), nullable=True),
             sa.Column("action", sa.Text(), nullable=False),
             sa.Column("resource_type", sa.Text(), nullable=False),
             sa.Column("resource_id", sa.Text(), nullable=True),
-            sa.Column(
-                "details",
-                postgresql.JSONB(),
-                server_default=sa.text("'{}'::jsonb"),
-                nullable=False,
-            ),
+            sa.Column("details", postgresql.JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False),
             sa.Column("ip_address", sa.Text(), nullable=True),
-            sa.Column(
-                "created_at",
-                sa.TIMESTAMP(timezone=True),
-                server_default=sa.text("now()"),
-                nullable=False,
-            ),
-            sa.CheckConstraint(
-                "actor_type IN ('user', 'api_key', 'system')",
-                name="ck_audit_logs_actor_type",
-            ),
+            sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+            sa.CheckConstraint("actor_type IN ('user', 'api_key', 'system')", name="ck_audit_logs_actor_type"),
             sa.PrimaryKeyConstraint("id"),
         )
 
@@ -184,48 +119,16 @@ def upgrade() -> None:
     if not _table_exists("llm_usage"):
         op.create_table(
             "llm_usage",
-            sa.Column(
-                "id",
-                sa.Uuid(),
-                server_default=sa.text("gen_random_uuid()"),
-                nullable=False,
-            ),
+            sa.Column("id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False),
             sa.Column("organization_id", sa.Uuid(), nullable=False),
             sa.Column("model", sa.Text(), nullable=False),
             sa.Column("task_type", sa.Text(), nullable=False),
-            sa.Column(
-                "prompt_tokens",
-                sa.Integer(),
-                server_default=sa.text("0"),
-                nullable=False,
-            ),
-            sa.Column(
-                "completion_tokens",
-                sa.Integer(),
-                server_default=sa.text("0"),
-                nullable=False,
-            ),
-            sa.Column(
-                "total_tokens",
-                sa.Integer(),
-                sa.Computed("prompt_tokens + completion_tokens"),
-                nullable=False,
-            ),
-            sa.Column(
-                "cost_estimate",
-                sa.Numeric(12, 8),
-                server_default=sa.text("0"),
-                nullable=False,
-            ),
-            sa.Column(
-                "duration_ms", sa.Integer(), server_default=sa.text("0"), nullable=False
-            ),
-            sa.Column(
-                "created_at",
-                sa.TIMESTAMP(timezone=True),
-                server_default=sa.text("now()"),
-                nullable=False,
-            ),
+            sa.Column("prompt_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False),
+            sa.Column("completion_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False),
+            sa.Column("total_tokens", sa.Integer(), sa.Computed("prompt_tokens + completion_tokens"), nullable=False),
+            sa.Column("cost_estimate", sa.Numeric(12, 8), server_default=sa.text("0"), nullable=False),
+            sa.Column("duration_ms", sa.Integer(), server_default=sa.text("0"), nullable=False),
+            sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
             sa.PrimaryKeyConstraint("id"),
         )
 

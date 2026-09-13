@@ -93,13 +93,10 @@ class TestDeliverWebhook:
         client = _make_async_client_mock(resp)
 
         with (
-            patch(
-                "services.worker.tasks.deliver_webhook.httpx.AsyncClient",
-                return_value=client,
-            ),
-            patch(
-                "services.worker.tasks.deliver_webhook._log_delivery", AsyncMock()
-            ) as mock_log,
+            patch("services.worker.tasks.deliver_webhook.httpx.AsyncClient",
+                  return_value=client),
+            patch("services.worker.tasks.deliver_webhook._log_delivery",
+                  AsyncMock()) as mock_log,
         ):
             await deliver_webhook(
                 DEFAULT_CTX,
@@ -127,11 +124,10 @@ class TestDeliverWebhook:
         client = _make_async_client_mock(resp)
 
         with (
-            patch(
-                "services.worker.tasks.deliver_webhook.httpx.AsyncClient",
-                return_value=client,
-            ),
-            patch("services.worker.tasks.deliver_webhook._log_delivery", AsyncMock()),
+            patch("services.worker.tasks.deliver_webhook.httpx.AsyncClient",
+                  return_value=client),
+            patch("services.worker.tasks.deliver_webhook._log_delivery",
+                  AsyncMock()),
         ):
             await deliver_webhook(
                 DEFAULT_CTX,
@@ -164,13 +160,10 @@ class TestDeliverWebhook:
         client = _make_async_client_mock(resp)
 
         with (
-            patch(
-                "services.worker.tasks.deliver_webhook.httpx.AsyncClient",
-                return_value=client,
-            ),
-            patch(
-                "services.worker.tasks.deliver_webhook._log_delivery", AsyncMock()
-            ) as mock_log,
+            patch("services.worker.tasks.deliver_webhook.httpx.AsyncClient",
+                  return_value=client),
+            patch("services.worker.tasks.deliver_webhook._log_delivery",
+                  AsyncMock()) as mock_log,
             patch("services.worker.tasks.deliver_webhook.logger.warning") as mock_warn,
         ):
             await deliver_webhook(
@@ -199,11 +192,10 @@ class TestDeliverWebhook:
         client = _make_async_client_mock(resp)
 
         with (
-            patch(
-                "services.worker.tasks.deliver_webhook.httpx.AsyncClient",
-                return_value=client,
-            ),
-            patch("services.worker.tasks.deliver_webhook._log_delivery", AsyncMock()),
+            patch("services.worker.tasks.deliver_webhook.httpx.AsyncClient",
+                  return_value=client),
+            patch("services.worker.tasks.deliver_webhook._log_delivery",
+                  AsyncMock()),
             pytest.raises(Retry) as exc_info,
         ):
             await deliver_webhook(
@@ -226,13 +218,10 @@ class TestDeliverWebhook:
         client = _make_async_client_mock(resp)
 
         with (
-            patch(
-                "services.worker.tasks.deliver_webhook.httpx.AsyncClient",
-                return_value=client,
-            ),
-            patch(
-                "services.worker.tasks.deliver_webhook._log_delivery", AsyncMock()
-            ) as mock_log,
+            patch("services.worker.tasks.deliver_webhook.httpx.AsyncClient",
+                  return_value=client),
+            patch("services.worker.tasks.deliver_webhook._log_delivery",
+                  AsyncMock()) as mock_log,
         ):
             # attempt=4 with MAX_ATTEMPTS=5 means the 5th attempt is final
             # (0-indexed, so attempt < 5 → retry; attempt >= 5 → no retry)
@@ -260,13 +249,10 @@ class TestDeliverWebhook:
 
         for attempt in range(3):
             with (
-                patch(
-                    "services.worker.tasks.deliver_webhook.httpx.AsyncClient",
-                    return_value=client,
-                ),
-                patch(
-                    "services.worker.tasks.deliver_webhook._log_delivery", AsyncMock()
-                ),
+                patch("services.worker.tasks.deliver_webhook.httpx.AsyncClient",
+                      return_value=client),
+                patch("services.worker.tasks.deliver_webhook._log_delivery",
+                      AsyncMock()),
                 pytest.raises(Retry) as exc_info,
             ):
                 await deliver_webhook(
@@ -291,11 +277,10 @@ class TestDeliverWebhook:
         client.post = AsyncMock(side_effect=httpx.TimeoutException("Timed out"))
 
         with (
-            patch(
-                "services.worker.tasks.deliver_webhook.httpx.AsyncClient",
-                return_value=client,
-            ),
-            patch("services.worker.tasks.deliver_webhook._log_delivery", AsyncMock()),
+            patch("services.worker.tasks.deliver_webhook.httpx.AsyncClient",
+                  return_value=client),
+            patch("services.worker.tasks.deliver_webhook._log_delivery",
+                  AsyncMock()),
             pytest.raises(Retry) as exc_info,
         ):
             await deliver_webhook(
@@ -318,13 +303,10 @@ class TestDeliverWebhook:
         client.post = AsyncMock(side_effect=httpx.TimeoutException("Timed out"))
 
         with (
-            patch(
-                "services.worker.tasks.deliver_webhook.httpx.AsyncClient",
-                return_value=client,
-            ),
-            patch(
-                "services.worker.tasks.deliver_webhook._log_delivery", AsyncMock()
-            ) as mock_log,
+            patch("services.worker.tasks.deliver_webhook.httpx.AsyncClient",
+                  return_value=client),
+            patch("services.worker.tasks.deliver_webhook._log_delivery",
+                  AsyncMock()) as mock_log,
         ):
             await deliver_webhook(
                 DEFAULT_CTX,
@@ -352,11 +334,10 @@ class TestDeliverWebhook:
         client.post = AsyncMock(side_effect=httpx.RequestError("Connection refused"))
 
         with (
-            patch(
-                "services.worker.tasks.deliver_webhook.httpx.AsyncClient",
-                return_value=client,
-            ),
-            patch("services.worker.tasks.deliver_webhook._log_delivery", AsyncMock()),
+            patch("services.worker.tasks.deliver_webhook.httpx.AsyncClient",
+                  return_value=client),
+            patch("services.worker.tasks.deliver_webhook._log_delivery",
+                  AsyncMock()),
             pytest.raises(Retry) as exc_info,
         ):
             await deliver_webhook(
@@ -379,13 +360,10 @@ class TestDeliverWebhook:
         client.post = AsyncMock(side_effect=httpx.RequestError("DNS failure"))
 
         with (
-            patch(
-                "services.worker.tasks.deliver_webhook.httpx.AsyncClient",
-                return_value=client,
-            ),
-            patch(
-                "services.worker.tasks.deliver_webhook._log_delivery", AsyncMock()
-            ) as mock_log,
+            patch("services.worker.tasks.deliver_webhook.httpx.AsyncClient",
+                  return_value=client),
+            patch("services.worker.tasks.deliver_webhook._log_delivery",
+                  AsyncMock()) as mock_log,
         ):
             await deliver_webhook(
                 DEFAULT_CTX,
@@ -413,11 +391,10 @@ class TestDeliverWebhook:
         mock_log = AsyncMock()
 
         with (
-            patch(
-                "services.worker.tasks.deliver_webhook.httpx.AsyncClient",
-                return_value=client,
-            ),
-            patch("services.worker.tasks.deliver_webhook._log_delivery", mock_log),
+            patch("services.worker.tasks.deliver_webhook.httpx.AsyncClient",
+                  return_value=client),
+            patch("services.worker.tasks.deliver_webhook._log_delivery",
+                  mock_log),
             pytest.raises(Retry),
         ):
             await deliver_webhook(
@@ -450,21 +427,14 @@ class TestLogDelivery:
         mock_settings.DATABASE_URL = "postgresql+asyncpg://localhost:5432/test"
 
         with (
-            patch(
-                "services.worker.tasks.deliver_webhook.get_settings",
-                return_value=mock_settings,
-            ),
-            patch(
-                "services.worker.tasks.deliver_webhook.init_db_engine",
-                return_value=mock_engine,
-            ) as mock_init_engine,
-            patch(
-                "services.worker.tasks.deliver_webhook.get_async_session",
-                return_value=mock_session_factory,
-            ),
-            patch(
-                "services.worker.tasks.deliver_webhook.WebhookDeliveryLog", MagicMock()
-            ) as mock_log_cls,
+            patch("services.worker.tasks.deliver_webhook.get_settings",
+                  return_value=mock_settings),
+            patch("services.worker.tasks.deliver_webhook.init_db_engine",
+                  return_value=mock_engine) as mock_init_engine,
+            patch("services.worker.tasks.deliver_webhook.get_async_session",
+                  return_value=mock_session_factory),
+            patch("services.worker.tasks.deliver_webhook.WebhookDeliveryLog",
+                  MagicMock()) as mock_log_cls,
         ):
             await _log_delivery(
                 endpoint_id=ENDPOINT_ID,
@@ -503,21 +473,14 @@ class TestLogDelivery:
         mock_settings.DATABASE_URL = "postgresql+asyncpg://localhost:5432/test"
 
         with (
-            patch(
-                "services.worker.tasks.deliver_webhook.get_settings",
-                return_value=mock_settings,
-            ),
-            patch(
-                "services.worker.tasks.deliver_webhook.init_db_engine",
-                return_value=mock_engine,
-            ),
-            patch(
-                "services.worker.tasks.deliver_webhook.get_async_session",
-                return_value=mock_session_factory,
-            ),
-            patch(
-                "services.worker.tasks.deliver_webhook.WebhookDeliveryLog", MagicMock()
-            ),
+            patch("services.worker.tasks.deliver_webhook.get_settings",
+                  return_value=mock_settings),
+            patch("services.worker.tasks.deliver_webhook.init_db_engine",
+                  return_value=mock_engine),
+            patch("services.worker.tasks.deliver_webhook.get_async_session",
+                  return_value=mock_session_factory),
+            patch("services.worker.tasks.deliver_webhook.WebhookDeliveryLog",
+                  MagicMock()),
             patch("services.worker.tasks.deliver_webhook.logger.exception") as mock_log,
         ):
             await _log_delivery(
@@ -543,21 +506,14 @@ class TestLogDelivery:
         mock_settings.DATABASE_URL = "postgresql+asyncpg://localhost:5432/test"
 
         with (
-            patch(
-                "services.worker.tasks.deliver_webhook.get_settings",
-                return_value=mock_settings,
-            ),
-            patch(
-                "services.worker.tasks.deliver_webhook.init_db_engine",
-                return_value=mock_engine,
-            ),
-            patch(
-                "services.worker.tasks.deliver_webhook.get_async_session",
-                return_value=mock_session_factory,
-            ),
-            patch(
-                "services.worker.tasks.deliver_webhook.WebhookDeliveryLog", MagicMock()
-            ),
+            patch("services.worker.tasks.deliver_webhook.get_settings",
+                  return_value=mock_settings),
+            patch("services.worker.tasks.deliver_webhook.init_db_engine",
+                  return_value=mock_engine),
+            patch("services.worker.tasks.deliver_webhook.get_async_session",
+                  return_value=mock_session_factory),
+            patch("services.worker.tasks.deliver_webhook.WebhookDeliveryLog",
+                  MagicMock()),
             patch("services.worker.tasks.deliver_webhook.logger.exception"),
         ):
             await _log_delivery(
@@ -617,7 +573,8 @@ class TestWriteAuditLog:
         mock_session_cm.__aenter__.return_value = self._mock_session_obj
         self._mock_session_factory = MagicMock(return_value=mock_session_cm)
 
-        p = patch("core.db.get_async_session", return_value=self._mock_session_factory)
+        p = patch("core.db.get_async_session",
+                  return_value=self._mock_session_factory)
         p.start()
         self._patchers.append(p)
 
@@ -826,7 +783,6 @@ class TestWriteAuditLog:
         )
 
         import core.db
-
         actual_url = core.db.init_db_engine.call_args[0][0]
         assert "localhost:5432/test" in actual_url
         assert "+asyncpg" in actual_url

@@ -414,7 +414,9 @@ async def test_rollback_prompt_template_success() -> None:
         repo_cls.return_value = repo_instance
 
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/admin/org/prompts/extract_facts/rollback/1")
+            resp = await client.post(
+                "/admin/org/prompts/extract_facts/rollback/1"
+            )
 
     assert resp.status_code == 200
     body = resp.json()
@@ -437,7 +439,9 @@ async def test_rollback_prompt_template_404() -> None:
         repo_cls.return_value = repo_instance
 
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            resp = await client.post("/admin/org/prompts/extract_facts/rollback/99")
+            resp = await client.post(
+                "/admin/org/prompts/extract_facts/rollback/99"
+            )
 
     assert resp.status_code == 404
 

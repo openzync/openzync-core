@@ -106,29 +106,19 @@ class TestBusinessFacts:
                 "session_id": isolated_fact_session,
                 "facts": [
                     {"subject": "Alice", "predicate": "likes", "object": "hiking"},
-                    {
-                        "subject": "Alice",
-                        "predicate": "works_at",
-                        "object": "Acme Corp",
-                    },
+                    {"subject": "Alice", "predicate": "works_at", "object": "Acme Corp"},
                     {"subject": "Bob", "predicate": "likes", "object": "coding"},
                     {"subject": "Bob", "predicate": "reports_to", "object": "Alice"},
                     {"subject": "Charlie", "predicate": "likes", "object": "design"},
                     {"subject": "Charlie", "predicate": "uses", "object": "Figma"},
-                    {
-                        "subject": "Acme Corp",
-                        "predicate": "located_in",
-                        "object": "San Francisco",
-                    },
+                    {"subject": "Acme Corp", "predicate": "located_in", "object": "San Francisco"},
                     {"subject": "Alice", "predicate": "has_skill", "object": "Python"},
                     {"subject": "Bob", "predicate": "has_skill", "object": "Go"},
                     {"subject": "Charlie", "predicate": "has_skill", "object": "UI/UX"},
                 ],
             },
         )
-        assert resp.status_code == 202, (
-            f"Expected 202, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"
         body = resp.json()
         _assert_fact_response_shape(body, expected_count=10)
 
@@ -264,7 +254,8 @@ class TestBusinessFacts:
         )
         detail = resp.json()["detail"]
         assert any(
-            err.get("type") == "missing" and err.get("loc") == ["body", "session_id"]
+            err.get("type") == "missing"
+            and err.get("loc") == ["body", "session_id"]
             for err in detail
         ), f"Expected a 'missing' error on session_id, got: {detail}"
 
@@ -344,14 +335,8 @@ class TestBusinessFacts:
             json={
                 "session_id": "facts_session",
                 "facts": [
-                    {
-                        "subject": "SessionFact",
-                        "predicate": "belongs_to",
-                        "object": "session",
-                    },
+                    {"subject": "SessionFact", "predicate": "belongs_to", "object": "session"},
                 ],
             },
         )
-        assert resp.status_code == 202, (
-            f"Expected 202, got {resp.status_code}: {resp.text}"
-        )
+        assert resp.status_code == 202, f"Expected 202, got {resp.status_code}: {resp.text}"

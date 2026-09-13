@@ -61,18 +61,10 @@ class EpisodeStats(BaseModel):
     added_total: int = Field(0, description="Total episodes ever created")
     added_24h: int = Field(0, description="Episodes created in last 24 hours")
     in_progress: int = Field(0, description="Episodes with incomplete enrichment")
-    enrichment_pending: int = Field(
-        0, description="Episodes with no enrichment started"
-    )
-    fully_enriched: int = Field(
-        0, description="Episodes with all enrichment bits set (status=63)"
-    )
-    with_embeddings: int = Field(
-        0, description="Episodes with embedding vector populated"
-    )
-    fully_enriched_pct: float = Field(
-        0.0, description="Percentage of episodes fully enriched"
-    )
+    enrichment_pending: int = Field(0, description="Episodes with no enrichment started")
+    fully_enriched: int = Field(0, description="Episodes with all enrichment bits set (status=63)")
+    with_embeddings: int = Field(0, description="Episodes with embedding vector populated")
+    fully_enriched_pct: float = Field(0.0, description="Percentage of episodes fully enriched")
 
 
 class GraphStats(BaseModel):
@@ -103,9 +95,7 @@ class MetricsSummaryResponse(BaseModel):
     error_rate_pct: float = Field(0.0, description="Percentage of 5xx errors")
     overall_latency_ms: LatencyPercentiles = Field(default_factory=LatencyPercentiles)
     context_latency_ms: LatencyPercentiles = Field(default_factory=LatencyPercentiles)
-    graph_search_latency_ms: LatencyPercentiles = Field(
-        default_factory=LatencyPercentiles
-    )
+    graph_search_latency_ms: LatencyPercentiles = Field(default_factory=LatencyPercentiles)
     queue_depth: QueueDepth | None = Field(None, description="Worker queue depth")
     total_requests: int = Field(0, description="Total HTTP requests ever")
     active_requests: int = Field(0, description="Currently in-flight requests")

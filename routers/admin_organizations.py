@@ -140,8 +140,7 @@ async def set_prompt_type_default(
     repo = PromptTemplateRepository(db)
     try:
         template = await repo.set_as_type_default(
-            org_id=uuid.UUID(org_id),
-            name=name,
+            org_id=uuid.UUID(org_id), name=name,
         )
     except ValueError as err:
         raise HTTPException(status_code=404, detail=str(err)) from err
@@ -306,7 +305,9 @@ async def delete_prompt_template_override(
     if active is None:
         raise HTTPException(
             status_code=404,
-            detail=(f"No template found with name '{name}' for this organisation."),
+            detail=(
+                f"No template found with name '{name}' for this organisation."
+            ),
         )
 
     if active.is_default_for_type:

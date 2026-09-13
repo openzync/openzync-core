@@ -22,7 +22,8 @@ the failure — nothing is swallowed silently.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from prometheus_client import Counter
@@ -30,9 +31,6 @@ from sqlalchemy import text
 
 from middleware.metrics import METRICS_REGISTRY
 from workers.tasks.base import with_retry
-
-if TYPE_CHECKING:
-    from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +184,8 @@ async def expire_graph_edges(
             at_time=at_time,
         )
         return (
-            f"expired {count} edge(s) for {source_id}->{target_id} {relationship_type}"
+            f"expired {count} edge(s) for "
+            f"{source_id}->{target_id} {relationship_type}"
         )
     except Exception as exc:
         logger.error(

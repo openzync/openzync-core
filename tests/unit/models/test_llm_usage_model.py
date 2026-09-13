@@ -1,5 +1,4 @@
 """Tests for ``LLMUsage`` model — immutable, append-only, computed total_tokens."""
-
 from __future__ import annotations
 
 import uuid

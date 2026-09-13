@@ -1,5 +1,4 @@
 """Unit tests for MetricsMiddleware."""
-
 from __future__ import annotations
 
 import pytest
@@ -35,7 +34,7 @@ class TestMetricsMiddleware:
     def _reset_metrics(self) -> None:
         """Reset all metric counters before each test."""
         # Can't easily reset counters, so we just note cumulative values
-        _ = METRICS_REGISTRY.get_sample_value  # sanity check registry exists
+        METRICS_REGISTRY.get_sample_value  # sanity check registry exists
         yield
 
     @pytest.mark.asyncio

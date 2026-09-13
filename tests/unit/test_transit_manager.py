@@ -173,9 +173,7 @@ class TestKeyRotation:
         results = await transit.rotate_all_keys()
 
         assert mock_bao.rotate_encryption_key.call_count == 3
-        called_keys = [
-            call.args[0] for call in mock_bao.rotate_encryption_key.call_args_list
-        ]
+        called_keys = [call.args[0] for call in mock_bao.rotate_encryption_key.call_args_list]
         assert ORG_API_KEY_KEY in called_keys
         assert WEBHOOK_SECRET_KEY in called_keys
         assert PII_ENCRYPTION_KEY in called_keys

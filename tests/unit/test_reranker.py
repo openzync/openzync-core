@@ -260,7 +260,9 @@ class TestSentenceTransformersReranker:
             await r2.rerank("q", [{"id": "2", "content": "test"}], top_n=1)
 
         # The cache should have exactly one entry
-        assert len(_MODEL_CACHE) == 1, "Expected exactly one model in the cache"
+        assert len(_MODEL_CACHE) == 1, (
+            "Expected exactly one model in the cache"
+        )
         # Both instances reference the same model object
         assert r1._model is r2._model, (
             "Both instances should share the same cached model"
@@ -268,10 +270,11 @@ class TestSentenceTransformersReranker:
         # run_in_executor is called for both model loading AND model.predict(),
         # so call_count is not a reliable check. Instead verify the model
         # was loaded only once by checking cache entry count.
-        assert (
-            _MODEL_CACHE[SentenceTransformersReranker.DEFAULT_MODEL]
-            is mock_model_instance
-        ), "Cached model should be the one returned by run_in_executor"
+        assert _MODEL_CACHE[
+            SentenceTransformersReranker.DEFAULT_MODEL
+        ] is mock_model_instance, (
+            "Cached model should be the one returned by run_in_executor"
+        )
 
     @pytest.mark.asyncio
     async def test_model_load_executor_used(self) -> None:
@@ -296,10 +299,13 @@ class TestSentenceTransformersReranker:
         # First call should be model loading; inference is the second call
         first_call = mock_loop.run_in_executor.await_args_list[0]
         args, _ = first_call
-        assert args[0] is None, "First argument should be None (default executor)"
+        assert args[0] is None, (
+            "First argument should be None (default executor)"
+        )
         # The callable should be loading a model (lambda wrapping CrossEncoder)
         assert callable(args[1]), (
-            f"Expected a callable for model loading, got {type(args[1]).__name__}"
+            "Expected a callable for model loading, "
+            f"got {type(args[1]).__name__}"
         )
         # Verify the second call is also run_in_executor (for predict call)
         assert mock_loop.run_in_executor.await_count >= 2, (
@@ -395,12 +401,8 @@ class TestCohereReranker:
         results = await reranker.rerank("python", sample_candidates, top_n=3)
 
         assert len(results) == 3
-        assert results[0]["id"] == "3", (
-            "FastAPI (index 2, score 0.95) should rank first"
-        )
-        assert results[1]["id"] == "1", (
-            "Python (index 0, score 0.80) should rank second"
-        )
+        assert results[0]["id"] == "3", "FastAPI (index 2, score 0.95) should rank first"
+        assert results[1]["id"] == "1", "Python (index 0, score 0.80) should rank second"
         assert results[2]["id"] == "2", "JS (index 1, score 0.30) should rank third"
 
         assert results[0]["reranker_score"] == 0.95
@@ -495,18 +497,16 @@ class TestCohereReranker:
                 raise ImportError(msg)
             return orig_import(name, *args, **kwargs)
 
-        with (
-            patch("builtins.__import__", side_effect=mock_import),
-            pytest.raises(
+        with patch("builtins.__import__", side_effect=mock_import):
+            with pytest.raises(
                 ImportError,
                 match="cohere is not installed",
-            ),
-        ):
-            await reranker.rerank(
-                "q",
-                [{"id": "1", "content": "test"}],
-                top_n=1,
-            )
+            ):
+                await reranker.rerank(
+                    "q",
+                    [{"id": "1", "content": "test"}],
+                    top_n=1,
+                )
 
     @pytest.mark.asyncio
     async def test_missing_api_key(
@@ -544,9 +544,7 @@ class TestRerankerFactory:
 
     # ── Disabled / unknown backends ───────────────────────────────────────
 
-    def test_backend_null_returns_none(
-        self, org_config_disabled: OrgConfigBase
-    ) -> None:
+    def test_backend_null_returns_none(self, org_config_disabled: OrgConfigBase) -> None:
         """``reranker_backend=None`` returns ``None``."""
         assert RerankerFactory.create(org_config_disabled) is None
 

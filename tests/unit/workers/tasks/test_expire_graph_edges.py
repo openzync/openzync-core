@@ -92,9 +92,7 @@ class TestExpireGraphEdgesTask:
     async def test_graph_disabled_backend_none_returns_zero(self) -> None:
         """Org has no graph backend → no-op, count 0, no commit of an expiry."""
         db = _make_db()
-        with patch(
-            "workers.backend.resolve_graph_backend", new=AsyncMock(return_value=None)
-        ):
+        with patch("workers.backend.resolve_graph_backend", new=AsyncMock(return_value=None)):
             result = await expire_graph_edges(ctx=_ctx(db), **_TASK_ARGS)
 
         assert result == f"expired 0 edge(s) for {SRC_ENTITY}->{TGT_ENTITY} reports_to"
@@ -123,10 +121,7 @@ class TestExpireGraphEdgesTask:
 
         backend.expire_relationships_matching = _flaky
         with (
-            patch(
-                "workers.backend.resolve_graph_backend",
-                new=AsyncMock(return_value=backend),
-            ),
+            patch("workers.backend.resolve_graph_backend", new=AsyncMock(return_value=backend)),
             patch("workers.tasks.base.asyncio.sleep", new=AsyncMock()),
         ):
             result = await expire_graph_edges(ctx=_ctx(db), **_TASK_ARGS)
@@ -144,14 +139,11 @@ class TestExpireGraphEdgesTask:
             side_effect=RuntimeError("backend down")
         )
         with (
-            patch(
-                "workers.backend.resolve_graph_backend",
-                new=AsyncMock(return_value=backend),
-            ),
+            patch("workers.backend.resolve_graph_backend", new=AsyncMock(return_value=backend)),
             patch("workers.tasks.base.asyncio.sleep", new=AsyncMock()),
-            pytest.raises(RuntimeError, match="backend down"),
         ):
-            await expire_graph_edges(ctx=_ctx(db), **_TASK_ARGS)
+            with pytest.raises(RuntimeError, match="backend down"):
+                await expire_graph_edges(ctx=_ctx(db), **_TASK_ARGS)
 
     @pytest.mark.asyncio
     async def test_final_failure_increments_metric_and_logs_loudly(
@@ -164,24 +156,19 @@ class TestExpireGraphEdgesTask:
             side_effect=RuntimeError("backend down")
         )
         with (
-            patch(
-                "workers.backend.resolve_graph_backend",
-                new=AsyncMock(return_value=backend),
-            ),
+            patch("workers.backend.resolve_graph_backend", new=AsyncMock(return_value=backend)),
             patch("workers.tasks.base.asyncio.sleep", new=AsyncMock()),
             patch(
                 "workers.tasks.expire_graph_edges.graph_edge_sync_failures_total"
             ) as mock_counter,
-            pytest.raises(RuntimeError, match="backend down"),
         ):
-            await expire_graph_edges(ctx=_ctx(db), **_TASK_ARGS)
+            with pytest.raises(RuntimeError, match="backend down"):
+                await expire_graph_edges(ctx=_ctx(db), **_TASK_ARGS)
 
         mock_counter.inc.assert_called_once()
         # The failure log carries the full context in the record's extra
         # (structured logging) — fact_id, triple, at_time, error.
-        failed = [
-            r for r in caplog.records if r.getMessage() == "expire_graph_edges.failed"
-        ]
+        failed = [r for r in caplog.records if r.getMessage() == "expire_graph_edges.failed"]
         assert failed, "the final failure must be logged loudly"
         record = failed[0]
         assert record.fact_id == str(FACT_ID)

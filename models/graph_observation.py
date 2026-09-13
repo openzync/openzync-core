@@ -85,12 +85,10 @@ class GraphObservation(TimestampMixin, Base):
     )
     content: Mapped[str] = mapped_column(Text, nullable=False)
     supporting_fact_ids: Mapped[list[uuid.UUID] | None] = mapped_column(
-        ARRAY(SA_UUID),
-        nullable=True,
+        ARRAY(SA_UUID), nullable=True,
     )
     supporting_relationship_ids: Mapped[list[uuid.UUID] | None] = mapped_column(
-        ARRAY(SA_UUID),
-        nullable=True,
+        ARRAY(SA_UUID), nullable=True,
     )
     confidence: Mapped[float] = mapped_column(
         Float,
@@ -98,12 +96,10 @@ class GraphObservation(TimestampMixin, Base):
         server_default="0.0",
     )
     valid_from: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True),
-        nullable=True,
+        TIMESTAMP(timezone=True), nullable=True,
     )
     valid_to: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True),
-        nullable=True,
+        TIMESTAMP(timezone=True), nullable=True,
     )
     observation_metadata: Mapped[dict | None] = mapped_column(
         JSONB,

@@ -123,7 +123,8 @@ class TestAdminBootstrap:
 
         # -- No bootstrap API key under the new contract --
         assert "api_key" not in body, (
-            f"Org bootstrap must not return an api_key — got one: {body.get('api_key')}"
+            "Org bootstrap must not return an api_key — got one: "
+            f"{body.get('api_key')}"
         )
 
         # -- No default project auto-created --
@@ -131,7 +132,9 @@ class TestAdminBootstrap:
 
         async with app.state.db_session_factory() as session:
             count = await session.execute(
-                text("SELECT count(*) FROM projects WHERE organization_id = :oid"),
+                text(
+                    "SELECT count(*) FROM projects WHERE organization_id = :oid"
+                ),
                 {"oid": body["organization_id"]},
             )
         assert count.scalar() == 0, (

@@ -40,10 +40,7 @@ class StructuredExtraction(TimestampMixin, Base):
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-        comment=(
-            "Denormalized for efficient project-scoped queries "
-            "without joining through episode."
-        ),
+        comment="Denormalized for efficient project-scoped queries without joining through episode.",
     )
     session_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("sessions.id", ondelete="CASCADE"),

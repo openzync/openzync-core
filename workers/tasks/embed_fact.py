@@ -119,12 +119,16 @@ async def embed_fact(
                 org_id=_org_id,
                 exc_info=True,
             )
-            raise RuntimeError(f"Failed to fetch org config for org {_org_id}") from exc
+            raise RuntimeError(
+                f"Failed to fetch org config for org {_org_id}"
+            ) from exc
 
     if org_cfg is None:
         raise RuntimeError(f"Org config not found for org {_org_id}")
     if org_cfg.embedding_backend is None:
-        raise RuntimeError(f"No embedding backend configured for org {_org_id}")
+        raise RuntimeError(
+            f"No embedding backend configured for org {_org_id}"
+        )
 
     _embedding_backend = org_cfg.embedding_backend
     _embedding_model = org_cfg.embedding_model
@@ -133,8 +137,7 @@ async def embed_fact(
 
     # ── 1. Resolve the embedding backend ──────────────────────────────────
     llm = await resolve_backend(
-        provider=_embedding_backend,
-        org_config=_org_config_dict,
+        provider=_embedding_backend, org_config=_org_config_dict,
     )
 
     # ── 2. Generate embedding ────────────────────────────────────────────
@@ -165,7 +168,9 @@ async def embed_fact(
         try:
             async with session_factory() as db:
                 await db.execute(
-                    text("UPDATE facts SET embedded_at = now() WHERE id = :id"),
+                    text(
+                        "UPDATE facts SET embedded_at = now() WHERE id = :id"
+                    ),
                     {"id": fact_id},
                 )
                 await db.commit()

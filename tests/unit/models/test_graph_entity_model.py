@@ -1,5 +1,4 @@
 """Tests for ``GraphEntity`` model — read-only stub for FK resolution."""
-
 from __future__ import annotations
 
 import uuid

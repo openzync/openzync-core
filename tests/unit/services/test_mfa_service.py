@@ -46,9 +46,7 @@ class TestMfaService:
         mock_otp = MagicMock()
         mock_redis = AsyncMock()
         service = AuthService(
-            repo=mock_repo,
-            otp_service=mock_otp,
-            redis=mock_redis,
+            repo=mock_repo, otp_service=mock_otp, redis=mock_redis,
             org_repo=AsyncMock(),
         )
         return service, mock_repo, mock_otp, mock_redis
@@ -116,10 +114,7 @@ class TestMfaService:
 
         with (
             patch("services.auth_service.verify_password", return_value=True),
-            patch(
-                "services.auth_service.secrets.token_hex",
-                return_value="mfa-session-abc",
-            ),
+            patch("services.auth_service.secrets.token_hex", return_value="mfa-session-abc"),
         ):
             result = await service.login(
                 LoginRequest(email="a@b.com", password="pass"),
@@ -214,13 +209,9 @@ class TestMfaService:
                 ),
             )
 
-        assert (
-            "expired" in str(exc_info.value.message).lower()
-            or "invalid"
-            in str(
-                exc_info.value.message,
-            ).lower()
-        )
+        assert "expired" in str(exc_info.value.message).lower() or "invalid" in str(
+            exc_info.value.message,
+        ).lower()
 
     # ── MFA verify — invalid OTP ──────────────────────────────────────────
 
@@ -246,13 +237,9 @@ class TestMfaService:
                 ),
             )
 
-        assert (
-            "invalid" in str(exc_info.value.message).lower()
-            or "expired"
-            in str(
-                exc_info.value.message,
-            ).lower()
-        )
+        assert "invalid" in str(exc_info.value.message).lower() or "expired" in str(
+            exc_info.value.message,
+        ).lower()
 
     # ── Enable MFA — correct password ──────────────────────────────────────
 
@@ -292,13 +279,12 @@ class TestMfaService:
             password_hash="$2b$12$validhash",
         )
 
-        with patch("services.auth_service.verify_password", return_value=False), pytest.raises(
-            AuthenticationError
-        ) as exc_info:
-            await service.enable_mfa(
-                user_id=self.USER_ID,
-                payload=MfaEnableRequest(password="wrong-pass"),
-            )
+        with patch("services.auth_service.verify_password", return_value=False):
+            with pytest.raises(AuthenticationError) as exc_info:
+                await service.enable_mfa(
+                    user_id=self.USER_ID,
+                    payload=MfaEnableRequest(password="wrong-pass"),
+                )
 
         assert "password" in str(exc_info.value.message).lower()
         mock_repo.set_mfa_enabled.assert_not_called()
@@ -343,22 +329,17 @@ class TestMfaService:
         )
         mock_otp.verify = AsyncMock(return_value=False)
 
-        with patch("services.auth_service.verify_password", return_value=True), pytest.raises(
-            AuthenticationError
-        ) as exc_info:
-            await service.disable_mfa(
-                user_id=self.USER_ID,
-                payload=MfaDisableRequest(
-                    password="correct-pass",
-                    otp="000000",
-                ),
-            )
+        with patch("services.auth_service.verify_password", return_value=True):
+            with pytest.raises(AuthenticationError) as exc_info:
+                await service.disable_mfa(
+                    user_id=self.USER_ID,
+                    payload=MfaDisableRequest(
+                        password="correct-pass",
+                        otp="000000",
+                    ),
+                )
 
-        assert (
-            "invalid" in str(exc_info.value.message).lower()
-            or "code"
-            in str(
-                exc_info.value.message,
-            ).lower()
-        )
+        assert "invalid" in str(exc_info.value.message).lower() or "code" in str(
+            exc_info.value.message,
+        ).lower()
         mock_repo.set_mfa_enabled.assert_not_called()

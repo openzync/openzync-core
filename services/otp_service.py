@@ -238,9 +238,7 @@ class OtpService:
         attempts: int = await self._redis.incr(attempts_key)
         if attempts > _MAX_ATTEMPTS:
             await self._redis.delete(
-                hash_key,
-                attempts_key,
-                _cooldown_key(email_key, purpose),
+                hash_key, attempts_key, _cooldown_key(email_key, purpose),
             )
             raise ValidationError(
                 "Too many failed attempts.  Please request a new code.",
@@ -249,9 +247,7 @@ class OtpService:
         input_hash = self._hash_otp(code.strip())
         if hmac.compare_digest(input_hash, stored_hash):
             await self._redis.delete(
-                hash_key,
-                attempts_key,
-                _cooldown_key(email_key, purpose),
+                hash_key, attempts_key, _cooldown_key(email_key, purpose),
             )
             logger.info(
                 "otp.verified",
@@ -359,7 +355,7 @@ class OtpService:
         Returns:
             A zero-padded ``_OTP_LENGTH``-digit string.
         """
-        return f"{secrets.randbelow(10**_OTP_LENGTH):0{_OTP_LENGTH}d}"
+        return f"{secrets.randbelow(10 ** _OTP_LENGTH):0{_OTP_LENGTH}d}"
 
     @staticmethod
     def _hash_otp(code: str) -> str:

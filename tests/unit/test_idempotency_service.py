@@ -32,7 +32,9 @@ class TestIdempotencyService:
         mock_redis.get.return_value = None
         service = IdempotencyService(redis=mock_redis)
 
-        result = await service.check_idempotency_key("new-key", "hash123", self.ORG_ID)
+        result = await service.check_idempotency_key(
+            "new-key", "hash123", self.ORG_ID
+        )
         assert result.status == IdempotencyStatus.NEW
         assert result.response_data is None
 
@@ -173,9 +175,7 @@ class TestIdempotencyService:
         service = IdempotencyService(redis=mock_redis)
 
         result = await service.check_content_hash(
-            "org1",
-            "user1",
-            "session1",
+            "org1", "user1", "session1",
             [{"role": "user", "content": "Hello"}],
         )
         assert result == "job-123"
@@ -187,9 +187,7 @@ class TestIdempotencyService:
         service = IdempotencyService(redis=mock_redis)
 
         result = await service.check_content_hash(
-            "org1",
-            "user1",
-            "session1",
+            "org1", "user1", "session1",
             [{"role": "user", "content": "Hello"}],
         )
         assert result is None
@@ -202,9 +200,7 @@ class TestIdempotencyService:
         service = IdempotencyService(redis=mock_redis)
 
         result = await service.store_content_hash(
-            "org1",
-            "user1",
-            "session1",
+            "org1", "user1", "session1",
             [{"role": "user", "content": "Hello"}],
         )
         assert isinstance(result, str)
@@ -212,8 +208,7 @@ class TestIdempotencyService:
 
     @pytest.mark.asyncio
     async def test_store_content_hash_with_payload_roundtrip(
-        self,
-        mock_redis: AsyncMock,
+        self, mock_redis: AsyncMock,
     ) -> None:
         """Payload stored with SETNX; check returns it unchanged."""
         stored_value: dict = {}
@@ -227,9 +222,7 @@ class TestIdempotencyService:
         service = IdempotencyService(redis=mock_redis)
 
         content_hash = await service.store_content_hash(
-            "org1",
-            "user1",
-            "session1",
+            "org1", "user1", "session1",
             [{"role": "user", "content": "Hello"}],
             payload="job-456",
         )
@@ -237,9 +230,7 @@ class TestIdempotencyService:
 
         mock_redis.get.return_value = stored_value["value"]
         result = await service.check_content_hash(
-            "org1",
-            "user1",
-            "session1",
+            "org1", "user1", "session1",
             [{"role": "user", "content": "Hello"}],
         )
         assert result == "job-456"
@@ -248,7 +239,9 @@ class TestIdempotencyService:
     def test_compute_content_hash_includes_metadata_and_blobs(self) -> None:
         """Different metadata/blobs produce different hashes."""
         base = [{"role": "user", "content": "Hello"}]
-        with_meta = [{"role": "user", "content": "Hello", "metadata": {"tag": "a"}}]
+        with_meta = [
+            {"role": "user", "content": "Hello", "metadata": {"tag": "a"}}
+        ]
         with_blobs = [
             {
                 "role": "user",

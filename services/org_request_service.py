@@ -93,7 +93,9 @@ class OrgRequestService:
         # Lazy import — avoid import-time cycles with the auth service.
         from core.system_config import get_system_config
 
-        system_config = await get_system_config(self._redis, self._bao_client)
+        system_config = await get_system_config(
+            self._redis, self._bao_client
+        )
         if system_config.org_creation_policy == "reject_all":
             raise AuthorizationError("Registration is disabled")
 

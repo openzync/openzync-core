@@ -253,28 +253,14 @@ class TestEnrichEpisodeFullSuccess:
             patch("core.llm.resolve_backend") as mock_resolve_backend,
             patch("core.org_config.get_org_config") as mock_org_config,
             patch("workers.backend.resolve_graph_backend") as mock_graph,
-            patch(
-                "workers.tasks.classify_dialog.process_classification_output"
-            ) as mock_cls,
+            patch("workers.tasks.classify_dialog.process_classification_output") as mock_cls,
             patch("workers.tasks.extract_entities.process_entities_output") as mock_ent,
             patch("workers.tasks.extract_facts.process_facts_output") as mock_fct,
-            patch(
-                "workers.tasks.extract_structured.process_structured_output"
-            ) as mock_str,
-            patch(
-                "repositories.episode_blob_repository.EpisodeBlobRepository"
-            ) as mock_blob_repo_cls,
+            patch("workers.tasks.extract_structured.process_structured_output") as mock_str,
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_blob_repo_cls,
         ):
             # Prompt rendering
-            mock_render.return_value = (
-                "system prompt",
-                {
-                    "entity_types": [],
-                    "known_entities": [],
-                    "existing_facts": [],
-                    "schemas": [],
-                },
-            )
+            mock_render.return_value = ("system prompt", {"entity_types": [], "known_entities": [], "existing_facts": [], "schemas": []})
             mock_build.return_value = "full prompt"
 
             # Org config
@@ -352,25 +338,13 @@ class TestEnrichEpisodePartialFailure:
             patch("core.llm.resolve_backend") as mock_resolve_backend,
             patch("core.org_config.get_org_config") as mock_org_config,
             patch("workers.backend.resolve_graph_backend") as mock_graph,
-            patch(
-                "workers.tasks.classify_dialog.process_classification_output"
-            ) as mock_cls,
+            patch("workers.tasks.classify_dialog.process_classification_output") as mock_cls,
             patch("workers.tasks.extract_entities.process_entities_output") as mock_ent,
             patch("workers.tasks.extract_facts.process_facts_output") as mock_fct,
-            patch(
-                "workers.tasks.extract_structured.process_structured_output"
-            ) as mock_str,
+            patch("workers.tasks.extract_structured.process_structured_output") as mock_str,
             patch("repositories.episode_blob_repository.EpisodeBlobRepository"),
         ):
-            mock_render.return_value = (
-                "system prompt",
-                {
-                    "entity_types": [],
-                    "known_entities": [],
-                    "existing_facts": [],
-                    "schemas": [],
-                },
-            )
+            mock_render.return_value = ("system prompt", {"entity_types": [], "known_entities": [], "existing_facts": [], "schemas": []})
             mock_build.return_value = "full prompt"
 
             mock_org_cfg = MagicMock()
@@ -424,25 +398,13 @@ class TestEnrichEpisodePartialFailure:
             patch("core.llm.resolve_backend") as mock_resolve_backend,
             patch("core.org_config.get_org_config") as mock_org_config,
             patch("workers.backend.resolve_graph_backend"),
-            patch(
-                "workers.tasks.classify_dialog.process_classification_output"
-            ) as mock_cls,
+            patch("workers.tasks.classify_dialog.process_classification_output") as mock_cls,
             patch("workers.tasks.extract_entities.process_entities_output") as mock_ent,
             patch("workers.tasks.extract_facts.process_facts_output") as mock_fct,
-            patch(
-                "workers.tasks.extract_structured.process_structured_output"
-            ) as mock_str,
+            patch("workers.tasks.extract_structured.process_structured_output") as mock_str,
             patch("repositories.episode_blob_repository.EpisodeBlobRepository"),
         ):
-            mock_render.return_value = (
-                "prompt",
-                {
-                    "entity_types": [],
-                    "known_entities": [],
-                    "existing_facts": [],
-                    "schemas": [],
-                },
-            )
+            mock_render.return_value = ("prompt", {"entity_types": [], "known_entities": [], "existing_facts": [], "schemas": []})
             mock_build.return_value = "prompt"
 
             mock_org_cfg = MagicMock()
@@ -506,15 +468,7 @@ class TestEnrichEpisodeMissingCtx:
             patch("core.db.init_db_engine") as mock_init_engine,
             patch("core.db.get_async_session") as mock_get_session,
         ):
-            mock_render.return_value = (
-                "p",
-                {
-                    "entity_types": [],
-                    "known_entities": [],
-                    "existing_facts": [],
-                    "schemas": [],
-                },
-            )
+            mock_render.return_value = ("p", {"entity_types": [], "known_entities": [], "existing_facts": [], "schemas": []})
             mock_build.return_value = "p"
 
             mock_org_cfg = MagicMock()
@@ -575,15 +529,7 @@ class TestEnrichEpisodeMissingCtx:
             patch("workers.tasks.extract_structured.process_structured_output"),
             patch("repositories.episode_blob_repository.EpisodeBlobRepository"),
         ):
-            mock_render.return_value = (
-                "p",
-                {
-                    "entity_types": [],
-                    "known_entities": [],
-                    "existing_facts": [],
-                    "schemas": [],
-                },
-            )
+            mock_render.return_value = ("p", {"entity_types": [], "known_entities": [], "existing_facts": [], "schemas": []})
             mock_build.return_value = "p"
 
             mock_org_cfg = MagicMock()
@@ -641,19 +587,9 @@ class TestEnrichEpisodeBlobText:
             patch("workers.tasks.extract_entities.process_entities_output") as mock_ent,
             patch("workers.tasks.extract_facts.process_facts_output"),
             patch("workers.tasks.extract_structured.process_structured_output"),
-            patch(
-                "repositories.episode_blob_repository.EpisodeBlobRepository"
-            ) as mock_blob_cls,
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_blob_cls,
         ):
-            mock_render.return_value = (
-                "p",
-                {
-                    "entity_types": [],
-                    "known_entities": [],
-                    "existing_facts": [],
-                    "schemas": [],
-                },
-            )
+            mock_render.return_value = ("p", {"entity_types": [], "known_entities": [], "existing_facts": [], "schemas": []})
             mock_build.return_value = "base prompt"
 
             mock_org_cfg = MagicMock()
@@ -713,19 +649,9 @@ class TestEnrichEpisodeBlobText:
             patch("workers.tasks.extract_entities.process_entities_output") as mock_ent,
             patch("workers.tasks.extract_facts.process_facts_output"),
             patch("workers.tasks.extract_structured.process_structured_output"),
-            patch(
-                "repositories.episode_blob_repository.EpisodeBlobRepository"
-            ) as mock_blob_cls,
+            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_blob_cls,
         ):
-            mock_render.return_value = (
-                "p",
-                {
-                    "entity_types": [],
-                    "known_entities": [],
-                    "existing_facts": [],
-                    "schemas": [],
-                },
-            )
+            mock_render.return_value = ("p", {"entity_types": [], "known_entities": [], "existing_facts": [], "schemas": []})
             mock_build.return_value = "prompt"
 
             mock_org_cfg = MagicMock()
@@ -810,25 +736,13 @@ class TestEnrichEpisodeGraphBackend:
             patch("core.llm.resolve_backend") as mock_resolve_backend,
             patch("core.org_config.get_org_config") as mock_org_config,
             patch("workers.backend.resolve_graph_backend") as mock_graph,
-            patch(
-                "workers.tasks.classify_dialog.process_classification_output"
-            ) as mock_cls,
+            patch("workers.tasks.classify_dialog.process_classification_output") as mock_cls,
             patch("workers.tasks.extract_entities.process_entities_output") as mock_ent,
             patch("workers.tasks.extract_facts.process_facts_output") as mock_fct,
-            patch(
-                "workers.tasks.extract_structured.process_structured_output"
-            ) as mock_str,
+            patch("workers.tasks.extract_structured.process_structured_output") as mock_str,
             patch("repositories.episode_blob_repository.EpisodeBlobRepository"),
         ):
-            mock_render.return_value = (
-                "p",
-                {
-                    "entity_types": [],
-                    "known_entities": [],
-                    "existing_facts": [],
-                    "schemas": [],
-                },
-            )
+            mock_render.return_value = ("p", {"entity_types": [], "known_entities": [], "existing_facts": [], "schemas": []})
             mock_build.return_value = "prompt"
 
             mock_org_cfg = MagicMock()
@@ -883,25 +797,13 @@ class TestEnrichEpisodeGraphBackend:
             patch("core.llm.resolve_backend") as mock_resolve_backend,
             patch("core.org_config.get_org_config") as mock_org_config,
             patch("workers.backend.resolve_graph_backend") as mock_graph,
-            patch(
-                "workers.tasks.classify_dialog.process_classification_output"
-            ) as mock_cls,
+            patch("workers.tasks.classify_dialog.process_classification_output") as mock_cls,
             patch("workers.tasks.extract_entities.process_entities_output") as mock_ent,
             patch("workers.tasks.extract_facts.process_facts_output") as mock_fct,
-            patch(
-                "workers.tasks.extract_structured.process_structured_output"
-            ) as mock_str,
+            patch("workers.tasks.extract_structured.process_structured_output") as mock_str,
             patch("repositories.episode_blob_repository.EpisodeBlobRepository"),
         ):
-            mock_render.return_value = (
-                "p",
-                {
-                    "entity_types": [],
-                    "known_entities": [],
-                    "existing_facts": [],
-                    "schemas": [],
-                },
-            )
+            mock_render.return_value = ("p", {"entity_types": [], "known_entities": [], "existing_facts": [], "schemas": []})
             mock_build.return_value = "prompt"
 
             mock_org_cfg = MagicMock()
@@ -965,25 +867,13 @@ class TestEnrichEpisodeOrgConfig:
             patch("core.llm.resolve_backend") as mock_resolve_backend,
             patch("core.org_config.get_org_config") as mock_org_config,
             patch("workers.backend.resolve_graph_backend"),
-            patch(
-                "workers.tasks.classify_dialog.process_classification_output"
-            ) as mock_cls,
+            patch("workers.tasks.classify_dialog.process_classification_output") as mock_cls,
             patch("workers.tasks.extract_entities.process_entities_output") as mock_ent,
             patch("workers.tasks.extract_facts.process_facts_output") as mock_fct,
-            patch(
-                "workers.tasks.extract_structured.process_structured_output"
-            ) as mock_str,
+            patch("workers.tasks.extract_structured.process_structured_output") as mock_str,
             patch("repositories.episode_blob_repository.EpisodeBlobRepository"),
         ):
-            mock_render.return_value = (
-                "p",
-                {
-                    "entity_types": [],
-                    "known_entities": [],
-                    "existing_facts": [],
-                    "schemas": [],
-                },
-            )
+            mock_render.return_value = ("p", {"entity_types": [], "known_entities": [], "existing_facts": [], "schemas": []})
             mock_build.return_value = "prompt"
 
             # Org config fetch raises
@@ -1043,15 +933,7 @@ class TestEnrichEpisodeLLMFailure:
             patch("workers.backend.resolve_graph_backend"),
             patch("repositories.episode_blob_repository.EpisodeBlobRepository"),
         ):
-            mock_render.return_value = (
-                "p",
-                {
-                    "entity_types": [],
-                    "known_entities": [],
-                    "existing_facts": [],
-                    "schemas": [],
-                },
-            )
+            mock_render.return_value = ("p", {"entity_types": [], "known_entities": [], "existing_facts": [], "schemas": []})
             mock_build.return_value = "prompt"
 
             mock_org_cfg = MagicMock()

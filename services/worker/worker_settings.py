@@ -216,12 +216,12 @@ class WorkerSettings(BaseModel):
 
     @property
     def high_queue_full(self) -> str:
-        """High-priority queue name (e.g. ``OpenZync:prod:queue:high``)."""
+        """Fully qualified high-priority queue name (e.g. ``OpenZync:prod:queue:high``)."""
         return get_queue_name(self.ENV, self.HIGH_QUEUE_NAME)
 
     @property
     def low_queue_full(self) -> str:
-        """Low-priority queue name (e.g. ``OpenZync:prod:queue:low``)."""
+        """Fully qualified low-priority queue name (e.g. ``OpenZync:prod:queue:low``)."""
         return get_queue_name(self.ENV, self.LOW_QUEUE_NAME)
 
     # ═════════════════════════════════════════════════════════════════════════
@@ -247,19 +247,17 @@ class WorkerSettings(BaseModel):
         # Worker reads a subset of the canonical SYSTEM_KEY_MAPPING keys.
         # Defined explicitly here but validated against the canonical source
         # so a drift is caught at startup, not at runtime.
-        _WORKER_KEYS: frozenset[str] = frozenset(
-            {
-                "OZ_DATABASE_URL",
-                "OZ_REDIS_URL",
-                "OZ_ENVIRONMENT",
-                "OZ_LOG_LEVEL",
-                "OZ_FALKORDB_URL",
-                "OZ_FALKORDB_MAX_CONNECTIONS",
-                "OZ_FALKORDB_SOCKET_TIMEOUT",
-                "OZ_SURREALDB_URL",
-                "OZ_MAX_WORKERS",
-            }
-        )
+        _WORKER_KEYS: frozenset[str] = frozenset({
+            "OZ_DATABASE_URL",
+            "OZ_REDIS_URL",
+            "OZ_ENVIRONMENT",
+            "OZ_LOG_LEVEL",
+            "OZ_FALKORDB_URL",
+            "OZ_FALKORDB_MAX_CONNECTIONS",
+            "OZ_FALKORDB_SOCKET_TIMEOUT",
+            "OZ_SURREALDB_URL",
+            "OZ_MAX_WORKERS",
+        })
         # Canary: fail fast if SYSTEM_KEY_MAPPING drifts from worker keys
         _canary = _WORKER_KEYS - SYSTEM_KEY_MAPPING.keys()
         if _canary:
@@ -272,13 +270,11 @@ class WorkerSettings(BaseModel):
         # Most keys strip the ``OZ_`` prefix, except:
         #   OZ_ENVIRONMENT → 'ENV' (not 'ENVIRONMENT' like Settings).
         _FIELD_OVERRIDES: dict[str, str] = {"OZ_ENVIRONMENT": "ENV"}
-        _INT_FIELDS: frozenset[str] = frozenset(
-            {
-                "OZ_MAX_WORKERS",
-                "OZ_FALKORDB_MAX_CONNECTIONS",
-                "OZ_FALKORDB_SOCKET_TIMEOUT",
-            }
-        )
+        _INT_FIELDS: frozenset[str] = frozenset({
+            "OZ_MAX_WORKERS",
+            "OZ_FALKORDB_MAX_CONNECTIONS",
+            "OZ_FALKORDB_SOCKET_TIMEOUT",
+        })
 
         kwargs: dict[str, Any] = {}
         for bao_key in _WORKER_KEYS:

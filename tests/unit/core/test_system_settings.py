@@ -43,9 +43,7 @@ class TestListSystemSettings:
     @pytest.mark.asyncio
     async def test_url_userinfo_stripped(self) -> None:
         bao = _bao(
-            {
-                "OZ_DATABASE_URL": "postgresql+asyncpg://user:pass@db.example.com:5432/mydb"
-            }
+            {"OZ_DATABASE_URL": "postgresql+asyncpg://user:pass@db.example.com:5432/mydb"}
         )
         resp = await list_system_settings(bao)
         item = _item(resp, "OZ_DATABASE_URL")

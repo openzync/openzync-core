@@ -170,9 +170,7 @@ class Settings(BaseModel):
     # ── Metrics / Observability ───────────────────────────────────────────
     PROMETHEUS_URL: str = Field(
         default="http://localhost:9090",
-        description=(
-            "Prometheus server URL.  Used by the admin /metrics/summary endpoint."
-        ),
+        description="Prometheus server URL.  Used by the admin /metrics/summary endpoint.",
     )
 
     # ── HTTP / Server ─────────────────────────────────────────────────────
@@ -285,8 +283,7 @@ class Settings(BaseModel):
         validation_alias="OZ_PROMPT_CACHING_ENABLED",
     )
     PROMPT_CACHING_ANTHROPIC_MIN_TOKENS: int = Field(
-        default=1024,
-        ge=512,
+        default=1024, ge=512,
         description=(
             "Minimum estimated token count for the system prompt before "
             "cache_control is applied to Anthropic calls. "
@@ -350,10 +347,7 @@ class Settings(BaseModel):
     )
     SMTP_USE_TLS: bool = Field(
         default=False,
-        description=(
-            "Use implicit TLS (SMTPS) on connect (port 465). "
-            "Set false for STARTTLS (port 587)."
-        ),
+        description="Use implicit TLS (SMTPS) on connect (port 465). Set false for STARTTLS (port 587).",
     )
     SMTP_START_TLS: bool = Field(
         default=True,

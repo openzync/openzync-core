@@ -13,16 +13,12 @@ from __future__ import annotations
 import hashlib
 import logging
 import sys
-from typing import TYPE_CHECKING, TypeVar
+from collections.abc import Callable
+from typing import TypeVar
 
 import orjson
 
 from core.exceptions import CacheUnavailableError
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
-    from redis.asyncio import Redis as AsyncRedis
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +55,9 @@ class CacheService:
             ``None``.
     """
 
-    def __init__(self, redis: object, default_ttl: int | None = None) -> None:
+    def __init__(
+        self, redis: object, default_ttl: int | None = None
+    ) -> None:
         if redis is None:
             raise ValueError(
                 "redis client is required. CacheService does not support "
@@ -91,6 +89,7 @@ class CacheService:
                 fails.
         """
         try:
+            from redis.asyncio import Redis as AsyncRedis
 
             r: AsyncRedis = self._redis  # type: ignore[assignment]
             return await r.get(key)
@@ -100,7 +99,9 @@ class CacheService:
                 extra={"key": key},
                 exc_info=True,
             )
-            raise CacheUnavailableError(f"Cache read failed for key '{key}'.") from exc
+            raise CacheUnavailableError(
+                f"Cache read failed for key '{key}'."
+            ) from exc
 
     async def set(self, key: str, value: str, ttl: int | None = None) -> bool:
         """Set a cached value with an optional TTL.
@@ -119,6 +120,7 @@ class CacheService:
                 fails.
         """
         try:
+            from redis.asyncio import Redis as AsyncRedis
 
             r: AsyncRedis = self._redis  # type: ignore[assignment]
             effective_ttl = ttl if ttl is not None else self._default_ttl
@@ -129,7 +131,9 @@ class CacheService:
                 extra={"key": key, "ttl": ttl},
                 exc_info=True,
             )
-            raise CacheUnavailableError(f"Cache write failed for key '{key}'.") from exc
+            raise CacheUnavailableError(
+                f"Cache write failed for key '{key}'."
+            ) from exc
 
     async def delete(self, key: str) -> bool:
         """Delete a single cache key.
@@ -145,6 +149,7 @@ class CacheService:
                 fails.
         """
         try:
+            from redis.asyncio import Redis as AsyncRedis
 
             r: AsyncRedis = self._redis  # type: ignore[assignment]
             deleted = await r.delete(key)
@@ -208,6 +213,7 @@ class CacheService:
         if enable_stampede_protection and self._redis is not None:
             lock_key = f"{key}:lock"
             try:
+                from redis.asyncio import Redis as AsyncRedis
 
                 r: AsyncRedis = self._redis  # type: ignore[assignment]
                 acquired = bool(
@@ -252,6 +258,7 @@ class CacheService:
             if acquired and lock_key is not None:
                 inflight_exc = sys.exc_info()[0]
                 try:
+                    from redis.asyncio import Redis as AsyncRedis
 
                     r: AsyncRedis = self._redis  # type: ignore[assignment]
                     await r.delete(lock_key)
@@ -369,10 +376,13 @@ class CacheService:
         deleted = 0
 
         try:
+            from redis.asyncio import Redis as AsyncRedis
 
             r: AsyncRedis = self._redis  # type: ignore[assignment]
             while True:
-                cursor, keys = await r.scan(cursor=cursor, match=pattern, count=100)
+                cursor, keys = await r.scan(
+                    cursor=cursor, match=pattern, count=100
+                )
                 if keys:
                     deleted += await r.delete(*keys)
                 if cursor == 0:
@@ -426,10 +436,13 @@ class CacheService:
         deleted = 0
 
         try:
+            from redis.asyncio import Redis as AsyncRedis
 
             r: AsyncRedis = self._redis  # type: ignore[assignment]
             while True:
-                cursor, keys = await r.scan(cursor=cursor, match=pattern, count=100)
+                cursor, keys = await r.scan(
+                    cursor=cursor, match=pattern, count=100
+                )
                 if keys:
                     deleted += await r.delete(*keys)
                 if cursor == 0:

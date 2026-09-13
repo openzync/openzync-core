@@ -19,9 +19,7 @@ Usage::
     await surreal.use("openzync", "openzync")
 
     backend = SurrealGraphBackend(surreal=surreal)
-    entity = await backend.create_entity(
-        UUID(...), UUID(...), name="Acme", entity_type="company"
-    )
+    entity = await backend.create_entity(UUID(...), UUID(...), name="Acme", entity_type="company")
 """
 
 from __future__ import annotations
@@ -314,13 +312,9 @@ class SurrealGraphBackend(GraphBackend):
             "source_id": cls._record_id_to_str(row.get("in")),
             "target_id": cls._record_id_to_str(row.get("out")),
             "type": edge_type,
-            "properties": row.get("properties")
-            if row.get("properties") is not None
-            else {},
+            "properties": row.get("properties") if row.get("properties") is not None else {},
             "fact": row.get("fact") if row.get("fact") is not None else "",
-            "confidence": float(row["confidence"])
-            if row.get("confidence") is not None
-            else 1.0,
+            "confidence": float(row["confidence"]) if row.get("confidence") is not None else 1.0,
             "valid_from": cls._to_iso(row.get("valid_from")),
             "valid_to": cls._to_iso(row.get("valid_to")),
             "created_at": cls._to_iso(row.get("created_at")),
@@ -342,18 +336,14 @@ class SurrealGraphBackend(GraphBackend):
             "related_entity_id": row.get("related_entity_id") or None,
             "observation_type": row.get("observation_type", ""),
             "content": row.get("content", ""),
-            "confidence": float(row["confidence"])
-            if row.get("confidence") is not None
-            else 0.0,
+            "confidence": float(row["confidence"]) if row.get("confidence") is not None else 0.0,
             "supporting_fact_ids": (
                 [str(fid) for fid in row["supporting_fact_ids"]]
-                if row.get("supporting_fact_ids")
-                else []
+                if row.get("supporting_fact_ids") else []
             ),
             "supporting_relationship_ids": (
                 [str(rid) for rid in row["supporting_relationship_ids"]]
-                if row.get("supporting_relationship_ids")
-                else []
+                if row.get("supporting_relationship_ids") else []
             ),
             "valid_from": cls._to_iso(row.get("valid_from")),
             "valid_to": cls._to_iso(row.get("valid_to")),
@@ -403,10 +393,14 @@ class SurrealGraphBackend(GraphBackend):
         # Inline response validation (avoids calling SDK methods that are
         # mocked as async in tests, causing unawaited-coroutine warnings).
         if not isinstance(response, dict) or response.get("error"):
-            raise SurrealError(str(response.get("error", "Invalid query response")))
+            raise SurrealError(
+                str(response.get("error", "Invalid query response"))
+            )
         results: list[dict[str, Any]] = response.get("result", [])
         if not results:
-            raise SurrealError("Query returned no result statements")
+            raise SurrealError(
+                "Query returned no result statements"
+            )
         for stmt in results:
             if stmt.get("status") == "ERR":
                 raise parse_query_error(stmt)
@@ -923,12 +917,8 @@ class SurrealGraphBackend(GraphBackend):
                     for et in edge_types:
                         safe_et = self._sanitize_edge_type(et)
                         et_result = await self._surreal.query(
-                            f"SELECT VALUE ->{safe_et}[WHERE {edge_filter}]->entity.id "
-                            "FROM $current_id;",
-                            {
-                                "current_id": RecordID("entity", current_id),
-                                "as_of": as_of_str,
-                            },
+                            f"SELECT VALUE ->{safe_et}[WHERE {edge_filter}]->entity.id FROM $current_id;",
+                            {"current_id": RecordID("entity", current_id), "as_of": as_of_str},
                         )
                         # SDK 2.0 returns a graph-traversal VALUE as a nested
                         # array ([[RecordID, ...]]); older shapes were flat.
@@ -938,16 +928,12 @@ class SurrealGraphBackend(GraphBackend):
                             if et_result and isinstance(et_result[0], list)
                             else et_result
                         )
-                        for row in rows if rows is not None else []:
+                        for row in (rows if rows is not None else []):
                             neighbour_ids.add(self._record_id_to_str(row))
                 else:
                     et_result = await self._surreal.query(
-                        f"SELECT VALUE ->?[WHERE {edge_filter}]->entity.id "
-                        "FROM $current_id;",
-                        {
-                            "current_id": RecordID("entity", current_id),
-                            "as_of": as_of_str,
-                        },
+                        f"SELECT VALUE ->?[WHERE {edge_filter}]->entity.id FROM $current_id;",
+                        {"current_id": RecordID("entity", current_id), "as_of": as_of_str},
                     )
                     neighbour_ids = set()
                     rows = (
@@ -955,7 +941,7 @@ class SurrealGraphBackend(GraphBackend):
                         if et_result and isinstance(et_result[0], list)
                         else et_result
                     )
-                    for row in rows if rows is not None else []:
+                    for row in (rows if rows is not None else []):
                         neighbour_ids.add(self._record_id_to_str(row))
 
                 for nid in neighbour_ids:
@@ -971,8 +957,7 @@ class SurrealGraphBackend(GraphBackend):
                     exc_info=True,
                 )
                 raise GraphBackendUnavailableError(
-                    f"SurrealDB graph traversal neighbour fetch failed "
-                    f"for entity {current_id}."
+                    f"SurrealDB graph traversal neighbour fetch failed for entity {current_id}."
                 ) from exc
 
         return nodes
@@ -1026,9 +1011,7 @@ class SurrealGraphBackend(GraphBackend):
             entities = []
             for row in rows:
                 entity = self._row_to_entity(row)
-                entity["score"] = float(
-                    row.get("score") if row.get("score") is not None else 0.0
-                )
+                entity["score"] = float(row.get("score") if row.get("score") is not None else 0.0)
                 entities.append(entity)
             return entities
         except Exception as exc:
@@ -1077,7 +1060,9 @@ class SurrealGraphBackend(GraphBackend):
             "project_id": str(project_id),
         }
 
-        where_clause = "organization_id = $org_id AND project_id = $project_id"
+        where_clause = (
+            "organization_id = $org_id AND project_id = $project_id"
+        )
 
         if entity_type:
             where_clause += " AND entity_type = $entity_type"
@@ -1273,15 +1258,13 @@ class SurrealGraphBackend(GraphBackend):
                 seen.add(entity_id_str)
 
                 # Add the matched entity itself with distance 0
-                results.append(
-                    {
-                        "id": entity_id_str,
-                        "name": entity.get("name", ""),
-                        "type": entity.get("type", ""),
-                        "summary": entity.get("summary", ""),
-                        "distance": 0,
-                    }
-                )
+                results.append({
+                    "id": entity_id_str,
+                    "name": entity.get("name", ""),
+                    "type": entity.get("type", ""),
+                    "summary": entity.get("summary", ""),
+                    "distance": 0,
+                })
 
                 # BFS up to max_depth
                 try:
@@ -1307,8 +1290,7 @@ class SurrealGraphBackend(GraphBackend):
                         exc_info=True,
                     )
                     raise GraphBackendUnavailableError(
-                        f"SurrealDB traverse failed for entity {entity_id_str} "
-                        "during retrieve_graph."
+                        f"SurrealDB traverse failed for entity {entity_id_str} during retrieve_graph."
                     ) from exc
 
                 for node in related:
@@ -1316,15 +1298,13 @@ class SurrealGraphBackend(GraphBackend):
                     depth = node.get("depth", 1)
                     if node_id and node_id not in seen:
                         seen.add(node_id)
-                        results.append(
-                            {
-                                "id": node_id,
-                                "name": node.get("name", ""),
-                                "type": node.get("type", ""),
-                                "summary": node.get("summary", ""),
-                                "distance": depth,
-                            }
-                        )
+                        results.append({
+                            "id": node_id,
+                            "name": node.get("name", ""),
+                            "type": node.get("type", ""),
+                            "summary": node.get("summary", ""),
+                            "distance": depth,
+                        })
 
             # Sort by distance (closest first), limit to max_results
             results.sort(key=lambda x: x.get("distance", 99))
@@ -1429,8 +1409,7 @@ class SurrealGraphBackend(GraphBackend):
                 },
             )
             raise ExternalServiceError(
-                message=f"Failed to link entity {entity_id} to episode {episode_id}: "
-                f"{exc}",
+                message=f"Failed to link entity {entity_id} to episode {episode_id}: {exc}",
                 detail={
                     "org_id": str(org_id),
                     "episode_id": str(episode_id),
@@ -1545,9 +1524,7 @@ class SurrealGraphBackend(GraphBackend):
                 """,
                 params,
             )
-            episode_rids: list[Any] = (
-                episode_result if episode_result is not None else []
-            )
+            episode_rids: list[Any] = episode_result if episode_result is not None else []
 
             if not episode_rids:
                 return []
@@ -1566,9 +1543,7 @@ class SurrealGraphBackend(GraphBackend):
                     """,
                     {"ep_rid": ep_rid},
                 )
-                entity_rids: list[Any] = (
-                    entity_result if entity_result is not None else []
-                )
+                entity_rids: list[Any] = entity_result if entity_result is not None else []
                 # Skip episodes with fewer than 2 entities
                 if len(entity_rids) < 2:
                     continue
@@ -1577,12 +1552,8 @@ class SurrealGraphBackend(GraphBackend):
                 for er in entity_rids:
                     eid_str = self._record_id_to_str(er)
                     if eid_str and eid_str not in entity_name_cache:
-                        entity = await self.get_entity(
-                            org_id, project_id, UUID(eid_str)
-                        )
-                        entity_name_cache[eid_str] = (
-                            entity.get("name", eid_str) if entity else eid_str
-                        )
+                        entity = await self.get_entity(org_id, project_id, UUID(eid_str))
+                        entity_name_cache[eid_str] = entity.get("name", eid_str) if entity else eid_str
 
                 # Build all pairs within this episode
                 eid_strs = sorted(
@@ -1597,15 +1568,13 @@ class SurrealGraphBackend(GraphBackend):
             results: list[dict[str, Any]] = []
             for (a_id, b_id), count in pair_counts.items():
                 if count >= min_co_count:
-                    results.append(
-                        {
-                            "entity_a_id": a_id,
-                            "entity_a_name": entity_name_cache.get(a_id, a_id),
-                            "entity_b_id": b_id,
-                            "entity_b_name": entity_name_cache.get(b_id, b_id),
-                            "co_count": count,
-                        }
-                    )
+                    results.append({
+                        "entity_a_id": a_id,
+                        "entity_a_name": entity_name_cache.get(a_id, a_id),
+                        "entity_b_id": b_id,
+                        "entity_b_name": entity_name_cache.get(b_id, b_id),
+                        "co_count": count,
+                    })
 
             results.sort(key=lambda x: x["co_count"], reverse=True)
             return results
@@ -1732,7 +1701,7 @@ class SurrealGraphBackend(GraphBackend):
                 rid_str = self._record_id_to_str(row.get("id"))
                 if rid_str in seen:
                     continue
-                # Skip has_entity edges — episode-entity links, not relationships
+                # Skip has_entity edges — they are episode-entity links, not graph relationships
                 edge_table = row.get("edge_table_name") or ""
                 if edge_table == "has_entity":
                     continue
@@ -1892,7 +1861,7 @@ class SurrealGraphBackend(GraphBackend):
                         "project_id": str(project_id),
                     },
                 )
-                for edge_row in out_result if out_result is not None else []:
+                for edge_row in (out_result if out_result is not None else []):
                     edge_table = edge_row.get("edge_table_name", "")
                     if not edge_table or edge_table == "has_entity":
                         continue  # skip episode-entity links
@@ -1943,7 +1912,7 @@ class SurrealGraphBackend(GraphBackend):
                         "project_id": str(project_id),
                     },
                 )
-                for edge_row in in_result if in_result is not None else []:
+                for edge_row in (in_result if in_result is not None else []):
                     edge_table = edge_row.get("edge_table_name", "")
                     if not edge_table or edge_table == "has_entity":
                         continue
@@ -1995,7 +1964,7 @@ class SurrealGraphBackend(GraphBackend):
                         "project_id": str(project_id),
                     },
                 )
-                for edge_info in out_del_result if out_del_result is not None else []:
+                for edge_info in (out_del_result if out_del_result is not None else []):
                     eid = edge_info.get("id")
                     et = edge_info.get("edge_table_name", "")
                     if eid is None or not et or et == "has_entity":
@@ -2018,7 +1987,7 @@ class SurrealGraphBackend(GraphBackend):
                         "project_id": str(project_id),
                     },
                 )
-                for edge_info in in_del_result if in_del_result is not None else []:
+                for edge_info in (in_del_result if in_del_result is not None else []):
                     eid = edge_info.get("id")
                     et = edge_info.get("edge_table_name", "")
                     if eid is None or not et or et == "has_entity":
@@ -2052,7 +2021,7 @@ class SurrealGraphBackend(GraphBackend):
             # Step 4: Delete duplicate relationships (same source, target, type)
             # Iterate each edge table that had rewires and remove dups
             # This is done by querying for duplicate edges and keeping only the first
-            # ⚠️ Performance: iterates edge tables; acceptable for batch merge
+            # ⚠️ Performance: this iterates edge tables, which is acceptable for batch merge
 
             logger.info(
                 "surreal_graph.entities_merged",
@@ -2208,12 +2177,12 @@ class SurrealGraphBackend(GraphBackend):
         subject_id_str = str(subject_entity_id)
         related_id_str = str(related_entity_id) if related_entity_id is not None else ""
         fact_ids = (
-            [str(fid) for fid in supporting_fact_ids] if supporting_fact_ids else []
+            [str(fid) for fid in supporting_fact_ids]
+            if supporting_fact_ids else []
         )
         rel_ids = (
             [str(rid) for rid in supporting_relationship_ids]
-            if supporting_relationship_ids
-            else []
+            if supporting_relationship_ids else []
         )
 
         query = """
@@ -2334,7 +2303,9 @@ class SurrealGraphBackend(GraphBackend):
             "project_id": str(project_id),
         }
 
-        where_clause = "organization_id = $org_id AND project_id = $project_id"
+        where_clause = (
+            "organization_id = $org_id AND project_id = $project_id"
+        )
 
         if subject_entity_id is not None:
             where_clause += " AND subject_entity_id = $subject_id"
@@ -2368,9 +2339,7 @@ class SurrealGraphBackend(GraphBackend):
                 extra={
                     "org_id": str(org_id),
                     "project_id": str(project_id),
-                    "subject_entity_id": str(subject_entity_id)
-                    if subject_entity_id
-                    else None,
+                    "subject_entity_id": str(subject_entity_id) if subject_entity_id else None,
                     "observation_type": observation_type,
                     "error": str(exc),
                 },
@@ -2436,8 +2405,7 @@ class SurrealGraphBackend(GraphBackend):
                 },
             )
             raise ExternalServiceError(
-                message=f"Failed to get appearance timestamps for entity {entity_id}: "
-                f"{exc}",
+                message=f"Failed to get appearance timestamps for entity {entity_id}: {exc}",
                 detail={
                     "org_id": str(org_id),
                     "entity_id": str(entity_id),
@@ -2484,7 +2452,7 @@ class SurrealGraphBackend(GraphBackend):
                 },
             )
             ids: list[UUID] = []
-            for row in result if result is not None else []:
+            for row in (result if result is not None else []):
                 rid_str = self._record_id_to_str(row.get("id"))
                 if rid_str:
                     try:
@@ -2509,7 +2477,7 @@ class SurrealGraphBackend(GraphBackend):
                     "project_id": str(project_id),
                 },
             )
-            for row in result_rev if result_rev is not None else []:
+            for row in (result_rev if result_rev is not None else []):
                 rid_str = self._record_id_to_str(row.get("id"))
                 if rid_str:
                     try:

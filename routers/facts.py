@@ -69,10 +69,8 @@ async def _get_fact_repository(db: AsyncSession = Depends(get_db)) -> FactReposi
         202: {"description": "Accepted — facts queued for processing."},
         401: {"description": "Missing or invalid authentication."},
         403: {"description": "Not a member of this project."},
-        422: {
-            "description": "Validation error (e.g., empty batch, >500 triples, "
-            "invalid triple format)."
-        },
+        422: {"description": "Validation error (e.g., empty batch, >500 triples, "
+            "invalid triple format)."},
     },
 )
 @audit_action("fact.create", "fact", "Fact created")

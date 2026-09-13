@@ -34,7 +34,9 @@ def upgrade() -> None:
     ``organization_id``.  Orgs that already had seeded copies keep them
     unchanged — only the system-level originals are removed.
     """
-    op.execute(sa.text("DELETE FROM prompt_templates WHERE organization_id IS NULL"))
+    op.execute(
+        sa.text("DELETE FROM prompt_templates WHERE organization_id IS NULL")
+    )
 
 
 def downgrade() -> None:
@@ -51,9 +53,7 @@ def downgrade() -> None:
     """
     prompts_dir = (
         Path(__file__).resolve().parent.parent.parent
-        / "services"
-        / "worker"
-        / "prompts"
+        / "services" / "worker" / "prompts"
     )
     if not prompts_dir.is_dir():
         return

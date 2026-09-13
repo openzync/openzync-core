@@ -10,20 +10,15 @@ no org-wide API keys.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from uuid import UUID
 
+import redis.asyncio as aioredis
 import structlog
 
+from models.api_key import ApiKey
+from repositories.api_key_repository import ApiKeyRepository
+from schemas.api_keys import CreateApiKeyRequest
 from utils.crypto import compute_lookup_hash, generate_api_key, hash_api_key
-
-if TYPE_CHECKING:
-    from uuid import UUID
-
-    import redis.asyncio as aioredis
-
-    from models.api_key import ApiKey
-    from repositories.api_key_repository import ApiKeyRepository
-    from schemas.api_keys import CreateApiKeyRequest
 
 logger = structlog.get_logger(__name__)
 

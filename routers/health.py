@@ -74,3 +74,4 @@ async def _check_redis_health(request: Request) -> bool:
     from core.redis import check_redis_health as _check
 
     return await _check(request.app.state.redis)
+

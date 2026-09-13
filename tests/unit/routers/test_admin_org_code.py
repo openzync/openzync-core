@@ -119,12 +119,10 @@ async def test_get_org_code_member_403() -> None:
     # permissions denies.
     with (
         patch(
-            "dependencies.auth._check_permission",
-            new=real_check_permission,
+            "dependencies.auth._check_permission", new=real_check_permission,
         ),
         patch(
-            "dependencies.auth.get_org_role",
-            new=AsyncMock(return_value="member"),
+            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
         ),
         patch(
             "dependencies.auth.get_effective_permissions",
@@ -183,8 +181,7 @@ async def test_patch_join_enabled_admin_200_toggles() -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.patch(
-            "/admin/org/org-code",
-            json={"join_enabled": False},
+            "/admin/org/org-code", json={"join_enabled": False},
         )
 
     assert resp.status_code == 200
@@ -201,8 +198,7 @@ async def test_patch_join_enabled_admin_200_re_enable() -> None:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.patch(
-            "/admin/org/org-code",
-            json={"join_enabled": True},
+            "/admin/org/org-code", json={"join_enabled": True},
         )
 
     assert resp.status_code == 200
@@ -254,12 +250,10 @@ async def test_regenerate_org_code_member_403() -> None:
 
     with (
         patch(
-            "dependencies.auth._check_permission",
-            new=real_check_permission,
+            "dependencies.auth._check_permission", new=real_check_permission,
         ),
         patch(
-            "dependencies.auth.get_org_role",
-            new=AsyncMock(return_value="member"),
+            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
         ),
         patch(
             "dependencies.auth.get_effective_permissions",

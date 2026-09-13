@@ -27,7 +27,8 @@ import asyncio
 import logging
 import signal
 import sys
-from typing import TYPE_CHECKING, Any, NoReturn
+from collections.abc import Awaitable, Callable
+from typing import Any, NoReturn
 
 import structlog
 from aiohttp import web
@@ -116,9 +117,6 @@ from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
 from workers.tasks.reconcile_enrichment import reconcile_enrichment
 from workers.tasks.reconcile_graph_edges import reconcile_graph_edges
 from workers.tasks.summarise_community import summarise_community
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
 
 HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     enrich_episode,  # combined LLM enrichment — classify/entities/facts/structured
@@ -517,9 +515,7 @@ async def main() -> NoReturn:
     # FalkorDB is required — default graph backend is falkordb.
     falkordb_client: FalkorDB | None = None  # type: ignore[name-defined]
     if not getattr(settings, "FALKORDB_URL", None):
-        logger.warning(
-            "falkordb_pool.skipped — FALKORDB_URL not set, falkordb backends will 503"
-        )
+        logger.warning("falkordb_pool.skipped — FALKORDB_URL not set, falkordb backends will 503")
     else:
         try:
             from falkordb.asyncio import FalkorDB

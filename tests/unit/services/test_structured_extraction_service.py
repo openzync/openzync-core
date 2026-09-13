@@ -3,7 +3,6 @@
 All external dependencies (structured extraction repo, session repo) are mocked
 at the service boundary.
 """
-
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -39,9 +38,7 @@ class TestStructuredExtractionService:
         mock_repo.get_by_episode = AsyncMock()
         mock_session_repo = AsyncMock()
         mock_session_repo.get_by_uuid = AsyncMock()
-        service = StructuredExtractionService(
-            repo=mock_repo, session_repo=mock_session_repo
-        )
+        service = StructuredExtractionService(repo=mock_repo, session_repo=mock_session_repo)
         return service, mock_repo, mock_session_repo
 
     def _make_extraction(
@@ -77,12 +74,8 @@ class TestStructuredExtractionService:
         service, mock_repo, mock_session_repo = self._make_service()
         mock_session_repo.get_by_uuid.return_value = self._make_session_mock()
         mock_repo.get_by_session.return_value = [
-            self._make_extraction(
-                episode_id=UUID("00000000-0000-0000-0000-000000000201")
-            ),
-            self._make_extraction(
-                episode_id=UUID("00000000-0000-0000-0000-000000000202")
-            ),
+            self._make_extraction(episode_id=UUID("00000000-0000-0000-0000-000000000201")),
+            self._make_extraction(episode_id=UUID("00000000-0000-0000-0000-000000000202")),
         ]
 
         result = await service.get_session_extractions(self.ORG_ID, self.SESSION_ID)
@@ -92,9 +85,7 @@ class TestStructuredExtractionService:
         assert len(result.items) == 2
         assert isinstance(result.items[0], StructuredExtractionResponse)
         mock_session_repo.get_by_uuid.assert_awaited_once_with(
-            org_id=self.ORG_ID,
-            session_id=self.SESSION_ID,
-            project_id=None,
+            org_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=None,
         )
         mock_repo.get_by_session.assert_awaited_once_with(self.ORG_ID, self.SESSION_ID)
 
@@ -117,17 +108,13 @@ class TestStructuredExtractionService:
         mock_repo.get_by_session.return_value = []
 
         result = await service.get_session_extractions(
-            self.ORG_ID,
-            self.SESSION_ID,
-            project_id=self.PROJECT_ID,
+            self.ORG_ID, self.SESSION_ID, project_id=self.PROJECT_ID,
         )
 
         assert result.total == 0
         assert result.items == []
         mock_session_repo.get_by_uuid.assert_awaited_once_with(
-            org_id=self.ORG_ID,
-            session_id=self.SESSION_ID,
-            project_id=self.PROJECT_ID,
+            org_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=self.PROJECT_ID,
         )
 
     @pytest.mark.asyncio
@@ -154,17 +141,13 @@ class TestStructuredExtractionService:
         )
 
         result = await service.get_episode_extraction(
-            self.ORG_ID,
-            self.SESSION_ID,
-            self.EPISODE_ID,
+            self.ORG_ID, self.SESSION_ID, self.EPISODE_ID,
         )
 
         assert isinstance(result, StructuredExtractionResponse)
         assert result.data == {"amount": 250.0}
         mock_session_repo.get_by_uuid.assert_awaited_once_with(
-            org_id=self.ORG_ID,
-            session_id=self.SESSION_ID,
-            project_id=None,
+            org_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=None,
         )
         mock_repo.get_by_episode.assert_awaited_once_with(self.ORG_ID, self.EPISODE_ID)
 
@@ -176,9 +159,7 @@ class TestStructuredExtractionService:
         mock_repo.get_by_episode.return_value = None
 
         result = await service.get_episode_extraction(
-            self.ORG_ID,
-            self.SESSION_ID,
-            self.EPISODE_ID,
+            self.ORG_ID, self.SESSION_ID, self.EPISODE_ID,
         )
 
         assert result is None
@@ -191,9 +172,7 @@ class TestStructuredExtractionService:
 
         with pytest.raises(NotFoundError, match="not found"):
             await service.get_episode_extraction(
-                self.ORG_ID,
-                self.SESSION_ID,
-                self.EPISODE_ID,
+                self.ORG_ID, self.SESSION_ID, self.EPISODE_ID,
             )
 
         mock_repo.get_by_episode.assert_not_awaited()
@@ -206,15 +185,10 @@ class TestStructuredExtractionService:
         mock_repo.get_by_episode.return_value = None
 
         result = await service.get_episode_extraction(
-            self.ORG_ID,
-            self.SESSION_ID,
-            self.EPISODE_ID,
-            project_id=self.PROJECT_ID,
+            self.ORG_ID, self.SESSION_ID, self.EPISODE_ID, project_id=self.PROJECT_ID,
         )
 
         assert result is None
         mock_session_repo.get_by_uuid.assert_awaited_once_with(
-            org_id=self.ORG_ID,
-            session_id=self.SESSION_ID,
-            project_id=self.PROJECT_ID,
+            org_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=self.PROJECT_ID,
         )

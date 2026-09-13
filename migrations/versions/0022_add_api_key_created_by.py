@@ -18,13 +18,10 @@ Create Date: 2026-06-21
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 revision: str = "0022"
 down_revision: str | None = "0021"
@@ -41,13 +38,11 @@ def upgrade() -> None:
             sa.ForeignKey("users.id", ondelete="SET NULL"),
             nullable=True,
             comment="The user who created this API key — used for attribution "
-            "in API-key-authenticated requests.",
+                    "in API-key-authenticated requests.",
         ),
     )
     op.create_index(
-        "ix_api_key_created_by",
-        "api_keys",
-        ["created_by"],
+        "ix_api_key_created_by", "api_keys", ["created_by"],
     )
 
 

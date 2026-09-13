@@ -11,13 +11,10 @@ Create Date: 2026-06-07
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 revision: str = "0007"
 down_revision: str | None = "99a299513d53"
@@ -41,7 +38,9 @@ def upgrade() -> None:
     # Explicitly backfill any rows where type might still be NULL (defensive —
     # server_default already handles new rows, but pre-existing NULLs from schema
     # changes before this migration need coverage).
-    op.execute("UPDATE extraction_schemas SET type = 'structured' WHERE type IS NULL")
+    op.execute(
+        "UPDATE extraction_schemas SET type = 'structured' WHERE type IS NULL"
+    )
 
 
 def downgrade() -> None:

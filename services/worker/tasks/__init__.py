@@ -29,10 +29,8 @@ whatever was passed to ``enqueue_job()``::
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Task registry
@@ -89,11 +87,9 @@ from services.worker.tasks.audit_log import write_audit_log
 #       classify_dialog,
 #       extract_structured,
 #   ])
-TASKS_LOW.extend(
-    [
-        write_audit_log,
-    ]
-)
+TASKS_LOW.extend([
+    write_audit_log,
+])
 #   TASKS_LOW.extend([
 #       summarise_community,
 #       merge_duplicate_entities,

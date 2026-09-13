@@ -1,5 +1,4 @@
 """Unit tests for link_entities_to_episode task."""
-
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -52,19 +51,10 @@ class TestLinkEntitiesToEpisode:
         ]
 
         with (
-            patch(
-                "workers.tasks.link_entities_to_episode.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "workers.tasks.link_entities_to_episode.resolve_graph_backend",
-                return_value=mock_backend,
-            ),
+            patch("workers.tasks.link_entities_to_episode.with_retry", lambda **kw: lambda f: f),
+            patch("workers.tasks.link_entities_to_episode.resolve_graph_backend", return_value=mock_backend),
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
-            patch(
-                "services.worker.worker_settings.settings",
-                MagicMock(AUTO_RUN_COMMUNITY_DETECTION=False),
-            ),
+            patch("services.worker.worker_settings.settings", MagicMock(AUTO_RUN_COMMUNITY_DETECTION=False)),
             patch("asyncio.sleep", AsyncMock()),
         ):
             mock_repo = AsyncMock()
@@ -92,19 +82,10 @@ class TestLinkEntitiesToEpisode:
         mock_backend.bulk_search_entities.return_value = []
 
         with (
-            patch(
-                "workers.tasks.link_entities_to_episode.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "workers.tasks.link_entities_to_episode.resolve_graph_backend",
-                return_value=mock_backend,
-            ),
+            patch("workers.tasks.link_entities_to_episode.with_retry", lambda **kw: lambda f: f),
+            patch("workers.tasks.link_entities_to_episode.resolve_graph_backend", return_value=mock_backend),
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
-            patch(
-                "services.worker.worker_settings.settings",
-                MagicMock(AUTO_RUN_COMMUNITY_DETECTION=False),
-            ),
+            patch("services.worker.worker_settings.settings", MagicMock(AUTO_RUN_COMMUNITY_DETECTION=False)),
             patch("asyncio.sleep", AsyncMock()),
         ):
             mock_repo = AsyncMock()
@@ -135,10 +116,7 @@ class TestLinkEntitiesToEpisode:
         factory = MagicMock()
         factory.return_value = db
 
-        with patch(
-            "workers.tasks.link_entities_to_episode.with_retry",
-            lambda **kw: lambda f: f,
-        ):
+        with patch("workers.tasks.link_entities_to_episode.with_retry", lambda **kw: lambda f: f):
             from workers.tasks.link_entities_to_episode import link_entities_to_episode
 
             with pytest.raises(EpisodeNotFoundError):
@@ -155,19 +133,10 @@ class TestLinkEntitiesToEpisode:
     async def test_backend_unavailable(self) -> None:
         """Graph backend disabled (None) → completes with 0 links, bit set."""
         with (
-            patch(
-                "workers.tasks.link_entities_to_episode.with_retry",
-                lambda **kw: lambda f: f,
-            ),
-            patch(
-                "workers.tasks.link_entities_to_episode.resolve_graph_backend",
-                return_value=None,
-            ),
+            patch("workers.tasks.link_entities_to_episode.with_retry", lambda **kw: lambda f: f),
+            patch("workers.tasks.link_entities_to_episode.resolve_graph_backend", return_value=None),
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
-            patch(
-                "services.worker.worker_settings.settings",
-                MagicMock(AUTO_RUN_COMMUNITY_DETECTION=False),
-            ),
+            patch("services.worker.worker_settings.settings", MagicMock(AUTO_RUN_COMMUNITY_DETECTION=False)),
             patch("asyncio.sleep", AsyncMock()),
         ):
             mock_repo = AsyncMock()
@@ -195,19 +164,13 @@ class TestLinkEntitiesToEpisode:
         the episode as linked.
         """
         with (
-            patch(
-                "workers.tasks.link_entities_to_episode.with_retry",
-                lambda **kw: lambda f: f,
-            ),
+            patch("workers.tasks.link_entities_to_episode.with_retry", lambda **kw: lambda f: f),
             patch(
                 "workers.tasks.link_entities_to_episode.resolve_graph_backend",
                 side_effect=GraphBackendUnavailableError("Graph down"),
             ),
             patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
-            patch(
-                "services.worker.worker_settings.settings",
-                MagicMock(AUTO_RUN_COMMUNITY_DETECTION=False),
-            ),
+            patch("services.worker.worker_settings.settings", MagicMock(AUTO_RUN_COMMUNITY_DETECTION=False)),
             patch("asyncio.sleep", AsyncMock()),
         ):
             mock_repo = AsyncMock()
@@ -238,10 +201,7 @@ class TestLinkEntitiesToEpisode:
         factory = MagicMock()
         factory.return_value = db
 
-        with patch(
-            "workers.tasks.link_entities_to_episode.with_retry",
-            lambda **kw: lambda f: f,
-        ):
+        with patch("workers.tasks.link_entities_to_episode.with_retry", lambda **kw: lambda f: f):
             from workers.tasks.link_entities_to_episode import link_entities_to_episode
 
             with pytest.raises(Exception):

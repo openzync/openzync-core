@@ -166,8 +166,7 @@ async def embed_episode(
 
     # ── 3. Resolve the embedding backend ──────────────────────────────────
     llm = await resolve_backend(
-        provider=_embedding_backend,
-        org_config=_org_config_dict,
+        provider=_embedding_backend, org_config=_org_config_dict,
     )
 
     # ── 4. Generate embedding ────────────────────────────────────────────

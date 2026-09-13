@@ -123,9 +123,7 @@ async def merge_duplicate_entities(
             for current_org_id in org_ids:
                 try:
                     clusters = await _process_org(
-                        ctx,
-                        db,
-                        current_org_id,
+                        ctx, db, current_org_id,
                     )
                     total_clusters += clusters["clusters"]
                     total_merged += clusters["entities_merged"]
@@ -235,10 +233,7 @@ async def _process_org(
     for project_id in project_ids:
         try:
             result_counts = await _process_project(
-                db,
-                backend,
-                org_id,
-                project_id,
+                db, backend, org_id, project_id,
             )
             total_clusters += result_counts["clusters"]
             total_merged += result_counts["entities_merged"]
@@ -358,9 +353,7 @@ async def _find_duplicate_clusters(
         (``id``, ``name``, ``entity_type``, ``created_at``).
     """
     entities = await backend.get_all_entities(
-        org_id,
-        project_id,
-        include_merged=False,
+        org_id, project_id, include_merged=False,
     )
 
     if len(entities) < 2:
@@ -400,12 +393,16 @@ async def _find_duplicate_clusters(
 
         # Exclude self and entities already locked into exact-match clusters
         fuzzy_ids = [
-            r["id"] for r in fuzzy_results if r["id"] != eid and r["id"] not in seen_ids
+            r["id"]
+            for r in fuzzy_results
+            if r["id"] != eid and r["id"] not in seen_ids
         ]
 
         if fuzzy_ids:
             cluster_ids = [eid] + fuzzy_ids
-            cluster = [entity] + [e for e in entities if e["id"] in fuzzy_ids]
+            cluster = [entity] + [
+                e for e in entities if e["id"] in fuzzy_ids
+            ]
             clusters.append(cluster)
             processed_fuzzy.update(cluster_ids)
             seen_ids.update(cluster_ids)

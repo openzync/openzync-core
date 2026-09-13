@@ -127,8 +127,14 @@ def upgrade() -> None:
             WHERE k.id = sub.id
             """
         ).bindparams(
-            **{f"m{i}s": src for i, (src, _) in enumerate(_SCOPE_MAP, start=1)},
-            **{f"m{i}p": perm for i, (_, perm) in enumerate(_SCOPE_MAP, start=1)},
+            **{
+                f"m{i}s": src
+                for i, (src, _) in enumerate(_SCOPE_MAP, start=1)
+            },
+            **{
+                f"m{i}p": perm
+                for i, (_, perm) in enumerate(_SCOPE_MAP, start=1)
+            },
         )
     )
 

@@ -26,9 +26,7 @@ class TestInitDbEngine:
         """Engine raises ValueError when URL lacks +asyncpg driver."""
         from core.db import init_db_engine
 
-        with pytest.raises(
-            ValueError, match="must use the postgresql\\+asyncpg:// scheme"
-        ):
+        with pytest.raises(ValueError, match="must use the postgresql\\+asyncpg:// scheme"):
             init_db_engine("postgresql://u:p@localhost:5432/test")
 
     def test_non_postgres_url_passes_through(self) -> None:

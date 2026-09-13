@@ -37,18 +37,8 @@ class TestFilterFacts:
     def test_low_confidence_filtered(self) -> None:
         """Facts below the confidence threshold are dropped."""
         facts = [
-            {
-                "subject": "Alice",
-                "predicate": "works_at",
-                "object": "Acme Corp",
-                "confidence": 0.95,
-            },
-            {
-                "subject": "Bob",
-                "predicate": "might_work_at",
-                "object": "Unknown",
-                "confidence": 0.2,
-            },
+            {"subject": "Alice", "predicate": "works_at", "object": "Acme Corp", "confidence": 0.95},
+            {"subject": "Bob", "predicate": "might_work_at", "object": "Unknown", "confidence": 0.2},
         ]
         valid = _filter_facts(facts)
         assert len(valid) == 1
@@ -57,19 +47,9 @@ class TestFilterFacts:
     def test_incomplete_triple_filtered(self) -> None:
         """Facts missing subject/predicate/object are dropped."""
         facts = [
-            {
-                "subject": "Alice",
-                "predicate": "works_at",
-                "object": "Acme Corp",
-                "confidence": 0.95,
-            },
+            {"subject": "Alice", "predicate": "works_at", "object": "Acme Corp", "confidence": 0.95},
             {"subject": "", "predicate": "is", "object": "Unknown", "confidence": 0.8},
-            {
-                "subject": "Bob",
-                "predicate": "  ",
-                "object": "Acme Corp",
-                "confidence": 0.9,
-            },
+            {"subject": "Bob", "predicate": "  ", "object": "Acme Corp", "confidence": 0.9},
         ]
         valid = _filter_facts(facts)
         assert len(valid) == 1
@@ -244,16 +224,10 @@ class TestProcessFactsOutput:
                 session_id=_SESSION_ID,
                 user_id=_USER_ID,
                 trace_id=_TRACE_ID,
-                parsed=self._parsed(
-                    [
-                        {
-                            "subject": "Bob",
-                            "predicate": "might_work_at",
-                            "object": "Unknown",
-                            "confidence": 0.1,
-                        },
-                    ]
-                ),
+                parsed=self._parsed([
+                    {"subject": "Bob", "predicate": "might_work_at",
+                     "object": "Unknown", "confidence": 0.1},
+                ]),
                 known_entities=[],
                 existing_facts=[],
             )
@@ -272,24 +246,18 @@ class TestProcessFactsOutput:
         persisted = self._persisted_fact()
 
         with (
-            patch(
-                "services.fact_invalidation_service.FactInvalidationService"
-            ) as mock_inval_cls,
+            patch("services.fact_invalidation_service.FactInvalidationService") as mock_inval_cls,
             patch("services.graph_edge_sync_service.GraphEdgeSyncService"),
             patch("services.cache_service.CacheService"),
         ):
             mock_inval = MagicMock()
             mock_inval.ingest_with_supersession = AsyncMock(
-                return_value=FactIngestionResult(
-                    created=[persisted], superseded_count=0
-                )
+                return_value=FactIngestionResult(created=[persisted], superseded_count=0)
             )
             mock_inval_cls.return_value = mock_inval
 
             entity_repo = MagicMock()
-            entity_repo.upsert_relationship = AsyncMock(
-                return_value={"id": str(uuid4())}
-            )
+            entity_repo.upsert_relationship = AsyncMock(return_value={"id": str(uuid4())})
             entity_repo.get_entity_by_name = AsyncMock(return_value=None)
 
             result = await process_facts_output(
@@ -304,18 +272,11 @@ class TestProcessFactsOutput:
                 session_id=_SESSION_ID,
                 user_id=_USER_ID,
                 trace_id=_TRACE_ID,
-                parsed=self._parsed(
-                    [
-                        {
-                            "subject": "Alice",
-                            "predicate": "works_at",
-                            "object": "Acme Corp",
-                            "confidence": 0.95,
-                            "subject_type": "literal",
-                            "object_type": "literal",
-                        },
-                    ]
-                ),
+                parsed=self._parsed([
+                    {"subject": "Alice", "predicate": "works_at",
+                     "object": "Acme Corp", "confidence": 0.95,
+                     "subject_type": "literal", "object_type": "literal"},
+                ]),
                 known_entities=[],
                 existing_facts=[],
             )
@@ -324,9 +285,7 @@ class TestProcessFactsOutput:
         mock_inval.ingest_with_supersession.assert_awaited_once()
         episode_repo.apply_enrichment_bits.assert_awaited_once_with(
             UUID(_EPISODE_ID),
-            __import__(
-                "workers.tasks.base", fromlist=["ENRICHMENT_FACTS"]
-            ).ENRICHMENT_FACTS,
+            __import__("workers.tasks.base", fromlist=["ENRICHMENT_FACTS"]).ENRICHMENT_FACTS,
         )
         db.flush.assert_awaited_once()
 
@@ -341,19 +300,13 @@ class TestProcessFactsOutput:
         persisted = self._persisted_fact()
 
         with (
-            patch(
-                "services.fact_invalidation_service.FactInvalidationService"
-            ) as mock_inval_cls,
-            patch(
-                "services.graph_edge_sync_service.GraphEdgeSyncService"
-            ) as mock_sync_cls,
+            patch("services.fact_invalidation_service.FactInvalidationService") as mock_inval_cls,
+            patch("services.graph_edge_sync_service.GraphEdgeSyncService") as mock_sync_cls,
             patch("services.cache_service.CacheService"),
         ):
             mock_inval = MagicMock()
             mock_inval.ingest_with_supersession = AsyncMock(
-                return_value=FactIngestionResult(
-                    created=[persisted], superseded_count=0
-                )
+                return_value=FactIngestionResult(created=[persisted], superseded_count=0)
             )
             mock_inval_cls.return_value = mock_inval
 
@@ -369,18 +322,11 @@ class TestProcessFactsOutput:
                 session_id=_SESSION_ID,
                 user_id=_USER_ID,
                 trace_id=_TRACE_ID,
-                parsed=self._parsed(
-                    [
-                        {
-                            "subject": "Alice",
-                            "predicate": "works_at",
-                            "object": "Acme Corp",
-                            "confidence": 0.95,
-                            "subject_type": "literal",
-                            "object_type": "literal",
-                        },
-                    ]
-                ),
+                parsed=self._parsed([
+                    {"subject": "Alice", "predicate": "works_at",
+                     "object": "Acme Corp", "confidence": 0.95,
+                     "subject_type": "literal", "object_type": "literal"},
+                ]),
                 known_entities=[],
                 existing_facts=[],
             )
@@ -402,21 +348,15 @@ class TestProcessFactsOutput:
         persisted = self._persisted_fact()
 
         with (
-            patch(
-                "services.fact_invalidation_service.FactInvalidationService"
-            ) as mock_inval_cls,
+            patch("services.fact_invalidation_service.FactInvalidationService") as mock_inval_cls,
             patch("services.graph_edge_sync_service.GraphEdgeSyncService"),
             patch("services.cache_service.CacheService"),
-            patch(
-                "services.worker.worker_settings.get_queue_name",
-                return_value="OpenZync:test:queue:high",
-            ),
+            patch("services.worker.worker_settings.get_queue_name",
+                  return_value="OpenZync:test:queue:high"),
         ):
             mock_inval = MagicMock()
             mock_inval.ingest_with_supersession = AsyncMock(
-                return_value=FactIngestionResult(
-                    created=[persisted], superseded_count=0
-                )
+                return_value=FactIngestionResult(created=[persisted], superseded_count=0)
             )
             mock_inval_cls.return_value = mock_inval
 
@@ -424,9 +364,7 @@ class TestProcessFactsOutput:
 
             entity_repo = MagicMock()
             entity_repo.get_entity_by_name = AsyncMock(return_value=None)
-            entity_repo.upsert_relationship = AsyncMock(
-                return_value={"id": str(uuid4())}
-            )
+            entity_repo.upsert_relationship = AsyncMock(return_value={"id": str(uuid4())})
 
             # Seed the WorkerSettings singleton so the lazy ``w_settings.ENV``
             # read inside ``process_facts_output`` succeeds (same pattern as
@@ -452,18 +390,11 @@ class TestProcessFactsOutput:
                 session_id=_SESSION_ID,
                 user_id=_USER_ID,
                 trace_id=_TRACE_ID,
-                parsed=self._parsed(
-                    [
-                        {
-                            "subject": "Alice",
-                            "predicate": "works_at",
-                            "object": "Acme Corp",
-                            "confidence": 0.95,
-                            "subject_type": "literal",
-                            "object_type": "literal",
-                        },
-                    ]
-                ),
+                parsed=self._parsed([
+                    {"subject": "Alice", "predicate": "works_at",
+                     "object": "Acme Corp", "confidence": 0.95,
+                     "subject_type": "literal", "object_type": "literal"},
+                ]),
                 known_entities=[],
                 existing_facts=[],
                 arq_redis=arq_redis,
@@ -524,18 +455,11 @@ class TestProcessFactsOutput:
                 session_id=_SESSION_ID,
                 user_id=_USER_ID,
                 trace_id=_TRACE_ID,
-                parsed=self._parsed(
-                    [
-                        {
-                            "subject": "Alice",
-                            "predicate": "works_at",
-                            "object": "Acme Corp",
-                            "confidence": 0.95,
-                            "subject_type": "literal",
-                            "object_type": "literal",
-                        },
-                    ]
-                ),
+                parsed=self._parsed([
+                    {"subject": "Alice", "predicate": "works_at",
+                     "object": "Acme Corp", "confidence": 0.95,
+                     "subject_type": "literal", "object_type": "literal"},
+                ]),
                 known_entities=[],
                 existing_facts=[],
                 return_slot_map=True,

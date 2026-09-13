@@ -93,17 +93,13 @@ def setup_traverse(mock_surreal: AsyncMock) -> Callable[..., None]:
     _entities: dict[str, dict] = {}
     _neighbors: dict[str, list[str]] = {}
 
-    def configure(
-        *, entities: dict[str, dict], neighbors: dict[str, list[str]]
-    ) -> None:
+    def configure(*, entities: dict[str, dict], neighbors: dict[str, list[str]]) -> None:
         _entities.clear()
         _entities.update(entities)
         _neighbors.clear()
         _neighbors.update(neighbors)
 
-        async def side_effect(
-            query: str, params: dict[str, Any] | None = None
-        ) -> list[Any]:
+        async def side_effect(query: str, params: dict[str, Any] | None = None) -> list[Any]:
             if not params:
                 return []
 
@@ -623,16 +619,14 @@ class TestSurrealGraphBackendTraversal:
         # We need to mock get_entity — it is called inside the empty edge_types branch
         bk = backend
         start_record = make_entity_record(entity_id=ENTITY_ID, name="Start")
-        bk.get_entity = AsyncMock(
-            return_value={
-                "id": str(ENTITY_ID),
-                "name": "Start",
-                "type": "Person",
-                "summary": "",
-                "attributes": {},
-                "created_at": "2024-01-01T00:00:00",
-            }
-        )
+        bk.get_entity = AsyncMock(return_value={
+            "id": str(ENTITY_ID),
+            "name": "Start",
+            "type": "Person",
+            "summary": "",
+            "attributes": {},
+            "created_at": "2024-01-01T00:00:00",
+        })
 
         result = await bk.traverse(
             ORG_ID,
@@ -763,9 +757,7 @@ class TestSurrealGraphBackendSearchAndListing:
     ) -> None:
         """More items than limit → overflow detected, cursor returned."""
         records = [
-            make_entity_record(
-                entity_id=UUID(f"00000000-0000-0000-0000-{i:012d}"), name=f"E{i}"
-            )
+            make_entity_record(entity_id=UUID(f"00000000-0000-0000-0000-{i:012d}"), name=f"E{i}")
             for i in range(6)
         ]
         mock_surreal.query.return_value = records  # 6 items, limit=5 → overflow

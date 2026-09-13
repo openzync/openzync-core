@@ -1,5 +1,4 @@
 """Unit tests for email_service — async SMTP delivery with Jinja2 templates."""
-
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch

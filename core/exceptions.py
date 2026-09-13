@@ -11,14 +11,12 @@ APIs).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import structlog
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-
-if TYPE_CHECKING:
-    from fastapi import FastAPI, Request
 
 logger = structlog.get_logger(__name__)
 

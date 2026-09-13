@@ -7,19 +7,15 @@ ownership verification before returning data.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from uuid import UUID
 
 from core.exceptions import NotFoundError
+from repositories.dialog_classification_repository import (
+    DialogClassificationRepository,
+)
+from repositories.episode_repository import EpisodeRepository
+from repositories.session_repository import SessionRepository
 from schemas.classifications import ClassificationResponse
-
-if TYPE_CHECKING:
-    from uuid import UUID
-
-    from repositories.dialog_classification_repository import (
-        DialogClassificationRepository,
-    )
-    from repositories.episode_repository import EpisodeRepository
-    from repositories.session_repository import SessionRepository
 
 
 class ClassificationService:
@@ -69,9 +65,7 @@ class ClassificationService:
 
         # Batch-fetch episode content to avoid N+1
         episode_ids = [c.episode_id for c in classifications]
-        episode_map = await self._episode_repo.get_content_batch(
-            episode_ids, org_id=org_id
-        )
+        episode_map = await self._episode_repo.get_content_batch(episode_ids, org_id=org_id)
 
         return [
             ClassificationResponse(
@@ -108,9 +102,7 @@ class ClassificationService:
         if classification is None:
             return None
 
-        episode_map = await self._episode_repo.get_content_batch(
-            [episode_id], org_id=org_id
-        )
+        episode_map = await self._episode_repo.get_content_batch([episode_id], org_id=org_id)
         content, role = episode_map.get(episode_id, ("", ""))
 
         return ClassificationResponse(

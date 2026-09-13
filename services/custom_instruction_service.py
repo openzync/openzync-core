@@ -15,7 +15,7 @@ from __future__ import annotations
 
 
 def format_custom_instructions(instructions: list[dict]) -> str:
-    """Format ``{name, text}`` instruction dicts into a prompt-ready text block.
+    """Format a list of ``{name, text}`` instruction dicts into a prompt-ready text block.
 
     Each instruction produces a Markdown section with the name as a level-3
     heading followed by the text body.  Sections are separated by a blank
@@ -41,7 +41,8 @@ def format_custom_instructions(instructions: list[dict]) -> str:
         return ""
 
     blocks: list[str] = [
-        f"### {instr['name']}\n{instr['text']}" for instr in instructions
+        f"### {instr['name']}\n{instr['text']}"
+        for instr in instructions
     ]
 
     return "\n\n".join(blocks)

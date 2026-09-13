@@ -116,10 +116,9 @@ class TestLoadManifest:
 
     def test_manifest_not_found_raises(self) -> None:
         """If ``manifest.yaml`` does not exist, ``FileNotFoundError`` is raised."""
-        with patch("core.prompt_manifest.PROMPTS_DIR", Path("/nonexistent/path")), pytest.raises(
-            FileNotFoundError, match="Prompt manifest not found"
-        ):
-            load_manifest()
+        with patch("core.prompt_manifest.PROMPTS_DIR", Path("/nonexistent/path")):
+            with pytest.raises(FileNotFoundError, match="Prompt manifest not found"):
+                load_manifest()
 
     def test_malformed_yaml_raises(self, tmp_path: Path) -> None:
         """Malformed YAML content raises ``yaml.YAMLError``."""
@@ -128,8 +127,9 @@ class TestLoadManifest:
         manifest = prompts_dir / MANIFEST_FILENAME
         manifest.write_text("{invalid: yaml: broken [[[")
 
-        with patch("core.prompt_manifest.PROMPTS_DIR", prompts_dir), pytest.raises(yaml.YAMLError):
-            load_manifest()
+        with patch("core.prompt_manifest.PROMPTS_DIR", prompts_dir):
+            with pytest.raises(yaml.YAMLError):
+                load_manifest()
 
     def test_empty_manifest_creates_empty_prompt_manifest(self, tmp_path: Path) -> None:
         """An empty manifest (``{}``) creates a ``PromptManifest`` with no templates."""

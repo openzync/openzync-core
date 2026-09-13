@@ -31,13 +31,9 @@ class TestProcessStructuredOutput:
         from workers.tasks.extract_structured import process_structured_output
 
         await process_structured_output(
-            db=db,
-            org_id=_ORG_ID,
-            episode_id=_EPISODE_ID,
-            project_id=_PROJECT_ID,
-            session_id=_SESSION_ID,
-            parsed={},
-            schemas=[{"name": "test", "id": str(uuid4()), "json_schema": {}}],
+            db=db, org_id=_ORG_ID, episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID, session_id=_SESSION_ID,
+            parsed={}, schemas=[{"name": "test", "id": str(uuid4()), "json_schema": {}}],
         )
         db.execute.assert_not_called()
 
@@ -48,11 +44,8 @@ class TestProcessStructuredOutput:
         from workers.tasks.extract_structured import process_structured_output
 
         await process_structured_output(
-            db=db,
-            org_id=_ORG_ID,
-            episode_id=_EPISODE_ID,
-            project_id=_PROJECT_ID,
-            session_id=_SESSION_ID,
+            db=db, org_id=_ORG_ID, episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID, session_id=_SESSION_ID,
             parsed={"unknown_name": {"field": "value"}},
             schemas=[{"name": "known_schema", "id": str(uuid4()), "json_schema": {}}],
         )
@@ -65,11 +58,8 @@ class TestProcessStructuredOutput:
         from workers.tasks.extract_structured import process_structured_output
 
         await process_structured_output(
-            db=db,
-            org_id=_ORG_ID,
-            episode_id=_EPISODE_ID,
-            project_id=_PROJECT_ID,
-            session_id=_SESSION_ID,
+            db=db, org_id=_ORG_ID, episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID, session_id=_SESSION_ID,
             parsed={"test_schema": None},
             schemas=[{"name": "test_schema", "id": str(uuid4()), "json_schema": {}}],
         )
@@ -82,11 +72,8 @@ class TestProcessStructuredOutput:
         from workers.tasks.extract_structured import process_structured_output
 
         await process_structured_output(
-            db=db,
-            org_id=_ORG_ID,
-            episode_id=_EPISODE_ID,
-            project_id=_PROJECT_ID,
-            session_id=_SESSION_ID,
+            db=db, org_id=_ORG_ID, episode_id=_EPISODE_ID,
+            project_id=_PROJECT_ID, session_id=_SESSION_ID,
             parsed={"test_schema": "string_data"},
             schemas=[{"name": "test_schema", "id": str(uuid4()), "json_schema": {}}],
         )
@@ -103,26 +90,20 @@ class TestProcessStructuredOutput:
         ) as mock_validate:
             schema_id = str(uuid4())
             await process_structured_output(
-                db=db,
-                org_id=_ORG_ID,
-                episode_id=_EPISODE_ID,
-                project_id=_PROJECT_ID,
-                session_id=_SESSION_ID,
+                db=db, org_id=_ORG_ID, episode_id=_EPISODE_ID,
+                project_id=_PROJECT_ID, session_id=_SESSION_ID,
                 parsed={"test_schema": {"present": "value"}},
-                schemas=[
-                    {
-                        "name": "test_schema",
-                        "id": schema_id,
-                        "json_schema": {
-                            "type": "object",
-                            "required": ["required_field"],
-                            "properties": {
-                                "required_field": {"type": "string"},
-                                "present": {"type": "string"},
-                            },
+                schemas=[{
+                    "name": "test_schema", "id": schema_id,
+                    "json_schema": {
+                        "type": "object",
+                        "required": ["required_field"],
+                        "properties": {
+                            "required_field": {"type": "string"},
+                            "present": {"type": "string"},
                         },
-                    }
-                ],
+                    },
+                }],
             )
             mock_validate.assert_called_once()
             cleaned = mock_validate.call_args[0][0]
@@ -141,11 +122,8 @@ class TestProcessStructuredOutput:
         ):
             schema_id = str(uuid4())
             await process_structured_output(
-                db=db,
-                org_id=_ORG_ID,
-                episode_id=_EPISODE_ID,
-                project_id=_PROJECT_ID,
-                session_id=_SESSION_ID,
+                db=db, org_id=_ORG_ID, episode_id=_EPISODE_ID,
+                project_id=_PROJECT_ID, session_id=_SESSION_ID,
                 parsed={"test_schema": {"field": "value"}},
                 schemas=[{"name": "test_schema", "id": schema_id, "json_schema": {}}],
             )

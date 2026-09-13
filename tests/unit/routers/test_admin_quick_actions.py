@@ -58,9 +58,7 @@ def _create_app() -> tuple[FastAPI, dict[str, AsyncMock]]:
     app.dependency_overrides[get_db] = lambda: AsyncMock()
     app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
     app.dependency_overrides[get_dashboard_user] = lambda: str(USER_ID)
-    app.dependency_overrides[get_quick_actions_service] = lambda: mocks[
-        "quick_actions_service"
-    ]
+    app.dependency_overrides[get_quick_actions_service] = lambda: mocks["quick_actions_service"]
 
     app.include_router(router)
     return app, mocks

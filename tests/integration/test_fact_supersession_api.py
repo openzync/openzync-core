@@ -114,9 +114,7 @@ class TestIngestContract:
         await _create_user(isolated_auth_client, "ss_202_user")
         resp = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/facts",
-            json=_fact_payload(
-                "Alice", "likes", "hiking", session_id=isolated_fact_session
-            ),
+            json=_fact_payload("Alice", "likes", "hiking", session_id=isolated_fact_session),
         )
         assert resp.status_code == 202, (
             f"Expected 202, got {resp.status_code}: {resp.text}"
@@ -167,17 +165,11 @@ class TestIngestContract:
         and the dedup replay must NOT swallow the second batch."""
         await _create_user(isolated_auth_client, "ss_spo_user")
         first = _fact_payload(
-            "Alice",
-            "likes",
-            "hiking",
-            "Alice likes hiking",
+            "Alice", "likes", "hiking", "Alice likes hiking",
             session_id=isolated_fact_session,
         )
         second = _fact_payload(
-            "Alice",
-            "likes",
-            "hiking",
-            "Alice absolutely loves hiking",
+            "Alice", "likes", "hiking", "Alice absolutely loves hiking",
             session_id=isolated_fact_session,
         )
 
@@ -216,17 +208,11 @@ class TestFactsListTemporal:
         """Contracts 3+4+5 — as-of shows old then new; default shows new."""
         await _create_user(isolated_auth_client, "ss_list_user")
         first = _fact_payload(
-            "Alice",
-            "likes",
-            "hiking",
-            "Alice likes hiking",
+            "Alice", "likes", "hiking", "Alice likes hiking",
             session_id=isolated_fact_session,
         )
         second = _fact_payload(
-            "Alice",
-            "likes",
-            "hiking",
-            "Alice loves hiking",
+            "Alice", "likes", "hiking", "Alice loves hiking",
             session_id=isolated_fact_session,
         )
 
@@ -318,17 +304,11 @@ class TestContextAsOf:
     ) -> None:
         await _create_user(isolated_auth_client, "ss_ctx_user")
         first = _fact_payload(
-            "Alice",
-            "likes",
-            "hiking",
-            "Alice likes hiking",
+            "Alice", "likes", "hiking", "Alice likes hiking",
             session_id=isolated_fact_session,
         )
         second = _fact_payload(
-            "Alice",
-            "likes",
-            "hiking",
-            "Alice loves hiking",
+            "Alice", "likes", "hiking", "Alice loves hiking",
             session_id=isolated_fact_session,
         )
 

@@ -11,23 +11,19 @@ Orgs define extraction schemas for two purposes:
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from uuid import UUID
 
 from sqlalchemy.exc import IntegrityError
 
 from core.exceptions import ConflictError, NotFoundError, ValidationError
+from repositories.extraction_schema_repository import (
+    ExtractionSchemaRepository,
+)
 from schemas.extraction_schemas import (
     CreateExtractionSchemaRequest,
     ExtractionSchemaResponse,
     UpdateExtractionSchemaRequest,
 )
-
-if TYPE_CHECKING:
-    from uuid import UUID
-
-    from repositories.extraction_schema_repository import (
-        ExtractionSchemaRepository,
-    )
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +102,9 @@ class SchemaService:
             schema_type=schema_type,
             is_active=is_active,
         )
-        return [ExtractionSchemaResponse.model_validate(s) for s in schemas]
+        return [
+            ExtractionSchemaResponse.model_validate(s) for s in schemas
+        ]
 
     async def get_schema(
         self,
@@ -120,7 +118,9 @@ class SchemaService:
         """
         schema = await self._repo.get_by_id(org_id, schema_id)
         if schema is None:
-            raise NotFoundError(f"Schema '{schema_id}' not found in this organization")
+            raise NotFoundError(
+                f"Schema '{schema_id}' not found in this organization"
+            )
         return ExtractionSchemaResponse.model_validate(schema)
 
     async def update_schema(
@@ -140,7 +140,9 @@ class SchemaService:
         """
         schema = await self._repo.get_by_id(org_id, schema_id)
         if schema is None:
-            raise NotFoundError(f"Schema '{schema_id}' not found in this organization")
+            raise NotFoundError(
+                f"Schema '{schema_id}' not found in this organization"
+            )
 
         # Build update dict from non-None fields (excluding type)
         update_kwargs: dict = {}
@@ -188,7 +190,9 @@ class SchemaService:
         """
         schema = await self._repo.get_by_id(org_id, schema_id)
         if schema is None:
-            raise NotFoundError(f"Schema '{schema_id}' not found in this organization")
+            raise NotFoundError(
+                f"Schema '{schema_id}' not found in this organization"
+            )
         await self._repo.soft_delete(schema)
 
     # ── Private validation helpers ───────────────────────────────────────
@@ -208,7 +212,9 @@ class SchemaService:
         All keys are optional — only those present are validated.
         """
         if not isinstance(json_schema, dict):
-            raise ValidationError("Classification schema must be a JSON object")
+            raise ValidationError(
+                "Classification schema must be a JSON object"
+            )
 
         for key, expected_type in _CLASSIFICATION_SCHEMA_KEYS.items():
             value = json_schema.get(key)
@@ -247,8 +253,8 @@ class SchemaService:
             jsonschema.Draft7Validator.check_schema(json_schema)
         except ImportError:
             # jsonschema is optional — skip validation if not installed
-            logger.warning(
-                "jsonschema library not available — skipping schema validation"
-            )
+            logger.warning("jsonschema library not available — skipping schema validation")
         except jsonschema.SchemaError as exc:
-            raise ValidationError(f"Invalid JSON Schema: {exc.message}") from exc
+            raise ValidationError(
+                f"Invalid JSON Schema: {exc.message}"
+            ) from exc
