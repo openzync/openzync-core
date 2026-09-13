@@ -388,12 +388,15 @@ class TestEpisodeRepository:
         results = await repo.search_by_vector(
             embedding=[0.1, 0.2, 0.3],
             project_id=self.PROJECT_ID,
+            org_id=self.ORG_ID,
             limit=10,
         )
 
         assert len(results) == 1
         assert results[0]["score"] == 0.95
         assert results[0]["content"] == "Hello"
+        params = mock_db.execute.call_args.args[1]
+        assert params["org_id"] == self.ORG_ID
 
     async def test_search_by_vector_empty(
         self, repo: EpisodeRepository, mock_db: AsyncMock
@@ -406,10 +409,33 @@ class TestEpisodeRepository:
         results = await repo.search_by_vector(
             embedding=[0.1, 0.2, 0.3],
             project_id=self.PROJECT_ID,
+            org_id=self.ORG_ID,
             limit=10,
         )
 
         assert results == []
+        params = mock_db.execute.call_args.args[1]
+        assert params["org_id"] == self.ORG_ID
+
+    async def test_search_by_vector_scopes_to_organization(
+        self, repo: EpisodeRepository, mock_db: AsyncMock
+    ) -> None:
+        """search_by_vector SQL filters on organization_id with bound org id."""
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = []
+        mock_db.execute.return_value = mock_result
+
+        await repo.search_by_vector(
+            embedding=[0.1, 0.2, 0.3],
+            project_id=self.PROJECT_ID,
+            org_id=self.ORG_ID,
+            limit=10,
+        )
+
+        stmt = mock_db.execute.call_args.args[0]
+        params = mock_db.execute.call_args.args[1]
+        assert "organization_id = :org_id" in str(stmt.text)
+        assert params["org_id"] == self.ORG_ID
 
     # ── search_by_bm25 ─────────────────────────────────────────────────────────
 

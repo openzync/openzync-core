@@ -408,7 +408,7 @@ class EpisodeRepository:
     # ── Vector Search ─────────────────────────────────────────────────────────
 
     async def search_by_vector(
-        self, embedding: list[float], project_id: UUID, limit: int = 50
+        self, embedding: list[float], project_id: UUID, org_id: UUID, limit: int = 50
     ) -> list[dict[str, Any]]:
         """Search episodes by vector similarity (pgvector cosine distance).
 
@@ -418,6 +418,7 @@ class EpisodeRepository:
         Args:
             embedding: The query embedding vector.
             project_id: Scope results to this project.
+            org_id: Tenant scope for multi-tenant isolation.
             limit: Maximum results (capped at 200).
 
         Returns:
@@ -432,13 +433,19 @@ class EpisodeRepository:
                        1 - (embedding <=> :embedding) AS score
                 FROM episodes
                 WHERE project_id = :project_id
+                  AND organization_id = :org_id
                   AND is_deleted = false
                   AND embedding IS NOT NULL
                 ORDER BY embedding <=> :embedding
                 LIMIT :limit
                 """
             ),
-            {"embedding": embedding, "project_id": project_id, "limit": effective_limit},
+            {
+                "embedding": embedding,
+                "project_id": project_id,
+                "org_id": org_id,
+                "limit": effective_limit,
+            },
         )
         return [
             {
