@@ -1425,3 +1425,110 @@ class TestRetractionWebhook:
         assert "reason" not in payload, (
             "the retraction webhook payload carries no reason"
         )
+
+
+class TestTombstoneWins:
+    """ADR 005 terminal state — a hard-retracted triple stays retracted.
+
+    ``ingest_with_supersession`` consults
+    ``find_retracted_by_match_keys`` (paths 2a batch / 2b sequential) and
+    skips re-assertion of a tombstoned SPO: ``skipped_count += 1``, no
+    insert, no event, no lineage row.  Superseded-only rows (``valid_to``
+    set, ``invalid_at`` None) never match the tombstone gate — re-assertion
+    after supersession still inserts.
+    """
+
+    @pytest.mark.asyncio
+    async def test_batch_reassert_after_hard_retraction_is_skipped(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Path 2a — re-asserting a hard-retracted SPO inserts nothing."""
+        tombstone = _fact(
+            content="Alice likes hiking (retracted)",
+            invalid_at=NOW,
+        )
+        mock_repo.find_conflicting_active_for_update.return_value = []
+        mock_repo.find_retracted_by_match_keys.return_value = [tombstone]
+
+        result = await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[_triple(content="Alice likes hiking v2")],
+            now=NOW,
+        )
+
+        assert result.skipped_count == 1
+        assert result.inserted_count == 0
+        assert result.superseded_count == 0
+        assert result.created == []
+        mock_repo.find_retracted_by_match_keys.assert_awaited_once()
+        mock_repo.set_valid_to.assert_not_awaited()
+        mock_repo.batch_create.assert_not_awaited()
+        mock_repo.batch_create_or_skip.assert_not_awaited()
+        mock_repo.set_superseded_by.assert_not_awaited()
+        mock_repo.record_invalidation_event.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_repeated_identity_reassert_after_hard_retraction_both_skipped(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Path 2b — the same tombstoned SPO twice skips twice, inserts zero."""
+        tombstone = _fact(
+            content="Alice likes hiking (retracted)",
+            invalid_at=NOW,
+        )
+        mock_repo.find_conflicting_active_for_update.return_value = []
+        mock_repo.find_retracted_by_match_keys.return_value = [tombstone]
+
+        result = await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[
+                _triple(content="Alice likes hiking v2"),
+                _triple(content="Alice likes hiking v3"),
+            ],
+            now=NOW,
+        )
+
+        assert result.skipped_count == 2
+        assert result.inserted_count == 0
+        assert result.superseded_count == 0
+        assert result.created == []
+        mock_repo.set_valid_to.assert_not_awaited()
+        mock_repo.batch_create.assert_not_awaited()
+        mock_repo.batch_create_or_skip.assert_not_awaited()
+        mock_repo.set_superseded_by.assert_not_awaited()
+        mock_repo.record_invalidation_event.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_superseded_only_row_still_supersedes(
+        self, service: FactInvalidationService, mock_repo: AsyncMock
+    ) -> None:
+        """Regression guard — a superseded-only row (``valid_to`` set,
+        ``invalid_at`` None) is not a tombstone: normal supersede proceeds."""
+        superseded = _fact(
+            content="Alice likes hiking",
+            valid_to=NOW,
+            invalid_at=None,
+        )
+        mock_repo.find_conflicting_active_for_update.return_value = [superseded]
+        mock_repo.find_retracted_by_match_keys.return_value = []
+        mock_repo.batch_create.return_value = [
+            _fact(id=FACT_2_ID, content="Alice loves hiking")
+        ]
+
+        result = await service.ingest_with_supersession(
+            org_id=ORG_ID,
+            project_id=PROJECT_ID,
+            user_id=USER_ID,
+            facts=[_triple(content="Alice loves hiking")],
+            now=NOW,
+        )
+
+        assert result.superseded_count == 1
+        assert result.inserted_count == 1
+        assert result.skipped_count == 0
+        mock_repo.set_valid_to.assert_awaited_once_with(FACT_1_ID, NOW)
+        mock_repo.batch_create.assert_awaited_once()

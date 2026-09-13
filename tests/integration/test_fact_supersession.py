@@ -1184,3 +1184,68 @@ class TestSupersessionLineage:
         assert at_time == T1, (
             "the event must carry the deterministic supersession instant"
         )
+
+
+class TestTombstoneWins:
+    """ADR 005 terminal state — retract-then-re-assert inserts nothing.
+
+    A hard-retracted triple (``invalid_at`` set) is invisible to the live
+    conflict scan, so without the tombstone gate a re-ingest of the same
+    SPO would silently un-retract it.  End-to-end: ingest → retract via
+    ``FactService.retract_fact`` → re-ingest the same SPO with new content
+    → zero new fact rows, ``skipped_count == 1``.
+    """
+
+    async def test_retract_then_reingest_same_spo_is_skipped(
+        self, engine, db_session
+    ) -> None:
+        from services.fact_service import FactService
+
+        user_id = _new_uuid()
+        async with AsyncSession(engine) as db:
+            await _seed_user(db, user_id)
+            await db.commit()
+
+        r1 = await _ingest(
+            engine,
+            facts=[_triple(content="Alice likes hiking")],
+            user_id=user_id,
+            now=T0,
+        )
+        assert r1.inserted_count == 1
+        fact_id = r1.created[0].id
+
+        db = AsyncSession(engine, expire_on_commit=False)
+        try:
+            service = FactService(
+                db=db,
+                redis_client=None,  # type: ignore[arg-type]
+                fact_repo=FactRepository(db),
+            )
+            await service.retract_fact(
+                fact_id,
+                organization_id=ORG_ID,
+                project_id=PROJECT_ID,
+                reason="user correction",
+                at_time=T1,
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+        rows_before = await _spo_rows(engine, "Alice")
+
+        r2 = await _ingest(
+            engine,
+            facts=[_triple(content="Alice likes hiking v2")],
+            user_id=user_id,
+            now=T2,
+        )
+        assert r2.inserted_count == 0
+        assert r2.superseded_count == 0
+        assert r2.skipped_count == 1
+
+        rows_after = await _spo_rows(engine, "Alice")
+        assert len(rows_after) == len(rows_before), (
+            "re-asserting a hard-retracted triple must insert zero new fact rows"
+        )
