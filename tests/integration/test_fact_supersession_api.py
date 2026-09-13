@@ -57,7 +57,9 @@ class _FakeEmbedBackend:
         return _FakeEmbedResponse(embeddings=[[0.0] * 1536 for _ in texts])
 
 
-async def _fake_resolve_backend(provider=None, org_config=None) -> _FakeEmbedBackend:
+async def _fake_resolve_backend(
+    provider=None, org_config=None, mode=None
+) -> _FakeEmbedBackend:
     return _FakeEmbedBackend()
 
 

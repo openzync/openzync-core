@@ -113,6 +113,7 @@ ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [
     ("GET", "/admin/org/config", {}, {}),
     ("PATCH", "/admin/org/config", {}, {}),
     ("PUT", "/admin/org/config", {}, {}),
+    ("POST", "/admin/org/config/test", {}, {}),
     # webhooks (GET /events is public — excluded)
     ("GET", "/v1/admin/webhooks", {}, {}),
     ("GET", "/v1/admin/webhooks/{endpoint_id}", {"endpoint_id": str(ENDPOINT_ID)}, {}),
