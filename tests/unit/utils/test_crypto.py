@@ -10,14 +10,13 @@ Covers:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from time import sleep
 from uuid import uuid4
 
 import pytest
 
 from core.exceptions import AuthenticationError
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Base62
@@ -273,7 +272,7 @@ class TestCreateJwtToken:
 
         from utils.crypto import create_jwt_token
 
-        before = int(datetime.now(timezone.utc).timestamp())
+        before = int(datetime.now(UTC).timestamp())
         token = create_jwt_token(
             data={"sub": str(uuid4())},
             secret=self.SECRET,
@@ -289,7 +288,7 @@ class TestCreateJwtToken:
 
         from utils.crypto import create_jwt_token
 
-        now = int(datetime.now(timezone.utc).timestamp())
+        now = int(datetime.now(UTC).timestamp())
         token = create_jwt_token(
             data={"sub": str(uuid4())},
             secret=self.SECRET,

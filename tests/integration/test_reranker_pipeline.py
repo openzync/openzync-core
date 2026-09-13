@@ -22,10 +22,10 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import SearchLegFailedError
 from packages.reranker.sentence_transformers import _MODEL_CACHE, _MODEL_LOCKS
 from schemas.organization_config import OrgConfigBase
 from services.context_service import ContextService
-from core.exceptions import SearchLegFailedError
 from services.hybrid_retriever import HybridRetriever
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]

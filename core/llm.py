@@ -15,15 +15,13 @@ Usage::
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from abc import ABC, abstractmethod
-
-import orjson
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+import orjson
 from pydantic import BaseModel, ValidationError
 
 from core.exceptions import LLMStructuredOutputError
@@ -553,6 +551,7 @@ class LLMBackendRegistry:
 # which imports llm.py.  importlib breaks the cycle by not requiring specific
 # names from the partially-initialised module.
 import importlib
+
 importlib.import_module("core.llm_backends")
 
 

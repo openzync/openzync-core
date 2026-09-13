@@ -29,8 +29,8 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import Request
 import redis.asyncio as aioredis
+from fastapi import Request
 
 logger = logging.getLogger(__name__)
 

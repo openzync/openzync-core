@@ -35,7 +35,6 @@ import pytest
 
 from core.exceptions import EpisodeNotFoundError
 
-
 # ── Module-level constants ──────────────────────────────────────────────────────
 
 _EPISODE_ID = str(uuid4())
@@ -223,21 +222,20 @@ class TestEnrichEpisode:
         mock_repo = AsyncMock()
         mock_repo.get_by_id_for_update.return_value = None
 
-        with patch("asyncio.sleep", AsyncMock()):
-            with patch(
-                "repositories.episode_repository.EpisodeRepository",
-                return_value=mock_repo,
-            ):
-                from workers.tasks.enrich_episode import enrich_episode
+        with patch("asyncio.sleep", AsyncMock()), patch(
+            "repositories.episode_repository.EpisodeRepository",
+            return_value=mock_repo,
+        ):
+            from workers.tasks.enrich_episode import enrich_episode
 
-                with pytest.raises(EpisodeNotFoundError) as exc_info:
-                    await enrich_episode(
-                        ctx=ctx,
-                        episode_id=_EPISODE_ID,
-                        org_id=_ORG_ID,
-                        project_id=_PROJECT_ID,
-                        content=_CONTENT,
-                    )
+            with pytest.raises(EpisodeNotFoundError) as exc_info:
+                await enrich_episode(
+                    ctx=ctx,
+                    episode_id=_EPISODE_ID,
+                    org_id=_ORG_ID,
+                    project_id=_PROJECT_ID,
+                    content=_CONTENT,
+                )
 
         assert exc_info.value.code == "episode_not_found"
         assert exc_info.value.status_code == 404

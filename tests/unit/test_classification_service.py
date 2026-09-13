@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
@@ -13,7 +13,6 @@ from repositories.dialog_classification_repository import (
 )
 from repositories.episode_repository import EpisodeRepository
 from repositories.session_repository import SessionRepository
-from repositories.user_repository import UserRepository
 from services.classification_service import ClassificationService
 
 
@@ -60,8 +59,8 @@ class TestClassificationService:
         m.arousal = kwargs.get("arousal", "medium")
         m.confidence = kwargs.get("confidence", 0.95)
         m.raw = kwargs.get("raw", {})
-        m.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
-        m.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
+        m.created_at = kwargs.get("created_at", datetime.now(UTC))
+        m.updated_at = kwargs.get("updated_at", datetime.now(UTC))
         m.episode_id = kwargs.get("episode_id", uuid4())
         return m
 

@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.organization_repository import OrganizationRepository
 
-
 pytestmark = pytest.mark.unit
 
 

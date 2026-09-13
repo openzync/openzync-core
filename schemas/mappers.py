@@ -14,7 +14,6 @@ ORM objects for ``model_validate``.
 from __future__ import annotations
 
 from typing import Any
-from uuid import UUID
 
 from models.episode import Episode
 from models.session import Session

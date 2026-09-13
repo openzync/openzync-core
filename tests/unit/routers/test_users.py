@@ -493,7 +493,6 @@ class TestUsersRouter:
             user_id=USER_ID,
         )
 
-        from dependencies.auth import require_org_id
         from dependencies.db import get_db
         from routers.users import get_user_summary_service, router
 
@@ -532,7 +531,6 @@ class TestUsersRouter:
             message="Rate limited. Try again in 5 minutes.",
         )
 
-        from dependencies.auth import require_org_id
         from dependencies.db import get_db
         from routers.users import get_user_summary_service, router
 
@@ -614,7 +612,6 @@ class TestUsersRouter:
             {"name": "healthcare", "text": "Focus on medical terms."},
         ]
 
-        from dependencies.auth import require_org_id
         from dependencies.db import get_db
         from routers.users import get_user_summary_service, router
 
@@ -659,7 +656,6 @@ class TestUsersRouter:
         mock_summary_service.return_value = mock_instance
         mock_instance.delete_instructions.return_value = None
 
-        from dependencies.auth import require_org_id
         from dependencies.db import get_db
         from routers.users import get_user_summary_service, router
 
@@ -708,7 +704,6 @@ class TestUsersRouterRoleChanges:
             _make_user_response({"role": "admin", "external_id": "u_1"}),
         )
 
-        from dependencies.auth import require_org_id
         from dependencies.db import get_db
         from routers.users import get_user_service, router
 

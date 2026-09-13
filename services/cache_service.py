@@ -13,8 +13,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import sys
-from typing import Any, Callable, TypeVar
-from uuid import UUID
+from collections.abc import Callable
+from typing import TypeVar
 
 import orjson
 

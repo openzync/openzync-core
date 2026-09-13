@@ -24,7 +24,6 @@ lifespan pattern.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
-from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import Request

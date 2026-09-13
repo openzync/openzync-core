@@ -31,7 +31,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.episode import Episode
 from workers.tasks.base import ENRICHMENT_EMBEDDING, ENRICHMENT_ENTITIES
 
-
 # Allow longer runtime for worker processing
 pytestmark = pytest.mark.slow
 
@@ -142,7 +141,7 @@ class TestEnrichmentPipeline:
         from arq.worker import Worker as ArqWorker
 
         from services.worker.worker import HIGH_QUEUE_TASKS
-        from services.worker.worker_settings import get_queue_name, settings
+        from services.worker.worker_settings import get_queue_name
 
         redis_settings = RedisSettings(
             host=redis_host,

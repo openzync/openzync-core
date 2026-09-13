@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
@@ -11,10 +11,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.episode_blob_repository import EpisodeBlobRepository
 
-
 pytestmark = pytest.mark.unit
 
-FIXED_NOW = datetime(2025, 1, 1, tzinfo=timezone.utc)
+FIXED_NOW = datetime(2025, 1, 1, tzinfo=UTC)
 
 
 class TestEpisodeBlobRepository:
@@ -51,10 +50,10 @@ class TestEpisodeBlobRepository:
         blob.mime_type = overrides.get("mime_type", "image/jpeg")
         blob.file_size = overrides.get("file_size", 1024)
         blob.content_hash = overrides.get("content_hash", "hash123")
-        blob.extracted_text = overrides.get("extracted_text", None)
+        blob.extracted_text = overrides.get("extracted_text")
         blob.blob_index = overrides.get("blob_index", 0)
-        blob.width = overrides.get("width", None)
-        blob.height = overrides.get("height", None)
+        blob.width = overrides.get("width")
+        blob.height = overrides.get("height")
         return blob
 
     # ── batch_create ───────────────────────────────────────────────────────────

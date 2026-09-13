@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.user_repository import UserRepository
-
 
 pytestmark = pytest.mark.unit
 
@@ -40,10 +39,10 @@ class TestUserRepository:
         u.email = overrides.get("email", "alice@example.com")
         u.metadata_ = overrides.get("metadata_", {})
         u.is_deleted = overrides.get("is_deleted", False)
-        u.created_at = overrides.get("created_at", datetime.now(timezone.utc))
-        u.updated_at = overrides.get("updated_at", None)
-        u.summary = overrides.get("summary", None)
-        u.summary_updated_at = overrides.get("summary_updated_at", None)
+        u.created_at = overrides.get("created_at", datetime.now(UTC))
+        u.updated_at = overrides.get("updated_at")
+        u.summary = overrides.get("summary")
+        u.summary_updated_at = overrides.get("summary_updated_at")
         return u
 
     # ── create ─────────────────────────────────────────────────────────────────
@@ -502,7 +501,7 @@ class TestUserRepository:
         """get_summary returns (summary, updated_at) tuple."""
         mock_row = MagicMock()
         mock_row.summary = "Existing summary"
-        mock_row.summary_updated_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        mock_row.summary_updated_at = datetime(2024, 6, 1, tzinfo=UTC)
         mock_result = MagicMock()
         mock_result.one_or_none.return_value = mock_row
         mock_db.execute.return_value = mock_result
@@ -601,14 +600,14 @@ class TestUserRepository:
 
     def test_encode_cursor(self, repo: UserRepository) -> None:
         """_encode_cursor produces a valid base64 string."""
-        dt = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        dt = datetime(2024, 1, 1, tzinfo=UTC)
         encoded = repo._encode_cursor(dt, self.USER_ID)
         assert isinstance(encoded, str)
         assert len(encoded) > 0
 
     def test_decode_cursor_roundtrip(self, repo: UserRepository) -> None:
         """_encode_cursor → _decode_cursor roundtrips correctly."""
-        dt = datetime(2024, 6, 15, 12, 30, 0, tzinfo=timezone.utc)
+        dt = datetime(2024, 6, 15, 12, 30, 0, tzinfo=UTC)
         encoded = repo._encode_cursor(dt, self.USER_ID)
         decoded_dt, decoded_id = repo._decode_cursor(encoded)
 

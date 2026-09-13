@@ -6,7 +6,7 @@ Mocks the async Redis client to test logic without infrastructure.
 from __future__ import annotations
 
 import hashlib
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import orjson
 import pytest

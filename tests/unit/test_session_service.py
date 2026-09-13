@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
@@ -34,9 +34,9 @@ class TestSessionService:
         session.metadata_ = kwargs.get("metadata", {})
         session.is_active = kwargs.get("is_active", True)
         session.is_deleted = kwargs.get("is_deleted", False)
-        session.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
-        session.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
-        session.closed_at = kwargs.get("closed_at", None)
+        session.created_at = kwargs.get("created_at", datetime.now(UTC))
+        session.updated_at = kwargs.get("updated_at", datetime.now(UTC))
+        session.closed_at = kwargs.get("closed_at")
         return session
 
     def _make_service(self) -> tuple[SessionService, AsyncMock]:
@@ -89,7 +89,7 @@ class TestSessionService:
         mock_repo.get_stats.return_value = {
             "message_count": 5,
             "fact_count": 3,
-            "last_message_at": datetime.now(timezone.utc),
+            "last_message_at": datetime.now(UTC),
         }
 
         session_id = mock_session.id
@@ -352,7 +352,7 @@ class TestSessionService:
         ep.metadata_ = kwargs.get("metadata", {})
         ep.token_count = kwargs.get("token_count", 10)
         ep.sequence_number = kwargs.get("sequence_number", 0)
-        ep.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
+        ep.created_at = kwargs.get("created_at", datetime.now(UTC))
         return ep
 
     @pytest.mark.asyncio

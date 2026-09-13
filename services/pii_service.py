@@ -340,9 +340,7 @@ class PIIDetector:
                 # Overlap — keep the longer span
                 prev_span = prev.end - prev.start
                 current_span = current.end - current.start
-                if current_span > prev_span:
-                    merged[-1] = current
-                elif current_span == prev_span and current.confidence > prev.confidence:
+                if current_span > prev_span or current_span == prev_span and current.confidence > prev.confidence:
                     merged[-1] = current
                 # Otherwise keep previous
             else:

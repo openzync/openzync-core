@@ -46,10 +46,11 @@ import asyncio
 import logging
 import re
 from collections import Counter, defaultdict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from functools import partial
-from typing import TYPE_CHECKING, Any, Awaitable, Callable, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from sqlalchemy import event
@@ -325,7 +326,7 @@ class FactInvalidationService:
                 the single commit/rollback point, so a raise here undoes
                 the whole batch including supersessions.
         """
-        now = now or datetime.now(timezone.utc)
+        now = now or datetime.now(UTC)
         if not facts:
             return FactIngestionResult()
 

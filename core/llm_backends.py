@@ -20,13 +20,7 @@ import time
 from typing import Any, ClassVar
 
 import httpx
-from openai import (
-    APIConnectionError,
-    APITimeoutError,
-    APIError,
-)
 
-from core.exceptions import LLMConfigurationError
 from core.llm import (
     ChatResponse,
     EmbeddingResponse,

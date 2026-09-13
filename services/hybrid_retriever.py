@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
@@ -445,7 +445,7 @@ class HybridRetriever:
             ``predicate``, ``object``, ``score``, ``confidence``,
             ``valid_from``, ``valid_to``, and ``invalid_at`` keys.
         """
-        effective_time = query_time or datetime.now(timezone.utc)
+        effective_time = query_time or datetime.now(UTC)
 
         # Resolve embedding dimension from org config so the runtime
         # ``::vector(N)`` cast matches the model that produced the data.
@@ -574,7 +574,7 @@ class HybridRetriever:
             ``valid_from``, ``valid_to``, and ``invalid_at`` keys.
         """
         ts_query = func.plainto_tsquery("english", query)
-        effective_time = query_time or datetime.now(timezone.utc)
+        effective_time = query_time or datetime.now(UTC)
         stmt = (
             select(
                 Fact.id,

@@ -15,7 +15,7 @@ No business logic. No database queries.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -123,7 +123,7 @@ async def get_context(
     # Normalize a naive ISO-8601 input (no offset) to UTC-aware so the
     # validity comparison against tz-aware DB timestamps is well-defined.
     if as_of is not None and as_of.tzinfo is None:
-        as_of = as_of.replace(tzinfo=timezone.utc)
+        as_of = as_of.replace(tzinfo=UTC)
 
     # ── Assemble context ────────────────────────────────────────────────
     redis = getattr(request.app.state, "redis", None) if request else None

@@ -16,7 +16,6 @@ from core.exceptions import ExternalServiceError, RateLimitError, ValidationErro
 from middleware.auth_throttle import AuthThrottle
 from services.otp_service import OtpService
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Fixtures — shared across OtpService tests
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -13,7 +13,7 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -27,7 +27,6 @@ from core.org_config import (
     update_org_config,
 )
 from schemas.organization_config import OrgConfigBase, UpdateOrgConfigRequest
-
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 CACHE_KEY = f"{CACHE_KEY_PREFIX}:{ORG_ID}"
@@ -187,7 +186,6 @@ class TestGetOrgConfig:
         mock_bao: AsyncMock,
     ) -> None:
         """A cache write failure is logged but does not fail the request."""
-        import logging
 
         mock_bao.read_org_config.return_value = {"llm_backend": "openai"}
         mock_redis.setex.side_effect = ConnectionError("Redis write failed")

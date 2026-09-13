@@ -14,7 +14,6 @@ from repositories.session_repository import SessionRepository
 from repositories.structured_extraction_repository import (
     StructuredExtractionRepository,
 )
-
 from schemas.structured_extractions import (
     StructuredExtractionListResponse,
     StructuredExtractionResponse,

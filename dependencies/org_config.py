@@ -24,7 +24,7 @@ from dependencies.auth import require_org_id
 async def get_org_config(
     request: Request,
     org_id: str = Depends(require_org_id),
-) -> "OrgConfigBase":
+) -> OrgConfigBase:
     """FastAPI dependency that yields the stored org config for the current org.
 
     The config is fetched from Redis cache (fast path) or OpenBao KV
@@ -41,7 +41,6 @@ async def get_org_config(
     """
     # Lazy import to avoid circular dependency on schemas
     from core.org_config import get_org_config as _get_org_config
-    from schemas.organization_config import OrgConfigBase
 
     bao_client = getattr(request.app.state, "openbao_client", None)
     redis = getattr(request.app.state, "redis", None)

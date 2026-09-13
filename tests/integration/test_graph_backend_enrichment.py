@@ -14,8 +14,9 @@ Tests the end-to-end enrichment flow:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -24,7 +25,6 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from core.exceptions import NotFoundError
 from tests.conftest import (
     _ensure_testcontainers_env,
     _run_alembic_upgrade,
@@ -39,7 +39,7 @@ pytestmark = [
     ),
 ]
 
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 
 # ── Known IDs for reproducibility ─────────────────────────────────────────────
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -61,7 +61,8 @@ def setup_module() -> None:
     _run_alembic_upgrade(driver_url)
 
     # Seed well-known test objects so FK constraints are satisfied.
-    from sqlalchemy import create_engine as create_sync_engine, text
+    from sqlalchemy import create_engine as create_sync_engine
+    from sqlalchemy import text
 
     sync_url = url.replace("+asyncpg", "")  # strip asyncpg driver for sync engine
     sync_engine = create_sync_engine(sync_url, pool_pre_ping=True)

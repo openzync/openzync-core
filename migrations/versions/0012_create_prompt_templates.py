@@ -8,10 +8,9 @@ Create Date: 2026-06-14
 from __future__ import annotations
 
 from pathlib import Path
-from typing import ClassVar
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 revision: str = "0012"
 down_revision: str | None = "4d5e6f7a8b9c"

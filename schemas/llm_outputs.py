@@ -27,11 +27,12 @@ Usage::
 
 from __future__ import annotations
 
-from datetime import datetime  # noqa: TC003 — pydantic resolves field annotations at runtime
+from datetime import (
+    datetime,  # noqa: TC003 — pydantic resolves field annotations at runtime
+)
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Entity extraction

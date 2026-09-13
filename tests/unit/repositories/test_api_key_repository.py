@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.api_key_repository import ApiKeyRepository
 
-
 pytestmark = pytest.mark.unit
 
 
@@ -43,9 +42,9 @@ class TestApiKeyRepository:
         key.prefix = overrides.get("prefix", "oz_test_")
         key.permissions = overrides.get("permissions", ["project:read", "project:write"])
         key.is_revoked = overrides.get("is_revoked", False)
-        key.last_used_at = overrides.get("last_used_at", None)
-        key.created_at = overrides.get("created_at", None)
-        key.created_by = overrides.get("created_by", None)
+        key.last_used_at = overrides.get("last_used_at")
+        key.created_at = overrides.get("created_at")
+        key.created_by = overrides.get("created_by")
         return key
 
     # ── list_by_org ────────────────────────────────────────────────────────────

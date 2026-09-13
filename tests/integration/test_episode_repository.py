@@ -11,9 +11,8 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.episode_repository import EpisodeRepository
-from repositories.user_repository import UserRepository
 from repositories.session_repository import SessionRepository
-
+from repositories.user_repository import UserRepository
 
 pytestmark = pytest.mark.integration
 

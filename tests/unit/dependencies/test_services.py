@@ -6,7 +6,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
-from fastapi import Request, Depends
+from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 pytestmark = pytest.mark.unit

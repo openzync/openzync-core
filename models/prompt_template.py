@@ -10,7 +10,6 @@ Only one template per (organization_id, template_name) can be active at a time.
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column

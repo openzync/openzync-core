@@ -8,7 +8,7 @@ All tests mock ``FactRepository`` — no database required.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 from uuid import UUID
 
@@ -16,7 +16,6 @@ import pytest
 
 from models.fact import Fact
 from services.temporal_service import TemporalValidationService
-
 
 # ── Fixtures ────────────────────────────────────────────────────────────────────
 
@@ -81,14 +80,14 @@ class TestTemporalValidationService:
             _make_fact(
                 subject="A", predicate="knows", obj="B",
                 source_episode_id="00000000-0000-0000-0000-000000000010",
-                valid_from=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                valid_to=datetime(2024, 6, 30, tzinfo=timezone.utc),
+                valid_from=datetime(2024, 1, 1, tzinfo=UTC),
+                valid_to=datetime(2024, 6, 30, tzinfo=UTC),
             ),
             _make_fact(
                 subject="C", predicate="knows", obj="D",
                 source_episode_id="00000000-0000-0000-0000-000000000011",
-                valid_from=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                valid_to=datetime(2024, 6, 30, tzinfo=timezone.utc),
+                valid_from=datetime(2024, 1, 1, tzinfo=UTC),
+                valid_to=datetime(2024, 6, 30, tzinfo=UTC),
             ),
         ]
         warnings = await service.check_project_temporal_consistency(
@@ -105,15 +104,15 @@ class TestTemporalValidationService:
                 fact_id="00000000-0000-0000-0000-000000000001",
                 subject="A", predicate="knows", obj="B",
                 source_episode_id="00000000-0000-0000-0000-000000000010",
-                valid_from=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                valid_to=datetime(2024, 6, 30, tzinfo=timezone.utc),
+                valid_from=datetime(2024, 1, 1, tzinfo=UTC),
+                valid_to=datetime(2024, 6, 30, tzinfo=UTC),
             ),
             _make_fact(
                 fact_id="00000000-0000-0000-0000-000000000002",
                 subject="A", predicate="knows", obj="B",
                 source_episode_id="00000000-0000-0000-0000-000000000011",
-                valid_from=datetime(2024, 3, 1, tzinfo=timezone.utc),
-                valid_to=datetime(2024, 9, 30, tzinfo=timezone.utc),
+                valid_from=datetime(2024, 3, 1, tzinfo=UTC),
+                valid_to=datetime(2024, 9, 30, tzinfo=UTC),
             ),
         ]
         warnings = await service.check_project_temporal_consistency(
@@ -133,15 +132,15 @@ class TestTemporalValidationService:
                 fact_id="00000000-0000-0000-0000-000000000001",
                 subject="A", predicate="knows", obj="B",
                 source_episode_id="00000000-0000-0000-0000-000000000010",
-                valid_from=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                valid_to=datetime(2024, 6, 30, tzinfo=timezone.utc),
+                valid_from=datetime(2024, 1, 1, tzinfo=UTC),
+                valid_to=datetime(2024, 6, 30, tzinfo=UTC),
             ),
             _make_fact(
                 fact_id="00000000-0000-0000-0000-000000000002",
                 subject="A", predicate="knows", obj="B",
                 source_episode_id="00000000-0000-0000-0000-000000000010",
-                valid_from=datetime(2024, 3, 1, tzinfo=timezone.utc),
-                valid_to=datetime(2024, 9, 30, tzinfo=timezone.utc),
+                valid_from=datetime(2024, 3, 1, tzinfo=UTC),
+                valid_to=datetime(2024, 9, 30, tzinfo=UTC),
             ),
         ]
         warnings = await service.check_project_temporal_consistency(
@@ -157,14 +156,14 @@ class TestTemporalValidationService:
             _make_fact(
                 subject="A", predicate="knows", obj="B",
                 source_episode_id="00000000-0000-0000-0000-000000000010",
-                valid_from=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                valid_to=datetime(2024, 3, 31, tzinfo=timezone.utc),
+                valid_from=datetime(2024, 1, 1, tzinfo=UTC),
+                valid_to=datetime(2024, 3, 31, tzinfo=UTC),
             ),
             _make_fact(
                 subject="A", predicate="knows", obj="B",
                 source_episode_id="00000000-0000-0000-0000-000000000011",
-                valid_from=datetime(2024, 4, 1, tzinfo=timezone.utc),
-                valid_to=datetime(2024, 6, 30, tzinfo=timezone.utc),
+                valid_from=datetime(2024, 4, 1, tzinfo=UTC),
+                valid_to=datetime(2024, 6, 30, tzinfo=UTC),
             ),
         ]
         warnings = await service.check_project_temporal_consistency(
@@ -180,11 +179,11 @@ class TestTemporalValidationService:
         """All facts have valid ranges → empty warnings."""
         mock_repo.get_all_active_for_project.return_value = [
             _make_fact(
-                valid_from=datetime(2024, 1, 1, tzinfo=timezone.utc),
-                valid_to=datetime(2024, 6, 30, tzinfo=timezone.utc),
+                valid_from=datetime(2024, 1, 1, tzinfo=UTC),
+                valid_to=datetime(2024, 6, 30, tzinfo=UTC),
             ),
             _make_fact(
-                valid_from=datetime(2024, 3, 1, tzinfo=timezone.utc),
+                valid_from=datetime(2024, 3, 1, tzinfo=UTC),
                 valid_to=None,  # open-ended
             ),
         ]
@@ -200,8 +199,8 @@ class TestTemporalValidationService:
         mock_repo.get_all_active_for_project.return_value = [
             _make_fact(
                 fact_id="00000000-0000-0000-0000-000000000001",
-                valid_from=datetime(2024, 6, 1, tzinfo=timezone.utc),
-                valid_to=datetime(2024, 1, 1, tzinfo=timezone.utc),  # before valid_from
+                valid_from=datetime(2024, 6, 1, tzinfo=UTC),
+                valid_to=datetime(2024, 1, 1, tzinfo=UTC),  # before valid_from
             ),
         ]
         warnings = await service.check_fact_ranges(
@@ -216,7 +215,7 @@ class TestTemporalValidationService:
         """valid_from more than 24h in the future → future_date warning."""
         from datetime import timedelta
 
-        far_future = datetime.now(timezone.utc) + timedelta(hours=48)
+        far_future = datetime.now(UTC) + timedelta(hours=48)
         mock_repo.get_all_active_for_project.return_value = [
             _make_fact(
                 fact_id="00000000-0000-0000-0000-000000000001",
@@ -235,7 +234,7 @@ class TestTemporalValidationService:
         """valid_from just a few hours in the future → no warning."""
         from datetime import timedelta
 
-        near_future = datetime.now(timezone.utc) + timedelta(hours=2)
+        near_future = datetime.now(UTC) + timedelta(hours=2)
         mock_repo.get_all_active_for_project.return_value = [
             _make_fact(
                 fact_id="00000000-0000-0000-0000-000000000001",
@@ -255,11 +254,11 @@ class TestTemporalValidationService:
         """No overlapping triples in batch → empty warnings."""
         facts = [
             {"subject": "A", "predicate": "knows", "object": "B",
-             "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
-             "valid_to": datetime(2024, 6, 30, tzinfo=timezone.utc)},
+             "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+             "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
             {"subject": "C", "predicate": "knows", "object": "D",
-             "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
-             "valid_to": datetime(2024, 6, 30, tzinfo=timezone.utc)},
+             "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+             "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
         ]
         warnings = await service.validate_batch(facts)
         assert warnings == []
@@ -271,12 +270,12 @@ class TestTemporalValidationService:
         facts = [
             {"subject": "A", "predicate": "knows", "object": "B",
              "source_episode_id": "00000000-0000-0000-0000-000000000010",
-             "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
-             "valid_to": datetime(2024, 6, 30, tzinfo=timezone.utc)},
+             "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+             "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
             {"subject": "A", "predicate": "knows", "object": "B",
              "source_episode_id": "00000000-0000-0000-0000-000000000010",
-             "valid_from": datetime(2024, 3, 1, tzinfo=timezone.utc),
-             "valid_to": datetime(2024, 9, 30, tzinfo=timezone.utc)},
+             "valid_from": datetime(2024, 3, 1, tzinfo=UTC),
+             "valid_to": datetime(2024, 9, 30, tzinfo=UTC)},
         ]
         warnings = await service.validate_batch(facts)
         assert len(warnings) == 1
@@ -290,10 +289,10 @@ class TestTemporalValidationService:
         facts = [
             {"subject": "A", "predicate": "knows", "object": "B",
              "source_episode_id": "00000000-0000-0000-0000-000000000010",
-             "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc)},
+             "valid_from": datetime(2024, 1, 1, tzinfo=UTC)},
             {"subject": "A", "predicate": "knows", "object": "B",
              "source_episode_id": "00000000-0000-0000-0000-000000000011",
-             "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc)},
+             "valid_from": datetime(2024, 1, 1, tzinfo=UTC)},
         ]
         warnings = await service.validate_batch(facts)
         assert warnings == []
@@ -306,42 +305,42 @@ class TestTemporalValidationService:
 
     def test_ranges_overlap_partial(self, service) -> None:
         """Partial overlap returns True."""
-        a_s = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        a_e = datetime(2024, 6, 30, tzinfo=timezone.utc)
-        b_s = datetime(2024, 3, 1, tzinfo=timezone.utc)
-        b_e = datetime(2024, 9, 30, tzinfo=timezone.utc)
+        a_s = datetime(2024, 1, 1, tzinfo=UTC)
+        a_e = datetime(2024, 6, 30, tzinfo=UTC)
+        b_s = datetime(2024, 3, 1, tzinfo=UTC)
+        b_e = datetime(2024, 9, 30, tzinfo=UTC)
         assert service._ranges_overlap(a_s, a_e, b_s, b_e)
 
     def test_ranges_no_overlap_adjacent(self, service) -> None:
         """Adjacent ranges (end=start) → no overlap ('[)' semantics)."""
-        a_s = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        a_e = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        b_s = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        b_e = datetime(2024, 12, 31, tzinfo=timezone.utc)
+        a_s = datetime(2024, 1, 1, tzinfo=UTC)
+        a_e = datetime(2024, 6, 1, tzinfo=UTC)
+        b_s = datetime(2024, 6, 1, tzinfo=UTC)
+        b_e = datetime(2024, 12, 31, tzinfo=UTC)
         assert not service._ranges_overlap(a_s, a_e, b_s, b_e)
 
     def test_ranges_no_overlap_disjoint(self, service) -> None:
         """Disjoint ranges → no overlap."""
-        a_s = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        a_e = datetime(2024, 3, 31, tzinfo=timezone.utc)
-        b_s = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        b_e = datetime(2024, 12, 31, tzinfo=timezone.utc)
+        a_s = datetime(2024, 1, 1, tzinfo=UTC)
+        a_e = datetime(2024, 3, 31, tzinfo=UTC)
+        b_s = datetime(2024, 6, 1, tzinfo=UTC)
+        b_e = datetime(2024, 12, 31, tzinfo=UTC)
         assert not service._ranges_overlap(a_s, a_e, b_s, b_e)
 
     def test_ranges_open_ended_overlap(self, service) -> None:
         """Open-ended range (valid_to=None) overlaps any range starting
         before its end."""
-        a_s = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        a_s = datetime(2024, 1, 1, tzinfo=UTC)
         a_e = None  # open-ended
-        b_s = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        b_e = datetime(2024, 12, 31, tzinfo=timezone.utc)
+        b_s = datetime(2024, 6, 1, tzinfo=UTC)
+        b_e = datetime(2024, 12, 31, tzinfo=UTC)
         assert service._ranges_overlap(a_s, a_e, b_s, b_e)
 
     def test_ranges_contained(self, service) -> None:
         """One range fully inside another → overlap."""
-        outer_s = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        outer_e = datetime(2024, 12, 31, tzinfo=timezone.utc)
-        inner_s = datetime(2024, 3, 1, tzinfo=timezone.utc)
-        inner_e = datetime(2024, 6, 30, tzinfo=timezone.utc)
+        outer_s = datetime(2024, 1, 1, tzinfo=UTC)
+        outer_e = datetime(2024, 12, 31, tzinfo=UTC)
+        inner_s = datetime(2024, 3, 1, tzinfo=UTC)
+        inner_e = datetime(2024, 6, 30, tzinfo=UTC)
         assert service._ranges_overlap(outer_s, outer_e, inner_s, inner_e)
         assert service._ranges_overlap(inner_s, inner_e, outer_s, outer_e)

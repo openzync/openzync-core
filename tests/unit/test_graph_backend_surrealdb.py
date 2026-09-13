@@ -18,7 +18,6 @@ Every test uses a mocked ``AsyncSurreal`` so no SurrealDB instance is needed.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
@@ -29,7 +28,11 @@ pytest.importorskip("surrealdb")
 
 from surrealdb import RecordID
 
-from core.exceptions import ExternalServiceError, GraphBackendUnavailableError, NotFoundError
+from core.exceptions import (
+    ExternalServiceError,
+    GraphBackendUnavailableError,
+    NotFoundError,
+)
 from packages.graph_backend.surrealdb import (
     SurrealGraphBackend,
     _decode_offset_cursor,

@@ -18,8 +18,6 @@ import argparse
 import asyncio
 import logging
 import os
-import sys
-import time
 
 import httpx
 
@@ -187,7 +185,7 @@ async def main() -> None:
         user_id = await create_user(auth_client, user_ext_id)
 
         # Export for Locust
-        print(f"\nExport these for Locust:")
+        print("\nExport these for Locust:")
         print(f"  export OZ_LOAD_TEST_API_KEY={api_key}")
         print(f"  export OZ_LOAD_TEST_USER_ID={user_id}")
         print()

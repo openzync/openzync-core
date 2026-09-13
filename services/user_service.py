@@ -133,7 +133,6 @@ class UserService:
             ConflictError: A user with this ``external_id`` already exists
                 in the organization.
         """
-
         exists = await self._repo.exists_by_external_id(
             organization_id, external_id
         )
@@ -220,7 +219,6 @@ class UserService:
             NotFoundError: If the IntegrityError path somehow cannot find
                 the row (should never happen — indicates DB inconsistency).
         """
-
         # Fast path: user already exists
         user = await self._repo.get_by_external_id(
             organization_id, external_id
@@ -288,7 +286,6 @@ class UserService:
             NotFoundError: No user with this UUID (or the user is
                 soft-deleted).
         """
-
         user = await self._repo.get_by_uuid(organization_id, user_id)
         if user is None or user.is_deleted:
             raise NotFoundError(f"User {user_id} not found")
@@ -529,7 +526,6 @@ class UserService:
         Raises:
             ValidationError: If ``limit`` is outside the 1-200 range.
         """
-
         if limit < 1 or limit > 200:
             raise ValidationError("limit must be between 1 and 200")
 

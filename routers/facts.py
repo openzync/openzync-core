@@ -16,7 +16,7 @@ No business logic. No database queries.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -163,9 +163,9 @@ async def list_facts_at_time(
 
     # Default to now; coerce naive ISO-8601 input to UTC-aware so the
     # comparison against tz-aware DB timestamps is well-defined.
-    query_time = as_of if as_of is not None else datetime.now(timezone.utc)
+    query_time = as_of if as_of is not None else datetime.now(UTC)
     if query_time.tzinfo is None:
-        query_time = query_time.replace(tzinfo=timezone.utc)
+        query_time = query_time.replace(tzinfo=UTC)
 
     # Fetch limit+1 to detect whether another page exists (offset pagination).
     facts = await repo.get_facts_at_time(

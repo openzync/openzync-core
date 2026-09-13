@@ -11,9 +11,9 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Query, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import audit_action
-from core.exceptions import NotFoundError, ValidationError
 from dependencies.auth import require_permission
 from dependencies.db import get_db
 from dependencies.project_auth import require_project_membership
@@ -26,7 +26,6 @@ from schemas.projects import (
     UpdateProjectRequest,
 )
 from services.project_service import ProjectService
-from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter(prefix="/v1/projects", tags=["projects"])
 

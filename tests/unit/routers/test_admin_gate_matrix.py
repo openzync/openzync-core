@@ -48,8 +48,6 @@ from httpx import ASGITransport, AsyncClient
 from core.config import PLATFORM_ORG_ID
 from core.exceptions import register_exception_handlers
 from dependencies.auth import (
-    require_permission,
-    require_permission_or_self,
     require_superadmin,
 )
 from dependencies.db import get_db

@@ -136,7 +136,7 @@ class EntityRepository:
                 exc_info=True,
             )
             raise GraphBackendUnavailableError(
-                f"Entity repository operation failed: upsert_entity."
+                "Entity repository operation failed: upsert_entity."
             ) from exc
 
     async def get_entity_by_name(
@@ -195,7 +195,7 @@ class EntityRepository:
                 exc_info=True,
             )
             raise GraphBackendUnavailableError(
-                f"Entity repository operation failed: get_entity_by_name."
+                "Entity repository operation failed: get_entity_by_name."
             ) from exc
 
     async def get_entity_by_id(
@@ -233,7 +233,7 @@ class EntityRepository:
                 exc_info=True,
             )
             raise GraphBackendUnavailableError(
-                f"Entity repository operation failed: get_entity_by_id."
+                "Entity repository operation failed: get_entity_by_id."
             ) from exc
 
     # ── Relationship CRUD ──────────────────────────────────────────────────────
@@ -322,5 +322,5 @@ class EntityRepository:
                 exc_info=True,
             )
             raise GraphBackendUnavailableError(
-                f"Entity repository operation failed: upsert_relationship."
+                "Entity repository operation failed: upsert_relationship."
             ) from exc

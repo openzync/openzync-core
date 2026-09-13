@@ -10,8 +10,8 @@ from typing import Any
 
 import streamlit as st
 from dotenv import load_dotenv
-from openai import OpenAI
 from langchain_core.messages import AIMessage, HumanMessage
+from openai import OpenAI
 from openzync import AsyncOpenZync
 from openzync.integrations.langchain import OZMemory
 

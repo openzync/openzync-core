@@ -66,7 +66,7 @@ class BlobStorageService:
         session_id: UUID,
         created_by: UUID,
         uploaded_files: Sequence[UploadFile],
-        blob_metadatas: Sequence["BlobMetadata"],
+        blob_metadatas: Sequence[BlobMetadata],
         storage_config: dict[str, Any],
     ) -> list[EpisodeBlob]:
         """Upload blobs to S3 and persist metadata in the DB.
@@ -214,7 +214,7 @@ class BlobStorageService:
 
     @staticmethod
     def validate_blob_metadata_count(
-        blob_metadatas: Sequence["BlobMetadata"],
+        blob_metadatas: Sequence[BlobMetadata],
     ) -> None:
         """Validate per-message blob count limits.
 

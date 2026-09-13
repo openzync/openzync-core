@@ -19,11 +19,10 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from httpx import ASGITransport, AsyncClient
+from httpx import AsyncClient
 
 from core.org_config import get_org_config, update_org_config
 from schemas.organization_config import OrgConfigBase, UpdateOrgConfigRequest
-
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.integration]
 

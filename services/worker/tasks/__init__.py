@@ -29,7 +29,8 @@ whatever was passed to ``enqueue_job()``::
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Task registry
@@ -73,6 +74,7 @@ blob cleanup role was replaced by ``workers.tasks.cleanup_orphan_blobs``.
 #   from services.worker.tasks.extract_structured import extract_structured
 #   from services.worker.tasks.summarise_community import summarise_community
 from services.worker.tasks.audit_log import write_audit_log
+
 #   from services.worker.tasks.merge_duplicate_entities import merge_duplicate_entities
 #   from services.worker.tasks.refresh_context_cache import refresh_context_cache
 #   from services.worker.tasks.delete_user_data import delete_user_data

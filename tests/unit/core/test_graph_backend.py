@@ -17,8 +17,7 @@ Backend **implementations** are tested in
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, sentinel
-from uuid import UUID
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

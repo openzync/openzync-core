@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
@@ -12,7 +12,6 @@ from sqlalchemy.sql.dml import Update
 
 from core.exceptions import ValidationError
 from repositories.fact_repository import FactRepository
-
 
 pytestmark = pytest.mark.unit
 
@@ -50,14 +49,14 @@ class TestFactRepository:
         f.object_str = overrides.get("object_str", "hiking")
         f.confidence = overrides.get("confidence", 0.95)
         f.source_episode_id = overrides.get("source_episode_id", self.EPISODE_ID)
-        f.valid_from = overrides.get("valid_from", datetime.now(timezone.utc))
-        f.valid_to = overrides.get("valid_to", None)
-        f.invalid_at = overrides.get("invalid_at", None)
+        f.valid_from = overrides.get("valid_from", datetime.now(UTC))
+        f.valid_to = overrides.get("valid_to")
+        f.invalid_at = overrides.get("invalid_at")
         f.subject_type = overrides.get("subject_type", "literal")
         f.object_type = overrides.get("object_type", "literal")
-        f.subject_entity_id = overrides.get("subject_entity_id", None)
-        f.object_entity_id = overrides.get("object_entity_id", None)
-        f.created_at = overrides.get("created_at", datetime.now(timezone.utc))
+        f.subject_entity_id = overrides.get("subject_entity_id")
+        f.object_entity_id = overrides.get("object_entity_id")
+        f.created_at = overrides.get("created_at", datetime.now(UTC))
         return f
 
     # ── create ─────────────────────────────────────────────────────────────────
@@ -284,7 +283,7 @@ class TestFactRepository:
         self, repo: FactRepository, mock_db: AsyncMock
     ) -> None:
         """M1 — caller-provided ``valid_from`` wins over the repo's own clock."""
-        caller_now = datetime(2026, 5, 1, 9, 30, tzinfo=timezone.utc)
+        caller_now = datetime(2026, 5, 1, 9, 30, tzinfo=UTC)
         facts = [
             {
                 "subject": "A",
@@ -329,7 +328,7 @@ class TestFactRepository:
         )
 
         (_, rows) = mock_db.execute.await_args.args
-        assert rows[0]["valid_from"].tzinfo == timezone.utc
+        assert rows[0]["valid_from"].tzinfo == UTC
 
     # ── get_all_active_for_project ─────────────────────────────────────────────
 
@@ -373,7 +372,7 @@ class TestFactRepository:
         mock_result.scalars.return_value.all.return_value = facts
         mock_db.execute.return_value = mock_result
 
-        timestamp = datetime.now(timezone.utc)
+        timestamp = datetime.now(UTC)
         result = await repo.get_facts_at_time(
             project_id=self.PROJECT_ID, timestamp=timestamp
         )
@@ -390,7 +389,7 @@ class TestFactRepository:
 
         result = await repo.get_facts_at_time(
             project_id=self.PROJECT_ID,
-            timestamp=datetime.now(timezone.utc),
+            timestamp=datetime.now(UTC),
             limit=10,
             offset=5,
         )
@@ -453,7 +452,7 @@ class TestFactRepository:
             (
                 str(self.FACT_ID), "Alice likes hiking", "Alice", "likes",
                 "hiking", 0.95, str(self.EPISODE_ID),
-                datetime.now(timezone.utc), "literal", "literal",
+                datetime.now(UTC), "literal", "literal",
                 None, None, None, None, None,
             ),
         ]

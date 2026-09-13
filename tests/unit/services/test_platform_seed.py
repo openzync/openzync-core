@@ -11,7 +11,6 @@ The seed runs at startup; these tests pin the three observable contracts:
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
 
 import pytest
 from sqlalchemy.exc import IntegrityError

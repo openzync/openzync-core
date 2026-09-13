@@ -29,7 +29,7 @@ class TestSchemaService:
         m.id = kwargs.get("id", uuid4())
         m.name = kwargs.get("name", "test-schema")
         m.json_schema = kwargs.get("json_schema", {"type": "object"})
-        m.prompt_template = kwargs.get("prompt_template", None)
+        m.prompt_template = kwargs.get("prompt_template")
         m.is_active = kwargs.get("is_active", True)
         m.organization_id = self.ORG_ID
         m.type = kwargs.get("type", "structured")

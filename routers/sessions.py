@@ -19,11 +19,10 @@ from fastapi import APIRouter, Depends, Query
 from starlette.responses import Response
 
 from core.audit import audit_action
-
+from dependencies.auth import get_current_user_id, require_permission
 from dependencies.project_auth import require_project_membership
 from dependencies.request import get_current_org_id, get_project_id
 from dependencies.services import get_fact_service, get_session_service
-from dependencies.auth import get_current_user_id, require_permission
 from schemas.common import PaginatedResponse
 from schemas.facts import FactResponse
 from schemas.sessions import (

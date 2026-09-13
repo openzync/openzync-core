@@ -15,7 +15,7 @@ rolled back when the session closes.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -98,7 +98,7 @@ class TestObservationBackend:
                 content="Alice appears weekly.",
                 confidence=0.85,
                 related_entity_id=None,
-                valid_from=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                valid_from=datetime(2024, 1, 1, tzinfo=UTC),
             )
             results = await backend.get_observations(ORG_ID, PROJECT_ID)
             assert len(results["items"]) == 1
@@ -393,7 +393,7 @@ class TestObservationServicePipeline:
         # ── Episodes + entity links ────────────────────────────────────────
         for idx, eid in enumerate(self._EPISODES):
             created_at = datetime(
-                2024, 1, 1 + idx * 7, tzinfo=timezone.utc,
+                2024, 1, 1 + idx * 7, tzinfo=UTC,
             )  # 7-day gaps
             await db.execute(
                 sa_text(

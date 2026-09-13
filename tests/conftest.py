@@ -14,7 +14,6 @@ import os
 
 import pytest
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Testcontainers helpers
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -92,7 +91,6 @@ def _run_alembic_upgrade(driver_url: str) -> None:
     Args:
         driver_url: Full asyncpg connection URL for the database.
     """
-    import asyncio
 
     from alembic.command import upgrade as alembic_upgrade
     from alembic.config import Config as AlembicConfig

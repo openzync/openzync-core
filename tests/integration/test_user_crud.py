@@ -32,9 +32,9 @@ from __future__ import annotations
 from uuid import UUID
 
 import pytest
-from dependencies.auth import get_current_user_id
 from httpx import ASGITransport, AsyncClient
 
+from dependencies.auth import get_current_user_id
 from tests.integration.conftest import bootstrap_tenant
 
 

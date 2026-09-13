@@ -292,12 +292,12 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
     from datetime import timedelta
     from uuid import uuid4
 
+    # ── Insert the org row directly (test infra, not a public API) ────
+    from sqlalchemy import text as _sql
+
     from core.config import get_settings
     from repositories.user_repository import UserRepository
     from utils.crypto import create_jwt_token
-
-    # ── Insert the org row directly (test infra, not a public API) ────
-    from sqlalchemy import text as _sql
 
     async with (
         app.state.db_session_factory() as session,

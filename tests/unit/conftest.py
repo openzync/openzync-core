@@ -26,7 +26,6 @@ def _init_settings() -> None:
     override this fixture (e.g. by resetting ``core.config._settings``
     in their own ``autouse`` fixture).
     """
-    import core.config as _cfg
 
     # The singleton is commonly reset by other autouse fixtures (e.g.
     # test_config.py's TestSettingsSingleton._reset_singleton).  That's

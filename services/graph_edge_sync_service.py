@@ -160,9 +160,9 @@ def make_supersession_event(
     old_edge_key = edge_key_for_fact(old_fact)
     new_edge_key = edge_key_for_fact(new_fact) if new_fact is not None else None
     return SupersessionEvent(
-        old_fact_id=UUID(str(getattr(old_fact, "id"))),
+        old_fact_id=UUID(str(old_fact.id)),
         new_fact_id=(
-            UUID(str(getattr(new_fact, "id"))) if new_fact is not None else None
+            UUID(str(new_fact.id)) if new_fact is not None else None
         ),
         triple=triple,
         old_edge_key=old_edge_key,

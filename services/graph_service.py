@@ -14,7 +14,6 @@ import logging
 from typing import Any
 from uuid import UUID
 
-from core.events import EventType
 from core.exceptions import (
     EntityNotFoundError,
     GraphBackendUnavailableError,

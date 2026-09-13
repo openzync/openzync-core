@@ -11,12 +11,10 @@ Covers:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
-
-from core.openbao import SYSTEM_KEY_MAPPING
 
 
 @pytest.mark.unit
@@ -175,7 +173,7 @@ class TestInitSettings:
     @pytest.mark.asyncio
     async def test_singleton_is_set(self) -> None:
         """After ``init_settings``, ``get_settings()`` returns the instance."""
-        from core.config import get_settings, set_settings
+        from core.config import get_settings
         from core.openbao_settings import init_settings
 
         mock_bao = AsyncMock()
@@ -192,7 +190,7 @@ class TestInitSettings:
     @pytest.mark.asyncio
     async def test_overwrites_existing_singleton(self) -> None:
         """Calling ``init_settings`` a second time replaces the singleton."""
-        from core.config import get_settings, set_settings
+        from core.config import get_settings
         from core.openbao_settings import init_settings
 
         mock_bao = AsyncMock()

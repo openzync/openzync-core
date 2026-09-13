@@ -784,7 +784,6 @@ async def test_get_me_unauthorized() -> None:
     Simulates a user that is not JWT-authenticated by overriding the dep
     to raise an HTTPException.
     """
-    from fastapi import HTTPException
 
     app = FastAPI()
     mocks: dict[str, AsyncMock] = {}

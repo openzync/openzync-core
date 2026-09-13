@@ -124,10 +124,12 @@ class TestDeleteSessionResponse:
     @pytest.mark.unit
     async def test_delete_session_returns_empty_response(self) -> None:
         """Verify delete_session returns Response with empty body and no Content-Length."""
-        from routers.sessions import delete_session
-        from starlette.responses import Response
         from unittest.mock import AsyncMock
         from uuid import UUID
+
+        from starlette.responses import Response
+
+        from routers.sessions import delete_session
 
         session_id = UUID("00000000-0000-0000-0000-000000000003")
         service = AsyncMock()

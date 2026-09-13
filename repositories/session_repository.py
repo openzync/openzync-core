@@ -7,14 +7,14 @@ logic, no schema construction.
 
 from __future__ import annotations
 
-from core.cursor import decode_cursor, encode_cursor
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.cursor import decode_cursor, encode_cursor
 from models.episode import Episode
 from models.fact import Fact
 from models.graph_observation import GraphObservation
@@ -374,7 +374,7 @@ class SessionRepository:
         if session is None:
             return None
 
-        session.closed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.closed_at = datetime.now(UTC).replace(tzinfo=None)
         await self._db.flush()
         await self._db.refresh(session)
         return session
@@ -584,7 +584,7 @@ class SessionRepository:
         Returns:
             A list of stale open Sessions.
         """
-        cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=inactivity_hours)
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=inactivity_hours)
         result = await self._db.execute(
             select(Session)
             .where(

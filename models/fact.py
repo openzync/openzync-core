@@ -10,14 +10,13 @@ from datetime import datetime
 
 from sqlalchemy import (
     ARRAY,
+    TIMESTAMP,
     Float,
     ForeignKey,
     Index,
-    TIMESTAMP,
     Text,
     func,
 )
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from models.base import Base, TimestampMixin

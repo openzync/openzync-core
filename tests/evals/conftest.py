@@ -6,10 +6,10 @@ by default and only run when ``--run-eval`` is passed to pytest.
 
 from __future__ import annotations
 
-import orjson
 from pathlib import Path
 from typing import Any
 
+import orjson
 import pytest
 
 GOLDEN_DIR = Path(__file__).parent / "golden"

@@ -9,22 +9,21 @@ No real database, no network, no LLM calls.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
 
 from services.observation_service import (
+    BehavioralPattern,
     CoOccurrencePattern,
     ObservationService,
     TemporalGapPattern,
-    BehavioralPattern,
     _is_burst,
     _is_monotonic,
     _stddev,
 )
-
 
 # ── Well-known test IDs ───────────────────────────────────────────────────────
 
@@ -186,7 +185,7 @@ class TestDetectTemporalGaps:
 
     def _ts(self, days_ago: float) -> datetime:
         """Build a UTC timestamp relative to now."""
-        return datetime.now(timezone.utc) - timedelta(days=days_ago)
+        return datetime.now(UTC) - timedelta(days=days_ago)
 
     async def test_single_appearance_no_analysis(
         self,

@@ -38,14 +38,13 @@ from arq.worker import Worker as ArqWorker
 from prometheus_client import Counter, Gauge, Histogram
 from prometheus_client import start_http_server as start_prometheus_server
 
+from core.config import BootstrapSettings, init_settings
+from core.openbao import OpenBaoClient
 from services.worker.worker_settings import (
     get_queue_name,
     init_worker_settings_from_bao,
     settings,
 )
-
-from core.config import BootstrapSettings, init_settings
-from core.openbao import OpenBaoClient
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Structlog setup
@@ -103,21 +102,21 @@ logger: structlog.stdlib.BoundLogger = structlog.get_logger("OpenZync.worker")
 # Task registry
 # ═════════════════════════════════════════════════════════════════════════════
 
+from services.worker.tasks.audit_log import write_audit_log
+from services.worker.tasks.deliver_webhook import deliver_webhook
+from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
+from workers.tasks.compute_observations import compute_observations
 from workers.tasks.embed_episode import embed_episode
 from workers.tasks.embed_fact import embed_fact
 from workers.tasks.enrich_episode import enrich_episode
-from workers.tasks.extract_blob_text import extract_blob_text
-from services.worker.tasks.audit_log import write_audit_log
-from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
-from workers.tasks.summarise_community import summarise_community
-from workers.tasks.link_entities_to_episode import link_entities_to_episode
-from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
-from workers.tasks.compute_observations import compute_observations
-from services.worker.tasks.deliver_webhook import deliver_webhook
-from workers.tasks.generate_user_summary import generate_user_summary
-from workers.tasks.reconcile_enrichment import reconcile_enrichment
 from workers.tasks.expire_graph_edges import expire_graph_edges
+from workers.tasks.extract_blob_text import extract_blob_text
+from workers.tasks.generate_user_summary import generate_user_summary
+from workers.tasks.link_entities_to_episode import link_entities_to_episode
+from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
+from workers.tasks.reconcile_enrichment import reconcile_enrichment
 from workers.tasks.reconcile_graph_edges import reconcile_graph_edges
+from workers.tasks.summarise_community import summarise_community
 
 HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     enrich_episode,  # combined LLM enrichment — classify/entities/facts/structured

@@ -24,7 +24,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # with_retry — success cases
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -399,7 +398,7 @@ class TestEnrichmentBitmask:
             | ENRICHMENT_CLASSIFICATION
             | ENRICHMENT_STRUCTURED_EXTRACTION
         )
-        assert ENRICHMENT_ALL == expected
+        assert expected == ENRICHMENT_ALL
 
     def test_observations_excluded_from_all(self) -> None:
         """``ENRICHMENT_OBSERVATIONS`` is NOT in ``ENRICHMENT_ALL``."""
@@ -416,7 +415,6 @@ class TestEnrichmentBitmask:
     def test_no_overlapping_bits(self) -> None:
         """All defined bitmask constants have unique bit positions."""
         from workers.tasks.base import (
-            ENRICHMENT_ALL,
             ENRICHMENT_BLOB_TEXT,
             ENRICHMENT_CLASSIFICATION,
             ENRICHMENT_EMBEDDING,

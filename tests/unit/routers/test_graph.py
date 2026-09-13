@@ -13,19 +13,6 @@ import pytest
 from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
-from schemas.graph import (
-    GraphNode,
-    GraphNodeDetail,
-    GraphNodeDetailResponse,
-    GraphNodesListResponse,
-    GraphEdgesListResponse,
-    GraphCommunitiesListResponse,
-    GraphEdge,
-    GraphCommunity,
-    PaginatedGraphNodes,
-    PaginatedGraphEdges,
-)
-
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")

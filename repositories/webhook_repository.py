@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import orjson
 import uuid
 
+import orjson
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 

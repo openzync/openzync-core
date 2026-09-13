@@ -5,7 +5,7 @@ at the service boundary.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
@@ -56,7 +56,7 @@ class TestStructuredExtractionService:
         ext.episode_id = episode_id or self.EPISODE_ID
         ext.schema_id = schema_id
         ext.data = data or {"amount": 100.0, "currency": "USD"}
-        ext.created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        ext.created_at = datetime(2025, 1, 1, tzinfo=UTC)
         return ext
 
     def _make_session_mock(self) -> MagicMock:

@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.auth import require_permission
 from dependencies.db import get_db
-from schemas.audit_log import AuditLogFilter, AuditLogListResponse, AuditLogResponse
+from schemas.audit_log import AuditLogListResponse, AuditLogResponse
 from services.audit_log_service import AuditLogService
 
 router = APIRouter(

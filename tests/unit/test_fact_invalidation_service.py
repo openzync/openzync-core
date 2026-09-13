@@ -897,6 +897,7 @@ class TestGraphEdgeSync:
 
     def _make_backend(self) -> Any:
         from unittest.mock import AsyncMock as _AsyncMock
+
         from sqlalchemy.ext.asyncio import AsyncSession as _AsyncSession
 
         from packages.graph_backend.postgres import PostgresGraphBackend
