@@ -67,7 +67,10 @@ class Fact(TimestampMixin, Base):
         ForeignKey("projects.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
-        comment="Denormalized for efficient project-scoped queries without joining through session.",
+        comment=(
+            "Denormalized for efficient project-scoped queries "
+            "without joining through session."
+        ),
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
@@ -119,13 +122,16 @@ class Fact(TimestampMixin, Base):
         comment="FK to graph_entities — resolved entity for the object.",
     )
     valid_from: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True,
+        TIMESTAMP(timezone=True),
+        nullable=True,
     )
     valid_to: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True,
+        TIMESTAMP(timezone=True),
+        nullable=True,
     )
     invalid_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True,
+        TIMESTAMP(timezone=True),
+        nullable=True,
     )
     superseded_by_fact_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("facts.id", ondelete="SET NULL"),
@@ -140,10 +146,13 @@ class Fact(TimestampMixin, Base):
     # note: Text is a stand-in for ``vector(1536)``. The Alembic
     # migration will alter this column when pgvector is available.
     embedding: Mapped[list[float] | None] = mapped_column(
-        ARRAY(Float), nullable=True, default=None,
+        ARRAY(Float),
+        nullable=True,
+        default=None,
     )
     embedded_at: Mapped[datetime | None] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True,
+        TIMESTAMP(timezone=True),
+        nullable=True,
     )
 
     __table_args__ = (

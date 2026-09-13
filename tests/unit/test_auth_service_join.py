@@ -36,7 +36,7 @@ USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 
 def _join_request(
     email: str = "alice@acme.com",
-    password: str = "SecurePass1",
+    password: str = "SecurePass1",  # noqa: S107  # fake fixture cred, never a real secret
     org_code: str = "K7M2Q9X4",
 ) -> JoinRequest:
     """Build a valid join request (password passes strength checks)."""
@@ -91,7 +91,9 @@ class TestJoinOrganization:
             yield
 
     def _make_org(
-        self, code: str = "K7M2Q9X4", join_enabled: bool = True,
+        self,
+        code: str = "K7M2Q9X4",
+        join_enabled: bool = True,
     ) -> AsyncMock:
         org = AsyncMock()
         org.id = ORG_ID
@@ -262,9 +264,7 @@ class TestJoinOrganization:
         mock_repo.create_dashboard_user.return_value = AsyncMock()
 
         with patch("services.auth_service.hash_password", return_value="hashed"):
-            await service.join_organization(
-                _join_request(org_code="  gce3gg9z  ")
-            )
+            await service.join_organization(_join_request(org_code="  gce3gg9z  "))
 
         mock_org_repo.get_by_code.assert_awaited_once_with("GCE3GG9Z")
 

@@ -43,48 +43,58 @@ class ObservationResponse(BaseModel):
     organization_id: UUID = Field(..., description="Owning organization.")
     project_id: UUID = Field(..., description="Owning project.")
     subject_entity_id: UUID = Field(
-        ..., description="The entity this observation is about.",
+        ...,
+        description="The entity this observation is about.",
     )
     related_entity_id: UUID | None = Field(
         default=None,
         description="Other entity in a pair-level observation (NULL for entity-level).",
     )
     observation_type: str = Field(
-        ..., description="One of ObservationType enum values.",
+        ...,
+        description="One of ObservationType enum values.",
     )
     content: str = Field(
-        ..., description="Natural-language description of the observation.",
+        ...,
+        description="Natural-language description of the observation.",
     )
     supporting_fact_ids: list[UUID] | None = Field(
-        default=None, description="UUIDs of supporting facts.",
+        default=None,
+        description="UUIDs of supporting facts.",
     )
     supporting_relationship_ids: list[UUID] | None = Field(
-        default=None, description="UUIDs of supporting graph relationships.",
+        default=None,
+        description="UUIDs of supporting graph relationships.",
     )
     confidence: float = Field(
-        ..., ge=0.0, le=1.0,
+        ...,
+        ge=0.0,
+        le=1.0,
         description="Confidence score (0.0–1.0).",
     )
     valid_from: datetime | None = Field(
-        default=None, description="Start of temporal validity (UTC).",
+        default=None,
+        description="Start of temporal validity (UTC).",
     )
     valid_to: datetime | None = Field(
-        default=None, description="End of temporal validity (NULL = open).",
+        default=None,
+        description="End of temporal validity (NULL = open).",
     )
     observation_metadata: dict | None = Field(
-        default=None, description="Arbitrary JSONB metadata.",
+        default=None,
+        description="Arbitrary JSONB metadata.",
     )
-    created_at: datetime = Field(
-        ..., description="Row creation timestamp (UTC)."
-    )
-    updated_at: datetime = Field(
-        ..., description="Row last-update timestamp (UTC)."
-    )
+    created_at: datetime = Field(..., description="Row creation timestamp (UTC).")
+    updated_at: datetime = Field(..., description="Row last-update timestamp (UTC).")
     subject_entity_name: str | None = Field(
-        default=None, description="Resolved name of the subject entity.",
+        default=None,
+        description="Resolved name of the subject entity.",
     )
     related_entity_name: str | None = Field(
-        default=None, description="Resolved name of the related entity (null for entity-level observations).",
+        default=None,
+        description=(
+            "Resolved name of the related entity (null for entity-level observations)."
+        ),
     )
 
     model_config = ConfigDict(from_attributes=True)
@@ -99,8 +109,11 @@ class ObservationListResponse(BaseModel):
     """
 
     data: list[ObservationResponse] = Field(
-        ..., description="List of observations for the current page.",
+        ...,
+        description="List of observations for the current page.",
     )
     total: int = Field(
-        ..., ge=0, description="Total number of matching observations.",
+        ...,
+        ge=0,
+        description="Total number of matching observations.",
     )

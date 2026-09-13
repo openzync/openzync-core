@@ -233,9 +233,7 @@ class TestFullIngestionPipeline:
         assert messages_resp.status_code == 200
         messages_body = messages_resp.json()
         messages = messages_body.get("items", [])
-        assert len(messages) == 2, (
-            f"Expected 2 messages, got {len(messages)}"
-        )
+        assert len(messages) == 2, f"Expected 2 messages, got {len(messages)}"
 
         # ── 5. Verify session stats include message count ────────────
         stats_resp = await auth_client.get(

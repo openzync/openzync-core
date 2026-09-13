@@ -135,7 +135,9 @@ class TestBlobStorageUpload:
         result = await storage.upload("path/to/file", b"data", "image/png")
         assert result == "path/to/file"
 
-        mock_session.client.assert_called_once_with("s3", endpoint_url="http://minio:9000")
+        mock_session.client.assert_called_once_with(
+            "s3", endpoint_url="http://minio:9000"
+        )
         mock_s3.put_object.assert_awaited_once_with(
             Bucket="test-bucket",
             Key="path/to/file",
@@ -318,7 +320,9 @@ class TestBlobStoragePresignedUrl:
         mock_session.client.return_value.__aenter__.return_value = mock_s3
         storage._session = mock_session
 
-        with pytest.raises(ExternalServiceError, match="Failed to generate presigned URL"):
+        with pytest.raises(
+            ExternalServiceError, match="Failed to generate presigned URL"
+        ):
             await storage.get_presigned_url("path/to/file")
 
 

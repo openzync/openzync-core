@@ -80,8 +80,7 @@ async def deliver_webhook(
                     # Client error — retrying won't help
                     error = f"HTTP {status_code}: {resp.text[:200]}"
                     logger.warning(
-                        "Webhook rejected by consumer (attempt %d): "
-                        "%s → %s %s",
+                        "Webhook rejected by consumer (attempt %d): %s → %s %s",
                         attempt,
                         endpoint_url,
                         status_code,
@@ -145,14 +144,16 @@ async def _log_delivery(
 
     try:
         async with _session_factory() as session:
-            session.add(WebhookDeliveryLog(
-                endpoint_id=uuid.UUID(endpoint_id),
-                event_type=event_type,
-                attempt=attempt,
-                status_code=status_code,
-                success=success,
-                error=error,
-            ))
+            session.add(
+                WebhookDeliveryLog(
+                    endpoint_id=uuid.UUID(endpoint_id),
+                    event_type=event_type,
+                    attempt=attempt,
+                    status_code=status_code,
+                    success=success,
+                    error=error,
+                )
+            )
             await session.commit()
     except Exception:
         logger.exception("Failed to persist webhook delivery log")

@@ -6,13 +6,17 @@ repository provides read-only query methods for the structured extraction API.
 
 from __future__ import annotations
 
-from uuid import UUID
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.episode import Episode
 from models.structured_extraction import StructuredExtraction
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class StructuredExtractionRepository:
@@ -56,9 +60,7 @@ class StructuredExtractionRepository:
         )
         return result.scalar_one_or_none()
 
-    async def count_for_session(
-        self, org_id: UUID, session_id: UUID
-    ) -> int:
+    async def count_for_session(self, org_id: UUID, session_id: UUID) -> int:
         """Count extractions for a session."""
         result = await self._db.execute(
             select(func.count())

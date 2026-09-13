@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -47,6 +46,8 @@ from packages.graph_backend.postgres import PostgresGraphBackend
 from services.worker.worker_settings import get_queue_name
 
 if TYPE_CHECKING:
+    from datetime import datetime
+
     from core.arq import ARQPool
     from packages.graph_backend.interface import GraphBackend
 
@@ -161,14 +162,10 @@ def make_supersession_event(
     new_edge_key = edge_key_for_fact(new_fact) if new_fact is not None else None
     return SupersessionEvent(
         old_fact_id=UUID(str(old_fact.id)),
-        new_fact_id=(
-            UUID(str(new_fact.id)) if new_fact is not None else None
-        ),
+        new_fact_id=(UUID(str(new_fact.id)) if new_fact is not None else None),
         triple=triple,
         old_edge_key=old_edge_key,
-        successor_reasserts=(
-            old_edge_key is not None and new_edge_key == old_edge_key
-        ),
+        successor_reasserts=(old_edge_key is not None and new_edge_key == old_edge_key),
     )
 
 

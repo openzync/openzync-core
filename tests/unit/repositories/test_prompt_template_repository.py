@@ -33,9 +33,7 @@ class TestPromptTemplateRepository:
         t.id = overrides.get("id", uuid4())
         t.organization_id = overrides.get("organization_id", self.ORG_ID)
         t.template_name = overrides.get("template_name", "test_template")
-        t.template_text = overrides.get(
-            "template_text", "Extract facts from: {{text}}"
-        )
+        t.template_text = overrides.get("template_text", "Extract facts from: {{text}}")
         t.version = overrides.get("version", 1)
         t.description = overrides.get("description", "A test template")
         t.type = overrides.get("type", "fact_extraction")
@@ -69,9 +67,7 @@ class TestPromptTemplateRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_active(
-            org_id=self.ORG_ID, template_name="nonexistent"
-        )
+        result = await repo.get_active(org_id=self.ORG_ID, template_name="nonexistent")
 
         assert result is None
 
@@ -100,9 +96,7 @@ class TestPromptTemplateRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_active_by_type(
-            org_id=self.ORG_ID, type="unknown_type"
-        )
+        result = await repo.get_active_by_type(org_id=self.ORG_ID, type="unknown_type")
 
         assert result is None
 
@@ -168,9 +162,7 @@ class TestPromptTemplateRepository:
         mock_db.execute.return_value = mock_result
 
         with pytest.raises(ValueError, match="Template .* not found"):
-            await repo.set_as_type_default(
-                org_id=self.ORG_ID, name="nonexistent"
-            )
+            await repo.set_as_type_default(org_id=self.ORG_ID, name="nonexistent")
 
     async def test_set_as_type_default_no_type(
         self, repo: PromptTemplateRepository, mock_db: AsyncMock
@@ -182,9 +174,7 @@ class TestPromptTemplateRepository:
         mock_db.execute.return_value = mock_result
 
         with pytest.raises(ValueError, match="no type assigned"):
-            await repo.set_as_type_default(
-                org_id=self.ORG_ID, name="test_template"
-            )
+            await repo.set_as_type_default(org_id=self.ORG_ID, name="test_template")
 
     # ── set_for_org (create new version) ───────────────────────────────────────
 
@@ -290,9 +280,7 @@ class TestPromptTemplateRepository:
         mock_db.execute.return_value = mock_result
 
         with pytest.raises(ValueError, match="Version 99"):
-            await repo.rollback(
-                org_id=self.ORG_ID, name="test_template", version=99
-            )
+            await repo.rollback(org_id=self.ORG_ID, name="test_template", version=99)
 
     # ── delete_for_org ─────────────────────────────────────────────────────────
 
@@ -303,9 +291,7 @@ class TestPromptTemplateRepository:
         mock_db.execute.return_value = MagicMock()
         mock_db.flush.return_value = None
 
-        await repo.delete_for_org(
-            org_id=self.ORG_ID, name="test_template"
-        )
+        await repo.delete_for_org(org_id=self.ORG_ID, name="test_template")
 
         mock_db.execute.assert_awaited_once()
         mock_db.flush.assert_awaited_once()
@@ -566,9 +552,7 @@ class TestPromptTemplateRepository:
         mock_result.scalars.return_value.all.return_value = versions
         mock_db.execute.return_value = mock_result
 
-        result = await repo.list_versions(
-            org_id=self.ORG_ID, name="test_template"
-        )
+        result = await repo.list_versions(org_id=self.ORG_ID, name="test_template")
 
         assert result == versions
 
@@ -580,8 +564,6 @@ class TestPromptTemplateRepository:
         mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result = await repo.list_versions(
-            org_id=self.ORG_ID, name="nonexistent"
-        )
+        result = await repo.list_versions(org_id=self.ORG_ID, name="nonexistent")
 
         assert result == []

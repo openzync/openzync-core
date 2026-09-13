@@ -1148,9 +1148,7 @@ class TestSupersessionLineage:
         async with AsyncSession(engine) as db:
             # 1. The superseded fact points at its successor.
             row = await db.execute(
-                sa_text(
-                    "SELECT superseded_by_fact_id FROM facts WHERE id = :fid"
-                ),
+                sa_text("SELECT superseded_by_fact_id FROM facts WHERE id = :fid"),
                 {"fid": old_id},
             )
             assert row.scalar_one() == new_id, (
@@ -1159,9 +1157,7 @@ class TestSupersessionLineage:
 
             # The open-ended successor never points at anything.
             row = await db.execute(
-                sa_text(
-                    "SELECT superseded_by_fact_id FROM facts WHERE id = :fid"
-                ),
+                sa_text("SELECT superseded_by_fact_id FROM facts WHERE id = :fid"),
                 {"fid": new_id},
             )
             assert row.scalar_one() is None

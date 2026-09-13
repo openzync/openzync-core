@@ -91,13 +91,10 @@ class IngestDedupRepository:
         Returns:
             The prior ``job_id`` if a claim exists, else ``None``.
         """
-        stmt = (
-            select(IngestDedup.job_id)
-            .where(
-                IngestDedup.project_id == project_id,
-                IngestDedup.session_id == session_id,
-                IngestDedup.content_hash == content_hash,
-            )
+        stmt = select(IngestDedup.job_id).where(
+            IngestDedup.project_id == project_id,
+            IngestDedup.session_id == session_id,
+            IngestDedup.content_hash == content_hash,
         )
         result = await self._db.execute(stmt)
         return result.scalar_one_or_none()

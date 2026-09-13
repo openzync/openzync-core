@@ -24,7 +24,6 @@ USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
 
 
-
 @pytest.fixture(autouse=True)
 def _stub_permission_gate() -> None:
     """Stub the permission gate for every test in this file.

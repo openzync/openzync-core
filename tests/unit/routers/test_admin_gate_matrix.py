@@ -117,8 +117,18 @@ ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [
     ("GET", "/v1/admin/webhooks", {}, {}),
     ("GET", "/v1/admin/webhooks/{endpoint_id}", {"endpoint_id": str(ENDPOINT_ID)}, {}),
     ("POST", "/v1/admin/webhooks", {}, {}),
-    ("PATCH", "/v1/admin/webhooks/{endpoint_id}", {"endpoint_id": str(ENDPOINT_ID)}, {}),
-    ("DELETE", "/v1/admin/webhooks/{endpoint_id}", {"endpoint_id": str(ENDPOINT_ID)}, {}),
+    (
+        "PATCH",
+        "/v1/admin/webhooks/{endpoint_id}",
+        {"endpoint_id": str(ENDPOINT_ID)},
+        {},
+    ),
+    (
+        "DELETE",
+        "/v1/admin/webhooks/{endpoint_id}",
+        {"endpoint_id": str(ENDPOINT_ID)},
+        {},
+    ),
     # organizations — prompts + custom-instructions (all require_org_admin)
     ("GET", "/admin/org/prompts", {}, {}),
     ("GET", "/admin/org/prompts/system", {}, {}),
@@ -127,7 +137,12 @@ ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [
     ("GET", "/admin/org/prompts/{name}", {"name": PROMPT_NAME}, {}),
     ("GET", "/admin/org/prompts/{name}/versions", {"name": PROMPT_NAME}, {}),
     ("PUT", "/admin/org/prompts/{name}", {"name": PROMPT_NAME}, {}),
-    ("POST", "/admin/org/prompts/{name}/rollback/{version}", {"name": PROMPT_NAME, "version": "1"}, {}),
+    (
+        "POST",
+        "/admin/org/prompts/{name}/rollback/{version}",
+        {"name": PROMPT_NAME, "version": "1"},
+        {},
+    ),
     ("DELETE", "/admin/org/prompts/{name}", {"name": PROMPT_NAME}, {}),
     ("GET", "/admin/org/custom-instructions", {}, {}),
     ("PUT", "/admin/org/custom-instructions", {}, {}),
@@ -154,8 +169,18 @@ ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [
     ("PATCH", "/v1/users/{user_id}", {"user_id": str(OTHER_USER_ID)}, {}),
     ("DELETE", "/v1/users/{user_id}", {"user_id": str(OTHER_USER_ID)}, {}),
     ("POST", "/v1/users/{user_id}/summary", {"user_id": str(OTHER_USER_ID)}, {}),
-    ("PUT", "/v1/users/{user_id}/summary-instructions", {"user_id": str(OTHER_USER_ID)}, {}),
-    ("DELETE", "/v1/users/{user_id}/summary-instructions", {"user_id": str(OTHER_USER_ID)}, {}),
+    (
+        "PUT",
+        "/v1/users/{user_id}/summary-instructions",
+        {"user_id": str(OTHER_USER_ID)},
+        {},
+    ),
+    (
+        "DELETE",
+        "/v1/users/{user_id}/summary-instructions",
+        {"user_id": str(OTHER_USER_ID)},
+        {},
+    ),
     # users — invite flow (admin only)
     ("POST", "/v1/admin/users/invite", {}, {}),
     (
@@ -166,7 +191,12 @@ ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [
     ),
     # users — require_permission_or_self: member on ANOTHER user
     ("GET", "/v1/users/{user_id}/summary", {"user_id": str(OTHER_USER_ID)}, {}),
-    ("GET", "/v1/users/{user_id}/summary-instructions", {"user_id": str(OTHER_USER_ID)}, {}),
+    (
+        "GET",
+        "/v1/users/{user_id}/summary-instructions",
+        {"user_id": str(OTHER_USER_ID)},
+        {},
+    ),
     # platform superadmin — POST /admin/organizations (re-gated bootstrap)
     ("POST", "/admin/organizations", {}, {}),
     # platform superadmin — /admin/system/*
@@ -265,7 +295,8 @@ async def test_member_jwt_denied_403(
 
     with (
         patch(
-            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+            "dependencies.auth.get_org_role",
+            new=AsyncMock(return_value="member"),
         ),
         patch(
             "dependencies.auth.get_effective_permissions",
@@ -330,13 +361,16 @@ async def test_member_self_summary_200() -> None:
     app = _make_app(authenticated=True)
     service = AsyncMock()
     service.get_summary.return_value = UserSummaryResponse(
-        user_id=MEMBER_USER_ID, summary="self summary", updated_at=None,
+        user_id=MEMBER_USER_ID,
+        summary="self summary",
+        updated_at=None,
     )
     app.dependency_overrides[get_user_summary_service] = lambda: service
 
     with (
         patch(
-            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+            "dependencies.auth.get_org_role",
+            new=AsyncMock(return_value="member"),
         ),
         patch(
             "dependencies.auth.get_effective_permissions",
@@ -360,7 +394,8 @@ async def test_member_self_summary_instructions_200() -> None:
 
     with (
         patch(
-            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+            "dependencies.auth.get_org_role",
+            new=AsyncMock(return_value="member"),
         ),
         patch(
             "dependencies.auth.get_effective_permissions",
@@ -388,7 +423,8 @@ async def test_admin_role_passes_org_code_200() -> None:
     app.dependency_overrides[_get_org_service] = lambda: service
 
     with patch(
-        "dependencies.auth.get_org_role", new=AsyncMock(return_value="admin"),
+        "dependencies.auth.get_org_role",
+        new=AsyncMock(return_value="admin"),
     ):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:

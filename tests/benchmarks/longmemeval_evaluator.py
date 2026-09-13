@@ -174,8 +174,5 @@ async def evaluate_answer(
     )
     return EvaluationResult(
         correct=False,
-        reasoning=(
-            "Judge LLM returned no parseable result. "
-            "Defaulting to incorrect."
-        ),
+        reasoning=("Judge LLM returned no parseable result. Defaulting to incorrect."),
     )

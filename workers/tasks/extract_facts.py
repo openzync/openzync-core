@@ -329,13 +329,13 @@ def _deduplicate_facts(
                 candidate_preds.add(canonical)
 
         if key in existing_pairs and candidate_preds & existing_pairs[key]:
-                logger.debug(
-                    "fact_dedup.duplicate_skipped",
-                    subject=nf["subject"],
-                    predicate=nf["predicate"],
-                    object=nf["object"],
-                )
-                continue
+            logger.debug(
+                "fact_dedup.duplicate_skipped",
+                subject=nf["subject"],
+                predicate=nf["predicate"],
+                object=nf["object"],
+            )
+            continue
 
         deduped.append(nf)
 
@@ -641,5 +641,3 @@ async def process_facts_output(
     if return_slot_map:
         return new_facts, slot_map
     return persisted_ids
-
-

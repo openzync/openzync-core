@@ -78,7 +78,9 @@ class TestGetOrgRole:
 
     @pytest.mark.asyncio
     async def test_cache_hit_returns_role_without_db_call(
-        self, db_session: AsyncMock, mock_user_repo: MagicMock,
+        self,
+        db_session: AsyncMock,
+        mock_user_repo: MagicMock,
     ) -> None:
         """Redis returns a cached role → returned, no DB lookup."""
         redis = AsyncMock()
@@ -93,7 +95,10 @@ class TestGetOrgRole:
 
     @pytest.mark.asyncio
     async def test_cache_miss_looks_up_db_and_writes_cache(
-        self, db_session: AsyncMock, mock_user_repo: MagicMock, mock_user: MagicMock,
+        self,
+        db_session: AsyncMock,
+        mock_user_repo: MagicMock,
+        mock_user: MagicMock,
     ) -> None:
         """Cache miss → DB lookup → role cached with the 60 s TTL."""
         redis = AsyncMock()
@@ -111,7 +116,9 @@ class TestGetOrgRole:
 
     @pytest.mark.asyncio
     async def test_db_miss_returns_member(
-        self, db_session: AsyncMock, mock_user_repo: MagicMock,
+        self,
+        db_session: AsyncMock,
+        mock_user_repo: MagicMock,
     ) -> None:
         """Unknown user → ``"member"`` (deny)."""
         redis = AsyncMock()
@@ -126,7 +133,10 @@ class TestGetOrgRole:
 
     @pytest.mark.asyncio
     async def test_inactive_user_returns_member(
-        self, db_session: AsyncMock, mock_user_repo: MagicMock, mock_user: MagicMock,
+        self,
+        db_session: AsyncMock,
+        mock_user_repo: MagicMock,
+        mock_user: MagicMock,
     ) -> None:
         """Inactive (or soft-deleted) user → ``"member"`` — never elevated."""
         redis = AsyncMock()
@@ -141,7 +151,10 @@ class TestGetOrgRole:
 
     @pytest.mark.asyncio
     async def test_redis_read_failure_falls_through_to_db(
-        self, db_session: AsyncMock, mock_user_repo: MagicMock, mock_user: MagicMock,
+        self,
+        db_session: AsyncMock,
+        mock_user_repo: MagicMock,
+        mock_user: MagicMock,
     ) -> None:
         """Redis read error → falls through to the DB (source of truth)."""
         redis = AsyncMock()
@@ -156,7 +169,9 @@ class TestGetOrgRole:
 
     @pytest.mark.asyncio
     async def test_db_failure_fails_closed_to_member(
-        self, db_session: AsyncMock, mock_user_repo: MagicMock,
+        self,
+        db_session: AsyncMock,
+        mock_user_repo: MagicMock,
     ) -> None:
         """DB error → ``"member"`` — a transient outage never elevates."""
         redis = AsyncMock()
@@ -170,7 +185,10 @@ class TestGetOrgRole:
 
     @pytest.mark.asyncio
     async def test_cache_write_failure_does_not_downgrade_db_verified_admin(
-        self, db_session: AsyncMock, mock_user_repo: MagicMock, mock_user: MagicMock,
+        self,
+        db_session: AsyncMock,
+        mock_user_repo: MagicMock,
+        mock_user: MagicMock,
     ) -> None:
         """A failed cache WRITE after a successful DB read keeps the admin role.
 
@@ -242,16 +260,16 @@ class TestGetEffectivePermissions:
 
     @pytest.mark.asyncio
     async def test_cache_hit_returns_permissions_without_db_call(
-        self, db_session: AsyncMock, mock_user_repo: MagicMock,
+        self,
+        db_session: AsyncMock,
+        mock_user_repo: MagicMock,
     ) -> None:
         """Redis returns a cached JSON array → decoded, no DB lookup."""
         redis = AsyncMock()
         redis.get.return_value = b'["project:read","project:write"]'
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
-            perms = await get_effective_permissions(
-                redis, db_session, ORG_ID, USER_ID
-            )
+            perms = await get_effective_permissions(redis, db_session, ORG_ID, USER_ID)
 
         assert perms == frozenset({"project:read", "project:write"})
         redis.get.assert_awaited_once_with(f"{RBAC_PERMS_CACHE_PREFIX}{USER_ID}")
@@ -259,7 +277,10 @@ class TestGetEffectivePermissions:
 
     @pytest.mark.asyncio
     async def test_cache_miss_looks_up_db_and_writes_sorted_json(
-        self, db_session: AsyncMock, mock_user_repo: MagicMock, mock_user: MagicMock,
+        self,
+        db_session: AsyncMock,
+        mock_user_repo: MagicMock,
+        mock_user: MagicMock,
     ) -> None:
         """Cache miss → DB lookup → sorted JSON cached with the 60 s TTL."""
         redis = AsyncMock()
@@ -267,9 +288,7 @@ class TestGetEffectivePermissions:
         mock_user_repo.get_by_uuid.return_value = mock_user
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
-            perms = await get_effective_permissions(
-                redis, db_session, ORG_ID, USER_ID
-            )
+            perms = await get_effective_permissions(redis, db_session, ORG_ID, USER_ID)
 
         assert perms == frozenset({"project:read", "project:write"})
         mock_user_repo.get_by_uuid.assert_awaited_once_with(ORG_ID, USER_ID)
@@ -281,7 +300,9 @@ class TestGetEffectivePermissions:
 
     @pytest.mark.asyncio
     async def test_db_miss_returns_empty_set(
-        self, db_session: AsyncMock, mock_user_repo: MagicMock,
+        self,
+        db_session: AsyncMock,
+        mock_user_repo: MagicMock,
     ) -> None:
         """Unknown user → empty frozenset (deny)."""
         redis = AsyncMock()
@@ -289,16 +310,17 @@ class TestGetEffectivePermissions:
         mock_user_repo.get_by_uuid.return_value = None
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
-            perms = await get_effective_permissions(
-                redis, db_session, ORG_ID, USER_ID
-            )
+            perms = await get_effective_permissions(redis, db_session, ORG_ID, USER_ID)
 
         assert perms == frozenset()
         redis.setex.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_inactive_user_returns_empty_set(
-        self, db_session: AsyncMock, mock_user_repo: MagicMock, mock_user: MagicMock,
+        self,
+        db_session: AsyncMock,
+        mock_user_repo: MagicMock,
+        mock_user: MagicMock,
     ) -> None:
         """Inactive (or soft-deleted) user → empty set — never granted."""
         redis = AsyncMock()
@@ -307,15 +329,16 @@ class TestGetEffectivePermissions:
         mock_user_repo.get_by_uuid.return_value = mock_user
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
-            perms = await get_effective_permissions(
-                redis, db_session, ORG_ID, USER_ID
-            )
+            perms = await get_effective_permissions(redis, db_session, ORG_ID, USER_ID)
 
         assert perms == frozenset()
 
     @pytest.mark.asyncio
     async def test_redis_read_failure_falls_through_to_db(
-        self, db_session: AsyncMock, mock_user_repo: MagicMock, mock_user: MagicMock,
+        self,
+        db_session: AsyncMock,
+        mock_user_repo: MagicMock,
+        mock_user: MagicMock,
     ) -> None:
         """Redis read error → falls through to the DB (source of truth)."""
         redis = AsyncMock()
@@ -323,16 +346,16 @@ class TestGetEffectivePermissions:
         mock_user_repo.get_by_uuid.return_value = mock_user
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
-            perms = await get_effective_permissions(
-                redis, db_session, ORG_ID, USER_ID
-            )
+            perms = await get_effective_permissions(redis, db_session, ORG_ID, USER_ID)
 
         assert perms == frozenset({"project:read", "project:write"})
         mock_user_repo.get_by_uuid.assert_awaited_once_with(ORG_ID, USER_ID)
 
     @pytest.mark.asyncio
     async def test_db_failure_fails_closed_to_empty(
-        self, db_session: AsyncMock, mock_user_repo: MagicMock,
+        self,
+        db_session: AsyncMock,
+        mock_user_repo: MagicMock,
     ) -> None:
         """DB error → empty frozenset — an outage never grants permissions."""
         redis = AsyncMock()
@@ -340,15 +363,16 @@ class TestGetEffectivePermissions:
         mock_user_repo.get_by_uuid.side_effect = RuntimeError("db down")
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
-            perms = await get_effective_permissions(
-                redis, db_session, ORG_ID, USER_ID
-            )
+            perms = await get_effective_permissions(redis, db_session, ORG_ID, USER_ID)
 
         assert perms == frozenset()
 
     @pytest.mark.asyncio
     async def test_cache_write_failure_does_not_downgrade_db_verified_set(
-        self, db_session: AsyncMock, mock_user_repo: MagicMock, mock_user: MagicMock,
+        self,
+        db_session: AsyncMock,
+        mock_user_repo: MagicMock,
+        mock_user: MagicMock,
     ) -> None:
         """A failed cache WRITE after a successful DB read keeps the set.
 
@@ -361,9 +385,7 @@ class TestGetEffectivePermissions:
         mock_user_repo.get_by_uuid.return_value = mock_user
 
         with patch("core.rbac.UserRepository", return_value=mock_user_repo):
-            perms = await get_effective_permissions(
-                redis, db_session, ORG_ID, USER_ID
-            )
+            perms = await get_effective_permissions(redis, db_session, ORG_ID, USER_ID)
 
         assert perms == frozenset({"project:read", "project:write"})
 
@@ -400,13 +422,16 @@ class TestRequirePermission:
 
     @pytest.fixture
     def db_session(self) -> AsyncMock:
-        return AsyncMock(spec=__import__(
-            "sqlalchemy.ext.asyncio", fromlist=["AsyncSession"]
-        ).AsyncSession)
+        return AsyncMock(
+            spec=__import__(
+                "sqlalchemy.ext.asyncio", fromlist=["AsyncSession"]
+            ).AsyncSession
+        )
 
     @pytest.mark.asyncio
     async def test_jwt_admin_role_passes_any_permission(
-        self, db_session: AsyncMock,
+        self,
+        db_session: AsyncMock,
     ) -> None:
         """JWT user with the org admin role → wildcard, returns the org_id."""
         from dependencies.auth import require_permission
@@ -429,7 +454,8 @@ class TestRequirePermission:
 
     @pytest.mark.asyncio
     async def test_jwt_superadmin_role_passes_any_permission(
-        self, db_session: AsyncMock,
+        self,
+        db_session: AsyncMock,
     ) -> None:
         """JWT user with the superadmin role → wildcard, passes."""
         from dependencies.auth import require_permission
@@ -444,7 +470,8 @@ class TestRequirePermission:
 
     @pytest.mark.asyncio
     async def test_jwt_member_with_permission_passes(
-        self, db_session: AsyncMock,
+        self,
+        db_session: AsyncMock,
     ) -> None:
         """JWT member whose explicit permissions contain the required one → passes."""
         from dependencies.auth import require_permission
@@ -457,7 +484,9 @@ class TestRequirePermission:
             ),
             patch(
                 "dependencies.auth.get_effective_permissions",
-                new=AsyncMock(return_value=frozenset({"project:read", "project:write"})),
+                new=AsyncMock(
+                    return_value=frozenset({"project:read", "project:write"})
+                ),
             ),
         ):
             result = await checker(request, ORG_ID_STR, db_session)
@@ -465,7 +494,8 @@ class TestRequirePermission:
 
     @pytest.mark.asyncio
     async def test_jwt_member_without_permission_raises_403(
-        self, db_session: AsyncMock,
+        self,
+        db_session: AsyncMock,
     ) -> None:
         """JWT member lacking the permission → 403."""
         from dependencies.auth import require_permission
@@ -500,7 +530,8 @@ class TestRequirePermission:
 
     @pytest.mark.asyncio
     async def test_api_key_without_permission_raises_403(
-        self, db_session: AsyncMock,
+        self,
+        db_session: AsyncMock,
     ) -> None:
         """API key missing the permission → 403 naming key + available set."""
         from dependencies.auth import require_permission
@@ -531,7 +562,8 @@ class TestRequirePermission:
 
     @pytest.mark.asyncio
     async def test_missing_redis_on_app_state_raises_503(
-        self, db_session: AsyncMock,
+        self,
+        db_session: AsyncMock,
     ) -> None:
         """Redis not configured on app.state → 503 (explicit, never silent)."""
         from dependencies.auth import require_permission
@@ -545,7 +577,9 @@ class TestRequirePermission:
         assert exc.value.status_code == 503
 
     @pytest.mark.asyncio
-    async def test_infra_failure_fails_closed_to_403(self, db_session: AsyncMock) -> None:
+    async def test_infra_failure_fails_closed_to_403(
+        self, db_session: AsyncMock
+    ) -> None:
         """Role lookup fails closed to member + empty perms → 403 deny."""
         from dependencies.auth import require_permission
 

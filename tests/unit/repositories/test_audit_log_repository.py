@@ -110,7 +110,7 @@ class TestAuditLogRepository:
             return mock_count_result
 
         mock_db.execute.side_effect = lambda *a, **kw: (
-            mock_count_result if hasattr(a[0], 'count') else mock_list_result
+            mock_count_result if hasattr(a[0], "count") else mock_list_result
         )
 
         # We'll use two sequential calls instead
@@ -154,9 +154,7 @@ class TestAuditLogRepository:
         mock_count_result.scalar.return_value = 0
         mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
-        result, total = await repo.list(
-            organization_id=self.ORG_ID, limit=10, offset=5
-        )
+        result, total = await repo.list(organization_id=self.ORG_ID, limit=10, offset=5)
 
         assert result == []
         assert total == 0

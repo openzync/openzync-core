@@ -19,7 +19,9 @@ depends_on: str | None = None
 def upgrade() -> None:
     op.create_table(
         "webhook_delivery_logs",
-        sa.Column("id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column(
+            "id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False
+        ),
         sa.Column("endpoint_id", sa.Uuid(), nullable=False),
         sa.Column("event_type", sa.Text(), nullable=False),
         sa.Column("attempt", sa.Integer(), nullable=False, server_default="0"),

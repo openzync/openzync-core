@@ -35,7 +35,9 @@ def upgrade() -> None:
             postgresql.JSONB(),
             nullable=False,
             server_default=sa.text("'{}'::jsonb"),
-            comment="Per-org UI-exposed configuration (LLM, embeddings, graph, behaviour).",
+            comment=(
+                "Per-org UI-exposed configuration (LLM, embeddings, graph, behaviour)."
+            ),
         ),
     )
 

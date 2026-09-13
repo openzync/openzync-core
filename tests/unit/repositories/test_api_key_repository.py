@@ -40,7 +40,9 @@ class TestApiKeyRepository:
         key.key_hash = overrides.get("key_hash", "def456")
         key.salt = overrides.get("salt", "salt123")
         key.prefix = overrides.get("prefix", "oz_test_")
-        key.permissions = overrides.get("permissions", ["project:read", "project:write"])
+        key.permissions = overrides.get(
+            "permissions", ["project:read", "project:write"]
+        )
         key.is_revoked = overrides.get("is_revoked", False)
         key.last_used_at = overrides.get("last_used_at")
         key.created_at = overrides.get("created_at")
@@ -116,9 +118,7 @@ class TestApiKeyRepository:
         mock_result.scalar_one_or_none.return_value = key
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_id(
-            organization_id=self.ORG_ID, key_id=self.KEY_ID
-        )
+        result = await repo.get_by_id(organization_id=self.ORG_ID, key_id=self.KEY_ID)
 
         assert result == key
 
@@ -130,9 +130,7 @@ class TestApiKeyRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_id(
-            organization_id=self.ORG_ID, key_id=self.KEY_ID
-        )
+        result = await repo.get_by_id(organization_id=self.ORG_ID, key_id=self.KEY_ID)
 
         assert result is None
 
@@ -218,9 +216,7 @@ class TestApiKeyRepository:
         mock_result.scalar_one_or_none.return_value = key
         mock_db.execute.return_value = mock_result
 
-        result = await repo.revoke(
-            organization_id=self.ORG_ID, key_id=self.KEY_ID
-        )
+        result = await repo.revoke(organization_id=self.ORG_ID, key_id=self.KEY_ID)
 
         assert result is not None
         assert result.is_revoked is True
@@ -235,9 +231,7 @@ class TestApiKeyRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.revoke(
-            organization_id=self.ORG_ID, key_id=self.KEY_ID
-        )
+        result = await repo.revoke(organization_id=self.ORG_ID, key_id=self.KEY_ID)
 
         assert result is None
         mock_db.flush.assert_not_called()

@@ -90,17 +90,37 @@ def sample_search_results() -> dict[str, Any]:
     """
     return {
         "episode_vector": [
-            {"id": "ep-1", "content": "Python is a programming language", "score": 0.92},
-            {"id": "ep-2", "content": "FastAPI is a Python web framework", "score": 0.75},
+            {
+                "id": "ep-1",
+                "content": "Python is a programming language",
+                "score": 0.92,
+            },
+            {
+                "id": "ep-2",
+                "content": "FastAPI is a Python web framework",
+                "score": 0.75,
+            },
         ],
         "episode_bm25": [
-            {"id": "ep-1", "content": "Python is a programming language", "score": 0.85},
+            {
+                "id": "ep-1",
+                "content": "Python is a programming language",
+                "score": 0.85,
+            },
         ],
         "fact_vector": [
-            {"id": "fact-1", "content": "Guido van Rossum created Python", "score": 0.88},
+            {
+                "id": "fact-1",
+                "content": "Guido van Rossum created Python",
+                "score": 0.88,
+            },
         ],
         "fact_bm25": [
-            {"id": "fact-1", "content": "Guido van Rossum created Python", "score": 0.80},
+            {
+                "id": "fact-1",
+                "content": "Guido van Rossum created Python",
+                "score": 0.80,
+            },
         ],
     }
 
@@ -330,8 +350,7 @@ class TestContextHttp:
             params={"query": ""},
         )
         assert response.status_code == 422, (
-            f"Expected 422 for empty query, "
-            f"got {response.status_code}: {response.text}"
+            f"Expected 422 for empty query, got {response.status_code}: {response.text}"
         )
 
     async def test_context_foreign_project_returns_403(
@@ -355,14 +374,11 @@ class TestContextHttp:
     ) -> None:
         """GET /context without auth → 401."""
         transport = ASGITransport(app=isolated_app)
-        async with AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as client:
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
             response = await client.get(
                 "/v1/projects/00000000-0000-0000-0000-000000000000/context",
                 params={"query": "Python"},
             )
         assert response.status_code == 401, (
-            f"Expected 401 without auth, "
-            f"got {response.status_code}: {response.text}"
+            f"Expected 401 without auth, got {response.status_code}: {response.text}"
         )

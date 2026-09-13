@@ -69,7 +69,12 @@ class OllamaBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self.DEFAULT_EMBED_DIM
 
-    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
+    async def _chat(
+        self,
+        messages: list[dict],
+        cache_config: PromptCachingConfig | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
         """Send a chat completion request to Ollama's ``/api/chat``.
 
         Supported kwargs (forwarded to Ollama):
@@ -128,7 +133,9 @@ class OllamaBackend(LLMBackend):
             },
         )
 
-        return ChatResponse(content=content, model=data.get("model", model), usage=usage)
+        return ChatResponse(
+            content=content, model=data.get("model", model), usage=usage
+        )
 
     async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:
         """Generate embeddings via Ollama's ``/api/embeddings`` endpoint.
@@ -144,7 +151,9 @@ class OllamaBackend(LLMBackend):
 
         try:
             async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post(f"{self._base_url}/api/embeddings", json=payload)
+                resp = await client.post(
+                    f"{self._base_url}/api/embeddings", json=payload
+                )
                 resp.raise_for_status()
                 data = resp.json()
         except httpx.HTTPStatusError as exc:
@@ -160,7 +169,7 @@ class OllamaBackend(LLMBackend):
             logger.error("ollama.embed_timeout", extra={"model": model})
             raise
 
-        # Handle both /api/embeddings (singular) and /api/embed (plural) response formats
+        # Handle both /api/embeddings (singular) and /api/embed (plural) formats
         raw = data.get("embeddings") or data.get("embedding")
         if raw and isinstance(raw, list):
             if raw and isinstance(raw[0], float):
@@ -172,7 +181,10 @@ class OllamaBackend(LLMBackend):
         else:
             embeddings = []
         if not embeddings:
-            raise ValueError(f"Empty embedding response for model {model}. Response: {str(data)[:200]}")
+            raise ValueError(
+                f"Empty embedding response for model {model}. "
+                f"Response: {str(data)[:200]}"
+            )
         dim = len(embeddings[0])
 
         logger.info(
@@ -185,7 +197,9 @@ class OllamaBackend(LLMBackend):
             },
         )
 
-        return EmbeddingResponse(embeddings=embeddings, model=data.get("model", model), dim=dim)
+        return EmbeddingResponse(
+            embeddings=embeddings, model=data.get("model", model), dim=dim
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -227,7 +241,12 @@ class OpenAIBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self.DEFAULT_EMBED_DIM
 
-    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
+    async def _chat(
+        self,
+        messages: list[dict],
+        cache_config: PromptCachingConfig | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
         """Send a chat completion request.
 
         Supported kwargs: ``temperature``, ``max_tokens``, ``top_p``,
@@ -274,9 +293,21 @@ class OpenAIBackend(LLMBackend):
                 usage_data = response.usage
                 cached_tokens = 0
                 cache_write_tokens = 0
-                if usage_data and hasattr(usage_data, 'prompt_tokens_details') and usage_data.prompt_tokens_details:
-                    cached_tokens = getattr(usage_data.prompt_tokens_details, 'cached_tokens', 0) or 0
-                    cache_write_tokens = getattr(usage_data.prompt_tokens_details, 'cache_write_tokens', 0) or 0
+                if (
+                    usage_data
+                    and hasattr(usage_data, "prompt_tokens_details")
+                    and usage_data.prompt_tokens_details
+                ):
+                    cached_tokens = (
+                        getattr(usage_data.prompt_tokens_details, "cached_tokens", 0)
+                        or 0
+                    )
+                    cache_write_tokens = (
+                        getattr(
+                            usage_data.prompt_tokens_details, "cache_write_tokens", 0
+                        )
+                        or 0
+                    )
 
                 usage = TokenUsage(
                     prompt_tokens=usage_data.prompt_tokens if usage_data else 0,
@@ -303,7 +334,12 @@ class OpenAIBackend(LLMBackend):
             except Exception as exc:
                 last_exception = exc
                 # Retry on 429 (rate limit) or 5xx server errors.
-                if hasattr(exc, "status_code") and exc.status_code in (429, 500, 502, 503):
+                if hasattr(exc, "status_code") and exc.status_code in (
+                    429,
+                    500,
+                    502,
+                    503,
+                ):
                     wait = 2**attempt  # exponential backoff: 2, 4, 8s
                     logger.warning(
                         "openai.retrying",
@@ -327,7 +363,9 @@ class OpenAIBackend(LLMBackend):
             "openai.chat_retries_exhausted",
             extra={"model": model, "last_error": str(last_exception)},
         )
-        raise RuntimeError(f"OpenAI chat failed after {self.MAX_RETRIES} retries: {last_exception}") from last_exception
+        raise RuntimeError(
+            f"OpenAI chat failed after {self.MAX_RETRIES} retries: {last_exception}"
+        ) from last_exception
 
     async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:
         """Generate embeddings via OpenAI's embeddings API.
@@ -417,7 +455,12 @@ class AzureBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self.DEFAULT_EMBED_DIM
 
-    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
+    async def _chat(
+        self,
+        messages: list[dict],
+        cache_config: PromptCachingConfig | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
         """Send a chat completion request to Azure OpenAI.
 
         Supported kwargs: ``temperature``, ``max_tokens``, ``top_p``, etc.
@@ -459,14 +502,27 @@ class AzureBackend(LLMBackend):
                         )
                     else:
                         raise ValueError(
-                            "Azure OpenAI response content is None and no tool calls present"
+                            "Azure OpenAI response content is None "
+                            "and no tool calls present"
                         )
                 usage_data = response.usage
                 cached_tokens = 0
                 cache_write_tokens = 0
-                if usage_data and hasattr(usage_data, 'prompt_tokens_details') and usage_data.prompt_tokens_details:
-                    cached_tokens = getattr(usage_data.prompt_tokens_details, 'cached_tokens', 0) or 0
-                    cache_write_tokens = getattr(usage_data.prompt_tokens_details, 'cache_write_tokens', 0) or 0
+                if (
+                    usage_data
+                    and hasattr(usage_data, "prompt_tokens_details")
+                    and usage_data.prompt_tokens_details
+                ):
+                    cached_tokens = (
+                        getattr(usage_data.prompt_tokens_details, "cached_tokens", 0)
+                        or 0
+                    )
+                    cache_write_tokens = (
+                        getattr(
+                            usage_data.prompt_tokens_details, "cache_write_tokens", 0
+                        )
+                        or 0
+                    )
 
                 usage = TokenUsage(
                     prompt_tokens=usage_data.prompt_tokens if usage_data else 0,
@@ -492,7 +548,12 @@ class AzureBackend(LLMBackend):
 
             except Exception as exc:
                 last_exception = exc
-                if hasattr(exc, "status_code") and exc.status_code in (429, 500, 502, 503):
+                if hasattr(exc, "status_code") and exc.status_code in (
+                    429,
+                    500,
+                    502,
+                    503,
+                ):
                     wait = 2**attempt
                     logger.warning(
                         "azure.retrying",
@@ -504,7 +565,8 @@ class AzureBackend(LLMBackend):
                 raise
 
         raise RuntimeError(
-            f"Azure OpenAI chat failed after {self.MAX_RETRIES} retries: {last_exception}"
+            f"Azure OpenAI chat failed after {self.MAX_RETRIES} retries: "
+            f"{last_exception}"
         ) from last_exception
 
     async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:
@@ -565,7 +627,12 @@ class AnthropicBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return 0  # Anthropic does not offer a public embedding API.
 
-    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
+    async def _chat(
+        self,
+        messages: list[dict],
+        cache_config: PromptCachingConfig | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
         """Send a chat completion request to the Anthropic API.
 
         Handles Anthropic's ``system`` message convention: if the first
@@ -634,8 +701,14 @@ class AnthropicBackend(LLMBackend):
                 usage = TokenUsage(
                     prompt_tokens=response.usage.input_tokens,
                     completion_tokens=response.usage.output_tokens,
-                    cache_read_input_tokens=getattr(response.usage, 'cache_read_input_tokens', 0) or 0,
-                    cache_creation_input_tokens=getattr(response.usage, 'cache_creation_input_tokens', 0) or 0,
+                    cache_read_input_tokens=getattr(
+                        response.usage, "cache_read_input_tokens", 0
+                    )
+                    or 0,
+                    cache_creation_input_tokens=getattr(
+                        response.usage, "cache_creation_input_tokens", 0
+                    )
+                    or 0,
                 )
 
                 logger.info(
@@ -735,7 +808,12 @@ class OpenAILikeBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self._embedding_dim
 
-    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
+    async def _chat(
+        self,
+        messages: list[dict],
+        cache_config: PromptCachingConfig | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
         """Send a chat completion request.
 
         Supported kwargs: ``temperature``, ``max_tokens``, ``top_p``,
@@ -777,7 +855,8 @@ class OpenAILikeBackend(LLMBackend):
                         )
                     else:
                         raise ValueError(
-                            "OpenAI-like response content is None and no tool calls present"
+                            "OpenAI-like response content is None "
+                            "and no tool calls present"
                         )
                 usage_data = response.usage
                 usage = TokenUsage(
@@ -801,7 +880,12 @@ class OpenAILikeBackend(LLMBackend):
             except Exception as exc:
                 last_exception = exc
                 # Retry on 429 (rate limit) or 5xx server errors.
-                if hasattr(exc, "status_code") and exc.status_code in (429, 500, 502, 503):
+                if hasattr(exc, "status_code") and exc.status_code in (
+                    429,
+                    500,
+                    502,
+                    503,
+                ):
                     wait = 2**attempt  # exponential backoff: 2, 4, 8s
                     logger.warning(
                         "openai_like.retrying",
@@ -825,7 +909,10 @@ class OpenAILikeBackend(LLMBackend):
             "openai_like.chat_retries_exhausted",
             extra={"model": model, "last_error": str(last_exception)},
         )
-        raise RuntimeError(f"OpenAI-like chat failed after {self.MAX_RETRIES} retries: {last_exception}") from last_exception
+        raise RuntimeError(
+            f"OpenAI-like chat failed after {self.MAX_RETRIES} retries: "
+            f"{last_exception}"
+        ) from last_exception
 
     async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:
         """Generate embeddings via the OpenAI-compatible embeddings API.

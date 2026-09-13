@@ -363,9 +363,7 @@ class TestSessionService:
         mock_repo.get_by_uuid.return_value = mock_session
 
         episodes = [
-            self._make_mock_episode(
-                sequence_number=0, role="user", content="First"
-            ),
+            self._make_mock_episode(sequence_number=0, role="user", content="First"),
             self._make_mock_episode(
                 sequence_number=1, role="assistant", content="Second"
             ),
@@ -403,9 +401,7 @@ class TestSessionService:
         """get_messages raises ValidationError for out-of-range limit."""
         service, mock_repo = self._make_service()
 
-        with pytest.raises(
-            ValidationError, match="limit must be between 1 and 500"
-        ):
+        with pytest.raises(ValidationError, match="limit must be between 1 and 500"):
             await service.get_messages(
                 org_id=self.ORG_ID,
                 session_id=uuid4(),
@@ -454,9 +450,7 @@ class TestSessionService:
         """Blob loading failure does not prevent messages from being returned."""
         mock_repo = AsyncMock(spec=SessionRepository)
         mock_blob_repo = AsyncMock(spec=EpisodeBlobRepository)
-        mock_blob_repo.get_by_episode = AsyncMock(
-            side_effect=RuntimeError("S3 down")
-        )
+        mock_blob_repo.get_by_episode = AsyncMock(side_effect=RuntimeError("S3 down"))
         service = SessionService(repo=mock_repo, blob_repo=mock_blob_repo)
         mock_session = self._make_mock_session()
         mock_repo.get_by_uuid.return_value = mock_session

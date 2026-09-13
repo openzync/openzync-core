@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
-import uuid
+from typing import TYPE_CHECKING
 
 import orjson
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.webhook import WebhookEndpoint
+
+if TYPE_CHECKING:
+    import uuid
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class WebhookRepository:
@@ -71,7 +75,9 @@ class WebhookRepository:
         update_data: dict[str, object] = {}
         if "events" in kwargs:
             events_val = kwargs["events"]
-            update_data["events"] = orjson.dumps(events_val) if isinstance(events_val, list) else events_val
+            update_data["events"] = (
+                orjson.dumps(events_val) if isinstance(events_val, list) else events_val
+            )
         for key in ("name", "url", "is_active", "last_delivery_at", "signing_secret"):
             if key in kwargs:
                 update_data[key] = kwargs[key]
@@ -141,10 +147,7 @@ class WebhookRepository:
         )
         endpoints = result.scalars().all()
         # Filter by event subscription (JSON array stored as text)
-        return [
-            e for e in endpoints
-            if self._endpoint_subscribes_to(e, event_type)
-        ]
+        return [e for e in endpoints if self._endpoint_subscribes_to(e, event_type)]
 
     def _endpoint_subscribes_to(
         self, endpoint: WebhookEndpoint, event_type: str

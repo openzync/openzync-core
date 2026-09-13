@@ -83,7 +83,8 @@ class FactInvalidationEvent(TimestampMixin, Base):
     )
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     at_time: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False,
+        TIMESTAMP(timezone=True),
+        nullable=False,
     )
     source_episode_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("episodes.id", ondelete="SET NULL"),

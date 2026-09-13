@@ -3,6 +3,7 @@
 All external dependencies (repository) are mocked at the service boundary.
 The ``_user_to_dict`` helper is tested directly — pure transformation.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -253,9 +254,9 @@ class TestUserService:
             None,  # First call — not found
             self._make_user(),  # Refetch after rollback — found
         ]
-        mock_repo.create.side_effect = __import__(
-            "sqlalchemy"
-        ).exc.IntegrityError("stmt", {}, Exception("unique constraint"))
+        mock_repo.create.side_effect = __import__("sqlalchemy").exc.IntegrityError(
+            "stmt", {}, Exception("unique constraint")
+        )
 
         with patch.object(service, "_webhook_service", None):
             result = await service.get_or_create_user(
@@ -278,9 +279,9 @@ class TestUserService:
         (should never happen — indicates DB inconsistency)."""
         service, mock_repo = self._make_service()
         mock_repo.get_by_external_id.side_effect = [None, None]
-        mock_repo.create.side_effect = __import__(
-            "sqlalchemy"
-        ).exc.IntegrityError("stmt", {}, Exception("unique constraint"))
+        mock_repo.create.side_effect = __import__("sqlalchemy").exc.IntegrityError(
+            "stmt", {}, Exception("unique constraint")
+        )
 
         with pytest.raises(NotFoundError) as exc:
             await service.get_or_create_user(
@@ -337,9 +338,7 @@ class TestUserService:
         assert result.message_count == 10
         assert result.fact_count == 4
         assert result.session_count == 3
-        mock_repo.get_by_uuid.assert_awaited_once_with(
-            self.ORG_ID, self.USER_ID
-        )
+        mock_repo.get_by_uuid.assert_awaited_once_with(self.ORG_ID, self.USER_ID)
         mock_repo.get_stats.assert_awaited_once_with(self.USER_ID)
 
     @pytest.mark.asyncio
@@ -350,9 +349,7 @@ class TestUserService:
         mock_repo.get_by_uuid.return_value = self._make_user(is_deleted=True)
 
         with pytest.raises(NotFoundError):
-            await service.get_user(
-                organization_id=self.ORG_ID, user_id=self.USER_ID
-            )
+            await service.get_user(organization_id=self.ORG_ID, user_id=self.USER_ID)
 
         mock_repo.get_stats.assert_not_awaited()
 
@@ -364,9 +361,7 @@ class TestUserService:
         mock_repo.get_by_uuid.return_value = None
 
         with pytest.raises(NotFoundError):
-            await service.get_user(
-                organization_id=self.ORG_ID, user_id=self.USER_ID
-            )
+            await service.get_user(organization_id=self.ORG_ID, user_id=self.USER_ID)
 
     # ── update_user ──────────────────────────────────────────────────────────
 
@@ -535,7 +530,8 @@ class TestUserServiceRoleGuards:
     MEMBER_ID = UUID("00000000-0000-0000-0000-000000000012")
 
     def _make_service(
-        self, with_redis: bool = False,
+        self,
+        with_redis: bool = False,
     ) -> tuple[UserService, AsyncMock, AsyncMock | None]:
         """Build a ``UserService`` with mocked repo and optional Redis."""
         mock_repo = AsyncMock()
@@ -543,7 +539,9 @@ class TestUserServiceRoleGuards:
         service = UserService(repo=mock_repo, redis=mock_redis)
         return service, mock_repo, mock_redis
 
-    def _make_user(self, role: str = "member", user_id: UUID | None = None) -> MagicMock:
+    def _make_user(
+        self, role: str = "member", user_id: UUID | None = None
+    ) -> MagicMock:
         """Build a User ORM mock with the fields ``_user_to_dict`` reads."""
         user = MagicMock()
         user.id = user_id or self.MEMBER_ID
@@ -694,7 +692,8 @@ class TestUserServiceRoleGuards:
         mock_repo.update.return_value = self._make_user(role="admin")
 
         with patch(
-            "services.user_service.invalidate_role", new=AsyncMock(),
+            "services.user_service.invalidate_role",
+            new=AsyncMock(),
         ) as mock_invalidate:
             await service.update_user(
                 organization_id=self.ORG_ID,
@@ -713,7 +712,8 @@ class TestUserServiceRoleGuards:
         mock_repo.soft_delete.return_value = MagicMock(role="member")
 
         with patch(
-            "services.user_service.invalidate_role", new=AsyncMock(),
+            "services.user_service.invalidate_role",
+            new=AsyncMock(),
         ) as mock_invalidate:
             await service.delete_user(
                 organization_id=self.ORG_ID,
@@ -742,7 +742,8 @@ class TestUserServicePermissionSeeding:
     MEMBER_ID = UUID("00000000-0000-0000-0000-000000000012")
 
     def _make_service(
-        self, with_redis: bool = False,
+        self,
+        with_redis: bool = False,
     ) -> tuple[UserService, AsyncMock, AsyncMock | None]:
         """Build a ``UserService`` with mocked repo and optional Redis."""
         mock_repo = AsyncMock()
@@ -751,7 +752,9 @@ class TestUserServicePermissionSeeding:
         return service, mock_repo, mock_redis
 
     def _make_user(
-        self, role: str = "member", permissions: list[str] | None = None,
+        self,
+        role: str = "member",
+        permissions: list[str] | None = None,
     ) -> MagicMock:
         """Build a User ORM mock with the fields ``_user_to_dict`` reads."""
         user = MagicMock()
@@ -775,7 +778,8 @@ class TestUserServicePermissionSeeding:
         service, mock_repo, _ = self._make_service()
         mock_repo.exists_by_external_id.return_value = False
         mock_repo.create.return_value = self._make_user(
-            role="member", permissions=["project:read", "project:write"],
+            role="member",
+            permissions=["project:read", "project:write"],
         )
 
         await service.create_user(
@@ -825,18 +829,22 @@ class TestUserServicePermissionSeeding:
         effective set)."""
         service, mock_repo, mock_redis = self._make_service(with_redis=True)
         mock_repo.get_by_uuid.return_value = self._make_user(
-            role="member", permissions=["project:read", "project:write"],
+            role="member",
+            permissions=["project:read", "project:write"],
         )
         mock_repo.update.return_value = self._make_user(
-            role="admin", permissions=["project:read", "project:write"],
+            role="admin",
+            permissions=["project:read", "project:write"],
         )
 
         with (
             patch(
-                "services.user_service.invalidate_role", new=AsyncMock(),
+                "services.user_service.invalidate_role",
+                new=AsyncMock(),
             ) as mock_invalidate_role,
             patch(
-                "services.user_service.invalidate_permissions", new=AsyncMock(),
+                "services.user_service.invalidate_permissions",
+                new=AsyncMock(),
             ) as mock_invalidate_perms,
         ):
             await service.update_user(
@@ -863,11 +871,13 @@ class TestUserServicePermissionSeeding:
         cached permission set (grant takes effect immediately)."""
         service, mock_repo, mock_redis = self._make_service(with_redis=True)
         mock_repo.update.return_value = self._make_user(
-            role="member", permissions=["configuration:read"],
+            role="member",
+            permissions=["configuration:read"],
         )
 
         with patch(
-            "services.user_service.invalidate_permissions", new=AsyncMock(),
+            "services.user_service.invalidate_permissions",
+            new=AsyncMock(),
         ) as mock_invalidate_perms:
             await service.update_user(
                 organization_id=self.ORG_ID,
@@ -976,7 +986,8 @@ class TestUserServiceSuperadminImmortalGuard:
     MEMBER_ID = UUID("00000000-0000-0000-0000-000000000012")
 
     def _make_service(
-        self, with_redis: bool = False,
+        self,
+        with_redis: bool = False,
     ) -> tuple[UserService, AsyncMock, AsyncMock | None]:
         """Build ``UserService`` with mocked repo and optional Redis."""
         mock_repo = AsyncMock()
@@ -985,7 +996,9 @@ class TestUserServiceSuperadminImmortalGuard:
         return service, mock_repo, mock_redis
 
     def _make_user(
-        self, role: str = "member", user_id: UUID | None = None,
+        self,
+        role: str = "member",
+        user_id: UUID | None = None,
     ) -> MagicMock:
         """Build a User ORM mock with the fields ``_user_to_dict`` reads."""
         user = MagicMock()
@@ -1008,7 +1021,8 @@ class TestUserServiceSuperadminImmortalGuard:
         """Deleting a superadmin via the tenant API → ValidationError."""
         service, mock_repo, _ = self._make_service()
         mock_repo.get_by_uuid.return_value = self._make_user(
-            role="superadmin", user_id=self.SUPERADMIN_ID,
+            role="superadmin",
+            user_id=self.SUPERADMIN_ID,
         )
 
         with pytest.raises(ValidationError) as exc:
@@ -1027,7 +1041,8 @@ class TestUserServiceSuperadminImmortalGuard:
         """Demoting a superadmin (superadmin → member) via tenant API → ValidationError."""
         service, mock_repo, _ = self._make_service()
         mock_repo.get_by_uuid.return_value = self._make_user(
-            role="superadmin", user_id=self.SUPERADMIN_ID,
+            role="superadmin",
+            user_id=self.SUPERADMIN_ID,
         )
 
         with pytest.raises(ValidationError) as exc:
@@ -1047,10 +1062,12 @@ class TestUserServiceSuperadminImmortalGuard:
         """Patching a superadmin with the same role (superadmin → superadmin) is not blocked."""
         service, mock_repo, _ = self._make_service()
         mock_repo.get_by_uuid.return_value = self._make_user(
-            role="superadmin", user_id=self.SUPERADMIN_ID,
+            role="superadmin",
+            user_id=self.SUPERADMIN_ID,
         )
         mock_repo.update.return_value = self._make_user(
-            role="superadmin", user_id=self.SUPERADMIN_ID,
+            role="superadmin",
+            user_id=self.SUPERADMIN_ID,
         )
 
         result = await service.update_user(
@@ -1073,7 +1090,8 @@ class TestUserServiceSuperadminImmortalGuard:
         """Regression: deleting the last admin is still blocked (last-admin guard intact)."""
         service, mock_repo, _ = self._make_service()
         mock_repo.get_by_uuid.return_value = self._make_user(
-            role="admin", user_id=self.ADMIN_ID,
+            role="admin",
+            user_id=self.ADMIN_ID,
         )
         mock_repo.count_active_admins.return_value = 1
 

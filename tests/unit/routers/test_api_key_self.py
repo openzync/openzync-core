@@ -88,18 +88,14 @@ async def jwt_client() -> AsyncClient:  # noqa: ANN201
 class TestGetApiKeyProjectId:
     """GET /v1/api-key/project-id — resolve project context."""
 
-    async def test_returns_project_id_for_api_key(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_returns_project_id_for_api_key(self, client: AsyncClient) -> None:
         """Should return the project_id when request is API-key-authenticated."""
         response = await client.get("/v1/api-key/project-id")
         assert response.status_code == 200
         body = response.json()
         assert body["project_id"] == str(PROJECT_ID)
 
-    async def test_returns_null_for_jwt(
-        self, jwt_client: AsyncClient
-    ) -> None:
+    async def test_returns_null_for_jwt(self, jwt_client: AsyncClient) -> None:
         """Should return null project_id for JWT-authenticated dashboard users."""
         response = await jwt_client.get("/v1/api-key/project-id")
         assert response.status_code == 200
@@ -116,8 +112,6 @@ class TestGetApiKeyProjectId:
             }
         )
         transport = ASGITransport(app=app)
-        async with AsyncClient(
-            transport=transport, base_url="http://test"
-        ) as ac:
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
             response = await ac.get("/v1/api-key/project-id")
         assert response.status_code == 401

@@ -97,9 +97,7 @@ async def test_classification_accuracy() -> None:
                 )
                 continue
 
-            is_match, detail = evaluate_classification_match(
-                parsed, item["expected"]
-            )
+            is_match, detail = evaluate_classification_match(parsed, item["expected"])
             if is_match:
                 correct += 1
             else:

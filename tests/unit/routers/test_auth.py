@@ -467,9 +467,7 @@ async def test_login_422() -> None:
     transport = ASGITransport(app=app)
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.post(
-            "/v1/auth/login", json={"email": "admin@acme.com"}
-        )
+        resp = await client.post("/v1/auth/login", json={"email": "admin@acme.com"})
 
     assert resp.status_code == 422
 
@@ -799,9 +797,7 @@ async def test_get_me_unauthorized() -> None:
     mocks["auth_service"] = AsyncMock()
     app.dependency_overrides[get_auth_service] = lambda: mocks["auth_service"]
     # Override get_dashboard_user to raise 401
-    app.dependency_overrides[get_dashboard_user] = lambda: (
-        _raise_401()
-    )
+    app.dependency_overrides[get_dashboard_user] = lambda: _raise_401()
     app.include_router(router)
 
     transport = ASGITransport(app=app)

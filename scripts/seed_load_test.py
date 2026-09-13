@@ -43,8 +43,11 @@ async def bootstrap_org(client: httpx.AsyncClient) -> dict:
     )
     resp.raise_for_status()
     data = resp.json()
-    logger.info("Org created: %s (API key: %s...)",
-                data["organization_id"], data["api_key"][:12])
+    logger.info(
+        "Org created: %s (API key: %s...)",
+        data["organization_id"],
+        data["api_key"][:12],
+    )
     return data
 
 
@@ -57,14 +60,25 @@ async def create_user(client: httpx.AsyncClient, user_ext_id: str) -> str:
     return user_id
 
 
-async def seed_episodes(client: httpx.AsyncClient, user_id: str, count: int = 100) -> None:
+async def seed_episodes(
+    client: httpx.AsyncClient, user_id: str, count: int = 100
+) -> None:
     """Seed episodes (conversation turns) for the test user."""
     topics = [
-        "python programming", "data structures", "machine learning",
-        "database indexes", "API design", "testing strategies",
-        "deployment pipelines", "security", "performance",
-        "error handling", "async patterns", "caching strategies",
-        "logging best practices", "configuration management",
+        "python programming",
+        "data structures",
+        "machine learning",
+        "database indexes",
+        "API design",
+        "testing strategies",
+        "deployment pipelines",
+        "security",
+        "performance",
+        "error handling",
+        "async patterns",
+        "caching strategies",
+        "logging best practices",
+        "configuration management",
         "container orchestration",
     ]
 
@@ -133,13 +147,15 @@ async def seed_facts(client: httpx.AsyncClient, user_id: str, count: int = 500) 
         facts = []
         for i in range(batch_start, batch_end):
             subj, pred, obj = fact_templates[i % len(fact_templates)]
-            facts.append({
-                "subject": subj,
-                "predicate": pred,
-                "object": obj,
-                "content": f"{subj} {pred} {obj}",
-                "confidence": 0.95,
-            })
+            facts.append(
+                {
+                    "subject": subj,
+                    "predicate": pred,
+                    "object": obj,
+                    "content": f"{subj} {pred} {obj}",
+                    "confidence": 0.95,
+                }
+            )
 
         resp = await client.post(
             f"/v1/users/{user_id}/facts",

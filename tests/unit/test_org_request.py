@@ -80,10 +80,13 @@ class TestOrgRequestService:
     ) -> None:
         """reject_all → AuthorizationError, nothing is created."""
         svc, mocks = service
-        with patch(
-            "core.system_config.get_system_config",
-            new=AsyncMock(return_value=_policy(policy="reject_all")),
-        ), pytest.raises(AuthorizationError):
+        with (
+            patch(
+                "core.system_config.get_system_config",
+                new=AsyncMock(return_value=_policy(policy="reject_all")),
+            ),
+            pytest.raises(AuthorizationError),
+        ):
             await svc.request_org_creation(_payload())
 
         mocks["org_service"].create_organization.assert_not_awaited()
@@ -96,12 +99,15 @@ class TestOrgRequestService:
     ) -> None:
         """approvals without in_app scope → 403 (this channel is not gated)."""
         svc, mocks = service
-        with patch(
-            "core.system_config.get_system_config",
-            new=AsyncMock(
-                return_value=_policy(policy="approvals", scope="public_signup"),
+        with (
+            patch(
+                "core.system_config.get_system_config",
+                new=AsyncMock(
+                    return_value=_policy(policy="approvals", scope="public_signup"),
+                ),
             ),
-        ), pytest.raises(AuthorizationError):
+            pytest.raises(AuthorizationError),
+        ):
             await svc.request_org_creation(_payload())
 
         mocks["org_service"].create_organization.assert_not_awaited()
@@ -199,12 +205,15 @@ class TestOrgRequestService:
         svc._auth_repo = AsyncMock()  # noqa: SLF001
         svc._auth_repo.find_user_by_email.return_value = existing  # noqa: SLF001
 
-        with patch(
-            "core.system_config.get_system_config",
-            new=AsyncMock(
-                return_value=_policy(policy="approvals", scope="in_app"),
+        with (
+            patch(
+                "core.system_config.get_system_config",
+                new=AsyncMock(
+                    return_value=_policy(policy="approvals", scope="in_app"),
+                ),
             ),
-        ), pytest.raises(ConflictError):
+            pytest.raises(ConflictError),
+        ):
             await svc.request_org_creation(_payload())
 
         mocks["auth_service"].create_pending_org_and_admin.assert_not_awaited()
@@ -219,16 +228,19 @@ class TestOrgRequestService:
         svc, mocks = service
         svc._auth_repo = AsyncMock()  # noqa: SLF001
         svc._auth_repo.find_user_by_email.return_value = None  # noqa: SLF001
-        mocks["auth_service"].create_pending_org_and_admin.side_effect = (
-            IntegrityError("stmt", {}, Exception("unique"))
+        mocks["auth_service"].create_pending_org_and_admin.side_effect = IntegrityError(
+            "stmt", {}, Exception("unique")
         )
 
-        with patch(
-            "core.system_config.get_system_config",
-            new=AsyncMock(
-                return_value=_policy(policy="approvals", scope="in_app"),
+        with (
+            patch(
+                "core.system_config.get_system_config",
+                new=AsyncMock(
+                    return_value=_policy(policy="approvals", scope="in_app"),
+                ),
             ),
-        ), pytest.raises(ConflictError):
+            pytest.raises(ConflictError),
+        ):
             await svc.request_org_creation(_payload())
 
     @pytest.mark.asyncio
@@ -241,10 +253,13 @@ class TestOrgRequestService:
         svc._auth_repo = AsyncMock()  # noqa: SLF001
         svc._auth_repo.find_user_by_email.return_value = existing  # noqa: SLF001
 
-        with patch(
-            "core.system_config.get_system_config",
-            new=AsyncMock(return_value=_policy(policy="allow_all")),
-        ), pytest.raises(ConflictError):
+        with (
+            patch(
+                "core.system_config.get_system_config",
+                new=AsyncMock(return_value=_policy(policy="allow_all")),
+            ),
+            pytest.raises(ConflictError),
+        ):
             await svc.request_org_creation(_payload())
 
         mocks["org_service"].create_organization.assert_not_awaited()
@@ -265,10 +280,13 @@ class TestOrgRequestService:
             "stmt", {}, Exception("unique")
         )
 
-        with patch(
-            "core.system_config.get_system_config",
-            new=AsyncMock(return_value=_policy(policy="allow_all")),
-        ), pytest.raises(ConflictError):
+        with (
+            patch(
+                "core.system_config.get_system_config",
+                new=AsyncMock(return_value=_policy(policy="allow_all")),
+            ),
+            pytest.raises(ConflictError),
+        ):
             await svc.request_org_creation(_payload())
 
         svc._auth_repo.rollback.assert_awaited_once()  # noqa: SLF001

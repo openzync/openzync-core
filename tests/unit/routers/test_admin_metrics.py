@@ -156,14 +156,20 @@ async def test_get_org_query_success() -> None:
 
     # Mock DB result for episodes_per_day query — returns rows via scalars()
     mock_result = MagicMock()
-    mock_result.__iter__ = MagicMock(return_value=iter([
-        MagicMock(date="2026-08-18", count=42),
-        MagicMock(date="2026-08-17", count=38),
-    ]))
+    mock_result.__iter__ = MagicMock(
+        return_value=iter(
+            [
+                MagicMock(date="2026-08-18", count=42),
+                MagicMock(date="2026-08-17", count=38),
+            ]
+        )
+    )
     db_mock.execute.return_value = mock_result
 
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.get("/metrics/query", params={"query": "episodes_per_day", "days": 7})
+        resp = await client.get(
+            "/metrics/query", params={"query": "episodes_per_day", "days": 7}
+        )
 
     assert resp.status_code == 200
     body = resp.json()

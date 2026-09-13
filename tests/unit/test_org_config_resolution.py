@@ -153,9 +153,7 @@ class TestGetOrgConfig:
         """When redis is None, always fetch from OpenBao (no cache layer)."""
         mock_bao_client.read_org_config.return_value = {"llm_backend": "openai"}
 
-        config = await get_org_config(
-            org_id, redis=None, bao_client=mock_bao_client
-        )
+        config = await get_org_config(org_id, redis=None, bao_client=mock_bao_client)
 
         assert config.llm_backend == "openai"
         mock_bao_client.read_org_config.assert_awaited_once_with(org_id)

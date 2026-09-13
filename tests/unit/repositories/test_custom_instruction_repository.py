@@ -53,9 +53,7 @@ class TestCustomInstructionRepository:
         mock_result.scalars.return_value.all.return_value = instructions
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_scope(
-            org_id=self.ORG_ID, scope="extraction"
-        )
+        result = await repo.get_by_scope(org_id=self.ORG_ID, scope="extraction")
 
         assert result == instructions
 
@@ -82,9 +80,7 @@ class TestCustomInstructionRepository:
         mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_scope(
-            org_id=self.ORG_ID, scope="nonexistent"
-        )
+        result = await repo.get_by_scope(org_id=self.ORG_ID, scope="nonexistent")
 
         assert result == []
 
@@ -159,9 +155,7 @@ class TestCustomInstructionRepository:
         """delete_by_scope removes instructions for the given scope."""
         mock_db.execute.return_value = MagicMock()
 
-        await repo.delete_by_scope(
-            org_id=self.ORG_ID, scope="extraction"
-        )
+        await repo.delete_by_scope(org_id=self.ORG_ID, scope="extraction")
 
         mock_db.execute.assert_awaited_once()
         mock_db.flush.assert_awaited_once()
@@ -188,9 +182,7 @@ class TestCustomInstructionRepository:
         mock_db.execute.return_value = MagicMock()
         mock_db.flush.return_value = None
 
-        await repo.delete_by_scope(
-            org_id=self.ORG_ID, scope="nonexistent"
-        )
+        await repo.delete_by_scope(org_id=self.ORG_ID, scope="nonexistent")
 
         mock_db.execute.assert_awaited_once()
         mock_db.flush.assert_awaited_once()

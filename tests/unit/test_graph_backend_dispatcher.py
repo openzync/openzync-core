@@ -17,8 +17,8 @@ import pytest
 
 surrealdb = pytest.importorskip("surrealdb")
 
-from core.graph_backend import GraphBackendDispatcher
-from packages.graph_backend.surrealdb import SurrealGraphBackend
+from core.graph_backend import GraphBackendDispatcher  # noqa: E402  # after importorskip
+from packages.graph_backend.surrealdb import SurrealGraphBackend  # noqa: E402  # after importorskip
 
 
 @pytest.mark.unit
@@ -63,9 +63,7 @@ class TestGraphBackendDispatcher:
 
     def test_register_backend(self, dispatcher: GraphBackendDispatcher) -> None:
         """A registered backend can be resolved and created."""
-        name = dispatcher.resolve_backend_name(
-            MagicMock(graph_backend="test_backend")
-        )
+        name = dispatcher.resolve_backend_name(MagicMock(graph_backend="test_backend"))
         assert name == "test_backend"
 
     def test_register_overwrite(self) -> None:
@@ -147,9 +145,7 @@ class TestGraphBackendDispatcher:
         with pytest.raises(ValueError, match="Unknown graph backend.*does_not_exist"):
             dispatcher.resolve_and_create(cfg, mock_db)
 
-    def test_create_passes_db_to_backend_constructor(
-        self, mock_db: MagicMock
-    ) -> None:
+    def test_create_passes_db_to_backend_constructor(self, mock_db: MagicMock) -> None:
         """Postgres creation is hard-blocked — raises ValueError (deprecated v1.1.0)."""
         disp = GraphBackendDispatcher()
         mock_cls = MagicMock()
@@ -157,15 +153,15 @@ class TestGraphBackendDispatcher:
 
         cfg = MagicMock(graph_backend="postgres")
         cfg.graph_max_traversal_depth = None
-        with pytest.raises(ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"):
+        with pytest.raises(
+            ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"
+        ):
             disp.resolve_and_create(cfg, mock_db)
         mock_cls.assert_not_called()
 
     # ── Postgres-specific kwargs ────────────────────────────────────────────────
 
-    def test_postgres_receives_max_traversal_depth(
-        self, mock_db: MagicMock
-    ) -> None:
+    def test_postgres_receives_max_traversal_depth(self, mock_db: MagicMock) -> None:
         """Postgres hard-blocked — deprecated, raises regardless of depth."""
         disp = GraphBackendDispatcher()
         mock_cls = MagicMock()
@@ -173,13 +169,13 @@ class TestGraphBackendDispatcher:
 
         cfg = MagicMock(graph_backend="postgres")
         cfg.graph_max_traversal_depth = 5
-        with pytest.raises(ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"):
+        with pytest.raises(
+            ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"
+        ):
             disp.resolve_and_create(cfg, mock_db)
         mock_cls.assert_not_called()
 
-    def test_postgres_without_max_traversal_depth(
-        self, mock_db: MagicMock
-    ) -> None:
+    def test_postgres_without_max_traversal_depth(self, mock_db: MagicMock) -> None:
         """Postgres hard-blocked — None depth also raises (deprecated)."""
         disp = GraphBackendDispatcher()
         mock_cls = MagicMock()
@@ -187,7 +183,9 @@ class TestGraphBackendDispatcher:
 
         cfg = MagicMock(graph_backend="postgres")
         cfg.graph_max_traversal_depth = None
-        with pytest.raises(ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"):
+        with pytest.raises(
+            ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"
+        ):
             disp.resolve_and_create(cfg, mock_db)
         mock_cls.assert_not_called()
 
@@ -230,8 +228,8 @@ class TestGraphBackendDispatcher:
         disp = GraphBackendDispatcher()
         cls_a = MagicMock()
         cls_b = MagicMock()
-        disp.register("postgres", cls_a)   # postgres is gone — skipped
-        disp.register("other", cls_b)      # non-postgres receives no db
+        disp.register("postgres", cls_a)  # postgres is gone — skipped
+        disp.register("other", cls_b)  # non-postgres receives no db
 
         backends = disp.create_all_backends(mock_db)
 
@@ -254,9 +252,7 @@ class TestGraphBackendDispatcher:
         assert len(backends) == 0
         mock_cls.assert_not_called()
 
-    def test_create_all_backends_without_org_config(
-        self, mock_db: MagicMock
-    ) -> None:
+    def test_create_all_backends_without_org_config(self, mock_db: MagicMock) -> None:
         """No org_config → postgres is gone, so no backends created."""
         disp = GraphBackendDispatcher()
         mock_cls = MagicMock()
@@ -286,9 +282,13 @@ class TestGraphBackendDispatcher:
         disp = init_dispatcher()
 
         # Postgres is registered
-        assert disp.resolve_backend_name(MagicMock(graph_backend="postgres")) == "postgres"
+        assert (
+            disp.resolve_backend_name(MagicMock(graph_backend="postgres")) == "postgres"
+        )
         # Unknown backends still fail
-        assert disp.resolve_backend_name(MagicMock(graph_backend="unknown")) == "unknown"
+        assert (
+            disp.resolve_backend_name(MagicMock(graph_backend="unknown")) == "unknown"
+        )
 
     def test_init_dispatcher_creates_postgres_backend(self) -> None:
         """resolve_and_create with 'postgres' is hard-blocked — deprecated v1.1.0."""
@@ -299,7 +299,9 @@ class TestGraphBackendDispatcher:
         cfg.graph_max_traversal_depth = 2
         mock_db = MagicMock()
 
-        with pytest.raises(ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"):
+        with pytest.raises(
+            ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"
+        ):
             disp.resolve_and_create(cfg, mock_db)
 
     # ── SurrealDB-specific ──────────────────────────────────────────────────────
@@ -318,9 +320,7 @@ class TestGraphBackendDispatcher:
         assert backend._max_depth == 3
         assert backend._surreal is mock_surreal
 
-    def test_create_all_backends_includes_surrealdb(
-        self, mock_db: MagicMock
-    ) -> None:
+    def test_create_all_backends_includes_surrealdb(self, mock_db: MagicMock) -> None:
         """create_all_backends includes SurrealGraphBackend when registered."""
         disp = GraphBackendDispatcher()
         disp.register("surrealdb", SurrealGraphBackend)
@@ -332,9 +332,7 @@ class TestGraphBackendDispatcher:
         surreal_bk = next(b for b in backends if isinstance(b, SurrealGraphBackend))
         assert surreal_bk._surreal is mock_surreal
 
-    def test_surreal_kwarg_not_passed_to_postgres(
-        self, mock_db: MagicMock
-    ) -> None:
+    def test_surreal_kwarg_not_passed_to_postgres(self, mock_db: MagicMock) -> None:
         """surreal kwarg is only passed to SurrealGraphBackend — postgres is gone (410)."""
         disp = GraphBackendDispatcher()
         mock_postgres_cls = MagicMock()

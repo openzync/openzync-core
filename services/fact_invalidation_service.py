@@ -46,7 +46,6 @@ import asyncio
 import logging
 import re
 from collections import Counter, defaultdict
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
@@ -55,7 +54,6 @@ from uuid import UUID
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
 
 from core.events import EventType
 from core.exceptions import ValidationError
@@ -64,12 +62,16 @@ from middleware.metrics import (
     facts_retracted_total,
     facts_superseded_total,
 )
-from models.fact import Fact
-from repositories.fact_repository import FactRepository
 from services.graph_edge_sync_service import make_supersession_event
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
+    from sqlalchemy.orm import Session
+
+    from models.fact import Fact
     from packages.graph_backend.interface import GraphBackend
+    from repositories.fact_repository import FactRepository
     from services.cache_service import CacheService
     from services.graph_edge_sync_service import GraphEdgeSyncService, SupersessionEvent
     from services.webhook_service import WebhookService
@@ -380,17 +382,15 @@ class FactInvalidationService:
         # vice versa; ``_candidate_conflicts`` applies the precise rule.
         candidates_by_identity: dict[NameIdentity, list[Fact]] = defaultdict(list)
         for candidate in candidates:
-            candidates_by_identity[
-                self._name_identity_of_fact(candidate)
-            ].append(candidate)
+            candidates_by_identity[self._name_identity_of_fact(candidate)].append(
+                candidate
+            )
 
         # Identities occurring once are batch-safe (one INSERT statement);
         # repeated NAME identities need sequential handling so the second
         # occurrence supersedes the first inside the batch.
         identity_counts = Counter(e["name_identity"] for e in entries)
-        batch_entries = [
-            e for e in entries if identity_counts[e["name_identity"]] == 1
-        ]
+        batch_entries = [e for e in entries if identity_counts[e["name_identity"]] == 1]
         sequential_entries = [
             e for e in entries if identity_counts[e["name_identity"]] > 1
         ]
@@ -435,9 +435,16 @@ class FactInvalidationService:
             batch_entries_kept.append((entry, conflicts))
 
         if batch_rows:
-            created.extend(await self._insert_rows(
-                org_id, project_id, user_id, source_episode_id, batch_rows, insert_mode
-            ))
+            created.extend(
+                await self._insert_rows(
+                    org_id,
+                    project_id,
+                    user_id,
+                    source_episode_id,
+                    batch_rows,
+                    insert_mode,
+                )
+            )
         # Pairing is NAME-based so cross-form supersessions still emit the
         # supersession event — a literal successor of an entity fact must
         # expire the old edge (D1 case 2), and vice versa.
@@ -684,10 +691,7 @@ class FactInvalidationService:
             # an invalidation is the bug to trap.  getattr keeps duck-typed
             # stand-ins (unit-test doubles) working — real Facts always
             # carry both attributes.
-            if (
-                old.valid_to is not None
-                or getattr(old, "invalid_at", None) is not None
-            ):
+            if old.valid_to is not None or getattr(old, "invalid_at", None) is not None:
                 skipped_count += 1
                 continue
             successor_ref = inv.get("successor_fact_ref")
@@ -723,9 +727,7 @@ class FactInvalidationService:
 
         # ── Post-commit effects (deferred to the real commit) ──────────────
         if closed_count:
-            self._queue_post_commit_effect(
-                lambda: _inc_invalidated_total(closed_count)
-            )
+            self._queue_post_commit_effect(lambda: _inc_invalidated_total(closed_count))
             if self._cache_service is not None:
                 self._queue_post_commit_effect(
                     partial(
@@ -869,6 +871,7 @@ class FactInvalidationService:
         Returns:
             The normalized ``(subject, predicate, object)`` tuple.
         """
+
         # str() coercion keeps the grouping hashable for non-ORM stand-ins
         # (unit-test doubles); real Fact columns are NOT NULL strings, so
         # this is a no-op in production.
@@ -905,14 +908,12 @@ class FactInvalidationService:
         """
         row = entry["row"]
         entry_resolved = (
-            row["subject_entity_id"] is not None
-            and row["object_entity_id"] is not None
+            row["subject_entity_id"] is not None and row["object_entity_id"] is not None
         )
         if entry_resolved:
             candidate_identity = cls._identity_of_fact(candidate)
-            candidate_resolved = (
-                isinstance(candidate_identity[0], UUID)
-                and isinstance(candidate_identity[2], UUID)
+            candidate_resolved = isinstance(candidate_identity[0], UUID) and isinstance(
+                candidate_identity[2], UUID
             )
             if candidate_resolved:
                 # Both resolved — entity match only.  Different UUIDs mean
@@ -1153,9 +1154,7 @@ class FactInvalidationService:
                         isinstance(backend, PostgresGraphBackend)
                         and getattr(backend, "_db", None) is self._db
                     ):
-                        fresh = AsyncSession(
-                            bind=self._db.bind, expire_on_commit=False
-                        )
+                        fresh = AsyncSession(bind=self._db.bind, expire_on_commit=False)
                         fresh_sessions.append(fresh)
                         rebuilt.append(
                             PostgresGraphBackend(

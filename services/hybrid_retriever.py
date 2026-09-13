@@ -21,10 +21,8 @@ import logging
 import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
 
 from sqlalchemy import Float, Select, cast, func, literal, literal_column, select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import SearchLegFailedError
 from middleware.metrics import graph_search_latency_seconds, reranker_latency_seconds
@@ -32,6 +30,10 @@ from models.episode import Episode
 from models.fact import Fact
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from packages.graph_backend.interface import GraphBackend
     from packages.reranker import CrossEncoderReranker
     from schemas.organization_config import OrgConfigBase
@@ -75,10 +77,14 @@ class HybridRetriever:
         no embedding has been generated yet (e.g. all vector legs failed).  Used
         by callers for diagnostic logging to detect dimension mismatches."""
         self._rerank_top_k: int = (
-            org_config.reranker_top_k if org_config and org_config.reranker_top_k else DEFAULT_RERANK_TOP_K
+            org_config.reranker_top_k
+            if org_config and org_config.reranker_top_k
+            else DEFAULT_RERANK_TOP_K
         )
         self._rerank_top_n: int = (
-            org_config.reranker_top_n if org_config and org_config.reranker_top_n else DEFAULT_RERANK_TOP_N
+            org_config.reranker_top_n
+            if org_config and org_config.reranker_top_n
+            else DEFAULT_RERANK_TOP_N
         )
 
     # ── Public API ──────────────────────────────────────────────────────────────
@@ -155,7 +161,9 @@ class HybridRetriever:
         fact_bm25_results: list[dict[str, Any]] = []
         entity_results: list[dict[str, Any]] = []
 
-        retrieval_limit = max(limit, self._rerank_top_k) if self._reranker is not None else limit
+        retrieval_limit = (
+            max(limit, self._rerank_top_k) if self._reranker is not None else limit
+        )
 
         # Vector search for episodes and facts
         try:
@@ -165,11 +173,17 @@ class HybridRetriever:
         except Exception as exc:
             logger.error(
                 "hybrid_retriever.episode_vector_failed",
-                extra={"project_id": str(project_id), "query": query, "leg": "episode_vector"},
+                extra={
+                    "project_id": str(project_id),
+                    "query": query,
+                    "leg": "episode_vector",
+                },
                 exc_info=True,
             )
             await self._db.rollback()
-            raise SearchLegFailedError(leg_name="episode_vector", original_error=str(exc)) from exc
+            raise SearchLegFailedError(
+                leg_name="episode_vector", original_error=str(exc)
+            ) from exc
 
         try:
             fact_vector_results = await self._vector_search_facts(
@@ -178,11 +192,17 @@ class HybridRetriever:
         except Exception as exc:
             logger.error(
                 "hybrid_retriever.fact_vector_failed",
-                extra={"project_id": str(project_id), "query": query, "leg": "fact_vector"},
+                extra={
+                    "project_id": str(project_id),
+                    "query": query,
+                    "leg": "fact_vector",
+                },
                 exc_info=True,
             )
             await self._db.rollback()
-            raise SearchLegFailedError(leg_name="fact_vector", original_error=str(exc)) from exc
+            raise SearchLegFailedError(
+                leg_name="fact_vector", original_error=str(exc)
+            ) from exc
 
         # BM25 search for episodes and facts
         try:
@@ -192,11 +212,17 @@ class HybridRetriever:
         except Exception as exc:
             logger.error(
                 "hybrid_retriever.episode_bm25_failed",
-                extra={"project_id": str(project_id), "query": query, "leg": "episode_bm25"},
+                extra={
+                    "project_id": str(project_id),
+                    "query": query,
+                    "leg": "episode_bm25",
+                },
                 exc_info=True,
             )
             await self._db.rollback()
-            raise SearchLegFailedError(leg_name="episode_bm25", original_error=str(exc)) from exc
+            raise SearchLegFailedError(
+                leg_name="episode_bm25", original_error=str(exc)
+            ) from exc
 
         try:
             fact_bm25_results = await self._bm25_search_facts(
@@ -205,11 +231,17 @@ class HybridRetriever:
         except Exception as exc:
             logger.error(
                 "hybrid_retriever.fact_bm25_failed",
-                extra={"project_id": str(project_id), "query": query, "leg": "fact_bm25"},
+                extra={
+                    "project_id": str(project_id),
+                    "query": query,
+                    "leg": "fact_bm25",
+                },
                 exc_info=True,
             )
             await self._db.rollback()
-            raise SearchLegFailedError(leg_name="fact_bm25", original_error=str(exc)) from exc
+            raise SearchLegFailedError(
+                leg_name="fact_bm25", original_error=str(exc)
+            ) from exc
 
         # Graph BFS via entity name search
         try:
@@ -221,11 +253,17 @@ class HybridRetriever:
         except Exception as exc:
             logger.error(
                 "hybrid_retriever.graph_bfs_failed",
-                extra={"project_id": str(project_id), "query": query, "leg": "graph_bfs"},
+                extra={
+                    "project_id": str(project_id),
+                    "query": query,
+                    "leg": "graph_bfs",
+                },
                 exc_info=True,
             )
             await self._db.rollback()
-            raise SearchLegFailedError(leg_name="graph_bfs", original_error=str(exc)) from exc
+            raise SearchLegFailedError(
+                leg_name="graph_bfs", original_error=str(exc)
+            ) from exc
 
         # ── RRF merge per type ────────────────────────────────────────────
         # Use rerank_top_k as the RRF candidate pool size when re-ranking is active
@@ -249,10 +287,14 @@ class HybridRetriever:
             _rerank_start = time.monotonic()
             try:
                 merged_episodes = await self._reranker.rerank(
-                    query, merged_episodes, top_n=self._rerank_top_n,
+                    query,
+                    merged_episodes,
+                    top_n=self._rerank_top_n,
                 )
                 merged_facts = await self._reranker.rerank(
-                    query, merged_facts, top_n=self._rerank_top_n,
+                    query,
+                    merged_facts,
+                    top_n=self._rerank_top_n,
                 )
                 _rerank_elapsed = time.monotonic() - _rerank_start
                 reranker_latency_seconds.labels(
@@ -268,7 +310,9 @@ class HybridRetriever:
                     },
                     exc_info=True,
                 )
-                raise SearchLegFailedError(leg_name="reranker", original_error=str(exc)) from exc
+                raise SearchLegFailedError(
+                    leg_name="reranker", original_error=str(exc)
+                ) from exc
 
         graph_search_latency_seconds.labels(org_id=str(self._org_id)).observe(
             time.monotonic() - _search_start
@@ -346,7 +390,9 @@ class HybridRetriever:
                 extra={"query": query[:100], "leg": "embedding"},
                 exc_info=True,
             )
-            raise SearchLegFailedError(leg_name="embedding", original_error=str(exc)) from exc
+            raise SearchLegFailedError(
+                leg_name="embedding", original_error=str(exc)
+            ) from exc
 
     async def _vector_search_episodes(
         self,

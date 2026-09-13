@@ -1,4 +1,5 @@
 """Tests for ``Project`` model."""
+
 from __future__ import annotations
 
 import uuid

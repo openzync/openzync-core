@@ -13,59 +13,73 @@ class TestEventTypeConstants:
 
     def test_session_created_value(self) -> None:
         from core.events import EventType
+
         assert EventType.SESSION_CREATED == "session.created"
         assert isinstance(EventType.SESSION_CREATED, str)
 
     def test_session_closed_value(self) -> None:
         from core.events import EventType
+
         assert EventType.SESSION_CLOSED == "session.closed"
 
     def test_message_added_value(self) -> None:
         from core.events import EventType
+
         assert EventType.MESSAGE_ADDED == "message.added"
 
     def test_episode_processed_value(self) -> None:
         from core.events import EventType
+
         assert EventType.EPISODE_PROCESSED == "episode.processed"
 
     def test_ingest_batch_completed_value(self) -> None:
         from core.events import EventType
+
         assert EventType.INGEST_BATCH_COMPLETED == "ingest.batch.completed"
 
     def test_ingest_episode_completed_value(self) -> None:
         from core.events import EventType
+
         assert EventType.INGEST_EPISODE_COMPLETED == "ingest.episode.completed"
 
     def test_graph_entity_created_value(self) -> None:
         from core.events import EventType
+
         assert EventType.GRAPH_ENTITY_CREATED == "graph.entity.created"
 
     def test_graph_entity_updated_value(self) -> None:
         from core.events import EventType
+
         assert EventType.GRAPH_ENTITY_UPDATED == "graph.entity.updated"
 
     def test_graph_edge_created_value(self) -> None:
         from core.events import EventType
+
         assert EventType.GRAPH_EDGE_CREATED == "graph.edge.created"
 
     def test_fact_extracted_value(self) -> None:
         from core.events import EventType
+
         assert EventType.FACT_EXTRACTED == "fact.extracted"
 
     def test_fact_deleted_value(self) -> None:
         from core.events import EventType
+
         assert EventType.FACT_DELETED == "fact.deleted"
 
     def test_classification_created_value(self) -> None:
         from core.events import EventType
+
         assert EventType.CLASSIFICATION_CREATED == "classification.created"
 
     def test_extraction_created_value(self) -> None:
         from core.events import EventType
+
         assert EventType.EXTRACTION_CREATED == "extraction.created"
 
     def test_user_created_value(self) -> None:
         from core.events import EventType
+
         assert EventType.USER_CREATED == "user.created"
 
     def test_all_event_types_follow_domain_action_pattern(self) -> None:
@@ -85,6 +99,7 @@ class TestEventTypeConstants:
     def test_event_type_is_subclass_of_str(self) -> None:
         """EventType inherits from str so it can be compared directly."""
         from core.events import EventType
+
         assert issubclass(EventType, str)
         assert isinstance(EventType.SESSION_CREATED, str)
 
@@ -146,7 +161,8 @@ class TestEventRegistry:
         from core.events import EVENT_REGISTRY, EventType
 
         event_count = sum(
-            1 for attr_name in dir(EventType)
+            1
+            for attr_name in dir(EventType)
             if isinstance(getattr(EventType, attr_name), str) and attr_name.isupper()
         )
         assert len(EVENT_REGISTRY) == event_count

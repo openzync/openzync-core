@@ -103,9 +103,7 @@ async def test_structured_extraction_accuracy() -> None:
                 )
                 continue
 
-            is_match, detail = evaluate_structured_match(
-                parsed, item["expected"]
-            )
+            is_match, detail = evaluate_structured_match(parsed, item["expected"])
             if is_match:
                 correct += 1
             else:

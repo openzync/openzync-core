@@ -50,7 +50,9 @@ class TestSessionCrud:
 
     @staticmethod
     async def _create_user(
-        isolated_app: Any, isolated_org_and_key: dict, external_id: str,
+        isolated_app: Any,
+        isolated_org_and_key: dict,
+        external_id: str,
     ) -> str:
         """Create a user via the API (JWT admin session) and return the user ID.
 
@@ -62,9 +64,7 @@ class TestSessionCrud:
 
         transport = asgi_transport(isolated_app)
         async with AsyncClient(transport=transport, base_url="http://test") as cli:
-            cli.headers["Authorization"] = (
-                f"Bearer {isolated_org_and_key['jwt']}"
-            )
+            cli.headers["Authorization"] = f"Bearer {isolated_org_and_key['jwt']}"
             resp = await cli.post(
                 "/v1/users",
                 json={"external_id": external_id},
@@ -116,7 +116,9 @@ class TestSessionCrud:
         The response must include ``created_by`` matching the authenticated
         user (from the fixture), and ``external_id`` matching the request.
         """
-        _ = await self._create_user(isolated_app, isolated_org_and_key, "session_creator")
+        _ = await self._create_user(
+            isolated_app, isolated_org_and_key, "session_creator"
+        )
         fixture_user_id = isolated_org_and_key["user_id"]
 
         response = await isolated_auth_client.post(
@@ -142,15 +144,20 @@ class TestSessionCrud:
 
     @pytest.mark.asyncio
     async def test_create_duplicate_session(
-        self, isolated_app: Any, isolated_auth_client: AsyncClient,
-        isolated_org_and_key: dict, isolated_project_id: UUID,
+        self,
+        isolated_app: Any,
+        isolated_auth_client: AsyncClient,
+        isolated_org_and_key: dict,
+        isolated_project_id: UUID,
     ) -> None:
         """POST /sessions with the same external_id for the same project → 409.
 
         The ``(project_id, external_id)`` unique constraint must prevent
         duplicate session creation.
         """
-        user_id = await self._create_user(isolated_app, isolated_org_and_key, "dup_session_user")  # noqa: F841
+        user_id = await self._create_user(
+            isolated_app, isolated_org_and_key, "dup_session_user"
+        )  # noqa: F841
 
         # Create the first session
         resp1 = await isolated_auth_client.post(
@@ -186,7 +193,9 @@ class TestSessionCrud:
         ``SessionResponse`` includes aggregate statistics: ``message_count``,
         ``fact_count``, ``pending_enrichment_count``, ``observation_count``.
         """
-        _ = await self._create_user(isolated_app, isolated_org_and_key, "get_session_user")
+        _ = await self._create_user(
+            isolated_app, isolated_org_and_key, "get_session_user"
+        )
         fixture_user_id = isolated_org_and_key["user_id"]
 
         # Create a session
@@ -233,7 +242,9 @@ class TestSessionCrud:
         - Page 1: 2 items, ``has_more=True``, ``next_cursor`` is not null.
         - Page 2: 1 item,  ``has_more=False``, ``next_cursor`` is null.
         """
-        _ = await self._create_user(isolated_app, isolated_org_and_key, "list_sesh_user")
+        _ = await self._create_user(
+            isolated_app, isolated_org_and_key, "list_sesh_user"
+        )
 
         # Seed 3 sessions
         for i in range(3):
@@ -253,9 +264,7 @@ class TestSessionCrud:
         assert "data" in body1, "Missing 'data'"
         assert "next_cursor" in body1, "Missing 'next_cursor'"
         assert "has_more" in body1, "Missing 'has_more'"
-        assert len(body1["data"]) == 2, (
-            f"Expected 2 items, got {len(body1['data'])}"
-        )
+        assert len(body1["data"]) == 2, f"Expected 2 items, got {len(body1['data'])}"
         assert body1["has_more"] is True
         assert body1["next_cursor"] is not None
 
@@ -275,15 +284,20 @@ class TestSessionCrud:
 
     @pytest.mark.asyncio
     async def test_get_messages(
-        self, isolated_app: Any, isolated_auth_client: AsyncClient,
-        isolated_org_and_key: dict, isolated_project_id: UUID,
+        self,
+        isolated_app: Any,
+        isolated_auth_client: AsyncClient,
+        isolated_org_and_key: dict,
+        isolated_project_id: UUID,
     ) -> None:
         """GET /sessions/{id}/messages → 200 with empty ``data`` list.
 
         A session with no ingested messages should return an empty array,
         not an error.
         """
-        user_id = await self._create_user(isolated_app, isolated_org_and_key, "msg_user")  # noqa: F841
+        user_id = await self._create_user(
+            isolated_app, isolated_org_and_key, "msg_user"
+        )  # noqa: F841
 
         # Create a session
         created = await isolated_auth_client.post(
@@ -304,9 +318,7 @@ class TestSessionCrud:
 
         # Empty message list response shape
         assert "data" in body, "Missing 'data'"
-        assert "next_cursor" in body or "has_more" in body, (
-            "Missing pagination fields"
-        )
+        assert "next_cursor" in body or "has_more" in body, "Missing pagination fields"
         assert body["data"] == [], f"Expected empty list, got {body['data']}"
         assert body.get("has_more") is False
         assert body.get("next_cursor") is None
@@ -317,8 +329,11 @@ class TestSessionCrud:
 
     @pytest.mark.asyncio
     async def test_delete_session(
-        self, isolated_app: Any, isolated_auth_client: AsyncClient,
-        isolated_org_and_key: dict, isolated_project_id: UUID,
+        self,
+        isolated_app: Any,
+        isolated_auth_client: AsyncClient,
+        isolated_org_and_key: dict,
+        isolated_project_id: UUID,
     ) -> None:
         """DELETE /sessions/{id} → 204, subsequent GET → 404.
 
@@ -326,7 +341,9 @@ class TestSessionCrud:
         - DELETE returns 204 No Content.
         - Fetching the same session immediately after returns 404.
         """
-        user_id = await self._create_user(isolated_app, isolated_org_and_key, "del_sesh_user")  # noqa: F841
+        user_id = await self._create_user(
+            isolated_app, isolated_org_and_key, "del_sesh_user"
+        )  # noqa: F841
 
         # Create session
         created = await isolated_auth_client.post(
@@ -370,14 +387,16 @@ class TestSessionCrud:
         """
         # ── Bootstrap org A ─────────────────────────────────────────────
         async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             tenant_a = await bootstrap_tenant(isolated_app, cli, "Org A")
             project_id_a = tenant_a["project_id"]
 
         # ── Set up user for org A ───────────────────────────────────────
         async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             # POST /v1/users is gated by members:write — use the admin JWT.
             cli.headers["Authorization"] = f"Bearer {tenant_a['jwt']}"
@@ -390,13 +409,15 @@ class TestSessionCrud:
 
         # ── Bootstrap org B ─────────────────────────────────────────────
         async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             tenant_b = await bootstrap_tenant(isolated_app, cli, "Org B")
 
         # ── Set up user for org B ───────────────────────────────────────
         async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             cli.headers["Authorization"] = f"Bearer {tenant_b['jwt']}"
             user_resp = await cli.post("/v1/users", json={"external_id": "org_b_user"})
@@ -406,7 +427,8 @@ class TestSessionCrud:
 
         # ── Org A: create session ───────────────────────────────────────
         async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             cli.headers["Authorization"] = f"Bearer {tenant_a['api_key']}"
             isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_a
@@ -420,7 +442,8 @@ class TestSessionCrud:
 
         # ── Org B: try to access Org A's session → 404 ─────────────────
         async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
             get_resp = await cli.get(
@@ -438,12 +461,17 @@ class TestSessionCrud:
 
     @pytest.mark.asyncio
     async def test_session_not_found(
-        self, isolated_app: Any, isolated_auth_client: AsyncClient,
-        isolated_org_and_key: dict, isolated_project_id: UUID,
+        self,
+        isolated_app: Any,
+        isolated_auth_client: AsyncClient,
+        isolated_org_and_key: dict,
+        isolated_project_id: UUID,
     ) -> None:
         """GET /sessions with a non-existent UUID → 404."""
         user_id = await self._create_user(
-            isolated_app, isolated_org_and_key, "not_found_user",
+            isolated_app,
+            isolated_org_and_key,
+            "not_found_user",
         )  # noqa: F841
         fake_session_id = "00000000-0000-0000-0000-000000000000"
 

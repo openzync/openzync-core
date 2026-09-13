@@ -1,4 +1,4 @@
-"""Graph backend abstraction — interface, PostgreSQL, SurrealDB, and FalkorDB implementations.
+"""Graph backend abstraction — interface, Postgres, SurrealDB, FalkorDB.
 
 This package provides:
 - ``GraphBackend`` — Abstract interface for graph-database operations

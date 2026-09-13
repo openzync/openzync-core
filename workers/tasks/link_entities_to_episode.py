@@ -112,7 +112,9 @@ async def link_entities_to_episode(
             try:
                 ctx_dict: dict = ctx if isinstance(ctx, dict) else {}
                 backend = await resolve_graph_backend(
-                    ctx_dict, UUID(org_id), db,
+                    ctx_dict,
+                    UUID(org_id),
+                    db,
                 )
             except GraphBackendUnavailableError:
                 # Backend is explicitly configured but unreachable — this is
@@ -244,6 +246,7 @@ async def link_entities_to_episode(
 
             # ── 7. Optionally trigger community detection (event-driven mode) ──
             from services.worker.worker_settings import settings as worker_settings
+
             if worker_settings.AUTO_RUN_COMMUNITY_DETECTION:
                 try:
                     # ctx is the ARQ worker context dict with a 'redis' key

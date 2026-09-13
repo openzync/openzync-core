@@ -100,9 +100,7 @@ class TestWebhookRepository:
 
     # ── create ─────────────────────────────────────────────────────────────────
 
-    async def test_create(
-        self, repo: WebhookRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_create(self, repo: WebhookRepository, mock_db: AsyncMock) -> None:
         """create inserts and returns a new webhook endpoint."""
         mock_db.add.return_value = None
         mock_db.flush.return_value = None
@@ -138,9 +136,7 @@ class TestWebhookRepository:
 
     # ── update ─────────────────────────────────────────────────────────────────
 
-    async def test_update(
-        self, repo: WebhookRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_update(self, repo: WebhookRepository, mock_db: AsyncMock) -> None:
         """update modifies endpoint fields."""
         endpoint = self._mock_endpoint()
         # get_by_id call after the update
@@ -158,9 +154,7 @@ class TestWebhookRepository:
 
         mock_db.execute.side_effect = execute_side_effect
 
-        result = await repo.update(
-            endpoint_id=self.ENDPOINT_ID, name="Updated"
-        )
+        result = await repo.update(endpoint_id=self.ENDPOINT_ID, name="Updated")
 
         assert result is not None
         mock_db.flush.assert_awaited_once()
@@ -195,9 +189,7 @@ class TestWebhookRepository:
     ) -> None:
         """update serialises events list to JSON."""
         endpoint = self._mock_endpoint()
-        updated_endpoint = self._mock_endpoint(
-            events=orjson.dumps(["session.closed"])
-        )
+        updated_endpoint = self._mock_endpoint(events=orjson.dumps(["session.closed"]))
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = endpoint
         mock_db.execute.return_value = mock_result
@@ -217,9 +209,7 @@ class TestWebhookRepository:
 
     # ── delete ─────────────────────────────────────────────────────────────────
 
-    async def test_delete(
-        self, repo: WebhookRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_delete(self, repo: WebhookRepository, mock_db: AsyncMock) -> None:
         """delete removes an endpoint and returns True."""
         endpoint = self._mock_endpoint()
         mock_result = MagicMock()
@@ -256,7 +246,8 @@ class TestWebhookRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.set_signing_secret_if_null(
-            endpoint_id=self.ENDPOINT_ID, signing_secret="whsec_new",  # noqa: S106
+            endpoint_id=self.ENDPOINT_ID,
+            signing_secret="whsec_new",  # noqa: S106
         )
 
         assert result == 1
@@ -271,7 +262,8 @@ class TestWebhookRepository:
         mock_db.execute.return_value = mock_result
 
         result = await repo.set_signing_secret_if_null(
-            endpoint_id=self.ENDPOINT_ID, signing_secret="whsec_new",  # noqa: S106
+            endpoint_id=self.ENDPOINT_ID,
+            signing_secret="whsec_new",  # noqa: S106
         )
 
         assert result == 0

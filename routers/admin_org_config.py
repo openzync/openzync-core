@@ -94,7 +94,9 @@ async def get_org_config_defaults() -> UpdateOrgConfigRequest:
     the user must fill them in.
     """
     if not DEFAULTS_PATH.is_file():
-        raise HTTPException(status_code=500, detail="Defaults configuration file not found")
+        raise HTTPException(
+            status_code=500, detail="Defaults configuration file not found"
+        )
     with DEFAULTS_PATH.open() as f:
         data: dict = yaml.safe_load(f)
     return UpdateOrgConfigRequest(**data)
@@ -154,8 +156,7 @@ async def update_org_config(
     system_managed = _get_system_managed_fields()
     if system_managed:
         overridden = {
-            f for f in system_managed
-            if f in body.model_dump(exclude_unset=True)
+            f for f in system_managed if f in body.model_dump(exclude_unset=True)
         }
         if overridden:
             raise HTTPException(
@@ -200,8 +201,7 @@ async def replace_org_config(
     system_managed = _get_system_managed_fields()
     if system_managed:
         overridden = {
-            f for f in system_managed
-            if f in body.model_dump(exclude_unset=True)
+            f for f in system_managed if f in body.model_dump(exclude_unset=True)
         }
         if overridden:
             raise HTTPException(

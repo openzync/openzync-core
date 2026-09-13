@@ -83,7 +83,9 @@ class TestProcessClassificationOutput:
         validation_sets: dict[str, set[str]],
     ) -> None:
         """Intent outside the org's taxonomy is not persisted (validated)."""
-        parsed = self._valid_output().model_copy(update={"intent": "unknown_category_xyz"})
+        parsed = self._valid_output().model_copy(
+            update={"intent": "unknown_category_xyz"}
+        )
 
         await process_classification_output(
             db=mock_db,
@@ -104,7 +106,9 @@ class TestProcessClassificationOutput:
         validation_sets: dict[str, set[str]],
     ) -> None:
         """Emotion outside the org's taxonomy is not persisted."""
-        parsed = self._valid_output().model_copy(update={"emotion": "not-a-real-emotion"})
+        parsed = self._valid_output().model_copy(
+            update={"emotion": "not-a-real-emotion"}
+        )
 
         await process_classification_output(
             db=mock_db,

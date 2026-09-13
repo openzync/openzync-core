@@ -144,7 +144,9 @@ class TestRequirePermission:
             ),
             patch(
                 "dependencies.auth.get_effective_permissions",
-                new=AsyncMock(return_value=frozenset({"project:read", "project:write"})),
+                new=AsyncMock(
+                    return_value=frozenset({"project:read", "project:write"})
+                ),
             ),
         ):
             result = await checker(request, self.ORG_ID_STR, db=MagicMock())
@@ -485,10 +487,13 @@ class TestGetDashboardUser:
         from dependencies.auth import get_dashboard_user
 
         request = self._flag_request("/v1/admin/stats/org")
-        with patch(
-            "dependencies.auth.get_must_change_password",
-            new=AsyncMock(return_value=True),
-        ), pytest.raises(HTTPException) as exc:
+        with (
+            patch(
+                "dependencies.auth.get_must_change_password",
+                new=AsyncMock(return_value=True),
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
             await get_dashboard_user(request, self.ORG_ID_STR, AsyncMock())
         assert exc.value.status_code == 403
         assert "Password Change Required" in exc.value.detail["title"]

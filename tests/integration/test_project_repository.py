@@ -215,9 +215,7 @@ class TestProjectRepository:
                 name="Other's Project",
                 created_by=other_user_id,
             )
-            await repo.add_member(
-                project_id=p.id, user_id=other_user_id, role="owner"
-            )
+            await repo.add_member(project_id=p.id, user_id=other_user_id, role="owner")
 
             projects = await repo.list(
                 organization_id=self.ORG_ID,
@@ -344,9 +342,7 @@ class TestProjectRepository:
                 name="Remove Test",
                 created_by=user_id,
             )
-            await repo.add_member(
-                project_id=project.id, user_id=user_id, role="member"
-            )
+            await repo.add_member(project_id=project.id, user_id=user_id, role="member")
 
             result = await repo.remove_member(project.id, user_id)
             assert result is True
@@ -373,9 +369,7 @@ class TestProjectRepository:
                 name="Get Member",
                 created_by=user_id,
             )
-            await repo.add_member(
-                project_id=project.id, user_id=user_id, role="owner"
-            )
+            await repo.add_member(project_id=project.id, user_id=user_id, role="owner")
 
             member = await repo.get_member(project.id, user_id)
             assert member is not None
@@ -403,9 +397,7 @@ class TestProjectRepository:
                 name="List Members",
                 created_by=user_id,
             )
-            await repo.add_member(
-                project_id=project.id, user_id=user_id, role="owner"
-            )
+            await repo.add_member(project_id=project.id, user_id=user_id, role="owner")
 
             members = await repo.list_members(project.id)
             assert len(members) >= 1
@@ -422,9 +414,7 @@ class TestProjectRepository:
                 name="Role Test",
                 created_by=user_id,
             )
-            await repo.add_member(
-                project_id=project.id, user_id=user_id, role="member"
-            )
+            await repo.add_member(project_id=project.id, user_id=user_id, role="member")
 
             updated = await repo.update_member_role(
                 project_id=project.id,
@@ -457,9 +447,7 @@ class TestProjectRepository:
                 name="Count Test",
                 created_by=user_id,
             )
-            await repo.add_member(
-                project_id=project.id, user_id=user_id, role="owner"
-            )
+            await repo.add_member(project_id=project.id, user_id=user_id, role="owner")
 
             count = await repo.count_members(project.id)
             assert count >= 1

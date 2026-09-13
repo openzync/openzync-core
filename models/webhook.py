@@ -46,7 +46,10 @@ class WebhookEndpoint(TimestampMixin, Base):
     events: Mapped[str] = mapped_column(
         Text,
         nullable=False,
-        comment='JSON array of subscribed event types, e.g. ["session.created","fact.extracted"]',
+        comment=(
+            "JSON array of subscribed event types, "
+            'e.g. ["session.created","fact.extracted"]'
+        ),
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
@@ -63,12 +66,12 @@ class WebhookEndpoint(TimestampMixin, Base):
     )
     last_delivery_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
-    __table_args__ = (
-        Index("ix_webhook_endpoints_org", "organization_id"),
-    )
+    __table_args__ = (Index("ix_webhook_endpoints_org", "organization_id"),)
 
     def __repr__(self) -> str:
-        return f"<WebhookEndpoint id={self.id} name={self.name!r} active={self.is_active}>"
+        return (
+            f"<WebhookEndpoint id={self.id} name={self.name!r} active={self.is_active}>"
+        )
 
 
 class WebhookDeliveryLog(TimestampMixin, Base):

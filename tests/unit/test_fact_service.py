@@ -38,7 +38,9 @@ class TestFactService:
         mock_redis = AsyncMock()
         mock_redis.get.return_value = None  # no cached idempotency
         mock_fact_repo = AsyncMock()
-        mock_fact_repo.create.return_value = MagicMock(id=UUID("00000000-0000-0000-0000-000000000099"))
+        mock_fact_repo.create.return_value = MagicMock(
+            id=UUID("00000000-0000-0000-0000-000000000099")
+        )
         mock_session_repo = AsyncMock()
 
         s = FactService(
@@ -59,7 +61,9 @@ class TestFactService:
         )
 
     @pytest.mark.asyncio
-    async def test_ingest_facts_empty_list_returns_accepted(self, service: FactService) -> None:
+    async def test_ingest_facts_empty_list_returns_accepted(
+        self, service: FactService
+    ) -> None:
         """Ingesting an empty fact list returns accepted (schema-level validation
         catches empty lists before reaching the service)."""
         result = await service.ingest_facts(
@@ -85,9 +89,7 @@ class TestFactService:
         mock_arq_pool = AsyncMock()
         facts = [
             self._sample_triple(subject="Alice", predicate="likes", object="hiking"),
-            self._sample_triple(
-                subject="Bob", predicate="works_at", object="AcmeCorp"
-            ),
+            self._sample_triple(subject="Bob", predicate="works_at", object="AcmeCorp"),
         ]
 
         with patch("services.fact_service.get_arq", return_value=mock_arq_pool):
@@ -267,9 +269,7 @@ class TestFactRetraction:
         )
 
     @pytest.mark.asyncio
-    async def test_retract_defaults_at_time_to_now(
-        self, service: FactService
-    ) -> None:
+    async def test_retract_defaults_at_time_to_now(self, service: FactService) -> None:
         """Omitting ``at_time`` stamps the current UTC instant."""
         fact = self._open_fact()
         service._fact_repo.get_by_id.return_value = fact
@@ -279,9 +279,7 @@ class TestFactRetraction:
 
         service._fact_repo.set_invalid_at.side_effect = _apply_invalid_at
 
-        with patch(
-            "services.fact_invalidation_service.FactInvalidationService"
-        ):
+        with patch("services.fact_invalidation_service.FactInvalidationService"):
             result = await service.retract_fact(
                 self.FACT_1_ID,
                 organization_id=self.ORG_ID,
@@ -317,9 +315,7 @@ class TestFactRetraction:
         mock_inv_cls.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_retract_superseded_fact_is_noop(
-        self, service: FactService
-    ) -> None:
+    async def test_retract_superseded_fact_is_noop(self, service: FactService) -> None:
         """A fact closed by supersession (``valid_to`` set) is a no-op too —
         history already recorded by the deterministic path."""
         fact = self._open_fact(valid_to=self.NOW)

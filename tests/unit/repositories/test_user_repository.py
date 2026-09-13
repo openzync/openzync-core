@@ -47,9 +47,7 @@ class TestUserRepository:
 
     # ── create ─────────────────────────────────────────────────────────────────
 
-    async def test_create(
-        self, repo: UserRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_create(self, repo: UserRepository, mock_db: AsyncMock) -> None:
         """create inserts and returns a new user."""
         mock_db.add.return_value = None
         mock_db.flush.return_value = None
@@ -76,9 +74,7 @@ class TestUserRepository:
         mock_db.flush.return_value = None
         mock_db.refresh.return_value = None
 
-        result = await repo.create(
-            organization_id=self.ORG_ID, external_id="ext-003"
-        )
+        result = await repo.create(organization_id=self.ORG_ID, external_id="ext-003")
 
         assert result is not None
 
@@ -201,17 +197,13 @@ class TestUserRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_uuid(
-            organization_id=self.ORG_ID, user_id=uuid4()
-        )
+        result = await repo.get_by_uuid(organization_id=self.ORG_ID, user_id=uuid4())
 
         assert result is None
 
     # ── update ─────────────────────────────────────────────────────────────────
 
-    async def test_update(
-        self, repo: UserRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_update(self, repo: UserRepository, mock_db: AsyncMock) -> None:
         """update modifies user fields."""
         user = self._mock_user(name="Old Name")
         mock_result = MagicMock()
@@ -267,9 +259,7 @@ class TestUserRepository:
 
     # ── soft_delete ────────────────────────────────────────────────────────────
 
-    async def test_soft_delete(
-        self, repo: UserRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_soft_delete(self, repo: UserRepository, mock_db: AsyncMock) -> None:
         """soft_delete sets is_deleted flag."""
         user = self._mock_user(is_deleted=False)
         mock_result = MagicMock()
@@ -303,9 +293,7 @@ class TestUserRepository:
 
     # ── hard_delete ────────────────────────────────────────────────────────────
 
-    async def test_hard_delete(
-        self, repo: UserRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_hard_delete(self, repo: UserRepository, mock_db: AsyncMock) -> None:
         """hard_delete permanently removes a user and returns True."""
         user = self._mock_user()
         mock_result = MagicMock()
@@ -337,9 +325,7 @@ class TestUserRepository:
 
     # ── list (cursor pagination) ───────────────────────────────────────────────
 
-    async def test_list(
-        self, repo: UserRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_list(self, repo: UserRepository, mock_db: AsyncMock) -> None:
         """list returns users with pagination metadata."""
         users = [self._mock_user(), self._mock_user(id=uuid4())]
         mock_result = MagicMock()
@@ -359,9 +345,7 @@ class TestUserRepository:
         mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result, cursor = await repo.list(
-            organization_id=self.ORG_ID, search="alice"
-        )
+        result, cursor = await repo.list(organization_id=self.ORG_ID, search="alice")
 
         assert result == []
 
@@ -406,21 +390,20 @@ class TestUserRepository:
         # Return limit + 1 rows to trigger has_more=True
         # With limit=1, effective_limit=2, so returning 2 rows = has_more
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = [user, self._mock_user(id=uuid4())]
+        mock_result.scalars.return_value.all.return_value = [
+            user,
+            self._mock_user(id=uuid4()),
+        ]
         mock_db.execute.return_value = mock_result
 
-        result, cursor = await repo.list(
-            organization_id=self.ORG_ID, limit=1
-        )
+        result, cursor = await repo.list(organization_id=self.ORG_ID, limit=1)
 
         assert len(result) == 1
         # has_more is True, so cursor should be set
         if cursor is not None:
             assert isinstance(cursor, str)
 
-    async def test_list_empty(
-        self, repo: UserRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_list_empty(self, repo: UserRepository, mock_db: AsyncMock) -> None:
         """list returns empty when no users."""
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = []
@@ -433,9 +416,7 @@ class TestUserRepository:
 
     # ── get_stats ──────────────────────────────────────────────────────────────
 
-    async def test_get_stats(
-        self, repo: UserRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_get_stats(self, repo: UserRepository, mock_db: AsyncMock) -> None:
         """get_stats returns aggregate counts."""
         mock_row = MagicMock()
         mock_row.message_count = 10
@@ -486,9 +467,7 @@ class TestUserRepository:
         mock_db.execute.return_value = MagicMock()
         mock_db.flush.return_value = None
 
-        await repo.update_summary(
-            user_id=self.USER_ID, summary="User summary text"
-        )
+        await repo.update_summary(user_id=self.USER_ID, summary="User summary text")
 
         mock_db.execute.assert_awaited_once()
         mock_db.flush.assert_awaited_once()
@@ -532,9 +511,7 @@ class TestUserRepository:
 
     # ── count_active ───────────────────────────────────────────────────────────
 
-    async def test_count_active(
-        self, repo: UserRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_count_active(self, repo: UserRepository, mock_db: AsyncMock) -> None:
         """count_active returns the active user count."""
         mock_result = MagicMock()
         mock_result.scalar.return_value = 7
@@ -588,9 +565,7 @@ class TestUserRepository:
 
     # ── rollback ───────────────────────────────────────────────────────────────
 
-    async def test_rollback(
-        self, repo: UserRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_rollback(self, repo: UserRepository, mock_db: AsyncMock) -> None:
         """rollback delegates to the DB session."""
         await repo.rollback()
 
@@ -614,9 +589,7 @@ class TestUserRepository:
         assert decoded_dt == dt
         assert decoded_id == self.USER_ID
 
-    def test_decode_cursor_invalid_raises(
-        self, repo: UserRepository
-    ) -> None:
+    def test_decode_cursor_invalid_raises(self, repo: UserRepository) -> None:
         """_decode_cursor raises ValueError for malformed input."""
         with pytest.raises(ValueError, match="Invalid cursor"):
             repo._decode_cursor("not-base64!!!")

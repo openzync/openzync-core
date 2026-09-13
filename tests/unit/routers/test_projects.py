@@ -84,7 +84,9 @@ class TestProjectsRouter:
     """Full HTTP-adapter tests for the projects router."""
 
     @patch("routers.projects.ProjectService")
-    async def test_create_project_success(self, mock_project_service: AsyncMock) -> None:
+    async def test_create_project_success(
+        self, mock_project_service: AsyncMock
+    ) -> None:
         """POST /v1/projects → 201 with ProjectResponse."""
         # ── Arrange ─────────────────────────────────────────────────────
         mock_instance = AsyncMock()
@@ -130,7 +132,9 @@ class TestProjectsRouter:
         mock_instance.create_project.assert_awaited_once()
 
     @patch("routers.projects.ProjectService")
-    async def test_create_project_422_empty_name(self, mock_project_service: AsyncMock) -> None:
+    async def test_create_project_422_empty_name(
+        self, mock_project_service: AsyncMock
+    ) -> None:
         """POST /v1/projects with empty name → 422."""
         mock_instance = AsyncMock()
         mock_project_service.return_value = mock_instance
@@ -162,7 +166,9 @@ class TestProjectsRouter:
         mock_instance.create_project.assert_not_called()
 
     @patch("routers.projects.ProjectService")
-    async def test_create_project_422_missing_body(self, mock_project_service: AsyncMock) -> None:
+    async def test_create_project_422_missing_body(
+        self, mock_project_service: AsyncMock
+    ) -> None:
         """POST /v1/projects without body → 422."""
         mock_instance = AsyncMock()
         mock_project_service.return_value = mock_instance
@@ -230,7 +236,9 @@ class TestProjectsRouter:
         mock_instance.list_projects.assert_awaited_once()
 
     @patch("routers.projects.ProjectService")
-    async def test_list_projects_with_pagination(self, mock_project_service: AsyncMock) -> None:
+    async def test_list_projects_with_pagination(
+        self, mock_project_service: AsyncMock
+    ) -> None:
         """GET /v1/projects with limit and offset → 200."""
         mock_instance = AsyncMock()
         mock_project_service.return_value = mock_instance
@@ -263,7 +271,9 @@ class TestProjectsRouter:
         assert _call_kwargs["offset"] == 5
 
     @patch("routers.projects.ProjectService")
-    async def test_list_projects_422_invalid_limit(self, mock_project_service: AsyncMock) -> None:
+    async def test_list_projects_422_invalid_limit(
+        self, mock_project_service: AsyncMock
+    ) -> None:
         """GET /v1/projects with limit out of range → 422."""
         mock_instance = AsyncMock()
         mock_project_service.return_value = mock_instance
@@ -330,7 +340,9 @@ class TestProjectsRouter:
         mock_instance.get_project.assert_awaited_once()
 
     @patch("routers.projects.ProjectService")
-    async def test_get_project_404_not_found(self, mock_project_service: AsyncMock) -> None:
+    async def test_get_project_404_not_found(
+        self, mock_project_service: AsyncMock
+    ) -> None:
         """GET /v1/projects/{id} when service raises NotFoundError → 404."""
         from core.exceptions import NotFoundError
 
@@ -371,7 +383,9 @@ class TestProjectsRouter:
         assert response.status_code == 404
 
     @patch("routers.projects.ProjectService")
-    async def test_update_project_success(self, mock_project_service: AsyncMock) -> None:
+    async def test_update_project_success(
+        self, mock_project_service: AsyncMock
+    ) -> None:
         """PATCH /v1/projects/{id} → 200 with updated ProjectResponse."""
         mock_instance = AsyncMock()
         mock_project_service.return_value = mock_instance
@@ -410,7 +424,9 @@ class TestProjectsRouter:
         mock_instance.update_project.assert_awaited_once()
 
     @patch("routers.projects.ProjectService")
-    async def test_update_project_empty_body(self, mock_project_service: AsyncMock) -> None:
+    async def test_update_project_empty_body(
+        self, mock_project_service: AsyncMock
+    ) -> None:
         """PATCH /v1/projects/{id} with empty body → 200 (all fields optional)."""
         mock_instance = AsyncMock()
         mock_project_service.return_value = mock_instance
@@ -448,7 +464,9 @@ class TestProjectsRouter:
         mock_instance.update_project.assert_awaited_once()
 
     @patch("routers.projects.ProjectService")
-    async def test_delete_project_success(self, mock_project_service: AsyncMock) -> None:
+    async def test_delete_project_success(
+        self, mock_project_service: AsyncMock
+    ) -> None:
         """DELETE /v1/projects/{id} → 204 No Content."""
         mock_instance = AsyncMock()
         mock_project_service.return_value = mock_instance
@@ -519,7 +537,9 @@ class TestProjectsRouter:
         mock_instance.add_member.assert_awaited_once()
 
     @patch("routers.projects.ProjectService")
-    async def test_add_member_422_invalid_role(self, mock_project_service: AsyncMock) -> None:
+    async def test_add_member_422_invalid_role(
+        self, mock_project_service: AsyncMock
+    ) -> None:
         """POST /v1/projects/{id}/members with invalid role → 422."""
         mock_instance = AsyncMock()
         mock_project_service.return_value = mock_instance
@@ -624,7 +644,9 @@ class TestProjectsRouter:
         mock_instance.remove_member.assert_awaited_once()
 
     @patch("routers.projects.ProjectService")
-    async def test_update_member_role_success(self, mock_project_service: AsyncMock) -> None:
+    async def test_update_member_role_success(
+        self, mock_project_service: AsyncMock
+    ) -> None:
         """PATCH /v1/projects/{id}/members/{uid} → 200 with updated member."""
         mock_instance = AsyncMock()
         mock_project_service.return_value = mock_instance
@@ -663,7 +685,8 @@ class TestProjectsRouter:
 
     @patch("routers.projects.ProjectService")
     async def test_update_member_role_422_invalid_role(
-        self, mock_project_service: AsyncMock,
+        self,
+        mock_project_service: AsyncMock,
     ) -> None:
         """PATCH with invalid role query parameter → 422."""
         mock_instance = AsyncMock()

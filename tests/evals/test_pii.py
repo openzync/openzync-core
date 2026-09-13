@@ -60,9 +60,7 @@ def test_pii_detection_accuracy() -> None:
         for expected_det in expected:
             pii_type = expected_det["type"]
             expected_count = expected_det["count"]
-            actual_count = sum(
-                1 for d in detections if d.type == pii_type
-            )
+            actual_count = sum(1 for d in detections if d.type == pii_type)
             if actual_count < expected_count:
                 case_errors.append(
                     f"'{pii_type}': expected {expected_count} {'instance' if expected_count == 1 else 'instances'}, "
@@ -86,7 +84,11 @@ def test_pii_detection_accuracy() -> None:
                     "content_preview": content[:80],
                     "errors": case_errors,
                     "detections": [
-                        {"type": d.type, "value_preview": d.value[:20], "start": d.start}
+                        {
+                            "type": d.type,
+                            "value_preview": d.value[:20],
+                            "start": d.start,
+                        }
                         for d in detections[:5]  # log up to 5 for debugging
                     ],
                 }

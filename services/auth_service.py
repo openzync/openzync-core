@@ -75,6 +75,7 @@ logger = logging.getLogger(__name__)
 # Constants
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 def _access_token_ttl() -> timedelta:
     """Lazy access to JWT access token TTL from settings."""
     return timedelta(minutes=get_settings().JWT_ACCESS_TOKEN_TTL_MINUTES)
@@ -83,6 +84,7 @@ def _access_token_ttl() -> timedelta:
 def _refresh_token_ttl() -> timedelta:
     """Lazy access to JWT refresh token TTL from settings."""
     return timedelta(days=get_settings().JWT_REFRESH_TOKEN_TTL_DAYS)
+
 
 _JWT_ALGORITHM = "HS256"
 _MFA_SESSION_TTL_SEC = 600  # 10 minutes — MFA pending session lifetime
@@ -166,9 +168,7 @@ class AuthService:
                 or the org name is reserved (``SYSTEM``).
         """
         # ── Platform policy gate (before any org creation) ────────────────
-        system_config = await get_system_config(
-            self._redis, self._bao_client
-        )
+        system_config = await get_system_config(self._redis, self._bao_client)
         if system_config.org_creation_policy == "reject_all":
             raise AuthorizationError("Registration is disabled")
 
@@ -342,9 +342,7 @@ class AuthService:
             raise NotFoundError("Dashboard user not found.")
 
         if user.password_hash is None:
-            raise ValidationError(
-                "This account does not have a password set."
-            )
+            raise ValidationError("This account does not have a password set.")
         if not verify_password(payload.old_password, user.password_hash):
             raise AuthenticationError("Current password is incorrect.")
 
@@ -446,9 +444,7 @@ class AuthService:
         """
         # ── Platform policy gate — sits on top of the per-org join_enabled
         #    check; reject_all blocks every channel. ────────────────────────
-        system_config = await get_system_config(
-            self._redis, self._bao_client
-        )
+        system_config = await get_system_config(self._redis, self._bao_client)
         if system_config.org_creation_policy == "reject_all":
             raise AuthorizationError("Registration is disabled")
 
@@ -464,9 +460,7 @@ class AuthService:
                 "auth.join_disabled",
                 extra={"org_id": str(org.id)},
             )
-            raise AuthorizationError(
-                "This organization is not accepting new members"
-            )
+            raise AuthorizationError("This organization is not accepting new members")
 
         existing = await self._repo.find_user_by_email(payload.email)
         if existing is not None:
@@ -529,8 +523,7 @@ class AuthService:
             # No account → no OTP was ever issued for it.  Raise the exact
             # wrong-code error so missing vs existing emails are indistinguishable.
             raise AuthenticationError(
-                "Invalid or expired verification code. "
-                "Please request a new code."
+                "Invalid or expired verification code. Please request a new code."
             )
 
         # Always verify the OTP — even for already-verified users.
@@ -543,8 +536,7 @@ class AuthService:
         )
         if not verified:
             raise AuthenticationError(
-                "Invalid or expired verification code. "
-                "Please request a new code."
+                "Invalid or expired verification code. Please request a new code."
             )
 
         # Only update DB if email was not already verified
@@ -554,9 +546,7 @@ class AuthService:
         # Bootstrap OpenBao namespace for the org (idempotent — skips if exists)
         if self._bao_client is not None:
             try:
-                await self._bao_client.create_org_namespace(
-                    user.organization_id
-                )
+                await self._bao_client.create_org_namespace(user.organization_id)
             except Exception:
                 logger.exception(
                     "auth_service.openbao_ns_bootstrap_failed org_id=%s",
@@ -670,8 +660,7 @@ class AuthService:
         user = await self._repo.find_user_by_email(payload.email)
         if user is None:
             raise AuthenticationError(
-                "Invalid or expired reset code. "
-                "Please request a new code.",
+                "Invalid or expired reset code. Please request a new code.",
             )
 
         # Verify OTP
@@ -682,8 +671,7 @@ class AuthService:
         )
         if not verified:
             raise AuthenticationError(
-                "Invalid or expired reset code. "
-                "Please request a new code.",
+                "Invalid or expired reset code. Please request a new code.",
             )
 
         # Validate and hash new password
@@ -742,8 +730,7 @@ class AuthService:
         )
 
         return OtpResponse(
-            message="If an account exists with this email, "
-            "a login code has been sent.",
+            message="If an account exists with this email, a login code has been sent.",
         )
 
     async def passwordless_login(self, payload: VerifyOtpRequest) -> TokenResponse:
@@ -771,8 +758,7 @@ class AuthService:
             # No account → no OTP was ever issued for it.  Raise the exact
             # wrong-code error so missing vs existing emails are indistinguishable.
             raise AuthenticationError(
-                "Invalid or expired login code. "
-                "Please request a new code."
+                "Invalid or expired login code. Please request a new code."
             )
 
         verified = await self._otp_service.verify(
@@ -782,8 +768,7 @@ class AuthService:
         )
         if not verified:
             raise AuthenticationError(
-                "Invalid or expired login code. "
-                "Please request a new code.",
+                "Invalid or expired login code. Please request a new code.",
             )
 
         # Auto-verify email if this is the user's first login
@@ -909,8 +894,7 @@ class AuthService:
 
         if session_raw is None:
             raise AuthenticationError(
-                "MFA session has expired or is invalid. "
-                "Please log in again."
+                "MFA session has expired or is invalid. Please log in again."
             )
 
         session_data = json.loads(session_raw)
@@ -924,8 +908,7 @@ class AuthService:
         )
         if not verified:
             raise AuthenticationError(
-                "Invalid or expired MFA code. "
-                "Please request a new code during login.",
+                "Invalid or expired MFA code. Please request a new code during login.",
             )
 
         # Issue tokens
@@ -964,7 +947,8 @@ class AuthService:
             raise NotFoundError("Dashboard user not found.")
 
         if user.password_hash is None or not verify_password(
-            payload.password, user.password_hash,
+            payload.password,
+            user.password_hash,
         ):
             raise AuthenticationError("Current password is incorrect.")
 
@@ -1003,7 +987,8 @@ class AuthService:
             raise NotFoundError("Dashboard user not found.")
 
         if user.password_hash is None or not verify_password(
-            payload.password, user.password_hash,
+            payload.password,
+            user.password_hash,
         ):
             raise AuthenticationError("Current password is incorrect.")
 
@@ -1051,9 +1036,7 @@ class AuthService:
         # Atomic claim — a concurrent request with the same token loses here.
         if not await self._repo.revoke_refresh_token_if_current(token_hash):
             await self._revoke_family(token_hash)
-            raise AuthenticationError(
-                "Refresh token is invalid or has expired."
-            )
+            raise AuthenticationError("Refresh token is invalid or has expired.")
 
         stored = await self._repo.get_refresh_token_by_hash(token_hash)
         if stored is None:
@@ -1077,9 +1060,7 @@ class AuthService:
 
         # Chain the claimed token to its successor (rotation audit trail).
         new_refresh_hash = self._hash_refresh_token(new_tokens.refresh_token)
-        new_stored = await self._repo.get_refresh_token_by_hash(
-            new_refresh_hash
-        )
+        new_stored = await self._repo.get_refresh_token_by_hash(new_refresh_hash)
         if new_stored is not None:
             await self._repo.set_refresh_token_rotated_by(
                 stored.id,
@@ -1119,9 +1100,7 @@ class AuthService:
                 break
             seen.add(node.rotated_by)
             family_ids.append(node.rotated_by)
-            successor = await self._repo.get_refresh_token_by_id(
-                node.rotated_by
-            )
+            successor = await self._repo.get_refresh_token_by_id(node.rotated_by)
             if successor is None:
                 break
             node = successor
@@ -1315,9 +1294,7 @@ class AuthService:
             # Check email uniqueness
             existing = await self._repo.find_user_by_email(payload.email)
             if existing is not None and existing.id != user_id:
-                raise ConflictError(
-                    f"Email '{payload.email}' is already in use."
-                )
+                raise ConflictError(f"Email '{payload.email}' is already in use.")
             update_kwargs["email"] = payload.email
             has_changes = True
 
@@ -1335,9 +1312,7 @@ class AuthService:
                     "Current password is required to set a new password."
                 )
             if user.password_hash is None:
-                raise ValidationError(
-                    "This account does not have a password set."
-                )
+                raise ValidationError("This account does not have a password set.")
             if not verify_password(payload.current_password, user.password_hash):
                 raise AuthenticationError("Current password is incorrect.")
             self._validate_password(payload.new_password)
@@ -1369,7 +1344,11 @@ class AuthService:
                     except Exception:
                         logger.warning(
                             "Failed to send password-change notification email",
-                            extra={"email": user_email[:3] + "**@" + user_email.split("@")[-1]},
+                            extra={
+                                "email": user_email[:3]
+                                + "**@"
+                                + user_email.split("@")[-1]
+                            },
                         )
 
         if has_changes:
@@ -1401,9 +1380,7 @@ class AuthService:
             ValidationError: If the password is too weak.
         """
         if len(password) < 8:
-            raise ValidationError(
-                "Password must be at least 8 characters long."
-            )
+            raise ValidationError("Password must be at least 8 characters long.")
         if not any(c.isupper() for c in password):
             raise ValidationError(
                 "Password must contain at least one uppercase letter."
@@ -1413,6 +1390,4 @@ class AuthService:
                 "Password must contain at least one lowercase letter."
             )
         if not any(c.isdigit() for c in password):
-            raise ValidationError(
-                "Password must contain at least one digit."
-            )
+            raise ValidationError("Password must contain at least one digit.")

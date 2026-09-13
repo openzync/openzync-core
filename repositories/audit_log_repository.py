@@ -7,12 +7,16 @@ The table is append-only — no UPDATE or DELETE at the application layer.
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import UUID
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, not_, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.audit_log import AuditLog
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def _parse_iso(ts: str) -> datetime:
@@ -29,8 +33,7 @@ def _parse_iso(ts: str) -> datetime:
         parsed = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except ValueError:
         raise ValueError(
-            f"Invalid ISO 8601 timestamp: {ts!r} "
-            "(expected e.g. '2026-07-31T10:00:00Z')"
+            f"Invalid ISO 8601 timestamp: {ts!r} (expected e.g. '2026-07-31T10:00:00Z')"
         ) from None
     if parsed.tzinfo is None:
         return parsed.replace(tzinfo=UTC)
@@ -138,16 +141,14 @@ class AuditLogRepository:
         if resource_id is not None:
             conditions.append(AuditLog.resource_id == resource_id)
         if status_code is not None:
-            conditions.append(AuditLog.details["status_code"].as_integer() == status_code)
+            conditions.append(
+                AuditLog.details["status_code"].as_integer() == status_code
+            )
         if exclude_prefix:
             prefixes = [p.strip() for p in exclude_prefix.split(",") if p.strip()]
             if prefixes:
                 conditions.append(
-                    not_(
-                        or_(
-                            *[AuditLog.action.startswith(p) for p in prefixes]
-                        )
-                    )
+                    not_(or_(*[AuditLog.action.startswith(p) for p in prefixes]))
                 )
         if created_after is not None:
             conditions.append(AuditLog.created_at >= _parse_iso(created_after))
@@ -163,12 +164,7 @@ class AuditLogRepository:
         total: int = total_result.scalar() or 0
 
         # Paginated query — newest first
-        query = (
-            base
-            .order_by(AuditLog.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+        query = base.order_by(AuditLog.created_at.desc()).limit(limit).offset(offset)
         result = await self._db.execute(query)
         entries = list(result.scalars().all())
 

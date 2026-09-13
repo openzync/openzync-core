@@ -85,9 +85,7 @@ async def process_structured_output(
         )
         return
 
-    schema_map: dict[str, dict[str, Any]] = {
-        s["name"]: s for s in schemas
-    }
+    schema_map: dict[str, dict[str, Any]] = {s["name"]: s for s in schemas}
 
     inserted_count = 0
     for schema_name, data in parsed.items():
@@ -111,9 +109,7 @@ async def process_structured_output(
             )
             continue
 
-        cleaned: dict[str, object] = {
-            k: v for k, v in data.items() if v is not None
-        }
+        cleaned: dict[str, object] = {k: v for k, v in data.items() if v is not None}
 
         type_defaults: dict[str, object] = {
             "string": "unknown",
@@ -178,5 +174,3 @@ async def process_structured_output(
         )
 
     await db.flush()
-
-

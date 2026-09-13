@@ -43,7 +43,6 @@ from tests.benchmarks.longmemeval_utils import (
 )
 
 if TYPE_CHECKING:
-
     from core.llm import LLMBackend
 
 from types import SimpleNamespace
@@ -191,9 +190,7 @@ async def _request_with_retry(
             request=last_exc.request,
             response=None,  # type: ignore[arg-type]
         ) from last_exc
-    raise RuntimeError(
-        f"Request failed after {max_retries} retries"
-    ) from last_exc
+    raise RuntimeError(f"Request failed after {max_retries} retries") from last_exc
 
 
 async def _login(client: httpx.AsyncClient) -> str:
@@ -210,12 +207,12 @@ async def _login(client: httpx.AsyncClient) -> str:
     email = os.environ.get("BENCH_EMAIL")
     password = os.environ.get("BENCH_PASSWORD")
     if not email or not password:
-        raise RuntimeError(
-            "BENCH_EMAIL and BENCH_PASSWORD must be set in environment"
-        )
+        raise RuntimeError("BENCH_EMAIL and BENCH_PASSWORD must be set in environment")
 
     resp = await _request_with_retry(
-        client, "POST", "/v1/auth/login",
+        client,
+        "POST",
+        "/v1/auth/login",
         json={"email": email, "password": password},
     )
     data: dict = resp.json()
@@ -243,7 +240,9 @@ async def _find_project_by_name(
     Only returns non-archived projects.
     """
     resp = await _request_with_retry(
-        client, "GET", "/v1/projects",
+        client,
+        "GET",
+        "/v1/projects",
         params={"limit": 200},
         headers=_auth_header(token),
     )
@@ -288,7 +287,9 @@ async def _ensure_project(
     # Priority 2: any non-archived project with "longmemeval" in its name
     # (catches legacy project names like longmemeval-1783604743)
     resp = await _request_with_retry(
-        client, "GET", "/v1/projects",
+        client,
+        "GET",
+        "/v1/projects",
         params={"limit": 200},
         headers=_auth_header(token),
     )
@@ -307,7 +308,9 @@ async def _ensure_project(
 
     # Priority 3: create new
     resp = await _request_with_retry(
-        client, "POST", "/v1/projects",
+        client,
+        "POST",
+        "/v1/projects",
         json={"name": project_name},
         headers=_auth_header(token),
     )
@@ -333,7 +336,9 @@ async def _set_org_graph_backend(
         The updated org config response.
     """
     resp = await _request_with_retry(
-        client, "PATCH", "/admin/org/config",
+        client,
+        "PATCH",
+        "/admin/org/config",
         json={"graph_backend": graph_backend},
         headers=_auth_header(token),
     )
@@ -362,7 +367,9 @@ async def _create_session(
         The created session's UUID as a string.
     """
     resp = await _request_with_retry(
-        client, "POST", f"/v1/projects/{project_id}/sessions",
+        client,
+        "POST",
+        f"/v1/projects/{project_id}/sessions",
         json={"external_id": external_id},
         headers=_auth_header(token),
     )
@@ -394,7 +401,9 @@ async def _ingest_memory(
     body: dict[str, object] = {"messages": messages, "session_id": session_id}
 
     await _request_with_retry(
-        client, "POST", f"/v1/projects/{project_id}/memory",
+        client,
+        "POST",
+        f"/v1/projects/{project_id}/memory",
         json=body,
         headers=_auth_header(token),
     )
@@ -423,9 +432,7 @@ async def _wait_for_enrichment(
     Raises:
         TimeoutError: If enrichment does not complete within the timeout.
     """
-    logger.info(
-        "Waiting 10s for worker to pick up enrichment tasks before polling..."
-    )
+    logger.info("Waiting 10s for worker to pick up enrichment tasks before polling...")
     await asyncio.sleep(10)
 
     deadline = time.monotonic() + ENRICHMENT_TIMEOUT_S
@@ -433,7 +440,9 @@ async def _wait_for_enrichment(
 
     while time.monotonic() < deadline:
         resp = await _request_with_retry(
-            client, "GET", "/metrics/summary",
+            client,
+            "GET",
+            "/metrics/summary",
             headers=_auth_header(token),
         )
         data: dict[str, Any] = resp.json()
@@ -492,7 +501,9 @@ async def _search(
         keys.
     """
     resp = await _request_with_retry(
-        client, "GET", f"/v1/projects/{project_id}/search",
+        client,
+        "GET",
+        f"/v1/projects/{project_id}/search",
         params={"query": query, "limit": limit, "types": "episodes,facts"},
         headers=_auth_header(token),
     )
@@ -520,7 +531,9 @@ async def _get_context(
         The assembled context text.
     """
     resp = await _request_with_retry(
-        client, "GET", f"/v1/projects/{project_id}/context",
+        client,
+        "GET",
+        f"/v1/projects/{project_id}/context",
         params={"query": query, "limit": limit, "format": "text"},
         headers=_auth_header(token),
     )
@@ -588,9 +601,7 @@ def _build_comparison_table(
     lines.append("| Category | Accuracy | Count |")
     lines.append("|----------|----------|-------|")
     for cat, stats in sorted(metrics_full.get("per_category", {}).items()):
-        lines.append(
-            f"| {cat} | {stats['accuracy']:.1%} | {stats['total']} |"
-        )
+        lines.append(f"| {cat} | {stats['accuracy']:.1%} | {stats['total']} |")
 
     return "\n".join(lines)
 
@@ -771,10 +782,12 @@ def _flatten_messages(
             )
             continue
         for msg in session:
-            flat.append({
-                "role": msg.get("role", "user"),
-                "content": msg.get("content", ""),
-            })
+            flat.append(
+                {
+                    "role": msg.get("role", "user"),
+                    "content": msg.get("content", ""),
+                }
+            )
     return flat
 
 
@@ -990,7 +1003,10 @@ async def _run_benchmark_pipeline(
             for i in range(0, len(messages), batch_size):
                 batch = messages[i : i + batch_size]
                 await _ingest_memory(
-                    api_client, token, project_id, batch,
+                    api_client,
+                    token,
+                    project_id,
+                    batch,
                     session_id=session_id,
                 )
                 ingested_count += len(batch)
@@ -1112,7 +1128,7 @@ async def _run_benchmark_pipeline(
         # Incremental save every 10 questions to protect against data loss
         if (idx + 1) % 10 == 0:
             _TMP_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-            tmp_path = _TMP_RESULTS_DIR / f"{label}_partial_{idx+1}.json"
+            tmp_path = _TMP_RESULTS_DIR / f"{label}_partial_{idx + 1}.json"
             with open(tmp_path, "w") as f:
                 json.dump(results, f, indent=2, default=str)
             logger.info(

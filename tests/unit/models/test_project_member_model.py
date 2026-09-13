@@ -1,4 +1,5 @@
 """Tests for ``ProjectMember`` model."""
+
 from __future__ import annotations
 
 import uuid
@@ -53,7 +54,11 @@ class TestProjectMemberModel:
         """Indices exist on user_id and project_id."""
         constraints = ProjectMember.__table_args__
         index_names = {
-            c.name for c in constraints if hasattr(c, "name") and not c.name.startswith("ck_") and not c.name.startswith("uq_")
+            c.name
+            for c in constraints
+            if hasattr(c, "name")
+            and not c.name.startswith("ck_")
+            and not c.name.startswith("uq_")
         }
         assert "ix_project_members_user_id" in index_names
         assert "ix_project_members_project_id" in index_names

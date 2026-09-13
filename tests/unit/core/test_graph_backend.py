@@ -35,21 +35,28 @@ class TestInitDispatcher:
         from core.graph_backend import init_dispatcher
 
         disp = init_dispatcher()
-        assert disp.resolve_backend_name(MagicMock(graph_backend="postgres")) == "postgres"
+        assert (
+            disp.resolve_backend_name(MagicMock(graph_backend="postgres")) == "postgres"
+        )
 
     def test_init_dispatcher_registers_surrealdb(self) -> None:
         """SurrealDB backend is registered."""
         from core.graph_backend import init_dispatcher
 
         disp = init_dispatcher()
-        assert disp.resolve_backend_name(MagicMock(graph_backend="surrealdb")) == "surrealdb"
+        assert (
+            disp.resolve_backend_name(MagicMock(graph_backend="surrealdb"))
+            == "surrealdb"
+        )
 
     def test_init_dispatcher_registers_falkordb(self) -> None:
         """FalkorDB backend is registered."""
         from core.graph_backend import init_dispatcher
 
         disp = init_dispatcher()
-        assert disp.resolve_backend_name(MagicMock(graph_backend="falkordb")) == "falkordb"
+        assert (
+            disp.resolve_backend_name(MagicMock(graph_backend="falkordb")) == "falkordb"
+        )
 
     def test_init_dispatcher_knows_all_three(self) -> None:
         """All three backend names are present in the registry."""
@@ -67,7 +74,9 @@ class TestInitDispatcher:
         disp = init_dispatcher()
         mock_db = MagicMock()
         cfg = MagicMock(graph_backend="postgres", graph_max_traversal_depth=None)
-        with pytest.raises(ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"):
+        with pytest.raises(
+            ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"
+        ):
             disp.resolve_and_create(cfg, mock_db)
 
     def test_init_dispatcher_creates_surrealdb_instance(self) -> None:
@@ -244,7 +253,9 @@ class TestCreateAllBackendsSkipping:
 
         mock_db = MagicMock()
         mock_client = MagicMock()
-        backends = disp.create_all_backends(mock_db, surreal=None, falkordb_client=mock_client)
+        backends = disp.create_all_backends(
+            mock_db, surreal=None, falkordb_client=mock_client
+        )
 
         assert len(backends) == 1
         pg_cls.assert_not_called()
@@ -327,8 +338,12 @@ class TestBackendSpecificKwargsIsolation:
         mock_client = MagicMock()
         cfg = MagicMock(graph_backend="postgres", graph_max_traversal_depth=2)
 
-        with pytest.raises(ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"):
-            disp.resolve_and_create(cfg, mock_db, surreal=mock_surreal, falkordb_client=mock_client)
+        with pytest.raises(
+            ValueError, match=r"PostgreSQL graph backend deprecated.*v1\.1\.0"
+        ):
+            disp.resolve_and_create(
+                cfg, mock_db, surreal=mock_surreal, falkordb_client=mock_client
+            )
         pg_cls.assert_not_called()
 
     def test_surrealdb_does_not_get_db_or_client(self) -> None:
@@ -343,7 +358,9 @@ class TestBackendSpecificKwargsIsolation:
         mock_client = MagicMock()
         cfg = MagicMock(graph_backend="surrealdb", graph_max_traversal_depth=3)
 
-        disp.resolve_and_create(cfg, MagicMock(), surreal=mock_surreal, falkordb_client=mock_client)
+        disp.resolve_and_create(
+            cfg, MagicMock(), surreal=mock_surreal, falkordb_client=mock_client
+        )
         sd_cls.assert_called_once_with(surreal=mock_surreal, max_traversal_depth=3)
 
     def test_falkordb_does_not_get_db_or_surreal(self) -> None:
@@ -358,5 +375,7 @@ class TestBackendSpecificKwargsIsolation:
         mock_client = MagicMock()
         cfg = MagicMock(graph_backend="falkordb", graph_max_traversal_depth=4)
 
-        disp.resolve_and_create(cfg, MagicMock(), surreal=mock_surreal, falkordb_client=mock_client)
+        disp.resolve_and_create(
+            cfg, MagicMock(), surreal=mock_surreal, falkordb_client=mock_client
+        )
         fd_cls.assert_called_once_with(client=mock_client, max_traversal_depth=4)

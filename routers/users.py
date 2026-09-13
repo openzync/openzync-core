@@ -275,7 +275,8 @@ async def trigger_user_summary(
     """
     try:
         return await service.trigger_generation(
-            org_id=UUID(org_id), user_id=user_id,
+            org_id=UUID(org_id),
+            user_id=user_id,
         )
     except RateLimitError as exc:
         raise HTTPException(status_code=429, detail=exc.message) from exc
@@ -295,7 +296,8 @@ async def list_user_summary_instructions(
     Readable by the target user themself or an org admin (JWT only).
     """
     instructions = await service.get_instructions(
-        org_id=UUID(org_id), user_id=user_id,
+        org_id=UUID(org_id),
+        user_id=user_id,
     )
     return CustomInstructionsResponse(
         data=[CustomInstructionSchema(**i) for i in instructions],

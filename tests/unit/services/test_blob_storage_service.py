@@ -3,6 +3,7 @@
 All external dependencies (S3 BlobStorage, DB repository) are mocked.
 FastAPI's ``UploadFile`` is replaced with a lightweight MagicMock.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -37,7 +38,9 @@ class TestBlobStorageService:
         return service, mock_db, mock_blob_repo
 
     def _make_upload_file(
-        self, filename: str = "test.pdf", content: bytes = b"hello world",
+        self,
+        filename: str = "test.pdf",
+        content: bytes = b"hello world",
         content_type: str = "application/pdf",
     ) -> MagicMock:
         """Build a MagicMock mimicking FastAPI's UploadFile."""
@@ -89,7 +92,9 @@ class TestBlobStorageService:
                 created_by=self.USER_ID,
                 uploaded_files=[upload_file],
                 blob_metadatas=[
-                    BlobMetadata(blob_id=0, mime_type="application/pdf", file_name="test.pdf"),
+                    BlobMetadata(
+                        blob_id=0, mime_type="application/pdf", file_name="test.pdf"
+                    ),
                 ],
                 storage_config=self._make_storage_config(),
             )
@@ -139,7 +144,9 @@ class TestBlobStorageService:
                 created_by=self.USER_ID,
                 uploaded_files=[upload_file],  # only 1 file
                 blob_metadatas=[
-                    BlobMetadata(blob_id=3, mime_type="text/plain", file_name="ghost.txt"),
+                    BlobMetadata(
+                        blob_id=3, mime_type="text/plain", file_name="ghost.txt"
+                    ),
                 ],
                 storage_config=self._make_storage_config(),
             )
@@ -162,7 +169,9 @@ class TestBlobStorageService:
                 created_by=self.USER_ID,
                 uploaded_files=[upload_file],
                 blob_metadatas=[
-                    BlobMetadata(blob_id=0, mime_type="application/pdf", file_name="big.pdf"),
+                    BlobMetadata(
+                        blob_id=0, mime_type="application/pdf", file_name="big.pdf"
+                    ),
                 ],
                 storage_config=self._make_storage_config(),
             )
@@ -209,7 +218,11 @@ class TestBlobStorageService:
                 created_by=self.USER_ID,
                 uploaded_files=[upload_file],
                 blob_metadatas=[
-                    BlobMetadata(blob_id=0, mime_type="application/octet-stream", file_name="file.bin"),
+                    BlobMetadata(
+                        blob_id=0,
+                        mime_type="application/octet-stream",
+                        file_name="file.bin",
+                    ),
                 ],
                 storage_config=self._make_storage_config(),
             )
@@ -305,7 +318,9 @@ class TestBlobStorageService:
             "services.blob_storage_service.BlobStorage",
         ) as mock_storage_cls:
             mock_storage = AsyncMock()
-            mock_storage.get_presigned_url.return_value = "https://minio/test-bucket/key?X-Amz=..."
+            mock_storage.get_presigned_url.return_value = (
+                "https://minio/test-bucket/key?X-Amz=..."
+            )
             mock_storage_cls.return_value = mock_storage
 
             url = await BlobStorageService.generate_download_url(
@@ -323,7 +338,9 @@ class TestBlobStorageService:
             "services.blob_storage_service.BlobStorage",
         ) as mock_storage_cls:
             mock_storage = AsyncMock()
-            mock_storage.get_presigned_url.side_effect = S3StorageError("S3 unreachable")
+            mock_storage.get_presigned_url.side_effect = S3StorageError(
+                "S3 unreachable"
+            )
             mock_storage_cls.return_value = mock_storage
 
             url = await BlobStorageService.generate_download_url(

@@ -30,16 +30,12 @@ class TestEntityRepository:
         return AsyncMock()
 
     @pytest.fixture
-    def repo(
-        self, mock_db: AsyncMock, mock_backend: AsyncMock
-    ) -> EntityRepository:
+    def repo(self, mock_db: AsyncMock, mock_backend: AsyncMock) -> EntityRepository:
         return EntityRepository(db=mock_db, graph_backend=mock_backend)
 
     # ── Constructor ────────────────────────────────────────────────────────────
 
-    def test_init_without_backend_raises(
-        self, mock_db: AsyncMock
-    ) -> None:
+    def test_init_without_backend_raises(self, mock_db: AsyncMock) -> None:
         """EntityRepository raises GraphBackendUnavailableError without backend."""
         with pytest.raises(GraphBackendUnavailableError):
             EntityRepository(db=mock_db, graph_backend=None)

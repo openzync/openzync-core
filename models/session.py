@@ -23,7 +23,9 @@ class Session(TimestampMixin, Base):
     __tablename__ = "sessions"
 
     id: Mapped[uuid.UUID] = mapped_column(
-        primary_key=True, default=uuid.uuid4, server_default=func.gen_random_uuid(),
+        primary_key=True,
+        default=uuid.uuid4,
+        server_default=func.gen_random_uuid(),
     )
     organization_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("organizations.id", ondelete="CASCADE"),
@@ -38,7 +40,10 @@ class Session(TimestampMixin, Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
-        comment="The user who created this session (attribution only — ownership is via project).",
+        comment=(
+            "The user who created this session (attribution only — "
+            "ownership is via project)."
+        ),
     )
     external_id: Mapped[str] = mapped_column(Text, nullable=False)
     # 'metadata' is reserved by SQLAlchemy — use trailing underscore for the
@@ -74,7 +79,4 @@ class Session(TimestampMixin, Base):
     )
 
     def __repr__(self) -> str:
-        return (
-            f"<Session id={self.id} user={self.user_id} "
-            f"active={self.is_active}>"
-        )
+        return f"<Session id={self.id} user={self.user_id} active={self.is_active}>"

@@ -46,7 +46,9 @@ def build_entity_graph(
     graph = nx.Graph()
 
     for entity in entities:
-        graph.add_node(str(entity["id"]), name=entity.get("name", ""), type=entity.get("type", ""))
+        graph.add_node(
+            str(entity["id"]), name=entity.get("name", ""), type=entity.get("type", "")
+        )
 
     for rel in relationships:
         source = str(rel.get("source_id", ""))

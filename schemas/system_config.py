@@ -152,6 +152,4 @@ class SystemConfigResponse(BaseModel):
 
 #: Every key ``core.system_config`` may read from / write to the OpenBao
 #: system secret.  Single source of truth for the whitelist.
-SYSTEM_CONFIG_WHITELIST: frozenset[str] = frozenset(
-    SystemConfigResponse.model_fields
-)
+SYSTEM_CONFIG_WHITELIST: frozenset[str] = frozenset(SystemConfigResponse.model_fields)

@@ -1,4 +1,5 @@
 """Tests for ``AuditLog`` model — immutable, append-only, with CreatedAtMixin."""
+
 from __future__ import annotations
 
 import pytest

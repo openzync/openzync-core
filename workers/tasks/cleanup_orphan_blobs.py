@@ -132,7 +132,8 @@ async def cleanup_orphan_blobs(
                 blobs = await blob_repo.get_by_episode(UUID(episode_id))
             else:
                 blobs = await blob_repo.get_orphaned_blobs(
-                    org_uuid, limit=batch_size,
+                    org_uuid,
+                    limit=batch_size,
                 )
 
             if not blobs:
@@ -156,7 +157,9 @@ async def cleanup_orphan_blobs(
                     from core.org_config import get_org_config
 
                     org_cfg = await get_org_config(
-                        org_uuid, redis=None, bao_client=bao_client,
+                        org_uuid,
+                        redis=None,
+                        bao_client=bao_client,
                     )
                     org_storage = org_cfg.to_blob_storage_config()
                     if org_storage:
@@ -174,7 +177,9 @@ async def cleanup_orphan_blobs(
                         timeout=10.0,
                     ) as _tmp_bao:
                         org_cfg = await get_org_config(
-                            org_uuid, redis=None, bao_client=_tmp_bao,
+                            org_uuid,
+                            redis=None,
+                            bao_client=_tmp_bao,
                         )
                         org_storage = org_cfg.to_blob_storage_config()
                         if org_storage:
@@ -247,7 +252,9 @@ async def cleanup_orphan_blobs(
                 for org_uuid in org_ids:
                     try:
                         cleaned = await _cleanup_for_org(
-                            db, org_uuid, bao_client,
+                            db,
+                            org_uuid,
+                            bao_client,
                         )
                         total_cleaned += cleaned
                     except Exception as exc:
@@ -272,7 +279,9 @@ async def cleanup_orphan_blobs(
 
             # ── Manual mode: single org, legacy int contract ─────────────
             return await _cleanup_for_org(
-                db, UUID(org_id), bao_client,
+                db,
+                UUID(org_id),
+                bao_client,
             )
 
     except Exception:

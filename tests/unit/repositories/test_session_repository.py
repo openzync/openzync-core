@@ -58,9 +58,7 @@ class TestSessionRepository:
 
     # ── create ─────────────────────────────────────────────────────────────────
 
-    async def test_create(
-        self, repo: SessionRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_create(self, repo: SessionRepository, mock_db: AsyncMock) -> None:
         """create inserts and returns a new session."""
         mock_db.add.return_value = None
         mock_db.flush.return_value = None
@@ -142,9 +140,7 @@ class TestSessionRepository:
         mock_result.scalar_one_or_none.return_value = session
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_uuid(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
-        )
+        result = await repo.get_by_uuid(org_id=self.ORG_ID, session_id=self.SESSION_ID)
 
         assert result == session
 
@@ -156,9 +152,7 @@ class TestSessionRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_uuid(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
-        )
+        result = await repo.get_by_uuid(org_id=self.ORG_ID, session_id=self.SESSION_ID)
 
         assert result is None
 
@@ -181,18 +175,14 @@ class TestSessionRepository:
 
     # ── list ───────────────────────────────────────────────────────────────────
 
-    async def test_list(
-        self, repo: SessionRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_list(self, repo: SessionRepository, mock_db: AsyncMock) -> None:
         """list returns sessions with pagination."""
         sessions = [self._mock_session(), self._mock_session(id=uuid4())]
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = sessions
         mock_db.execute.return_value = mock_result
 
-        result, cursor = await repo.list(
-            org_id=self.ORG_ID, project_id=self.PROJECT_ID
-        )
+        result, cursor = await repo.list(org_id=self.ORG_ID, project_id=self.PROJECT_ID)
 
         assert result == sessions
         assert cursor is None
@@ -242,9 +232,7 @@ class TestSessionRepository:
         mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result, cursor = await repo.list(
-            org_id=self.ORG_ID, project_id=self.PROJECT_ID
-        )
+        result, cursor = await repo.list(org_id=self.ORG_ID, project_id=self.PROJECT_ID)
 
         assert result == []
         assert cursor is None
@@ -377,9 +365,7 @@ class TestSessionRepository:
 
     # ── close ──────────────────────────────────────────────────────────────────
 
-    async def test_close(
-        self, repo: SessionRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_close(self, repo: SessionRepository, mock_db: AsyncMock) -> None:
         """close sets closed_at on the session."""
         session = self._mock_session(closed_at=None)
         mock_result = MagicMock()
@@ -388,9 +374,7 @@ class TestSessionRepository:
         mock_db.flush.return_value = None
         mock_db.refresh.return_value = None
 
-        result = await repo.close(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
-        )
+        result = await repo.close(org_id=self.ORG_ID, session_id=self.SESSION_ID)
 
         assert result is not None
         assert result.closed_at is not None
@@ -405,9 +389,7 @@ class TestSessionRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.close(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
-        )
+        result = await repo.close(org_id=self.ORG_ID, session_id=self.SESSION_ID)
 
         assert result is None
 
@@ -424,9 +406,7 @@ class TestSessionRepository:
         mock_db.flush.return_value = None
         mock_db.refresh.return_value = None
 
-        result = await repo.soft_delete(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
-        )
+        result = await repo.soft_delete(org_id=self.ORG_ID, session_id=self.SESSION_ID)
 
         assert result is not None
         assert result.is_deleted is True
@@ -441,9 +421,7 @@ class TestSessionRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.soft_delete(
-            org_id=self.ORG_ID, session_id=self.SESSION_ID
-        )
+        result = await repo.soft_delete(org_id=self.ORG_ID, session_id=self.SESSION_ID)
 
         assert result is None
 
@@ -465,9 +443,7 @@ class TestSessionRepository:
 
     # ── get_stats ──────────────────────────────────────────────────────────────
 
-    async def test_get_stats(
-        self, repo: SessionRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_get_stats(self, repo: SessionRepository, mock_db: AsyncMock) -> None:
         """get_stats returns aggregate counts."""
         mock_row = MagicMock()
         mock_row.message_count = 15
@@ -562,9 +538,7 @@ class TestSessionRepository:
         self, repo: SessionRepository, mock_db: AsyncMock
     ) -> None:
         """batch_get_stats returns empty dict for empty input."""
-        stats = await repo.batch_get_stats(
-            session_ids=[], organization_id=self.ORG_ID
-        )
+        stats = await repo.batch_get_stats(session_ids=[], organization_id=self.ORG_ID)
 
         assert stats == {}
 
@@ -613,9 +587,7 @@ class TestSessionRepository:
 
     # ── Cursor helpers ─────────────────────────────────────────────────────────
 
-    def test_encode_decode_cursor_roundtrip(
-        self, repo: SessionRepository
-    ) -> None:
+    def test_encode_decode_cursor_roundtrip(self, repo: SessionRepository) -> None:
         """_encode_cursor and _decode_cursor round-trip correctly."""
         dt = datetime(2024, 6, 15, 12, 30, 0)
         encoded = repo._encode_cursor(dt, self.SESSION_ID)
@@ -624,9 +596,7 @@ class TestSessionRepository:
         assert decoded_dt == dt
         assert decoded_id == self.SESSION_ID
 
-    def test_decode_cursor_invalid_raises(
-        self, repo: SessionRepository
-    ) -> None:
+    def test_decode_cursor_invalid_raises(self, repo: SessionRepository) -> None:
         """_decode_cursor raises ValueError for malformed input."""
         with pytest.raises(ValueError, match="Invalid session cursor"):
             repo._decode_cursor("not-base64!!!")

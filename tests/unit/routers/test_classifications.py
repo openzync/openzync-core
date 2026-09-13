@@ -32,7 +32,6 @@ def mock_class_service() -> AsyncMock:
     return AsyncMock()
 
 
-
 @pytest.fixture(autouse=True)
 def _stub_permission_gate() -> None:
     """Stub the permission gate for every test in this file.

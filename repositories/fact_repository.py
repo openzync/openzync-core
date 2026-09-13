@@ -15,17 +15,19 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from sqlalchemy import or_, text, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.cursor import decode_cursor, encode_cursor
 from core.exceptions import ValidationError
 from models.fact import Fact
 from models.fact_invalidation_event import FactInvalidationEvent
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -45,15 +47,19 @@ def _effective_at_clause(t: datetime):
     Returns:
         A SQLAlchemy boolean expression for the ``WHERE`` clause.
     """
-    return or_(
-        Fact.invalid_at.is_(None),
-        Fact.invalid_at > t,
-    ) & or_(
-        Fact.valid_from.is_(None),
-        Fact.valid_from <= t,
-    ) & or_(
-        Fact.valid_to.is_(None),
-        Fact.valid_to > t,
+    return (
+        or_(
+            Fact.invalid_at.is_(None),
+            Fact.invalid_at > t,
+        )
+        & or_(
+            Fact.valid_from.is_(None),
+            Fact.valid_from <= t,
+        )
+        & or_(
+            Fact.valid_to.is_(None),
+            Fact.valid_to > t,
+        )
     )
 
 
@@ -187,7 +193,7 @@ class FactRepository:
                 valid_from=valid_from or datetime.now(),
                 subject_entity_id=subject_entity_id,
                 object_entity_id=object_entity_id,
-            embedding=None,
+                embedding=None,
             )
             .on_conflict_do_nothing(
                 constraint="uq_facts_temporal_excl",
@@ -586,9 +592,7 @@ class FactRepository:
             now: The instant the fact stopped being current.
         """
         await self._db.execute(
-            update(Fact)
-            .where(Fact.id == fact_id)
-            .values(valid_to=now, updated_at=now)
+            update(Fact).where(Fact.id == fact_id).values(valid_to=now, updated_at=now)
         )
         await self._db.flush()
 
@@ -611,9 +615,7 @@ class FactRepository:
         )
         await self._db.flush()
 
-    async def set_superseded_by(
-        self, fact_id: UUID, successor_id: UUID | None
-    ) -> None:
+    async def set_superseded_by(self, fact_id: UUID, successor_id: UUID | None) -> None:
         """Record the lineage successor of a fact.
 
         Supersession primitive — links the superseded fact to the fact
@@ -735,9 +737,7 @@ class FactRepository:
             .offset(offset)
         )
         if organization_id is not None:
-            stmt = stmt.where(
-                FactInvalidationEvent.organization_id == organization_id
-            )
+            stmt = stmt.where(FactInvalidationEvent.organization_id == organization_id)
 
         result = await self._db.execute(stmt)
         return [

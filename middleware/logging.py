@@ -28,11 +28,15 @@ Usage:
 
 from __future__ import annotations
 
-import logging
 import time
+from typing import TYPE_CHECKING
 
 import structlog
-from starlette.types import ASGIApp, Receive, Scope, Send
+
+if TYPE_CHECKING:
+    import logging
+
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
 logger = structlog.get_logger(__name__)
 
@@ -112,7 +116,9 @@ class LoggingMiddleware:
 
         try:
             await self.app(scope, receive, send_wrapper)
-        except Exception:  # Never catch KeyboardInterrupt/SystemExit — let them propagate
+        except (
+            Exception
+        ):  # Never catch KeyboardInterrupt/SystemExit — let them propagate
             status_code = 500
             raise
         finally:

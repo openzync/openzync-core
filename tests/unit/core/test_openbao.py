@@ -232,7 +232,9 @@ class TestTokenManagement:
     """Token lifecycle: access, expiry-based re-auth, missing-token guard."""
 
     @pytest.mark.asyncio
-    async def test_token_property_returns_token(self, bao_client: OpenBaoClient) -> None:
+    async def test_token_property_returns_token(
+        self, bao_client: OpenBaoClient
+    ) -> None:
         """``_token`` returns the stored client token."""
         assert bao_client._token == "s.test-token-abc123"
 
@@ -393,7 +395,9 @@ class TestRequestHelper:
     """Low-level ``_request`` path (retry logic, error wrapping)."""
 
     @pytest.mark.asyncio
-    async def test_successful_request(self, bao_client: OpenBaoClient, mock_http: AsyncMock) -> None:
+    async def test_successful_request(
+        self, bao_client: OpenBaoClient, mock_http: AsyncMock
+    ) -> None:
         """A 200 response is returned directly."""
         resp = await bao_client._request("GET", "config/data/key")
         assert resp.status_code == 200
@@ -433,14 +437,18 @@ class TestRequestHelper:
             await bao_client._request("GET", "config/data/key")
 
     @pytest.mark.asyncio
-    async def test_url_is_prefixed_with_v1(self, bao_client: OpenBaoClient, mock_http: AsyncMock) -> None:
+    async def test_url_is_prefixed_with_v1(
+        self, bao_client: OpenBaoClient, mock_http: AsyncMock
+    ) -> None:
         """The request URL is prefixed with ``/v1/``."""
         await bao_client._request("GET", "config/data/key")
         call_args = mock_http.request.call_args
         assert call_args[0][1] == "/v1/config/data/key"
 
     @pytest.mark.asyncio
-    async def test_url_strips_leading_slash(self, bao_client: OpenBaoClient, mock_http: AsyncMock) -> None:
+    async def test_url_strips_leading_slash(
+        self, bao_client: OpenBaoClient, mock_http: AsyncMock
+    ) -> None:
         """Leading slashes in path are stripped before adding ``/v1/`` prefix."""
         await bao_client._request("GET", "/config/data/key")
         call_args = mock_http.request.call_args
@@ -652,7 +660,9 @@ class TestKvRead:
                 },
             },
         )
-        data, version = await bao_client._kv_read("config/data/mykey", include_meta=True)
+        data, version = await bao_client._kv_read(
+            "config/data/mykey", include_meta=True
+        )
         assert data == {"value": "v2-value"}
         assert version == 2
 
@@ -667,7 +677,9 @@ class TestKvRead:
             200,
             {"data": {"data": {"value": "v1"}}},
         )
-        data, version = await bao_client._kv_read("config/data/mykey", include_meta=True)
+        data, version = await bao_client._kv_read(
+            "config/data/mykey", include_meta=True
+        )
         assert version == 0
 
     @pytest.mark.asyncio
@@ -730,7 +742,9 @@ class TestKvWrite:
     ) -> None:
         """Write within a namespace sends the header."""
         ns = "org_abc123/"
-        await bao_client._kv_write("config/data/mykey", {"value": "ns-val"}, namespace=ns)
+        await bao_client._kv_write(
+            "config/data/mykey", {"value": "ns-val"}, namespace=ns
+        )
         call_headers = mock_http.request.call_args.kwargs.get("headers", {})
         assert call_headers.get("X-Vault-Namespace") == ns
 
@@ -895,12 +909,15 @@ class TestSystemConfig:
         # First call (read): version 2
         # Second call (write): POST with cas=2
         mock_http.request.side_effect = [
-            _make_response(200, {
-                "data": {
-                    "data": {"OZ_DATABASE_URL": "old"},
-                    "metadata": {"version": 2},
+            _make_response(
+                200,
+                {
+                    "data": {
+                        "data": {"OZ_DATABASE_URL": "old"},
+                        "metadata": {"version": 2},
+                    },
                 },
-            }),
+            ),
             _make_response(200),
         ]
         await bao_client.write_system_config({"OZ_SECRET_KEY": "new-key"})
@@ -931,12 +948,15 @@ class TestSystemConfig:
     ) -> None:
         """Writing merges new keys into existing config (does not replace)."""
         mock_http.request.side_effect = [
-            _make_response(200, {
-                "data": {
-                    "data": {"OZ_EXISTING_KEY": "existing-value"},
-                    "metadata": {"version": 1},
+            _make_response(
+                200,
+                {
+                    "data": {
+                        "data": {"OZ_EXISTING_KEY": "existing-value"},
+                        "metadata": {"version": 1},
+                    },
                 },
-            }),
+            ),
             _make_response(200),
         ]
         await bao_client.write_system_config({"OZ_NEW_KEY": "new-value"})
@@ -1131,7 +1151,9 @@ class TestOrgConfig:
         await bao_client.create_org_namespace(self.ORG_ID)
 
         # The namespace endpoint is called directly via _http.post (not _request)
-        assert mock_http.post.call_count == 2  # 1 for create_namespace, 1 for enable_kv_v2
+        assert (
+            mock_http.post.call_count == 2
+        )  # 1 for create_namespace, 1 for enable_kv_v2
 
     @pytest.mark.asyncio
     async def test_delete_org_namespace(
@@ -1143,7 +1165,10 @@ class TestOrgConfig:
         mock_http.request.return_value = _make_response(204)
         await bao_client.delete_org_namespace(self.ORG_ID)
         assert mock_http.request.call_args[0][0] == "DELETE"
-        assert f"sys/namespaces/{ORG_NAMESPACE_PREFIX}{self.ORG_ID}" in mock_http.request.call_args[0][1]
+        assert (
+            f"sys/namespaces/{ORG_NAMESPACE_PREFIX}{self.ORG_ID}"
+            in mock_http.request.call_args[0][1]
+        )
 
     def test_org_ns_static_method(self) -> None:
         """``_org_ns`` builds the correct namespace path."""
@@ -1168,7 +1193,9 @@ class TestNamespaceManagement:
     """Raw namespace create / delete operations."""
 
     @pytest.mark.asyncio
-    async def test_create_namespace_success(self, bao_client: OpenBaoClient, mock_http: AsyncMock) -> None:
+    async def test_create_namespace_success(
+        self, bao_client: OpenBaoClient, mock_http: AsyncMock
+    ) -> None:
         """Creating a namespace sends a POST to ``sys/namespaces/<name>``."""
         mock_http.post.return_value = _make_response(204)
         await bao_client.create_namespace("org_abc123", parent="system/")
@@ -1182,7 +1209,9 @@ class TestNamespaceManagement:
         mock_http: AsyncMock,
     ) -> None:
         """HTTP 400 with \"already exists\" is silently ignored."""
-        mock_http.post.return_value = _make_response(400, {"errors": ["already exists"]})
+        mock_http.post.return_value = _make_response(
+            400, {"errors": ["already exists"]}
+        )
         await bao_client.create_namespace("org_existing")
         # Should not raise
 
@@ -1261,7 +1290,9 @@ class TestEnableEngines:
         mock_http: AsyncMock,
     ) -> None:
         """HTTP 400 with \"already in use\" is silently ignored."""
-        mock_http.post.return_value = _make_response(400, {"errors": ["path already in use"]})
+        mock_http.post.return_value = _make_response(
+            400, {"errors": ["path already in use"]}
+        )
         await bao_client.enable_kv_v2("config")
         # Should not raise
 
@@ -1341,7 +1372,9 @@ class TestTransitEngine:
         assert ct == "vault:v1:abc123"
 
         call_json = mock_http.request.call_args.kwargs.get("json", {})
-        assert call_json["plaintext"] == base64.b64encode(self.PLAINTEXT.encode()).decode()
+        assert (
+            call_json["plaintext"] == base64.b64encode(self.PLAINTEXT.encode()).decode()
+        )
 
     @pytest.mark.asyncio
     async def test_decrypt_data(
@@ -1630,10 +1663,10 @@ class TestRootTokenLoading:
                 "http://localhost:8200",
                 "role-id",
                 "secret-id",
-                root_token_path="/tmp/root-token",
+                root_token_path="/tmp/root-token",  # noqa: S108  # fake fixture path, asserted verbatim below
             ) as client:
                 assert client._root_token == "s.root-token-value"
-                mock_open.assert_called_once_with("/tmp/root-token")
+                mock_open.assert_called_once_with("/tmp/root-token")  # noqa: S108  # matches fake path above
 
     @pytest.mark.asyncio
     async def test_root_token_file_missing_is_ignored(self) -> None:

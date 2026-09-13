@@ -10,13 +10,17 @@ Revision ID: 0019
 Revises: 0018
 Create Date: 2026-06-18
 """
+
 from __future__ import annotations
 
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 revision: str = "0019"
 down_revision: str | None = "0018"
@@ -45,16 +49,37 @@ def upgrade() -> None:
     # ── projects ────────────────────────────────────────────────────────────
     op.create_table(
         "projects",
-        sa.Column("id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column(
+            "id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False
+        ),
         sa.Column("organization_id", sa.Uuid(), nullable=False),
         sa.Column("name", sa.Text(), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
-        sa.Column("metadata", postgresql.JSONB(), server_default=sa.text("'{}'::jsonb"), nullable=False),
-        sa.Column("is_archived", sa.Boolean(), server_default=sa.text("false"), nullable=False),
+        sa.Column(
+            "metadata",
+            postgresql.JSONB(),
+            server_default=sa.text("'{}'::jsonb"),
+            nullable=False,
+        ),
+        sa.Column(
+            "is_archived", sa.Boolean(), server_default=sa.text("false"), nullable=False
+        ),
         sa.Column("created_by", sa.Uuid(), nullable=True),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.ForeignKeyConstraint(
+            ["organization_id"], ["organizations.id"], ondelete="CASCADE"
+        ),
         sa.ForeignKeyConstraint(["created_by"], ["users.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("organization_id", "name", name="uq_projects_org_name"),
@@ -65,17 +90,35 @@ def upgrade() -> None:
     # ── project_members ─────────────────────────────────────────────────────
     op.create_table(
         "project_members",
-        sa.Column("id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column(
+            "id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False
+        ),
         sa.Column("project_id", sa.Uuid(), nullable=False),
         sa.Column("user_id", sa.Uuid(), nullable=False),
-        sa.Column("role", sa.String(20), server_default=sa.text("'member'"), nullable=False),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "role", sa.String(20), server_default=sa.text("'member'"), nullable=False
+        ),
+        sa.Column(
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.ForeignKeyConstraint(["project_id"], ["projects.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("project_id", "user_id", name="uq_project_members_project_user"),
-        sa.CheckConstraint("role IN ('owner', 'member')", name="ck_project_members_role"),
+        sa.UniqueConstraint(
+            "project_id", "user_id", name="uq_project_members_project_user"
+        ),
+        sa.CheckConstraint(
+            "role IN ('owner', 'member')", name="ck_project_members_role"
+        ),
     )
     op.create_index("idx_project_members_project_id", "project_members", ["project_id"])
     op.create_index("idx_project_members_user_id", "project_members", ["user_id"])

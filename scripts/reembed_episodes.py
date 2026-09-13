@@ -22,6 +22,7 @@ logger = logging.getLogger("reembed_episodes")
 
 MAX_TOKENS = 1500  # nomic-embed-text context window is 2048 tokens; ~1.3 tok/word
 
+
 def _truncate(text: str, max_words: int = MAX_TOKENS) -> str:
     """Truncate *text* to *max_words* words so it fits the model's context window."""
     words = text.split()
@@ -121,16 +122,31 @@ async def reembed_episodes(
 
 @click.command()
 @click.argument("project_id", type=str)
-@click.option("--db-url", default="postgresql+asyncpg://openzep@localhost:5432/openzep", show_default=True)
+@click.option(
+    "--db-url",
+    default="postgresql+asyncpg://openzep@localhost:5432/openzep",
+    show_default=True,
+)
 @click.option("--ollama-url", default="http://localhost:11434", show_default=True)
 @click.option("--model", default="nomic-embed-text", show_default=True)
 @click.option("--concurrency", default=10, show_default=True)
 @click.option("--batch-size", default=200, show_default=True)
-def main(project_id: str, db_url: str, ollama_url: str, model: str, concurrency: int, batch_size: int) -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+def main(
+    project_id: str,
+    db_url: str,
+    ollama_url: str,
+    model: str,
+    concurrency: int,
+    batch_size: int,
+) -> None:
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+    )
     pid = uuid.UUID(project_id)
     start = time.monotonic()
-    count = asyncio.run(reembed_episodes(pid, db_url, ollama_url, model, concurrency, batch_size))
+    count = asyncio.run(
+        reembed_episodes(pid, db_url, ollama_url, model, concurrency, batch_size)
+    )
     elapsed = time.monotonic() - start
     logger.info("Done — re-embedded %d episodes in %.1fs", count, elapsed)
 

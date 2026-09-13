@@ -13,11 +13,15 @@ Revision ID: 0021
 Revises: 0020
 Create Date: 2026-06-19
 """
+
 from __future__ import annotations
 
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from alembic import op
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 revision: str = "0021"
 down_revision: str | None = "0020"
@@ -76,8 +80,12 @@ def upgrade() -> None:
     # ═════════════════════════════════════════════════════════════════════
     op.drop_constraint("fk_api_keys_project_id", "api_keys", type_="foreignkey")
     op.create_foreign_key(
-        "fk_api_keys_project_id", "api_keys", "projects",
-        ["project_id"], ["id"], ondelete="CASCADE",
+        "fk_api_keys_project_id",
+        "api_keys",
+        "projects",
+        ["project_id"],
+        ["id"],
+        ondelete="CASCADE",
     )
 
     # ═════════════════════════════════════════════════════════════════════
@@ -97,8 +105,12 @@ def downgrade() -> None:
     # ═════════════════════════════════════════════════════════════════════
     op.drop_constraint("fk_api_keys_project_id", "api_keys", type_="foreignkey")
     op.create_foreign_key(
-        "fk_api_keys_project_id", "api_keys", "projects",
-        ["project_id"], ["id"], ondelete="SET NULL",
+        "fk_api_keys_project_id",
+        "api_keys",
+        "projects",
+        ["project_id"],
+        ["id"],
+        ondelete="SET NULL",
     )
 
     # ═════════════════════════════════════════════════════════════════════

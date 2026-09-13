@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -17,12 +16,15 @@ import orjson
 import structlog
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from redis.asyncio import Redis as AsyncRedis
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     from models.fact import Fact
     from packages.graph_backend.interface import GraphBackend
+    from services.webhook_service import WebhookService
 
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import get_arq
 from core.config import get_settings
@@ -32,7 +34,6 @@ from repositories.fact_repository import FactRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
 from schemas.facts import FactBatchResponse, FactResponse, FactTriple
-from services.webhook_service import WebhookService
 from services.worker.worker_settings import get_queue_name
 
 logger = logging.getLogger(__name__)
@@ -302,9 +303,7 @@ class FactService:
         if at_time is None:
             at_time = datetime.now(UTC)
 
-        fact = await self._fact_repo.get_by_id(
-            fact_id, organization_id=organization_id
-        )
+        fact = await self._fact_repo.get_by_id(fact_id, organization_id=organization_id)
         # NotFoundError, not 403 — a cross-project fact must be
         # indistinguishable from a nonexistent one (no existence leak).
         if fact is None or fact.project_id != project_id:
@@ -414,9 +413,7 @@ class FactService:
             NotFoundError: If no fact with the given ID exists in the
                 scoped organization and project.
         """
-        fact = await self._fact_repo.get_by_id(
-            fact_id, organization_id=organization_id
-        )
+        fact = await self._fact_repo.get_by_id(fact_id, organization_id=organization_id)
         if fact is None or fact.project_id != project_id:
             raise NotFoundError(
                 message=f"Fact {fact_id} not found",
@@ -600,7 +597,6 @@ class FactService:
                 },
             )
             raise  # Propagate so ARQ retry mechanism handles it
-
 
     # ── List by session ──────────────────────────────────────────────────────
 

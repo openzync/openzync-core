@@ -19,7 +19,9 @@ depends_on: str | None = None
 def upgrade() -> None:
     op.create_table(
         "webhook_endpoints",
-        sa.Column("id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column(
+            "id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False
+        ),
         sa.Column("organization_id", sa.Uuid(), nullable=False),
         sa.Column("name", sa.Text(), nullable=False),
         sa.Column("url", sa.Text(), nullable=False),
@@ -27,7 +29,10 @@ def upgrade() -> None:
             "events",
             sa.Text(),
             nullable=False,
-            comment='JSON array of subscribed event types, e.g. ["session.created","fact.extracted"]',
+            comment=(
+                "JSON array of subscribed event types, "
+                'e.g. ["session.created","fact.extracted"]'
+            ),
         ),
         sa.Column("is_active", sa.Boolean(), server_default="true", nullable=False),
         sa.Column("last_delivery_at", sa.DateTime(timezone=True), nullable=True),

@@ -3,6 +3,7 @@
 Tests the static ``_rrf_merge`` method directly (pure algorithm, no I/O) and
 ``hybrid_search`` with all retrieval legs mocked at the service boundary.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -170,10 +171,14 @@ class TestHybridRetriever:
         service._embed_query.assert_awaited_once_with("test query")
         embedding = service._embed_query.return_value
         service._vector_search_episodes.assert_awaited_once_with(
-            embedding, self.PROJECT_ID, 20,
+            embedding,
+            self.PROJECT_ID,
+            20,
         )
         service._vector_search_facts.assert_awaited_once_with(
-            embedding, self.PROJECT_ID, 20,
+            embedding,
+            self.PROJECT_ID,
+            20,
         )
 
     @pytest.mark.asyncio
@@ -402,16 +407,24 @@ class TestHybridRetriever:
         # (the ``_embed_query`` stub's return value), not the query string.
         embedding = [0.1, 0.2, 0.3]
         service._vector_search_episodes.assert_awaited_once_with(
-            embedding, self.PROJECT_ID, expected_limit,
+            embedding,
+            self.PROJECT_ID,
+            expected_limit,
         )
         service._vector_search_facts.assert_awaited_once_with(
-            embedding, self.PROJECT_ID, expected_limit,
+            embedding,
+            self.PROJECT_ID,
+            expected_limit,
         )
         service._bm25_search_episodes.assert_awaited_once_with(
-            "query", self.PROJECT_ID, expected_limit,
+            "query",
+            self.PROJECT_ID,
+            expected_limit,
         )
         service._bm25_search_facts.assert_awaited_once_with(
-            "query", self.PROJECT_ID, expected_limit,
+            "query",
+            self.PROJECT_ID,
+            expected_limit,
         )
 
     @pytest.mark.asyncio
@@ -429,7 +442,9 @@ class TestHybridRetriever:
         )
         service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
 
-        service._vector_search_episodes = AsyncMock(return_value=[self._make_item("a", 0.9)])
+        service._vector_search_episodes = AsyncMock(
+            return_value=[self._make_item("a", 0.9)]
+        )
         service._vector_search_facts = AsyncMock(return_value=[])
         service._bm25_search_episodes = AsyncMock(return_value=[])
         service._bm25_search_facts = AsyncMock(return_value=[])
@@ -455,7 +470,9 @@ class TestHybridRetriever:
         )
         service._embed_query = AsyncMock(return_value=[0.1, 0.2, 0.3])
 
-        service._vector_search_episodes = AsyncMock(return_value=[self._make_item("a", 0.9)])
+        service._vector_search_episodes = AsyncMock(
+            return_value=[self._make_item("a", 0.9)]
+        )
         service._vector_search_facts = AsyncMock(return_value=[])
         service._bm25_search_episodes = AsyncMock(return_value=[])
         service._bm25_search_facts = AsyncMock(return_value=[])
@@ -489,7 +506,9 @@ class TestEmbedQuery:
     async def test_embed_query_success(self) -> None:
         """Happy path: returns the embedding vector from the LLM backend."""
         mock_backend = AsyncMock()
-        mock_backend.embed = AsyncMock(return_value=MagicMock(embeddings=[[0.1, 0.2, 0.3]]))
+        mock_backend.embed = AsyncMock(
+            return_value=MagicMock(embeddings=[[0.1, 0.2, 0.3]])
+        )
 
         mock_resolve = AsyncMock(return_value=mock_backend)
         with patch("core.llm.resolve_backend", mock_resolve):
@@ -517,7 +536,9 @@ class TestEmbedQuery:
     async def test_embed_query_failure(self) -> None:
         """Backend.embed raises an exception — SearchLegFailedError is raised."""
         mock_backend = AsyncMock()
-        mock_backend.embed = AsyncMock(side_effect=RuntimeError("embedding API timeout"))
+        mock_backend.embed = AsyncMock(
+            side_effect=RuntimeError("embedding API timeout")
+        )
 
         mock_resolve = AsyncMock(return_value=mock_backend)
         with patch("core.llm.resolve_backend", mock_resolve):
@@ -556,7 +577,9 @@ class TestEmbedQuery:
         mock_org_config.reranker_top_n = None
 
         mock_backend = AsyncMock()
-        mock_backend.embed = AsyncMock(return_value=MagicMock(embeddings=[[0.1, 0.2, 0.3]]))
+        mock_backend.embed = AsyncMock(
+            return_value=MagicMock(embeddings=[[0.1, 0.2, 0.3]])
+        )
 
         mock_db = AsyncMock()
         service = HybridRetriever(
@@ -605,13 +628,20 @@ class TestVectorSearch:
         """
         service, _ = self._make_service()
         mock_results = [
-            {"id": "ep1", "score": 0.95, "content": "test episode", "role": "assistant"},
+            {
+                "id": "ep1",
+                "score": 0.95,
+                "content": "test episode",
+                "role": "assistant",
+            },
         ]
 
         service._execute_ranked_query = AsyncMock(return_value=mock_results)
 
         results = await service._vector_search_episodes(
-            [0.1, 0.2, 0.3], self.PROJECT_ID, limit=20,
+            [0.1, 0.2, 0.3],
+            self.PROJECT_ID,
+            limit=20,
         )
 
         assert results == mock_results
@@ -622,13 +652,21 @@ class TestVectorSearch:
         """Fact vector search returns results from ``_execute_ranked_query``."""
         service, _ = self._make_service()
         mock_results = [
-            {"id": "f1", "score": 0.92, "content": "test fact", "subject": "S", "predicate": "P"},
+            {
+                "id": "f1",
+                "score": 0.92,
+                "content": "test fact",
+                "subject": "S",
+                "predicate": "P",
+            },
         ]
 
         service._execute_ranked_query = AsyncMock(return_value=mock_results)
 
         results = await service._vector_search_facts(
-            [0.1, 0.2, 0.3], self.PROJECT_ID, limit=20,
+            [0.1, 0.2, 0.3],
+            self.PROJECT_ID,
+            limit=20,
         )
 
         assert results == mock_results
@@ -642,7 +680,9 @@ class TestVectorSearch:
         service._execute_ranked_query = AsyncMock(return_value=[])
 
         results = await service._vector_search_episodes(
-            [0.1, 0.2, 0.3], self.PROJECT_ID, limit=20,
+            [0.1, 0.2, 0.3],
+            self.PROJECT_ID,
+            limit=20,
         )
 
         assert results == []
@@ -655,7 +695,9 @@ class TestVectorSearch:
         service._execute_ranked_query = AsyncMock(return_value=[])
 
         results = await service._vector_search_facts(
-            [0.1, 0.2, 0.3], self.PROJECT_ID, limit=20,
+            [0.1, 0.2, 0.3],
+            self.PROJECT_ID,
+            limit=20,
         )
 
         assert results == []
@@ -680,7 +722,9 @@ class TestVectorSearch:
         service._execute_ranked_query = AsyncMock(return_value=mock_results)
 
         results = await service._vector_search_facts(
-            [0.1, 0.2, 0.3], self.PROJECT_ID, limit=20,
+            [0.1, 0.2, 0.3],
+            self.PROJECT_ID,
+            limit=20,
         )
 
         assert len(results) == 1
@@ -908,7 +952,9 @@ class TestBM25Search:
         service._execute_ranked_query = AsyncMock(return_value=mock_results)
 
         results = await service._bm25_search_facts(
-            "test", self.PROJECT_ID, limit=20,
+            "test",
+            self.PROJECT_ID,
+            limit=20,
         )
 
         assert len(results) == 1

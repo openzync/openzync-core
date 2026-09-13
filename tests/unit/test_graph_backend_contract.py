@@ -54,11 +54,23 @@ class MockRow:
     """
 
     _FALKORDB_ENTITY_ORDER: list[str] = [
-        "id", "name", "entity_type", "summary", "attributes", "created_at",
+        "id",
+        "name",
+        "entity_type",
+        "summary",
+        "attributes",
+        "created_at",
     ]
     _FALKORDB_REL_ORDER: list[str] = [
-        "id", "source_id", "target_id", "relationship_type",
-        "properties", "fact", "confidence", "valid_from", "valid_to",
+        "id",
+        "source_id",
+        "target_id",
+        "relationship_type",
+        "properties",
+        "fact",
+        "confidence",
+        "valid_from",
+        "valid_to",
         "created_at",
     ]
 
@@ -345,7 +357,9 @@ def _configure_entity_result(
         if result is None:
             graph.query.return_value = MagicMock(result_set=[])
         else:
-            graph.query.return_value = MagicMock(result_set=[_mockrow_to_falkordb_tuple(result)])
+            graph.query.return_value = MagicMock(
+                result_set=[_mockrow_to_falkordb_tuple(result)]
+            )
 
 
 def _configure_entity_create_result(
@@ -372,7 +386,9 @@ def _configure_entity_create_result(
         }
     elif bk_name == "falkordb":
         graph = mock_falkordb_client.select_graph.return_value
-        graph.query.return_value = MagicMock(result_set=[_mockrow_to_falkordb_tuple(row)])
+        graph.query.return_value = MagicMock(
+            result_set=[_mockrow_to_falkordb_tuple(row)]
+        )
 
 
 def _mockrow_to_falkordb_rel_tuple(row: Any) -> tuple:
@@ -421,7 +437,9 @@ def _configure_relationship_create_result(
         }
     elif bk_name == "falkordb":
         graph = mock_falkordb_client.select_graph.return_value
-        graph.query.return_value = MagicMock(result_set=[_mockrow_to_falkordb_rel_tuple(row)])
+        graph.query.return_value = MagicMock(
+            result_set=[_mockrow_to_falkordb_rel_tuple(row)]
+        )
 
 
 def _configure_db_error(
@@ -473,7 +491,9 @@ class TestCreateEntity:
     ) -> None:
         """create_entity returns dict with expected keys."""
         row = _make_mock_entity_row()
-        _configure_entity_create_result(backend, mock_db, mock_surreal, mock_falkordb_client, row)
+        _configure_entity_create_result(
+            backend, mock_db, mock_surreal, mock_falkordb_client, row
+        )
 
         result = await backend.create_entity(
             org_id=ORG_ID,
@@ -499,7 +519,10 @@ class TestCreateEntity:
         """Database error → ExternalServiceError."""
         _configure_db_error(backend, mock_db, mock_surreal, mock_falkordb_client)
 
-        with pytest.raises(ExternalServiceError, match="Failed to create entity|DB connection lost|surreal not reachable|falkordb connection refused"):
+        with pytest.raises(
+            ExternalServiceError,
+            match="Failed to create entity|DB connection lost|surreal not reachable|falkordb connection refused",
+        ):
             await backend.create_entity(
                 org_id=ORG_ID,
                 project_id=PROJ_ID,
@@ -525,7 +548,9 @@ class TestGetEntity:
     ) -> None:
         """Entity exists → returns entity dict."""
         row = _make_mock_entity_row()
-        _configure_entity_result(backend, mock_db, mock_surreal, mock_falkordb_client, row)
+        _configure_entity_result(
+            backend, mock_db, mock_surreal, mock_falkordb_client, row
+        )
 
         result = await backend.get_entity(ORG_ID, PROJ_ID, ENTITY_ID)
 
@@ -540,7 +565,9 @@ class TestGetEntity:
         mock_falkordb_client: MagicMock,
     ) -> None:
         """Entity does not exist → returns None."""
-        _configure_entity_result(backend, mock_db, mock_surreal, mock_falkordb_client, None)
+        _configure_entity_result(
+            backend, mock_db, mock_surreal, mock_falkordb_client, None
+        )
 
         result = await backend.get_entity(ORG_ID, PROJ_ID, ENTITY_ID)
         assert result is None
@@ -649,15 +676,21 @@ class TestUpdateEntity:
             execute_result.one.return_value = row
             mock_db.execute.return_value = execute_result
         elif bk_name == "surrealdb":
-            mock_surreal.query.return_value = [row] if isinstance(row, dict) else [{
-                "id": str(ENTITY_ID),
-                "name": "updated",
-                "entity_type": "Person",
-                "summary": "",
-                "attributes": {},
-                "created_at": NOW.isoformat(),
-                "updated_at": NOW.isoformat(),
-            }]
+            mock_surreal.query.return_value = (
+                [row]
+                if isinstance(row, dict)
+                else [
+                    {
+                        "id": str(ENTITY_ID),
+                        "name": "updated",
+                        "entity_type": "Person",
+                        "summary": "",
+                        "attributes": {},
+                        "created_at": NOW.isoformat(),
+                        "updated_at": NOW.isoformat(),
+                    }
+                ]
+            )
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
             graph.query.return_value = MagicMock(result_set=[row])
@@ -737,9 +770,12 @@ class TestCreateRelationship:
         bk_name = _get_backend_name(backend)
         if bk_name == "postgres":
             row = _make_mock_rel_row()
-            _configure_relationship_create_result(backend, mock_db, mock_surreal, mock_falkordb_client, row)
+            _configure_relationship_create_result(
+                backend, mock_db, mock_surreal, mock_falkordb_client, row
+            )
         elif bk_name == "surrealdb":
             from surrealdb import RecordID
+
             edge_record = {
                 "id": RecordID("knows", str(uuid4())),
                 "in": RecordID("entity", str(ENTITY_ID)),
@@ -759,7 +795,18 @@ class TestCreateRelationship:
                 "time": "1ms",
             }
         elif bk_name == "falkordb":
-            row = (str(REL_ID), str(ENTITY_ID), str(TARGET_ID), "knows", "{}", "", 1.0, None, None, NOW.isoformat())
+            row = (
+                str(REL_ID),
+                str(ENTITY_ID),
+                str(TARGET_ID),
+                "knows",
+                "{}",
+                "",
+                1.0,
+                None,
+                None,
+                NOW.isoformat(),
+            )
             graph = mock_falkordb_client.select_graph.return_value
             graph.query.return_value = MagicMock(result_set=[row])
 
@@ -830,9 +877,11 @@ class TestTraverse:
             graph.query.return_value = MagicMock(result_set=[])
             # Also handle get_entity inside traverse
             # FalkorDB traverse calls get_entity which uses the same graph.query
-            graph.query.return_value = MagicMock(result_set=[
-                (str(ENTITY_ID), "test", "Person", "", "{}", NOW.isoformat()),
-            ])
+            graph.query.return_value = MagicMock(
+                result_set=[
+                    (str(ENTITY_ID), "test", "Person", "", "{}", NOW.isoformat()),
+                ]
+            )
 
         result = await backend.traverse(ORG_ID, PROJ_ID, ENTITY_ID, max_depth=1)
 
@@ -875,15 +924,17 @@ class TestSearchEntities:
             execute_result.all.return_value = [row]
             mock_db.execute.return_value = execute_result
         elif bk_name == "surrealdb":
-            mock_surreal.query.return_value = [{
-                "id": str(ENTITY_ID),
-                "name": "found",
-                "entity_type": "Person",
-                "summary": "",
-                "attributes": {},
-                "created_at": NOW.isoformat(),
-                "score": 0.85,
-            }]
+            mock_surreal.query.return_value = [
+                {
+                    "id": str(ENTITY_ID),
+                    "name": "found",
+                    "entity_type": "Person",
+                    "summary": "",
+                    "attributes": {},
+                    "created_at": NOW.isoformat(),
+                    "score": 0.85,
+                }
+            ]
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
             row = (str(ENTITY_ID), "found", "Person", "", "{}", NOW.isoformat(), 0.85)
@@ -932,14 +983,16 @@ class TestListEntities:
             execute_result.all.return_value = [row]
             mock_db.execute.return_value = execute_result
         elif bk_name == "surrealdb":
-            mock_surreal.query.return_value = [{
-                "id": str(ENTITY_ID),
-                "name": "found",
-                "entity_type": "Person",
-                "summary": "",
-                "attributes": {},
-                "created_at": NOW.isoformat(),
-            }]
+            mock_surreal.query.return_value = [
+                {
+                    "id": str(ENTITY_ID),
+                    "name": "found",
+                    "entity_type": "Person",
+                    "summary": "",
+                    "attributes": {},
+                    "created_at": NOW.isoformat(),
+                }
+            ]
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
             row = (str(ENTITY_ID), "found", "Person", "", "{}", NOW.isoformat())
@@ -993,23 +1046,37 @@ class TestListEntityEdges:
             mock_db.execute.return_value = execute_result
         elif bk_name == "surrealdb":
             from surrealdb import RecordID
+
             src_rid = RecordID("entity", str(ENTITY_ID))
             tgt_rid = RecordID("entity", str(TARGET_ID))
-            mock_surreal.query.return_value = [{
-                "id": RecordID("knows", str(REL_ID)),
-                "in": src_rid,
-                "out": tgt_rid,
-                "properties": {},
-                "fact": "",
-                "confidence": 1.0,
-                "valid_from": None,
-                "valid_to": None,
-                "created_at": NOW.isoformat(),
-                "edge_table_name": "knows",
-            }]
+            mock_surreal.query.return_value = [
+                {
+                    "id": RecordID("knows", str(REL_ID)),
+                    "in": src_rid,
+                    "out": tgt_rid,
+                    "properties": {},
+                    "fact": "",
+                    "confidence": 1.0,
+                    "valid_from": None,
+                    "valid_to": None,
+                    "created_at": NOW.isoformat(),
+                    "edge_table_name": "knows",
+                }
+            ]
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
-            row = (str(REL_ID), str(ENTITY_ID), str(TARGET_ID), "knows", "{}", "", 1.0, None, None, NOW.isoformat())
+            row = (
+                str(REL_ID),
+                str(ENTITY_ID),
+                str(TARGET_ID),
+                "knows",
+                "{}",
+                "",
+                1.0,
+                None,
+                None,
+                NOW.isoformat(),
+            )
             graph.query.return_value = MagicMock(result_set=[row])
 
         result = await backend.list_entity_edges(ORG_ID, PROJ_ID, ENTITY_ID)
@@ -1063,35 +1130,51 @@ class TestGetEntityWithEdges:
             mock_db.execute.side_effect = [r1, r2]
         elif bk_name == "surrealdb":
             from surrealdb import RecordID
+
             src_rid = RecordID("entity", str(ENTITY_ID))
             tgt_rid = RecordID("entity", str(TARGET_ID))
             mock_surreal.query.side_effect = [
                 # First call (get_entity)
-                [{
-                    "id": src_rid,
-                    "name": "test",
-                    "entity_type": "Person",
-                    "summary": "",
-                    "attributes": {},
-                    "created_at": NOW.isoformat(),
-                }],
+                [
+                    {
+                        "id": src_rid,
+                        "name": "test",
+                        "entity_type": "Person",
+                        "summary": "",
+                        "attributes": {},
+                        "created_at": NOW.isoformat(),
+                    }
+                ],
                 # Second call (list_entity_edges)
-                [{
-                    "id": RecordID("knows", str(REL_ID)),
-                    "in": src_rid,
-                    "out": tgt_rid,
-                    "properties": {},
-                    "fact": "",
-                    "confidence": 1.0,
-                    "valid_from": None,
-                    "valid_to": None,
-                    "created_at": NOW.isoformat(),
-                    "edge_table_name": "knows",
-                }],
+                [
+                    {
+                        "id": RecordID("knows", str(REL_ID)),
+                        "in": src_rid,
+                        "out": tgt_rid,
+                        "properties": {},
+                        "fact": "",
+                        "confidence": 1.0,
+                        "valid_from": None,
+                        "valid_to": None,
+                        "created_at": NOW.isoformat(),
+                        "edge_table_name": "knows",
+                    }
+                ],
             ]
         elif bk_name == "falkordb":
             entity_row = (str(ENTITY_ID), "test", "Person", "", "{}", NOW.isoformat())
-            rel_row = (str(REL_ID), str(ENTITY_ID), str(TARGET_ID), "knows", "{}", "", 1.0, None, None, NOW.isoformat())
+            rel_row = (
+                str(REL_ID),
+                str(ENTITY_ID),
+                str(TARGET_ID),
+                "knows",
+                "{}",
+                "",
+                1.0,
+                None,
+                None,
+                NOW.isoformat(),
+            )
             graph = mock_falkordb_client.select_graph.return_value
             graph.query.side_effect = [
                 MagicMock(result_set=[entity_row]),
@@ -1112,7 +1195,9 @@ class TestGetEntityWithEdges:
         mock_falkordb_client: MagicMock,
     ) -> None:
         """Entity not found → returns None."""
-        _configure_entity_result(backend, mock_db, mock_surreal, mock_falkordb_client, None)
+        _configure_entity_result(
+            backend, mock_db, mock_surreal, mock_falkordb_client, None
+        )
 
         result = await backend.get_entity_with_edges(ORG_ID, PROJ_ID, ENTITY_ID)
         assert result is None
@@ -1175,6 +1260,7 @@ class TestRetrieveGraph:
         _configure_db_error(backend, mock_db, mock_surreal, mock_falkordb_client)
 
         from core.exceptions import GraphBackendUnavailableError
+
         with pytest.raises((ExternalServiceError, GraphBackendUnavailableError)):
             await backend.retrieve_graph(ORG_ID, PROJ_ID, query="test")
 
@@ -1238,7 +1324,11 @@ class TestLinkEntityToEpisode:
             }
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
-            graph.query.return_value = MagicMock(result_set=[(str(ENTITY_ID), "test", "Person", "", "{}", NOW.isoformat())])
+            graph.query.return_value = MagicMock(
+                result_set=[
+                    (str(ENTITY_ID), "test", "Person", "", "{}", NOW.isoformat())
+                ]
+            )
 
         # First call
         await backend.link_entity_to_episode(
@@ -1278,7 +1368,11 @@ class TestLinkEntityToEpisode:
             }
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
-            graph.query.return_value = MagicMock(result_set=[(str(ENTITY_ID), "test", "Person", "", "{}", NOW.isoformat())])
+            graph.query.return_value = MagicMock(
+                result_set=[
+                    (str(ENTITY_ID), "test", "Person", "", "{}", NOW.isoformat())
+                ]
+            )
 
         result = await backend.link_entity_to_episode(
             org_id=ORG_ID,
@@ -1578,9 +1672,9 @@ class TestMergeEntities:
             # 2. Distinct edge types (collect relationship types)
             # 3. Soft-delete (return merged_count)
             graph.query.side_effect = [
-                MagicMock(result_set=[([str(ENTITY_ID)],)]),   # entity check
-                MagicMock(result_set=[]),                       # edge types (empty)
-                MagicMock(result_set=[(0,)]),                  # soft-delete (0 merged)
+                MagicMock(result_set=[([str(ENTITY_ID)],)]),  # entity check
+                MagicMock(result_set=[]),  # edge types (empty)
+                MagicMock(result_set=[(0,)]),  # soft-delete (0 merged)
             ]
 
         try:
@@ -1654,31 +1748,56 @@ class TestCreateRelationshipBulk:
             mock_db.execute.return_value = execute_result
         elif bk_name == "surrealdb":
             from surrealdb import RecordID
+
             mock_surreal.query_raw.return_value = {
                 "result": [
                     {"status": "OK", "result": []},
-                    {"status": "OK", "result": [{
-                        "id": RecordID("knows", str(REL_ID)),
-                        "in": RecordID("entity", str(ENTITY_ID)),
-                        "out": RecordID("entity", str(TARGET_ID)),
-                        "properties": {},
-                        "fact": "",
-                        "confidence": 1.0,
-                        "valid_from": None,
-                        "valid_to": None,
-                        "created_at": NOW.isoformat(),
-                    }],
-                }],
+                    {
+                        "status": "OK",
+                        "result": [
+                            {
+                                "id": RecordID("knows", str(REL_ID)),
+                                "in": RecordID("entity", str(ENTITY_ID)),
+                                "out": RecordID("entity", str(TARGET_ID)),
+                                "properties": {},
+                                "fact": "",
+                                "confidence": 1.0,
+                                "valid_from": None,
+                                "valid_to": None,
+                                "created_at": NOW.isoformat(),
+                            }
+                        ],
+                    },
+                ],
                 "time": "1ms",
             }
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
-            row = (str(REL_ID), str(ENTITY_ID), str(TARGET_ID), "knows", "{}", "", 1.0, None, None, NOW.isoformat())
+            row = (
+                str(REL_ID),
+                str(ENTITY_ID),
+                str(TARGET_ID),
+                "knows",
+                "{}",
+                "",
+                1.0,
+                None,
+                None,
+                NOW.isoformat(),
+            )
             graph.query.return_value = MagicMock(result_set=[row])
 
-        result = await backend.create_relationship_bulk(ORG_ID, PROJ_ID, [
-            {"source_id": ENTITY_ID, "target_id": TARGET_ID, "relationship_type": "knows"},
-        ])
+        result = await backend.create_relationship_bulk(
+            ORG_ID,
+            PROJ_ID,
+            [
+                {
+                    "source_id": ENTITY_ID,
+                    "target_id": TARGET_ID,
+                    "relationship_type": "knows",
+                },
+            ],
+        )
         assert isinstance(result, list)
 
     async def test_raises_on_bad_input(
@@ -1690,9 +1809,13 @@ class TestCreateRelationshipBulk:
     ) -> None:
         """Missing fields → ValueError."""
         with pytest.raises(ValueError):
-            await backend.create_relationship_bulk(ORG_ID, PROJ_ID, [
-                {"source_id": ENTITY_ID},  # missing target_id and relationship_type
-            ])
+            await backend.create_relationship_bulk(
+                ORG_ID,
+                PROJ_ID,
+                [
+                    {"source_id": ENTITY_ID},  # missing target_id and relationship_type
+                ],
+            )
 
     async def test_raises_external_service_error(
         self,
@@ -1705,9 +1828,17 @@ class TestCreateRelationshipBulk:
         _configure_db_error(backend, mock_db, mock_surreal, mock_falkordb_client)
 
         with pytest.raises(ExternalServiceError):
-            await backend.create_relationship_bulk(ORG_ID, PROJ_ID, [
-                {"source_id": ENTITY_ID, "target_id": TARGET_ID, "relationship_type": "knows"},
-            ])
+            await backend.create_relationship_bulk(
+                ORG_ID,
+                PROJ_ID,
+                [
+                    {
+                        "source_id": ENTITY_ID,
+                        "target_id": TARGET_ID,
+                        "relationship_type": "knows",
+                    },
+                ],
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1736,31 +1867,47 @@ class TestUpsertObservation:
             mock_surreal.query_raw.return_value = {
                 "result": [
                     {"status": "OK", "result": []},
-                    {"status": "OK", "result": [{
-                        "id": str(uuid4()),
-                        "organization_id": str(ORG_ID),
-                        "project_id": str(PROJ_ID),
-                        "subject_entity_id": str(ENTITY_ID),
-                        "observation_type": "co_occurrence",
-                        "content": "test",
-                        "confidence": 0.95,
-                        "related_entity_id": None,
-                        "supporting_fact_ids": [],
-                        "supporting_relationship_ids": [],
-                        "valid_from": None,
-                        "valid_to": None,
-                        "observation_metadata": {},
-                        "created_at": NOW.isoformat(),
-                        "updated_at": NOW.isoformat(),
-                    }],
-                }],
+                    {
+                        "status": "OK",
+                        "result": [
+                            {
+                                "id": str(uuid4()),
+                                "organization_id": str(ORG_ID),
+                                "project_id": str(PROJ_ID),
+                                "subject_entity_id": str(ENTITY_ID),
+                                "observation_type": "co_occurrence",
+                                "content": "test",
+                                "confidence": 0.95,
+                                "related_entity_id": None,
+                                "supporting_fact_ids": [],
+                                "supporting_relationship_ids": [],
+                                "valid_from": None,
+                                "valid_to": None,
+                                "observation_metadata": {},
+                                "created_at": NOW.isoformat(),
+                                "updated_at": NOW.isoformat(),
+                            }
+                        ],
+                    },
+                ],
                 "time": "1ms",
             }
         elif bk_name == "falkordb":
             graph = mock_falkordb_client.select_graph.return_value
             row = (
-                str(uuid4()), str(ENTITY_ID), "co_occurrence", "test", 0.95, None, "{}", NOW.isoformat(),
-                None, None, NOW.isoformat(), str(ORG_ID), str(PROJ_ID),
+                str(uuid4()),
+                str(ENTITY_ID),
+                "co_occurrence",
+                "test",
+                0.95,
+                None,
+                "{}",
+                NOW.isoformat(),
+                None,
+                None,
+                NOW.isoformat(),
+                str(ORG_ID),
+                str(PROJ_ID),
             )
             graph.query.return_value = MagicMock(result_set=[row])
 
@@ -1878,7 +2025,9 @@ class TestGetEntityAppearanceTimestamps:
             graph = mock_falkordb_client.select_graph.return_value
             graph.query.return_value = MagicMock(result_set=[])
 
-        result = await backend.get_entity_appearance_timestamps(ORG_ID, PROJ_ID, ENTITY_ID)
+        result = await backend.get_entity_appearance_timestamps(
+            ORG_ID, PROJ_ID, ENTITY_ID
+        )
         assert isinstance(result, list)
         for item in result:
             assert isinstance(item, datetime)
@@ -1926,7 +2075,9 @@ class TestGetRelationshipIdsBetween:
             graph = mock_falkordb_client.select_graph.return_value
             graph.query.return_value = MagicMock(result_set=[(str(REL_ID),)])
 
-        result = await backend.get_relationship_ids_between(ORG_ID, PROJ_ID, ENTITY_ID, TARGET_ID)
+        result = await backend.get_relationship_ids_between(
+            ORG_ID, PROJ_ID, ENTITY_ID, TARGET_ID
+        )
         assert isinstance(result, list)
         for item in result:
             assert isinstance(item, UUID)
@@ -1942,7 +2093,9 @@ class TestGetRelationshipIdsBetween:
         _configure_db_error(backend, mock_db, mock_surreal, mock_falkordb_client)
 
         with pytest.raises(ExternalServiceError):
-            await backend.get_relationship_ids_between(ORG_ID, PROJ_ID, ENTITY_ID, TARGET_ID)
+            await backend.get_relationship_ids_between(
+                ORG_ID, PROJ_ID, ENTITY_ID, TARGET_ID
+            )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2064,7 +2217,10 @@ class TestExpireRelationshipsMatching:
 
         if _get_backend_name(backend) == "surrealdb":
             mock_surreal.query.side_effect = [
-                [{"id": RecordID("knows", "edge1")}, {"id": RecordID("knows", "edge2")}],
+                [
+                    {"id": RecordID("knows", "edge1")},
+                    {"id": RecordID("knows", "edge2")},
+                ],
                 [],
             ]
         else:  # falkordb
@@ -2190,13 +2346,26 @@ class TestRetrieveGraphAsOf:
         mock_falkordb_client: MagicMock,
     ) -> None:
         """retrieve_graph(as_of=T2) → traverse receives the exact as_of."""
-        backend.search_entities = AsyncMock(return_value=[
-            {"id": str(ENTITY_ID), "name": "Match", "type": "Person", "summary": ""},
-        ])
+        backend.search_entities = AsyncMock(
+            return_value=[
+                {
+                    "id": str(ENTITY_ID),
+                    "name": "Match",
+                    "type": "Person",
+                    "summary": "",
+                },
+            ]
+        )
         backend.traverse = AsyncMock(return_value=[])
 
         await backend.retrieve_graph(
-            ORG_ID, PROJ_ID, "find", match_limit=5, max_depth=2, max_results=50, as_of=T2
+            ORG_ID,
+            PROJ_ID,
+            "find",
+            match_limit=5,
+            max_depth=2,
+            max_results=50,
+            as_of=T2,
         )
 
         if _get_backend_name(backend) == "postgres":
@@ -2226,9 +2395,16 @@ class TestRetrieveGraphAsOf:
     ) -> None:
         """No as_of → traversal without a caller-supplied instant (old callers
         keep working unchanged)."""
-        backend.search_entities = AsyncMock(return_value=[
-            {"id": str(ENTITY_ID), "name": "Match", "type": "Person", "summary": ""},
-        ])
+        backend.search_entities = AsyncMock(
+            return_value=[
+                {
+                    "id": str(ENTITY_ID),
+                    "name": "Match",
+                    "type": "Person",
+                    "summary": "",
+                },
+            ]
+        )
         backend.traverse = AsyncMock(return_value=[])
 
         await backend.retrieve_graph(ORG_ID, PROJ_ID, "find")
@@ -2257,7 +2433,12 @@ class TestRetrieveGraphAsOf:
         """The emitted neighbour query filters edges by the effective-at
         window: invalid_at unset OR after as_of, and within
         [valid_from, valid_to].  Bound params carry the exact as_of."""
-        start_entity = {"id": str(ENTITY_ID), "name": "Start", "type": "Person", "summary": ""}
+        start_entity = {
+            "id": str(ENTITY_ID),
+            "name": "Start",
+            "type": "Person",
+            "summary": "",
+        }
 
         if _get_backend_name(backend) == "postgres":
             # Temporal: the BFS CTE relaxes invalid_at to the effective-at

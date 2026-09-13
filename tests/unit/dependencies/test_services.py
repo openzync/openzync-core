@@ -88,9 +88,7 @@ class TestGetSessionService:
 
         with (
             patch("dependencies.services.SessionRepository") as mock_repo_cls,
-            patch(
-                "dependencies.services.EpisodeBlobRepository"
-            ) as mock_blob_cls,
+            patch("dependencies.services.EpisodeBlobRepository") as mock_blob_cls,
             patch("dependencies.services.SessionService") as mock_svc_cls,
         ):
             mock_repo = MagicMock()
@@ -529,9 +527,7 @@ class TestGetGraphService:
             mock_dispatcher.resolve_and_create.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_falkordb_per_org_config(
-        self, mock_dispatcher: MagicMock
-    ) -> None:
+    async def test_falkordb_per_org_config(self, mock_dispatcher: MagicMock) -> None:
         """falkordb_url in org_config → creates per-org FalkorDB client."""
         from dependencies.services import get_graph_service
 
@@ -555,9 +551,7 @@ class TestGetGraphService:
             patch("dependencies.services.FactRepository"),
             patch("dependencies.services.GraphService"),
             patch("falkordb.asyncio.FalkorDB") as mock_falkor_cls,
-            patch(
-                "redis.asyncio.BlockingConnectionPool"
-            ) as mock_pool_cls,
+            patch("redis.asyncio.BlockingConnectionPool") as mock_pool_cls,
         ):
             mock_pool = MagicMock()
             mock_pool_cls.from_url.return_value = mock_pool
@@ -702,9 +696,7 @@ class TestGetGraphBackendForProject:
 
         db = AsyncMock(spec=AsyncSession)
 
-        with patch(
-            "dependencies.services.get_settings"
-        ) as mock_get_settings:
+        with patch("dependencies.services.get_settings") as mock_get_settings:
             mock_settings = MagicMock()
             mock_settings.SURREALDB_URL = "ws://surrealdb:8000/rpc"
             mock_get_settings.return_value = mock_settings

@@ -131,9 +131,7 @@ async def _await_effect(predicate, timeout_s: float = 10.0) -> Any:
     raise AssertionError("post-commit graph-sync effect did not complete in time")
 
 
-def _entity_triple(
-    src_entity: UUID, tgt_entity: UUID, content: str
-) -> dict[str, Any]:
+def _entity_triple(src_entity: UUID, tgt_entity: UUID, content: str) -> dict[str, Any]:
     return {
         "subject": "Robbie",
         "predicate": "wears",
@@ -180,7 +178,10 @@ class TestCrossFormSupersessionExpiresEdge:
         try:
             backend = PostgresGraphBackend(db=db)
             pre = await backend.traverse(
-                ORG_ID, PROJECT_ID, graph["src_id"], max_depth=1,
+                ORG_ID,
+                PROJECT_ID,
+                graph["src_id"],
+                max_depth=1,
                 at_time=T0 + timedelta(minutes=1),
             )
             assert str(graph["tgt_id"]) in {n["id"] for n in pre}, (
@@ -253,11 +254,17 @@ class TestCrossFormSupersessionExpiresEdge:
         try:
             backend = PostgresGraphBackend(db=db)
             before_t1 = await backend.traverse(
-                ORG_ID, PROJECT_ID, graph["src_id"], max_depth=1,
+                ORG_ID,
+                PROJECT_ID,
+                graph["src_id"],
+                max_depth=1,
                 at_time=T0 + timedelta(minutes=1),
             )
             after_t1 = await backend.traverse(
-                ORG_ID, PROJECT_ID, graph["src_id"], max_depth=1,
+                ORG_ID,
+                PROJECT_ID,
+                graph["src_id"],
+                max_depth=1,
                 at_time=T1 + timedelta(minutes=1),
             )
             assert str(graph["tgt_id"]) in {n["id"] for n in before_t1}, (
@@ -444,9 +451,7 @@ class TestRetractionExpiresEdge:
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
-                    _entity_triple(
-                        graph["src_id"], graph["tgt_id"], "supports edge"
-                    )
+                    _entity_triple(graph["src_id"], graph["tgt_id"], "supports edge")
                 ],
                 now=T0,
             )

@@ -136,9 +136,7 @@ class TestAdminSchemasCRUD:
         assert create_resp.status_code == 201
         schema_id = create_resp.json()["id"]
 
-        get_resp = await admin_client.get(
-            f"/v1/admin/schemas/{schema_id}"
-        )
+        get_resp = await admin_client.get(f"/v1/admin/schemas/{schema_id}")
         assert get_resp.status_code == 200
         body = get_resp.json()
         _assert_schema_response_shape(body)
@@ -239,15 +237,11 @@ class TestAdminSchemasCRUD:
         assert create_resp.status_code == 201
         schema_id = create_resp.json()["id"]
 
-        delete_resp = await admin_client.delete(
-            f"/v1/admin/schemas/{schema_id}"
-        )
+        delete_resp = await admin_client.delete(f"/v1/admin/schemas/{schema_id}")
         assert delete_resp.status_code == 204
 
         # Verify soft-deleted
-        get_resp = await admin_client.get(
-            f"/v1/admin/schemas/{schema_id}"
-        )
+        get_resp = await admin_client.get(f"/v1/admin/schemas/{schema_id}")
         assert get_resp.status_code == 200
         assert get_resp.json()["is_active"] is False
 
@@ -373,14 +367,10 @@ class TestAdminSchemasCRUD:
             body_b = list_b.json()
             # Org B should NOT see Org A's schema
             ids_b = {s["id"] for s in body_b["data"]}
-            assert org_a_schema_id not in ids_b, (
-                "Org B should not see Org A's schema"
-            )
+            assert org_a_schema_id not in ids_b, "Org B should not see Org A's schema"
 
             # Org B: GET Org A's schema by ID → 404
-            get_b = await cli.get(
-                f"/v1/admin/schemas/{org_a_schema_id}"
-            )
+            get_b = await cli.get(f"/v1/admin/schemas/{org_a_schema_id}")
             assert get_b.status_code == 404, (
                 "Org B should not be able to GET Org A's schema"
             )

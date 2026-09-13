@@ -53,9 +53,7 @@ class TestProjectRepository:
 
     # ── create ─────────────────────────────────────────────────────────────────
 
-    async def test_create(
-        self, repo: ProjectRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_create(self, repo: ProjectRepository, mock_db: AsyncMock) -> None:
         """create inserts and returns a new project."""
         mock_db.add.return_value = None
         mock_db.flush.return_value = None
@@ -82,9 +80,7 @@ class TestProjectRepository:
         mock_db.flush.return_value = None
         mock_db.refresh.return_value = None
 
-        result = await repo.create(
-            organization_id=self.ORG_ID, name="Minimal"
-        )
+        result = await repo.create(organization_id=self.ORG_ID, name="Minimal")
 
         assert result is not None
 
@@ -130,9 +126,7 @@ class TestProjectRepository:
         mock_result.scalar_one_or_none.return_value = project
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_name(
-            organization_id=self.ORG_ID, name="My Project"
-        )
+        result = await repo.get_by_name(organization_id=self.ORG_ID, name="My Project")
 
         assert result == project
 
@@ -144,26 +138,20 @@ class TestProjectRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_name(
-            organization_id=self.ORG_ID, name="Nonexistent"
-        )
+        result = await repo.get_by_name(organization_id=self.ORG_ID, name="Nonexistent")
 
         assert result is None
 
     # ── list ───────────────────────────────────────────────────────────────────
 
-    async def test_list(
-        self, repo: ProjectRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_list(self, repo: ProjectRepository, mock_db: AsyncMock) -> None:
         """list returns projects for an org."""
         projects = [self._mock_project(), self._mock_project(id=uuid4())]
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = projects
         mock_db.execute.return_value = mock_result
 
-        result = await repo.list(
-            organization_id=self.ORG_ID, user_id=None
-        )
+        result = await repo.list(organization_id=self.ORG_ID, user_id=None)
 
         assert result == projects
 
@@ -175,9 +163,7 @@ class TestProjectRepository:
         mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result = await repo.list(
-            organization_id=self.ORG_ID, user_id=self.USER_ID
-        )
+        result = await repo.list(organization_id=self.ORG_ID, user_id=self.USER_ID)
 
         assert result == []
 
@@ -197,9 +183,7 @@ class TestProjectRepository:
 
     # ── update ─────────────────────────────────────────────────────────────────
 
-    async def test_update(
-        self, repo: ProjectRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_update(self, repo: ProjectRepository, mock_db: AsyncMock) -> None:
         """update modifies project fields."""
         project = self._mock_project()
         mock_result = MagicMock()
@@ -257,9 +241,7 @@ class TestProjectRepository:
 
     # ── archive ────────────────────────────────────────────────────────────────
 
-    async def test_archive(
-        self, repo: ProjectRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_archive(self, repo: ProjectRepository, mock_db: AsyncMock) -> None:
         """archive sets is_archived flag."""
         project = self._mock_project(is_archived=False)
         mock_result = MagicMock()
@@ -379,9 +361,7 @@ class TestProjectRepository:
         mock_result.scalar_one_or_none.return_value = member
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_member(
-            project_id=self.PROJECT_ID, user_id=self.USER_ID
-        )
+        result = await repo.get_member(project_id=self.PROJECT_ID, user_id=self.USER_ID)
 
         assert result == member
 
@@ -393,9 +373,7 @@ class TestProjectRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_member(
-            project_id=self.PROJECT_ID, user_id=self.USER_ID
-        )
+        result = await repo.get_member(project_id=self.PROJECT_ID, user_id=self.USER_ID)
 
         assert result is None
 

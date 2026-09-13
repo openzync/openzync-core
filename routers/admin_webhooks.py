@@ -121,7 +121,9 @@ async def update_webhook(
         raise HTTPException(status_code=400, detail="No fields to update")
 
     endpoint = await service.update_endpoint(
-        endpoint_id, uuid.UUID(org_id), updates,
+        endpoint_id,
+        uuid.UUID(org_id),
+        updates,
     )
     if not endpoint:
         raise HTTPException(status_code=404, detail="Webhook endpoint not found")

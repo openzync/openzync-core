@@ -1,4 +1,5 @@
 """Tests for ``StructuredExtraction`` model."""
+
 from __future__ import annotations
 
 import uuid

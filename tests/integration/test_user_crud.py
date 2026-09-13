@@ -58,7 +58,9 @@ class TestUserCrud:
 
     @pytest.fixture
     async def admin_client(
-        self, isolated_app: pytest.fixture, isolated_org_and_key: dict,
+        self,
+        isolated_app: pytest.fixture,
+        isolated_org_and_key: dict,
     ) -> AsyncClient:
         """JWT-authenticated client — user mutations require ``members:write``.
 
@@ -70,9 +72,7 @@ class TestUserCrud:
 
         transport = asgi_transport(isolated_app)  # type: ignore[arg-type]
         async with AsyncClient(transport=transport, base_url="http://test") as client:
-            client.headers["Authorization"] = (
-                f"Bearer {isolated_org_and_key['jwt']}"
-            )
+            client.headers["Authorization"] = f"Bearer {isolated_org_and_key['jwt']}"
             yield client
 
     @staticmethod
@@ -170,7 +170,9 @@ class TestUserCrud:
 
     @pytest.mark.asyncio
     async def test_get_user(
-        self, admin_client: AsyncClient, isolated_auth_client: AsyncClient,
+        self,
+        admin_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
     ) -> None:
         """GET /v1/users/{id} → 200 with UserResponseWithStats.
 
@@ -225,7 +227,9 @@ class TestUserCrud:
 
     @pytest.mark.asyncio
     async def test_update_user(
-        self, admin_client: AsyncClient, isolated_auth_client: AsyncClient,
+        self,
+        admin_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
     ) -> None:
         """PATCH /v1/users/{id} with partial data → 200, fields updated.
 
@@ -263,7 +267,9 @@ class TestUserCrud:
 
     @pytest.mark.asyncio
     async def test_update_user_metadata_merge(
-        self, admin_client: AsyncClient, isolated_auth_client: AsyncClient,
+        self,
+        admin_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
     ) -> None:
         """PATCH metadata is deep-merged, not replaced.
 
@@ -292,14 +298,12 @@ class TestUserCrud:
             json={
                 "metadata": {
                     "region": "eu-west",  # override
-                    "tier": "gold",       # new key
+                    "tier": "gold",  # new key
                     "nested": {"a": 99},  # partial override of nested dict
                 }
             },
         )
-        assert patch_resp.status_code == 200, (
-            f"PATCH failed: {patch_resp.text}"
-        )
+        assert patch_resp.status_code == 200, f"PATCH failed: {patch_resp.text}"
 
         # Fetch and verify merge semantics
         get_resp = await isolated_auth_client.get(f"/v1/users/{user_id}")
@@ -307,9 +311,7 @@ class TestUserCrud:
         metadata = get_resp.json()["metadata"]
 
         # "plan" was not in the PATCH body → preserved
-        assert metadata["plan"] == "pro", (
-            f"Expected 'pro', got {metadata.get('plan')}"
-        )
+        assert metadata["plan"] == "pro", f"Expected 'pro', got {metadata.get('plan')}"
         # "region" was overridden
         assert metadata["region"] == "eu-west"
         # "tier" was added
@@ -326,7 +328,9 @@ class TestUserCrud:
 
     @pytest.mark.asyncio
     async def test_delete_user(
-        self, admin_client: AsyncClient, isolated_auth_client: AsyncClient,
+        self,
+        admin_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
     ) -> None:
         """DELETE /v1/users/{id} → 204, subsequent GET → 404.
 
@@ -360,7 +364,9 @@ class TestUserCrud:
 
     @pytest.mark.asyncio
     async def test_list_users_paginated(
-        self, admin_client: AsyncClient, isolated_auth_client: AsyncClient,
+        self,
+        admin_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
     ) -> None:
         """GET /v1/users with cursor-based pagination.
 
@@ -386,9 +392,7 @@ class TestUserCrud:
         assert "has_more" in body1, "Missing 'has_more'"
         assert len(body1["data"]) == 2, f"Expected 2 items, got {len(body1['data'])}"
         assert body1["has_more"] is True
-        assert body1["next_cursor"] is not None, (
-            "Expected non-null cursor for page 1"
-        )
+        assert body1["next_cursor"] is not None, "Expected non-null cursor for page 1"
 
         # Page 2: follow cursor
         page2 = await isolated_auth_client.get(
@@ -416,7 +420,9 @@ class TestUserCrud:
 
     @pytest.mark.asyncio
     async def test_list_users_search(
-        self, admin_client: AsyncClient, isolated_auth_client: AsyncClient,
+        self,
+        admin_client: AsyncClient,
+        isolated_auth_client: AsyncClient,
     ) -> None:
         """GET /v1/users?search=alice filters by external_id, name, or email.
 
@@ -468,39 +474,48 @@ class TestUserCrud:
         """
         # -- Bootstrap org A --
         async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             tenant_a = await bootstrap_tenant(isolated_app, cli, "Org A")
 
         # -- Bootstrap org B --
         async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             tenant_b = await bootstrap_tenant(isolated_app, cli, "Org B")
 
         # -- Set up fixture user for org A (so get_current_user_id works) --
         async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             cli.headers["Authorization"] = f"Bearer {tenant_a['jwt']}"
-            user_resp = await cli.post("/v1/users", json={"external_id": "org_a_fixture"})
+            user_resp = await cli.post(
+                "/v1/users", json={"external_id": "org_a_fixture"}
+            )
             assert user_resp.status_code == 201
             user_id_a = UUID(user_resp.json()["id"])
             isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_a
 
         # -- Set up fixture user for org B --
         async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             cli.headers["Authorization"] = f"Bearer {tenant_b['jwt']}"
-            user_resp = await cli.post("/v1/users", json={"external_id": "org_b_fixture"})
+            user_resp = await cli.post(
+                "/v1/users", json={"external_id": "org_b_fixture"}
+            )
             assert user_resp.status_code == 201
             user_id_b = UUID(user_resp.json()["id"])
             isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_b
 
         # -- Create a user under org A --
         async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             cli.headers["Authorization"] = f"Bearer {tenant_a['jwt']}"
             isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_a
@@ -517,7 +532,8 @@ class TestUserCrud:
 
         # -- Try to access that user from org B → 404 --
         async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
             get_resp = await cli.get(f"/v1/users/{user_id}")

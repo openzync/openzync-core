@@ -29,7 +29,6 @@ SESSION_ID = UUID("00000000-0000-0000-0000-000000000004")
 EPISODE_ID = UUID("00000000-0000-0000-0000-000000000005")
 
 
-
 @pytest.fixture(autouse=True)
 def _stub_permission_gate() -> None:
     """Stub the permission gate for every test in this file.
@@ -77,18 +76,20 @@ async def test_list_structured_extractions_success() -> None:
     """GET list returns 200 with a list of structured extractions."""
     app = _create_app()
     mock_service = app.state._mock_extraction_service
-    mock_service.get_session_extractions.return_value = StructuredExtractionListResponse(
-        items=[
-            StructuredExtractionResponse(
-                id=UUID("00000000-0000-0000-0000-000000000010"),
-                session_id=SESSION_ID,
-                episode_id=EPISODE_ID,
-                schema_id=UUID("00000000-0000-0000-0000-000000000030"),
-                data={"order_total": 42.99, "currency": "USD"},
-                created_at=NOW,
-            ),
-        ],
-        total=1,
+    mock_service.get_session_extractions.return_value = (
+        StructuredExtractionListResponse(
+            items=[
+                StructuredExtractionResponse(
+                    id=UUID("00000000-0000-0000-0000-000000000010"),
+                    session_id=SESSION_ID,
+                    episode_id=EPISODE_ID,
+                    schema_id=UUID("00000000-0000-0000-0000-000000000030"),
+                    data={"order_total": 42.99, "currency": "USD"},
+                    created_at=NOW,
+                ),
+            ],
+            total=1,
+        )
     )
 
     transport = ASGITransport(app=app)
@@ -116,9 +117,11 @@ async def test_list_structured_extractions_empty() -> None:
     """GET list returns 200 with an empty list when no extractions exist."""
     app = _create_app()
     mock_service = app.state._mock_extraction_service
-    mock_service.get_session_extractions.return_value = StructuredExtractionListResponse(
-        items=[],
-        total=0,
+    mock_service.get_session_extractions.return_value = (
+        StructuredExtractionListResponse(
+            items=[],
+            total=0,
+        )
     )
 
     transport = ASGITransport(app=app)

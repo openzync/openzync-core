@@ -127,7 +127,8 @@ class TestLinkEntitiesToEpisode:
 
     @pytest.mark.asyncio
     async def test_raises_on_missing_episode(
-        self, ctx: dict,
+        self,
+        ctx: dict,
     ) -> None:
         """Raw select(Episode) returns None → EpisodeNotFoundError is raised."""
 
@@ -170,7 +171,7 @@ class TestComputeObservations:
         mock_repo = AsyncMock()
         mock_repo.get_by_id.return_value = None
 
-        with patch("asyncio.sleep", AsyncMock()):
+        with patch("asyncio.sleep", AsyncMock()):  # noqa: SIM117  # lazy import below must run inside the patches
             # Patch the resolver: compute_observations lazily imports it, and
             # on the dispatcher-less mock ctx it now RAISES
             # GraphBackendUnavailableError (no silent Postgres fallback),
@@ -222,9 +223,12 @@ class TestEnrichEpisode:
         mock_repo = AsyncMock()
         mock_repo.get_by_id_for_update.return_value = None
 
-        with patch("asyncio.sleep", AsyncMock()), patch(
-            "repositories.episode_repository.EpisodeRepository",
-            return_value=mock_repo,
+        with (
+            patch("asyncio.sleep", AsyncMock()),
+            patch(
+                "repositories.episode_repository.EpisodeRepository",
+                return_value=mock_repo,
+            ),
         ):
             from workers.tasks.enrich_episode import enrich_episode
 

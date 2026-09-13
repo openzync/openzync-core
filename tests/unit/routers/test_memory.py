@@ -36,7 +36,6 @@ MOCK_MEMORY_SERVICE = AsyncMock()
 """Shared mock instance reused across all tests and DI resolution."""
 
 
-
 @pytest.fixture(autouse=True)
 def _stub_permission_gate() -> None:
     """Stub the permission gate for every test in this file.
@@ -160,7 +159,9 @@ async def test_ingest_messages_with_blobs() -> None:
             {
                 "role": "user",
                 "content": "See attachment",
-                "blobs": [{"blob_id": 0, "mime_type": "image/png", "file_name": "test.png"}],
+                "blobs": [
+                    {"blob_id": 0, "mime_type": "image/png", "file_name": "test.png"}
+                ],
             },
         ],
     }
@@ -290,9 +291,7 @@ async def test_ingest_forwards_body_hash() -> None:
 
     call_kwargs = MOCK_MEMORY_SERVICE.ingest.await_args[1]
     # The router hashes the parsed form payload exactly as the service would.
-    expected = IdempotencyService.hash_request_body(
-        orjson.loads(json.dumps(payload))
-    )
+    expected = IdempotencyService.hash_request_body(orjson.loads(json.dumps(payload)))
     assert call_kwargs["body_hash"] == expected
     assert re.fullmatch(r"[0-9a-f]{64}", call_kwargs["body_hash"])
     assert call_kwargs["idempotency_key"] == "hash-key"

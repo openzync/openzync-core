@@ -81,15 +81,17 @@ class TestMemoryWipe:
 
         ingest_resp = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/memory",
-            data={"data": json.dumps({
-                "external_id": external_id,
-                "session_id": session_id,
-                "messages": messages,
-            })},
+            data={
+                "data": json.dumps(
+                    {
+                        "external_id": external_id,
+                        "session_id": session_id,
+                        "messages": messages,
+                    }
+                )
+            },
         )
-        assert ingest_resp.status_code == 202, (
-            f"Ingestion failed: {ingest_resp.text}"
-        )
+        assert ingest_resp.status_code == 202, f"Ingestion failed: {ingest_resp.text}"
 
         return user_id
 
@@ -164,9 +166,7 @@ class TestMemoryWipe:
         after_count = await self._count_episodes(
             isolated_auth_client, isolated_project_id
         )
-        assert after_count == 0, (
-            f"Expected 0 episodes after wipe, got {after_count}"
-        )
+        assert after_count == 0, f"Expected 0 episodes after wipe, got {after_count}"
 
     # ═════════════════════════════════════════════════════════════════════════
     # 2.  Double wipe is idempotent
@@ -255,8 +255,7 @@ class TestMemoryWipe:
             "/v1/projects/00000000-0000-0000-0000-000000000000/memory",
         )
         assert response.status_code == 401, (
-            f"Expected 401 without auth, "
-            f"got {response.status_code}: {response.text}"
+            f"Expected 401 without auth, got {response.status_code}: {response.text}"
         )
         body = response.json()
         # RFC 7807 problem-detail shape
@@ -316,8 +315,7 @@ class TestMemoryWipe:
         matching = [s for s in data_after if s["external_id"] == "preserve_me"]
         assert len(matching) >= 1
         assert matching[0]["message_count"] == 0, (
-            f"Expected 0 messages after wipe, "
-            f"got {matching[0]['message_count']}"
+            f"Expected 0 messages after wipe, got {matching[0]['message_count']}"
         )
 
     # ═════════════════════════════════════════════════════════════════════════
@@ -373,7 +371,8 @@ class TestMemoryWipe:
 
         # ── Org A: create user + ingest memory ────────────────────────────
         async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             cli.headers["Authorization"] = f"Bearer {tenant_a['api_key']}"
             user_resp = await cli.post(
@@ -391,19 +390,24 @@ class TestMemoryWipe:
 
             ingest_resp = await cli.post(
                 f"/v1/projects/{project_id_a}/memory",
-                data={"data": json.dumps({
-                    "external_id": "cross_tenant_wipe_user",
-                    "session_id": "x_wipe_session",
-                    "messages": [
-                        {"role": "user", "content": "Wipe me if you can"},
-                    ],
-                })},
+                data={
+                    "data": json.dumps(
+                        {
+                            "external_id": "cross_tenant_wipe_user",
+                            "session_id": "x_wipe_session",
+                            "messages": [
+                                {"role": "user", "content": "Wipe me if you can"},
+                            ],
+                        }
+                    )
+                },
             )
             assert ingest_resp.status_code == 202
 
         # ── Org B: try to wipe Org A's project → 403 ────────────────────
         async with AsyncClient(
-            transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=isolated_app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
             delete_resp = await cli.delete(

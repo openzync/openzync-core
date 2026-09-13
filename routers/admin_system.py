@@ -346,9 +346,7 @@ async def list_org_members(
         HTTPException: 404 if the organization does not exist.
     """
     try:
-        users, total = await service.list_org_members(
-            org_id, page=page, limit=limit
-        )
+        users, total = await service.list_org_members(org_id, page=page, limit=limit)
     except NotFoundError:
         raise HTTPException(
             status_code=404,

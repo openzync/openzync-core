@@ -374,10 +374,7 @@ class TestAuthService:
         )
         mock_repo.create_dashboard_user.assert_awaited_once()
         # Pending admin — no password hash yet (set at invite-accept time).
-        assert (
-            mock_repo.create_dashboard_user.call_args.kwargs["password_hash"]
-            is None
-        )
+        assert mock_repo.create_dashboard_user.call_args.kwargs["password_hash"] is None
         # No OpenBao namespace, no OTP, no prompt seeding for pending orgs.
         mock_bao_client.create_org_namespace.assert_not_awaited()
         mock_otp.generate_and_send.assert_not_awaited()
@@ -554,9 +551,7 @@ class TestAuthService:
             password_hash="hashed-new",  # noqa: S106 — test fixture
             must_change_password=False,
         )
-        mock_repo.revoke_all_refresh_tokens.assert_awaited_once_with(
-            self.USER_ID
-        )
+        mock_repo.revoke_all_refresh_tokens.assert_awaited_once_with(self.USER_ID)
         mock_invalidate.assert_awaited_once_with(mock_redis, self.USER_ID)
 
     @pytest.mark.asyncio
@@ -693,9 +688,7 @@ class TestAuthService:
 
         payload = VerifyEmailRequest(email="admin@acme.com", otp="123456")
 
-        with patch.object(
-            service, "issue_tokens"
-        ) as mock_issue:
+        with patch.object(service, "issue_tokens") as mock_issue:
             mock_issue.return_value = TokenResponse(
                 access_token="at", refresh_token="rt", expires_in=1800
             )
@@ -703,9 +696,7 @@ class TestAuthService:
 
         assert result.access_token == "at"
         mock_repo.mark_email_verified.assert_awaited_once_with(self.USER_ID)
-        mock_bao_client.create_org_namespace.assert_awaited_once_with(
-            self.ORG_ID
-        )
+        mock_bao_client.create_org_namespace.assert_awaited_once_with(self.ORG_ID)
 
     @pytest.mark.asyncio
     async def test_verify_email_happy_path_without_bao(
@@ -721,9 +712,7 @@ class TestAuthService:
 
         payload = VerifyEmailRequest(email="admin@acme.com", otp="123456")
 
-        with patch.object(
-            service_no_bao, "issue_tokens"
-        ) as mock_issue:
+        with patch.object(service_no_bao, "issue_tokens") as mock_issue:
             mock_issue.return_value = TokenResponse(
                 access_token="at", refresh_token="rt", expires_in=1800
             )
@@ -746,9 +735,7 @@ class TestAuthService:
 
         payload = VerifyEmailRequest(email="admin@acme.com", otp="123456")
 
-        with patch.object(
-            service, "issue_tokens"
-        ) as mock_issue:
+        with patch.object(service, "issue_tokens") as mock_issue:
             mock_issue.return_value = TokenResponse(
                 access_token="at", refresh_token="rt", expires_in=1800
             )
@@ -943,9 +930,7 @@ class TestAuthService:
             user_id=self.USER_ID,
             password_hash="new_hash",
         )
-        mock_repo.revoke_all_refresh_tokens.assert_awaited_once_with(
-            self.USER_ID
-        )
+        mock_repo.revoke_all_refresh_tokens.assert_awaited_once_with(self.USER_ID)
         mock_otp.invalidate.assert_awaited_once_with(
             email="admin@acme.com", purpose="password_reset"
         )
@@ -1000,9 +985,7 @@ class TestAuthService:
 
         payload = VerifyOtpRequest(email="nobody@acme.com", otp="123456")
 
-        with pytest.raises(
-            AuthenticationError, match="Invalid or expired login code"
-        ):
+        with pytest.raises(AuthenticationError, match="Invalid or expired login code"):
             await service.passwordless_login(payload)
 
     @pytest.mark.asyncio
@@ -1118,9 +1101,10 @@ class TestAuthService:
 
         payload = LoginRequest(email="admin@acme.com", password="WrongPass1")
 
-        with patch(
-            "services.auth_service.verify_password", return_value=False
-        ), pytest.raises(AuthenticationError, match="Invalid email or password"):
+        with (
+            patch("services.auth_service.verify_password", return_value=False),
+            pytest.raises(AuthenticationError, match="Invalid email or password"),
+        ):
             await service.login(payload)
 
     @pytest.mark.asyncio
@@ -1136,9 +1120,10 @@ class TestAuthService:
 
         payload = LoginRequest(email="admin@acme.com", password="StrongPass1")
 
-        with patch(
-            "services.auth_service.verify_password", return_value=True
-        ), pytest.raises(AuthenticationError, match="deactivated"):
+        with (
+            patch("services.auth_service.verify_password", return_value=True),
+            pytest.raises(AuthenticationError, match="deactivated"),
+        ):
             await service.login(payload)
 
     @pytest.mark.asyncio
@@ -1154,9 +1139,10 @@ class TestAuthService:
 
         payload = LoginRequest(email="admin@acme.com", password="StrongPass1")
 
-        with patch(
-            "services.auth_service.verify_password", return_value=True
-        ), pytest.raises(AuthenticationError, match="Email not verified"):
+        with (
+            patch("services.auth_service.verify_password", return_value=True),
+            pytest.raises(AuthenticationError, match="Email not verified"),
+        ):
             await service.login(payload)
 
     @pytest.mark.asyncio
@@ -1174,9 +1160,7 @@ class TestAuthService:
 
         payload = LoginRequest(email="admin@acme.com", password="StrongPass1")
 
-        with patch(
-            "services.auth_service.verify_password", return_value=True
-        ):
+        with patch("services.auth_service.verify_password", return_value=True):
             result = await service.login(payload)
 
         assert result.requires_mfa is True
@@ -1266,9 +1250,12 @@ class TestAuthService:
 
         # root forms normalize to 'root'
         for raw in ("root", "ROOT", "  Root  "):
-            assert LoginRequest(  # noqa: S106 — test fixture credential
-                email=raw, password="admin"
-            ).email == "root"
+            assert (
+                LoginRequest(  # noqa: S106 — test fixture credential
+                    email=raw, password="admin"
+                ).email
+                == "root"
+            )
 
         # malformed addresses (including 'root@') still fail with 422
         for bad in ("root@", "not-an-email", "@x.com", ""):
@@ -1305,7 +1292,9 @@ class TestAuthService:
             mfa_session_token="bad-token",
         )
 
-        with pytest.raises(AuthenticationError, match="MFA session has expired or is invalid"):
+        with pytest.raises(
+            AuthenticationError, match="MFA session has expired or is invalid"
+        ):
             await service.mfa_verify(payload)
 
     @pytest.mark.asyncio
@@ -1394,9 +1383,10 @@ class TestAuthService:
 
         payload = MfaEnableRequest(password="WrongPass1")
 
-        with patch(
-            "services.auth_service.verify_password", return_value=False
-        ), pytest.raises(AuthenticationError, match="incorrect"):
+        with (
+            patch("services.auth_service.verify_password", return_value=False),
+            pytest.raises(AuthenticationError, match="incorrect"),
+        ):
             await service.enable_mfa(self.USER_ID, payload)
 
     @pytest.mark.asyncio
@@ -1411,15 +1401,11 @@ class TestAuthService:
 
         payload = MfaEnableRequest(password="StrongPass1")
 
-        with patch(
-            "services.auth_service.verify_password", return_value=True
-        ):
+        with patch("services.auth_service.verify_password", return_value=True):
             result = await service.enable_mfa(self.USER_ID, payload)
 
         assert "MFA has been enabled" in result.message
-        mock_repo.set_mfa_enabled.assert_awaited_once_with(
-            self.USER_ID, enabled=True
-        )
+        mock_repo.set_mfa_enabled.assert_awaited_once_with(self.USER_ID, enabled=True)
         mock_otp.generate_and_send.assert_awaited_once_with(
             email="admin@acme.com", purpose="mfa"
         )
@@ -1453,9 +1439,10 @@ class TestAuthService:
 
         payload = MfaDisableRequest(password="WrongPass1", otp="123456")
 
-        with patch(
-            "services.auth_service.verify_password", return_value=False
-        ), pytest.raises(AuthenticationError, match="incorrect"):
+        with (
+            patch("services.auth_service.verify_password", return_value=False),
+            pytest.raises(AuthenticationError, match="incorrect"),
+        ):
             await service.disable_mfa(self.USER_ID, payload)
 
     @pytest.mark.asyncio
@@ -1471,9 +1458,10 @@ class TestAuthService:
 
         payload = MfaDisableRequest(password="StrongPass1", otp="000000")
 
-        with patch(
-            "services.auth_service.verify_password", return_value=True
-        ), pytest.raises(AuthenticationError, match="Invalid MFA code"):
+        with (
+            patch("services.auth_service.verify_password", return_value=True),
+            pytest.raises(AuthenticationError, match="Invalid MFA code"),
+        ):
             await service.disable_mfa(self.USER_ID, payload)
 
     @pytest.mark.asyncio
@@ -1489,15 +1477,11 @@ class TestAuthService:
 
         payload = MfaDisableRequest(password="StrongPass1", otp="654321")
 
-        with patch(
-            "services.auth_service.verify_password", return_value=True
-        ):
+        with patch("services.auth_service.verify_password", return_value=True):
             result = await service.disable_mfa(self.USER_ID, payload)
 
         assert "MFA has been disabled" in result.message
-        mock_repo.set_mfa_enabled.assert_awaited_once_with(
-            self.USER_ID, enabled=False
-        )
+        mock_repo.set_mfa_enabled.assert_awaited_once_with(self.USER_ID, enabled=False)
         mock_otp.invalidate.assert_awaited_once_with(
             email="admin@acme.com", purpose="mfa"
         )
@@ -1656,9 +1640,7 @@ class TestAuthService:
         assert mock_issue.await_count == 1  # exactly ONE successor issued
         assert first.access_token == "at"
         # Loser walked the family (presented token only — no chain here).
-        mock_repo.revoke_refresh_token_ids.assert_awaited_once_with(
-            [token_id]
-        )
+        mock_repo.revoke_refresh_token_ids.assert_awaited_once_with([token_id])
 
     @pytest.mark.asyncio
     async def test_refresh_deactivated_user_rejected(
@@ -1673,9 +1655,7 @@ class TestAuthService:
         stored.organization_id = self.ORG_ID
         mock_repo.revoke_refresh_token_if_current.return_value = True
         mock_repo.get_refresh_token_by_hash.return_value = stored
-        mock_repo.get_user_by_id.return_value = self._make_mock_user(
-            is_active=False
-        )
+        mock_repo.get_user_by_id.return_value = self._make_mock_user(is_active=False)
 
         with pytest.raises(AuthenticationError, match="deactivated"):
             await service.refresh("some-token")
@@ -1822,20 +1802,19 @@ class TestAuthService:
             new_password="NewStrong2",
         )
 
-        with patch(
-            "services.auth_service.verify_password", return_value=True
-        ), patch(
-            "services.auth_service.hash_password", return_value="new_hash"
-        ), patch(
-            "services.email_service.render_email_template",
-            return_value="<html>",
-        ), patch(
-            "services.email_service.render_text_template",
-            return_value="text",
+        with (
+            patch("services.auth_service.verify_password", return_value=True),
+            patch("services.auth_service.hash_password", return_value="new_hash"),
+            patch(
+                "services.email_service.render_email_template",
+                return_value="<html>",
+            ),
+            patch(
+                "services.email_service.render_text_template",
+                return_value="text",
+            ),
         ):
-            result = await service.update_profile(
-                self.USER_ID, payload
-            )
+            result = await service.update_profile(self.USER_ID, payload)
 
         assert result.email == "admin@acme.com"
         mock_repo.update_dashboard_user.assert_awaited_once_with(
@@ -1879,9 +1858,10 @@ class TestAuthService:
             new_password="NewStrong2",
         )
 
-        with patch(
-            "services.auth_service.verify_password", return_value=False
-        ), pytest.raises(AuthenticationError, match="incorrect"):
+        with (
+            patch("services.auth_service.verify_password", return_value=False),
+            pytest.raises(AuthenticationError, match="incorrect"),
+        ):
             await service.update_profile(self.USER_ID, payload)
 
     @pytest.mark.asyncio
@@ -1899,14 +1879,11 @@ class TestAuthService:
             new_password="NewStrong2",
         )
 
-        with patch(
-            "services.auth_service.verify_password", return_value=True
-        ), patch(
-            "services.auth_service.hash_password", return_value="new_hash"
+        with (
+            patch("services.auth_service.verify_password", return_value=True),
+            patch("services.auth_service.hash_password", return_value="new_hash"),
         ):
-            result = await service_no_email.update_profile(
-                self.USER_ID, payload
-            )
+            result = await service_no_email.update_profile(self.USER_ID, payload)
 
         assert result.email == "admin@acme.com"
         mock_repo.update_dashboard_user.assert_awaited_once()
@@ -1920,16 +1897,12 @@ class TestAuthService:
         with pytest.raises(ValidationError, match="at least 8 characters"):
             service._validate_password("Ab1")
 
-    def test_validate_password_no_uppercase(
-        self, service: AuthService
-    ) -> None:
+    def test_validate_password_no_uppercase(self, service: AuthService) -> None:
         """Password without uppercase letter raises ValidationError."""
         with pytest.raises(ValidationError, match="uppercase"):
             service._validate_password("abcdefg1")
 
-    def test_validate_password_no_lowercase(
-        self, service: AuthService
-    ) -> None:
+    def test_validate_password_no_lowercase(self, service: AuthService) -> None:
         """Password without lowercase letter raises ValidationError."""
         with pytest.raises(ValidationError, match="lowercase"):
             service._validate_password("ABCDEFG1")
@@ -1948,17 +1921,13 @@ class TestAuthService:
     # _hash_refresh_token()
     # ═══════════════════════════════════════════════════════════════════════
 
-    def test_hash_refresh_token_deterministic(
-        self, service: AuthService
-    ) -> None:
+    def test_hash_refresh_token_deterministic(self, service: AuthService) -> None:
         """Same input always produces the same hash."""
         h1 = service._hash_refresh_token("my-token")
         h2 = service._hash_refresh_token("my-token")
         assert h1 == h2
 
-    def test_hash_refresh_token_different_inputs(
-        self, service: AuthService
-    ) -> None:
+    def test_hash_refresh_token_different_inputs(self, service: AuthService) -> None:
         """Different inputs produce different hashes."""
         h1 = service._hash_refresh_token("token-a")
         h2 = service._hash_refresh_token("token-b")
@@ -1977,10 +1946,11 @@ class TestAuthService:
         """issue_tokens returns a populated TokenResponse and persists refresh."""
         mock_repo.create_refresh_token.return_value = AsyncMock()
 
-        with patch(
-            "services.auth_service.create_jwt_token", return_value="jwt-access"
-        ), patch(
-            "services.auth_service.secrets.token_hex", return_value="raw-refresh"
+        with (
+            patch("services.auth_service.create_jwt_token", return_value="jwt-access"),
+            patch(
+                "services.auth_service.secrets.token_hex", return_value="raw-refresh"
+            ),
         ):
             result = await service.issue_tokens(
                 user_id=self.USER_ID,
@@ -1998,9 +1968,7 @@ class TestAuthService:
         call_kwargs = mock_repo.create_refresh_token.call_args.kwargs
         assert call_kwargs["user_id"] == self.USER_ID
         assert call_kwargs["organization_id"] == self.ORG_ID
-        assert call_kwargs["token_hash"] == service._hash_refresh_token(
-            "raw-refresh"
-        )
+        assert call_kwargs["token_hash"] == service._hash_refresh_token("raw-refresh")
 
     @pytest.mark.asyncio
     async def test_issue_tokens_includes_mcp_claim_from_db_row(

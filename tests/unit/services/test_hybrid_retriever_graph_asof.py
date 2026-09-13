@@ -41,7 +41,9 @@ class TestGraphBFSSearchAsOf:
         backend.retrieve_graph = AsyncMock(return_value=[])
         service = _service([backend])
 
-        await service._graph_bfs_search("who reports to Alice", PROJECT_ID, query_time=QUERY_TIME)
+        await service._graph_bfs_search(
+            "who reports to Alice", PROJECT_ID, query_time=QUERY_TIME
+        )
 
         backend.retrieve_graph.assert_awaited_once_with(
             org_id=ORG_ID,

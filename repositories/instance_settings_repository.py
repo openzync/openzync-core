@@ -9,13 +9,15 @@ No business logic — pure query construction and execution.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.instance_settings import InstanceSettings
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 _INSTANCE_SETTINGS_PK: int = 1
 """Fixed primary key enforcing single-row semantics."""

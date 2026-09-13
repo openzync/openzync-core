@@ -9,11 +9,15 @@ Revision ID: 226db3adb6ba
 Revises: 2089cbf56394
 Create Date: 2026-06-11
 """
+
 from __future__ import annotations
 
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from alembic import op
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 revision: str = "226db3adb6ba"
 down_revision: str | None = "5d21420b9c05"

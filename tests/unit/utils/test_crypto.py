@@ -22,6 +22,7 @@ from core.exceptions import AuthenticationError
 # Base62
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 @pytest.mark.unit
 class TestBase62Encode:
     """base62_encode() — integer-to-base62 conversion."""

@@ -166,7 +166,9 @@ class TestProjectApiKeysRouter:
     # ── POST /v1/projects/{project_id}/api-keys ─────────────────────────
 
     @patch("routers.project_api_keys.ApiKeyService")
-    async def test_create_api_key_success(self, mock_api_key_service: AsyncMock) -> None:
+    async def test_create_api_key_success(
+        self, mock_api_key_service: AsyncMock
+    ) -> None:
         """POST .../api-keys → 201 with ApiKeyCreatedResponse including raw_key."""
         mock_instance = AsyncMock()
         mock_api_key_service.return_value = mock_instance
@@ -215,7 +217,8 @@ class TestProjectApiKeysRouter:
 
     @patch("routers.project_api_keys.ApiKeyService")
     async def test_create_api_key_422_empty_name(
-        self, mock_api_key_service: AsyncMock,
+        self,
+        mock_api_key_service: AsyncMock,
     ) -> None:
         """POST .../api-keys with empty name → 422."""
         mock_instance = AsyncMock()
@@ -256,7 +259,9 @@ class TestProjectApiKeysRouter:
     # ── DELETE /v1/projects/{project_id}/api-keys/{key_id} ──────────────
 
     @patch("routers.project_api_keys.ApiKeyService")
-    async def test_revoke_api_key_success(self, mock_api_key_service: AsyncMock) -> None:
+    async def test_revoke_api_key_success(
+        self, mock_api_key_service: AsyncMock
+    ) -> None:
         """DELETE .../api-keys/{key_id} → 204 No Content."""
         mock_instance = AsyncMock()
         mock_api_key_service.return_value = mock_instance
@@ -298,7 +303,8 @@ class TestProjectApiKeysRouter:
 
     @patch("routers.project_api_keys.ApiKeyService")
     async def test_revoke_api_key_404_not_found(
-        self, mock_api_key_service: AsyncMock,
+        self,
+        mock_api_key_service: AsyncMock,
     ) -> None:
         """DELETE .../api-keys/{key_id} when not found → 404."""
         mock_instance = AsyncMock()

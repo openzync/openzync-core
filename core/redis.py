@@ -28,9 +28,12 @@ Then in routers:
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import redis.asyncio as aioredis
-from fastapi import Request
+
+if TYPE_CHECKING:
+    from fastapi import Request
 
 logger = logging.getLogger(__name__)
 

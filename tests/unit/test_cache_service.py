@@ -220,9 +220,7 @@ class TestCacheService:
         result = await cache.get_or_compute("key", lambda: data)
 
         assert result == data
-        mock_redis.setex.assert_awaited_once_with(
-            "key", 60, orjson.dumps(data)
-        )
+        mock_redis.setex.assert_awaited_once_with("key", 60, orjson.dumps(data))
 
     @pytest.mark.asyncio
     async def test_get_or_compute_stampede_unlock_failure_raises(self) -> None:
@@ -231,12 +229,12 @@ class TestCacheService:
         mock_redis.get.return_value = None  # cache miss
         mock_redis.set.return_value = True  # lock acquired
         mock_redis.setex.return_value = True  # cache write succeeds
-        mock_redis.delete.side_effect = ConnectionError("Redis down")  # lock release fails
+        mock_redis.delete.side_effect = ConnectionError(
+            "Redis down"
+        )  # lock release fails
         cache = CacheService(redis=mock_redis, default_ttl=60)
 
-        with pytest.raises(
-            CacheUnavailableError, match="Stampede lock release failed"
-        ):
+        with pytest.raises(CacheUnavailableError, match="Stampede lock release failed"):
             await cache.get_or_compute("key", lambda: "computed")
 
     @pytest.mark.asyncio

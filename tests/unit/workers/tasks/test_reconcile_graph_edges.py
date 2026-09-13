@@ -144,7 +144,9 @@ class TestReconcileGraphEdges:
     @pytest.mark.asyncio
     async def test_enqueue_failure_logged_and_continues(self) -> None:
         """A failed enqueue is logged and skipped — the tick still completes."""
-        db = _make_db([_edge_row(), _edge_row(id=UUID("00000000-0000-0000-0000-000000000101"))])
+        db = _make_db(
+            [_edge_row(), _edge_row(id=UUID("00000000-0000-0000-0000-000000000101"))]
+        )
         enqueued: list[str] = []
 
         async def _flaky(task: str, **kwargs) -> str:

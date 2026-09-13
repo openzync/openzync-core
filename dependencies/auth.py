@@ -63,12 +63,14 @@ middleware handles that.
 # Must-change-password exemption
 # ═══════════════════════════════════════════════════════════════════════════════
 
-MUST_CHANGE_PASSWORD_EXEMPT_PATHS: frozenset[tuple[str, str]] = frozenset({
-    ("POST", "/v1/auth/change-password"),
-    ("GET", "/v1/auth/me"),
-    ("POST", "/v1/auth/logout"),
-    ("POST", "/v1/auth/refresh"),
-})
+MUST_CHANGE_PASSWORD_EXEMPT_PATHS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("POST", "/v1/auth/change-password"),
+        ("GET", "/v1/auth/me"),
+        ("POST", "/v1/auth/logout"),
+        ("POST", "/v1/auth/refresh"),
+    }
+)
 """Paths a user with ``must_change_password=True`` may still call.
 
 The change-password endpoint itself, the profile read (so the UI can
@@ -179,9 +181,7 @@ async def _check_permission(
     auth_type: str | None = getattr(request.state, "auth_type", None)
 
     if auth_type == "api_key":
-        key_permissions: list[str] = getattr(
-            request.state, "api_key_permissions", []
-        )
+        key_permissions: list[str] = getattr(request.state, "api_key_permissions", [])
         if required_permission not in key_permissions:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -442,18 +442,17 @@ async def get_dashboard_user(
             UUID(user_id),
         )
         if must_change:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail={
-                        "type": "https://errors.openzync.tech/authorization_error",
-                        "title": "Password Change Required",
-                        "status": 403,
-                        "detail": (
-                            "You must set a new password before using the "
-                            "dashboard."
-                        ),
-                    },
-                )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "type": "https://errors.openzync.tech/authorization_error",
+                    "title": "Password Change Required",
+                    "status": 403,
+                    "detail": (
+                        "You must set a new password before using the dashboard."
+                    ),
+                },
+            )
 
     return user_id
 

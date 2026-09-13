@@ -134,7 +134,7 @@ def _fetch_permissions(engine: Any, table: str, row_id: str) -> list[str]:
     """Read the ``permissions`` array for a row."""
     with engine.connect() as conn:
         result = conn.execute(
-            text(f"SELECT permissions FROM {table} WHERE id = :id"),
+            text(f"SELECT permissions FROM {table} WHERE id = :id"),  # noqa: S608  # table is a test-constant allowlist, not user input
             {"id": row_id},
         )
         row = result.fetchone()
@@ -145,7 +145,8 @@ class TestMigration0050:
     """Migration 0050 backfill — members, admins, and legacy API-key scopes."""
 
     def test_backfill_members_admins_and_legacy_scopes(
-        self, sync_engine: Any,
+        self,
+        sync_engine: Any,
     ) -> None:
         """Apply 0049, seed legacy data, apply 0050, assert the backfill."""
         _run_alembic(sync_engine, "0049")
@@ -157,9 +158,12 @@ class TestMigration0050:
             sync_engine, "users", "00000000-0000-0000-0000-000000000010"
         ) == ["project:read", "project:write"]
         # Admins stay [] (wildcard via role).
-        assert _fetch_permissions(
-            sync_engine, "users", "00000000-0000-0000-0000-000000000011"
-        ) == []
+        assert (
+            _fetch_permissions(
+                sync_engine, "users", "00000000-0000-0000-0000-000000000011"
+            )
+            == []
+        )
 
         # Legacy API-key scopes map to the new vocabulary.
         assert _fetch_permissions(
@@ -184,9 +188,7 @@ class TestMigration0050:
         """
         # Give the member a custom grant, then re-apply 0050.
         with sync_engine.connect() as conn:
-            conn.execute(
-                text("SELECT set_config('app.bypass_rls', 'true', false)")
-            )
+            conn.execute(text("SELECT set_config('app.bypass_rls', 'true', false)"))
             conn.execute(
                 text(
                     "UPDATE users SET permissions = "
@@ -199,9 +201,11 @@ class TestMigration0050:
         _run_alembic(sync_engine, "0050")
 
         # The custom grant survives the re-run.
-        assert set(_fetch_permissions(
-            sync_engine, "users", "00000000-0000-0000-0000-000000000010"
-        )) == {"configuration:read", "project:read", "project:write"}
+        assert set(
+            _fetch_permissions(
+                sync_engine, "users", "00000000-0000-0000-0000-000000000010"
+            )
+        ) == {"configuration:read", "project:read", "project:write"}
         # The API-key backfill is a no-op (identity rows map values to
         # themselves).
         assert _fetch_permissions(

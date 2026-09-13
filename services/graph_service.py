@@ -11,18 +11,21 @@ Every method enforces org_id isolation. All methods raise
 from __future__ import annotations
 
 import logging
-from typing import Any
-from uuid import UUID
+from typing import TYPE_CHECKING, Any
 
 from core.exceptions import (
     EntityNotFoundError,
     GraphBackendUnavailableError,
     NotFoundError,
 )
-from packages.graph_backend.interface import GraphBackend
-from repositories.fact_repository import FactRepository
-from repositories.user_repository import UserRepository
-from services.webhook_service import WebhookService
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from packages.graph_backend.interface import GraphBackend
+    from repositories.fact_repository import FactRepository
+    from repositories.user_repository import UserRepository
+    from services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
 
@@ -271,16 +274,18 @@ class GraphService:
             import asyncio
 
             per_subject_limit = min(limit, 200)
-            results = await asyncio.gather(*[
-                self._backend.list_entity_edges(
-                    org_id=org_id,
-                    project_id=project_id,
-                    entity_id=eid,
-                    predicate=predicate,
-                    limit=per_subject_limit,
-                )
-                for eid in subject_ids
-            ])
+            results = await asyncio.gather(
+                *[
+                    self._backend.list_entity_edges(
+                        org_id=org_id,
+                        project_id=project_id,
+                        entity_id=eid,
+                        predicate=predicate,
+                        limit=per_subject_limit,
+                    )
+                    for eid in subject_ids
+                ]
+            )
             seen: set[str] = set()
             items: list[dict[str, Any]] = []
             for r in results:

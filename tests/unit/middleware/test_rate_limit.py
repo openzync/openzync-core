@@ -1,4 +1,5 @@
 """Unit tests for RateLimitMiddleware."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -23,7 +24,9 @@ class TestRateLimitMiddleware:
         mock_pipe.zcard = AsyncMock(return_value=0)
         mock_pipe.zadd = MagicMock(return_value=None)
         mock_pipe.expire = MagicMock(return_value=None)
-        mock_pipe.execute = AsyncMock(return_value=pipeline_result or [None, 1, 1, True])
+        mock_pipe.execute = AsyncMock(
+            return_value=pipeline_result or [None, 1, 1, True]
+        )
         mock_redis.pipeline = MagicMock(return_value=mock_pipe)
         mock_redis.ping = AsyncMock(return_value=True)
         return mock_redis
@@ -31,6 +34,7 @@ class TestRateLimitMiddleware:
     def _create_prod_settings(self) -> object:
         """Create production settings so rate limiting is enforced."""
         import core.config as cfg
+
         return cfg.Settings(
             DATABASE_URL="postgresql+asyncpg://u:p@localhost:5432/test",
             REDIS_URL="redis://localhost:6379/1",
@@ -70,6 +74,7 @@ class TestRateLimitMiddleware:
     async def test_development_bypasses_rate_limit(self) -> None:
         """In development environment, rate limiting is bypassed."""
         import core.config as cfg
+
         settings = cfg.Settings(
             DATABASE_URL="postgresql+asyncpg://u:p@localhost:5432/test",
             REDIS_URL="redis://localhost:6379/1",
@@ -107,7 +112,9 @@ class TestRateLimitMiddleware:
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as c:
                 resp = await c.get("/test")
-                assert resp.status_code == 429, f"Expected 429, got {resp.status_code}: {resp.text}"
+                assert resp.status_code == 429, (
+                    f"Expected 429, got {resp.status_code}: {resp.text}"
+                )
 
     @pytest.mark.asyncio
     async def test_rate_limit_headers_present(self) -> None:
@@ -138,7 +145,9 @@ class TestRateLimitMiddleware:
                 assert resp.status_code == 429
                 assert "retry-after" in resp.headers
                 body = resp.json()
-                assert body["type"] == "https://errors.openzync.tech/rate_limit_exceeded"
+                assert (
+                    body["type"] == "https://errors.openzync.tech/rate_limit_exceeded"
+                )
                 assert body["title"] == "Too Many Requests"
 
     @pytest.mark.asyncio
@@ -165,7 +174,10 @@ class TestRateLimitMiddleware:
                     f"Expected 503, got {resp.status_code}: {resp.text}"
                 )
                 body = resp.json()
-                assert body["type"] == "https://errors.openzync.tech/rate_limit_unavailable"
+                assert (
+                    body["type"]
+                    == "https://errors.openzync.tech/rate_limit_unavailable"
+                )
                 assert body["title"] == "Service Unavailable"
                 assert body["status"] == 503
                 assert body["instance"] == "/test"
@@ -227,4 +239,3 @@ class TestRateLimitMiddleware:
             async with AsyncClient(transport=transport, base_url="http://test") as c:
                 resp = await c.get("/test")
                 assert resp.status_code == 503
-

@@ -76,8 +76,13 @@ _NON_LLM_TASK_MAP: dict[int, tuple[str, set[str], str]] = {
     ENRICHMENT_ENTITY_LINKS: (
         "link_entities_to_episode",
         {
-            "episode_id", "org_id", "project_id",
-            "content", "role", "trace_id", "metadata",
+            "episode_id",
+            "org_id",
+            "project_id",
+            "content",
+            "role",
+            "trace_id",
+            "metadata",
         },
         "low",
     ),
@@ -87,8 +92,14 @@ _NON_LLM_TASK_MAP: dict[int, tuple[str, set[str], str]] = {
 _LLM_TASK_DETAILS: tuple[str, set[str], str] = (
     "enrich_episode",
     {
-        "episode_id", "org_id", "project_id", "content",
-        "session_id", "trace_id", "metadata", "role",
+        "episode_id",
+        "org_id",
+        "project_id",
+        "content",
+        "session_id",
+        "trace_id",
+        "metadata",
+        "role",
     },
     "high",
 )
@@ -200,12 +211,14 @@ async def _repair_missing_fact_embeddings(
             .limit(RECONCILE_BATCH_SIZE)
         )
         for row in result.all():
-            rows.append({
-                "id": str(row.id),
-                "content": row.content,
-                "org_id": str(row.organization_id),
-                "project_id": str(row.project_id),
-            })
+            rows.append(
+                {
+                    "id": str(row.id),
+                    "content": row.content,
+                    "org_id": str(row.organization_id),
+                    "project_id": str(row.project_id),
+                }
+            )
 
     if not rows:
         return 0
@@ -351,7 +364,8 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
                 Episode.session_id,
                 Episode.metadata_,
                 Episode.enrichment_status,
-            ).where(
+            )
+            .where(
                 Episode.enrichment_status != ENRICHMENT_ALL,
                 Episode.updated_at < cutoff,
             )
@@ -361,15 +375,17 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
         rows = result.all()
 
         for row in rows:
-            stale_episodes.append({
-                "id": str(row.id),
-                "content": row.content,
-                "org_id": str(row.organization_id),
-                "project_id": str(row.project_id),
-                "session_id": str(row.session_id),
-                "metadata": row.metadata_,
-                "enrichment_status": row.enrichment_status,
-            })
+            stale_episodes.append(
+                {
+                    "id": str(row.id),
+                    "content": row.content,
+                    "org_id": str(row.organization_id),
+                    "project_id": str(row.project_id),
+                    "session_id": str(row.session_id),
+                    "metadata": row.metadata_,
+                    "enrichment_status": row.enrichment_status,
+                }
+            )
 
     if not stale_episodes:
         logger.debug("reconcile_enrichment.nothing_stale")

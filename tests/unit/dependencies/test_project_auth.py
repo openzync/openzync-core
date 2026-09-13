@@ -73,9 +73,12 @@ class TestRequireProjectMembership:
         mock_repo.get_by_id.return_value = MagicMock()
         mock_repo.get_member.return_value = None  # not a member
 
-        with patch(
-            "dependencies.project_auth.ProjectRepository", return_value=mock_repo
-        ), pytest.raises(HTTPException) as exc:
+        with (
+            patch(
+                "dependencies.project_auth.ProjectRepository", return_value=mock_repo
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
             await require_project_membership(request, PROJECT_ID, db_session)
 
         assert exc.value.status_code == 403
@@ -96,9 +99,12 @@ class TestRequireProjectMembership:
         mock_repo.get_by_id.return_value = None  # project not found
         mock_repo.get_member = AsyncMock()
 
-        with patch(
-            "dependencies.project_auth.ProjectRepository", return_value=mock_repo
-        ), pytest.raises(HTTPException) as exc:
+        with (
+            patch(
+                "dependencies.project_auth.ProjectRepository", return_value=mock_repo
+            ),
+            pytest.raises(HTTPException) as exc,
+        ):
             await require_project_membership(request, PROJECT_ID, db_session)
 
         assert exc.value.status_code == 404
@@ -106,7 +112,8 @@ class TestRequireProjectMembership:
 
     @pytest.mark.asyncio
     async def test_jwt_missing_user_id_raises_401(
-        self, db_session: AsyncMock,
+        self,
+        db_session: AsyncMock,
     ) -> None:
         """JWT without user_id → raises 401."""
         from dependencies.project_auth import require_project_membership
@@ -122,7 +129,8 @@ class TestRequireProjectMembership:
 
     @pytest.mark.asyncio
     async def test_no_org_id_raises_401(
-        self, db_session: AsyncMock,
+        self,
+        db_session: AsyncMock,
     ) -> None:
         """Missing org_id → raises 401."""
         from dependencies.project_auth import require_project_membership
@@ -136,7 +144,8 @@ class TestRequireProjectMembership:
 
     @pytest.mark.asyncio
     async def test_api_key_scoped_to_correct_project_passes(
-        self, db_session: AsyncMock,
+        self,
+        db_session: AsyncMock,
     ) -> None:
         """API key scoped to the requested project → passes."""
         from dependencies.project_auth import require_project_membership
@@ -151,7 +160,8 @@ class TestRequireProjectMembership:
 
     @pytest.mark.asyncio
     async def test_api_key_wrong_project_raises_403(
-        self, db_session: AsyncMock,
+        self,
+        db_session: AsyncMock,
     ) -> None:
         """API key scoped to a different project → raises 403."""
         from dependencies.project_auth import require_project_membership
@@ -167,7 +177,8 @@ class TestRequireProjectMembership:
 
     @pytest.mark.asyncio
     async def test_api_key_no_project_scope_raises_403(
-        self, db_session: AsyncMock,
+        self,
+        db_session: AsyncMock,
     ) -> None:
         """API key with no project scope → raises 403."""
         from dependencies.project_auth import require_project_membership
@@ -183,7 +194,8 @@ class TestRequireProjectMembership:
 
     @pytest.mark.asyncio
     async def test_unknown_auth_type_raises_401(
-        self, db_session: AsyncMock,
+        self,
+        db_session: AsyncMock,
     ) -> None:
         """auth_type is neither jwt nor api_key → falls through to user_id check → 401."""
         from dependencies.project_auth import require_project_membership

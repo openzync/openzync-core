@@ -40,9 +40,7 @@ OPENZYNC_API_KEY: str = os.environ.get("OPENZYNC_API_KEY", "")
 OPENZYNC_BASE_URL: str = os.environ.get("OPENZYNC_BASE_URL", "http://localhost:8000")
 OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_MODEL: str = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
-OPENAI_BASE_URL: str = os.environ.get(
-    "OPENAI_BASE_URL", "https://api.openai.com/v1"
-)
+OPENAI_BASE_URL: str = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
 DEFAULT_USER_EXTERNAL_ID: str = os.environ.get(
     "DEFAULT_USER_EXTERNAL_ID", "streamlit-chat-user"
 )
@@ -161,7 +159,9 @@ def _ensure_project(client: AsyncOpenZync, name: str) -> str:
     except Exception as exc:
         logger.warning("Failed to list projects, will create: %s", exc)
 
-    project = _await(client.projects.create(name=name, description="Auto-created for Streamlit Chat"))
+    project = _await(
+        client.projects.create(name=name, description="Auto-created for Streamlit Chat")
+    )
     pid: str = project.id if hasattr(project, "id") else project["id"]
     logger.info("Created project: %s (id=%s)", name, pid)
     return pid
@@ -174,11 +174,15 @@ def _list_sessions(client: AsyncOpenZync, project_id: str) -> list[dict[str, Any
     """List all sessions for a project (newest first)."""
     try:
         result = _await(client.sessions.list(limit=100))
-        sessions_raw = result.get("data", []) if isinstance(result, dict) else result.data
-        sessions_raw.sort(key=lambda s: (
-            s.get("created_at") if isinstance(s, dict) else s.created_at
-            or ""
-        ), reverse=True)
+        sessions_raw = (
+            result.get("data", []) if isinstance(result, dict) else result.data
+        )
+        sessions_raw.sort(
+            key=lambda s: (
+                s.get("created_at") if isinstance(s, dict) else s.created_at or ""
+            ),
+            reverse=True,
+        )
         return sessions_raw
     except Exception as exc:
         logger.warning("Failed to list sessions: %s", exc)
@@ -242,7 +246,9 @@ if "session_id" not in st.session_state:
             latest.id if hasattr(latest, "id") else latest["id"]
         )
         st.session_state.session_external_id = (
-            latest.external_id if hasattr(latest, "external_id") else latest["external_id"]
+            latest.external_id
+            if hasattr(latest, "external_id")
+            else latest["external_id"]
         )
     else:
         try:
@@ -297,7 +303,9 @@ with st.sidebar:
         s_id = s.id if hasattr(s, "id") else s["id"]
         s_ext = s.external_id if hasattr(s, "external_id") else s["external_id"]
         s_msg_count = (
-            s.message_count if hasattr(s, "message_count") else s.get("message_count", 0)
+            s.message_count
+            if hasattr(s, "message_count")
+            else s.get("message_count", 0)
         )
         is_active = s_id == st.session_state.session_id
         label = f"{'▶ ' if is_active else ''}{s_ext}"
@@ -365,9 +373,11 @@ if prompt := st.chat_input("Type a message..."):
 
     # ── Persist user message via LangChain integration ──
     try:
-        _await(st.session_state.memory.chat_memory.aadd_messages(
-            [HumanMessage(content=prompt)]
-        ))
+        _await(
+            st.session_state.memory.chat_memory.aadd_messages(
+                [HumanMessage(content=prompt)]
+            )
+        )
         logger.info("Stored user message via OZMemory integration")
     except Exception as exc:
         logger.error("Failed to store user message: %s", exc)
@@ -422,10 +432,14 @@ if prompt := st.chat_input("Type a message..."):
     if reply:
         st.session_state.messages.append({"role": "assistant", "content": reply})
         try:
-            _await(st.session_state.memory.chat_memory.aadd_messages(
-                [AIMessage(content=reply)]
-            ))
-            logger.info("Stored assistant response (%d chars) via integration", len(reply))
+            _await(
+                st.session_state.memory.chat_memory.aadd_messages(
+                    [AIMessage(content=reply)]
+                )
+            )
+            logger.info(
+                "Stored assistant response (%d chars) via integration", len(reply)
+            )
         except Exception as exc:
             logger.error("Failed to store assistant response: %s", exc)
             st.error(f"Failed to store assistant response: {exc}")

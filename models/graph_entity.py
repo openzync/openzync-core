@@ -67,6 +67,5 @@ class GraphEntity(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<GraphEntity id={self.id} name={self.name!r} "
-            f"type={self.entity_type!r}>"
+            f"<GraphEntity id={self.id} name={self.name!r} type={self.entity_type!r}>"
         )

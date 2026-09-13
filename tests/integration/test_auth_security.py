@@ -132,16 +132,12 @@ class TestRefreshTokenAtomicClaim:
         # First rotation: old token revoked, successor live and chained.
         async with AsyncSession(engine) as db:
             result = await db.execute(
-                select(RefreshToken).where(
-                    RefreshToken.token_hash == _token_hash(raw)
-                )
+                select(RefreshToken).where(RefreshToken.token_hash == _token_hash(raw))
             )
             old = result.scalar_one()
             assert old.is_revoked is True
             result = await db.execute(
-                select(RefreshToken).where(
-                    RefreshToken.token_hash == successor_hash
-                )
+                select(RefreshToken).where(RefreshToken.token_hash == successor_hash)
             )
             successor = result.scalar_one()
             assert successor.is_revoked is False
@@ -156,9 +152,7 @@ class TestRefreshTokenAtomicClaim:
 
         async with AsyncSession(engine) as db:
             result = await db.execute(
-                select(RefreshToken).where(
-                    RefreshToken.token_hash == successor_hash
-                )
+                select(RefreshToken).where(RefreshToken.token_hash == successor_hash)
             )
             assert result.scalar_one().is_revoked is True
 

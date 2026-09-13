@@ -27,9 +27,7 @@ class TestDialogClassificationRepository:
         return AsyncMock(spec=AsyncSession)
 
     @pytest.fixture
-    def repo(
-        self, mock_db: AsyncMock
-    ) -> DialogClassificationRepository:
+    def repo(self, mock_db: AsyncMock) -> DialogClassificationRepository:
         return DialogClassificationRepository(db=mock_db)
 
     # ── Helpers ────────────────────────────────────────────────────────────────

@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from uuid import UUID
+from typing import TYPE_CHECKING
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from schemas.search import GlobalSearchItem
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +61,9 @@ class GlobalSearchService:
 
     # ── Private query methods ─────────────────────────────────────────────
 
-    async def _search_projects(self, pattern: str, limit: int) -> list[GlobalSearchItem]:
+    async def _search_projects(
+        self, pattern: str, limit: int
+    ) -> list[GlobalSearchItem]:
         """Search projects the user is a member of."""
         stmt = text("""
             SELECT p.id, p.name, p.description
@@ -71,7 +77,12 @@ class GlobalSearchService:
         """)
         rows = await self._db.execute(
             stmt,
-            {"org_id": str(self._org_id), "user_id": str(self._user_id), "pattern": pattern, "limit": limit},
+            {
+                "org_id": str(self._org_id),
+                "user_id": str(self._user_id),
+                "pattern": pattern,
+                "limit": limit,
+            },
         )
         return [
             GlobalSearchItem(
@@ -121,7 +132,9 @@ class GlobalSearchService:
             )
         return results
 
-    async def _search_sessions(self, pattern: str, limit: int) -> list[GlobalSearchItem]:
+    async def _search_sessions(
+        self, pattern: str, limit: int
+    ) -> list[GlobalSearchItem]:
         """Search sessions within projects the user is a member of."""
         stmt = text("""
             SELECT s.id, s.external_id, s.project_id, p.name as project_name
@@ -136,7 +149,12 @@ class GlobalSearchService:
         """)
         rows = await self._db.execute(
             stmt,
-            {"org_id": str(self._org_id), "user_id": str(self._user_id), "pattern": pattern, "limit": limit},
+            {
+                "org_id": str(self._org_id),
+                "user_id": str(self._user_id),
+                "pattern": pattern,
+                "limit": limit,
+            },
         )
         return [
             GlobalSearchItem(

@@ -537,8 +537,12 @@ class TestUserSummaryComputed:
             DataSource.USER_EPISODES,
             mock_episodes,
         )
-        for source in (DataSource.USER_FACTS, DataSource.USER_ENTITIES,
-                       DataSource.USER_CLASSIFICATIONS, DataSource.CUSTOM_INSTRUCTIONS):
+        for source in (
+            DataSource.USER_FACTS,
+            DataSource.USER_ENTITIES,
+            DataSource.USER_CLASSIFICATIONS,
+            DataSource.CUSTOM_INSTRUCTIONS,
+        ):
             monkeypatch.setitem(_PROVIDER_DISPATCH, source, mock_provider)
 
         prompt, ctx = await render_prompt(
@@ -698,7 +702,9 @@ class TestProviderFetchSessionEntities:
 
     @pytest.mark.asyncio
     async def test_no_session_id(
-        self, org_id: UUID, project_id: UUID,
+        self,
+        org_id: UUID,
+        project_id: UUID,
     ) -> None:
         """session_id is None → empty entities."""
         result = await _fetch_session_entities(
@@ -712,7 +718,9 @@ class TestProviderFetchSessionEntities:
 
     @pytest.mark.asyncio
     async def test_no_project_id(
-        self, org_id: UUID, session_id: UUID,
+        self,
+        org_id: UUID,
+        session_id: UUID,
     ) -> None:
         """project_id is None → empty entities."""
         result = await _fetch_session_entities(
@@ -726,7 +734,10 @@ class TestProviderFetchSessionEntities:
 
     @pytest.mark.asyncio
     async def test_no_graph_backend(
-        self, org_id: UUID, session_id: UUID, project_id: UUID,
+        self,
+        org_id: UUID,
+        session_id: UUID,
+        project_id: UUID,
     ) -> None:
         """graph_backend is None → empty entities."""
         result = await _fetch_session_entities(
@@ -747,16 +758,19 @@ class TestProviderFetchSessionEntities:
         monkeypatch: MonkeyPatch,
     ) -> None:
         """With PostgresGraphBackend and db_session_factory, creates fresh session."""
+
         class FakePostgresBackend:
             def __init__(self, db: Any = None) -> None:
                 self.db = db
 
             async def get_entities_for_session(
-                self, **kwargs: Any,
+                self,
+                **kwargs: Any,
             ) -> list[dict[str, str]]:
                 return [{"name": "Entity1", "entity_type": "Person"}]
 
         import packages.graph_backend.postgres  # noqa: F811 — ensure module loaded
+
         monkeypatch.setattr(
             packages.graph_backend.postgres,
             "PostgresGraphBackend",
@@ -784,9 +798,11 @@ class TestProviderFetchSessionEntities:
         project_id: UUID,
     ) -> None:
         """Uses graph_backend.get_entities_for_session directly."""
+
         class NonPostgresBackend:
             async def get_entities_for_session(
-                self, **kwargs: Any,
+                self,
+                **kwargs: Any,
             ) -> list[dict[str, str]]:
                 return [{"name": "E1", "entity_type": "Location"}]
 
@@ -817,7 +833,10 @@ class TestProviderFetchSessionFacts:
 
     @pytest.mark.asyncio
     async def test_with_session_id(
-        self, org_id: UUID, session_id: UUID, monkeypatch: MonkeyPatch,
+        self,
+        org_id: UUID,
+        session_id: UUID,
+        monkeypatch: MonkeyPatch,
     ) -> None:
         """Mock FactRepository.list_by_session, returns facts."""
         from repositories.fact_repository import FactRepository
@@ -859,9 +878,13 @@ class TestProviderFetchSessionRecentHistory:
 
     @pytest.mark.asyncio
     async def test_with_episode_id_filter(
-        self, org_id: UUID, session_id: UUID, episode_id: UUID,
+        self,
+        org_id: UUID,
+        session_id: UUID,
+        episode_id: UUID,
     ) -> None:
         """Excludes current episode from results."""
+
         class FakeEp:
             def __init__(self, role: str, content: str) -> None:
                 self.role = role
@@ -888,9 +911,12 @@ class TestProviderFetchSessionRecentHistory:
 
     @pytest.mark.asyncio
     async def test_without_episode_id(
-        self, org_id: UUID, session_id: UUID,
+        self,
+        org_id: UUID,
+        session_id: UUID,
     ) -> None:
         """Returns all recent history without episode filter."""
+
         class FakeEp:
             def __init__(self, role: str, content: str) -> None:
                 self.role = role
@@ -975,12 +1001,26 @@ class TestProviderFetchSimilarEpisodes:
         from repositories.episode_repository import EpisodeRepository
 
         async def mock_search_by_bm25(
-            self: Any, query: str, project_id: UUID, org_id: UUID, limit: int,
+            self: Any,
+            query: str,
+            project_id: UUID,
+            org_id: UUID,
+            limit: int,
         ) -> list[dict[str, Any]]:
             return [
-                {"id": str(uuid4()), "content": "Similar one", "role": "user", "score": 0.85},
+                {
+                    "id": str(uuid4()),
+                    "content": "Similar one",
+                    "role": "user",
+                    "score": 0.85,
+                },
                 {"id": str(episode_id), "content": "Self match"},
-                {"id": str(uuid4()), "content": "Similar two", "role": "assistant", "score": 0.72},
+                {
+                    "id": str(uuid4()),
+                    "content": "Similar two",
+                    "role": "assistant",
+                    "score": 0.72,
+                },
             ]
 
         monkeypatch.setattr(EpisodeRepository, "search_by_bm25", mock_search_by_bm25)
@@ -1038,7 +1078,11 @@ class TestProviderFetchSimilarFacts:
         from repositories.fact_repository import FactRepository
 
         async def mock_search_by_bm25(
-            self: Any, query: str, project_id: UUID, org_id: UUID, limit: int,
+            self: Any,
+            query: str,
+            project_id: UUID,
+            org_id: UUID,
+            limit: int,
         ) -> list[dict[str, Any]]:
             return [
                 {"subject": "S1", "predicate": "P1", "object": "O1", "score": 0.9},
@@ -1074,8 +1118,12 @@ class TestProviderFetchOrgEntityTypes:
         )
         assert result == {
             "entity_types": [
-                "Person", "Organization", "Product",
-                "Location", "Date", "Custom",
+                "Person",
+                "Organization",
+                "Product",
+                "Location",
+                "Date",
+                "Custom",
             ],
         }
 
@@ -1103,8 +1151,12 @@ class TestProviderFetchOrgEntityTypes:
         )
         assert result == {
             "entity_types": [
-                "Person", "Organization", "Product",
-                "Location", "Date", "Custom",
+                "Person",
+                "Organization",
+                "Product",
+                "Location",
+                "Date",
+                "Custom",
             ],
         }
 
@@ -1136,14 +1188,16 @@ class TestProviderFetchClassificationLabels:
     @pytest.mark.asyncio
     async def test_with_schemas(self, org_id: UUID) -> None:
         """Returns merged labels from schemas."""
-        rows = [(
-            {
-                "intent": ["ask", "tell"],
-                "emotion": ["happy", "sad"],
-                "valence": ["pos", "neg"],
-                "arousal": ["high", "low"],
-            },
-        )]
+        rows = [
+            (
+                {
+                    "intent": ["ask", "tell"],
+                    "emotion": ["happy", "sad"],
+                    "valence": ["pos", "neg"],
+                    "arousal": ["high", "low"],
+                },
+            )
+        ]
         session = FakeAsyncSession(rows)
         result = await _fetch_classification_labels(
             db=session,
@@ -1209,7 +1263,9 @@ class TestProviderFetchUserEpisodes:
 
     @pytest.mark.asyncio
     async def test_with_user_id(
-        self, org_id: UUID, user_id: UUID,
+        self,
+        org_id: UUID,
+        user_id: UUID,
     ) -> None:
         """Returns episodes from DB."""
         # Rows are (role, content) tuples; result is reversed to chronological
@@ -1244,7 +1300,9 @@ class TestProviderFetchUserFacts:
 
     @pytest.mark.asyncio
     async def test_with_user_id(
-        self, org_id: UUID, user_id: UUID,
+        self,
+        org_id: UUID,
+        user_id: UUID,
     ) -> None:
         """Returns facts from DB."""
         rows = [
@@ -1266,13 +1324,18 @@ class TestProviderFetchUserFacts:
 
     @pytest.mark.asyncio
     async def test_query_applies_effective_at_predicate(
-        self, org_id: UUID, user_id: UUID,
+        self,
+        org_id: UUID,
+        user_id: UUID,
     ) -> None:
         """The facts query applies the effective-at predicate so superseded
         (valid_to closed) and retracted (invalid_at set) facts do not leak
         into LLM extraction prompts."""
+
         class _RecordingSession(FakeAsyncSession):
-            async def execute(self, query: Any, params: Any | None = None) -> MockResult:
+            async def execute(
+                self, query: Any, params: Any | None = None
+            ) -> MockResult:
                 self.executed_sql = str(query.text if hasattr(query, "text") else query)
                 return await super().execute(query, params)
 
@@ -1281,9 +1344,17 @@ class TestProviderFetchUserFacts:
         )
         await _fetch_user_facts(db=session, org_id=org_id, user_id=user_id)
 
-        assert "(f.invalid_at IS NULL OR f.invalid_at > :effective_at)" in session.executed_sql
-        assert "(f.valid_from IS NULL OR f.valid_from <= :effective_at)" in session.executed_sql
-        assert "(f.valid_to IS NULL OR f.valid_to > :effective_at)" in session.executed_sql
+        assert (
+            "(f.invalid_at IS NULL OR f.invalid_at > :effective_at)"
+            in session.executed_sql
+        )
+        assert (
+            "(f.valid_from IS NULL OR f.valid_from <= :effective_at)"
+            in session.executed_sql
+        )
+        assert (
+            "(f.valid_to IS NULL OR f.valid_to > :effective_at)" in session.executed_sql
+        )
 
 
 @pytest.mark.unit
@@ -1324,7 +1395,9 @@ class TestProviderFetchCustomInstructions:
 
     @pytest.mark.asyncio
     async def test_no_instructions(
-        self, org_id: UUID, monkeypatch: MonkeyPatch,
+        self,
+        org_id: UUID,
+        monkeypatch: MonkeyPatch,
     ) -> None:
         """Returns empty custom_instructions."""
         from repositories.custom_instruction_repository import (
@@ -1332,12 +1405,15 @@ class TestProviderFetchCustomInstructions:
         )
 
         async def mock_get_by_scope(
-            self: Any, **kwargs: Any,
+            self: Any,
+            **kwargs: Any,
         ) -> list[Any]:
             return []
 
         monkeypatch.setattr(
-            CustomInstructionRepository, "get_by_scope", mock_get_by_scope,
+            CustomInstructionRepository,
+            "get_by_scope",
+            mock_get_by_scope,
         )
 
         result = await _fetch_custom_instructions(
@@ -1348,7 +1424,10 @@ class TestProviderFetchCustomInstructions:
 
     @pytest.mark.asyncio
     async def test_with_instructions(
-        self, org_id: UUID, user_id: UUID, monkeypatch: MonkeyPatch,
+        self,
+        org_id: UUID,
+        user_id: UUID,
+        monkeypatch: MonkeyPatch,
     ) -> None:
         """Uses CustomInstructionRepository.get_by_scope and formats result."""
         from repositories.custom_instruction_repository import (
@@ -1361,12 +1440,15 @@ class TestProviderFetchCustomInstructions:
                 self.text = text
 
         async def mock_get_by_scope(
-            self: Any, **kwargs: Any,
+            self: Any,
+            **kwargs: Any,
         ) -> list[Any]:
             return [MockInstruction("style", "Be concise.")]
 
         monkeypatch.setattr(
-            CustomInstructionRepository, "get_by_scope", mock_get_by_scope,
+            CustomInstructionRepository,
+            "get_by_scope",
+            mock_get_by_scope,
         )
 
         # format_custom_instructions is imported lazily — ensure the module
@@ -1489,8 +1571,12 @@ class TestBuildEnrichmentPrompt:
             "known_entities": [{"name": "E1", "entity_type": "Type"}],
             "existing_facts": [{"subject": "S", "predicate": "P", "object": "O"}],
             "recent_history": [{"role": "user", "content": "Hi"}],
-            "similar_episodes": [{"role": "assistant", "content": "Prev answer", "score": 0.8}],
-            "related_facts": [{"subject": "RS", "predicate": "RP", "object": "RO", "score": 0.9}],
+            "similar_episodes": [
+                {"role": "assistant", "content": "Prev answer", "score": 0.8}
+            ],
+            "related_facts": [
+                {"subject": "RS", "predicate": "RP", "object": "RO", "score": 0.9}
+            ],
             "conversation": "Extract from this.",
         }
         result = build_enrichment_prompt("System prompt", ctx)
@@ -1503,9 +1589,8 @@ class TestBuildEnrichmentPrompt:
         assert "NOW EXTRACT FROM THIS CONVERSATION" in result
         # Metadata appears first, conversation last
         assert result.index("MESSAGE METADATA") < result.index("KNOWN ENTITIES")
-        assert (
-            result.index("NOW EXTRACT FROM THIS CONVERSATION")
-            > result.index("EXISTING FACTS")
+        assert result.index("NOW EXTRACT FROM THIS CONVERSATION") > result.index(
+            "EXISTING FACTS"
         )
 
     def test_empty_context(self) -> None:

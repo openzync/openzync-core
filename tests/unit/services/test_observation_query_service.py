@@ -3,6 +3,7 @@
 The ``GraphBackend`` dependency is fully mocked.  We test filtering by entity,
 type, pagination, entity-name resolution, and empty-result handling.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -101,10 +102,12 @@ class TestObservationQueryService:
         """Filtering by observation_type returns only matching observations."""
         service, mock_backend = self._make_service()
 
-        obs = [self._make_observation(
-            subject_entity_id=self.ENTITY_ID,
-            observation_type="temporal_pattern",
-        )]
+        obs = [
+            self._make_observation(
+                subject_entity_id=self.ENTITY_ID,
+                observation_type="temporal_pattern",
+            )
+        ]
         mock_backend.get_observations.return_value = {
             "items": obs,
             "next_cursor": None,
@@ -184,10 +187,12 @@ class TestObservationQueryService:
         service, mock_backend = self._make_service()
 
         related_id = uuid4()
-        obs = [self._make_observation(
-            subject_entity_id=self.ENTITY_ID,
-            related_entity_id=related_id,
-        )]
+        obs = [
+            self._make_observation(
+                subject_entity_id=self.ENTITY_ID,
+                related_entity_id=related_id,
+            )
+        ]
         mock_backend.get_observations.return_value = {
             "items": obs,
             "next_cursor": None,
@@ -207,7 +212,9 @@ class TestObservationQueryService:
         assert result.data[0].related_entity_name == "Related Entity"
 
     @pytest.mark.asyncio
-    async def test_get_observations_entity_name_resolution_fails_gracefully(self) -> None:
+    async def test_get_observations_entity_name_resolution_fails_gracefully(
+        self,
+    ) -> None:
         """When entity name resolution fails, observations are returned without names."""
         service, mock_backend = self._make_service()
 

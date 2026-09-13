@@ -13,10 +13,13 @@ Create Date: 2026-06-07
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from alembic import op
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 revision: str = "0008"
 down_revision: str | None = "0007"

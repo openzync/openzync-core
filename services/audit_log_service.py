@@ -8,11 +8,14 @@ request metadata, and delegates persistence to the repository.
 from __future__ import annotations
 
 import logging
-from uuid import UUID
-
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import TYPE_CHECKING
 
 from repositories.audit_log_repository import AuditLogRepository
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 

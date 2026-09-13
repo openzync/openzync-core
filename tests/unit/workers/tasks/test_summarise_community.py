@@ -1,4 +1,5 @@
 """Unit tests for summarise_community task."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,7 +14,9 @@ _ORG_ID = str(uuid4())
 class TestSummariseCommunity:
     """summarise_community task tests."""
 
-    def _make_db(self, org_ids: list | None = None, project_ids: list | None = None) -> AsyncMock:
+    def _make_db(
+        self, org_ids: list | None = None, project_ids: list | None = None
+    ) -> AsyncMock:
         db = AsyncMock()
         # ``add`` is sync in SQLAlchemy — an AsyncMock child would return an
         # unawaited coroutine (RuntimeWarning → error under filterwarnings).
@@ -69,9 +72,14 @@ class TestSummariseCommunity:
         mock_backend.create_relationship_bulk = AsyncMock()
 
         with (
-            patch("workers.tasks.summarise_community.resolve_graph_backend", return_value=mock_backend),
+            patch(
+                "workers.tasks.summarise_community.resolve_graph_backend",
+                return_value=mock_backend,
+            ),
             patch("packages.community.algorithms.build_entity_graph") as mock_build,
-            patch("packages.community.algorithms.detect_communities_label_propagation") as mock_detect,
+            patch(
+                "packages.community.algorithms.detect_communities_label_propagation"
+            ) as mock_detect,
             patch("core.llm.resolve_backend") as mock_llm,
             patch("core.org_config.get_org_config") as mock_cfg,
         ):
@@ -124,9 +132,14 @@ class TestSummariseCommunity:
         mock_backend.create_relationship_bulk = AsyncMock()
 
         with (
-            patch("workers.tasks.summarise_community.resolve_graph_backend", return_value=mock_backend),
+            patch(
+                "workers.tasks.summarise_community.resolve_graph_backend",
+                return_value=mock_backend,
+            ),
             patch("packages.community.algorithms.build_entity_graph"),
-            patch("packages.community.algorithms.detect_communities_label_propagation") as mock_detect,
+            patch(
+                "packages.community.algorithms.detect_communities_label_propagation"
+            ) as mock_detect,
             patch("core.llm.resolve_backend"),
             patch("core.org_config.get_org_config"),
         ):
@@ -151,7 +164,10 @@ class TestSummariseCommunity:
         mock_backend = AsyncMock()
         mock_backend.get_all_entities.return_value = self._make_entities(3)
 
-        with patch("workers.tasks.summarise_community.resolve_graph_backend", return_value=mock_backend):
+        with patch(
+            "workers.tasks.summarise_community.resolve_graph_backend",
+            return_value=mock_backend,
+        ):
             db = AsyncMock()
             db.__aenter__.return_value = db
             db.__aexit__.return_value = None
@@ -173,9 +189,15 @@ class TestSummariseCommunity:
         mock_backend.get_all_relationships.return_value = []
 
         with (
-            patch("workers.tasks.summarise_community.resolve_graph_backend", return_value=mock_backend),
+            patch(
+                "workers.tasks.summarise_community.resolve_graph_backend",
+                return_value=mock_backend,
+            ),
             patch("packages.community.algorithms.build_entity_graph"),
-            patch("packages.community.algorithms.detect_communities_label_propagation", return_value=[]),
+            patch(
+                "packages.community.algorithms.detect_communities_label_propagation",
+                return_value=[],
+            ),
         ):
             db = AsyncMock()
             db.__aenter__.return_value = db
@@ -199,9 +221,14 @@ class TestSummariseCommunity:
         mock_backend.create_relationship_bulk = AsyncMock()
 
         with (
-            patch("workers.tasks.summarise_community.resolve_graph_backend", return_value=mock_backend),
+            patch(
+                "workers.tasks.summarise_community.resolve_graph_backend",
+                return_value=mock_backend,
+            ),
             patch("packages.community.algorithms.build_entity_graph"),
-            patch("packages.community.algorithms.detect_communities_label_propagation") as mock_detect,
+            patch(
+                "packages.community.algorithms.detect_communities_label_propagation"
+            ) as mock_detect,
             patch("core.llm.resolve_backend", side_effect=Exception("LLM down")),
         ):
             mock_detect.return_value = [{str(uuid4()), str(uuid4()), str(uuid4())}]
@@ -223,7 +250,9 @@ class TestSummariseCommunity:
     @pytest.mark.asyncio
     async def test_backend_unavailable(self) -> None:
         """Graph backend unavailable → skips org gracefully."""
-        with patch("workers.tasks.summarise_community.resolve_graph_backend", return_value=None):
+        with patch(
+            "workers.tasks.summarise_community.resolve_graph_backend", return_value=None
+        ):
             db = AsyncMock()
             db.__aenter__.return_value = db
             db.__aexit__.return_value = None
@@ -338,7 +367,11 @@ class TestSummariseCommunity:
         # bypass_rls + org-discovery + org_1 set_config + org_1 project
         # query + org_2 set_config + org_2 project query (raises).
         db.execute.side_effect = [
-            empty, discovery, empty, proj_result, empty,
+            empty,
+            discovery,
+            empty,
+            proj_result,
+            empty,
             Exception("mid-org DB error"),
         ]
 
@@ -385,7 +418,9 @@ class TestSummariseCommunity:
         # bypass_rls + org discovery + org_1 set_config + org_1 project
         # query (raises) + org_2 set_config + org_2 project query (raises).
         db.execute.side_effect = [
-            empty, discovery, empty,
+            empty,
+            discovery,
+            empty,
             Exception("project select failed"),
             empty,
             Exception("project select failed"),

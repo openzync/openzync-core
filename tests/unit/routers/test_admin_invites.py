@@ -129,10 +129,12 @@ async def test_invite_member_403() -> None:
 
     with (
         patch(
-            "dependencies.auth._check_permission", new=real_check_permission,
+            "dependencies.auth._check_permission",
+            new=real_check_permission,
         ),
         patch(
-            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+            "dependencies.auth.get_org_role",
+            new=AsyncMock(return_value="member"),
         ),
         patch(
             "dependencies.auth.get_effective_permissions",
@@ -193,9 +195,7 @@ async def test_invite_email_send_failure_502() -> None:
     back with the error (get_db contract) — no orphaned invite.
     """
     app, service_mock = _make_app()
-    service_mock.invite_user.side_effect = ExternalServiceError(
-        "Failed to send email"
-    )
+    service_mock.invite_user.side_effect = ExternalServiceError("Failed to send email")
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -254,10 +254,12 @@ async def test_revoke_member_403() -> None:
 
     with (
         patch(
-            "dependencies.auth._check_permission", new=real_check_permission,
+            "dependencies.auth._check_permission",
+            new=real_check_permission,
         ),
         patch(
-            "dependencies.auth.get_org_role", new=AsyncMock(return_value="member"),
+            "dependencies.auth.get_org_role",
+            new=AsyncMock(return_value="member"),
         ),
         patch(
             "dependencies.auth.get_effective_permissions",

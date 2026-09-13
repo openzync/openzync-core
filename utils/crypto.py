@@ -25,9 +25,7 @@ from core.exceptions import AuthenticationError
 # Base62 encoding — no external dependency required
 # ═══════════════════════════════════════════════════════════════════════════════
 
-BASE62_ALPHABET: str = (
-    "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-)
+BASE62_ALPHABET: str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 """Base62 character set: 0-9 (10), A-Z (26), a-z (26) = 62 chars."""
 
 

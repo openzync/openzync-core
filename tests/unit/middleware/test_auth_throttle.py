@@ -1,4 +1,5 @@
 """Unit tests for AuthThrottle."""
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
@@ -50,7 +51,9 @@ class TestAuthThrottle:
         # Simulate exceeding the email limit (5)
         mock_redis.incr = AsyncMock(return_value=6)
 
-        with pytest.raises(RateLimitError, match="Too many login attempts for this account"):
+        with pytest.raises(
+            RateLimitError, match="Too many login attempts for this account"
+        ):
             await throttle.check_login_attempt("user@example.com", "192.168.1.1")
 
     @pytest.mark.asyncio
@@ -70,7 +73,9 @@ class TestAuthThrottle:
 
         mock_redis.incr = AsyncMock(side_effect=mock_incr)
 
-        with pytest.raises(RateLimitError, match="Too many login attempts from this IP"):
+        with pytest.raises(
+            RateLimitError, match="Too many login attempts from this IP"
+        ):
             await throttle.check_login_attempt("user@example.com", "192.168.1.1")
 
     @pytest.mark.asyncio
@@ -107,7 +112,9 @@ class TestAuthThrottle:
         """Too many signups from same IP raises RateLimitError."""
         mock_redis.incr = AsyncMock(return_value=4)  # > max 3
 
-        with pytest.raises(RateLimitError, match="Too many signup attempts from this IP"):
+        with pytest.raises(
+            RateLimitError, match="Too many signup attempts from this IP"
+        ):
             await throttle.check_signup_attempt("10.0.0.1")
 
     @pytest.mark.asyncio
@@ -132,7 +139,9 @@ class TestAuthThrottle:
         """Too many verify attempts per email raises RateLimitError."""
         mock_redis.incr = AsyncMock(return_value=11)  # > 10
 
-        with pytest.raises(RateLimitError, match="Too many verification attempts for this email"):
+        with pytest.raises(
+            RateLimitError, match="Too many verification attempts for this email"
+        ):
             await throttle.check_verify_attempt("user@example.com", "10.0.0.1")
 
     # ── Forgot password ─────────────────────────────────────────────────────────
@@ -149,7 +158,9 @@ class TestAuthThrottle:
         """Too many forgot-password requests per email raises RateLimitError."""
         mock_redis.incr = AsyncMock(return_value=4)  # > 3
 
-        with pytest.raises(RateLimitError, match="Too many password reset requests for this email"):
+        with pytest.raises(
+            RateLimitError, match="Too many password reset requests for this email"
+        ):
             await throttle.check_forgot_password_attempt("user@example.com", "10.0.0.1")
 
     # ── Reset attempts ──────────────────────────────────────────────────────────
@@ -166,7 +177,9 @@ class TestAuthThrottle:
         """Too many reset attempts per email raises RateLimitError."""
         mock_redis.incr = AsyncMock(return_value=11)  # > 10
 
-        with pytest.raises(RateLimitError, match="Too many reset attempts for this email"):
+        with pytest.raises(
+            RateLimitError, match="Too many reset attempts for this email"
+        ):
             await throttle.check_reset_attempt("user@example.com", "10.0.0.1")
 
     # ── Passwordless ────────────────────────────────────────────────────────────
@@ -183,11 +196,15 @@ class TestAuthThrottle:
         """Too many passwordless sends per email raises RateLimitError."""
         mock_redis.incr = AsyncMock(return_value=6)  # > 5
 
-        with pytest.raises(RateLimitError, match="Too many login code requests for this email"):
+        with pytest.raises(
+            RateLimitError, match="Too many login code requests for this email"
+        ):
             await throttle.check_passwordless_send("user@example.com", "10.0.0.1")
 
     @pytest.mark.asyncio
-    async def test_first_passwordless_verify_passes(self, throttle: AuthThrottle) -> None:
+    async def test_first_passwordless_verify_passes(
+        self, throttle: AuthThrottle
+    ) -> None:
         """First passwordless verify passes."""
         await throttle.check_passwordless_verify("user@example.com", "10.0.0.1")
 
@@ -206,7 +223,9 @@ class TestAuthThrottle:
 
         mock_redis.incr = AsyncMock(side_effect=mock_incr)
 
-        with pytest.raises(RateLimitError, match="Too many login verification attempts from this IP"):
+        with pytest.raises(
+            RateLimitError, match="Too many login verification attempts from this IP"
+        ):
             await throttle.check_passwordless_verify("user@example.com", "10.0.0.1")
 
     # ── MFA ─────────────────────────────────────────────────────────────────────
@@ -231,13 +250,17 @@ class TestAuthThrottle:
 
         mock_redis.incr = AsyncMock(side_effect=mock_incr)
 
-        with pytest.raises(RateLimitError, match="Too many MFA verification attempts from this IP"):
+        with pytest.raises(
+            RateLimitError, match="Too many MFA verification attempts from this IP"
+        ):
             await throttle.check_mfa_verify("user@example.com", "10.0.0.1")
 
     # ── Window reset ────────────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_window_reset_after_expiry(self, mock_redis: AsyncMock, throttle: AuthThrottle) -> None:
+    async def test_window_reset_after_expiry(
+        self, mock_redis: AsyncMock, throttle: AuthThrottle
+    ) -> None:
         """After expiry, attempts reset (counter goes back to 1)."""
         # First call: incr returns 1 (first after reset)
         mock_redis.incr = AsyncMock(return_value=1)
@@ -450,7 +473,9 @@ class TestAuthThrottle:
     # ── Redis unavailable ───────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
-    async def test_redis_error_propagates(self, mock_redis: AsyncMock, throttle: AuthThrottle) -> None:
+    async def test_redis_error_propagates(
+        self, mock_redis: AsyncMock, throttle: AuthThrottle
+    ) -> None:
         """When Redis is down, the exception propagates (fail-closed)."""
         mock_redis.incr = AsyncMock(side_effect=ConnectionError("Redis down"))
         with pytest.raises(ConnectionError):

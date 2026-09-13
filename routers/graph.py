@@ -1,11 +1,11 @@
 """Graph query endpoints — HTTP adapter layer only.
 
 Provides:
-- ``GET    /v1/projects/{project_id}/graph/nodes``              — List entity nodes
-- ``GET    /v1/projects/{project_id}/graph/nodes/{node_id}``    — Get single node with edges
-- ``DELETE /v1/projects/{project_id}/graph/nodes/{node_id}``    — Delete entity node
-- ``GET    /v1/projects/{project_id}/graph/edges``              — List relationship edges
-- ``GET    /v1/projects/{project_id}/graph/communities``        — List community summaries
+- ``GET /v1/projects/{project_id}/graph/nodes`` — List entity nodes
+- ``GET /v1/projects/{project_id}/graph/nodes/{node_id}`` — Get node w/ edges
+- ``DELETE /v1/projects/{project_id}/graph/nodes/{node_id}`` — Delete node
+- ``GET /v1/projects/{project_id}/graph/edges`` — List relationship edges
+- ``GET /v1/projects/{project_id}/graph/communities`` — List communities
 
 Every endpoint is guarded by ``require_project_membership`` for unified
 authentication and project authorization, and ``project_id`` is passed to
@@ -254,9 +254,7 @@ async def list_graph_edges(
     parsed_ids: list[UUID] | None = None
     if subject_ids is not None:
         try:
-            parsed_ids = [
-                UUID(s.strip()) for s in subject_ids.split(",") if s.strip()
-            ]
+            parsed_ids = [UUID(s.strip()) for s in subject_ids.split(",") if s.strip()]
         except ValueError:
             raise HTTPException(
                 status_code=422,

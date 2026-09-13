@@ -11,7 +11,9 @@ class GlobalSearchItem(BaseModel):
     type: str  # "project", "user", "session"
     id: str
     label: str  # primary display text (project name, user email, session external_id)
-    subtitle: str | None  # secondary text (project description, user name, project name)
+    subtitle: (
+        str | None
+    )  # secondary text (project description, user name, project name)
     href: str  # frontend URL for navigation
 
 

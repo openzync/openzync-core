@@ -155,12 +155,8 @@ class ProjectResponse(BaseModel):
         default=None,
         description="UUID of the creating user, or ``None`` if deleted.",
     )
-    created_at: datetime = Field(
-        ..., description="Project creation timestamp (UTC)."
-    )
-    updated_at: datetime = Field(
-        ..., description="Last modification timestamp (UTC)."
-    )
+    created_at: datetime = Field(..., description="Project creation timestamp (UTC).")
+    updated_at: datetime = Field(..., description="Last modification timestamp (UTC).")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -194,12 +190,8 @@ class ProjectListResponse(BaseModel):
         default=None,
         description="UUID of the creating user, or ``None`` if deleted.",
     )
-    created_at: datetime = Field(
-        ..., description="Project creation timestamp (UTC)."
-    )
-    updated_at: datetime = Field(
-        ..., description="Last modification timestamp (UTC)."
-    )
+    created_at: datetime = Field(..., description="Project creation timestamp (UTC).")
+    updated_at: datetime = Field(..., description="Last modification timestamp (UTC).")
 
     model_config = ConfigDict(from_attributes=True)
 

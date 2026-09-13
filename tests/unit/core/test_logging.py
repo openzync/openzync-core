@@ -86,9 +86,7 @@ class TestLoggingSetup:
         with patch("structlog.configure") as mock_configure:
             setup_logging("development", "DEBUG")
             processors = mock_configure.call_args.kwargs["processors"]
-            timestamps = [
-                p for p in processors if "TimeStamper" in type(p).__name__
-            ]
+            timestamps = [p for p in processors if "TimeStamper" in type(p).__name__]
             assert len(timestamps) == 1
 
     def test_structlog_configure_kwargs(self) -> None:
@@ -345,7 +343,11 @@ class TestRequestContext:
 
         bind_request_context(request_id="req-004", org_id="o-1", user_id="u-1")
         event_dict = _add_context_from_vars(None, None, {})
-        assert event_dict == {"request_id": "req-004", "org_id": "o-1", "user_id": "u-1"}
+        assert event_dict == {
+            "request_id": "req-004",
+            "org_id": "o-1",
+            "user_id": "u-1",
+        }
 
     def test_skips_empty_optional_fields(self) -> None:
         """Optional fields not provided are omitted from event dict."""

@@ -115,7 +115,8 @@ class BlobStorage:
         """Upload a blob to S3.
 
         Args:
-            key: S3 object key (e.g. ``blobs/{org_id}/{project_id}/{episode_id}/{idx}_{filename}``).
+            key: S3 object key (e.g.
+                ``blobs/{org_id}/{project_id}/{episode_id}/{idx}_{filename}``).
             data: Raw bytes of the file.
             mime_type: MIME type of the file (e.g. ``"image/png"``).
 

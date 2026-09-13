@@ -78,13 +78,17 @@ class TestTemporalValidationService:
         """No overlapping triples → empty warnings list."""
         mock_repo.get_all_active_for_project.return_value = [
             _make_fact(
-                subject="A", predicate="knows", obj="B",
+                subject="A",
+                predicate="knows",
+                obj="B",
                 source_episode_id="00000000-0000-0000-0000-000000000010",
                 valid_from=datetime(2024, 1, 1, tzinfo=UTC),
                 valid_to=datetime(2024, 6, 30, tzinfo=UTC),
             ),
             _make_fact(
-                subject="C", predicate="knows", obj="D",
+                subject="C",
+                predicate="knows",
+                obj="D",
                 source_episode_id="00000000-0000-0000-0000-000000000011",
                 valid_from=datetime(2024, 1, 1, tzinfo=UTC),
                 valid_to=datetime(2024, 6, 30, tzinfo=UTC),
@@ -102,14 +106,18 @@ class TestTemporalValidationService:
         mock_repo.get_all_active_for_project.return_value = [
             _make_fact(
                 fact_id="00000000-0000-0000-0000-000000000001",
-                subject="A", predicate="knows", obj="B",
+                subject="A",
+                predicate="knows",
+                obj="B",
                 source_episode_id="00000000-0000-0000-0000-000000000010",
                 valid_from=datetime(2024, 1, 1, tzinfo=UTC),
                 valid_to=datetime(2024, 6, 30, tzinfo=UTC),
             ),
             _make_fact(
                 fact_id="00000000-0000-0000-0000-000000000002",
-                subject="A", predicate="knows", obj="B",
+                subject="A",
+                predicate="knows",
+                obj="B",
                 source_episode_id="00000000-0000-0000-0000-000000000011",
                 valid_from=datetime(2024, 3, 1, tzinfo=UTC),
                 valid_to=datetime(2024, 9, 30, tzinfo=UTC),
@@ -130,14 +138,18 @@ class TestTemporalValidationService:
         mock_repo.get_all_active_for_project.return_value = [
             _make_fact(
                 fact_id="00000000-0000-0000-0000-000000000001",
-                subject="A", predicate="knows", obj="B",
+                subject="A",
+                predicate="knows",
+                obj="B",
                 source_episode_id="00000000-0000-0000-0000-000000000010",
                 valid_from=datetime(2024, 1, 1, tzinfo=UTC),
                 valid_to=datetime(2024, 6, 30, tzinfo=UTC),
             ),
             _make_fact(
                 fact_id="00000000-0000-0000-0000-000000000002",
-                subject="A", predicate="knows", obj="B",
+                subject="A",
+                predicate="knows",
+                obj="B",
                 source_episode_id="00000000-0000-0000-0000-000000000010",
                 valid_from=datetime(2024, 3, 1, tzinfo=UTC),
                 valid_to=datetime(2024, 9, 30, tzinfo=UTC),
@@ -154,13 +166,17 @@ class TestTemporalValidationService:
         """Same triple, different episodes, disjoint ranges → no warning."""
         mock_repo.get_all_active_for_project.return_value = [
             _make_fact(
-                subject="A", predicate="knows", obj="B",
+                subject="A",
+                predicate="knows",
+                obj="B",
                 source_episode_id="00000000-0000-0000-0000-000000000010",
                 valid_from=datetime(2024, 1, 1, tzinfo=UTC),
                 valid_to=datetime(2024, 3, 31, tzinfo=UTC),
             ),
             _make_fact(
-                subject="A", predicate="knows", obj="B",
+                subject="A",
+                predicate="knows",
+                obj="B",
                 source_episode_id="00000000-0000-0000-0000-000000000011",
                 valid_from=datetime(2024, 4, 1, tzinfo=UTC),
                 valid_to=datetime(2024, 6, 30, tzinfo=UTC),
@@ -253,12 +269,20 @@ class TestTemporalValidationService:
     ) -> None:
         """No overlapping triples in batch → empty warnings."""
         facts = [
-            {"subject": "A", "predicate": "knows", "object": "B",
-             "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-             "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
-            {"subject": "C", "predicate": "knows", "object": "D",
-             "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-             "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
+            {
+                "subject": "A",
+                "predicate": "knows",
+                "object": "B",
+                "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                "valid_to": datetime(2024, 6, 30, tzinfo=UTC),
+            },
+            {
+                "subject": "C",
+                "predicate": "knows",
+                "object": "D",
+                "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                "valid_to": datetime(2024, 6, 30, tzinfo=UTC),
+            },
         ]
         warnings = await service.validate_batch(facts)
         assert warnings == []
@@ -268,14 +292,22 @@ class TestTemporalValidationService:
     ) -> None:
         """Same triple, overlapping ranges in batch → warning."""
         facts = [
-            {"subject": "A", "predicate": "knows", "object": "B",
-             "source_episode_id": "00000000-0000-0000-0000-000000000010",
-             "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
-             "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
-            {"subject": "A", "predicate": "knows", "object": "B",
-             "source_episode_id": "00000000-0000-0000-0000-000000000010",
-             "valid_from": datetime(2024, 3, 1, tzinfo=UTC),
-             "valid_to": datetime(2024, 9, 30, tzinfo=UTC)},
+            {
+                "subject": "A",
+                "predicate": "knows",
+                "object": "B",
+                "source_episode_id": "00000000-0000-0000-0000-000000000010",
+                "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                "valid_to": datetime(2024, 6, 30, tzinfo=UTC),
+            },
+            {
+                "subject": "A",
+                "predicate": "knows",
+                "object": "B",
+                "source_episode_id": "00000000-0000-0000-0000-000000000010",
+                "valid_from": datetime(2024, 3, 1, tzinfo=UTC),
+                "valid_to": datetime(2024, 9, 30, tzinfo=UTC),
+            },
         ]
         warnings = await service.validate_batch(facts)
         assert len(warnings) == 1
@@ -287,12 +319,20 @@ class TestTemporalValidationService:
         """Same triple, different source_episode_id → no batch warning
         (cross-episode dedup is handled by project-level scan)."""
         facts = [
-            {"subject": "A", "predicate": "knows", "object": "B",
-             "source_episode_id": "00000000-0000-0000-0000-000000000010",
-             "valid_from": datetime(2024, 1, 1, tzinfo=UTC)},
-            {"subject": "A", "predicate": "knows", "object": "B",
-             "source_episode_id": "00000000-0000-0000-0000-000000000011",
-             "valid_from": datetime(2024, 1, 1, tzinfo=UTC)},
+            {
+                "subject": "A",
+                "predicate": "knows",
+                "object": "B",
+                "source_episode_id": "00000000-0000-0000-0000-000000000010",
+                "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+            },
+            {
+                "subject": "A",
+                "predicate": "knows",
+                "object": "B",
+                "source_episode_id": "00000000-0000-0000-0000-000000000011",
+                "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+            },
         ]
         warnings = await service.validate_batch(facts)
         assert warnings == []

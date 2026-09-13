@@ -70,9 +70,7 @@ class ApiKeyResponse(BaseModel):
     id: UUID = Field(..., description="API key UUID.")
     name: str = Field(..., description="Human-readable label.")
     prefix: str = Field(..., description="Key prefix (e.g. ``oz_live_``).")
-    project_id: UUID = Field(
-        ..., description="Project UUID this key is scoped to."
-    )
+    project_id: UUID = Field(..., description="Project UUID this key is scoped to.")
     created_by: UUID | None = Field(
         default=None,
         description="UUID of the user who created this key. "
@@ -83,15 +81,11 @@ class ApiKeyResponse(BaseModel):
         description="Permission strings.",
         examples=[["project:read", "project:write"]],
     )
-    is_revoked: bool = Field(
-        ..., description="Whether the key has been revoked."
-    )
+    is_revoked: bool = Field(..., description="Whether the key has been revoked.")
     last_used_at: datetime | None = Field(
         default=None, description="Last usage timestamp."
     )
-    created_at: datetime = Field(
-        ..., description="Key creation timestamp (UTC)."
-    )
+    created_at: datetime = Field(..., description="Key creation timestamp (UTC).")
     raw_key: str | None = Field(
         default=None,
         description="Full API key string — only populated on creation.",
@@ -127,7 +121,5 @@ class ApiKeyCreatedResponse(ApiKeyResponse):
 class ApiKeyListResponse(BaseModel):
     """Paginated response for ``GET /v1/projects/{project_id}/api-keys``."""
 
-    data: list[ApiKeyResponse] = Field(
-        ..., description="List of API keys."
-    )
+    data: list[ApiKeyResponse] = Field(..., description="List of API keys.")
     total: int = Field(..., description="Total number of keys (excluding revoked).")

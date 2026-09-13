@@ -39,7 +39,8 @@ class TestClassificationService:
 
         # Stub session lookup so they pass
         mock_session_repo.get_by_uuid.return_value = MagicMock(
-            id=uuid4(), is_deleted=False,
+            id=uuid4(),
+            is_deleted=False,
         )
 
         service = ClassificationService(
@@ -81,9 +82,7 @@ class TestClassificationService:
     @pytest.mark.asyncio
     async def test_get_classifications_for_session_with_results(self) -> None:
         """Classifications include intent and emotion from DB."""
-        service, mock_repo, _mock_session_repo, mock_episode_repo = (
-            self._make_service()
-        )
+        service, mock_repo, _mock_session_repo, mock_episode_repo = self._make_service()
         mock_cls = self._mock_classification(intent="greeting", emotion="positive")
         mock_repo.get_by_session.return_value = [mock_cls]
 
@@ -105,9 +104,7 @@ class TestClassificationService:
         self,
     ) -> None:
         """Episode content and role are injected into classification responses."""
-        service, mock_repo, _mock_session_repo, mock_episode_repo = (
-            self._make_service()
-        )
+        service, mock_repo, _mock_session_repo, mock_episode_repo = self._make_service()
         episode_id = uuid4()
 
         mock_cls = self._mock_classification(
@@ -139,9 +136,7 @@ class TestClassificationService:
         self,
     ) -> None:
         """Single episode classification includes message and role."""
-        service, mock_repo, _mock_session_repo, mock_episode_repo = (
-            self._make_service()
-        )
+        service, mock_repo, _mock_session_repo, mock_episode_repo = self._make_service()
         episode_id = uuid4()
 
         mock_cls = self._mock_classification(

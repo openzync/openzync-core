@@ -29,10 +29,12 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
-from typing import Any
-from uuid import UUID
+from typing import TYPE_CHECKING, Any
 
-from repositories.fact_repository import FactRepository
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from repositories.fact_repository import FactRepository
 
 logger = logging.getLogger(__name__)
 
@@ -144,8 +146,10 @@ class TemporalValidationService:
                         continue
 
                     if self._ranges_overlap(
-                        a.valid_from, a.valid_to,
-                        b.valid_from, b.valid_to,
+                        a.valid_from,
+                        a.valid_to,
+                        b.valid_from,
+                        b.valid_to,
                     ):
                         subject, predicate, obj = triple
                         warnings.append(
@@ -295,9 +299,7 @@ class TemporalValidationService:
                 f.get("subject"),
                 f.get("predicate"),
                 f.get("object"),
-                str(f.get("source_episode_id"))
-                if f.get("source_episode_id")
-                else None,
+                str(f.get("source_episode_id")) if f.get("source_episode_id") else None,
             )
             groups[key].append({"index": i, **f})
 

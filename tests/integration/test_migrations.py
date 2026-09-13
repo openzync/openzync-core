@@ -25,7 +25,7 @@ class TestMigrations:
     def test_upgrade_head_creates_tables(self) -> None:
         """``alembic upgrade head`` should succeed without errors."""
         result = subprocess.run(
-            ["alembic", "upgrade", "head"],
+            ["alembic", "upgrade", "head"],  # noqa: S607 — test invokes venv binary by name
             capture_output=True,
             text=True,
             cwd=PROJECT_ROOT,
@@ -38,13 +38,13 @@ class TestMigrations:
         """``alembic downgrade base`` should revert all migrations cleanly."""
         # Ensure we are at head first
         subprocess.run(
-            ["alembic", "upgrade", "head"],
+            ["alembic", "upgrade", "head"],  # noqa: S607 — test invokes venv binary by name
             capture_output=True,
             cwd=PROJECT_ROOT,
         )
 
         result = subprocess.run(
-            ["alembic", "downgrade", "base"],
+            ["alembic", "downgrade", "base"],  # noqa: S607 — test invokes venv binary by name
             capture_output=True,
             text=True,
             cwd=PROJECT_ROOT,
@@ -106,14 +106,14 @@ class TestMigrations:
         """
         # Start from base
         subprocess.run(
-            ["alembic", "downgrade", "base"],
+            ["alembic", "downgrade", "base"],  # noqa: S607 — test invokes venv binary by name
             capture_output=True,
             cwd=PROJECT_ROOT,
         )
 
         # Re-apply
         result = subprocess.run(
-            ["alembic", "upgrade", "head"],
+            ["alembic", "upgrade", "head"],  # noqa: S607 — test invokes venv binary by name
             capture_output=True,
             text=True,
             cwd=PROJECT_ROOT,
@@ -126,21 +126,21 @@ class TestMigrations:
         """``alembic current`` should report the same revision as ``heads``."""
         # Apply head
         subprocess.run(
-            ["alembic", "upgrade", "head"],
+            ["alembic", "upgrade", "head"],  # noqa: S607 — test invokes venv binary by name
             capture_output=True,
             cwd=PROJECT_ROOT,
         )
 
         # Get current revision
         current = subprocess.run(
-            ["alembic", "current"],
+            ["alembic", "current"],  # noqa: S607 — test invokes venv binary by name
             capture_output=True,
             text=True,
             cwd=PROJECT_ROOT,
         )
         # Get expected head revision
         heads = subprocess.run(
-            ["alembic", "heads"],
+            ["alembic", "heads"],  # noqa: S607 — test invokes venv binary by name
             capture_output=True,
             text=True,
             cwd=PROJECT_ROOT,
@@ -157,7 +157,7 @@ class TestMigrations:
     def test_history_is_linear(self) -> None:
         """The migration history should have exactly one head (linear lineage)."""
         heads = subprocess.run(
-            ["alembic", "heads"],
+            ["alembic", "heads"],  # noqa: S607 — test invokes venv binary by name
             capture_output=True,
             text=True,
             cwd=PROJECT_ROOT,
@@ -165,7 +165,9 @@ class TestMigrations:
         assert heads.returncode == 0
 
         # One revision per line, minus trailing newline
-        num_heads = len([line for line in heads.stdout.strip().split("\n") if line.strip()])
+        num_heads = len(
+            [line for line in heads.stdout.strip().split("\n") if line.strip()]
+        )
         assert num_heads == 1, (
             f"Expected exactly 1 head, found {num_heads}:\n{heads.stdout}"
         )

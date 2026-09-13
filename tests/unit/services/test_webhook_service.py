@@ -3,6 +3,7 @@
 All external dependencies (repository, ARQ) are mocked at the service boundary.
 The ``sign_payload`` standalone function is tested directly — pure logic.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -217,13 +218,19 @@ class TestWebhookService:
         mock_repo.create.return_value = self._make_endpoint()
 
         _, s1 = await service.create_endpoint(
-            self.ORG_ID, "A", "https://example.com/a",
+            self.ORG_ID,
+            "A",
+            "https://example.com/a",
         )
         _, s2 = await service.create_endpoint(
-            self.ORG_ID, "B", "https://example.com/b",
+            self.ORG_ID,
+            "B",
+            "https://example.com/b",
         )
         _, s3 = await service.create_endpoint(
-            self.WRONG_ORG_ID, "C", "https://example.com/c",
+            self.WRONG_ORG_ID,
+            "C",
+            "https://example.com/c",
         )
         assert len({s1, s2, s3}) == 3
 
@@ -255,14 +262,16 @@ class TestWebhookService:
         )
 
         new_secret = await service.rotate_endpoint_secret(
-            self.ENDPOINT_ID, self.ORG_ID,
+            self.ENDPOINT_ID,
+            self.ORG_ID,
         )
 
         assert isinstance(new_secret, str)
         assert len(new_secret) >= 32
         assert new_secret != "whsec_old"  # noqa: S105
         mock_repo.update.assert_awaited_once_with(
-            self.ENDPOINT_ID, signing_secret=new_secret,
+            self.ENDPOINT_ID,
+            signing_secret=new_secret,
         )
 
     @pytest.mark.asyncio
@@ -272,7 +281,8 @@ class TestWebhookService:
         mock_repo.get_by_id.return_value = self._make_endpoint()
 
         result = await service.rotate_endpoint_secret(
-            self.ENDPOINT_ID, self.WRONG_ORG_ID,
+            self.ENDPOINT_ID,
+            self.WRONG_ORG_ID,
         )
         assert result is None
         mock_repo.update.assert_not_awaited()
@@ -286,7 +296,9 @@ class TestWebhookService:
         mock_repo.get_by_id.return_value = self._make_endpoint()
 
         result = await service.update_endpoint(
-            self.ENDPOINT_ID, self.WRONG_ORG_ID, {"name": "Hacked"},
+            self.ENDPOINT_ID,
+            self.WRONG_ORG_ID,
+            {"name": "Hacked"},
         )
         assert result is None
         mock_repo.update.assert_not_awaited()
@@ -300,7 +312,9 @@ class TestWebhookService:
         mock_repo.update.return_value = updated_ep
 
         result = await service.update_endpoint(
-            self.ENDPOINT_ID, self.ORG_ID, {"name": "Updated"},
+            self.ENDPOINT_ID,
+            self.ORG_ID,
+            {"name": "Updated"},
         )
         assert result is not None
         assert result["name"] == "Updated"
@@ -316,7 +330,9 @@ class TestWebhookService:
         mock_repo.update.return_value = updated_ep
 
         result = await service.toggle_endpoint(
-            self.ENDPOINT_ID, self.ORG_ID, is_active=True,
+            self.ENDPOINT_ID,
+            self.ORG_ID,
+            is_active=True,
         )
         assert result is not None
         assert result["is_active"] is True
@@ -328,7 +344,9 @@ class TestWebhookService:
         mock_repo.get_by_id.return_value = self._make_endpoint()
 
         result = await service.toggle_endpoint(
-            self.ENDPOINT_ID, self.WRONG_ORG_ID, is_active=False,
+            self.ENDPOINT_ID,
+            self.WRONG_ORG_ID,
+            is_active=False,
         )
         assert result is None
 
@@ -379,7 +397,8 @@ class TestWebhookService:
         assert result is True
         assert mock_arq_pool.enqueue.await_count == 2
         mock_repo.get_active_endpoints_for_event.assert_awaited_once_with(
-            self.ORG_ID, "session.created",
+            self.ORG_ID,
+            "session.created",
         )
 
     @pytest.mark.asyncio
@@ -517,11 +536,13 @@ class TestWebhookService:
         """Each endpoint is signed with its own secret — no shared global."""
         service, mock_repo = self._make_service()
         ep_a = self._make_endpoint(
-            url="https://hook-a.com", endpoint_id=uuid4(),
+            url="https://hook-a.com",
+            endpoint_id=uuid4(),
             signing_secret="whsec_org_a",  # noqa: S106
         )
         ep_b = self._make_endpoint(
-            url="https://hook-b.com", endpoint_id=uuid4(),
+            url="https://hook-b.com",
+            endpoint_id=uuid4(),
             signing_secret="whsec_org_b",  # noqa: S106
         )
         mock_repo.get_active_endpoints_for_event.return_value = [ep_a, ep_b]
@@ -543,10 +564,14 @@ class TestWebhookService:
         )
         # Each signature verifies against that endpoint's own secret
         assert _verify_signature(
-            "whsec_org_a", body_bytes, sig_by_url["https://hook-a.com"],
+            "whsec_org_a",
+            body_bytes,
+            sig_by_url["https://hook-a.com"],
         )
         assert _verify_signature(
-            "whsec_org_b", body_bytes, sig_by_url["https://hook-b.com"],
+            "whsec_org_b",
+            body_bytes,
+            sig_by_url["https://hook-b.com"],
         )
         # Different orgs ⇒ different signatures for the identical payload
         assert sig_by_url["https://hook-a.com"] != sig_by_url["https://hook-b.com"]
@@ -558,7 +583,9 @@ class TestWebhookService:
         """Legacy endpoint with NULL secret gets one generated and persisted."""
         service, mock_repo = self._make_service()
         legacy_ep = self._make_endpoint(
-            url="https://hook.com", endpoint_id=uuid4(), signing_secret=None,
+            url="https://hook.com",
+            endpoint_id=uuid4(),
+            signing_secret=None,
         )
         mock_repo.get_active_endpoints_for_event.return_value = [legacy_ep]
         mock_repo.set_signing_secret_if_null.return_value = 1
@@ -590,10 +617,13 @@ class TestWebhookService:
         """Backfill loser re-reads the winner's secret instead of overwriting."""
         service, mock_repo = self._make_service()
         legacy_ep = self._make_endpoint(
-            url="https://hook.com", endpoint_id=uuid4(), signing_secret=None,
+            url="https://hook.com",
+            endpoint_id=uuid4(),
+            signing_secret=None,
         )
         winner_ep = self._make_endpoint(
-            url="https://hook.com", endpoint_id=legacy_ep.id,
+            url="https://hook.com",
+            endpoint_id=legacy_ep.id,
             signing_secret="whsec_winner",  # noqa: S106
         )
         mock_repo.get_active_endpoints_for_event.return_value = [legacy_ep]

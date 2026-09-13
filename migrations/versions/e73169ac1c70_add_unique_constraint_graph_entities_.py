@@ -7,11 +7,15 @@ Revision ID: e73169ac1c70
 Revises: 0011
 Create Date: 2026-06-11 08:54:32.382177
 """
+
 from __future__ import annotations
 
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from alembic import op
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 revision: str = "e73169ac1c70"
 down_revision: str | None = "0011"

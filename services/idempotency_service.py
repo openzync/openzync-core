@@ -48,15 +48,17 @@ import hashlib
 import logging
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID  # noqa: TCH003 — used in type hints for callers
 
 import orjson
-from redis import asyncio as aioredis
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import get_settings
 from repositories.episode_repository import EpisodeRepository
+
+if TYPE_CHECKING:
+    from redis import asyncio as aioredis
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -116,10 +118,10 @@ class IdempotencyResult:
 # ``episodes.enrichment_status`` integer column.  Combine with bitwise OR (``|``)
 # to mark multiple tasks as completed.
 
-ENRICHMENT_ENTITIES: int = 1 << 0      # bit 0: entity extraction
-ENRICHMENT_EMBEDDING: int = 1 << 1     # bit 1: episode embedding
-ENRICHMENT_FACTS: int = 1 << 2         # bit 2: fact extraction
-ENRICHMENT_ENTITY_LINKS: int = 1 << 3    # bit 3: entity-episode linking
+ENRICHMENT_ENTITIES: int = 1 << 0  # bit 0: entity extraction
+ENRICHMENT_EMBEDDING: int = 1 << 1  # bit 1: episode embedding
+ENRICHMENT_FACTS: int = 1 << 2  # bit 2: fact extraction
+ENRICHMENT_ENTITY_LINKS: int = 1 << 3  # bit 3: entity-episode linking
 ENRICHMENT_ALL: int = (
     ENRICHMENT_ENTITIES
     | ENRICHMENT_EMBEDDING
@@ -154,7 +156,9 @@ class IdempotencyService:
         # ── TTL ──────────────────────────────────────────────────────────
         _s = get_settings()
         self._idem_ttl: int = getattr(
-            _s, "IDEMPOTENCY_TTL_SECONDS", 172800  # 48 hours
+            _s,
+            "IDEMPOTENCY_TTL_SECONDS",
+            172800,  # 48 hours
         )
         self._content_ttl: int = self._idem_ttl
 
@@ -357,9 +361,7 @@ class IdempotencyService:
             The stored payload (e.g. the original ``job_id``) if this
             content was already ingested, ``None`` if it is new.
         """
-        content_hash = self.compute_content_hash(
-            org_id, user_id, session_id, messages
-        )
+        content_hash = self.compute_content_hash(org_id, user_id, session_id, messages)
         cache_key = self._content_prefix + content_hash
 
         cached: str | None = await self._redis.get(cache_key)
@@ -405,9 +407,7 @@ class IdempotencyService:
         Returns:
             The computed content hash hex string.
         """
-        content_hash = self.compute_content_hash(
-            org_id, user_id, session_id, messages
-        )
+        content_hash = self.compute_content_hash(org_id, user_id, session_id, messages)
         cache_key = self._content_prefix + content_hash
         value = payload if payload is not None else content_hash
 

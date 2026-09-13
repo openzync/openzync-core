@@ -105,9 +105,7 @@ def format_text(
             else:
                 score = score_val
             confidence_str = (
-                f" (confidence={confidence:.2f})"
-                if confidence is not None
-                else ""
+                f" (confidence={confidence:.2f})" if confidence is not None else ""
             )
             score_str = f" [score={score:.4f}]" if score is not None else ""
 
@@ -250,10 +248,7 @@ def _clean_episodes(
         Cleaned episode dicts safe for JSON serialisation.
     """
     allowed_keys = {"id", "role", "content", "created_at", "blobs"}
-    return [
-        {k: v for k, v in ep.items() if k in allowed_keys}
-        for ep in episodes
-    ]
+    return [{k: v for k, v in ep.items() if k in allowed_keys} for ep in episodes]
 
 
 def _clean_facts(
@@ -273,14 +268,18 @@ def _clean_facts(
         Cleaned fact dicts safe for JSON serialisation.
     """
     allowed_keys = {
-        "id", "content", "subject", "predicate",
-        "object", "confidence", "created_at",
-        "valid_from", "valid_to", "invalid_at",
+        "id",
+        "content",
+        "subject",
+        "predicate",
+        "object",
+        "confidence",
+        "created_at",
+        "valid_from",
+        "valid_to",
+        "invalid_at",
     }
-    return [
-        {k: v for k, v in fact.items() if k in allowed_keys}
-        for fact in facts
-    ]
+    return [{k: v for k, v in fact.items() if k in allowed_keys} for fact in facts]
 
 
 def _clean_entities(
@@ -298,10 +297,7 @@ def _clean_entities(
         Cleaned entity dicts safe for JSON serialisation.
     """
     allowed_keys = {"id", "name", "type", "summary"}
-    return [
-        {k: v for k, v in ent.items() if k in allowed_keys}
-        for ent in entities
-    ]
+    return [{k: v for k, v in ent.items() if k in allowed_keys} for ent in entities]
 
 
 def _clean_communities(
@@ -318,7 +314,4 @@ def _clean_communities(
         Cleaned community dicts safe for JSON serialisation.
     """
     allowed_keys = {"id", "name", "summary"}
-    return [
-        {k: v for k, v in com.items() if k in allowed_keys}
-        for com in communities
-    ]
+    return [{k: v for k, v in com.items() if k in allowed_keys} for com in communities]

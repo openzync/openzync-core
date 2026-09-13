@@ -7,6 +7,7 @@ Revision ID: 0006
 Revises: 0005
 Create Date: 2026-06-06
 """
+
 from collections.abc import Sequence
 
 import sqlalchemy as sa
@@ -33,31 +34,36 @@ def upgrade() -> None:
     # ── graph_entities ────────────────────────────────────────────────────
     op.create_table(
         "graph_entities",
-        sa.Column("id", sa.UUID(), primary_key=True,
-                  server_default=sa.text("gen_random_uuid()")),
+        sa.Column(
+            "id",
+            sa.UUID(),
+            primary_key=True,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
         sa.Column("organization_id", sa.UUID(), nullable=False),
         sa.Column("name", sa.Text(), nullable=False),
-        sa.Column("entity_type", sa.Text(), nullable=False,
-                  server_default="custom"),
+        sa.Column("entity_type", sa.Text(), nullable=False, server_default="custom"),
         sa.Column("summary", sa.Text(), nullable=True),
-        sa.Column("attributes", postgresql.JSONB(), nullable=False,
-                  server_default="{}"),
+        sa.Column(
+            "attributes", postgresql.JSONB(), nullable=False, server_default="{}"
+        ),
         sa.Column("embedding", sa.ARRAY(sa.Float()), nullable=True),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True),
-                  server_default=sa.func.now()),
-        sa.Column("updated_at", sa.TIMESTAMP(timezone=True),
-                  server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()
+        ),
+        sa.Column(
+            "updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()
+        ),
         sa.ForeignKeyConstraint(
-            ["organization_id"], ["organizations.id"],
+            ["organization_id"],
+            ["organizations.id"],
             ondelete="CASCADE",
         ),
     )
     # Tenant isolation
-    op.create_index("idx_graph_entities_org", "graph_entities",
-                    ["organization_id"])
+    op.create_index("idx_graph_entities_org", "graph_entities", ["organization_id"])
     # Type filtering
-    op.create_index("idx_graph_entities_type", "graph_entities",
-                    ["entity_type"])
+    op.create_index("idx_graph_entities_type", "graph_entities", ["entity_type"])
     # Fuzzy name search
     op.execute(
         "CREATE INDEX IF NOT EXISTS idx_graph_entities_name_trgm "
@@ -73,50 +79,68 @@ def upgrade() -> None:
     # ── graph_relationships ───────────────────────────────────────────────
     op.create_table(
         "graph_relationships",
-        sa.Column("id", sa.UUID(), primary_key=True,
-                  server_default=sa.text("gen_random_uuid()")),
+        sa.Column(
+            "id",
+            sa.UUID(),
+            primary_key=True,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
         sa.Column("organization_id", sa.UUID(), nullable=False),
         sa.Column("source_id", sa.UUID(), nullable=False),
         sa.Column("target_id", sa.UUID(), nullable=False),
         sa.Column("relationship_type", sa.Text(), nullable=False),
-        sa.Column("properties", postgresql.JSONB(), nullable=False,
-                  server_default="{}"),
+        sa.Column(
+            "properties", postgresql.JSONB(), nullable=False, server_default="{}"
+        ),
         sa.Column("fact", sa.Text(), nullable=True),
-        sa.Column("confidence", sa.Float(), nullable=False,
-                  server_default="1.0"),
+        sa.Column("confidence", sa.Float(), nullable=False, server_default="1.0"),
         sa.Column("source_episode_id", sa.UUID(), nullable=True),
         sa.Column("valid_from", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("valid_to", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("invalid_at", sa.TIMESTAMP(timezone=True), nullable=True),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True),
-                  server_default=sa.func.now()),
-        sa.ForeignKeyConstraint(
-            ["organization_id"], ["organizations.id"], ondelete="CASCADE",
+        sa.Column(
+            "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()
         ),
         sa.ForeignKeyConstraint(
-            ["source_id"], ["graph_entities.id"], ondelete="CASCADE",
+            ["organization_id"],
+            ["organizations.id"],
+            ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["target_id"], ["graph_entities.id"], ondelete="CASCADE",
+            ["source_id"],
+            ["graph_entities.id"],
+            ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["source_episode_id"], ["episodes.id"], ondelete="SET NULL",
+            ["target_id"],
+            ["graph_entities.id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["source_episode_id"],
+            ["episodes.id"],
+            ondelete="SET NULL",
         ),
     )
     # Tenant isolation
-    op.create_index("idx_graph_rels_org", "graph_relationships",
-                    ["organization_id"])
+    op.create_index("idx_graph_rels_org", "graph_relationships", ["organization_id"])
     # BFS traversal: find all edges from/to a node (with org scope)
-    op.create_index("idx_graph_rels_source_org", "graph_relationships",
-                    ["source_id", "organization_id"])
-    op.create_index("idx_graph_rels_target_org", "graph_relationships",
-                    ["target_id", "organization_id"])
+    op.create_index(
+        "idx_graph_rels_source_org",
+        "graph_relationships",
+        ["source_id", "organization_id"],
+    )
+    op.create_index(
+        "idx_graph_rels_target_org",
+        "graph_relationships",
+        ["target_id", "organization_id"],
+    )
     # Filter by relationship type
-    op.create_index("idx_graph_rels_type", "graph_relationships",
-                    ["relationship_type"])
+    op.create_index("idx_graph_rels_type", "graph_relationships", ["relationship_type"])
     # Temporal queries: find facts active at a point in time
-    op.create_index("idx_graph_rels_valid", "graph_relationships",
-                    ["valid_from", "valid_to"])
+    op.create_index(
+        "idx_graph_rels_valid", "graph_relationships", ["valid_from", "valid_to"]
+    )
     # Partial indexes for active (non-invalidated) edges — speeds up BFS
     op.execute(
         "CREATE INDEX IF NOT EXISTS idx_graph_rels_source_active "
@@ -138,18 +162,22 @@ def upgrade() -> None:
         "graph_episode_entities",
         sa.Column("episode_id", sa.UUID(), nullable=False),
         sa.Column("entity_id", sa.UUID(), nullable=False),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True),
-                  server_default=sa.func.now()),
-        sa.ForeignKeyConstraint(
-            ["episode_id"], ["episodes.id"], ondelete="CASCADE",
+        sa.Column(
+            "created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()
         ),
         sa.ForeignKeyConstraint(
-            ["entity_id"], ["graph_entities.id"], ondelete="CASCADE",
+            ["episode_id"],
+            ["episodes.id"],
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["entity_id"],
+            ["graph_entities.id"],
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("episode_id", "entity_id"),
     )
-    op.create_index("idx_graph_ep_entity", "graph_episode_entities",
-                    ["entity_id"])
+    op.create_index("idx_graph_ep_entity", "graph_episode_entities", ["entity_id"])
 
 
 def downgrade() -> None:

@@ -91,12 +91,16 @@ class ARQPool:
             RuntimeError: If ``initialize()`` has not been called.
         """
         if self._pool is None:
-            raise RuntimeError("ARQ pool has not been initialised — call initialize() first")
+            raise RuntimeError(
+                "ARQ pool has not been initialised — call initialize() first"
+            )
         return self._pool
 
     # ── Convenience ────────────────────────────────────────────────────────────
 
-    async def enqueue(self, task_name: str, queue_name: str | None = None, **kwargs: Any) -> str | None:
+    async def enqueue(
+        self, task_name: str, queue_name: str | None = None, **kwargs: Any
+    ) -> str | None:
         """Enqueue a background job.
 
         Args:

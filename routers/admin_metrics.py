@@ -60,7 +60,7 @@ def _get_metrics_service() -> MetricsService:
     description=(
         "Returns a combined view of DB counts (episodes, users, graphs) and "
         "Prometheus-backed performance metrics (latency, error rate, request "
-        "rate).  The ``status`` field is ``\"degraded\"`` if Prometheus is "
+        'rate).  The ``status`` field is ``"degraded"`` if Prometheus is '
         "unreachable — DB counts are still returned."
     ),
 )
@@ -77,9 +77,7 @@ async def get_metrics_summary(
     org_uuid = UUID(org_id)
 
     # ── DB counts (run concurrently) ─────────────────────────────────────
-    episode_stats, graph_stats, user_count = await _fetch_db_counts(
-        db, org_uuid
-    )
+    episode_stats, graph_stats, user_count = await _fetch_db_counts(db, org_uuid)
 
     # ── Prometheus metrics (org-scoped) ──────────────────────────────────
     perf = await prom.get_summary(org_id=str(org_uuid))
@@ -131,9 +129,7 @@ async def _prom_instant(promql: str) -> float:
     """Run a PromQL instant query and return the scalar value."""
     base_url = get_settings().PROMETHEUS_URL.rstrip("/")
     async with httpx.AsyncClient(timeout=5) as client:
-        resp = await client.get(
-            f"{base_url}/api/v1/query", params={"query": promql}
-        )
+        resp = await client.get(f"{base_url}/api/v1/query", params={"query": promql})
         resp.raise_for_status()
         data = resp.json()
     if data["status"] != "success":
@@ -396,7 +392,10 @@ async def _top_users_by_messages(
 async def _error_rate_by_day(
     db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
 ) -> dict:
-    promql = f'sum(increase(openzync_http_requests_total{{status="5xx",org_id="{org_uuid}"}}[1d]))'
+    promql = (
+        f'sum(increase(openzync_http_requests_total{{status="5xx",'
+        f'org_id="{org_uuid}"}}[1d]))'
+    )
     rows = await _prom_range(promql, days)
     return _result(
         "error_rate_by_day", True, ["timestamp", "value"], rows, {"days": days}
@@ -407,23 +406,48 @@ async def _latency_percentiles(
     db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
 ) -> dict:
     queries = {
-        "overall_p50": f'histogram_quantile(0.50, sum(rate(openzync_http_request_duration_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
-        "overall_p95": f'histogram_quantile(0.95, sum(rate(openzync_http_request_duration_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
-        "overall_p99": f'histogram_quantile(0.99, sum(rate(openzync_http_request_duration_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
-        "context_p50": f'histogram_quantile(0.50, sum(rate(openzync_context_latency_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
-        "context_p95": f'histogram_quantile(0.95, sum(rate(openzync_context_latency_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
-        "context_p99": f'histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
-        "graph_p50": f'histogram_quantile(0.50, sum(rate(openzync_graph_search_latency_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
-        "graph_p95": f'histogram_quantile(0.95, sum(rate(openzync_graph_search_latency_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
-        "graph_p99": f'histogram_quantile(0.99, sum(rate(openzync_graph_search_latency_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
+        "overall_p50": (
+            "histogram_quantile(0.50, sum(rate(openzync_http_request_duration_seconds"
+            f'_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000'
+        ),
+        "overall_p95": (
+            "histogram_quantile(0.95, sum(rate(openzync_http_request_duration_seconds"
+            f'_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000'
+        ),
+        "overall_p99": (
+            "histogram_quantile(0.99, sum(rate(openzync_http_request_duration_seconds"
+            f'_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000'
+        ),
+        "context_p50": (
+            "histogram_quantile(0.50, sum(rate(openzync_context_latency_seconds"
+            f'_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000'
+        ),
+        "context_p95": (
+            "histogram_quantile(0.95, sum(rate(openzync_context_latency_seconds"
+            f'_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000'
+        ),
+        "context_p99": (
+            "histogram_quantile(0.99, sum(rate(openzync_context_latency_seconds"
+            f'_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000'
+        ),
+        "graph_p50": (
+            "histogram_quantile(0.50, sum(rate(openzync_graph_search_latency_seconds"
+            f'_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000'
+        ),
+        "graph_p95": (
+            "histogram_quantile(0.95, sum(rate(openzync_graph_search_latency_seconds"
+            f'_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000'
+        ),
+        "graph_p99": (
+            "histogram_quantile(0.99, sum(rate(openzync_graph_search_latency_seconds"
+            f'_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000'
+        ),
     }
     rows = []
     for name, promql in queries.items():
         val = await _prom_instant(promql)
         rows.append([name, round(val, 1)])
-    return _result(
-        "latency_percentiles", True, ["metric", "value_ms"], rows, {}
-    )
+    return _result("latency_percentiles", True, ["metric", "value_ms"], rows, {})
 
 
 async def _queue_depth_over_time(
@@ -450,13 +474,17 @@ async def _queue_depth_over_time(
     )
     result = await db.execute(stmt)
     rows = [[str(r.date), r.count] for r in result]
-    return _result("queue_depth_over_time", True, ["date", "count"], rows, {"days": days})
+    return _result(
+        "queue_depth_over_time", True, ["date", "count"], rows, {"days": days}
+    )
 
 
 async def _context_retrieval_rate(
     db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
 ) -> dict:
-    promql = f'sum(rate(openzync_context_latency_seconds_count{{org_id="{org_uuid}"}}[5m]))'
+    promql = (
+        f'sum(rate(openzync_context_latency_seconds_count{{org_id="{org_uuid}"}}[5m]))'
+    )
     rows = await _prom_range(promql, days)
     return _result(
         "context_retrieval_rate", True, ["timestamp", "rate"], rows, {"days": days}
@@ -481,18 +509,90 @@ _QUERY_HANDLERS = {
 }
 
 AVAILABLE_QUERY_LIST: list[dict] = [
-    {"name": "episodes_per_day", "description": "Daily episode count", "category": "ingestion", "org_scoped": True, "params": ["days"]},
-    {"name": "messages_per_day", "description": "Daily message count", "category": "ingestion", "org_scoped": True, "params": ["days"]},
-    {"name": "users_per_day", "description": "Daily user creation", "category": "users", "org_scoped": True, "params": ["days"]},
-    {"name": "entities_per_day", "description": "Daily graph entity creation", "category": "graph", "org_scoped": True, "params": ["days"]},
-    {"name": "facts_per_day", "description": "Daily fact extraction", "category": "graph", "org_scoped": True, "params": ["days"]},
-    {"name": "enrichment_progress", "description": "Enrichment status breakdown", "category": "ingestion", "org_scoped": True, "params": []},
-    {"name": "top_projects_by_episodes", "description": "Projects ranked by episode count", "category": "projects", "org_scoped": True, "params": ["limit"]},
-    {"name": "top_users_by_messages", "description": "Users ranked by message count", "category": "users", "org_scoped": True, "params": ["limit"]},
-    {"name": "error_rate_by_day", "description": "Daily 5xx error counts", "category": "performance", "org_scoped": True, "params": ["days"]},
-    {"name": "latency_percentiles", "description": "Current p50/p95/p99 latency", "category": "performance", "org_scoped": True, "params": []},
-    {"name": "queue_depth_over_time", "description": "Pending enrichments per day (org backlog)", "category": "performance", "org_scoped": True, "params": ["days"]},
-    {"name": "context_retrieval_rate", "description": "Context assembly request rate", "category": "performance", "org_scoped": True, "params": ["days"]},
+    {
+        "name": "episodes_per_day",
+        "description": "Daily episode count",
+        "category": "ingestion",
+        "org_scoped": True,
+        "params": ["days"],
+    },
+    {
+        "name": "messages_per_day",
+        "description": "Daily message count",
+        "category": "ingestion",
+        "org_scoped": True,
+        "params": ["days"],
+    },
+    {
+        "name": "users_per_day",
+        "description": "Daily user creation",
+        "category": "users",
+        "org_scoped": True,
+        "params": ["days"],
+    },
+    {
+        "name": "entities_per_day",
+        "description": "Daily graph entity creation",
+        "category": "graph",
+        "org_scoped": True,
+        "params": ["days"],
+    },
+    {
+        "name": "facts_per_day",
+        "description": "Daily fact extraction",
+        "category": "graph",
+        "org_scoped": True,
+        "params": ["days"],
+    },
+    {
+        "name": "enrichment_progress",
+        "description": "Enrichment status breakdown",
+        "category": "ingestion",
+        "org_scoped": True,
+        "params": [],
+    },
+    {
+        "name": "top_projects_by_episodes",
+        "description": "Projects ranked by episode count",
+        "category": "projects",
+        "org_scoped": True,
+        "params": ["limit"],
+    },
+    {
+        "name": "top_users_by_messages",
+        "description": "Users ranked by message count",
+        "category": "users",
+        "org_scoped": True,
+        "params": ["limit"],
+    },
+    {
+        "name": "error_rate_by_day",
+        "description": "Daily 5xx error counts",
+        "category": "performance",
+        "org_scoped": True,
+        "params": ["days"],
+    },
+    {
+        "name": "latency_percentiles",
+        "description": "Current p50/p95/p99 latency",
+        "category": "performance",
+        "org_scoped": True,
+        "params": [],
+    },
+    {
+        "name": "queue_depth_over_time",
+        "description": "Pending enrichments per day (org backlog)",
+        "category": "performance",
+        "org_scoped": True,
+        "params": ["days"],
+    },
+    {
+        "name": "context_retrieval_rate",
+        "description": "Context assembly request rate",
+        "category": "performance",
+        "org_scoped": True,
+        "params": ["days"],
+    },
 ]
 
 
@@ -511,7 +611,9 @@ async def run_org_query(
     query: str = Query(..., description="Query name (see /metrics/queries)"),
     days: int = Query(default=7, ge=1, le=365, description="Look-back window in days"),
     limit: int = Query(default=20, ge=1, le=100, description="Max results"),
-    project_id: str | None = Query(default=None, description="Optional project UUID filter"),
+    project_id: str | None = Query(
+        default=None, description="Optional project UUID filter"
+    ),
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_permission("members:read")),
     prom: MetricsService = Depends(_get_metrics_service),
@@ -567,13 +669,15 @@ async def get_prometheus_targets(
 
     targets = []
     for t in data.get("data", {}).get("activeTargets", []):
-        targets.append({
-            "job": t.get("labels", {}).get("job", ""),
-            "instance": t.get("labels", {}).get("instance", ""),
-            "health": t.get("health", "unknown"),
-            "last_scrape": t.get("lastScrape", ""),
-            "last_error": t.get("lastError", "") or None,
-        })
+        targets.append(
+            {
+                "job": t.get("labels", {}).get("job", ""),
+                "instance": t.get("labels", {}).get("instance", ""),
+                "health": t.get("health", "unknown"),
+                "last_scrape": t.get("lastScrape", ""),
+                "last_error": t.get("lastError", "") or None,
+            }
+        )
 
     return {"status": "ok", "targets": targets}
 
@@ -664,9 +768,9 @@ async def _fetch_db_counts(
         enrichment_pending=episodes_pending,
         fully_enriched=episodes_fully_enriched,
         with_embeddings=episodes_with_embeddings,
-        fully_enriched_pct=round(
-            episodes_fully_enriched / episodes_total * 100, 1
-        ) if episodes_total > 0 else 0.0,
+        fully_enriched_pct=round(episodes_fully_enriched / episodes_total * 100, 1)
+        if episodes_total > 0
+        else 0.0,
     )
 
     # ── Graph counts ────────────────────────────────────────────────────

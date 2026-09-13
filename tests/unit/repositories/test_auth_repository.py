@@ -363,9 +363,7 @@ class TestAuthRepository:
         successor_id = uuid4()
         mock_db.execute.return_value = MagicMock(rowcount=1)
 
-        await repo.set_refresh_token_rotated_by(
-            self.TOKEN_ID, successor_id
-        )
+        await repo.set_refresh_token_rotated_by(self.TOKEN_ID, successor_id)
 
         mock_db.execute.assert_awaited_once()
         mock_db.flush.assert_awaited_once()
@@ -376,9 +374,7 @@ class TestAuthRepository:
         """revoke_refresh_token_ids revokes the family in one statement."""
         mock_db.execute.return_value = MagicMock(rowcount=3)
 
-        count = await repo.revoke_refresh_token_ids(
-            [uuid4(), uuid4(), uuid4()]
-        )
+        count = await repo.revoke_refresh_token_ids([uuid4(), uuid4(), uuid4()])
 
         assert count == 3
         mock_db.flush.assert_awaited_once()
@@ -392,9 +388,7 @@ class TestAuthRepository:
         assert count == 0
         mock_db.execute.assert_not_awaited()
 
-    async def test_rollback(
-        self, repo: AuthRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_rollback(self, repo: AuthRepository, mock_db: AsyncMock) -> None:
         """rollback delegates to the session (post-IntegrityError recovery)."""
         await repo.rollback()
         mock_db.rollback.assert_awaited_once()
@@ -505,16 +499,12 @@ class TestAuthRepository:
 
     # ── flush / refresh ────────────────────────────────────────────────────────
 
-    async def test_flush(
-        self, repo: AuthRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_flush(self, repo: AuthRepository, mock_db: AsyncMock) -> None:
         """flush delegates to the session."""
         await repo.flush()
         mock_db.flush.assert_awaited_once()
 
-    async def test_refresh(
-        self, repo: AuthRepository, mock_db: AsyncMock
-    ) -> None:
+    async def test_refresh(self, repo: AuthRepository, mock_db: AsyncMock) -> None:
         """refresh delegates to the session."""
         instance = MagicMock()
         await repo.refresh(instance)
@@ -572,6 +562,4 @@ class TestAuthRepository:
         from core.exceptions import NotFoundError
 
         with pytest.raises(NotFoundError):
-            await repo.update_dashboard_user(
-                user_id=self.USER_ID, name="New Name"
-            )
+            await repo.update_dashboard_user(user_id=self.USER_ID, name="New Name")

@@ -85,16 +85,24 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.ForeignKeyConstraint(
-            ["project_id"], ["projects.id"], ondelete="CASCADE",
+            ["project_id"],
+            ["projects.id"],
+            ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["old_fact_id"], ["facts.id"], ondelete="SET NULL",
+            ["old_fact_id"],
+            ["facts.id"],
+            ondelete="SET NULL",
         ),
         sa.ForeignKeyConstraint(
-            ["new_fact_id"], ["facts.id"], ondelete="SET NULL",
+            ["new_fact_id"],
+            ["facts.id"],
+            ondelete="SET NULL",
         ),
         sa.ForeignKeyConstraint(
-            ["source_episode_id"], ["episodes.id"], ondelete="SET NULL",
+            ["source_episode_id"],
+            ["episodes.id"],
+            ondelete="SET NULL",
         ),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -139,7 +147,9 @@ def downgrade() -> None:
     """
     op.drop_table("fact_invalidation_events")
     op.drop_constraint(
-        "fk_facts_superseded_by_fact_id", "facts", type_="foreignkey",
+        "fk_facts_superseded_by_fact_id",
+        "facts",
+        type_="foreignkey",
     )
     op.drop_index("ix_facts_superseded_by_fact_id", table_name="facts")
     op.drop_column("facts", "superseded_by_fact_id")

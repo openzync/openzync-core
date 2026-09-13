@@ -8,12 +8,15 @@ Raises ``GraphBackendUnavailableError`` when no backend is available.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from core.exceptions import GraphBackendUnavailableError
-from packages.graph_backend.interface import GraphBackend
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from packages.graph_backend.interface import GraphBackend
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +182,7 @@ class EntityRepository:
             for r in results:
                 if name_lower in r.get("name", "").lower():
                     return r
-            # Third pass: reversed contains (handles "Alice Johnson" searching for "Alice J")
+            # Third pass: reversed contains ("Alice Johnson" matches "Alice J")
             for r in results:
                 if r.get("name", "").lower().strip() in name_lower:
                     return r

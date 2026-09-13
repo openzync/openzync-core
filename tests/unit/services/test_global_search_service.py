@@ -3,6 +3,7 @@
 All DB interactions are mocked at the service boundary — no real I/O occurs.
 Each private query method is replaced with an AsyncMock returning controlled data.
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -26,7 +27,9 @@ class TestGlobalSearchService:
     def _make_service(self) -> tuple[GlobalSearchService, AsyncMock]:
         """Create a GlobalSearchService with mocked DB session."""
         mock_db = AsyncMock()
-        service = GlobalSearchService(db=mock_db, org_id=self.ORG_ID, user_id=self.USER_ID)
+        service = GlobalSearchService(
+            db=mock_db, org_id=self.ORG_ID, user_id=self.USER_ID
+        )
         return service, mock_db
 
     @staticmethod
@@ -60,16 +63,25 @@ class TestGlobalSearchService:
         # Mock _db.execute to return different results for each query
         # We mock the private methods instead since they're the composition units
         mock_project_item = GlobalSearchItem(
-            type="project", id="p1", label="Proj A",
-            subtitle="desc", href="/projects/p1",
+            type="project",
+            id="p1",
+            label="Proj A",
+            subtitle="desc",
+            href="/projects/p1",
         )
         mock_user_item = GlobalSearchItem(
-            type="user", id="u1", label="user@example.com",
-            subtitle="User One", href="/users/u1",
+            type="user",
+            id="u1",
+            label="user@example.com",
+            subtitle="User One",
+            href="/users/u1",
         )
         mock_session_item = GlobalSearchItem(
-            type="session", id="s1", label="SESS-001",
-            subtitle="Proj A", href="/projects/p1/sessions/s1",
+            type="session",
+            id="s1",
+            label="SESS-001",
+            subtitle="Proj A",
+            href="/projects/p1/sessions/s1",
         )
 
         service._search_projects = AsyncMock(return_value=[mock_project_item])
@@ -104,18 +116,33 @@ class TestGlobalSearchService:
 
         # Return more results than the limit allows
         projects = [
-            GlobalSearchItem(type="project", id=f"p{i}", label=f"P{i}",
-                             subtitle=None, href=f"/projects/p{i}")
+            GlobalSearchItem(
+                type="project",
+                id=f"p{i}",
+                label=f"P{i}",
+                subtitle=None,
+                href=f"/projects/p{i}",
+            )
             for i in range(5)
         ]
         users = [
-            GlobalSearchItem(type="user", id=f"u{i}", label=f"u{i}@e.com",
-                             subtitle=None, href=f"/users/u{i}")
+            GlobalSearchItem(
+                type="user",
+                id=f"u{i}",
+                label=f"u{i}@e.com",
+                subtitle=None,
+                href=f"/users/u{i}",
+            )
             for i in range(5)
         ]
         sessions = [
-            GlobalSearchItem(type="session", id=f"s{i}", label=f"S{i}",
-                             subtitle="Proj", href=f"/proj/s/{i}")
+            GlobalSearchItem(
+                type="session",
+                id=f"s{i}",
+                label=f"S{i}",
+                subtitle="Proj",
+                href=f"/proj/s/{i}",
+            )
             for i in range(5)
         ]
 
@@ -131,16 +158,23 @@ class TestGlobalSearchService:
         """``search`` results are sorted by type then label."""
         service, mock_db = self._make_service()
 
-        service._search_projects = AsyncMock(return_value=[
-            GlobalSearchItem(type="project", id="p2", label="Beta",
-                             subtitle=None, href="/p2"),
-            GlobalSearchItem(type="project", id="p1", label="Alpha",
-                             subtitle=None, href="/p1"),
-        ])
-        service._search_users = AsyncMock(return_value=[
-            GlobalSearchItem(type="user", id="u1", label="b@e.com",
-                             subtitle=None, href="/u1"),
-        ])
+        service._search_projects = AsyncMock(
+            return_value=[
+                GlobalSearchItem(
+                    type="project", id="p2", label="Beta", subtitle=None, href="/p2"
+                ),
+                GlobalSearchItem(
+                    type="project", id="p1", label="Alpha", subtitle=None, href="/p1"
+                ),
+            ]
+        )
+        service._search_users = AsyncMock(
+            return_value=[
+                GlobalSearchItem(
+                    type="user", id="u1", label="b@e.com", subtitle=None, href="/u1"
+                ),
+            ]
+        )
         service._search_sessions = AsyncMock(return_value=[])
 
         results = await service.search("test", limit=10)

@@ -141,7 +141,11 @@ class User(TimestampMixin, Base):
             name="uq_user_organization_external",
         ),
         Index("ix_user_organization_id", "organization_id"),
-        Index("ix_user_email_unique", "email", postgresql_where=text("email IS NOT NULL AND is_deleted = false")),
+        Index(
+            "ix_user_email_unique",
+            "email",
+            postgresql_where=text("email IS NOT NULL AND is_deleted = false"),
+        ),
         Index(
             "ix_user_invite_token_hash",
             "invite_token_hash",

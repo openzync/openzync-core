@@ -82,7 +82,8 @@ class TestOtpService:
         assert h1 != h2
 
     async def test_constant_time_comparison_used(
-        self, otp_service: OtpService,
+        self,
+        otp_service: OtpService,
     ) -> None:
         """The verify method uses ``hmac.compare_digest`` for comparison."""
         source = inspect.getsource(otp_service.verify)

@@ -122,7 +122,9 @@ class TestSelectCanonical:
         ]
 
         canonical = await _select_canonical(
-            mock_db, org_id, sample_cluster,
+            mock_db,
+            org_id,
+            sample_cluster,
         )
 
         assert canonical["id"] == "11111111-1111-4111-a111-111111111111"
@@ -151,7 +153,9 @@ class TestSelectCanonical:
         cluster[1]["updated_at"] = datetime(2024, 6, 1, tzinfo=UTC)
 
         canonical = await _select_canonical(
-            mock_db, org_id, cluster,
+            mock_db,
+            org_id,
+            cluster,
         )
 
         assert canonical["id"] == "33333333-3333-4333-a333-333333333333"
@@ -165,7 +169,9 @@ class TestSelectCanonical:
     ) -> None:
         """A cluster with one entity should return that entity as canonical."""
         canonical = await _select_canonical(
-            mock_db, org_id, single_entity_cluster,
+            mock_db,
+            org_id,
+            single_entity_cluster,
         )
 
         assert canonical["id"] == "44444444-4444-4444-a444-444444444444"
@@ -194,7 +200,9 @@ class TestMergeCluster:
         mock_db.execute.return_value.rowcount = 2
 
         result = await _merge_cluster(
-            mock_db, org_id, sample_cluster,
+            mock_db,
+            org_id,
+            sample_cluster,
         )
 
         assert result["entities_merged"] == 2
@@ -215,7 +223,9 @@ class TestMergeCluster:
     ) -> None:
         """A single-entity cluster should return zero merges."""
         result = await _merge_cluster(
-            mock_db, org_id, single_entity_cluster,
+            mock_db,
+            org_id,
+            single_entity_cluster,
         )
 
         assert result["entities_merged"] == 0
@@ -246,9 +256,9 @@ class TestMergeCluster:
         )
         # Verify the entry passed to add has details containing 'before'
         audit_calls = [
-            call for call in mock_db.add.call_args_list
-            if hasattr(call[0][0], "action")
-            and call[0][0].action == "entity.merge"
+            call
+            for call in mock_db.add.call_args_list
+            if hasattr(call[0][0], "action") and call[0][0].action == "entity.merge"
         ]
         assert len(audit_calls) == 1, "Expected exactly one audit log entry"
         entry = audit_calls[0][0][0]

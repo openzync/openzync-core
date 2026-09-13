@@ -130,9 +130,7 @@ class PromptManifest:
 
     def get_default_names(self) -> list[str]:
         """Return the template names of all type-default entries."""
-        return [
-            t["name"] for t in self.templates if t.get("is_default_for_type")
-        ]
+        return [t["name"] for t in self.templates if t.get("is_default_for_type")]
 
     # ── File I/O ────────────────────────────────────────────────────────────
 
@@ -140,7 +138,8 @@ class PromptManifest:
         """Read the actual prompt template text from disk.
 
         Args:
-            file_name: Relative filename from the manifest (e.g. ``"extract_facts_v4.jinja2"``).
+            file_name: Relative filename from the manifest
+                (e.g. ``"extract_facts_v4.jinja2"``).
 
         Returns:
             The full file contents as a string.

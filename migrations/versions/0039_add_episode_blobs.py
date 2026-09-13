@@ -11,10 +11,13 @@ Create Date: 2026-07-24
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from alembic import op
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 revision: str = "0039"
 down_revision: str | None = "0028"
@@ -27,7 +30,8 @@ def upgrade() -> None:
         "episode_blobs",
         # ── Primary key ────────────────────────────────────────────────────────
         sa.Column(
-            "id", sa.UUID(),
+            "id",
+            sa.UUID(),
             primary_key=True,
             server_default=sa.text("gen_random_uuid()"),
         ),
@@ -39,8 +43,10 @@ def upgrade() -> None:
         sa.Column("created_by", sa.UUID(), nullable=False),
         # ── Storage metadata ───────────────────────────────────────────────────
         sa.Column(
-            "storage_backend", sa.VARCHAR(16),
-            nullable=False, server_default=sa.text("'s3'"),
+            "storage_backend",
+            sa.VARCHAR(16),
+            nullable=False,
+            server_default=sa.text("'s3'"),
         ),
         sa.Column("storage_key", sa.Text(), nullable=False),
         sa.Column("file_name", sa.VARCHAR(512), nullable=False),
@@ -54,41 +60,53 @@ def upgrade() -> None:
         sa.Column("extracted_text", sa.Text(), nullable=True),
         # ── Order within the episode ───────────────────────────────────────────
         sa.Column(
-            "blob_index", sa.Integer(),
-            nullable=False, server_default=sa.text("0"),
+            "blob_index",
+            sa.Integer(),
+            nullable=False,
+            server_default=sa.text("0"),
         ),
         # ── Timestamps ─────────────────────────────────────────────────────────
         sa.Column(
-            "created_at", sa.TIMESTAMP(timezone=True),
-            server_default=sa.func.now(), nullable=False,
+            "created_at",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
         ),
         sa.Column(
-            "updated_at", sa.TIMESTAMP(timezone=True),
-            server_default=sa.func.now(), nullable=False,
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
         ),
         # ── Constraints ────────────────────────────────────────────────────────
         sa.ForeignKeyConstraint(
-            ["organization_id"], ["organizations.id"],
+            ["organization_id"],
+            ["organizations.id"],
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["project_id"], ["projects.id"],
+            ["project_id"],
+            ["projects.id"],
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["session_id"], ["sessions.id"],
+            ["session_id"],
+            ["sessions.id"],
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["episode_id"], ["episodes.id"],
+            ["episode_id"],
+            ["episodes.id"],
             ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["created_by"], ["users.id"],
+            ["created_by"],
+            ["users.id"],
             ondelete="CASCADE",
         ),
         sa.UniqueConstraint(
-            "episode_id", "blob_index",
+            "episode_id",
+            "blob_index",
             name="uq_episode_blob_index",
         ),
         # ── Table comment ──────────────────────────────────────────────────────
@@ -98,18 +116,24 @@ def upgrade() -> None:
     # ── Indexes for common query patterns ──────────────────────────────────────
     # All blobs for a session (e.g. "show me everything from this session")
     op.create_index(
-        "ix_episode_blobs_session", "episode_blobs", ["session_id"],
+        "ix_episode_blobs_session",
+        "episode_blobs",
+        ["session_id"],
     )
 
     # All blobs in a project (e.g. "show me all files in this project")
     op.create_index(
-        "ix_episode_blobs_project", "episode_blobs", ["project_id"],
+        "ix_episode_blobs_project",
+        "episode_blobs",
+        ["project_id"],
     )
 
     # Lookup by content hash for dedup / reuse ("has this file been uploaded
     # before?")
     op.create_index(
-        "ix_episode_blobs_content_hash", "episode_blobs", ["content_hash"],
+        "ix_episode_blobs_content_hash",
+        "episode_blobs",
+        ["content_hash"],
     )
 
 

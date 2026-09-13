@@ -8,11 +8,10 @@ logic, no schema construction.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.cursor import decode_cursor, encode_cursor
 from models.episode import Episode
@@ -20,6 +19,9 @@ from models.fact import Fact
 from models.graph_observation import GraphObservation
 from models.project import Project
 from models.session import Session
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class SessionRepository:
@@ -182,9 +184,9 @@ class SessionRepository:
                 )
             )
 
-        query = query.order_by(
-            Session.created_at.desc(), Session.id.asc()
-        ).limit(effective_limit)
+        query = query.order_by(Session.created_at.desc(), Session.id.asc()).limit(
+            effective_limit
+        )
 
         result = await self._db.execute(query)
         rows = result.scalars().all()
@@ -255,9 +257,9 @@ class SessionRepository:
                 )
             )
 
-        query = query.order_by(
-            Episode.sequence_number.asc(), Episode.id.asc()
-        ).limit(effective_limit)
+        query = query.order_by(Episode.sequence_number.asc(), Episode.id.asc()).limit(
+            effective_limit
+        )
 
         result = await self._db.execute(query)
         rows = result.scalars().all()
@@ -268,9 +270,7 @@ class SessionRepository:
         next_cursor: str | None = None
         if has_more and messages:
             last = messages[-1]
-            next_cursor = self._encode_message_cursor(
-                last.sequence_number, last.id
-            )
+            next_cursor = self._encode_message_cursor(last.sequence_number, last.id)
 
         return messages, next_cursor
 
@@ -346,9 +346,7 @@ class SessionRepository:
 
     # ── Close ───────────────────────────────────────────────────────────────
 
-    async def close(
-        self, org_id: UUID, session_id: UUID
-    ) -> Session | None:
+    async def close(self, org_id: UUID, session_id: UUID) -> Session | None:
         """Mark a session as closed by setting ``closed_at = now()``, scoped to org.
 
         Idempotent — calling close on an already-closed session returns
@@ -494,9 +492,7 @@ class SessionRepository:
             "pending_enrichment_count": row.pending_enrichment_count or 0,
         }
 
-    async def get_observation_count(
-        self, org_id: UUID, project_id: UUID
-    ) -> int:
+    async def get_observation_count(self, org_id: UUID, project_id: UUID) -> int:
         """Return the total number of observations for a project.
 
         Observations are computed by the ``compute_observations`` worker
@@ -509,9 +505,13 @@ class SessionRepository:
         Returns:
             Total observation count (0 if none or table is empty).
         """
-        stmt = select(func.count()).select_from(GraphObservation).where(
-            GraphObservation.organization_id == org_id,
-            GraphObservation.project_id == project_id,
+        stmt = (
+            select(func.count())
+            .select_from(GraphObservation)
+            .where(
+                GraphObservation.organization_id == org_id,
+                GraphObservation.project_id == project_id,
+            )
         )
         result = await self._db.execute(stmt)
         return result.scalar() or 0
@@ -547,15 +547,19 @@ class SessionRepository:
             .scalar_subquery()
         )
 
-        stmt = select(
-            Episode.session_id,
-            func.count(Episode.id).label("message_count"),
-            func.coalesce(func.sum(fact_subq), 0).label("fact_count"),
-        ).where(
-            Episode.session_id.in_(session_ids),
-            Episode.organization_id == organization_id,
-            Episode.is_deleted.is_(False),
-        ).group_by(Episode.session_id)
+        stmt = (
+            select(
+                Episode.session_id,
+                func.count(Episode.id).label("message_count"),
+                func.coalesce(func.sum(fact_subq), 0).label("fact_count"),
+            )
+            .where(
+                Episode.session_id.in_(session_ids),
+                Episode.organization_id == organization_id,
+                Episode.is_deleted.is_(False),
+            )
+            .group_by(Episode.session_id)
+        )
 
         result = await self._db.execute(stmt)
         return {
@@ -584,7 +588,9 @@ class SessionRepository:
         Returns:
             A list of stale open Sessions.
         """
-        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(hours=inactivity_hours)
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+            hours=inactivity_hours
+        )
         result = await self._db.execute(
             select(Session)
             .where(

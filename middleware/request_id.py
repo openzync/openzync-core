@@ -16,9 +16,12 @@ Usage in ``main.py``:
 from __future__ import annotations
 
 import uuid
+from typing import TYPE_CHECKING
 
 import structlog
-from starlette.types import ASGIApp, Receive, Scope, Send
+
+if TYPE_CHECKING:
+    from starlette.types import ASGIApp, Receive, Scope, Send
 
 
 class RequestIDMiddleware:
@@ -50,15 +53,15 @@ class RequestIDMiddleware:
         async def send_wrapper(message: dict) -> None:
             if message["type"] == "http.response.start":
                 headers_list = list(message.get("headers", []))
-                headers_list.append(
-                    (b"X-Request-ID", request_id.encode())
-                )
+                headers_list.append((b"X-Request-ID", request_id.encode()))
                 message["headers"] = headers_list
             await send(message)
 
         try:
             await self.app(scope, receive, send_wrapper)
-        except Exception:  # Never catch KeyboardInterrupt/SystemExit — let them propagate
+        except (
+            Exception
+        ):  # Never catch KeyboardInterrupt/SystemExit — let them propagate
             raise
         finally:
             structlog.contextvars.clear_contextvars()

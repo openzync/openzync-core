@@ -49,9 +49,7 @@ class TestHandlerAsyncness:
         non_async: list[str] = []
         for exc_type, handler in app.exception_handlers.items():
             if not inspect.iscoroutinefunction(handler):
-                non_async.append(
-                    f"{exc_type.__name__}: {type(handler).__name__}"
-                )
+                non_async.append(f"{exc_type.__name__}: {type(handler).__name__}")
 
         assert not non_async, (
             f"All exception handlers must be async coroutines; "
@@ -90,9 +88,7 @@ class TestProblemJsonResponseIntegrity:
         body_len = len(response.body)
         content_length = response.headers.get("content-length")
 
-        assert content_length is not None, (
-            "Content-Length header must be set"
-        )
+        assert content_length is not None, "Content-Length header must be set"
         assert int(content_length) == body_len, (
             f"Content-Length ({content_length}) != body length ({body_len}); "
             f"body was: {response.body.decode()}"

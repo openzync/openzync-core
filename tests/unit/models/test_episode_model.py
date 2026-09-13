@@ -1,4 +1,5 @@
 """Tests for ``Episode`` model."""
+
 from __future__ import annotations
 
 import uuid
@@ -32,7 +33,13 @@ class TestEpisodeModel:
     @pytest.mark.unit
     def test_defaults_configured(self) -> None:
         """metadata_, token_count, sequence_number, enrichment_status, is_deleted have server_defaults."""
-        for col_name in ["metadata", "token_count", "sequence_number", "enrichment_status", "is_deleted"]:
+        for col_name in [
+            "metadata",
+            "token_count",
+            "sequence_number",
+            "enrichment_status",
+            "is_deleted",
+        ]:
             col = Episode.__table__.columns[col_name]
             # 'metadata' column uses name="metadata" in the mapping
             assert col.server_default is not None, f"{col_name} missing server_default"
@@ -68,7 +75,9 @@ class TestEpisodeModel:
         """Indices exist on (session_id, sequence_number) and user_id."""
         constraints = Episode.__table_args__
         index_names = {
-            c.name for c in constraints if hasattr(c, "name") and not c.name.startswith("ck_")
+            c.name
+            for c in constraints
+            if hasattr(c, "name") and not c.name.startswith("ck_")
         }
         assert "ix_episode_session_sequence" in index_names
         assert "ix_episode_user_id" in index_names

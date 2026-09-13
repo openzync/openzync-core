@@ -84,7 +84,9 @@ class TestSchemaService:
 
         payload = UpdateExtractionSchemaRequest(prompt_template="updated")
         result = await service.update_schema(
-            self.ORG_ID, uuid4(), payload=payload,
+            self.ORG_ID,
+            uuid4(),
+            payload=payload,
         )
         assert result.prompt_template == "updated"
 

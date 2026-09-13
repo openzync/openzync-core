@@ -38,7 +38,7 @@ from uuid import UUID
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from tests.integration.conftest import asgi_transport
+from tests.integration.conftest import asgi_transport, bootstrap_tenant
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Helpers
@@ -82,9 +82,7 @@ async def _session_message_count(
     )
     assert sessions_resp.status_code == 200, sessions_resp.text
     sessions_data = sessions_resp.json().get("data", [])
-    matches = [
-        s for s in sessions_data if s["external_id"] == session_external_id
-    ]
+    matches = [s for s in sessions_data if s["external_id"] == session_external_id]
     if not matches:
         return 0
     msgs_resp = await client.get(
@@ -177,11 +175,15 @@ class TestMemoryIngestion:
         _start = time.monotonic()
         response = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/memory",
-            data={"data": json.dumps({
-                "external_id": "ingest_happy_user",
-                "session_id": "test_session",
-                "messages": _ten_turn_conversation,
-            })},
+            data={
+                "data": json.dumps(
+                    {
+                        "external_id": "ingest_happy_user",
+                        "session_id": "test_session",
+                        "messages": _ten_turn_conversation,
+                    }
+                )
+            },
         )
         _elapsed_ms = (time.monotonic() - _start) * 1000
         assert response.status_code == 202, (
@@ -219,16 +221,19 @@ class TestMemoryIngestion:
         """
         response = await anon_client.post(
             "/v1/projects/00000000-0000-0000-0000-000000000000/memory",
-            data={"data": json.dumps({
-                "session_id": "no_auth_session",
-                "messages": [
-                    {"role": "user", "content": "Hello"},
-                ],
-            })},
+            data={
+                "data": json.dumps(
+                    {
+                        "session_id": "no_auth_session",
+                        "messages": [
+                            {"role": "user", "content": "Hello"},
+                        ],
+                    }
+                )
+            },
         )
         assert response.status_code == 401, (
-            f"Expected 401 without auth, "
-            f"got {response.status_code}: {response.text}"
+            f"Expected 401 without auth, got {response.status_code}: {response.text}"
         )
         body = response.json()
         # RFC 7807 problem-detail shape
@@ -259,13 +264,17 @@ class TestMemoryIngestion:
 
         response = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/memory",
-            data={"data": json.dumps({
-                "external_id": "missing_sesh_user",
-                "messages": [
-                    {"role": "user", "content": "No session ID"},
-                    {"role": "assistant", "content": "Must 422"},
-                ],
-            })},
+            data={
+                "data": json.dumps(
+                    {
+                        "external_id": "missing_sesh_user",
+                        "messages": [
+                            {"role": "user", "content": "No session ID"},
+                            {"role": "assistant", "content": "Must 422"},
+                        ],
+                    }
+                )
+            },
         )
         assert response.status_code == 422, (
             f"Expected 422, got {response.status_code}: {response.text}"
@@ -294,12 +303,16 @@ class TestMemoryIngestion:
         """
         response = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/memory",
-            data={"data": json.dumps({
-                "session_id": "any-session",
-                "messages": [
-                    {"role": "invalid-role", "content": "Hello"},
-                ],
-            })},
+            data={
+                "data": json.dumps(
+                    {
+                        "session_id": "any-session",
+                        "messages": [
+                            {"role": "invalid-role", "content": "Hello"},
+                        ],
+                    }
+                )
+            },
         )
         assert response.status_code == 422, (
             f"Expected 422, got {response.status_code}: {response.text}"
@@ -328,12 +341,16 @@ class TestMemoryIngestion:
         """
         response = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/memory",
-            data={"data": json.dumps({
-                "session_id": "no-such-session",
-                "messages": [
-                    {"role": "user", "content": "Hello"},
-                ],
-            })},
+            data={
+                "data": json.dumps(
+                    {
+                        "session_id": "no-such-session",
+                        "messages": [
+                            {"role": "user", "content": "Hello"},
+                        ],
+                    }
+                )
+            },
         )
         assert response.status_code == 404, (
             f"Expected 404, got {response.status_code}: {response.text}"
@@ -397,8 +414,7 @@ class TestMemoryIngestion:
             data={"data": json.dumps(payload)},
         )
         assert resp2.status_code == 202, (
-            f"Expected 202 on idempotent replay, "
-            f"got {resp2.status_code}: {resp2.text}"
+            f"Expected 202 on idempotent replay, got {resp2.status_code}: {resp2.text}"
         )
         body2 = resp2.json()
         _assert_ingest_response_shape(body2, expected_episodes=1)
@@ -443,13 +459,17 @@ class TestMemoryIngestion:
         resp1 = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/memory",
             headers={"Idempotency-Key": idem_key},
-            data={"data": json.dumps({
-                "external_id": "idem_conflict_user",
-                "session_id": "conflict_session",
-                "messages": [
-                    {"role": "user", "content": "Original message"},
-                ],
-            })},
+            data={
+                "data": json.dumps(
+                    {
+                        "external_id": "idem_conflict_user",
+                        "session_id": "conflict_session",
+                        "messages": [
+                            {"role": "user", "content": "Original message"},
+                        ],
+                    }
+                )
+            },
         )
         assert resp1.status_code == 202, f"First request failed: {resp1.text}"
 
@@ -463,13 +483,17 @@ class TestMemoryIngestion:
         resp2 = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/memory",
             headers={"Idempotency-Key": idem_key},
-            data={"data": json.dumps({
-                "external_id": "idem_conflict_user",
-                "session_id": "conflict_session",
-                "messages": [
-                    {"role": "user", "content": "Completely different content"},
-                ],
-            })},
+            data={
+                "data": json.dumps(
+                    {
+                        "external_id": "idem_conflict_user",
+                        "session_id": "conflict_session",
+                        "messages": [
+                            {"role": "user", "content": "Completely different content"},
+                        ],
+                    }
+                )
+            },
         )
         assert resp2.status_code == 409, (
             f"Expected 409 (idempotency key conflict), "
@@ -549,8 +573,7 @@ class TestMemoryIngestion:
             data={"data": json.dumps(payload)},
         )
         assert resp2.status_code == 202, (
-            f"Expected 202 on dedup hit, "
-            f"got {resp2.status_code}: {resp2.text}"
+            f"Expected 202 on dedup hit, got {resp2.status_code}: {resp2.text}"
         )
         body2 = resp2.json()
         _assert_ingest_response_shape(body2, expected_episodes=2)
@@ -592,13 +615,17 @@ class TestMemoryIngestion:
         # Ingest some messages first
         ingest_resp = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/memory",
-            data={"data": json.dumps({
-                "external_id": "wipe_test_user",
-                "session_id": "wipe_session",
-                "messages": [
-                    {"role": "user", "content": "Message to be wiped"},
-                ],
-            })},
+            data={
+                "data": json.dumps(
+                    {
+                        "external_id": "wipe_test_user",
+                        "session_id": "wipe_session",
+                        "messages": [
+                            {"role": "user", "content": "Message to be wiped"},
+                        ],
+                    }
+                )
+            },
         )
         assert ingest_resp.status_code == 202
 
@@ -619,9 +646,7 @@ class TestMemoryIngestion:
         )
         assert sessions_resp.status_code == 200
         sessions_data = sessions_resp.json().get("data", [])
-        wipe_sessions = [
-            s for s in sessions_data if s["external_id"] == "wipe_session"
-        ]
+        wipe_sessions = [s for s in sessions_data if s["external_id"] == "wipe_session"]
         if wipe_sessions:
             session_id = wipe_sessions[0]["id"]
             msgs_resp = await isolated_auth_client.get(
@@ -631,8 +656,7 @@ class TestMemoryIngestion:
             msgs_body = msgs_resp.json()
             messages_data = msgs_body.get("data", [])
             assert len(messages_data) == 0, (
-                f"Expected 0 messages after wipe, "
-                f"got {len(messages_data)}"
+                f"Expected 0 messages after wipe, got {len(messages_data)}"
             )
 
 
@@ -664,7 +688,8 @@ class TestMemoryCrossTenant:
 
         # ── Org A: create user + ingest memory ────────────────────────────
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             cli.headers["Authorization"] = f"Bearer {tenant_a['api_key']}"
             user_resp = await cli.post(
@@ -682,30 +707,39 @@ class TestMemoryCrossTenant:
 
             ingest_resp = await cli.post(
                 f"/v1/projects/{project_id_a}/memory",
-                data={"data": json.dumps({
-                    "external_id": "cross_tenant_mem_user",
-                    "session_id": "x_tenant_session",
-                    "messages": [
-                        {"role": "user", "content": "Secret message"},
-                    ],
-                })},
+                data={
+                    "data": json.dumps(
+                        {
+                            "external_id": "cross_tenant_mem_user",
+                            "session_id": "x_tenant_session",
+                            "messages": [
+                                {"role": "user", "content": "Secret message"},
+                            ],
+                        }
+                    )
+                },
             )
             assert ingest_resp.status_code == 202
 
         # ── Org B: try to access Org A's memory by project → 404 ──────────
         async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test"  # type: ignore[arg-type]
+            transport=ASGITransport(app=app),
+            base_url="http://test",  # type: ignore[arg-type]
         ) as cli:
             cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
             ingest_resp = await cli.post(
                 f"/v1/projects/{project_id_a}/memory",
-                data={"data": json.dumps({
-                    "external_id": "should_not_work",
-                    "session_id": "x_tenant_session",
-                    "messages": [
-                        {"role": "user", "content": "Should not work"},
-                    ],
-                })},
+                data={
+                    "data": json.dumps(
+                        {
+                            "external_id": "should_not_work",
+                            "session_id": "x_tenant_session",
+                            "messages": [
+                                {"role": "user", "content": "Should not work"},
+                            ],
+                        }
+                    )
+                },
             )
 
         # ⚠️ Org B cannot see Org A's project → the endpoint should reject

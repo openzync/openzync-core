@@ -1,4 +1,5 @@
 """Unit tests for LoggingMiddleware."""
+
 from __future__ import annotations
 
 from unittest.mock import patch
@@ -191,4 +192,4 @@ class TestLoggingMiddleware:
                 assert resp.status_code == 200
 
         duration = logs[0]["duration_ms"]
-        assert isinstance(duration, float) or isinstance(duration, int)
+        assert isinstance(duration, (float, int))

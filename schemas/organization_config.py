@@ -220,11 +220,16 @@ class OrgConfigBase(BaseModel):
     # ── Re-ranker (RET-05) ────────────────────────────────────────────────
     reranker_backend: str | None = Field(
         default=None,
-        description="Re-ranker backend (sentence_transformers, cohere, or null to disable).",
+        description=(
+            "Re-ranker backend (sentence_transformers, cohere, or null to disable)."
+        ),
     )
     reranker_model: str | None = Field(
         default=None,
-        description="Model name for the re-ranker (e.g. cross-encoder/ms-marco-MiniLM-L-6-v2 or rerank-english-v3.0).",
+        description=(
+            "Model name for the re-ranker "
+            "(e.g. cross-encoder/ms-marco-MiniLM-L-6-v2 or rerank-english-v3.0)."
+        ),
     )
     reranker_top_k: int | None = Field(
         default=None,
@@ -246,7 +251,10 @@ class OrgConfigBase(BaseModel):
     # ── Blob Storage (S3-compatible) ────────────────────────────────────
     blob_storage_backend: str | None = Field(
         default=None,
-        description="Blob storage backend (s3, none). Defaults to 's3' when endpoint is configured.",
+        description=(
+            "Blob storage backend (s3, none). "
+            "Defaults to 's3' when endpoint is configured."
+        ),
     )
     s3_endpoint_url: str | None = Field(
         default=None,
@@ -272,7 +280,9 @@ class OrgConfigBase(BaseModel):
         default=None,
         ge=1,
         le=500,
-        description="Max upload size per blob in MB (default 50). Overrides the system default.",
+        description=(
+            "Max upload size per blob in MB (default 50). Overrides the system default."
+        ),
     )
 
     # ── Image Extraction ─────────────────────────────────────────────────
@@ -325,7 +335,9 @@ class OrgConfigBase(BaseModel):
         }
         invalid = [t for t in v if t not in allowed]
         if invalid:
-            raise ValueError(f"Invalid PII types: {invalid}. Allowed: {sorted(allowed)}")
+            raise ValueError(
+                f"Invalid PII types: {invalid}. Allowed: {sorted(allowed)}"
+            )
         return v
 
     # ── Helpers for downstream callers ───────────────────────────────────────
@@ -523,7 +535,9 @@ class UpdateOrgConfigRequest(BaseModel):
         }
         invalid = [t for t in v if t not in allowed]
         if invalid:
-            raise ValueError(f"Invalid PII types: {invalid}. Allowed: {sorted(allowed)}")
+            raise ValueError(
+                f"Invalid PII types: {invalid}. Allowed: {sorted(allowed)}"
+            )
         return v
 
 

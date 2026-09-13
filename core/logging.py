@@ -94,12 +94,8 @@ import contextvars  # noqa: E402 (import after _sensitive_keys for clarity)
 _request_id: contextvars.ContextVar[str] = contextvars.ContextVar(
     "request_id", default=""
 )
-_org_id: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "org_id", default=""
-)
-_user_id: contextvars.ContextVar[str] = contextvars.ContextVar(
-    "user_id", default=""
-)
+_org_id: contextvars.ContextVar[str] = contextvars.ContextVar("org_id", default="")
+_user_id: contextvars.ContextVar[str] = contextvars.ContextVar("user_id", default="")
 
 
 def bind_request_context(

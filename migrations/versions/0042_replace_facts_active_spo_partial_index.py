@@ -39,9 +39,12 @@ Create Date: 2026-08-02
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from alembic import op
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 revision: str = "0042"
 down_revision: str | None = "0041"

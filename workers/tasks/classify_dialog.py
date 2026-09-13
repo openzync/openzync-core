@@ -32,9 +32,7 @@ ALLOWED_AROUSALS = frozenset({"low", "medium", "high"})
 # ── Private helpers ────────────────────────────────────────────────────────────
 
 
-async def _fetch_validation_sets(
-    db: Any, org_id: str
-) -> dict[str, set[str]]:
+async def _fetch_validation_sets(db: Any, org_id: str) -> dict[str, set[str]]:
     """Fetch intent and emotion label sets from the org's schemas.
 
     Returns ``{"intent_set": ..., "emotion_set": ...}`` with possibly
@@ -192,5 +190,3 @@ async def process_classification_output(
         )
 
     await db.flush()
-
-

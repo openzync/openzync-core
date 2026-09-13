@@ -6,12 +6,15 @@ ORM-style reads.  Returns ``EpisodeBlob`` models.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.episode_blob import EpisodeBlob
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class EpisodeBlobRepository:
@@ -69,23 +72,25 @@ class EpisodeBlobRepository:
 
         for i, blob in enumerate(blobs):
             pfx = f"b{i}"
-            params.update({
-                f"{pfx}_id": blob.get("id", str(uuid4())),
-                f"{pfx}_org": org_id_str,
-                f"{pfx}_proj": proj_id_str,
-                f"{pfx}_sess": sess_id_str,
-                f"{pfx}_ep": ep_id_str,
-                f"{pfx}_user": user_id_str,
-                f"{pfx}_backend": blob.get("storage_backend", "s3"),
-                f"{pfx}_key": blob.get("storage_key", ""),
-                f"{pfx}_fname": blob.get("file_name", ""),
-                f"{pfx}_mime": blob.get("mime_type", ""),
-                f"{pfx}_size": blob.get("file_size", 0),
-                f"{pfx}_hash": blob.get("content_hash", ""),
-                f"{pfx}_w": blob.get("width"),
-                f"{pfx}_h": blob.get("height"),
-                f"{pfx}_idx": blob.get("blob_index", 0),
-            })
+            params.update(
+                {
+                    f"{pfx}_id": blob.get("id", str(uuid4())),
+                    f"{pfx}_org": org_id_str,
+                    f"{pfx}_proj": proj_id_str,
+                    f"{pfx}_sess": sess_id_str,
+                    f"{pfx}_ep": ep_id_str,
+                    f"{pfx}_user": user_id_str,
+                    f"{pfx}_backend": blob.get("storage_backend", "s3"),
+                    f"{pfx}_key": blob.get("storage_key", ""),
+                    f"{pfx}_fname": blob.get("file_name", ""),
+                    f"{pfx}_mime": blob.get("mime_type", ""),
+                    f"{pfx}_size": blob.get("file_size", 0),
+                    f"{pfx}_hash": blob.get("content_hash", ""),
+                    f"{pfx}_w": blob.get("width"),
+                    f"{pfx}_h": blob.get("height"),
+                    f"{pfx}_idx": blob.get("blob_index", 0),
+                }
+            )
             values.append(
                 f"(:{pfx}_id, :{pfx}_org, :{pfx}_proj, :{pfx}_sess, "
                 f":{pfx}_ep, :{pfx}_user, :{pfx}_backend, :{pfx}_key, "
@@ -99,7 +104,7 @@ class EpisodeBlobRepository:
                 created_by, storage_backend, storage_key, file_name, mime_type,
                 file_size, content_hash, width, height, blob_index
             )
-            VALUES {', '.join(values)}
+            VALUES {", ".join(values)}
             RETURNING
                 id, organization_id, project_id, session_id, episode_id,
                 created_by, storage_backend, storage_key, file_name, mime_type,
@@ -199,8 +204,7 @@ class EpisodeBlobRepository:
             List of matching ``EpisodeBlob`` instances.
         """
         result = await self._db.execute(
-            select(EpisodeBlob)
-            .where(
+            select(EpisodeBlob).where(
                 EpisodeBlob.organization_id == organization_id,
                 EpisodeBlob.content_hash == content_hash,
             )
@@ -253,8 +257,9 @@ class EpisodeBlobRepository:
         from sqlalchemy import func
 
         result = await self._db.execute(
-            select(func.count(EpisodeBlob.id))
-            .where(EpisodeBlob.episode_id == episode_id)
+            select(func.count(EpisodeBlob.id)).where(
+                EpisodeBlob.episode_id == episode_id
+            )
         )
         return result.scalar_one()
 
@@ -281,8 +286,7 @@ class EpisodeBlobRepository:
         result = await self._db.execute(
             select(EpisodeBlob)
             .select_from(
-                join(EpisodeBlob, Episode,
-                     EpisodeBlob.episode_id == Episode.id)
+                join(EpisodeBlob, Episode, EpisodeBlob.episode_id == Episode.id)
             )
             .where(
                 EpisodeBlob.organization_id == organization_id,
@@ -312,9 +316,7 @@ class EpisodeBlobRepository:
         await self._db.flush()
         return blobs
 
-    async def delete_by_ids(
-        self, blob_ids: list[UUID]
-    ) -> list[EpisodeBlob]:
+    async def delete_by_ids(self, blob_ids: list[UUID]) -> list[EpisodeBlob]:
         """Delete blob records by ID and return them.
 
         Args:

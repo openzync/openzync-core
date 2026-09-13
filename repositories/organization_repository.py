@@ -6,13 +6,16 @@ No business logic — pure query construction and execution.
 
 from __future__ import annotations
 
-from typing import Any
-from uuid import UUID
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import func, select, text, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.organization import Organization
+
+if TYPE_CHECKING:
+    from uuid import UUID
+
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class OrganizationRepository:
@@ -284,9 +287,7 @@ class OrganizationRepository:
         """
         # Primary: read from new config JSONB
         result = await self._db.execute(
-            text(
-                "SELECT config->'llm' AS llm FROM organizations WHERE id = :org_id"
-            ),
+            text("SELECT config->'llm' AS llm FROM organizations WHERE id = :org_id"),
             {"org_id": org_id},
         )
         row = result.one_or_none()

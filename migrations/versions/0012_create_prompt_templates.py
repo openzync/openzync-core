@@ -21,7 +21,9 @@ depends_on: str | None = None
 def upgrade() -> None:
     op.create_table(
         "prompt_templates",
-        sa.Column("id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column(
+            "id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False
+        ),
         sa.Column("organization_id", sa.Uuid(), nullable=True),
         sa.Column("template_name", sa.VARCHAR(100), nullable=False),
         sa.Column("template_text", sa.Text(), nullable=False),
@@ -61,7 +63,12 @@ def upgrade() -> None:
     )
 
     # Seed system-default prompt templates from .jinja2 files
-    prompts_dir = Path(__file__).resolve().parent.parent.parent / "services" / "worker" / "prompts"
+    prompts_dir = (
+        Path(__file__).resolve().parent.parent.parent
+        / "services"
+        / "worker"
+        / "prompts"
+    )
     if prompts_dir.is_dir():
         for f in sorted(prompts_dir.glob("*.jinja2")):
             template_name = f.stem

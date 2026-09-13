@@ -191,9 +191,7 @@ class FactResponse(BaseModel):
         description="Hard-retraction timestamp (UTC) from the wipe path; "
         "None unless explicitly invalidated.",
     )
-    created_at: datetime = Field(
-        ..., description="Fact creation timestamp (UTC)."
-    )
+    created_at: datetime = Field(..., description="Fact creation timestamp (UTC).")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -213,9 +211,7 @@ class PaginatedFactsResponse(BaseModel):
     next_cursor: str | None = Field(
         None, description="Opaque cursor for the next page."
     )
-    has_more: bool = Field(
-        default=False, description="Whether additional pages exist."
-    )
+    has_more: bool = Field(default=False, description="Whether additional pages exist.")
 
 
 class FactRetractRequest(BaseModel):
@@ -274,9 +270,7 @@ class FactHistoryResponse(BaseModel):
         events: Invalidation events, newest first.
     """
 
-    fact: FactResponse = Field(
-        ..., description="The fact whose lineage this is."
-    )
+    fact: FactResponse = Field(..., description="The fact whose lineage this is.")
     events: list[FactHistoryEvent] = Field(
         ..., description="Invalidation-lineage events, newest first."
     )

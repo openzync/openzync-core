@@ -301,7 +301,9 @@ class TestExtractImageOcr:
 
         with (
             patch.dict("sys.modules", {"pytesseract": mock_pyt, "PIL": mock_pil}),
-            patch("asyncio.to_thread", AsyncMock(side_effect=RuntimeError("OCR failed"))),
+            patch(
+                "asyncio.to_thread", AsyncMock(side_effect=RuntimeError("OCR failed"))
+            ),
         ):
             result = await _extract_image_ocr(b"image bytes")
 
@@ -342,9 +344,12 @@ class TestExtractImageOcr:
         # Image.open was called with a BytesIO wrapper
         mock_pil.Image.open.assert_called_once()
         call_arg = mock_pil.Image.open.call_args[0][0]
-        assert isinstance(call_arg, type(  # io.BytesIO
-            __import__("io").BytesIO()
-        )) or hasattr(call_arg, "read")
+        assert isinstance(
+            call_arg,
+            type(  # io.BytesIO
+                __import__("io").BytesIO()
+            ),
+        ) or hasattr(call_arg, "read")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -651,9 +656,15 @@ class TestExtractBlobText:
         ctx = self._make_ctx(db)
 
         with (
-            patch("workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f),
-            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
+            patch(
+                "workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f
+            ),
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
+            patch(
+                "repositories.episode_repository.EpisodeRepository"
+            ) as mock_ep_repo_cls,
         ):
             mock_blob = MagicMock()
             mock_blob.id = UUID(_BLOB_ID)
@@ -695,8 +706,12 @@ class TestExtractBlobText:
         ctx = self._make_ctx(db)
 
         with (
-            patch("workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f),
-            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
+            patch(
+                "workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f
+            ),
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
         ):
             mock_blob_repo = AsyncMock()
             mock_blob_repo.get_by_id.return_value = None  # blob not found
@@ -727,9 +742,15 @@ class TestExtractBlobText:
         ctx = self._make_ctx(db)
 
         with (
-            patch("workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f),
-            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
+            patch(
+                "workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f
+            ),
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
+            patch(
+                "repositories.episode_repository.EpisodeRepository"
+            ) as mock_ep_repo_cls,
         ):
             mock_blob_repo = AsyncMock()
             mock_blob_repo.get_by_id.return_value = MagicMock(id=UUID(_BLOB_ID))
@@ -764,9 +785,15 @@ class TestExtractBlobText:
         ctx = self._make_ctx(db)
 
         with (
-            patch("workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f),
-            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
+            patch(
+                "workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f
+            ),
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
+            patch(
+                "repositories.episode_repository.EpisodeRepository"
+            ) as mock_ep_repo_cls,
             patch("core.blob_storage.BlobStorage") as mock_storage_cls,
             patch("core.blob_storage.BlobStorageConfig") as mock_cfg_cls,
             patch(
@@ -832,9 +859,15 @@ class TestExtractBlobText:
         ctx = self._make_ctx(db)
 
         with (
-            patch("workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f),
-            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
+            patch(
+                "workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f
+            ),
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
+            patch(
+                "repositories.episode_repository.EpisodeRepository"
+            ) as mock_ep_repo_cls,
             patch("core.blob_storage.BlobStorage") as mock_storage_cls,
             patch("core.blob_storage.BlobStorageConfig"),
             patch(
@@ -888,9 +921,15 @@ class TestExtractBlobText:
         ctx = self._make_ctx(db)
 
         with (
-            patch("workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f),
-            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
+            patch(
+                "workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f
+            ),
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
+            patch(
+                "repositories.episode_repository.EpisodeRepository"
+            ) as mock_ep_repo_cls,
             patch("core.blob_storage.BlobStorage") as mock_storage_cls,
             patch("core.blob_storage.BlobStorageConfig"),
             patch(
@@ -937,10 +976,16 @@ class TestExtractBlobText:
         ctx = self._make_ctx(db)
 
         with (
-            patch("workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f),
+            patch(
+                "workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f
+            ),
             patch("workers.tasks.extract_blob_text.structlog") as mock_structlog,
-            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
+            patch(
+                "repositories.episode_repository.EpisodeRepository"
+            ) as mock_ep_repo_cls,
         ):
             from workers.tasks.extract_blob_text import extract_blob_text
 
@@ -982,9 +1027,15 @@ class TestExtractBlobText:
         session_factory = self._make_session_factory(db)
 
         with (
-            patch("workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f),
-            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
+            patch(
+                "workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f
+            ),
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
+            patch(
+                "repositories.episode_repository.EpisodeRepository"
+            ) as mock_ep_repo_cls,
             patch("core.db.init_db_engine") as mock_init_engine,
             patch("core.db.get_async_session") as mock_get_session,
         ):
@@ -1030,9 +1081,15 @@ class TestExtractBlobText:
         db = self._make_db(enrichment_status=ENRICHMENT_BLOB_TEXT)  # skip early
 
         with (
-            patch("workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f),
-            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
+            patch(
+                "workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f
+            ),
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
+            patch(
+                "repositories.episode_repository.EpisodeRepository"
+            ) as mock_ep_repo_cls,
             patch("core.db.get_async_session") as mock_get_session,
         ):
             session_factory = self._make_session_factory(db)
@@ -1076,9 +1133,15 @@ class TestExtractBlobText:
         ctx = self._make_ctx(db, include_bao=False)
 
         with (
-            patch("workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f),
-            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
+            patch(
+                "workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f
+            ),
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
+            patch(
+                "repositories.episode_repository.EpisodeRepository"
+            ) as mock_ep_repo_cls,
             patch("core.blob_storage.BlobStorage") as mock_storage_cls,
             patch("core.blob_storage.BlobStorageConfig"),
             patch(
@@ -1125,8 +1188,12 @@ class TestExtractBlobText:
         ctx = self._make_ctx(db)
 
         with (
-            patch("workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f),
-            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
+            patch(
+                "workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f
+            ),
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
         ):
             mock_blob_repo = AsyncMock()
             mock_blob_repo.get_by_id.side_effect = RuntimeError("DB connection lost")
@@ -1176,9 +1243,15 @@ class TestExtractBlobTextCtxObject:
             pass
 
         with (
-            patch("workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f),
-            patch("repositories.episode_blob_repository.EpisodeBlobRepository") as mock_repo_cls,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_ep_repo_cls,
+            patch(
+                "workers.tasks.extract_blob_text.with_retry", lambda **kw: lambda f: f
+            ),
+            patch(
+                "repositories.episode_blob_repository.EpisodeBlobRepository"
+            ) as mock_repo_cls,
+            patch(
+                "repositories.episode_repository.EpisodeRepository"
+            ) as mock_ep_repo_cls,
             patch("core.db.init_db_engine") as mock_init_engine,
             patch("core.db.get_async_session") as mock_get_session,
         ):

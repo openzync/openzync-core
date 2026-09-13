@@ -39,7 +39,9 @@ async def list_audit_logs(
     org_id: str = Depends(require_permission("members:read")),
     action: str | None = Query(None, description="Filter by action (exact match)"),
     actor_id: str | None = Query(None, description="Filter by actor ID"),
-    actor_type: str | None = Query(None, description="Filter by actor type (user, api_key, system)"),
+    actor_type: str | None = Query(
+        None, description="Filter by actor type (user, api_key, system)"
+    ),
     resource_type: str | None = Query(None, description="Filter by resource type"),
     resource_id: str | None = Query(None, description="Filter by resource ID"),
     status_code: int | None = Query(None, description="Filter by HTTP status code"),
@@ -47,8 +49,12 @@ async def list_audit_logs(
         None,
         description="Comma-separated action prefixes to exclude (e.g. 'http.,auth.')",
     ),
-    created_after: str | None = Query(None, description="Include entries after this ISO 8601 timestamp"),
-    created_before: str | None = Query(None, description="Include entries before this ISO 8601 timestamp"),
+    created_after: str | None = Query(
+        None, description="Include entries after this ISO 8601 timestamp"
+    ),
+    created_before: str | None = Query(
+        None, description="Include entries before this ISO 8601 timestamp"
+    ),
     limit: int = Query(default=50, ge=1, le=500, description="Max entries per page"),
     offset: int = Query(default=0, ge=0, description="Number of entries to skip"),
 ) -> AuditLogListResponse:

@@ -15,15 +15,17 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.org_codes import generate_org_code
 from models.organization import Organization
 from models.refresh_token import RefreshToken
 from models.user import User
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class AuthRepository:
@@ -202,9 +204,7 @@ class AuthRepository:
         await self._db.refresh(rt)
         return rt
 
-    async def find_refresh_token(
-        self, token_hash: str
-    ) -> RefreshToken | None:
+    async def find_refresh_token(self, token_hash: str) -> RefreshToken | None:
         """Look up a refresh token by its hash.
 
         Args:
@@ -223,9 +223,7 @@ class AuthRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_refresh_token_by_hash(
-        self, token_hash: str
-    ) -> RefreshToken | None:
+    async def get_refresh_token_by_hash(self, token_hash: str) -> RefreshToken | None:
         """Look up a refresh token by hash, including revoked tokens.
 
         Used for reuse detection and family-revocation walks — the caller
@@ -242,9 +240,7 @@ class AuthRepository:
         )
         return result.scalar_one_or_none()
 
-    async def get_refresh_token_by_id(
-        self, token_id: uuid.UUID
-    ) -> RefreshToken | None:
+    async def get_refresh_token_by_id(self, token_id: uuid.UUID) -> RefreshToken | None:
         """Look up a refresh token by primary key (any revocation state).
 
         Args:
@@ -304,9 +300,7 @@ class AuthRepository:
         )
         await self._db.flush()
 
-    async def revoke_refresh_token_ids(
-        self, token_ids: list[uuid.UUID]
-    ) -> int:
+    async def revoke_refresh_token_ids(self, token_ids: list[uuid.UUID]) -> int:
         """Revoke a set of refresh tokens in one statement (family walk).
 
         Args:

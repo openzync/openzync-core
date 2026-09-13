@@ -27,7 +27,6 @@ MOCK_FACT_SERVICE = AsyncMock()
 """Shared mock instance reused across all tests and DI resolution."""
 
 
-
 @pytest.fixture(autouse=True)
 def _stub_permission_gate() -> None:
     """Stub the permission gate for every test in this file.

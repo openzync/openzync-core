@@ -19,7 +19,9 @@ depends_on: str | None = None
 def upgrade() -> None:
     op.create_table(
         "custom_instructions",
-        sa.Column("id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column(
+            "id", sa.Uuid(), server_default=sa.text("gen_random_uuid()"), nullable=False
+        ),
         sa.Column("organization_id", sa.Uuid(), nullable=False),
         sa.Column("scope", sa.VARCHAR(50), nullable=False),
         sa.Column("target_id", sa.Uuid(), nullable=True),
@@ -72,6 +74,10 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_custom_instructions_scope_target", table_name="custom_instructions")
-    op.drop_index("ix_custom_instructions_unique_scope_name", table_name="custom_instructions")
+    op.drop_index(
+        "ix_custom_instructions_scope_target", table_name="custom_instructions"
+    )
+    op.drop_index(
+        "ix_custom_instructions_unique_scope_name", table_name="custom_instructions"
+    )
     op.drop_table("custom_instructions")

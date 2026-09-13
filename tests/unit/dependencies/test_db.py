@@ -50,7 +50,10 @@ class TestGetDb:
 
     @pytest.mark.asyncio
     async def test_yields_session_and_commits(
-        self, mock_factory: AsyncMock, mock_session: MagicMock, request_with_org: MagicMock
+        self,
+        mock_factory: AsyncMock,
+        mock_session: MagicMock,
+        request_with_org: MagicMock,
     ) -> None:
         """Happy path: yields session, commits on success, sets RLS context."""
         from dependencies.db import get_db
@@ -75,7 +78,10 @@ class TestGetDb:
 
     @pytest.mark.asyncio
     async def test_rolls_back_on_exception(
-        self, mock_factory: AsyncMock, mock_session: MagicMock, request_with_org: MagicMock
+        self,
+        mock_factory: AsyncMock,
+        mock_session: MagicMock,
+        request_with_org: MagicMock,
     ) -> None:
         """Exception in yielded block → session.rollback() called, exception re-raised."""
         from dependencies.db import get_db
@@ -93,7 +99,10 @@ class TestGetDb:
 
     @pytest.mark.asyncio
     async def test_no_rls_when_org_id_missing(
-        self, mock_factory: AsyncMock, mock_session: MagicMock, request_without_org: MagicMock
+        self,
+        mock_factory: AsyncMock,
+        mock_session: MagicMock,
+        request_without_org: MagicMock,
     ) -> None:
         """No org_id in request.state → RLS context is NOT set."""
         from dependencies.db import get_db
@@ -225,9 +234,7 @@ class TestGetDbSuperadmin:
         verify, bypass = verify_and_bypass_sessions
         request_with_session.app.state.db_session_factory = two_session_factory
 
-        with patch(
-            "dependencies.auth._ensure_superadmin", new=AsyncMock()
-        ):
+        with patch("dependencies.auth._ensure_superadmin", new=AsyncMock()):
             gen = get_db_superadmin(request_with_session)
             session = await gen.__anext__()
             assert session is bypass
@@ -237,14 +244,13 @@ class TestGetDbSuperadmin:
 
         set_config_calls = [str(c.args[0]) for c in bypass.execute.await_args_list]
         assert any(
-            "set_config('app.bypass_rls', 'true', true)" in c
-            for c in set_config_calls
+            "set_config('app.bypass_rls', 'true', true)" in c for c in set_config_calls
         )
         assert any(
-            "set_config('app.org_id', :org_id, true)" in c
-            for c in set_config_calls
+            "set_config('app.org_id', :org_id, true)" in c for c in set_config_calls
         )
         bypass.commit.assert_awaited_once()
+
     @pytest.mark.asyncio
     async def test_raises_runtime_error_when_state_missing(self) -> None:
         """No org_id/user_id on request.state → RuntimeError (fail-closed)."""

@@ -63,9 +63,13 @@ class TestEnrichmentBitmask:
         will not increase the population count.
         """
         all_bits = (
-            ENRICHMENT_ENTITIES | ENRICHMENT_EMBEDDING | ENRICHMENT_FACTS
-            | ENRICHMENT_ENTITY_LINKS | ENRICHMENT_CLASSIFICATION
-            | ENRICHMENT_STRUCTURED_EXTRACTION | ENRICHMENT_OBSERVATIONS
+            ENRICHMENT_ENTITIES
+            | ENRICHMENT_EMBEDDING
+            | ENRICHMENT_FACTS
+            | ENRICHMENT_ENTITY_LINKS
+            | ENRICHMENT_CLASSIFICATION
+            | ENRICHMENT_STRUCTURED_EXTRACTION
+            | ENRICHMENT_OBSERVATIONS
         )
 
         # With 7 distinct bits the combined mask must have exactly 7 bits set

@@ -11,22 +11,24 @@ import secrets
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from uuid import UUID
 
 import structlog
 import yaml
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import ConflictError, NotFoundError
-from core.openbao import OpenBaoClient
 from core.org_codes import generate_org_code
 from models.organization import Organization
-from models.user import User
-from repositories.organization_repository import OrganizationRepository
 from repositories.user_repository import UserRepository
 from schemas.organizations import CreateOrgRequest, CreateOrgResponse
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from core.openbao import OpenBaoClient
+    from models.user import User
+    from repositories.organization_repository import OrganizationRepository
     from services.email_service import EmailService
     from services.invite_service import send_invite_email  # noqa: F401  — re-export
 
@@ -218,9 +220,7 @@ class OrganizationService:
             )
         admin_email = pending_admin.email
         if admin_email is None:
-            raise ConflictError(
-                f"Organization {org_id}'s pending admin has no email."
-            )
+            raise ConflictError(f"Organization {org_id}'s pending admin has no email.")
 
         # OpenBao bootstrap — errors propagate and roll the approval back.
         if self._bao_client is not None:
@@ -430,5 +430,7 @@ class OrganizationService:
             logger.warning("org_config.defaults_file_not_found", path=str(path))
             return {}
         except yaml.YAMLError as e:
-            logger.warning("org_config.defaults_file_invalid", path=str(path), error=str(e))
+            logger.warning(
+                "org_config.defaults_file_invalid", path=str(path), error=str(e)
+            )
             return {}

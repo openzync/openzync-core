@@ -48,7 +48,10 @@ class CreateUserRequest(BaseModel):
 
     external_id: str = Field(
         ...,
-        description="Caller-defined unique user identifier. Must be unique within the organization.",
+        description=(
+            "Caller-defined unique user identifier. "
+            "Must be unique within the organization."
+        ),
         min_length=1,
         max_length=255,
         examples=["user_abc123", "alice@example.com", "usr_8f3a2c"],
@@ -207,8 +210,7 @@ class UserResponse(BaseModel):
     permissions: list[str] = Field(
         default_factory=list,
         description=(
-            "Explicit permission strings. Empty = wildcard via role "
-            "(admin/superadmin)."
+            "Explicit permission strings. Empty = wildcard via role (admin/superadmin)."
         ),
         examples=[["project:read", "project:write"]],
     )
@@ -273,10 +275,14 @@ class UserListResponse(BaseModel):
         has_more: ``True`` if there are additional pages beyond this one.
     """
 
-    data: list[UserResponse] = Field(..., description="List of users for the current page.")
+    data: list[UserResponse] = Field(
+        ..., description="List of users for the current page."
+    )
     next_cursor: str | None = Field(
         default=None,
-        description="Cursor to pass as ?cursor= in the next request. Null if no more results.",
+        description=(
+            "Cursor to pass as ?cursor= in the next request. Null if no more results."
+        ),
     )
     has_more: bool = Field(
         default=False,

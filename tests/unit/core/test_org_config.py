@@ -81,7 +81,9 @@ class TestGetOrgConfig:
         mock_bao: AsyncMock,
     ) -> None:
         """Config is returned from cache when available — no OpenBao call."""
-        cached_config = OrgConfigBase(llm_backend="anthropic", llm_model="claude-opus-4")
+        cached_config = OrgConfigBase(
+            llm_backend="anthropic", llm_model="claude-opus-4"
+        )
         mock_redis.get.return_value = cached_config.model_dump_json()
 
         config = await get_org_config(ORG_ID, redis=mock_redis, bao_client=mock_bao)
@@ -167,9 +169,13 @@ class TestGetOrgConfig:
         # All fields except graph_backend should be None — new org defaults to falkordb
         for field_name in OrgConfigBase.model_fields:
             if field_name == "graph_backend":
-                assert getattr(config, field_name) == "falkordb", f"{field_name} should be falkordb"
+                assert getattr(config, field_name) == "falkordb", (
+                    f"{field_name} should be falkordb"
+                )
             else:
-                assert getattr(config, field_name) is None, f"{field_name} should be None"
+                assert getattr(config, field_name) is None, (
+                    f"{field_name} should be None"
+                )
 
     @pytest.mark.asyncio
     async def test_no_bao_client_raises(
@@ -260,8 +266,13 @@ class TestUpdateOrgConfig:
         mock_bao: AsyncMock,
     ) -> None:
         """Multiple fields can be updated in one call."""
-        mock_bao.read_org_config.return_value = {"llm_backend": "openai", "llm_model": "gpt-4"}
-        update = UpdateOrgConfigRequest(llm_backend="anthropic", llm_model="claude-3-5-sonnet")
+        mock_bao.read_org_config.return_value = {
+            "llm_backend": "openai",
+            "llm_model": "gpt-4",
+        }
+        update = UpdateOrgConfigRequest(
+            llm_backend="anthropic", llm_model="claude-3-5-sonnet"
+        )
 
         config = await update_org_config(
             ORG_ID,
@@ -402,7 +413,10 @@ class TestUpdateOrgConfig:
         mock_bao: AsyncMock,
     ) -> None:
         """The merged config is written to OpenBao."""
-        mock_bao.read_org_config.return_value = {"llm_backend": "openai", "llm_temperature": 0.7}
+        mock_bao.read_org_config.return_value = {
+            "llm_backend": "openai",
+            "llm_temperature": 0.7,
+        }
 
         await update_org_config(
             ORG_ID,
@@ -413,7 +427,11 @@ class TestUpdateOrgConfig:
 
         mock_bao.write_org_config.assert_awaited_once_with(
             ORG_ID,
-            {"llm_backend": "anthropic", "llm_temperature": 0.7, "llm_model": "claude-3"},
+            {
+                "llm_backend": "anthropic",
+                "llm_temperature": 0.7,
+                "llm_model": "claude-3",
+            },
         )
 
     @pytest.mark.asyncio
