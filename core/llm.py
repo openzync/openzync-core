@@ -19,7 +19,7 @@ import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 import orjson
 from pydantic import BaseModel, ValidationError
@@ -563,9 +563,16 @@ importlib.import_module("core.llm_backends")
 from core.exceptions import LLMConfigurationError as LLMConfigurationError
 
 
+#: Caller context for :func:`resolve_backend` — selects which base URL /
+#: credential pair the ``openai_like`` provider uses.  All other providers
+#: ignore it.
+BackendMode = Literal["llm", "embedding"]
+
+
 async def resolve_backend(
     provider: str | None = None,
     org_config: dict | None = None,
+    mode: BackendMode | None = None,
 ) -> LLMBackend:
     """Resolve the appropriate LLM backend via org config or explicit argument.
 
@@ -580,9 +587,16 @@ async def resolve_backend(
         org_config: Optional dict with per-organisation LLM settings.
             Supported keys: ``llm_backend``, ``ollama_base_url``,
             ``openai_api_key``, ``openai_model``, ``openai_like_base_url``,
+            ``embedding_api_key``, ``embedding_openai_like_base_url``,
             ``llm_model``, ``azure_endpoint``,
             ``azure_api_key``, ``azure_deployment``, ``anthropic_api_key``,
             ``anthropic_model``.
+        mode: Caller context.  ``"embedding"`` selects the dedicated
+            embedding endpoint/credentials for ``openai_like``
+            (``embedding_openai_like_base_url`` + ``embedding_api_key``,
+            strict — no fallback to the LLM keys).  ``"llm"`` or ``None``
+            keeps the chat behaviour (``openai_like_base_url`` +
+            ``openai_api_key`` + ``llm_model``).
 
     Returns:
         An initialised ``LLMBackend`` instance.
@@ -593,6 +607,21 @@ async def resolve_backend(
     """
     provider_name: str | None = None
 
+    # 0. Embedding callers resolve from ``embedding_backend`` first — never
+    #    fall through to the ``llm_backend`` path below.
+    if mode == "embedding" and provider is None:
+        if org_config and org_config.get("embedding_backend"):
+            embedding_provider: str = org_config["embedding_backend"]
+            logger.debug(
+                "llm.resolved_from_org_config",
+                extra={"provider": embedding_provider},
+            )
+            return await _create_backend(embedding_provider, org_config, mode=mode)
+        raise LLMConfigurationError(
+            "No embedding backend configured.  Set "
+            "embedding_backend in the per-org configuration."
+        )
+
     # 1. Org-level config (skip if explicit provider given).
     if provider is None and org_config and org_config.get("llm_backend"):
         provider_name = org_config["llm_backend"]
@@ -600,13 +629,13 @@ async def resolve_backend(
             "llm.resolved_from_org_config",
             extra={"provider": provider_name},
         )
-        return await _create_backend(provider_name, org_config)
+        return await _create_backend(provider_name, org_config, mode=mode)
 
     # 2. Explicit argument.
     if provider is not None:
         provider_name = provider
         logger.debug("llm.resolved_from_argument", extra={"provider": provider_name})
-        return await _create_backend(provider_name, org_config)
+        return await _create_backend(provider_name, org_config, mode=mode)
 
     # 3. Nothing worked.
     raise LLMConfigurationError(
@@ -618,7 +647,11 @@ async def resolve_backend(
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
 
-async def _create_backend(provider: str, config: dict | None = None) -> LLMBackend:
+async def _create_backend(
+    provider: str,
+    config: dict | None = None,
+    mode: BackendMode | None = None,
+) -> LLMBackend:
     """Instantiate an LLM backend for *provider*, passing optional config.
 
     All provider-specific values (API keys, model names, endpoints) come
@@ -631,6 +664,11 @@ async def _create_backend(provider: str, config: dict | None = None) -> LLMBacke
             ``"azure"``, ``"anthropic"``.
         config: Optional dict with provider-specific overrides (API keys,
             model names, endpoints).  Required fields vary by provider.
+        mode: Caller context.  Only ``openai_like`` + ``"embedding"``
+            changes behaviour — it requires ``embedding_openai_like_base_url``
+            and reads ``embedding_api_key`` (``None`` allowed → the backend
+            uses its ``"not-needed"`` placeholder).  All other
+            provider/mode combinations behave as before.
 
     Returns:
         An initialised ``LLMBackend`` instance.
@@ -658,16 +696,29 @@ async def _create_backend(provider: str, config: dict | None = None) -> LLMBacke
         model: str | None = config.get("openai_model")
         instance = backend_cls(api_key=api_key, model=model)
     elif provider == "openai_like":
-        if config is None or not config.get("openai_like_base_url"):
-            raise LLMConfigurationError(
-                "OpenAI-like backend requires openai_like_base_url in per-org "
-                "configuration.  Set it via PATCH /admin/org/config."
+        if mode == "embedding":
+            if config is None or not config.get("embedding_openai_like_base_url"):
+                raise LLMConfigurationError(
+                    "OpenAI-like embedding backend requires "
+                    "embedding_openai_like_base_url in per-org "
+                    "configuration.  Set it via PATCH /admin/org/config."
+                )
+            instance = backend_cls(
+                base_url=config["embedding_openai_like_base_url"],
+                api_key=config.get("embedding_api_key"),
+                model=config.get("embedding_model"),
             )
-        instance = backend_cls(
-            base_url=config["openai_like_base_url"],
-            api_key=config.get("openai_api_key"),
-            model=config.get("llm_model"),
-        )
+        else:
+            if config is None or not config.get("openai_like_base_url"):
+                raise LLMConfigurationError(
+                    "OpenAI-like backend requires openai_like_base_url in per-org "
+                    "configuration.  Set it via PATCH /admin/org/config."
+                )
+            instance = backend_cls(
+                base_url=config["openai_like_base_url"],
+                api_key=config.get("openai_api_key"),
+                model=config.get("llm_model"),
+            )
     elif provider == "azure":
         if config is None or not config.get("azure_endpoint"):
             raise LLMConfigurationError(

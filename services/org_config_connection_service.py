@@ -230,11 +230,22 @@ class OrgConfigConnectionService:
     async def _probe_embeddings(self, merged: OrgConfigBase) -> ProbeResult:
         """Single-vector embed plus dimensionality check."""
         start = time.perf_counter()
+        if not merged.embedding_backend:
+            return self._failure(
+                start, "embeddings probe failed: embedding_backend is not configured"
+            )
         try:
             from core.llm import resolve_backend
 
-            backend = await resolve_backend(org_config=merged.to_llm_config_dict())
-            response = await backend.embed(["ping"])
+            backend = await resolve_backend(
+                provider=merged.embedding_backend,
+                org_config=merged.to_llm_config_dict(),
+                mode="embedding",
+            )
+            embed_kwargs: dict[str, str] = {}
+            if merged.embedding_model is not None:
+                embed_kwargs["model"] = merged.embedding_model
+            response = await backend.embed(["ping"], **embed_kwargs)
             vectors = response.embeddings
             if not vectors or not vectors[0]:
                 return self._failure(start, "embeddings probe failed: empty response")
