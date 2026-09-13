@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import Settings, set_settings
 from core.exceptions import AuthenticationError
+from core.org_codes import generate_org_code
 from models.refresh_token import RefreshToken
 from repositories.auth_repository import AuthRepository
 from schemas.auth import TokenResponse
@@ -51,7 +52,9 @@ async def _make_user(db: AsyncSession, email: str) -> object:
     repo = AuthRepository(db)
     from models.organization import Organization
 
-    org = Organization(name=f"Sec Test {uuid4()}", plan="free")
+    org = Organization(
+        name=f"Sec Test {uuid4()}", plan="free", org_code=generate_org_code()
+    )
     db.add(org)
     await db.flush()
     user = await repo.create_dashboard_user(

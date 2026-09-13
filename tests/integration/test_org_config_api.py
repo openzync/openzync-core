@@ -68,9 +68,14 @@ class TestGetOrgConfig:
         assert "stored" in data
         assert "effective" not in data
 
-        # Stored should be all-None (we haven't set anything yet)
+        # Fresh org: get_org_config defaults graph_backend to
+        # 'falkordb' for empty configs (core/org_config.py); every
+        # other field stays None until explicitly set.
         stored = data["stored"]
-        assert all(v is None for v in stored.values())
+        assert stored["graph_backend"] == "falkordb"
+        assert all(
+            v is None for k, v in stored.items() if k != "graph_backend"
+        )
 
     async def test_requires_auth(self, async_client: AsyncClient) -> None:
         """Unauthenticated requests should return 401."""
@@ -217,7 +222,7 @@ class TestResolutionEndToEnd:
         app: Any,
         org_and_key: dict,
     ) -> None:
-        """An org with no stored config should return all-None fields (no env defaults)."""
+        """An org with no stored config defaults graph_backend to falkordb."""
         from unittest.mock import AsyncMock
 
         mock_bao = AsyncMock()
@@ -229,10 +234,13 @@ class TestResolutionEndToEnd:
             bao_client=mock_bao,
         )
         assert isinstance(config, OrgConfigBase)
-        # Every field should be None
+        # Empty config defaults graph_backend to 'falkordb'
+        # (core/org_config.py) — every other field should be None.
         for field_name in OrgConfigBase.model_fields:
-            assert getattr(config, field_name) is None, (
-                f"Expected {field_name} to be None, got {getattr(config, field_name)!r}"
+            expected = "falkordb" if field_name == "graph_backend" else None
+            assert getattr(config, field_name) == expected, (
+                f"Expected {field_name} to be {expected!r}, "
+                f"got {getattr(config, field_name)!r}"
             )
 
     async def test_stored_config_reflects_openbao_overrides(

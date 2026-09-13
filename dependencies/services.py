@@ -112,7 +112,11 @@ async def get_session_service(
     The service is constructed once per request using a DB session from
     the application's async engine.
     """
-    return SessionService(repo=SessionRepository(db), webhook_service=webhook)
+    return SessionService(
+        repo=SessionRepository(db),
+        blob_repo=EpisodeBlobRepository(db),
+        webhook_service=webhook,
+    )
 
 
 # ── Auth ───────────────────────────────────────────────────────────────────────

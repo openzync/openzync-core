@@ -8,11 +8,11 @@ Endpoints under test (all under ``/v1/projects/{project_id}/graph``):
     GET    /v1/projects/{project_id}/graph/edges             — List relationship edges
     GET    /v1/projects/{project_id}/graph/communities       — List community summaries
 
-The org is configured with ``graph_backend="postgres"`` via an org-config
-dependency override on the isolated app.  On a fresh isolated project the
-Postgres backend has no entities, so every endpoint returns empty results
-and node lookups return 404 — these tests verify that behaviour end-to-end
-through the HTTP layer.
+The org is configured with ``graph_backend="falkordb"`` (plus a per-org
+``falkordb_url`` pointing at the session testcontainer) via an org-config
+dependency override on the isolated app.  On a fresh graph FalkorDB has no
+entities, so every endpoint returns empty results and node lookups return
+404 — these tests verify that behaviour end-to-end through the HTTP layer.
 
 Auth strategy:
     Each test uses the per-test isolation fixtures (``isolated_app`` +
@@ -30,14 +30,16 @@ from httpx import ASGITransport, AsyncClient
 
 
 @pytest.fixture(autouse=True)
-async def _graph_backend_env(isolated_app: Any) -> None:
-    """Wire the graph backend dispatcher + postgres org-config override.
+async def _graph_backend_env(isolated_app: Any, falkordb_url: str) -> None:
+    """Wire the graph backend dispatcher + falkordb org-config override.
 
     The app lifespan (which normally sets ``graph_backend_dispatcher``) is
     not run in tests, and the stored org config has no ``graph_backend``
     value — without this fixture every graph endpoint would return 503.
-    With ``graph_backend="postgres"``, endpoints hit the Postgres backend
-    against the per-test database (empty → empty results, 404 lookups).
+    With ``graph_backend="falkordb"`` plus a per-org ``falkordb_url``
+    pointing at the session FalkorDB testcontainer, endpoints hit the real
+    FalkorDB backend against a fresh graph (empty → empty results,
+    404 lookups).
     """
     from core.graph_backend import init_dispatcher
     from dependencies.org_config import get_org_config
@@ -45,7 +47,7 @@ async def _graph_backend_env(isolated_app: Any) -> None:
 
     isolated_app.state.graph_backend_dispatcher = init_dispatcher()
     isolated_app.dependency_overrides[get_org_config] = lambda: OrgConfigBase(
-        graph_backend="postgres"
+        graph_backend="falkordb", falkordb_url=falkordb_url
     )
 
 

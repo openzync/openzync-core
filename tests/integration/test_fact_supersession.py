@@ -46,6 +46,7 @@ import pytest
 from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.org_codes import generate_org_code
 from repositories.fact_repository import FactRepository
 from services.cache_service import CacheService
 from services.fact_invalidation_service import FactInvalidationService
@@ -88,10 +89,11 @@ async def _seed_user(db: AsyncSession, user_id: UUID, org_id: UUID = ORG_ID) -> 
 async def _seed_org(db: AsyncSession, org_id: UUID) -> None:
     await db.execute(
         sa_text(
-            "INSERT INTO organizations (id, name, plan) VALUES (:oid, :name, 'free') "
+            "INSERT INTO organizations (id, name, plan, org_code) "
+            "VALUES (:oid, :name, 'free', :code) "
             "ON CONFLICT (id) DO NOTHING"
         ),
-        {"oid": org_id, "name": f"org-{org_id}"},
+        {"oid": org_id, "name": f"org-{org_id}", "code": generate_org_code()},
     )
 
 

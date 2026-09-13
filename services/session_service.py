@@ -1,7 +1,8 @@
 """Session service — business logic for session management.
 
 Provides create, read, list, and delete operations for conversation
-sessions.  All DB access is delegated to ``SessionRepository``.
+sessions.  All DB access is delegated to ``SessionRepository`` (sessions)
+and ``EpisodeBlobRepository`` (message attachments).
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from schemas.sessions import (
 from core.events import EventType
 from core.exceptions import ConflictError, NotFoundError, ValidationError
 from schemas.mappers import episode_to_dict, session_to_dict, session_to_list_dict
+from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.session_repository import SessionRepository
 from services.webhook_service import WebhookService
 
@@ -31,17 +33,22 @@ class SessionService:
 
     Args:
         repo: The session repository.
+        blob_repo: The episode-blob repository for message attachments.
+            Optional so unit tests can construct the service with only a
+            session mock; production wiring always provides it. When
+            ``None``, messages are returned without blob attachments.
         webhook_service: Optional webhook service for event emission.
     """
 
     def __init__(
         self,
         repo: SessionRepository,
+        blob_repo: EpisodeBlobRepository | None = None,
         webhook_service: WebhookService | None = None,
     ) -> None:
         self._repo = repo
+        self._blob_repo = blob_repo
         self._webhook_service = webhook_service
-        self._db = repo._db  # for blob loading in get_messages
 
     # ── Create ──────────────────────────────────────────────────────────────
 
@@ -318,31 +325,30 @@ class SessionService:
         # Load blob attachments for each episode and build an episode→blobs map.
         # per-episode query (N+1 within page). Batch via
         # EpisodeBlobRepository.get_by_episode_ids() if page sizes grow >100.
+        # Skipped entirely when no blob repo is wired (unit-test construction).
         episode_blob_map: dict[UUID, list[dict]] = {}
-        try:
-            from repositories.episode_blob_repository import EpisodeBlobRepository
-
-            blob_repo = EpisodeBlobRepository(self._db)
-            for ep in messages:
-                blobs = await blob_repo.get_by_episode(ep.id)
-                if blobs:
-                    episode_blob_map[ep.id] = [
-                        {
-                            "id": b.id,
-                            "file_name": b.file_name,
-                            "mime_type": b.mime_type,
-                            "file_size": b.file_size,
-                            "download_url": None,
-                        }
-                        for b in blobs
-                    ]
-        except Exception:
-            logger.warning(
-                "get_messages.blob_load_failed",
-                extra={"session_id": str(session_id)},
-                exc_info=True,
-            )
-            # Non-critical — messages returned without blobs
+        if self._blob_repo is not None:
+            try:
+                for ep in messages:
+                    blobs = await self._blob_repo.get_by_episode(ep.id)
+                    if blobs:
+                        episode_blob_map[ep.id] = [
+                            {
+                                "id": b.id,
+                                "file_name": b.file_name,
+                                "mime_type": b.mime_type,
+                                "file_size": b.file_size,
+                                "download_url": None,
+                            }
+                            for b in blobs
+                        ]
+            except Exception:
+                logger.warning(
+                    "get_messages.blob_load_failed",
+                    extra={"session_id": str(session_id)},
+                    exc_info=True,
+                )
+                # Non-critical — messages returned without blobs
 
         items = []
         for m in messages:

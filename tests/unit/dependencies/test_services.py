@@ -88,17 +88,23 @@ class TestGetSessionService:
 
         with (
             patch("dependencies.services.SessionRepository") as mock_repo_cls,
+            patch(
+                "dependencies.services.EpisodeBlobRepository"
+            ) as mock_blob_cls,
             patch("dependencies.services.SessionService") as mock_svc_cls,
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
+            mock_blob = MagicMock()
+            mock_blob_cls.return_value = mock_blob
             mock_svc_cls.return_value = "session_service"
 
             result = await get_session_service(db, webhook)
 
             mock_repo_cls.assert_called_once_with(db)
+            mock_blob_cls.assert_called_once_with(db)
             mock_svc_cls.assert_called_once_with(
-                repo=mock_repo, webhook_service=webhook
+                repo=mock_repo, blob_repo=mock_blob, webhook_service=webhook
             )
             assert result == "session_service"
 
@@ -339,6 +345,7 @@ class TestGetMemoryService:
 
         request = MagicMock(spec=Request)
         request.app.state.redis = AsyncMock()
+        request.app.state.openbao_client = MagicMock()
         db = AsyncMock(spec=AsyncSession)
         webhook = MagicMock()
 
@@ -376,6 +383,7 @@ class TestGetMemoryService:
                 org_repo=m5.return_value,
                 webhook_service=webhook,
                 blob_repo=m6.return_value,
+                bao_client=request.app.state.openbao_client,
             )
             assert result == "memory_service"
 

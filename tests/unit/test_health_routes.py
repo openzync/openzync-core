@@ -8,12 +8,43 @@ Kubernetes/Helm probes, NGINX, and the Dockerfile healthcheck resolve
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+import pytest
 from httpx import ASGITransport, AsyncClient
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # NOTE: `services.api.main` is imported inside each test, not at module
 # level — the module executes ``app = create_app()`` at import time, which
 # calls ``get_settings()``. The unit conftest's autouse ``_init_settings``
 # fixture initialises the settings singleton before each test body runs.
+
+
+@pytest.fixture(autouse=True)
+def _isolate_logging_config() -> Iterator[None]:
+    """Restore process-global logging state after each test.
+
+    Importing ``services.api.main`` executes ``create_app()`` at module
+    scope, which calls ``core.logging.setup_logging()`` — a process-global
+    ``structlog.configure()`` plus stdlib level/captureWarnings changes.
+    Without isolation that configuration leaks into every test file
+    collected after this one: failure-path tests that log exceptions then
+    trip structlog's ``format_exc_info`` UserWarning, which
+    ``filterwarnings = error`` escalates into a failure —order-dependent
+    breakage far away from this file (worker-task and transit tests).
+    """
+    import logging
+
+    import structlog
+
+    root = logging.getLogger()
+    level = root.level
+    yield
+    structlog.reset_defaults()
+    root.setLevel(level)
+    logging.captureWarnings(False)
 
 
 async def _get(path: str) -> int:

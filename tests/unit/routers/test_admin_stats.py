@@ -11,7 +11,7 @@ that mimic what SQLAlchemy async returns.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
@@ -134,16 +134,15 @@ class TestGetOrgStats:
         self, client: AsyncClient, mock_db: AsyncMock
     ) -> None:
         """Should return aggregate counts for all six metric categories."""
-        # Each _count_* helper calls db.execute() and reads .scalar()
-        # We need 6 execute calls in sequence for: users, sessions, episodes,
-        # facts, messages, api_keys
+        # get_org_stats runs 6 count queries in sequence: episodes,
+        # sessions, facts, extractions, observations, classifications.
         mock_db.execute.side_effect = [
-            _MockScalarResult(10),   # users
-            _MockScalarResult(25),   # sessions
             _MockScalarResult(100),  # episodes
-            _MockScalarResult(50),   # facts
-            _MockScalarResult(500),  # messages
-            _MockScalarResult(3),    # api_keys
+            _MockScalarResult(25),  # sessions
+            _MockScalarResult(50),  # facts
+            _MockScalarResult(7),  # extractions
+            _MockScalarResult(30),  # observations
+            _MockScalarResult(12),  # classifications
         ]
 
         response = await client.get("/v1/admin/stats/org")
@@ -151,12 +150,12 @@ class TestGetOrgStats:
         body = response.json()
 
         assert body["organization_id"] == str(ORG_ID)
-        assert body["total_users"] == 10
-        assert body["total_sessions"] == 25
         assert body["total_episodes"] == 100
+        assert body["total_sessions"] == 25
         assert body["total_facts"] == 50
-        assert body["total_messages"] == 500
-        assert body["total_api_keys"] == 3
+        assert body["total_extractions"] == 7
+        assert body["total_observations"] == 30
+        assert body["total_classifications"] == 12
         # Verify all 6 execute calls were made
         assert mock_db.execute.await_count == 6
 
@@ -165,42 +164,44 @@ class TestGetOrgStats:
     ) -> None:
         """Should return zeroes when no data exists in the org."""
         mock_db.execute.side_effect = [
-            _MockScalarResult(0),  # users
-            _MockScalarResult(0),  # sessions
             _MockScalarResult(0),  # episodes
+            _MockScalarResult(0),  # sessions
             _MockScalarResult(0),  # facts
-            _MockScalarResult(0),  # messages
-            _MockScalarResult(0),  # api_keys
+            _MockScalarResult(0),  # extractions
+            _MockScalarResult(0),  # observations
+            _MockScalarResult(0),  # classifications
         ]
         response = await client.get("/v1/admin/stats/org")
         assert response.status_code == 200
         body = response.json()
-        assert body["total_users"] == 0
-        assert body["total_sessions"] == 0
         assert body["total_episodes"] == 0
+        assert body["total_sessions"] == 0
         assert body["total_facts"] == 0
-        assert body["total_messages"] == 0
-        assert body["total_api_keys"] == 0
+        assert body["total_extractions"] == 0
+        assert body["total_observations"] == 0
+        assert body["total_classifications"] == 0
 
     async def test_handles_none_scalar(
         self, client: AsyncClient, mock_db: AsyncMock
     ) -> None:
         """Should handle when scalar() returns None."""
         mock_db.execute.side_effect = [
-            _MockScalarResult(None),  # users → 0
+            _MockScalarResult(None),  # episodes → 0
             _MockScalarResult(None),  # sessions → 0
-            _MockScalarResult(1),     # episodes
-            _MockScalarResult(None),  # facts → 0
-            _MockScalarResult(5),     # messages
-            _MockScalarResult(None),  # api_keys → 0
+            _MockScalarResult(1),  # facts
+            _MockScalarResult(None),  # extractions → 0
+            _MockScalarResult(5),  # observations
+            _MockScalarResult(None),  # classifications → 0
         ]
         response = await client.get("/v1/admin/stats/org")
         assert response.status_code == 200
         body = response.json()
-        assert body["total_users"] == 0
-        assert body["total_episodes"] == 1
-        assert body["total_messages"] == 5
-        assert body["total_api_keys"] == 0
+        assert body["total_episodes"] == 0
+        assert body["total_sessions"] == 0
+        assert body["total_facts"] == 1
+        assert body["total_extractions"] == 0
+        assert body["total_observations"] == 5
+        assert body["total_classifications"] == 0
 
 
 # ── GET /usage — daily usage trends ──────────────────────────────────────────
@@ -212,10 +213,10 @@ class TestGetUsageStats:
     async def test_returns_usage_stats(
         self, client: AsyncClient, mock_db: AsyncMock
     ) -> None:
-        """Should return merged daily message and session counts."""
-        # The /usage endpoint runs 2 queries:
-        #   1. Message counts (date, count) with iteration over result
-        #   2. Session counts (date, count) with iteration over result
+        """Should return merged daily counts across all eight categories."""
+        # The /usage endpoint runs 8 queries in sequence:
+        #   episodes, sessions, facts, extractions, observations,
+        #   classifications, nodes, edges.
         # Each result is iterable (supports `for row in result`).
 
         class _IterResult:
@@ -230,10 +231,18 @@ class TestGetUsageStats:
         mock_db.execute.side_effect = [
             _IterResult(
                 [_MockRow("2026-07-28", 20), _MockRow("2026-07-27", 15)]
-            ),
+            ),  # episodes
             _IterResult(
                 [_MockRow("2026-07-28", 5), _MockRow("2026-07-27", 3)]
-            ),
+            ),  # sessions
+            _IterResult([_MockRow("2026-07-28", 7)]),  # facts
+            _IterResult([_MockRow("2026-07-28", 2)]),  # extractions
+            _IterResult([_MockRow("2026-07-27", 4)]),  # observations
+            _IterResult([]),  # classifications
+            _IterResult([_MockRow("2026-07-28", 1)]),  # nodes
+            _IterResult(
+                [_MockRow("2026-07-28", 3), _MockRow("2026-07-27", 1)]
+            ),  # edges
         ]
 
         response = await client.get("/v1/admin/stats/usage?days=7")
@@ -245,25 +254,42 @@ class TestGetUsageStats:
         # Results are sorted newest first
         day1, day2 = body[0], body[1]
         assert day1["date"] == "2026-07-28"
-        assert day1["message_count"] == 20
+        assert day1["episode_count"] == 20
         assert day1["session_count"] == 5
+        assert day1["fact_count"] == 7
+        assert day1["extraction_count"] == 2
+        assert day1["observation_count"] == 0
+        assert day1["classification_count"] == 0
+        assert day1["node_count"] == 1
+        assert day1["edge_count"] == 3
         assert day2["date"] == "2026-07-27"
-        assert day2["message_count"] == 15
+        assert day2["episode_count"] == 15
         assert day2["session_count"] == 3
+        assert day2["observation_count"] == 4
+        assert day2["edge_count"] == 1
+        assert mock_db.execute.await_count == 8
 
     async def test_uses_default_days(
         self, client: AsyncClient, mock_db: AsyncMock
     ) -> None:
         """Should default to 30 days when no days param is provided."""
+
         class _IterResult:
             def __init__(self, rows: list):
                 self._rows = rows
+
             def __iter__(self):
                 return iter(self._rows)
 
         mock_db.execute.side_effect = [
-            _IterResult([]),
-            _IterResult([]),
+            _IterResult([]),  # episodes
+            _IterResult([]),  # sessions
+            _IterResult([]),  # facts
+            _IterResult([]),  # extractions
+            _IterResult([]),  # observations
+            _IterResult([]),  # classifications
+            _IterResult([]),  # nodes
+            _IterResult([]),  # edges
         ]
         response = await client.get("/v1/admin/stats/usage")
         assert response.status_code == 200

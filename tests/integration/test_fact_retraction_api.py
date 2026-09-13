@@ -168,11 +168,13 @@ class TestRetractEndpoint:
             "an idempotent retraction must not re-stamp invalid_at"
         )
 
-        # Still exactly one fact — no duplicate rows.
+        # GET /facts excludes retracted facts by design (invalid_at-set
+        # rows are filtered in routers/facts.py list_facts_at_time), so a
+        # retracted fact reads back as zero rows — still no duplicates.
         listing = await isolated_auth_client.get(
             f"/v1/projects/{isolated_project_id}/facts"
         )
-        assert len(listing.json()["data"]) == 1
+        assert len(listing.json()["data"]) == 0
 
     async def test_retract_unknown_fact_returns_404(
         self,
