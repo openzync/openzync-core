@@ -21,13 +21,13 @@ Requires testcontainers PostgreSQL with graph_relationships table.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
 from sqlalchemy import text as sa_text
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from packages.graph_backend.postgres import PostgresGraphBackend
 from repositories.fact_repository import FactRepository
@@ -38,8 +38,8 @@ pytestmark = pytest.mark.integration
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 PROJECT_ID = UUID("00000000-0000-0000-0000-000000000002")
 
-_DATE_2024_06 = datetime(2024, 6, 1, tzinfo=timezone.utc)
-_DATE_2024_12 = datetime(2024, 12, 1, tzinfo=timezone.utc)
+_DATE_2024_06 = datetime(2024, 6, 1, tzinfo=UTC)
+_DATE_2024_12 = datetime(2024, 12, 1, tzinfo=UTC)
 _REL_TYPE = "temporal_valid_to_test"
 
 
@@ -256,12 +256,12 @@ class TestFactTemporalExclusion:
             facts = [
                 {"subject": "A", "predicate": "knows", "object": "B",
                  "source_episode_id": self._EPISODE_ID,
-                 "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
-                 "valid_to": datetime(2024, 3, 31, tzinfo=timezone.utc)},
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 3, 31, tzinfo=UTC)},
                 {"subject": "A", "predicate": "knows", "object": "B",
                  "source_episode_id": self._EPISODE_ID,
-                 "valid_from": datetime(2024, 4, 1, tzinfo=timezone.utc),
-                 "valid_to": datetime(2024, 6, 30, tzinfo=timezone.utc)},
+                 "valid_from": datetime(2024, 4, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
             ]
             created = await repo.batch_create(
                 organization_id=ORG_ID,
@@ -279,12 +279,12 @@ class TestFactTemporalExclusion:
             facts = [
                 {"subject": "X", "predicate": "located_in", "object": "Y",
                  "source_episode_id": self._EPISODE_ID,
-                 "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
-                 "valid_to": datetime(2024, 6, 30, tzinfo=timezone.utc)},
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
                 {"subject": "X", "predicate": "located_in", "object": "Y",
                  "source_episode_id": self._EPISODE_ID,
-                 "valid_from": datetime(2024, 3, 1, tzinfo=timezone.utc),
-                 "valid_to": datetime(2024, 9, 30, tzinfo=timezone.utc)},
+                 "valid_from": datetime(2024, 3, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 9, 30, tzinfo=UTC)},
             ]
             with pytest.raises(IntegrityError):
                 await repo.batch_create(
@@ -302,12 +302,12 @@ class TestFactTemporalExclusion:
             facts = [
                 {"subject": "P", "predicate": "reports_to", "object": "Q",
                  "source_episode_id": self._EPISODE_ID,
-                 "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
-                 "valid_to": datetime(2024, 6, 1, tzinfo=timezone.utc)},
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 6, 1, tzinfo=UTC)},
                 {"subject": "P", "predicate": "reports_to", "object": "Q",
                  "source_episode_id": self._EPISODE_ID,
-                 "valid_from": datetime(2024, 6, 1, tzinfo=timezone.utc),
-                 "valid_to": datetime(2024, 12, 31, tzinfo=timezone.utc)},
+                 "valid_from": datetime(2024, 6, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 12, 31, tzinfo=UTC)},
             ]
             created = await repo.batch_create(
                 organization_id=ORG_ID,
@@ -325,12 +325,12 @@ class TestFactTemporalExclusion:
             facts = [
                 {"subject": "A", "predicate": "knows", "object": "B",
                  "source_episode_id": self._EPISODE_ID,
-                 "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
-                 "valid_to": datetime(2024, 12, 31, tzinfo=timezone.utc)},
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 12, 31, tzinfo=UTC)},
                 {"subject": "C", "predicate": "knows", "object": "D",
                  "source_episode_id": self._EPISODE_ID,
-                 "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
-                 "valid_to": datetime(2024, 12, 31, tzinfo=timezone.utc)},
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 12, 31, tzinfo=UTC)},
             ]
             created = await repo.batch_create(
                 organization_id=ORG_ID,
@@ -349,8 +349,8 @@ class TestFactTemporalExclusion:
             fact_dict = {
                 "subject": "M", "predicate": "founded", "object": "N",
                 "source_episode_id": self._EPISODE_ID,
-                "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
-                "valid_to": datetime(2024, 12, 31, tzinfo=timezone.utc),
+                "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
             }
             [fact] = await repo.batch_create(
                 organization_id=ORG_ID,
@@ -386,8 +386,8 @@ class TestFactTemporalExclusion:
             fact_dict = {
                 "subject": "R", "predicate": "works_at", "object": "S",
                 "source_episode_id": self._EPISODE_ID,
-                "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
-                "valid_to": datetime(2024, 12, 31, tzinfo=timezone.utc),
+                "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
             }
             first = await repo.batch_create(
                 organization_id=ORG_ID,
@@ -404,8 +404,8 @@ class TestFactTemporalExclusion:
                 facts=[fact_dict,  # conflict
                        {"subject": "R2", "predicate": "works_at", "object": "S2",
                         "source_episode_id": self._EPISODE_ID,
-                        "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
-                        "valid_to": datetime(2024, 12, 31, tzinfo=timezone.utc)}],
+                        "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                        "valid_to": datetime(2024, 12, 31, tzinfo=UTC)}],
                 on_conflict="skip",
             )
             # Only the non-conflicting row should be returned
@@ -420,8 +420,8 @@ class TestFactTemporalExclusion:
             fact_dict = {
                 "subject": "T", "predicate": "manages", "object": "U",
                 "source_episode_id": self._EPISODE_ID,
-                "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
-                "valid_to": datetime(2024, 12, 31, tzinfo=timezone.utc),
+                "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
             }
             await repo.batch_create(
                 organization_id=ORG_ID,
@@ -452,7 +452,7 @@ class TestFactTemporalExclusion:
                 facts=[{
                     "subject": "V", "predicate": "employs", "object": "W",
                     "source_episode_id": self._EPISODE_ID,
-                    "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
+                    "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
                     "valid_to": None,
                 }],
             )
@@ -466,14 +466,14 @@ class TestFactTemporalExclusion:
                     facts=[{
                         "subject": "V", "predicate": "employs", "object": "W",
                         "source_episode_id": self._EPISODE_ID,
-                        "valid_from": datetime(2024, 6, 1, tzinfo=timezone.utc),
-                        "valid_to": datetime(2024, 12, 31, tzinfo=timezone.utc),
+                        "valid_from": datetime(2024, 6, 1, tzinfo=UTC),
+                        "valid_to": datetime(2024, 12, 31, tzinfo=UTC),
                     }],
                 )
- 
+
         await self._run_with_session(engine, _test)
- 
- 
+
+
 @pytest.mark.asyncio
 class TestTemporalQueries:
     """Integration tests for temporal query methods on facts.
@@ -554,20 +554,20 @@ class TestTemporalQueries:
             facts=[
                 {"subject": "QA", "predicate": "test_time", "object": "A",
                  "source_episode_id": self._EPISODE_ID,
-                 "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
-                 "valid_to": datetime(2024, 6, 30, tzinfo=timezone.utc)},
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
                 {"subject": "QB", "predicate": "test_time", "object": "B",
                  "source_episode_id": self._EPISODE_ID,
-                 "valid_from": datetime(2024, 3, 1, tzinfo=timezone.utc),
-                 "valid_to": datetime(2024, 9, 30, tzinfo=timezone.utc)},
+                 "valid_from": datetime(2024, 3, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 9, 30, tzinfo=UTC)},
                 {"subject": "QC", "predicate": "test_time", "object": "C",
                  "source_episode_id": self._EPISODE_ID,
-                 "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
                  "valid_to": None},
                 {"subject": "QD", "predicate": "test_time", "object": "D",
                  "source_episode_id": self._EPISODE_ID,
-                 "valid_from": datetime(2024, 1, 1, tzinfo=timezone.utc),
-                 "valid_to": datetime(2024, 6, 30, tzinfo=timezone.utc)},
+                 "valid_from": datetime(2024, 1, 1, tzinfo=UTC),
+                 "valid_to": datetime(2024, 6, 30, tzinfo=UTC)},
             ],
         )
 
@@ -591,7 +591,7 @@ class TestTemporalQueries:
         """Timestamp falls inside a fact's valid range → returned."""
         async def _test(db, repo):
             await self._seed_facts(db, repo)
-            ts = datetime(2024, 5, 1, tzinfo=timezone.utc)
+            ts = datetime(2024, 5, 1, tzinfo=UTC)
             results = await repo.get_facts_at_time(PROJECT_ID, ts)
             subjects = {f.subject for f in results}
             assert "QA" in subjects  # [2024-01, 2024-06]
@@ -611,7 +611,7 @@ class TestTemporalQueries:
         """Timestamp before a fact's valid_from → not returned."""
         async def _test(db, repo):
             await self._seed_facts(db, repo)
-            ts = datetime(2023, 12, 1, tzinfo=timezone.utc)
+            ts = datetime(2023, 12, 1, tzinfo=UTC)
             results = await repo.get_facts_at_time(PROJECT_ID, ts)
             assert len(results) == 0
 
@@ -628,7 +628,7 @@ class TestTemporalQueries:
         but open-ended facts are still included."""
         async def _test(db, repo):
             await self._seed_facts(db, repo)
-            ts = datetime(2024, 12, 1, tzinfo=timezone.utc)
+            ts = datetime(2024, 12, 1, tzinfo=UTC)
             results = await repo.get_facts_at_time(PROJECT_ID, ts)
             subjects = {f.subject for f in results}
             assert "QA" not in subjects  # ends 2024-06
@@ -649,8 +649,8 @@ class TestTemporalQueries:
         """Query range partially overlaps a fact's range → returned."""
         async def _test(db, repo):
             await self._seed_facts(db, repo)
-            start = datetime(2024, 2, 1, tzinfo=timezone.utc)
-            end = datetime(2024, 4, 1, tzinfo=timezone.utc)
+            start = datetime(2024, 2, 1, tzinfo=UTC)
+            end = datetime(2024, 4, 1, tzinfo=UTC)
             results = await repo.get_facts_in_range(PROJECT_ID, start, end)
             subjects = {f.subject for f in results}
             assert "QA" in subjects  # overlaps [Feb, Apr)
@@ -671,8 +671,8 @@ class TestTemporalQueries:
         facts are returned."""
         async def _test(db, repo):
             await self._seed_facts(db, repo)
-            start = datetime(2025, 1, 1, tzinfo=timezone.utc)
-            end = datetime(2025, 6, 1, tzinfo=timezone.utc)
+            start = datetime(2025, 1, 1, tzinfo=UTC)
+            end = datetime(2025, 6, 1, tzinfo=UTC)
             results = await repo.get_facts_in_range(PROJECT_ID, start, end)
             subjects = {f.subject for f in results}
             assert "QA" not in subjects  # ended 2024-06
@@ -694,8 +694,8 @@ class TestTemporalQueries:
             await self._seed_facts(db, repo)
             # Fact QA ends at 2024-06-30.  Query [2024-06-30, 2024-12-31)
             # should NOT include QA because '[)' excludes the end.
-            start = datetime(2024, 6, 30, tzinfo=timezone.utc)
-            end = datetime(2024, 12, 31, tzinfo=timezone.utc)
+            start = datetime(2024, 6, 30, tzinfo=UTC)
+            end = datetime(2024, 12, 31, tzinfo=UTC)
             results = await repo.get_facts_in_range(PROJECT_ID, start, end)
             subjects = {f.subject for f in results}
             assert "QA" not in subjects  # QA ends exactly at start of query

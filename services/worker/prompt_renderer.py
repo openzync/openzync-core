@@ -27,6 +27,7 @@ Usage (workers):
 
 from __future__ import annotations
 
+from datetime import UTC
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -656,7 +657,7 @@ async def _fetch_user_facts(
     if user_id is None:
         return {"facts": []}
 
-    from datetime import datetime, timezone  # noqa: PLC0415 — lazy import
+    from datetime import datetime  # noqa: PLC0415 — lazy import
 
     from sqlalchemy import text  # noqa: PLC0415 — lazy import
 
@@ -675,7 +676,7 @@ async def _fetch_user_facts(
         {
             "user_id": user_id,
             "org_id": org_id,
-            "effective_at": datetime.now(timezone.utc),
+            "effective_at": datetime.now(UTC),
         },
     )
     facts = [

@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.custom_instruction_repository import CustomInstructionRepository
 
-
 pytestmark = pytest.mark.unit
 
 
@@ -35,7 +34,7 @@ class TestCustomInstructionRepository:
         inst.id = overrides.get("id", uuid4())
         inst.organization_id = overrides.get("organization_id", self.ORG_ID)
         inst.scope = overrides.get("scope", "extraction")
-        inst.target_id = overrides.get("target_id", None)
+        inst.target_id = overrides.get("target_id")
         inst.name = overrides.get("name", "test-instruction")
         inst.text = overrides.get("text", "Do the thing")
         return inst

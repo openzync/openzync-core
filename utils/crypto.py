@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from core.exceptions import AuthenticationError
@@ -165,7 +165,7 @@ def create_jwt_token(
     import jwt
 
     to_encode: dict[str, Any] = data.copy()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     to_encode.update(
         {
             "exp": now + expires_delta,

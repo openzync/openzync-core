@@ -7,7 +7,7 @@ a fake aioboto3.Session with a mock S3 client context manager.
 
 from __future__ import annotations
 
-from unittest.mock import ANY, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

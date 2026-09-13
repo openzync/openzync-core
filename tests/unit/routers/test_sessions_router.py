@@ -7,7 +7,7 @@ dependency guard-clause behaviour.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
@@ -16,7 +16,7 @@ from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
 from schemas.common import PaginatedResponse
-from schemas.sessions import SessionResponse, SessionListResponse, MessageResponse
+from schemas.sessions import MessageResponse, SessionListResponse, SessionResponse
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -53,8 +53,8 @@ def _make_session_response(overrides: dict | None = None) -> dict:
         "pending_enrichment_count": 0,
         "observation_count": 0,
         "closed_at": None,
-        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
-        "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "updated_at": datetime(2026, 1, 1, tzinfo=UTC),
     }
     base.update(overrides or {})
     return base
@@ -70,7 +70,7 @@ def _make_session_list_response(overrides: dict | None = None) -> dict:
         "is_active": True,
         "message_count": 5,
         "fact_count": 2,
-        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC),
     }
     base.update(overrides or {})
     return base
@@ -85,7 +85,7 @@ def _make_message_response(overrides: dict | None = None) -> dict:
         "metadata": {},
         "token_count": 10,
         "sequence_number": 0,
-        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC),
         "blobs": [],
     }
     base.update(overrides or {})
@@ -106,7 +106,7 @@ def _make_fact_response(overrides: dict | None = None) -> dict:
         "object_type": "literal",
         "subject_entity_id": None,
         "object_entity_id": None,
-        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC),
     }
     base.update(overrides or {})
     return base
@@ -137,11 +137,10 @@ class TestSessionsRouter:
         self.session_service = AsyncMock()
         self.fact_service = AsyncMock()
 
-        from dependencies.services import get_fact_service, get_session_service
-        from dependencies.project_auth import require_project_membership
         from dependencies.auth import get_current_user_id
+        from dependencies.project_auth import require_project_membership
         from dependencies.request import get_current_org_id, get_project_id
-
+        from dependencies.services import get_fact_service, get_session_service
         from routers.sessions import router
 
         self.app = FastAPI()

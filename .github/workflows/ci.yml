@@ -4,7 +4,7 @@
 # Stages:
 #   lint            → ruff, mypy
 #   test-unit       → pytest with coverage
-#   test-integration → combined unit + integration coverage (Postgres + Redis testcontainers)
+#   test-integration → combined unit + integration coverage (Postgres + Redis + FalkorDB)
 #   build           → Docker image (tags only) pushed to ghcr.io
 #   deploy          → SSH into VPS, pull images, migrate, restart backend (tags only)
 #   sdk-publish     → PyPI (tags only)
@@ -80,6 +80,8 @@ jobs:
   # ═════════════════════════════════════════════════════════════════════════════
   test-integration:
     runs-on: ubuntu-latest
+    env:
+      OZ_FALKORDB_URL: "redis://localhost:6381"
     services:
       postgres:
         image: pgvector/pgvector:pg15
@@ -98,6 +100,15 @@ jobs:
         image: redis:7-alpine
         ports:
           - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+      falkordb:
+        image: falkordb/falkordb:v4.20.1-alpine
+        ports:
+          - 6381:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s

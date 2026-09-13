@@ -24,7 +24,7 @@ and the post-commit sync never conflict.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import text
@@ -105,7 +105,7 @@ async def reconcile_graph_edges(ctx: dict[str, Any]) -> str:
         queue_name = "OpenZync:development:queue:low"
 
     # ── Scan stale edges (Postgres anti-join) ───────────────────────────
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     stale_edges: list[dict[str, Any]] = []
     async with session_factory() as db:
         # Cross-org cron scan: bypass RLS so every org is visible.  The

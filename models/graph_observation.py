@@ -19,8 +19,9 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import ARRAY, Float, ForeignKey, Text, TIMESTAMP, func
-from sqlalchemy.dialects.postgresql import JSONB, UUID as SA_UUID
+from sqlalchemy import ARRAY, TIMESTAMP, Float, ForeignKey, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as SA_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from models.base import Base, TimestampMixin

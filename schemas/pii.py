@@ -7,7 +7,6 @@ Schemas must never import from ``models/``, ``services/``, or ``routers/``.
 from __future__ import annotations
 
 import enum
-from typing import Any
 
 from pydantic import BaseModel, Field
 

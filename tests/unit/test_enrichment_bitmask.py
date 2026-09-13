@@ -10,16 +10,14 @@ Exit criterion G1.6:
 
 from __future__ import annotations
 
-import pytest
-
 from workers.tasks.base import (
     ENRICHMENT_CLASSIFICATION,
     ENRICHMENT_EMBEDDING,
     ENRICHMENT_ENTITIES,
+    ENRICHMENT_ENTITY_LINKS,
     ENRICHMENT_FACTS,
     ENRICHMENT_OBSERVATIONS,
     ENRICHMENT_STRUCTURED_EXTRACTION,
-    ENRICHMENT_ENTITY_LINKS,
 )
 
 

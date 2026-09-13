@@ -1,6 +1,6 @@
 """LLM-as-judge evaluation for the LongMemEval benchmark.
 
-Uses an LLM backend (e.g. OpenRouter) to judge whether a model's answer
+Uses an LLM backend (e.g. OpenAI) to judge whether a model's answer
 matches the expected ground truth for each LongMemEval question.
 """
 

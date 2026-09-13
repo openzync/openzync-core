@@ -5,7 +5,7 @@ service boundary.  Private validation helpers are tested directly — pure logic
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -63,8 +63,8 @@ class TestSchemaService:
         schema.json_schema = json_schema or {"type": "object", "properties": {}}
         schema.prompt_template = prompt_template
         schema.is_active = is_active
-        schema.created_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        schema.updated_at = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        schema.created_at = datetime(2025, 1, 1, tzinfo=UTC)
+        schema.updated_at = datetime(2025, 1, 1, tzinfo=UTC)
         return schema
 
     def _make_classification_schema(self) -> dict:

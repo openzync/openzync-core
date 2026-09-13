@@ -12,7 +12,6 @@ from repositories.dialog_classification_repository import (
     DialogClassificationRepository,
 )
 
-
 pytestmark = pytest.mark.unit
 
 

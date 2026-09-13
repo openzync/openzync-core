@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import orjson
 import pytest
@@ -300,7 +300,7 @@ class TestAuditMiddleware:
         mock_pool.enqueue = AsyncMock(return_value=None)
 
         from unittest.mock import patch
-        
+
         # Mock the body capture resolution to avoid OpenBao calls
         with patch("middleware.audit._resolve_audit_body_capture", return_value=False):
             app = self._create_app(mock_arq_pool=mock_pool)

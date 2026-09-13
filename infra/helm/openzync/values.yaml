@@ -149,7 +149,6 @@ secrets:
   falkordbUrl: ""
   secretKey: ""
   openaiApiKey: ""
-  openrouterApiKey: ""
   anthropicApiKey: ""
 
 # ── Service accounts ──────────────────────────────────────────────────────────

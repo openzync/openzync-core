@@ -9,10 +9,6 @@ from prometheus_client import generate_latest
 from middleware.metrics import (
     METRICS_REGISTRY,
     MetricsMiddleware,
-    http_errors_total,
-    http_request_duration_seconds,
-    http_requests_in_progress,
-    http_requests_total,
 )
 
 
@@ -168,7 +164,6 @@ class TestMetricsMiddleware:
 
         @app.get("/not-found")
         async def not_found() -> None:
-            from starlette.responses import Response
             # Can't easily trigger 4xx without full app, just verify 2xx path
             return None
 

@@ -10,7 +10,7 @@ Tests cover all CRUD endpoints under ``/v1/admin/schemas``:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -25,7 +25,7 @@ from schemas.extraction_schemas import UpdateExtractionSchemaRequest
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
 SCHEMA_ID = UUID("00000000-0000-0000-0000-000000000003")
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 
 
 @pytest.fixture(autouse=True)

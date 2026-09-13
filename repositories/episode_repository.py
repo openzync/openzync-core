@@ -15,12 +15,12 @@ Key patterns:
 from __future__ import annotations
 
 import base64
-import orjson
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Select, func, or_, select, text
+import orjson
+from sqlalchemy import func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.episode import Episode
@@ -75,7 +75,7 @@ class EpisodeRepository:
 
         values: list[str] = []
         params: dict[str, object] = {}
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         for i, msg in enumerate(messages):
             episode_id = uuid4()

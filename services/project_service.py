@@ -10,8 +10,6 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from core.exceptions import NotFoundError, ValidationError
 from repositories.project_repository import ProjectRepository
 from schemas.projects import (

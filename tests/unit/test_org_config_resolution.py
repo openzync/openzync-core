@@ -136,13 +136,13 @@ class TestGetOrgConfig:
     ) -> None:
         """skip_cache=True should bypass Redis even when it's available."""
         mock_redis.get.return_value = '{"llm_backend": "cached"}'
-        mock_bao_client.read_org_config.return_value = {"llm_backend": "from_openbao"}
+        mock_bao_client.read_org_config.return_value = {"llm_backend": "openai"}
 
         config = await get_org_config(
             org_id, redis=mock_redis, bao_client=mock_bao_client, skip_cache=True
         )
 
-        assert config.llm_backend == "from_openbao"  # from OpenBao, not cache
+        assert config.llm_backend == "openai"  # from OpenBao, not cache
         mock_redis.get.assert_not_awaited()
 
     async def test_no_redis_skips_cache_entirely(
@@ -151,13 +151,13 @@ class TestGetOrgConfig:
         mock_bao_client: AsyncMock,
     ) -> None:
         """When redis is None, always fetch from OpenBao (no cache layer)."""
-        mock_bao_client.read_org_config.return_value = {"llm_backend": "no-cache"}
+        mock_bao_client.read_org_config.return_value = {"llm_backend": "openai"}
 
         config = await get_org_config(
             org_id, redis=None, bao_client=mock_bao_client
         )
 
-        assert config.llm_backend == "no-cache"
+        assert config.llm_backend == "openai"
         mock_bao_client.read_org_config.assert_awaited_once_with(org_id)
 
     async def test_requires_client(

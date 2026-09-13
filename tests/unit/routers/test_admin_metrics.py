@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.auth import require_org_id
 from dependencies.db import get_db
-from routers.admin_metrics import router, _get_metrics_service
+from routers.admin_metrics import _get_metrics_service, router
 from schemas.admin_metrics import (
     EpisodeStats,
     GraphStats,

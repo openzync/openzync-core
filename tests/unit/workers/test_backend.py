@@ -18,7 +18,6 @@ import pytest
 
 from core.exceptions import GraphBackendUnavailableError
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # resolve_graph_backend
 # ═══════════════════════════════════════════════════════════════════════════════

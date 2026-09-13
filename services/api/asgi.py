@@ -60,6 +60,7 @@ except RuntimeError:
 # TODO: Remove when FastAPI dependency is pinned to a fixed version (>0.115.6).
 # ═══════════════════════════════════════════════════════════════════════════
 import fastapi.routing as _fr_cb  # noqa: E402
+
 # Patch the reference inside fastapi.routing (where it's used in assertions)
 _fr_cb.is_body_allowed_for_status_code = lambda code: True
 # ═══════════════════════════════════════════════════════════════════════════

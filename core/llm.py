@@ -15,15 +15,13 @@ Usage::
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from abc import ABC, abstractmethod
-
-import orjson
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+import orjson
 from pydantic import BaseModel, ValidationError
 
 from core.exceptions import LLMStructuredOutputError
@@ -41,9 +39,9 @@ class LLMProvider(str, Enum):
 
     OLLAMA = "ollama"
     OPENAI = "openai"
+    OPENAI_LIKE = "openai_like"
     AZURE = "azure"
     ANTHROPIC = "anthropic"
-    OPENROUTER = "openrouter"
 
 
 @dataclass
@@ -73,7 +71,6 @@ class PromptCachingConfig:
     Each backend interprets the fields relevant to it:
     - Anthropic: enabled, anthropic_min_tokens, anthropic_cache_ttl
     - OpenAI/Azure: enabled (automatic prefix caching needs no config)
-    - OpenRouter: enabled, session_id (for sticky routing)
     - Ollama: ignored (no caching support)
     """
 
@@ -130,7 +127,7 @@ def build_cache_config(
         org_config: Optional per-org config dict (from DB JSONB column).
             May contain a ``"prompt_caching"`` key with ``enabled``,
             ``anthropic_min_tokens``, ``anthropic_cache_ttl``.
-        session_id: Optional session ID for OpenRouter sticky routing.
+        session_id: Optional session ID for provider-side sticky routing.
 
     Returns:
         A ``PromptCachingConfig`` instance.
@@ -554,6 +551,7 @@ class LLMBackendRegistry:
 # which imports llm.py.  importlib breaks the cycle by not requiring specific
 # names from the partially-initialised module.
 import importlib
+
 importlib.import_module("core.llm_backends")
 
 
@@ -581,7 +579,8 @@ async def resolve_backend(
         provider: Explicit override.  If provided, org config is skipped.
         org_config: Optional dict with per-organisation LLM settings.
             Supported keys: ``llm_backend``, ``ollama_base_url``,
-            ``openai_api_key``, ``openai_model``, ``azure_endpoint``,
+            ``openai_api_key``, ``openai_model``, ``openai_like_base_url``,
+            ``llm_model``, ``azure_endpoint``,
             ``azure_api_key``, ``azure_deployment``, ``anthropic_api_key``,
             ``anthropic_model``.
 
@@ -628,8 +627,8 @@ async def _create_backend(provider: str, config: dict | None = None) -> LLMBacke
     in *config* or the function raises :class:`LLMConfigurationError`.
 
     Args:
-        provider: One of ``"ollama"``, ``"openai"``, ``"azure"``,
-            ``"anthropic"``, ``"openrouter"``.
+        provider: One of ``"ollama"``, ``"openai"``, ``"openai_like"``,
+            ``"azure"``, ``"anthropic"``.
         config: Optional dict with provider-specific overrides (API keys,
             model names, endpoints).  Required fields vary by provider.
 
@@ -658,6 +657,17 @@ async def _create_backend(provider: str, config: dict | None = None) -> LLMBacke
         api_key: str = config["openai_api_key"]
         model: str | None = config.get("openai_model")
         instance = backend_cls(api_key=api_key, model=model)
+    elif provider == "openai_like":
+        if config is None or not config.get("openai_like_base_url"):
+            raise LLMConfigurationError(
+                "OpenAI-like backend requires openai_like_base_url in per-org "
+                "configuration.  Set it via PATCH /admin/org/config."
+            )
+        instance = backend_cls(
+            base_url=config["openai_like_base_url"],
+            api_key=config.get("openai_api_key"),
+            model=config.get("llm_model"),
+        )
     elif provider == "azure":
         if config is None or not config.get("azure_endpoint"):
             raise LLMConfigurationError(
@@ -687,15 +697,6 @@ async def _create_backend(provider: str, config: dict | None = None) -> LLMBacke
             )
         api_key = config["anthropic_api_key"]
         model = config.get("anthropic_model")
-        instance = backend_cls(api_key=api_key, model=model)
-    elif provider == "openrouter":
-        if config is None or not config.get("api_key"):
-            raise LLMConfigurationError(
-                "OpenRouter backend requires api_key in per-org "
-                "configuration.  Set it via PATCH /admin/org/config."
-            )
-        api_key = config["api_key"]
-        model = config.get("model")
         instance = backend_cls(api_key=api_key, model=model)
     else:
         raise ValueError(f"Unknown provider: {provider}")

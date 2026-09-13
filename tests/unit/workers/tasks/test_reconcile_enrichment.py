@@ -1,7 +1,7 @@
 """Unit tests for reconcile_enrichment task."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -22,7 +22,6 @@ class TestReconcileEnrichment:
         enrichment_status: int = 0,
         episode_id: str | None = None,
     ) -> dict:
-        from workers.tasks.base import ENRICHMENT_ALL
         return {
             "id": episode_id or _EPISODE_ID,
             "content": _CONTENT,
@@ -151,7 +150,6 @@ class TestReconcileEnrichment:
     @pytest.mark.asyncio
     async def test_already_enriched_skipped(self) -> None:
         """Episode with all enrichment bits set → not returned as stale."""
-        from workers.tasks.base import ENRICHMENT_ALL
 
         session_factory = MagicMock()
         db = AsyncMock()
@@ -274,7 +272,6 @@ class TestReconcileEnrichment:
     @pytest.mark.asyncio
     async def test_backlog_guard_zcard_failure(self) -> None:
         """zcard failure → falls back to 0, does not skip."""
-        from workers.tasks.reconcile_enrichment import BACKLOG_SKIP_THRESHOLD
 
         session_factory = MagicMock()
         db = AsyncMock()

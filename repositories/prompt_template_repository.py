@@ -19,7 +19,6 @@ import logging
 from collections import defaultdict
 from uuid import UUID
 
-import sqlalchemy
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 

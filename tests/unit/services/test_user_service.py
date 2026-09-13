@@ -5,7 +5,7 @@ The ``_user_to_dict`` helper is tested directly — pure transformation.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -65,8 +65,8 @@ class TestUserService:
         user.role = role
         user.is_active = is_active
         user.is_deleted = is_deleted
-        user.created_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
-        user.updated_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        user.created_at = datetime(2025, 6, 1, tzinfo=UTC)
+        user.updated_at = datetime(2025, 6, 1, tzinfo=UTC)
         return user
 
     def _make_stats(
@@ -474,8 +474,8 @@ class TestUserService:
         service, mock_repo = self._make_service()
         cursor = "some-cursor-value"
         search = "alice"
-        created_after = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        created_before = datetime(2025, 12, 31, tzinfo=timezone.utc)
+        created_after = datetime(2025, 1, 1, tzinfo=UTC)
+        created_before = datetime(2025, 12, 31, tzinfo=UTC)
 
         users = [self._make_user()]
         mock_repo.list.return_value = (users, "next-cursor")
@@ -555,8 +555,8 @@ class TestUserServiceRoleGuards:
         user.role = role
         user.is_active = True
         user.is_deleted = False
-        user.created_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
-        user.updated_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        user.created_at = datetime(2025, 6, 1, tzinfo=UTC)
+        user.updated_at = datetime(2025, 6, 1, tzinfo=UTC)
         return user
 
     # ── Self-change guard ─────────────────────────────────────────────────
@@ -765,8 +765,8 @@ class TestUserServicePermissionSeeding:
         user.permissions = permissions or []
         user.is_active = True
         user.is_deleted = False
-        user.created_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
-        user.updated_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        user.created_at = datetime(2025, 6, 1, tzinfo=UTC)
+        user.updated_at = datetime(2025, 6, 1, tzinfo=UTC)
         return user
 
     @pytest.mark.asyncio
@@ -999,8 +999,8 @@ class TestUserServiceSuperadminImmortalGuard:
         user.permissions = []
         user.is_active = True
         user.is_deleted = False
-        user.created_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
-        user.updated_at = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        user.created_at = datetime(2025, 6, 1, tzinfo=UTC)
+        user.updated_at = datetime(2025, 6, 1, tzinfo=UTC)
         return user
 
     @pytest.mark.asyncio

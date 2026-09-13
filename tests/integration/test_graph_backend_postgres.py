@@ -15,8 +15,9 @@ Tests the full Postgres graph backend pipeline with real DB tables:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -25,7 +26,7 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from core.exceptions import ExternalServiceError, NotFoundError
+from core.exceptions import NotFoundError
 from tests.conftest import (
     _ensure_testcontainers_env,
     _run_alembic_upgrade,
@@ -43,7 +44,7 @@ pytestmark = [
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 PROJ_ID = UUID("00000000-0000-0000-0000-000000000002")
 ALT_PROJ_ID = UUID("00000000-0000-0000-0000-000000000003")
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 
 # Module-level container reference
 _pg_container: Any = None
@@ -60,15 +61,17 @@ def setup_module() -> None:
 
     # Seed the well-known test organization and project so FK constraints
     # (graph_entities.organization_id → organizations.id) are satisfied.
-    from sqlalchemy import create_engine as create_sync_engine, text
+    from sqlalchemy import create_engine as create_sync_engine
+    from sqlalchemy import text
 
     sync_url = url.replace("+asyncpg", "")  # strip asyncpg driver for sync engine
     sync_engine = create_sync_engine(sync_url, pool_pre_ping=True)
     with sync_engine.begin() as conn:
         conn.execute(
             text(
-                "INSERT INTO organizations (id, name, plan) "
-                "VALUES ('00000000-0000-0000-0000-000000000001', 'Test Org', 'free') "
+                "INSERT INTO organizations (id, name, plan, org_code) "
+                "VALUES ('00000000-0000-0000-0000-000000000001', "
+                "'Test Org', 'free', 'testorg01') "
                 "ON CONFLICT (id) DO NOTHING"
             )
         )
@@ -363,7 +366,7 @@ class TestRelationships:
         src_id, tgt_id = UUID(src["id"]), UUID(tgt["id"])
         await _create_test_relationship(backend, src_id, tgt_id, rel_type="works_at")
 
-        at_time = datetime.now(timezone.utc) - timedelta(minutes=1)
+        at_time = datetime.now(UTC) - timedelta(minutes=1)
         count = await backend.expire_relationships_matching(
             ORG_ID, PROJ_ID,
             source_id=src_id, target_id=tgt_id,
@@ -384,7 +387,7 @@ class TestRelationships:
         src_id, tgt_id = UUID(src["id"]), UUID(tgt["id"])
         await _create_test_relationship(backend, src_id, tgt_id, rel_type="works_at")
 
-        at_time = datetime.now(timezone.utc)
+        at_time = datetime.now(UTC)
         first = await backend.expire_relationships_matching(
             ORG_ID, PROJ_ID,
             source_id=src_id, target_id=tgt_id,
@@ -404,7 +407,7 @@ class TestRelationships:
         count = await backend.expire_relationships_matching(
             ORG_ID, PROJ_ID,
             source_id=uuid4(), target_id=uuid4(),
-            relationship_type="nonexistent", at_time=datetime.now(timezone.utc),
+            relationship_type="nonexistent", at_time=datetime.now(UTC),
         )
         assert count == 0
 
@@ -423,7 +426,7 @@ class TestRelationships:
         count = await backend.expire_relationships_matching(
             ORG_ID, PROJ_ID,
             source_id=src_id, target_id=tgt_id,
-            relationship_type="works_at", at_time=datetime.now(timezone.utc),
+            relationship_type="works_at", at_time=datetime.now(UTC),
         )
         assert count == 1
         # The other edge (src → other) is still active.
@@ -595,7 +598,7 @@ class TestPaginatedListing:
         count = await backend.expire_relationships_matching(
             ORG_ID, PROJ_ID,
             source_id=src_id, target_id=tgt_id,
-            relationship_type="likes", at_time=datetime.now(timezone.utc),
+            relationship_type="likes", at_time=datetime.now(UTC),
         )
         assert count == 1
 
@@ -758,7 +761,7 @@ class TestTraversal:
         tgt = await _create_test_entity(backend, name="ZzzTargetOmega")
         src_id, tgt_id = UUID(src["id"]), UUID(tgt["id"])
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         t0 = now - timedelta(days=2)
         t1 = now - timedelta(days=1)  # edge validity ends here
         t2 = now  # query as-of — after t1
@@ -802,7 +805,7 @@ class TestTraversal:
         tgt = await _create_test_entity(backend, name="ZzzExpTargetOmega")
         src_id, tgt_id = UUID(src["id"]), UUID(tgt["id"])
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         # Edge created with a HISTORICAL valid_from so the as-of window sits
         # between creation and the invalidation instant — with the default
         # valid_from=now() the edge legitimately did not exist at a past as-of.

@@ -5,7 +5,7 @@ Tests prompt template CRUD and custom instructions endpoints.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
@@ -20,20 +20,8 @@ from dependencies.auth import (
 )
 from dependencies.db import get_db
 from routers.admin_organizations import router
-from schemas.custom_instructions import (
-    CustomInstructionSchema,
-    CustomInstructionsResponse,
-    SetCustomInstructionsRequest,
-)
 from schemas.prompt_templates import (
-    ImportPromptRequest,
-    PromptTemplateDetail,
-    PromptTemplateListResponse,
-    PromptTemplateSummary,
-    PromptTemplateVersionsResponse,
-    SetPromptTemplateRequest,
     SystemPromptGroup,
-    SystemPromptGroupsResponse,
     SystemTemplateEntry,
 )
 
@@ -79,7 +67,7 @@ def _create_app() -> tuple[FastAPI, AsyncMock]:
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # ── Prompt Templates ────────────────────────────────────────────────────────────

@@ -139,7 +139,7 @@ def _init_tracer() -> Any | None:
             "opentelemetry-exporter-otlp-proto-grpc"
         )
         _tracer = None
-    except Exception as exc:
+    except Exception:
         logger.error("tracing.span_failed", exc_info=True)
         # Don't fail the request for tracing infrastructure failure
         _tracer = None

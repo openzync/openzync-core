@@ -17,8 +17,6 @@ New code should import directly from ``workers.tasks.base``.
 
 from __future__ import annotations
 
-from typing import Any, Callable
-
 import httpx
 import structlog
 

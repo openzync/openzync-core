@@ -5,7 +5,7 @@ Tests ``/admin/org/config`` CRUD endpoints and the ``/defaults`` endpoint.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
 import pytest
@@ -18,11 +18,10 @@ from dependencies.auth import (
     require_org_id,
 )
 from dependencies.db import get_db
-from routers.admin_org_config import router, _get_config_service
+from routers.admin_org_config import _get_config_service, router
 from schemas.organization_config import (
     OrgConfigBase,
     OrgConfigResponse,
-    UpdateOrgConfigRequest,
 )
 from services.org_config_service import OrgConfigService
 

@@ -6,20 +6,19 @@ Repository calls are mocked via ``AsyncMock`` so no database is required.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 
 from core.exceptions import NotFoundError, ValidationError
-from services.project_service import ProjectService
-
 from schemas.projects import (
     AddMemberRequest,
     CreateProjectRequest,
     UpdateProjectRequest,
 )
+from services.project_service import ProjectService
 
 
 @pytest.mark.unit
@@ -46,8 +45,8 @@ class TestProjectService:
         project.name = kwargs.get("name", "Test Project")
         project.description = kwargs.get("description", "A test project")
         project.created_by = kwargs.get("created_by", self.USER_ID)
-        project.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
-        project.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
+        project.created_at = kwargs.get("created_at", datetime.now(UTC))
+        project.updated_at = kwargs.get("updated_at", datetime.now(UTC))
         return project
 
     def _make_mock_member(self, **kwargs: object) -> MagicMock:
@@ -57,7 +56,7 @@ class TestProjectService:
         member.project_id = kwargs.get("project_id", self.PROJECT_ID)
         member.user_id = kwargs.get("user_id", self.USER_ID)
         member.role = kwargs.get("role", "owner")
-        member.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
+        member.created_at = kwargs.get("created_at", datetime.now(UTC))
         return member
 
     # ── Create ───────────────────────────────────────────────────────────────

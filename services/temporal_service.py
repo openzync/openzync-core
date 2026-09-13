@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -203,7 +203,7 @@ class TemporalValidationService:
             A list of warning dicts, empty if no issues found.
         """
         warnings: list[dict[str, Any]] = []
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         future_threshold = now + timedelta(hours=MAX_FUTURE_HOURS)
 
         facts = await self._fact_repo.get_all_active_for_project(
@@ -370,10 +370,10 @@ class TemporalValidationService:
         ``'[)'`` semantics: [from, to) — ``to`` is **excluded**.
         """
         # Treat None as unbounded
-        a_start = from_a if from_a is not None else datetime.min.replace(tzinfo=timezone.utc)
-        a_end = to_a if to_a is not None else datetime.max.replace(tzinfo=timezone.utc)
-        b_start = from_b if from_b is not None else datetime.min.replace(tzinfo=timezone.utc)
-        b_end = to_b if to_b is not None else datetime.max.replace(tzinfo=timezone.utc)
+        a_start = from_a if from_a is not None else datetime.min.replace(tzinfo=UTC)
+        a_end = to_a if to_a is not None else datetime.max.replace(tzinfo=UTC)
+        b_start = from_b if from_b is not None else datetime.min.replace(tzinfo=UTC)
+        b_end = to_b if to_b is not None else datetime.max.replace(tzinfo=UTC)
 
         # [a_start, a_end) and [b_start, b_end) overlap if
         # a_start < b_end AND b_start < a_end

@@ -13,7 +13,7 @@ import pytest
 from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
-from schemas.search import GlobalSearchResponse, GlobalSearchItem
+from schemas.search import GlobalSearchItem
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -74,8 +74,8 @@ class TestGlobalSearchRouter:
             ),
         ]
 
+        from dependencies.auth import get_current_user_id, require_org_id
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id, get_current_user_id
         from routers.global_search import router
 
         app = FastAPI()
@@ -118,8 +118,8 @@ class TestGlobalSearchRouter:
         mock_instance = AsyncMock()
         mock_search_service.return_value = mock_instance
 
+        from dependencies.auth import get_current_user_id, require_org_id
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id, get_current_user_id
         from routers.global_search import router
 
         app = FastAPI()
@@ -154,8 +154,8 @@ class TestGlobalSearchRouter:
         mock_instance = AsyncMock()
         mock_search_service.return_value = mock_instance
 
+        from dependencies.auth import get_current_user_id, require_org_id
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id, get_current_user_id
         from routers.global_search import router
 
         app = FastAPI()
@@ -191,8 +191,8 @@ class TestGlobalSearchRouter:
         mock_search_service.return_value = mock_instance
         mock_instance.search.return_value = []
 
+        from dependencies.auth import get_current_user_id, require_org_id
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id, get_current_user_id
         from routers.global_search import router
 
         app = FastAPI()
@@ -231,8 +231,8 @@ class TestGlobalSearchRouter:
         mock_search_service.return_value = mock_instance
         mock_instance.search.return_value = []
 
+        from dependencies.auth import get_current_user_id, require_org_id
         from dependencies.db import get_db
-        from dependencies.auth import require_org_id, get_current_user_id
         from routers.global_search import router
 
         app = FastAPI()

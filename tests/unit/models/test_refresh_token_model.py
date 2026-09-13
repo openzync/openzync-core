@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -15,7 +15,7 @@ class TestRefreshTokenModel:
     @pytest.mark.unit
     def test_required_fields(self) -> None:
         """Minimal required fields produce a valid instance."""
-        expires = datetime.now(timezone.utc)
+        expires = datetime.now(UTC)
         token = RefreshToken(
             user_id="admin-1",
             organization_id=uuid.uuid4(),
@@ -41,7 +41,7 @@ class TestRefreshTokenModel:
             user_id="admin-1",
             organization_id=uuid.uuid4(),
             token_hash="hash",
-            expires_at=datetime.now(timezone.utc),
+            expires_at=datetime.now(UTC),
         )
         assert token.rotated_by is None
 
@@ -59,7 +59,7 @@ class TestRefreshTokenModel:
     @pytest.mark.unit
     def test_repr(self) -> None:
         """repr includes id, is_revoked, expires_at."""
-        expires = datetime.now(timezone.utc)
+        expires = datetime.now(UTC)
         token = RefreshToken(
             user_id="admin-1",
             organization_id=uuid.uuid4(),

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
 from uuid import UUID
 
 import pytest
 from fastapi import Request
-from unittest.mock import MagicMock
 
 from core.exceptions import AuthenticationError, ValidationError
 

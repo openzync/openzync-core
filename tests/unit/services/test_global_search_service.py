@@ -5,8 +5,7 @@ Each private query method is replaced with an AsyncMock returning controlled dat
 """
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, PropertyMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest

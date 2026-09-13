@@ -18,7 +18,7 @@ leaves episodes un-enriched until an operator manually intervenes.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -334,7 +334,7 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
 
     from models.episode import Episode
 
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=STALE_AFTER_MINUTES)
+    cutoff = datetime.now(UTC) - timedelta(minutes=STALE_AFTER_MINUTES)
 
     stale_episodes: list[dict[str, Any]] = []
 

@@ -50,8 +50,8 @@ class TestPartialEnrichmentError:
 
     def test_custom_bits(self) -> None:
         """``successful_bits`` is preserved when provided."""
-        from workers.tasks.enrich_episode import PartialEnrichmentError
         from workers.tasks.base import ENRICHMENT_ENTITIES, ENRICHMENT_FACTS
+        from workers.tasks.enrich_episode import PartialEnrichmentError
 
         bits = ENRICHMENT_ENTITIES | ENRICHMENT_FACTS
         err = PartialEnrichmentError("partial", successful_bits=bits)

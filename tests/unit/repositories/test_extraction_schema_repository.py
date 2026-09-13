@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.extraction_schema_repository import ExtractionSchemaRepository
-
 
 pytestmark = pytest.mark.unit
 
@@ -37,9 +36,9 @@ class TestExtractionSchemaRepository:
         s.name = overrides.get("name", "test-schema")
         s.type = overrides.get("type", "structured")
         s.json_schema = overrides.get("json_schema", {"type": "object"})
-        s.prompt_template = overrides.get("prompt_template", None)
+        s.prompt_template = overrides.get("prompt_template")
         s.is_active = overrides.get("is_active", True)
-        s.created_at = overrides.get("created_at", None)
+        s.created_at = overrides.get("created_at")
         return s
 
     # ── get_by_id ──────────────────────────────────────────────────────────────

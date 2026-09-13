@@ -7,12 +7,11 @@ block data-processing tasks.
 
 from __future__ import annotations
 
-import orjson
 import logging
-import traceback
 from typing import Any
 from uuid import UUID
 
+import orjson
 import structlog
 
 from services.audit_log_service import AuditLogService

@@ -31,7 +31,7 @@ import base64
 import re
 from collections import deque
 from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -264,7 +264,7 @@ class FalkorGraphBackend(GraphBackend):
                     "episode_id": str(episode_id),
                     "org_id": str(org_id),
                     "project_id": str(project_id),
-                    "now": datetime.now(timezone.utc).isoformat(),
+                    "now": datetime.now(UTC).isoformat(),
                 },
             )
         except Exception as exc:
@@ -312,7 +312,7 @@ class FalkorGraphBackend(GraphBackend):
                     "session_id": str(session_id),
                     "org_id": str(org_id),
                     "project_id": str(project_id),
-                    "now": datetime.now(timezone.utc).isoformat(),
+                    "now": datetime.now(UTC).isoformat(),
                 },
             )
         except Exception as exc:
@@ -498,7 +498,7 @@ class FalkorGraphBackend(GraphBackend):
         name_lower = name.lower().strip()
         summary_val = summary if summary is not None else ""
         entity_id = str(uuid4())
-        now_str = datetime.now(timezone.utc).isoformat()
+        now_str = datetime.now(UTC).isoformat()
 
         try:
             result = await graph.query(
@@ -716,7 +716,7 @@ class FalkorGraphBackend(GraphBackend):
             return existing
 
         set_clause = ", ".join(set_parts)
-        params["now"] = datetime.now(timezone.utc).isoformat()
+        params["now"] = datetime.now(UTC).isoformat()
 
         try:
             result = await graph.query(
@@ -803,7 +803,7 @@ class FalkorGraphBackend(GraphBackend):
 
         safe_type = self._sanitize_edge_type(relationship_type)
         rel_id = str(uuid4())
-        now_str = datetime.now(timezone.utc).isoformat()
+        now_str = datetime.now(UTC).isoformat()
 
         params: dict[str, object] = {
             "source_id": str(source_id),
@@ -917,7 +917,7 @@ class FalkorGraphBackend(GraphBackend):
         if graph is None:
             return []
 
-        at_time = at_time or datetime.now(timezone.utc)
+        at_time = at_time or datetime.now(UTC)
         params: dict[str, object] = {
             "eid": str(entity_id),
             "at_time": at_time.isoformat(),
@@ -1094,7 +1094,7 @@ class FalkorGraphBackend(GraphBackend):
         if graph is None:
             return False
 
-        now_str = datetime.now(timezone.utc).isoformat()
+        now_str = datetime.now(UTC).isoformat()
         try:
             result = await graph.query(
                 """
@@ -1284,7 +1284,7 @@ class FalkorGraphBackend(GraphBackend):
         # RedisGraph treats NULL comparisons as no-ops — always pass a
         # concrete timestamp so the invalid_at/valid_from/valid_to bounds
         # actually filter.
-        as_of = as_of or datetime.now(timezone.utc)
+        as_of = as_of or datetime.now(UTC)
         as_of_str = as_of.isoformat()
         visited: set[str] = set()
         queue: deque[tuple[str, int]] = deque()
@@ -2258,7 +2258,7 @@ class FalkorGraphBackend(GraphBackend):
                 detail={"org_id": str(org_id)},
             ) from exc
 
-        now_str = datetime.now(timezone.utc).isoformat()
+        now_str = datetime.now(UTC).isoformat()
         rewired_count = 0
 
         # Step 3 & 4: Rewire each edge type (incoming + outgoing)
@@ -2533,7 +2533,7 @@ class FalkorGraphBackend(GraphBackend):
         )
 
         obs_id = str(uuid4())
-        now_str = datetime.now(timezone.utc).isoformat()
+        now_str = datetime.now(UTC).isoformat()
 
         supporting_fact_strs: list[str] = (
             [str(fid) for fid in supporting_fact_ids]
@@ -2771,9 +2771,9 @@ class FalkorGraphBackend(GraphBackend):
                         try:
                             timestamps.append(datetime.fromisoformat(ts))
                         except (ValueError, TypeError):
-                            timestamps.append(datetime.now(timezone.utc))
+                            timestamps.append(datetime.now(UTC))
                     else:
-                        timestamps.append(datetime.now(timezone.utc))
+                        timestamps.append(datetime.now(UTC))
             return timestamps
         except Exception as exc:
             logger.error(

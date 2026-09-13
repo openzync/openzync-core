@@ -10,13 +10,12 @@ only the backend logic, not the store itself.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
-
 from surrealdb import RecordID
 
 from core.exceptions import ExternalServiceError, NotFoundError
@@ -32,13 +31,13 @@ SESSION_ID = UUID("00000000-0000-0000-0000-000000000006")
 REL_ID = UUID("00000000-0000-0000-0000-000000000010")
 NEIGHBOR_ID = UUID("00000000-0000-0000-0000-000000000011")
 
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 
 # Effective-at timestamps for Phase 3 temporal tests: T1 = the supersession
 # instant written to ``invalid_at``; T0 < T1 < T2.
-T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
-T1 = datetime(2026, 6, 1, tzinfo=timezone.utc)
-T2 = datetime(2026, 12, 1, tzinfo=timezone.utc)
+T0 = datetime(2026, 1, 1, tzinfo=UTC)
+T1 = datetime(2026, 6, 1, tzinfo=UTC)
+T2 = datetime(2026, 12, 1, tzinfo=UTC)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -849,7 +848,7 @@ class TestTraverse:
         """Database error → ExternalServiceError or GraphBackendUnavailableError."""
         _configure_db_error(backend, mock_db, mock_surreal, mock_falkordb_client)
 
-        with pytest.raises((ExternalServiceError)):
+        with pytest.raises(ExternalServiceError):
             await backend.traverse(ORG_ID, PROJ_ID, ENTITY_ID, max_depth=1)
 
 

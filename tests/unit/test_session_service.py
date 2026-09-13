@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
 
 from core.events import EventType
 from core.exceptions import ConflictError, NotFoundError, ValidationError
+from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.session_repository import SessionRepository
 from services.session_service import SessionService
 from services.webhook_service import WebhookService
@@ -33,9 +34,9 @@ class TestSessionService:
         session.metadata_ = kwargs.get("metadata", {})
         session.is_active = kwargs.get("is_active", True)
         session.is_deleted = kwargs.get("is_deleted", False)
-        session.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
-        session.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
-        session.closed_at = kwargs.get("closed_at", None)
+        session.created_at = kwargs.get("created_at", datetime.now(UTC))
+        session.updated_at = kwargs.get("updated_at", datetime.now(UTC))
+        session.closed_at = kwargs.get("closed_at")
         return session
 
     def _make_service(self) -> tuple[SessionService, AsyncMock]:
@@ -88,7 +89,7 @@ class TestSessionService:
         mock_repo.get_stats.return_value = {
             "message_count": 5,
             "fact_count": 3,
-            "last_message_at": datetime.now(timezone.utc),
+            "last_message_at": datetime.now(UTC),
         }
 
         session_id = mock_session.id
@@ -351,7 +352,7 @@ class TestSessionService:
         ep.metadata_ = kwargs.get("metadata", {})
         ep.token_count = kwargs.get("token_count", 10)
         ep.sequence_number = kwargs.get("sequence_number", 0)
-        ep.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
+        ep.created_at = kwargs.get("created_at", datetime.now(UTC))
         return ep
 
     @pytest.mark.asyncio
@@ -414,7 +415,9 @@ class TestSessionService:
     @pytest.mark.asyncio
     async def test_get_messages_with_blobs(self) -> None:
         """Getting messages includes blob attachments when present."""
-        service, mock_repo = self._make_service()
+        mock_repo = AsyncMock(spec=SessionRepository)
+        mock_blob_repo = AsyncMock(spec=EpisodeBlobRepository)
+        service = SessionService(repo=mock_repo, blob_repo=mock_blob_repo)
         mock_session = self._make_mock_session()
         mock_repo.get_by_uuid.return_value = mock_session
 
@@ -423,27 +426,18 @@ class TestSessionService:
         )
         mock_repo.get_messages.return_value = ([episode], None)
 
-        # The service accesses self._db inside get_messages for blob loading.
-        service._db = AsyncMock()
-
         blob_id = uuid4()
         mock_blob = AsyncMock(spec=["id", "file_name", "mime_type", "file_size"])
         mock_blob.id = blob_id
         mock_blob.file_name = "photo.png"
         mock_blob.mime_type = "image/png"
         mock_blob.file_size = 1024
+        mock_blob_repo.get_by_episode = AsyncMock(return_value=[mock_blob])
 
-        with patch(
-            "repositories.episode_blob_repository.EpisodeBlobRepository"
-        ) as mock_blob_repo_cls:
-            mock_blob_repo = AsyncMock()
-            mock_blob_repo.get_by_episode = AsyncMock(return_value=[mock_blob])
-            mock_blob_repo_cls.return_value = mock_blob_repo
-
-            result = await service.get_messages(
-                org_id=self.ORG_ID,
-                session_id=mock_session.id,
-            )
+        result = await service.get_messages(
+            org_id=self.ORG_ID,
+            session_id=mock_session.id,
+        )
 
         assert len(result.data) == 1
         msg = result.data[0]
@@ -458,7 +452,12 @@ class TestSessionService:
     @pytest.mark.asyncio
     async def test_get_messages_blob_load_failure(self) -> None:
         """Blob loading failure does not prevent messages from being returned."""
-        service, mock_repo = self._make_service()
+        mock_repo = AsyncMock(spec=SessionRepository)
+        mock_blob_repo = AsyncMock(spec=EpisodeBlobRepository)
+        mock_blob_repo.get_by_episode = AsyncMock(
+            side_effect=RuntimeError("S3 down")
+        )
+        service = SessionService(repo=mock_repo, blob_repo=mock_blob_repo)
         mock_session = self._make_mock_session()
         mock_repo.get_by_uuid.return_value = mock_session
 
@@ -467,21 +466,10 @@ class TestSessionService:
         )
         mock_repo.get_messages.return_value = ([episode], None)
 
-        service._db = AsyncMock()
-
-        with patch(
-            "repositories.episode_blob_repository.EpisodeBlobRepository"
-        ) as mock_blob_repo_cls:
-            mock_blob_repo = AsyncMock()
-            mock_blob_repo.get_by_episode = AsyncMock(
-                side_effect=RuntimeError("S3 down")
-            )
-            mock_blob_repo_cls.return_value = mock_blob_repo
-
-            result = await service.get_messages(
-                org_id=self.ORG_ID,
-                session_id=mock_session.id,
-            )
+        result = await service.get_messages(
+            org_id=self.ORG_ID,
+            session_id=mock_session.id,
+        )
 
         # Messages are still returned despite blob loading failure.
         assert len(result.data) == 1

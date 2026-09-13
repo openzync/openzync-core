@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
@@ -38,8 +38,8 @@ class TestUserService:
         user.role = kwargs.get("role", "member")
         user.is_active = kwargs.get("is_active", True)
         user.is_deleted = kwargs.get("is_deleted", False)
-        user.created_at = kwargs.get("created_at", datetime.now(timezone.utc))
-        user.updated_at = kwargs.get("updated_at", datetime.now(timezone.utc))
+        user.created_at = kwargs.get("created_at", datetime.now(UTC))
+        user.updated_at = kwargs.get("updated_at", datetime.now(UTC))
         return user
 
     @pytest.mark.asyncio

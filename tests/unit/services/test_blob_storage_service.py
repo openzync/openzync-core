@@ -5,7 +5,7 @@ FastAPI's ``UploadFile`` is replaced with a lightweight MagicMock.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -13,9 +13,8 @@ from fastapi import UploadFile
 
 from core.blob_storage import S3StorageError
 from core.exceptions import PayloadTooLargeError, ValidationError
-from services.blob_storage_service import BlobStorageService
-
 from schemas.memory import BlobMetadata
+from services.blob_storage_service import BlobStorageService
 
 
 @pytest.mark.unit

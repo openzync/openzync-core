@@ -75,9 +75,8 @@ class TestRequireProjectMembership:
 
         with patch(
             "dependencies.project_auth.ProjectRepository", return_value=mock_repo
-        ):
-            with pytest.raises(HTTPException) as exc:
-                await require_project_membership(request, PROJECT_ID, db_session)
+        ), pytest.raises(HTTPException) as exc:
+            await require_project_membership(request, PROJECT_ID, db_session)
 
         assert exc.value.status_code == 403
         assert "Not a member" in exc.value.detail
@@ -99,9 +98,8 @@ class TestRequireProjectMembership:
 
         with patch(
             "dependencies.project_auth.ProjectRepository", return_value=mock_repo
-        ):
-            with pytest.raises(HTTPException) as exc:
-                await require_project_membership(request, PROJECT_ID, db_session)
+        ), pytest.raises(HTTPException) as exc:
+            await require_project_membership(request, PROJECT_ID, db_session)
 
         assert exc.value.status_code == 404
         assert "Project not found" in exc.value.detail

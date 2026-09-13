@@ -11,11 +11,13 @@ Key pattern:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
 logger = logging.getLogger(__name__)
+
+LlmBackend = Literal["ollama", "openai", "openai_like", "azure", "anthropic"]
 
 # ── System-managed field sets ──────────────────────────────────────────────
 # These fields are overridden at the system level (via OpenBao / env vars)
@@ -83,9 +85,9 @@ class OrgConfigBase(BaseModel):
     model_config = {"extra": "ignore"}  # silently drop unknown keys
 
     # ── LLM ────────────────────────────────────────────────────────────────
-    llm_backend: str | None = Field(
+    llm_backend: LlmBackend | None = Field(
         default=None,
-        description="LLM provider (ollama, openai, azure, anthropic, openrouter).",
+        description="LLM provider (ollama, openai, openai_like, azure, anthropic).",
     )
     llm_model: str | None = Field(
         default=None,
@@ -106,10 +108,6 @@ class OrgConfigBase(BaseModel):
         default=None,
         description="OpenAI API key.",
     )
-    openrouter_api_key: str | None = Field(
-        default=None,
-        description="OpenRouter API key.",
-    )
     azure_openai_endpoint: str | None = Field(
         default=None,
         description="Azure OpenAI endpoint URL.",
@@ -125,6 +123,11 @@ class OrgConfigBase(BaseModel):
     ollama_base_url: str | None = Field(
         default=None,
         description="Base URL for a local Ollama instance.",
+    )
+    openai_like_base_url: str | None = Field(
+        default=None,
+        description="Base URL for any OpenAI-compatible endpoint "
+        "(self-hosted vLLM, OpenRouter, LiteLLM proxy, …).",
     )
     llm_fact_invalidation_enabled: bool | None = Field(
         default=None,
@@ -341,8 +344,11 @@ class OrgConfigBase(BaseModel):
             d["llm_backend"] = self.llm_backend
         if self.openai_api_key is not None:
             d["openai_api_key"] = self.openai_api_key
+        if self.openai_like_base_url is not None:
+            d["openai_like_base_url"] = self.openai_like_base_url
         if self.llm_model is not None:
             d["openai_model"] = self.llm_model
+            d["llm_model"] = self.llm_model
             d["azure_deployment"] = self.llm_model
             d["anthropic_model"] = self.llm_model
             d["model"] = self.llm_model
@@ -354,9 +360,6 @@ class OrgConfigBase(BaseModel):
             d["anthropic_api_key"] = self.anthropic_api_key
         if self.ollama_base_url is not None:
             d["ollama_base_url"] = self.ollama_base_url
-        if self.openrouter_api_key is not None:
-            d["openrouter_api_key"] = self.openrouter_api_key
-            d["api_key"] = self.openrouter_api_key
         if self.llm_temperature is not None:
             d["temperature"] = self.llm_temperature
         if self.llm_max_tokens is not None:
@@ -418,16 +421,16 @@ class UpdateOrgConfigRequest(BaseModel):
     """
 
     # Same fields as OrgConfigBase, all optional
-    llm_backend: str | None = None
+    llm_backend: LlmBackend | None = None
     llm_model: str | None = None
     llm_temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     llm_max_tokens: int | None = Field(default=None, ge=1)
     openai_api_key: str | None = None
-    openrouter_api_key: str | None = None
     azure_openai_endpoint: str | None = None
     azure_openai_key: str | None = None
     anthropic_api_key: str | None = None
     ollama_base_url: str | None = None
+    openai_like_base_url: str | None = None
     llm_fact_invalidation_enabled: bool | None = Field(
         default=None,
         description="Enable LLM-driven fact invalidation during episode "

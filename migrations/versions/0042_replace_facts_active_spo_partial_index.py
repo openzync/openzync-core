@@ -39,14 +39,14 @@ Create Date: 2026-08-02
 
 from __future__ import annotations
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 from alembic import op
 
 revision: str = "0042"
-down_revision: Union[str, None] = "0041"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "0041"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 _OLD_INDEX = "ix_facts_active_spo"
 _NEW_INDEX = "ix_facts_active_spo_expr"

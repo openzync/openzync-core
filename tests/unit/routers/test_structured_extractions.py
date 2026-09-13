@@ -6,7 +6,7 @@ and ``GET /.../structured-extractions/{episode_id}``.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
@@ -69,7 +69,7 @@ def _create_app() -> FastAPI:
     return app
 
 
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 
 
 @pytest.mark.asyncio

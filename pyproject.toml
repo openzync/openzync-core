@@ -179,7 +179,7 @@ filterwarnings = [
     # FastAPI / Starlette deprecation warnings — harmless in our codebase.
     # Removed: starlette.exceptions.StarletteDeprecationWarning does not
     # exist in starlette 1.1.0 (the version currently installed).
-    # Session-scoped async fixtures (e.g. OpenRouter backend's internal
+    # Session-scoped async fixtures (e.g. an LLM backend's internal
     # httpx.AsyncClient) may leave transports unclosed after the event
     # loop shuts down.  This is cosmetic — no data loss or leak.
     "ignore::pytest.PytestUnraisableExceptionWarning",

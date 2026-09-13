@@ -1,7 +1,7 @@
 """Unit tests for TracingMiddleware."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -25,7 +25,7 @@ class FakeSpan:
         self.status_code = code
         self.status_description = description
 
-    def __enter__(self) -> "FakeSpan":
+    def __enter__(self) -> FakeSpan:
         return self
 
     def __exit__(self, *args: object) -> None:
@@ -186,7 +186,7 @@ class TestTracingMiddleware:
         fake_tracer = MagicMock()
         fake_tracer.start_as_current_span = MagicMock(return_value=fake_span)
 
-        from starlette.types import ASGIApp, Scope, Receive, Send
+        from starlette.types import ASGIApp, Receive, Scope, Send
 
         class _InjectState:
             """Inject scope state so TracingMiddleware can read org_id."""

@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.audit_log_repository import AuditLogRepository
 
-
 pytestmark = pytest.mark.unit
 
 
@@ -40,7 +39,7 @@ class TestAuditLogRepository:
         entry.resource_id = overrides.get("resource_id", "sess-123")
         entry.details = overrides.get("details", {"key": "val"})
         entry.ip_address = overrides.get("ip_address", "127.0.0.1")
-        entry.created_at = overrides.get("created_at", None)
+        entry.created_at = overrides.get("created_at")
         return entry
 
     # ── create ─────────────────────────────────────────────────────────────────

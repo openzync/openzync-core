@@ -13,7 +13,6 @@ import pytest
 
 from workers.tasks.extract_facts import _match_entity, _resolve_fact_entities
 
-
 # ── Fixtures ───────────────────────────────────────────────────────────────────
 
 

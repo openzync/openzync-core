@@ -1,7 +1,7 @@
 """Unit tests for merge_duplicate_entities task."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -30,7 +30,7 @@ class TestMergeDuplicateEntities:
     def _make_entities(self, count: int = 3, names: list[str] | None = None) -> list[dict]:
         if names is None:
             names = [f"Entity_{i}" for i in range(count)]
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         return [
             {
                 "id": str(uuid4()),

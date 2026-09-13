@@ -18,7 +18,6 @@ from services.worker.tasks.base import (
     with_retry,
 )
 
-
 pytestmark = pytest.mark.unit
 
 

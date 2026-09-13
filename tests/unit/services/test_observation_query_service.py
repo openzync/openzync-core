@@ -5,13 +5,13 @@ type, pagination, entity-name resolution, and empty-result handling.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
 
-from schemas.observation import ObservationListResponse, ObservationResponse
+from schemas.observation import ObservationListResponse
 from services.observation_query_service import ObservationQueryService
 
 
@@ -39,7 +39,7 @@ class TestObservationQueryService:
         content: str = "Entities frequently co-appear in sessions.",
     ) -> dict:
         """Build an observation dict as returned by the graph backend."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return {
             "id": str(uuid4()),
             "organization_id": str(UUID("00000000-0000-0000-0000-000000000001")),

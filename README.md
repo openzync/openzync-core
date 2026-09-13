@@ -32,7 +32,7 @@ This is the **core backend** of the OpenZync platform — a FastAPI monolith tha
 
 OpenZync Core is the backend monolith for the OpenZync agent memory platform. It ingests conversational data, enriches it asynchronously into a knowledge graph with entities, facts, and embeddings, and exposes a hybrid search API for LLM context retrieval.
 
-Built for developers who need persistent, queryable agent memory without vendor lock-in. Bring your own LLM (OpenAI, Anthropic, Ollama, Azure, OpenRouter) and your own infrastructure.
+Built for developers who need persistent, queryable agent memory without vendor lock-in. Bring your own LLM (OpenAI, Anthropic, Ollama, Azure) and your own infrastructure.
 
 ---
 
@@ -42,7 +42,7 @@ Built for developers who need persistent, queryable agent memory without vendor 
 - **Knowledge graph** — automatic entity extraction, relationship mapping, and community detection via Label Propagation
 - **Hybrid search** — vector similarity (pgvector) + BM25 full-text + graph traversal, fused via RRF
 - **Async enrichment pipeline** — ARQ workers extract entities, facts, embeddings, and classifications from ingested messages
-- **Multi-provider LLM** — BYOK support for OpenAI, Anthropic, Ollama, Azure OpenAI, OpenRouter
+- **Multi-provider LLM** — BYOK support for OpenAI, Anthropic, Ollama, Azure OpenAI
 - **Multi-tenant** — org-scoped data isolation with JWT + API key authentication
 - **MCP server** — expose memory tools to any MCP-compatible LLM (Claude Desktop, etc.)
 - **Admin dashboard** — Next.js frontend for graph exploration and tenant management

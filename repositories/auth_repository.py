@@ -14,7 +14,7 @@ Key patterns:
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select, update
@@ -391,7 +391,7 @@ class AuthRepository:
             raise NotFoundError("Dashboard user not found.")
 
         user.is_email_verified = True
-        user.email_verified_at = datetime.now(timezone.utc)
+        user.email_verified_at = datetime.now(UTC)
         await self._db.flush()
         await self._db.refresh(user)
         return user

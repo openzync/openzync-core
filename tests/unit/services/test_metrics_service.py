@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 import httpx
+import pytest
 
 from core.exceptions import MetricsUnavailableError
 from services.metrics_service import MetricsService

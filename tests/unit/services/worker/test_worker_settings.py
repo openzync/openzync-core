@@ -12,11 +12,9 @@ Tests cover:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from unittest.mock import AsyncMock, patch
 
 import pytest
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # get_queue_name
@@ -451,7 +449,7 @@ class TestSettingsProxy:
 
     def test_proxy_forwards_to_singleton(self) -> None:
         """Proxy attribute access goes through get_worker_settings()."""
-        from services.worker.worker_settings import _SettingsProxy, WorkerSettings
+        from services.worker.worker_settings import WorkerSettings, _SettingsProxy
 
         ws = WorkerSettings(
             DATABASE_URL="postgresql+asyncpg://localhost/db",
@@ -469,7 +467,7 @@ class TestSettingsProxy:
 
     def test_proxy_raises_on_unknown_attribute(self) -> None:
         """Unknown attribute raises AttributeError."""
-        from services.worker.worker_settings import _SettingsProxy, WorkerSettings
+        from services.worker.worker_settings import WorkerSettings, _SettingsProxy
 
         ws = WorkerSettings(
             DATABASE_URL="postgresql+asyncpg://localhost/db",

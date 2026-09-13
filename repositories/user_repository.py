@@ -141,8 +141,9 @@ class UserRepository:
         # would be circular.  These are API-key-authenticated ingestion users
         # (always member role) — seed member defaults so they are not
         # deny-everything.
-        from core.rbac import MEMBER_DEFAULT_PERMISSIONS
         from sqlalchemy.exc import IntegrityError
+
+        from core.rbac import MEMBER_DEFAULT_PERMISSIONS
 
         try:
             return await self.create(

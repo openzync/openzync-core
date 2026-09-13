@@ -44,7 +44,7 @@ class TestApiKeyService:
         key.lookup_hash = kwargs.get("lookup_hash", "abc123")
         key.key_hash = kwargs.get("key_hash", "def456")
         key.salt = kwargs.get("salt", "salt123")
-        key.last_used_at = kwargs.get("last_used_at", None)
+        key.last_used_at = kwargs.get("last_used_at")
         return key
 
     # ── Tests ────────────────────────────────────────────────────────────────

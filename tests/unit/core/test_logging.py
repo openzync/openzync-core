@@ -306,13 +306,13 @@ class TestRequestContext:
     def test_binds_request_id(self) -> None:
         """request_id is set and appears in event dict."""
         self._reset_context_vars()
-        from core.logging import bind_request_context, _add_context_from_vars
+        from core.logging import _add_context_from_vars, bind_request_context
 
         bind_request_context(request_id="req-001")
         event_dict = _add_context_from_vars(None, None, {})
         assert event_dict["request_id"] == "req-001"
         """request_id is set and appears in event dict."""
-        from core.logging import bind_request_context, _add_context_from_vars
+        from core.logging import _add_context_from_vars, bind_request_context
 
         bind_request_context(request_id="req-001")
         event_dict = _add_context_from_vars(None, None, {})
@@ -321,7 +321,7 @@ class TestRequestContext:
     def test_binds_org_id(self) -> None:
         """org_id is set when provided."""
         self._reset_context_vars()
-        from core.logging import bind_request_context, _add_context_from_vars
+        from core.logging import _add_context_from_vars, bind_request_context
 
         bind_request_context(request_id="req-002", org_id="org-42")
         event_dict = _add_context_from_vars(None, None, {})
@@ -331,7 +331,7 @@ class TestRequestContext:
     def test_binds_user_id(self) -> None:
         """user_id is set when provided."""
         self._reset_context_vars()
-        from core.logging import bind_request_context, _add_context_from_vars
+        from core.logging import _add_context_from_vars, bind_request_context
 
         bind_request_context(request_id="req-003", user_id="usr-7")
         event_dict = _add_context_from_vars(None, None, {})
@@ -341,7 +341,7 @@ class TestRequestContext:
     def test_binds_all_context_vars(self) -> None:
         """All three context vars are set when all are provided."""
         self._reset_context_vars()
-        from core.logging import bind_request_context, _add_context_from_vars
+        from core.logging import _add_context_from_vars, bind_request_context
 
         bind_request_context(request_id="req-004", org_id="o-1", user_id="u-1")
         event_dict = _add_context_from_vars(None, None, {})
@@ -350,7 +350,7 @@ class TestRequestContext:
     def test_skips_empty_optional_fields(self) -> None:
         """Optional fields not provided are omitted from event dict."""
         self._reset_context_vars()
-        from core.logging import bind_request_context, _add_context_from_vars
+        from core.logging import _add_context_from_vars, bind_request_context
 
         bind_request_context(request_id="req-005")
         event_dict = _add_context_from_vars(None, None, {})
@@ -360,7 +360,7 @@ class TestRequestContext:
     def test_context_var_isolation(self) -> None:
         """Context vars are per-context — second bind overrides first."""
         self._reset_context_vars()
-        from core.logging import bind_request_context, _add_context_from_vars
+        from core.logging import _add_context_from_vars, bind_request_context
 
         bind_request_context(request_id="first")
         bind_request_context(request_id="second")

@@ -24,7 +24,6 @@ from repositories.prompt_template_repository import PromptTemplateRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
 
-
 pytestmark = pytest.mark.integration
 
 

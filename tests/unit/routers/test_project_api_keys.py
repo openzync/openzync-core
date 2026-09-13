@@ -6,7 +6,7 @@ API keys.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
@@ -15,10 +15,7 @@ from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
 from schemas.api_keys import (
-    ApiKeyListResponse,
-    ApiKeyCreatedResponse,
     ApiKeyResponse,
-    CreateApiKeyRequest,
 )
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -68,7 +65,7 @@ def _make_api_key_response(overrides: dict | None = None) -> dict:
         "permissions": ["project:read", "project:write"],
         "is_revoked": False,
         "last_used_at": None,
-        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC),
         "raw_key": None,
     }
     base.update(overrides or {})
@@ -89,9 +86,9 @@ class TestProjectApiKeysRouter:
             _make_api_key_response(),
         ]
 
-        from dependencies.db import get_db
         from core.redis import get_redis
-        from dependencies.auth import require_org_id, get_current_user_id
+        from dependencies.auth import get_current_user_id, require_org_id
+        from dependencies.db import get_db
         from routers.project_api_keys import _get_service, router
 
         app = FastAPI()
@@ -132,9 +129,9 @@ class TestProjectApiKeysRouter:
         mock_api_key_service.return_value = mock_instance
         mock_instance.list_project_keys.return_value = []
 
-        from dependencies.db import get_db
         from core.redis import get_redis
-        from dependencies.auth import require_org_id, get_current_user_id
+        from dependencies.auth import get_current_user_id, require_org_id
+        from dependencies.db import get_db
         from routers.project_api_keys import _get_service, router
 
         app = FastAPI()
@@ -179,9 +176,9 @@ class TestProjectApiKeysRouter:
             "oz_live_abc123def456",
         )
 
-        from dependencies.db import get_db
         from core.redis import get_redis
-        from dependencies.auth import require_org_id, get_current_user_id
+        from dependencies.auth import get_current_user_id, require_org_id
+        from dependencies.db import get_db
         from routers.project_api_keys import _get_service, router
 
         app = FastAPI()
@@ -224,9 +221,9 @@ class TestProjectApiKeysRouter:
         mock_instance = AsyncMock()
         mock_api_key_service.return_value = mock_instance
 
-        from dependencies.db import get_db
         from core.redis import get_redis
-        from dependencies.auth import require_org_id, get_current_user_id
+        from dependencies.auth import get_current_user_id, require_org_id
+        from dependencies.db import get_db
         from routers.project_api_keys import _get_service, router
 
         app = FastAPI()
@@ -267,9 +264,9 @@ class TestProjectApiKeysRouter:
             {"is_revoked": True},
         )
 
-        from dependencies.db import get_db
         from core.redis import get_redis
-        from dependencies.auth import require_org_id, get_current_user_id
+        from dependencies.auth import get_current_user_id, require_org_id
+        from dependencies.db import get_db
         from routers.project_api_keys import _get_service, router
 
         app = FastAPI()
@@ -308,9 +305,9 @@ class TestProjectApiKeysRouter:
         mock_api_key_service.return_value = mock_instance
         mock_instance.revoke_project_key.return_value = None
 
-        from dependencies.db import get_db
         from core.redis import get_redis
-        from dependencies.auth import require_org_id, get_current_user_id
+        from dependencies.auth import get_current_user_id, require_org_id
+        from dependencies.db import get_db
         from routers.project_api_keys import _get_service, router
 
         app = FastAPI()

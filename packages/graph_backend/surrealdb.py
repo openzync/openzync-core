@@ -27,8 +27,7 @@ from __future__ import annotations
 import base64
 import re
 from collections import deque
-from collections.abc import Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
@@ -37,12 +36,18 @@ import structlog
 from surrealdb import AsyncSurreal, RecordID
 from surrealdb.errors import (
     InternalError,
-    NotFoundError as SurrealNotFoundError,
     SurrealError,
     parse_query_error,
 )
+from surrealdb.errors import (
+    NotFoundError as SurrealNotFoundError,
+)
 
-from core.exceptions import ExternalServiceError, GraphBackendUnavailableError, NotFoundError
+from core.exceptions import (
+    ExternalServiceError,
+    GraphBackendUnavailableError,
+    NotFoundError,
+)
 from packages.graph_backend.interface import GraphBackend
 
 logger = structlog.get_logger(__name__)
@@ -875,7 +880,7 @@ class SurrealGraphBackend(GraphBackend):
         max_depth = min(max_depth, self._max_depth)
         # SurrealDB evaluates ``x > NULL`` as true — the comparison operand
         # must always be a concrete timestamp, never a NULL bound parameter.
-        as_of = as_of or datetime.now(timezone.utc)
+        as_of = as_of or datetime.now(UTC)
         as_of_str = as_of.isoformat()
         visited: set[str] = set()
         queue: deque[tuple[str, int]] = deque()

@@ -20,12 +20,10 @@ import yaml
 
 from core.prompt_manifest import (
     MANIFEST_FILENAME,
-    PROMPTS_DIR,
     PromptManifest,
     invalidate_manifest_cache,
     load_manifest,
 )
-
 
 # Path.parent is a readonly property — can't patch.object it.
 # Instead we patch PROMPTS_DIR itself (the whole Path), which is mutable

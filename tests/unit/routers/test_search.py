@@ -56,8 +56,8 @@ class TestSearchRouter:
     def _setup_app(self) -> None:
         """Set up the FastAPI app with all dependency overrides."""
         from dependencies.db import get_db
-        from dependencies.project_auth import require_project_membership
         from dependencies.org_config import get_org_config
+        from dependencies.project_auth import require_project_membership
         from routers.search import router
         from schemas.organization_config import OrgConfigBase
 

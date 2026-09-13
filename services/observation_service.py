@@ -54,12 +54,12 @@ data leakage is possible.
 from __future__ import annotations
 
 import asyncio
-import structlog
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -666,7 +666,7 @@ class ObservationService:
             Number of observations persisted (2 × number of pairs).
         """
         assert self._backend is not None  # called from run_full_project_scan which guards
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         persisted = 0
 
         for pair in patterns:
@@ -734,7 +734,7 @@ class ObservationService:
             Number of observations persisted.
         """
         assert self._backend is not None  # called from run_full_project_scan which guards
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         persisted = 0
 
         for pattern in patterns:
@@ -782,7 +782,7 @@ class ObservationService:
             Number of observations persisted.
         """
         assert self._backend is not None  # called from run_full_project_scan which guards
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         persisted = 0
 
         for pattern in patterns:
@@ -910,7 +910,7 @@ class ObservationService:
             """),
             {
                 "project_id": project_id,
-                "effective_at": datetime.now(timezone.utc),
+                "effective_at": datetime.now(UTC),
             },
         )
         rows = result.mappings().all()
@@ -984,9 +984,7 @@ def _is_monotonic(gaps: list[float], *, increasing: bool) -> bool:
     consistent = 0
     total = len(gaps) - 1
     for i in range(total):
-        if increasing and gaps[i + 1] > gaps[i]:
-            consistent += 1
-        elif not increasing and gaps[i + 1] < gaps[i]:
+        if increasing and gaps[i + 1] > gaps[i] or not increasing and gaps[i + 1] < gaps[i]:
             consistent += 1
     return consistent / total >= 0.6
 

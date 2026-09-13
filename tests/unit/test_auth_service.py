@@ -7,12 +7,10 @@ helpers (password validation, hash refresh token, issue tokens).
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from unittest.mock import ANY, AsyncMock, MagicMock, PropertyMock, call, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
-
 from sqlalchemy.exc import IntegrityError
 
 from core.exceptions import (
@@ -33,7 +31,7 @@ from schemas.auth import (
     UpdateProfileRequest,
     VerifyEmailRequest,
 )
-from schemas.email import OtpResponse, ResetPasswordRequest, VerifyOtpRequest
+from schemas.email import ResetPasswordRequest, VerifyOtpRequest
 from services.auth_service import AuthService
 
 
@@ -1122,9 +1120,8 @@ class TestAuthService:
 
         with patch(
             "services.auth_service.verify_password", return_value=False
-        ):
-            with pytest.raises(AuthenticationError, match="Invalid email or password"):
-                await service.login(payload)
+        ), pytest.raises(AuthenticationError, match="Invalid email or password"):
+            await service.login(payload)
 
     @pytest.mark.asyncio
     async def test_login_inactive_user(
@@ -1141,9 +1138,8 @@ class TestAuthService:
 
         with patch(
             "services.auth_service.verify_password", return_value=True
-        ):
-            with pytest.raises(AuthenticationError, match="deactivated"):
-                await service.login(payload)
+        ), pytest.raises(AuthenticationError, match="deactivated"):
+            await service.login(payload)
 
     @pytest.mark.asyncio
     async def test_login_email_not_verified(
@@ -1160,9 +1156,8 @@ class TestAuthService:
 
         with patch(
             "services.auth_service.verify_password", return_value=True
-        ):
-            with pytest.raises(AuthenticationError, match="Email not verified"):
-                await service.login(payload)
+        ), pytest.raises(AuthenticationError, match="Email not verified"):
+            await service.login(payload)
 
     @pytest.mark.asyncio
     async def test_login_mfa_enabled(
@@ -1401,9 +1396,8 @@ class TestAuthService:
 
         with patch(
             "services.auth_service.verify_password", return_value=False
-        ):
-            with pytest.raises(AuthenticationError, match="incorrect"):
-                await service.enable_mfa(self.USER_ID, payload)
+        ), pytest.raises(AuthenticationError, match="incorrect"):
+            await service.enable_mfa(self.USER_ID, payload)
 
     @pytest.mark.asyncio
     async def test_enable_mfa_happy_path(
@@ -1461,9 +1455,8 @@ class TestAuthService:
 
         with patch(
             "services.auth_service.verify_password", return_value=False
-        ):
-            with pytest.raises(AuthenticationError, match="incorrect"):
-                await service.disable_mfa(self.USER_ID, payload)
+        ), pytest.raises(AuthenticationError, match="incorrect"):
+            await service.disable_mfa(self.USER_ID, payload)
 
     @pytest.mark.asyncio
     async def test_disable_mfa_invalid_otp(
@@ -1480,9 +1473,8 @@ class TestAuthService:
 
         with patch(
             "services.auth_service.verify_password", return_value=True
-        ):
-            with pytest.raises(AuthenticationError, match="Invalid MFA code"):
-                await service.disable_mfa(self.USER_ID, payload)
+        ), pytest.raises(AuthenticationError, match="Invalid MFA code"):
+            await service.disable_mfa(self.USER_ID, payload)
 
     @pytest.mark.asyncio
     async def test_disable_mfa_happy_path(
@@ -1832,21 +1824,18 @@ class TestAuthService:
 
         with patch(
             "services.auth_service.verify_password", return_value=True
+        ), patch(
+            "services.auth_service.hash_password", return_value="new_hash"
+        ), patch(
+            "services.email_service.render_email_template",
+            return_value="<html>",
+        ), patch(
+            "services.email_service.render_text_template",
+            return_value="text",
         ):
-            with patch(
-                "services.auth_service.hash_password", return_value="new_hash"
-            ):
-                with patch(
-                    "services.email_service.render_email_template",
-                    return_value="<html>",
-                ):
-                    with patch(
-                        "services.email_service.render_text_template",
-                        return_value="text",
-                    ):
-                        result = await service.update_profile(
-                            self.USER_ID, payload
-                        )
+            result = await service.update_profile(
+                self.USER_ID, payload
+            )
 
         assert result.email == "admin@acme.com"
         mock_repo.update_dashboard_user.assert_awaited_once_with(
@@ -1892,9 +1881,8 @@ class TestAuthService:
 
         with patch(
             "services.auth_service.verify_password", return_value=False
-        ):
-            with pytest.raises(AuthenticationError, match="incorrect"):
-                await service.update_profile(self.USER_ID, payload)
+        ), pytest.raises(AuthenticationError, match="incorrect"):
+            await service.update_profile(self.USER_ID, payload)
 
     @pytest.mark.asyncio
     async def test_update_profile_password_skips_email_without_service(
@@ -1913,13 +1901,12 @@ class TestAuthService:
 
         with patch(
             "services.auth_service.verify_password", return_value=True
+        ), patch(
+            "services.auth_service.hash_password", return_value="new_hash"
         ):
-            with patch(
-                "services.auth_service.hash_password", return_value="new_hash"
-            ):
-                result = await service_no_email.update_profile(
-                    self.USER_ID, payload
-                )
+            result = await service_no_email.update_profile(
+                self.USER_ID, payload
+            )
 
         assert result.email == "admin@acme.com"
         mock_repo.update_dashboard_user.assert_awaited_once()
@@ -1992,15 +1979,14 @@ class TestAuthService:
 
         with patch(
             "services.auth_service.create_jwt_token", return_value="jwt-access"
+        ), patch(
+            "services.auth_service.secrets.token_hex", return_value="raw-refresh"
         ):
-            with patch(
-                "services.auth_service.secrets.token_hex", return_value="raw-refresh"
-            ):
-                result = await service.issue_tokens(
-                    user_id=self.USER_ID,
-                    organization_id=self.ORG_ID,
-                    role="admin",
-                )
+            result = await service.issue_tokens(
+                user_id=self.USER_ID,
+                organization_id=self.ORG_ID,
+                role="admin",
+            )
 
         assert isinstance(result, TokenResponse)
         assert result.access_token == "jwt-access"

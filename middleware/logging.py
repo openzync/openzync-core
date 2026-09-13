@@ -47,7 +47,7 @@ def add_request_context(
     method_name: str,  # noqa: ARG001
     event_dict: dict,
 ) -> dict:
-    """structlog processor that merges bound contextvars into every log entry.
+    """Structlog processor that merges bound contextvars into every log entry.
 
     This processor reads context variables set by :class:`RequestIDMiddleware`
     and :class:`LoggingMiddleware` (e.g. ``request_id``) and adds them to

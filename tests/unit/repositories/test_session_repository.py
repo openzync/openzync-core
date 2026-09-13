@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.session_repository import SessionRepository
-
 
 pytestmark = pytest.mark.unit
 
@@ -43,9 +42,9 @@ class TestSessionRepository:
         s.external_id = overrides.get("external_id", "ext-session-1")
         s.metadata_ = overrides.get("metadata_", {})
         s.is_deleted = overrides.get("is_deleted", False)
-        s.closed_at = overrides.get("closed_at", None)
-        s.created_at = overrides.get("created_at", datetime.now(timezone.utc))
-        s.updated_at = overrides.get("updated_at", datetime.now(timezone.utc))
+        s.closed_at = overrides.get("closed_at")
+        s.created_at = overrides.get("created_at", datetime.now(UTC))
+        s.updated_at = overrides.get("updated_at", datetime.now(UTC))
         return s
 
     def _mock_episode(self, **overrides: object) -> MagicMock:
@@ -54,7 +53,7 @@ class TestSessionRepository:
         ep.session_id = overrides.get("session_id", self.SESSION_ID)
         ep.sequence_number = overrides.get("sequence_number", 0)
         ep.is_deleted = overrides.get("is_deleted", False)
-        ep.created_at = overrides.get("created_at", datetime.now(timezone.utc))
+        ep.created_at = overrides.get("created_at", datetime.now(UTC))
         return ep
 
     # ── create ─────────────────────────────────────────────────────────────────
@@ -221,7 +220,7 @@ class TestSessionRepository:
         self, repo: SessionRepository, mock_db: AsyncMock
     ) -> None:
         """list includes closed sessions when include_closed is True."""
-        closed = self._mock_session(closed_at=datetime.now(timezone.utc))
+        closed = self._mock_session(closed_at=datetime.now(UTC))
         open_session = self._mock_session(id=uuid4())
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [closed, open_session]
@@ -473,7 +472,7 @@ class TestSessionRepository:
         mock_row = MagicMock()
         mock_row.message_count = 15
         mock_row.fact_count = 7
-        mock_row.last_message_at = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        mock_row.last_message_at = datetime(2024, 6, 1, tzinfo=UTC)
         mock_row.pending_enrichment_count = 3
         mock_result = MagicMock()
         mock_result.one_or_none.return_value = mock_row

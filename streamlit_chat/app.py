@@ -1,4 +1,4 @@
-"""Streamlit chat UI for OpenZync — powered by the OpenZync SDK + OpenRouter."""
+"""Streamlit chat UI for OpenZync — powered by the OpenZync SDK + OpenAI."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from typing import Any
 
 import streamlit as st
 from dotenv import load_dotenv
-from openai import OpenAI
 from langchain_core.messages import AIMessage, HumanMessage
+from openai import OpenAI
 from openzync import AsyncOpenZync
 from openzync.integrations.langchain import OZMemory
 
@@ -38,12 +38,10 @@ load_dotenv()
 
 OPENZYNC_API_KEY: str = os.environ.get("OPENZYNC_API_KEY", "")
 OPENZYNC_BASE_URL: str = os.environ.get("OPENZYNC_BASE_URL", "http://localhost:8000")
-OPENROUTER_API_KEY: str = os.environ.get("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL: str = os.environ.get(
-    "OPENROUTER_MODEL", "openai/gpt-oss-20b:free"
-)
-OPENROUTER_BASE_URL: str = os.environ.get(
-    "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+OPENAI_API_KEY: str = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_MODEL: str = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_BASE_URL: str = os.environ.get(
+    "OPENAI_BASE_URL", "https://api.openai.com/v1"
 )
 DEFAULT_USER_EXTERNAL_ID: str = os.environ.get(
     "DEFAULT_USER_EXTERNAL_ID", "streamlit-chat-user"
@@ -56,8 +54,8 @@ PROJECT_ID: str | None = os.environ.get("PROJECT_ID", None)
 missing: list[str] = []
 if not OPENZYNC_API_KEY:
     missing.append("OPENZYNC_API_KEY")
-if not OPENROUTER_API_KEY:
-    missing.append("OPENROUTER_API_KEY")
+if not OPENAI_API_KEY:
+    missing.append("OPENAI_API_KEY")
 if missing:
     st.error(
         f"Missing required environment variables: {', '.join(missing)}. "
@@ -85,13 +83,13 @@ def _get_openzync_client() -> tuple[asyncio.AbstractEventLoop, AsyncOpenZync]:
 
 @st.cache_resource
 def _get_llm_client() -> OpenAI:
-    """Create and cache the OpenAI-compatible client for OpenRouter."""
+    """Create and cache the OpenAI client."""
     logger.info(
-        "Initializing OpenRouter client: base_url=%s model=%s",
-        OPENROUTER_BASE_URL,
-        OPENROUTER_MODEL,
+        "Initializing OpenAI client: base_url=%s model=%s",
+        OPENAI_BASE_URL,
+        OPENAI_MODEL,
     )
-    return OpenAI(base_url=OPENROUTER_BASE_URL, api_key=OPENROUTER_API_KEY)
+    return OpenAI(base_url=OPENAI_BASE_URL, api_key=OPENAI_API_KEY)
 
 
 _openzync_loop, _async_oz = _get_openzync_client()
@@ -287,7 +285,7 @@ with st.sidebar:
     st.divider()
     st.subheader("Status")
     st.success("✅ OpenZync", icon="✅")
-    st.success("✅ OpenRouter", icon="✅")
+    st.success("✅ OpenAI", icon="✅")
 
     # Session list
     st.divider()
@@ -345,7 +343,7 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    st.caption("Powered by OpenZync + OpenRouter")
+    st.caption("Powered by OpenZync + OpenAI")
 
 # ── Main Chat Area ────────────────────────────────────────────────────────────
 
@@ -401,24 +399,20 @@ if prompt := st.chat_input("Type a message..."):
     for m in st.session_state.messages[-20:]:
         llm_messages.append({"role": m["role"], "content": m["content"]})
 
-    # ── Call OpenRouter ──
+    # ── Call OpenAI ──
     reply = ""
     with st.chat_message("assistant"):
         with st.spinner("Thinking..."):
             try:
                 response = llm.chat.completions.create(
-                    model=OPENROUTER_MODEL,
+                    model=OPENAI_MODEL,
                     messages=llm_messages,
                     max_tokens=1024,
                     temperature=0.7,
-                    extra_headers={
-                        "HTTP-Referer": "https://openzync-chat.streamlit.app",
-                        "X-Title": "OpenZync Chat",
-                    },
                 )
                 reply = response.choices[0].message.content or ""
             except Exception as exc:
-                logger.error("OpenRouter request failed: %s", exc)
+                logger.error("OpenAI request failed: %s", exc)
                 reply = f"I'm sorry, I encountered an error communicating with the LLM: {exc}"
 
         if reply:

@@ -14,17 +14,16 @@ Key patterns:
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
+from typing import Any, Literal
 from uuid import UUID
 
-from typing import Any, Literal
-
-from core.cursor import decode_cursor, encode_cursor
-from core.exceptions import ValidationError
 from sqlalchemy import or_, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.cursor import decode_cursor, encode_cursor
+from core.exceptions import ValidationError
 from models.fact import Fact
 from models.fact_invalidation_event import FactInvalidationEvent
 
@@ -167,8 +166,7 @@ class FactRepository:
             The newly created :class:`Fact` instance, or ``None`` if a
             duplicate was skipped.
         """
-        from sqlalchemy import func, insert
-
+        from sqlalchemy import func
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
         stmt = (
@@ -271,9 +269,9 @@ class FactRepository:
         if not facts:
             return []
 
-        from datetime import datetime, timezone
+        from datetime import datetime
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Born-dead guard — reject empty validity ranges before building
         # the insert statement.  A missing ``valid_from`` defaults to
@@ -416,11 +414,11 @@ class FactRepository:
         # ⚠️ Uses constraint name rather than index_elements to stay
         # consistent with the existing create_or_skip method. Both must
         # reference the same exclusion constraint for correct dedup.
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Born-dead guard — reject empty validity ranges before building
         # the insert statement.  A missing ``valid_from`` defaults to
@@ -778,14 +776,12 @@ class FactRepository:
         Returns:
             List of active ``Fact`` ORM instances effective at now.
         """
-        from datetime import timezone
-
         from sqlalchemy import select
 
         stmt = (
             select(Fact)
             .where(Fact.project_id == project_id)
-            .where(_effective_at_clause(datetime.now(timezone.utc)))
+            .where(_effective_at_clause(datetime.now(UTC)))
             .order_by(Fact.valid_from.asc().nullsfirst())
         )
         if organization_id is not None:
@@ -968,12 +964,10 @@ class FactRepository:
             includes ``id``, ``valid_from``, ``valid_to``, ``invalid_at``
             (ISO-8601) for prompt-rendering validity checks.
         """
-        from datetime import timezone
-
         from sqlalchemy import text as sql_text
 
         effective_limit = min(limit, 200) + 1  # +1 to detect has_more
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # Decode cursor
         cursor_created: datetime | None = None
@@ -1102,9 +1096,8 @@ class FactRepository:
             ``predicate``, ``object``, ``confidence``, and ``score``.
         """
         effective_limit = min(limit, 200)
-        from datetime import timezone
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         result = await self._db.execute(
             text(
                 """
@@ -1164,9 +1157,8 @@ class FactRepository:
             fields ISO-8601) for prompt-rendering validity checks.
         """
         effective_limit = min(limit, 200)
-        from datetime import timezone
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         result = await self._db.execute(
             text(
                 """

@@ -16,8 +16,8 @@ from fastapi import FastAPI
 from starlette.requests import Request
 
 from core.exceptions import (
-    _to_problem_json,
     NotFoundError,
+    _to_problem_json,
     register_exception_handlers,
 )
 

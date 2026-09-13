@@ -6,7 +6,6 @@ Isolation between organizations is enforced via RLS policies keyed on
 """
 
 import uuid
-from datetime import datetime
 
 from sqlalchemy import Boolean, CheckConstraint, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB

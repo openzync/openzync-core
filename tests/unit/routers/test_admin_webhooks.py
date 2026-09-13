@@ -11,7 +11,6 @@ Tests cover all CRUD endpoints under ``/v1/admin/webhooks``:
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 

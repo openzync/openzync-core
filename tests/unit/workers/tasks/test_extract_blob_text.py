@@ -220,7 +220,7 @@ class TestExtractTextPlain:
         """Valid UTF-8 bytes produce the decoded string."""
         from workers.tasks.extract_blob_text import _extract_text_plain
 
-        result = _extract_text_plain("Hello, world!".encode("utf-8"))
+        result = _extract_text_plain(b"Hello, world!")
         assert result == "Hello, world!"
 
     def test_replaces_invalid_bytes(self) -> None:

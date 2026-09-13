@@ -6,7 +6,7 @@ filters (subject_entity_id, observation_type, limit).
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
@@ -17,7 +17,6 @@ from httpx import ASGITransport, AsyncClient
 from dependencies.project_auth import require_project_membership
 from dependencies.services import get_graph_backend_for_project
 from routers.observations import router
-from schemas.observation import ObservationListResponse, ObservationResponse
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
@@ -74,7 +73,7 @@ def _reset_mock() -> None:
     MOCK_GRAPH_BACKEND.resolve_entity_names = AsyncMock(return_value={})
 
 
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 
 
 @pytest.mark.asyncio

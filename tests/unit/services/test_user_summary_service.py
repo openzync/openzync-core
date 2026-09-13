@@ -1,9 +1,9 @@
 """Unit tests for user_summary_service — summary generation, retrieval, instructions."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 
@@ -91,7 +91,7 @@ class TestUserSummaryService:
         """Existing summary returns a UserSummaryResponse."""
         service, mock_arq, mock_user_repo, mock_ci_repo = self._make_service()
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_user_repo.get_summary.return_value = (
             "User is an active contributor.",
             now,

@@ -12,7 +12,6 @@ from repositories.structured_extraction_repository import (
     StructuredExtractionRepository,
 )
 
-
 pytestmark = pytest.mark.unit
 
 
@@ -40,7 +39,7 @@ class TestStructuredExtractionRepository:
         ext.organization_id = overrides.get("organization_id", self.ORG_ID)
         ext.schema_name = overrides.get("schema_name", "test_schema")
         ext.result = overrides.get("result", {"field": "value"})
-        ext.created_at = overrides.get("created_at", None)
+        ext.created_at = overrides.get("created_at")
         return ext
 
     # ── get_by_session ─────────────────────────────────────────────────────────

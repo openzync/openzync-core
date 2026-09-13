@@ -14,16 +14,20 @@ Usage::
 from __future__ import annotations
 
 import base64
-import orjson
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+import orjson
 import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.exceptions import ExternalServiceError, GraphBackendUnavailableError, NotFoundError
+from core.exceptions import (
+    ExternalServiceError,
+    GraphBackendUnavailableError,
+    NotFoundError,
+)
 from packages.graph_backend.interface import GraphBackend
 
 logger = structlog.get_logger(__name__)
@@ -724,7 +728,7 @@ class PostgresGraphBackend(GraphBackend):
         Returns:
             List of relationship dicts.
         """
-        at_time = at_time or datetime.now(timezone.utc)
+        at_time = at_time or datetime.now(UTC)
         conditions = """
             r.organization_id = :org_id
             AND r.project_id = :project_id
@@ -1066,7 +1070,7 @@ class PostgresGraphBackend(GraphBackend):
             results: list[dict] = []
             # as_of=None → now: a deterministic instant per call, matching
             # the ``get_relationships`` as-of primitive's None semantics.
-            as_of_value = as_of or datetime.now(timezone.utc)
+            as_of_value = as_of or datetime.now(UTC)
 
             for entity in matched_entities:
                 entity_id_str = entity.get("id", "")

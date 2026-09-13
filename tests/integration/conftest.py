@@ -30,6 +30,7 @@ from sqlalchemy.pool import NullPool
 from core.db import get_async_session
 from tests.conftest import (
     _ensure_testcontainers_env,
+    _start_falkordb_container,
     _start_postgres_container,
     _start_redis_container,
 )
@@ -75,8 +76,10 @@ async def engine():
     _ensure_testcontainers_env()
     pg_container = _start_postgres_container()
     redis_container = _start_redis_container()
+    falkordb_container = _start_falkordb_container()
     _testcontainers["pg"] = pg_container
     _testcontainers["redis"] = redis_container
+    _testcontainers["falkordb"] = falkordb_container
 
     # ── Step 1: Run Alembic migrations via a sync engine ─────────────────
     pg_url = pg_container.get_connection_url()
@@ -148,7 +151,23 @@ async def engine():
     await async_engine.dispose()
     pg_container.stop()
     redis_container.stop()
+    falkordb_container.stop()
     _testcontainers.clear()
+
+
+@pytest_asyncio.fixture(scope="session")
+async def falkordb_url(engine) -> str:
+    """Connection URL for the session-scoped FalkorDB testcontainer.
+
+    FalkorDB speaks the Redis protocol — plain ``redis://`` URL, e.g.
+    for per-org ``falkordb_url`` overrides in graph-backend tests.
+    Depends on :func:`engine` so the container is started first.
+    """
+    container = _testcontainers["falkordb"]
+    return (
+        f"redis://{container.get_container_host_ip()}:"
+        f"{container.get_exposed_port(6379)}"
+    )
 
 
 @pytest_asyncio.fixture(loop_scope="function")
@@ -273,12 +292,12 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
     from datetime import timedelta
     from uuid import uuid4
 
+    # ── Insert the org row directly (test infra, not a public API) ────
+    from sqlalchemy import text as _sql
+
     from core.config import get_settings
     from repositories.user_repository import UserRepository
     from utils.crypto import create_jwt_token
-
-    # ── Insert the org row directly (test infra, not a public API) ────
-    from sqlalchemy import text as _sql
 
     async with (
         app.state.db_session_factory() as session,
@@ -330,6 +349,8 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
     # ``members:read`` is granted explicitly because suites drive
     # GET /v1/users* through this key; the default key permissions
     # (project:read, project:write) no longer satisfy that gate.
+    # ``members:write`` is included because POST /v1/users requires it;
+    # the API-key path checks exact permission membership.
     key_resp = await client.post(
         f"/v1/projects/{project_id}/api-keys",
         json={
@@ -338,6 +359,7 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
                 "project:read",
                 "project:write",
                 "members:read",
+                "members:write",
             ],
         },
     )

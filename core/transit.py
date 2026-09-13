@@ -20,9 +20,10 @@ Usage::
 
 from __future__ import annotations
 
-import structlog
 from typing import Any
 from uuid import UUID
+
+import structlog
 
 from core.openbao import OpenBaoClient
 

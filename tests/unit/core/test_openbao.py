@@ -17,16 +17,16 @@ from __future__ import annotations
 import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import httpx
 import pytest
 
 from core.openbao import (
+    _MAX_RETRIES,
     KV_MOUNT,
     ORG_NAMESPACE_PREFIX,
     SYSTEM_KEY_MAPPING,
-    _MAX_RETRIES,
     OpenBaoClient,
 )
 from core.openbao_exceptions import (
@@ -37,7 +37,6 @@ from core.openbao_exceptions import (
     OpenBaoRateLimitError,
     OpenBaoSecretNotFoundError,
 )
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Fixtures

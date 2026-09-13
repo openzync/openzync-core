@@ -9,28 +9,25 @@ All require testcontainers PostgreSQL.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.episode import Episode
-from models.fact import Fact
 from repositories.api_key_repository import ApiKeyRepository
 from repositories.auth_repository import AuthRepository
 from repositories.dialog_classification_repository import (
     DialogClassificationRepository,
 )
+from repositories.episode_repository import EpisodeRepository
 from repositories.extraction_schema_repository import ExtractionSchemaRepository
 from repositories.fact_repository import FactRepository
+from repositories.session_repository import SessionRepository
 from repositories.structured_extraction_repository import (
     StructuredExtractionRepository,
 )
 from repositories.user_repository import UserRepository
-from repositories.session_repository import SessionRepository
-from repositories.episode_repository import EpisodeRepository
-
 
 pytestmark = pytest.mark.integration
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -229,6 +226,7 @@ class TestAuthRepository:
             await repo.revoke_refresh_token(token.id)
             # Manually check the token was revoked in DB
             from sqlalchemy import select
+
             from models.refresh_token import RefreshToken
             result = await db.execute(
                 select(RefreshToken).where(RefreshToken.id == token.id)

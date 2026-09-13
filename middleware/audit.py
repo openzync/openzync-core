@@ -17,13 +17,13 @@ This design means:
 
 from __future__ import annotations
 
-import orjson
 import logging
 import re
 import uuid
 from typing import Any
 from uuid import UUID
 
+import orjson
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from core.audit import get_audit_metadata

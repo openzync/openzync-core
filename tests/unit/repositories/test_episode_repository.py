@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.episode_repository import EpisodeRepository
-
 
 pytestmark = pytest.mark.unit
 
@@ -45,8 +44,8 @@ class TestEpisodeRepository:
         ep.sequence_number = overrides.get("sequence_number", 0)
         ep.enrichment_status = overrides.get("enrichment_status", 0)
         ep.is_deleted = overrides.get("is_deleted", False)
-        ep.created_at = overrides.get("created_at", None)
-        ep.updated_at = overrides.get("updated_at", None)
+        ep.created_at = overrides.get("created_at")
+        ep.updated_at = overrides.get("updated_at")
         return ep
 
     def _mock_episode_row(self, **overrides: object) -> MagicMock:
@@ -60,13 +59,13 @@ class TestEpisodeRepository:
             "role": overrides.get("role", "user"),
             "content": overrides.get("content", "Hello"),
             "metadata": overrides.get("metadata", {}),
-            "embedding": overrides.get("embedding", None),
-            "token_count": overrides.get("token_count", None),
+            "embedding": overrides.get("embedding"),
+            "token_count": overrides.get("token_count"),
             "sequence_number": overrides.get("sequence_number", 0),
             "enrichment_status": overrides.get("enrichment_status", 0),
             "is_deleted": overrides.get("is_deleted", False),
-            "created_at": overrides.get("created_at", None),
-            "updated_at": overrides.get("updated_at", None),
+            "created_at": overrides.get("created_at"),
+            "updated_at": overrides.get("updated_at"),
         }
         return row
 

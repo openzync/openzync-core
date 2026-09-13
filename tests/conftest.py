@@ -14,7 +14,6 @@ import os
 
 import pytest
 
-
 # ═══════════════════════════════════════════════════════════════════════════════
 # Testcontainers helpers
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -65,13 +64,33 @@ def _start_redis_container() -> object:
     return container
 
 
+def _start_falkordb_container() -> object:
+    """Start a FalkorDB testcontainer.
+
+    FalkorDB speaks the Redis protocol on 6379 — same image tag and
+    port mapping as the dev profile in
+    ``infra/docker-compose.backend.yml`` (host 6381 → container 6379).
+    Host and port are available via
+    ``container.get_container_host_ip()`` and
+    ``container.get_exposed_port(6379)``; the connection URL is
+    ``redis://{host}:{port}``.
+
+    Returns:
+        The started container instance.
+    """
+    from testcontainers.redis import RedisContainer
+
+    container = RedisContainer(image="falkordb/falkordb:v4.20.1-alpine")
+    container.start()
+    return container
+
+
 def _run_alembic_upgrade(driver_url: str) -> None:
     """Run Alembic migrations up to ``head`` against the given database.
 
     Args:
         driver_url: Full asyncpg connection URL for the database.
     """
-    import asyncio
 
     from alembic.command import upgrade as alembic_upgrade
     from alembic.config import Config as AlembicConfig

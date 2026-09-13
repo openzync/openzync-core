@@ -14,7 +14,7 @@ All endpoints require API key or JWT authentication.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import httpx
@@ -150,7 +150,7 @@ async def _prom_instant(promql: str) -> float:
 async def _prom_range(promql: str, days: int) -> list[list]:
     """Run a PromQL range query and return rows as [[timestamp, value]]."""
     base_url = get_settings().PROMETHEUS_URL.rstrip("/")
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     start = (now - timedelta(days=days)).isoformat()
     end = now.isoformat()
     async with httpx.AsyncClient(timeout=10) as client:

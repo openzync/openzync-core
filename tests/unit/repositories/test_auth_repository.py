@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
@@ -10,7 +10,6 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.auth_repository import AuthRepository
-
 
 pytestmark = pytest.mark.unit
 
@@ -43,7 +42,7 @@ class TestAuthRepository:
         user.role = overrides.get("role", "admin")
         user.is_deleted = overrides.get("is_deleted", False)
         user.is_email_verified = overrides.get("is_email_verified", False)
-        user.email_verified_at = overrides.get("email_verified_at", None)
+        user.email_verified_at = overrides.get("email_verified_at")
         user.mfa_enabled = overrides.get("mfa_enabled", False)
         user.metadata_ = overrides.get("metadata_", {})
         return user
@@ -55,10 +54,10 @@ class TestAuthRepository:
         token.organization_id = overrides.get("organization_id", self.ORG_ID)
         token.token_hash = overrides.get("token_hash", "abc123")
         token.expires_at = overrides.get(
-            "expires_at", datetime.now(timezone.utc) + timedelta(hours=1)
+            "expires_at", datetime.now(UTC) + timedelta(hours=1)
         )
         token.is_revoked = overrides.get("is_revoked", False)
-        token.rotated_by = overrides.get("rotated_by", None)
+        token.rotated_by = overrides.get("rotated_by")
         return token
 
     # ── find_user_by_email ─────────────────────────────────────────────────────
@@ -214,7 +213,7 @@ class TestAuthRepository:
             user_id=self.USER_ID,
             organization_id=self.ORG_ID,
             token_hash="abc123",
-            expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+            expires_at=datetime.now(UTC) + timedelta(days=7),
         )
 
         assert result is not None
@@ -439,7 +438,7 @@ class TestAuthRepository:
         """reset_email_verification clears email verification state."""
         user = self._mock_user(
             is_email_verified=True,
-            email_verified_at=datetime.now(timezone.utc),
+            email_verified_at=datetime.now(UTC),
         )
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = user

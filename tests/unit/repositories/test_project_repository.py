@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.project_repository import ProjectRepository
 
-
 pytestmark = pytest.mark.unit
 
 
@@ -40,7 +39,7 @@ class TestProjectRepository:
         p.created_by = overrides.get("created_by", self.USER_ID)
         p.metadata_ = overrides.get("metadata_", {})
         p.is_archived = overrides.get("is_archived", False)
-        p.created_at = overrides.get("created_at", None)
+        p.created_at = overrides.get("created_at")
         return p
 
     def _mock_member(self, **overrides: object) -> MagicMock:
@@ -49,7 +48,7 @@ class TestProjectRepository:
         m.project_id = overrides.get("project_id", self.PROJECT_ID)
         m.user_id = overrides.get("user_id", self.USER_ID)
         m.role = overrides.get("role", "member")
-        m.created_at = overrides.get("created_at", None)
+        m.created_at = overrides.get("created_at")
         return m
 
     # ── create ─────────────────────────────────────────────────────────────────

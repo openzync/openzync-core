@@ -5,8 +5,6 @@ Tests the Pydantic schema resolution logic independently of any DB or cache.
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from schemas.organization_config import (

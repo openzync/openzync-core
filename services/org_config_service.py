@@ -19,6 +19,8 @@ from uuid import UUID
 from core.openbao import OpenBaoClient
 from core.org_config import (
     get_org_config,
+)
+from core.org_config import (
     update_org_config as core_update_org_config,
 )
 from schemas.organization_config import (

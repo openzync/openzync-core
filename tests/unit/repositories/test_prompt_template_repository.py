@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.prompt_template_repository import PromptTemplateRepository
 
-
 pytestmark = pytest.mark.unit
 
 
@@ -42,7 +41,7 @@ class TestPromptTemplateRepository:
         t.type = overrides.get("type", "fact_extraction")
         t.is_active = overrides.get("is_active", True)
         t.is_default_for_type = overrides.get("is_default_for_type", False)
-        t.updated_at = overrides.get("updated_at", None)
+        t.updated_at = overrides.get("updated_at")
         return t
 
     # ── get_active ─────────────────────────────────────────────────────────────

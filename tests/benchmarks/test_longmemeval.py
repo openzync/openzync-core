@@ -786,7 +786,7 @@ def _flatten_messages(
 @pytest.mark.benchmark
 @pytest.mark.asyncio
 async def test_longmemeval_benchmark(
-    openrouter_backend: LLMBackend,
+    openai_backend: LLMBackend,
     benchmark_config: SimpleNamespace,
     api_client: httpx.AsyncClient,
 ) -> None:
@@ -801,7 +801,7 @@ async def test_longmemeval_benchmark(
     6. Saves results as timestamped JSON and prints a comparison table
 
     Args:
-        openrouter_backend: OpenRouter LLM backend for answer evaluation.
+        openai_backend: OpenAI LLM backend for answer evaluation.
         benchmark_config: Parsed CLI options from the conftest.
         api_client: HTTP client configured with the benchmark API base URL.
     """
@@ -836,7 +836,7 @@ async def test_longmemeval_benchmark(
         api_client=api_client,
         token=token,
         dataset=dataset,
-        openrouter_backend=openrouter_backend,
+        openai_backend=openai_backend,
         reranker=benchmark_config.reranker,
         variant=variant,
         label="full",
@@ -853,7 +853,7 @@ async def test_longmemeval_benchmark(
                 api_client=api_client,
                 token=token,
                 dataset=dataset,
-                openrouter_backend=openrouter_backend,
+                openai_backend=openai_backend,
                 reranker=False,
                 variant=f"{variant}-baseline",
                 label="baseline",
@@ -930,7 +930,7 @@ async def _run_benchmark_pipeline(
     api_client: httpx.AsyncClient,
     token: str,
     dataset: list[dict[str, Any]],
-    openrouter_backend: LLMBackend,
+    openai_backend: LLMBackend,
     reranker: bool,
     variant: str,
     label: str = "run",
@@ -946,7 +946,7 @@ async def _run_benchmark_pipeline(
         api_client: Authenticated HTTP client.
         token: JWT access token.
         dataset: LongMemEval question entries.
-        openrouter_backend: LLM backend for answer evaluation.
+        openai_backend: LLM backend for answer evaluation.
         reranker: Whether the reranker is enabled for this run.
         variant: Dataset variant (``"s"``, ``"oracle"``, etc.) — used
             to derive the persistent project name.
@@ -1053,13 +1053,13 @@ async def _run_benchmark_pipeline(
 
         try:
             model_answer = await _answer_from_context(
-                backend=openrouter_backend,
+                backend=openai_backend,
                 question=question,
                 context=context_text,
                 is_abstention=abstention,
             )
             judge_result: EvaluationResult = await evaluate_answer(
-                backend=openrouter_backend,
+                backend=openai_backend,
                 question=question,
                 expected_answer=expected_answer,
                 model_answer=model_answer,

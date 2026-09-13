@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from repositories.webhook_repository import WebhookRepository
 
-
 pytestmark = pytest.mark.unit
 
 
@@ -41,8 +40,8 @@ class TestWebhookRepository:
             "events", orjson.dumps(["message.created", "session.closed"]).decode()
         )
         ep.is_active = overrides.get("is_active", True)
-        ep.last_delivery_at = overrides.get("last_delivery_at", None)
-        ep.created_at = overrides.get("created_at", None)
+        ep.last_delivery_at = overrides.get("last_delivery_at")
+        ep.created_at = overrides.get("created_at")
         return ep
 
     # ── get_by_id ──────────────────────────────────────────────────────────────

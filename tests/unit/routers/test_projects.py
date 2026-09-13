@@ -6,7 +6,7 @@ router, including success paths, validation errors, and 401 failures.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 from uuid import UUID
 
@@ -61,8 +61,8 @@ def _make_project_response(overrides: dict | None = None) -> dict:
         "is_archived": False,
         "member_count": 1,
         "created_by": USER_ID,
-        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
-        "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+        "updated_at": datetime(2026, 1, 1, tzinfo=UTC),
     }
     base.update(overrides or {})
     return base
@@ -74,7 +74,7 @@ def _make_member_response(overrides: dict | None = None) -> dict:
         "id": UUID("00000000-0000-0000-0000-000000000099"),
         "user_id": USER_ID,
         "role": "member",
-        "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 1, 1, tzinfo=UTC),
     }
     base.update(overrides or {})
     return base
@@ -94,11 +94,8 @@ class TestProjectsRouter:
         )
 
         from dependencies.db import get_db
-
-        from dependencies.auth import require_org_id
         from routers.projects import (
             _get_project_service,
-            require_project_membership,
             router,
         )
 
@@ -303,7 +300,11 @@ class TestProjectsRouter:
         )
 
         from dependencies.db import get_db
-        from routers.projects import _get_project_service, require_project_membership, router
+        from routers.projects import (
+            _get_project_service,
+            require_project_membership,
+            router,
+        )
 
         app = FastAPI()
         app.include_router(router)
@@ -340,9 +341,13 @@ class TestProjectsRouter:
             detail={"project_id": str(PROJECT_ID)},
         )
 
-        from dependencies.db import get_db
-        from routers.projects import _get_project_service, require_project_membership, router
         from core.exceptions import register_exception_handlers
+        from dependencies.db import get_db
+        from routers.projects import (
+            _get_project_service,
+            require_project_membership,
+            router,
+        )
 
         app = FastAPI()
         app.include_router(router)
@@ -374,8 +379,8 @@ class TestProjectsRouter:
             _make_project_response({"name": "Updated Project"})
         )
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
+        from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
         app = FastAPI()
@@ -413,8 +418,8 @@ class TestProjectsRouter:
             _make_project_response()
         )
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
+        from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
         app = FastAPI()
@@ -449,8 +454,8 @@ class TestProjectsRouter:
         mock_project_service.return_value = mock_instance
         mock_instance.archive_project.return_value = None
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
+        from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
         app = FastAPI()
@@ -482,8 +487,8 @@ class TestProjectsRouter:
         mock_project_service.return_value = mock_instance
         mock_instance.add_member.return_value = _make_member_response()
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
+        from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
         app = FastAPI()
@@ -519,8 +524,8 @@ class TestProjectsRouter:
         mock_instance = AsyncMock()
         mock_project_service.return_value = mock_instance
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
+        from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
         app = FastAPI()
@@ -554,7 +559,11 @@ class TestProjectsRouter:
         mock_instance.list_members.return_value = [_make_member_response()]
 
         from dependencies.db import get_db
-        from routers.projects import _get_project_service, require_project_membership, router
+        from routers.projects import (
+            _get_project_service,
+            require_project_membership,
+            router,
+        )
 
         app = FastAPI()
         app.include_router(router)
@@ -587,8 +596,8 @@ class TestProjectsRouter:
         mock_project_service.return_value = mock_instance
         mock_instance.remove_member.return_value = None
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
+        from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
         app = FastAPI()
@@ -623,8 +632,8 @@ class TestProjectsRouter:
             {"role": "owner"}
         )
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
+        from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
         app = FastAPI()
@@ -660,8 +669,8 @@ class TestProjectsRouter:
         mock_instance = AsyncMock()
         mock_project_service.return_value = mock_instance
 
-        from dependencies.db import get_db
         from dependencies.auth import require_org_id
+        from dependencies.db import get_db
         from routers.projects import _get_project_service, router
 
         app = FastAPI()

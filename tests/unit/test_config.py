@@ -23,7 +23,6 @@ import pytest
 
 from core.config import Settings, get_settings, set_settings
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 _DEFAULT_REQUIRED: dict[str, str] = {
@@ -153,7 +152,7 @@ class TestSettingsSingleton:
         set_settings(_settings())
         from core.config import settings  # noqa: F811  — intentional lazy import
 
-        assert settings.DATABASE_URL == _DEFAULT_REQUIRED["DATABASE_URL"]
+        assert _DEFAULT_REQUIRED["DATABASE_URL"] == settings.DATABASE_URL
 
     def test_backward_compatible_import_raises_before_init(self) -> None:
         """Importing ``settings`` before ``init_settings`` raises ``RuntimeError``."""
