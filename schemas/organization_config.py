@@ -527,6 +527,53 @@ class UpdateOrgConfigRequest(BaseModel):
         return v
 
 
+ConfigTestDomain = Literal["llm", "embeddings", "graph", "blob"]
+"""Domain selector for ``POST /admin/org/config/test``."""
+
+
+class TestOrgConfigRequest(BaseModel):
+    """Request body for ``POST /admin/org/config/test``.
+
+    ``config`` is a partial candidate — same shape as
+    :class:`UpdateOrgConfigRequest`, only explicitly provided fields
+    overlay the stored config in-memory.  Nothing is persisted.
+    """
+
+    domain: ConfigTestDomain = Field(
+        description="Which connection family to probe (llm, embeddings, graph, blob).",
+    )
+    config: UpdateOrgConfigRequest = Field(
+        description="Partial candidate config overlaid on the stored "
+        "config in-memory for this probe only.",
+    )
+
+
+class ProbeResult(BaseModel):
+    """Outcome of a single connection probe."""
+
+    ok: bool = Field(description="Whether the probe succeeded.")
+    latency_ms: int = Field(
+        ge=0, description="Wall-clock probe latency in milliseconds."
+    )
+    detail: str = Field(
+        max_length=500,
+        description="Human-readable outcome (truncated, secrets redacted).",
+    )
+
+
+class TestOrgConfigResponse(BaseModel):
+    """Response for ``POST /admin/org/config/test``.
+
+    Per-probe failures are reported inline with ``ok: false`` — the
+    endpoint still returns 200.  Only invalid payloads (422) or a
+    down secrets backend (503) change the status code.
+    """
+
+    results: dict[str, ProbeResult] = Field(
+        description="Probe outcomes keyed by probe name.",
+    )
+
+
 class OrgConfigResponse(BaseModel):
     """Response for config GET endpoints.
 
