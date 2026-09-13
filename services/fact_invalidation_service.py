@@ -385,25 +385,16 @@ class FactInvalidationService:
             ].append(candidate)
 
         # ── 1b. Tombstone scan (ADR 005: retracted --> [*], terminal) ────
-        # Identities with no live candidates may still collide with a
-        # hard-retracted row (valid_to + invalid_at both set).  One query
-        # for the whole batch (no N+1), bucketed by NAME identity so the
-        # cross-form match applies.  Superseded/expired-only rows
-        # (invalid_at NULL) never match — re-assertion after supersession
-        # still inserts.
-        tombstone_identities = {
-            e["name_identity"]
-            for e in entries
-            if not candidates_by_identity.get(e["name_identity"])
-        }
+        # Every entry may collide with a hard-retracted row (valid_to +
+        # invalid_at both set) — including identities that also have live
+        # candidates, whose 2a/2b gates still consult the tombstone
+        # bucket.  One query for the whole batch (no N+1), bucketed by
+        # NAME identity so the cross-form match applies.
+        # Superseded/expired-only rows (invalid_at NULL) never match —
+        # re-assertion after supersession still inserts.
         tombstones_by_identity: dict[NameIdentity, list[Fact]] = defaultdict(list)
-        if tombstone_identities:
-            tombstone_keys = [
-                k
-                for e in entries
-                if e["name_identity"] in tombstone_identities
-                for k in e["match_keys"]
-            ]
+        tombstone_keys = sorted({k for e in entries for k in e["match_keys"]}, key=repr)
+        if tombstone_keys:
             for tombstone in await self._fact_repo.find_retracted_by_match_keys(
                 org_id=org_id,
                 project_id=project_id,
