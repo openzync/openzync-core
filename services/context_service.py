@@ -229,22 +229,29 @@ class ContextService:
                 else None
             )
 
-            # Load blobs for all returned episodes concurrently (N+1 guard)
-            episode_ids = [ep["id"] for ep in episodes if ep.get("id")]
-            all_episode_blobs = await asyncio.gather(
-                *[blob_repo.get_by_episode(eid) for eid in episode_ids],
-            )
-            # Index by episode id for O(1) lookup
-            blobs_by_eid: dict[UUID, list[Any]] = {}
-            for eid, blbs in zip(episode_ids, all_episode_blobs):
-                if blbs:
-                    blobs_by_eid[eid] = blbs
+            # One batched query; normalize str ids to UUID up front so the
+            # repo receives its typed list[UUID]. Malformed ids are skipped,
+            # never fatal — blob enrichment is best-effort (see above).
+            episode_ids: list[UUID] = []
+            eid_by_raw: dict[str, UUID] = {}
+            for ep in episodes:
+                raw = ep.get("id")
+                if not raw:
+                    continue
+                try:
+                    parsed = UUID(str(raw))
+                except ValueError:
+                    continue
+                eid_by_raw[str(raw)] = parsed
+                episode_ids.append(parsed)
+            blobs_by_eid = await blob_repo.get_by_episodes(episode_ids)
 
             for ep in episodes:
-                eid = ep.get("id")
-                if not eid or eid not in blobs_by_eid:
+                raw_eid = ep.get("id")
+                key = eid_by_raw.get(str(raw_eid)) if raw_eid else None
+                blbs = blobs_by_eid.get(key) if key else None
+                if not blbs:
                     continue
-                blbs = blobs_by_eid[eid]
                 urls: list[str | None] = (
                     await asyncio.gather(*[
                         BlobStorageService.generate_download_url(

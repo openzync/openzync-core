@@ -6,7 +6,6 @@ state (projects, LLM config, users).  Called by the overview page router.
 
 from __future__ import annotations
 
-import asyncio
 from uuid import UUID
 
 from repositories.organization_repository import OrganizationRepository
@@ -45,12 +44,10 @@ class QuickActionsService:
         """
         actions: list[dict] = []
 
-        # All three queries are independent — run in parallel
-        project_count, llm_config, user_count = await asyncio.gather(
-            self._project_repo.count_active(org_id),
-            self._org_repo.get_llm_config(org_id),
-            self._user_repo.count_active(org_id),
-        )
+        # One AsyncSession allows only one in-flight query — sequential, not gather.
+        project_count = await self._project_repo.count_active(org_id)
+        llm_config = await self._org_repo.get_llm_config(org_id)
+        user_count = await self._user_repo.count_active(org_id)
 
         # 1. Projects
         if project_count == 0:

@@ -1,12 +1,11 @@
 """Global search service — cross-resource search across org-scoped entities.
 
-Runs three parallel ILIKE queries (projects, users, sessions) scoped to the
+Runs three sequential ILIKE queries (projects, users, sessions) scoped to the
 authenticated user's organization and membership, returning a flat sorted list.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from uuid import UUID
 
@@ -45,11 +44,11 @@ class GlobalSearchService:
         pattern = f"%{query}%"
         per_type = max(1, limit // 3)
 
-        p_results, u_results, s_results = await asyncio.gather(
-            self._search_projects(pattern, per_type),
-            self._search_users(pattern, per_type),
-            self._search_sessions(pattern, per_type),
-        )
+        # One AsyncSession allows only one in-flight operation, so the
+        # three legs must run sequentially, not via asyncio.gather.
+        p_results = await self._search_projects(pattern, per_type)
+        u_results = await self._search_users(pattern, per_type)
+        s_results = await self._search_sessions(pattern, per_type)
 
         all_results: list[GlobalSearchItem] = [*p_results, *u_results, *s_results]
         all_results.sort(key=lambda r: (r.type, r.label))
@@ -87,7 +86,7 @@ class GlobalSearchService:
     async def _search_users(self, pattern: str, limit: int) -> list[GlobalSearchItem]:
         """Search users in the same organization."""
         stmt = text("""
-            SELECT id, name, email
+            SELECT id, name, email, external_id
             FROM users
             WHERE organization_id = :org_id
               AND is_deleted = false
@@ -101,14 +100,11 @@ class GlobalSearchService:
         results: list[GlobalSearchItem] = []
         for row in rows:
             # Prefer email as label when both name and email exist
-            if row.email and row.name:
+            if row.email:
                 label = row.email
                 subtitle = row.name
-            elif row.email:
-                label = row.email
-                subtitle = None
             else:
-                label = row.name
+                label = row.name or row.external_id or str(row.id)
                 subtitle = None
             results.append(
                 GlobalSearchItem(

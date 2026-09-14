@@ -184,6 +184,56 @@ class TestEpisodeBlobRepository:
 
         assert result == []
 
+    # ── get_by_episodes (batched) ────────────────────────────────────────────
+
+    async def test_get_by_episodes_empty_returns_empty_no_query(
+        self, repo: EpisodeBlobRepository, mock_db: AsyncMock
+    ) -> None:
+        """get_by_episodes short-circuits on empty input — no DB round-trip."""
+        result = await repo.get_by_episodes([])
+
+        assert result == {}
+        mock_db.execute.assert_not_called()
+
+    async def test_get_by_episodes_groups_and_orders(
+        self, repo: EpisodeBlobRepository, mock_db: AsyncMock
+    ) -> None:
+        """get_by_episodes groups blobs per episode in blob_index order."""
+        ep_a = self.EPISODE_ID
+        ep_b = UUID("00000000-0000-0000-0000-000000000011")
+        blobs = [
+            self._mock_blob(episode_id=ep_a, blob_index=0, file_name="a0.jpg"),
+            self._mock_blob(episode_id=ep_a, blob_index=1, file_name="a1.jpg"),
+            self._mock_blob(episode_id=ep_b, blob_index=0, file_name="b0.jpg"),
+        ]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = blobs
+        mock_db.execute.return_value = mock_result
+
+        result = await repo.get_by_episodes([ep_a, ep_b])
+
+        assert set(result.keys()) == {ep_a, ep_b}
+        assert [b.file_name for b in result[ep_a]] == ["a0.jpg", "a1.jpg"]
+        assert [b.file_name for b in result[ep_b]] == ["b0.jpg"]
+        # Single batched query — not one per episode.
+        mock_db.execute.assert_awaited_once()
+
+    async def test_get_by_episodes_omits_episodes_without_blobs(
+        self, repo: EpisodeBlobRepository, mock_db: AsyncMock
+    ) -> None:
+        """Episodes with no blobs are absent — callers must use ``.get()``."""
+        ep_a = self.EPISODE_ID
+        ep_missing = UUID("00000000-0000-0000-0000-000000000012")
+        blobs = [self._mock_blob(episode_id=ep_a, blob_index=0)]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = blobs
+        mock_db.execute.return_value = mock_result
+
+        result = await repo.get_by_episodes([ep_a, ep_missing])
+
+        assert list(result.keys()) == [ep_a]
+        assert result.get(ep_missing) is None
+
     # ── get_by_session ─────────────────────────────────────────────────────────
 
     async def test_get_by_session(
