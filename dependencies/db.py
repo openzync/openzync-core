@@ -23,10 +23,13 @@ lifespan pattern.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import Request
+
+logger = logging.getLogger(__name__)
 
 
 async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
@@ -43,6 +46,14 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
 
     Yields:
         An :class:`AsyncSession` bound to the application's engine.
+
+    RLS context behavior by ``request.state.org_id`` value:
+
+    * ``None`` — public endpoint, no ``set_config`` at all.
+    * ``""`` / whitespace-only — fail-closed, treated exactly like
+      ``None`` (no ``set_config`` at all, warning logged).
+    * Valid UUID string — ``app.org_id`` set plus ``app.bypass_rls``
+      paired to ``'false'``.
 
     Raises:
         RuntimeError: If ``db_session_factory`` has not been set on
@@ -70,7 +81,14 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
         # on those tables, signup/join will silently fail — check this
         # invariant on deployment.
         org_id: str | None = getattr(request.state, "org_id", None)
-        if org_id is not None:
+        if org_id is None:
+            pass
+        elif not org_id.strip():
+            logger.warning(
+                "skipping empty app.org_id RLS context: path=%s",
+                request.url.path,
+            )
+        else:
             from sqlalchemy import text
 
             await session.execute(

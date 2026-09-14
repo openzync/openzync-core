@@ -13,17 +13,20 @@ Key patterns:
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.org_codes import generate_org_code
 from models.organization import Organization
 from models.refresh_token import RefreshToken
 from models.user import User
+
+logger = logging.getLogger(__name__)
 
 
 class AuthRepository:
@@ -43,7 +46,9 @@ class AuthRepository:
         """Find a dashboard user by email (global lookup).
 
         Uses the partial unique index on ``email`` — email is globally
-        unique across all organizations.
+        unique across all organizations. Runs under a scoped RLS
+        bypass (reset in ``finally``) so public-login sessions with no
+        org context can see the row.
 
         Args:
             email: The user's email address.
@@ -51,16 +56,30 @@ class AuthRepository:
         Returns:
             The User with ``password_hash`` set, or ``None``.
         """
-        result = await self._db.execute(
-            select(User).where(
-                User.email == email,
-                User.is_deleted.is_(False),
-            )
+        await self._db.execute(
+            text("SELECT set_config('app.bypass_rls', 'true', true)")
         )
-        return result.scalar_one_or_none()
+        try:
+            result = await self._db.execute(
+                select(User).where(
+                    User.email == email,
+                    User.is_deleted.is_(False),
+                )
+            )
+            return result.scalar_one_or_none()
+        except Exception:
+            logger.exception("find_user_by_email lookup failed")
+            raise
+        finally:
+            await self._db.execute(
+                text("SELECT set_config('app.bypass_rls', 'false', true)")
+            )
 
     async def get_user_by_id(self, user_id: uuid.UUID) -> User | None:
         """Get a user by UUID (no org scope — used during token validation).
+
+        Runs under a scoped RLS bypass (reset in ``finally``) so
+        token validation without org context can see the row.
 
         Args:
             user_id: The internal user UUID.
@@ -68,13 +87,26 @@ class AuthRepository:
         Returns:
             The User if found, or ``None``.
         """
-        result = await self._db.execute(
-            select(User).where(
-                User.id == user_id,
-                User.is_deleted.is_(False),
-            )
+        await self._db.execute(
+            text("SELECT set_config('app.bypass_rls', 'true', true)")
         )
-        return result.scalar_one_or_none()
+        try:
+            result = await self._db.execute(
+                select(User).where(
+                    User.id == user_id,
+                    User.is_deleted.is_(False),
+                )
+            )
+            return result.scalar_one_or_none()
+        except Exception:
+            logger.exception(
+                "get_user_by_id lookup failed: user_id=%s", user_id
+            )
+            raise
+        finally:
+            await self._db.execute(
+                text("SELECT set_config('app.bypass_rls', 'false', true)")
+            )
 
     # ── Organization ────────────────────────────────────────────────────────
 
