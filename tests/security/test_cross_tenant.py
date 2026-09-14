@@ -17,7 +17,10 @@ Gate truth table (verified against the routers/services, not guessed):
   │ GET /v1/users (list, cursor pagination)      │ 200    │ service org-  │
   │                                              │        │ scope (own    │
   │                                              │        │ rows only)    │
-  │ GET/POST/DELETE                              │ 403    │ require_      │
+  │ GET /v1/search?q=...                    │ 200    │ service org-  │
+│                                              │        │ scope (own    │
+│                                              │        │ rows only)    │
+│ GET/POST/DELETE                              │ 403    │ require_      │
   │ /v1/projects/<B project>/sessions...         │        │ project_      │
   │                                              │        │ membership    │
   │                                              │        │ (API-key      │
@@ -26,9 +29,8 @@ Gate truth table (verified against the routers/services, not guessed):
   │ GET /v1/projects/<B project>/search?...      │ 403    │ same as above │
   └──────────────────────────────────────────────┴────────┴───────────────┘
 
-Global ``GET /v1/search`` is excluded (see test 8 docstring): the service
-fans three queries out on one ``AsyncSession`` and 500s — filed for
-``@senior-backend-dev``.
+Global ``GET /v1/search`` is covered in test 8 (org-B project/user/session
+rows seeded, zero leakage asserted with an org-A positive control).
 
 Why 404 (not 403) for users: the bootstrap API key carries
 ``members:read``/``members:write``, so ``require_permission[_or_self]``
@@ -64,6 +66,42 @@ async def _create_user(client: AsyncClient, external_id: str) -> dict[str, Any]:
     assert resp.status_code == 201, f"User creation failed: {resp.text}"
     body = resp.json()
     UUID(body["id"])  # fail fast if the contract ever stops returning a UUID
+    return body
+
+
+async def _create_named_user(
+    client: AsyncClient, external_id: str, name: str
+) -> dict[str, Any]:
+    """Create a user with a display name (needed for global-search labels)."""
+    resp = await client.post(
+        "/v1/users", json={"external_id": external_id, "name": name}
+    )
+    assert resp.status_code == 201, f"User creation failed: {resp.text}"
+    body = resp.json()
+    UUID(body["id"])
+    return body
+
+
+async def _create_project_via_jwt(
+    isolated_app: Any, jwt: str, name: str
+) -> dict[str, Any]:
+    """Create a project via ``POST /v1/projects`` with JWT auth.
+
+    Project creation requires ``project:manage``, which the project-scoped
+    API keys do not carry — so this drives the JWT path (as in
+    ``bootstrap_tenant``) instead of the ``auth_client_*`` fixtures.
+    """
+    from httpx import AsyncClient
+
+    from tests.integration.conftest import asgi_transport
+
+    transport = asgi_transport(isolated_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers["Authorization"] = f"Bearer {jwt}"
+        resp = await client.post("/v1/projects", json={"name": name})
+    assert resp.status_code == 201, f"Project creation failed: {resp.text}"
+    body = resp.json()
+    UUID(body["id"])
     return body
 
 
@@ -322,6 +360,7 @@ class TestCrossTenantIsolation:
     @pytest.mark.asyncio
     async def test_cross_tenant_search_does_not_leak(
         self,
+        isolated_app: Any,
         auth_client_org_a: AsyncClient,
         auth_client_org_b: AsyncClient,
         tenants: dict[str, dict[str, Any]],
@@ -337,15 +376,10 @@ class TestCrossTenantIsolation:
           vacuous emptiness), then org A's own-project search returns
           zero org-B rows, and the cross-project URL is gated 403.
 
-        .. note::
-            Global ``GET /v1/search`` is deliberately NOT covered here:
-            ``GlobalSearchService.search`` fans three queries out via
-            ``asyncio.gather`` on a single ``AsyncSession``
-            (``services/global_search_service.py:48``), which raises
-            ``InvalidRequestError: ... concurrent operations are not
-            permitted`` (→ HTTP 500).  That is a production race filed
-            for ``@senior-backend-dev`` — add a global-search leakage
-            test once it is fixed.
+        Also covers global ``GET /v1/search`` (``routers/global_search.py``,
+        ``project:read``): org-B project/user/session rows matching the
+        query must be absent from org A's results while org A's own
+        matching user row is present (positive control).
         """
         marker = "quuxnimbus"
         session_ext = f"xtenant-{marker}-session"
@@ -419,4 +453,50 @@ class TestCrossTenantIsolation:
         )
         assert gated.status_code == 403, (
             f"Cross-project search returned {gated.status_code}, expected 403"
+        )
+
+        # ── Global search: org-B rows invisible to org A ────────────────
+        # ``GET /v1/search`` runs three org-scoped ILIKE legs (projects,
+        # users, sessions).  Seed one matching row per leg in org B plus
+        # a matching user in org A as the positive control.
+        gmarker = "zxqglobal"
+        gproj_b = await _create_project_via_jwt(
+            isolated_app, tenants["b"]["jwt"], f"Project {gmarker} B"
+        )
+        guser_b = await _create_named_user(
+            auth_client_org_b,
+            f"gsearch-{gmarker}-b-user",
+            f"Gsearch {gmarker} User B",
+        )
+        gsess_b = await _create_session(
+            auth_client_org_b, project_b, f"gsearch-{gmarker}-b-session"
+        )
+        guser_a = await _create_named_user(
+            auth_client_org_a,
+            f"gsearch-{gmarker}-a-user",
+            f"Gsearch {gmarker} User A",
+        )
+        # Nameless + emailless user: external_id-only row must still match
+        # via the external_id ILIKE leg and render with external_id label
+        # (guards the label-fallback fix — the old code 500'd here).
+        gnameless_a = await _create_user(
+            auth_client_org_a, f"gsearch-{gmarker}-a-nameless"
+        )
+
+        gresp = await auth_client_org_a.get(
+            "/v1/search", params={"q": gmarker, "limit": 50}
+        )
+        assert gresp.status_code == 200, f"Global search failed: {gresp.text}"
+        gbody = gresp.json()
+        assert gbody["query"] == gmarker
+        found_ids = {r["id"] for r in gbody["results"]}
+        assert gproj_b["id"] not in found_ids, "Global search leaked org-B project"
+        assert guser_b["id"] not in found_ids, "Global search leaked org-B user"
+        assert gsess_b["id"] not in found_ids, "Global search leaked org-B session"
+        assert guser_a["id"] in found_ids, (
+            "Positive control missing — leakage asserts vacuous"
+        )
+        by_id = {r["id"]: r for r in gbody["results"]}
+        assert by_id[gnameless_a["id"]]["label"] == gnameless_a["external_id"], (
+            "Nameless user label must fall back to external_id"
         )

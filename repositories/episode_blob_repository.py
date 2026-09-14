@@ -156,6 +156,34 @@ class EpisodeBlobRepository:
         )
         return list(result.scalars().all())
 
+    async def get_by_episodes(
+        self, episode_ids: list[UUID]
+    ) -> dict[UUID, list[EpisodeBlob]]:
+        """Get blobs for multiple episodes in a single query.
+
+        Trust boundary: callers must pass ids from scoped retrieval — this
+        method applies no org predicate of its own.
+
+        Args:
+            episode_ids: Episode UUIDs to fetch blobs for.
+
+        Returns:
+            Dict mapping each episode UUID with blobs to its ``EpisodeBlob``
+            list (ordered by ``blob_index``). Episodes with no blobs are
+            absent — callers must use ``.get()``, not ``[]``.
+        """
+        if not episode_ids:
+            return {}
+        result = await self._db.execute(
+            select(EpisodeBlob)
+            .where(EpisodeBlob.episode_id.in_(episode_ids))
+            .order_by(EpisodeBlob.blob_index)
+        )
+        blobs_by_episode: dict[UUID, list[EpisodeBlob]] = {}
+        for blob in result.scalars().all():
+            blobs_by_episode.setdefault(blob.episode_id, []).append(blob)
+        return blobs_by_episode
+
     async def get_by_session(self, session_id: UUID) -> list[EpisodeBlob]:
         """Get all blobs for a session.
 

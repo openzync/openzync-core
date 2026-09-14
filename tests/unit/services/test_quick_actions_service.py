@@ -1,12 +1,57 @@
 """Unit tests for quick_actions_service — context-aware dashboard suggestions."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+import asyncio
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
+from sqlalchemy.exc import InvalidRequestError
+
+from repositories.organization_repository import OrganizationRepository
+from repositories.project_repository import ProjectRepository
+from repositories.user_repository import UserRepository
 from services.quick_actions_service import QuickActionsService
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
+
+
+class ConcurrencyDetectingFakeSession:
+    """Fake session that raises on overlapping ``execute`` calls.
+
+    Same technique as
+    ``tests/unit/services/test_global_search_service.py``: mirrors the real
+    ``AsyncSession`` contract of one in-flight operation. While an
+    ``execute`` is suspended at its ``await``, a second entry raises
+    ``InvalidRequestError`` — the failure Postgres raised under ``gather``.
+    Returns a universal result stub: ``scalar()`` → 0 for the count legs,
+    ``one_or_none()`` → row with ``llm={}`` for the LLM-config leg.
+    """
+
+    def __init__(self) -> None:
+        self._in_flight = 0
+        self.max_in_flight = 0
+
+    async def execute(self, stmt: Any, params: Any = None) -> Any:
+        """Track overlap; fail like ``AsyncSession`` on concurrent use."""
+        self._in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self._in_flight)
+        try:
+            if self._in_flight > 1:
+                raise InvalidRequestError(
+                    "concurrent operations are not permitted"
+                )
+            await asyncio.sleep(0.01)
+            result = MagicMock()
+            result.scalar.return_value = 0
+            row = MagicMock()
+            row.llm = {}
+            row.llm_config = None
+            row.config = None
+            result.one_or_none.return_value = row
+            return result
+        finally:
+            self._in_flight -= 1
 
 
 class TestQuickActionsService:
@@ -110,6 +155,26 @@ class TestQuickActionsService:
         actions = await service.get_actions(ORG_ID)
         labels = [a["label"] for a in actions]
         assert "Invite Team Members" in labels
+
+    async def test_get_actions_runs_sequentially_on_single_session(self) -> None:
+        """``get_actions`` never overlaps ``execute`` calls on one session.
+
+        Regression: the three repo legs fanned out via ``asyncio.gather``
+        on a single ``AsyncSession``, raising ``InvalidRequestError`` under
+        real Postgres. The fake raises on overlap, so it fails on
+        ``gather`` and passes on sequential awaits.
+        """
+        fake = ConcurrencyDetectingFakeSession()
+        service = QuickActionsService(
+            project_repo=ProjectRepository(db=fake),  # type: ignore[arg-type]
+            user_repo=UserRepository(db=fake),  # type: ignore[arg-type]
+            org_repo=OrganizationRepository(db=fake),  # type: ignore[arg-type]
+        )
+
+        actions = await service.get_actions(ORG_ID)
+
+        assert len(actions) > 0
+        assert fake.max_in_flight == 1
 
     async def test_always_has_analytics_and_audit(self) -> None:
         """View Analytics and View Audit Log are always present."""

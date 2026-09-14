@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from datetime import UTC
-from unittest.mock import AsyncMock
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -129,6 +130,114 @@ class TestContextService:
         """The CacheService guard is intact — the caller must coalesce."""
         with pytest.raises(ValueError):
             CacheService(AsyncMock(), default_ttl=None)
+
+    @pytest.mark.asyncio
+    async def test_assemble_resolves_blobs_for_str_episode_ids(
+        self,
+        service: ContextService,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Str episode ids are normalized to UUID before the repo call.
+
+        The retriever returns episode ids as ``str``; ``assemble``
+        normalizes them to ``UUID`` up front, so ``get_by_episodes``
+        receives ``list[UUID]``. The str-id episode still gets its
+        blobs attached via the raw->UUID map.
+        """
+        eid = uuid4()
+        episodes: list[dict[str, Any]] = [
+            {"id": str(eid), "role": "user", "content": "hello"}
+        ]
+        service._retriever.hybrid_search.return_value = {
+            "episodes": episodes,
+            "facts": [],
+            "entities": [],
+            "communities": [],
+            "source_counts": {"episodes": {}, "facts": {}, "entities": {}},
+            "total_items": 1,
+        }
+
+        blob = MagicMock()
+        blob.id = uuid4()
+        blob.file_name = "photo.jpg"
+        blob.mime_type = "image/jpeg"
+        blob.file_size = 1024
+        blob.storage_key = "key-123"
+
+        calls: dict[str, Any] = {}
+
+        class _FakeBlobRepo:
+            def __init__(self, db: object) -> None:
+                pass
+
+            async def get_by_episodes(
+                self, episode_ids: list[Any]
+            ) -> dict[Any, list[Any]]:
+                calls["ids"] = episode_ids
+                return {eid: [blob]}
+
+        monkeypatch.setattr(
+            "services.context_service.EpisodeBlobRepository", _FakeBlobRepo
+        )
+
+        await service.assemble(project_id=uuid4(), query="q", limit=10)
+
+        # Single batched call with normalized UUID ids…
+        assert calls["ids"] == [eid]
+        # …and the str-id episode got its blobs (raw->UUID map lookup).
+        assert episodes[0]["blobs"][0]["file_name"] == "photo.jpg"
+        assert episodes[0]["blobs"][0]["download_url"] is None
+
+    @pytest.mark.asyncio
+    async def test_assemble_skips_malformed_episode_ids(
+        self,
+        service: ContextService,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Malformed episode ids are skipped — good ids still get blobs."""
+        eid = uuid4()
+        episodes: list[dict[str, Any]] = [
+            {"id": str(eid), "role": "user", "content": "hello"},
+            {"id": "not-a-uuid", "role": "user", "content": "bad id"},
+        ]
+        service._retriever.hybrid_search.return_value = {
+            "episodes": episodes,
+            "facts": [],
+            "entities": [],
+            "communities": [],
+            "source_counts": {"episodes": {}, "facts": {}, "entities": {}},
+            "total_items": 2,
+        }
+
+        blob = MagicMock()
+        blob.id = uuid4()
+        blob.file_name = "photo.jpg"
+        blob.mime_type = "image/jpeg"
+        blob.file_size = 1024
+        blob.storage_key = "key-123"
+
+        calls: dict[str, Any] = {}
+
+        class _FakeBlobRepo:
+            def __init__(self, db: object) -> None:
+                pass
+
+            async def get_by_episodes(
+                self, episode_ids: list[Any]
+            ) -> dict[Any, list[Any]]:
+                calls["ids"] = episode_ids
+                return {eid: [blob]}
+
+        monkeypatch.setattr(
+            "services.context_service.EpisodeBlobRepository", _FakeBlobRepo
+        )
+
+        # Must not raise on the malformed id.
+        await service.assemble(project_id=uuid4(), query="q", limit=10)
+
+        assert calls["ids"] == [eid]
+        assert episodes[0]["blobs"][0]["file_name"] == "photo.jpg"
+        assert "blobs" not in episodes[1]
 
 
 class TestContextAsOf:

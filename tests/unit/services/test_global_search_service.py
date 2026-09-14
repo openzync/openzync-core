@@ -5,13 +5,47 @@ Each private query method is replaced with an AsyncMock returning controlled dat
 """
 from __future__ import annotations
 
+import asyncio
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
+from sqlalchemy.exc import InvalidRequestError
 
 from schemas.search import GlobalSearchItem
 from services.global_search_service import GlobalSearchService
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+
+class ConcurrencyDetectingFakeSession:
+    """Fake session that raises on overlapping ``execute`` calls.
+
+    Mirrors the real ``AsyncSession`` contract of one in-flight operation:
+    while an ``execute`` is suspended at its ``await``, a second entry
+    raises ``InvalidRequestError`` — the same failure Postgres raised
+    under the old ``asyncio.gather`` fan-out.
+    """
+
+    def __init__(self) -> None:
+        self._in_flight = 0
+        self.max_in_flight = 0
+
+    async def execute(
+        self, stmt: Any, params: dict[str, Any] | None = None
+    ) -> list[Any]:
+        """Track overlap; fail like ``AsyncSession`` on concurrent use."""
+        self._in_flight += 1
+        self.max_in_flight = max(self.max_in_flight, self._in_flight)
+        try:
+            if self._in_flight > 1:
+                raise InvalidRequestError("concurrent operations are not permitted")
+            await asyncio.sleep(0.01)
+            return []
+        finally:
+            self._in_flight -= 1
 
 
 @pytest.mark.unit
@@ -26,13 +60,15 @@ class TestGlobalSearchService:
     def _make_service(self) -> tuple[GlobalSearchService, AsyncMock]:
         """Create a GlobalSearchService with mocked DB session."""
         mock_db = AsyncMock()
-        service = GlobalSearchService(db=mock_db, org_id=self.ORG_ID, user_id=self.USER_ID)
+        service = GlobalSearchService(
+            db=mock_db, org_id=self.ORG_ID, user_id=self.USER_ID
+        )
         return service, mock_db
 
     @staticmethod
     def _make_db_row(
         row_id: str | UUID,
-        name: str = "test",
+        name: str | None = "test",
         email: str | None = None,
         description: str | None = None,
         external_id: str | None = None,
@@ -149,6 +185,25 @@ class TestGlobalSearchService:
         assert results[1].label == "Beta"
         assert results[2].label == "b@e.com"
 
+    @pytest.mark.asyncio
+    async def test_search_runs_sequentially_on_single_session(self) -> None:
+        """``search`` never overlaps ``execute`` calls on one session.
+
+        Regression: the three legs fanned out via ``asyncio.gather`` on a
+        single ``AsyncSession``, raising ``InvalidRequestError`` under real
+        Postgres.  The fake raises on overlap, so it fails on ``gather``
+        and passes on sequential awaits.
+        """
+        fake = ConcurrencyDetectingFakeSession()
+        service = GlobalSearchService(
+            db=cast("AsyncSession", fake), org_id=self.ORG_ID, user_id=self.USER_ID
+        )
+
+        results = await service.search("test", limit=9)
+
+        assert results == []
+        assert fake.max_in_flight == 1
+
     # ── _search_projects — raw DB query ─────────────────────────────────────
 
     @pytest.mark.asyncio
@@ -187,4 +242,46 @@ class TestGlobalSearchService:
         results = await service._search_users("%anon%", 10)
         assert len(results) == 1
         assert results[0].label == "anon@example.com"
+        assert results[0].subtitle is None
+
+    @pytest.mark.asyncio
+    async def test_search_users_nameless_emailless_falls_back_to_external_id(
+        self,
+    ) -> None:
+        """Nameless + emailless row labels by ``external_id`` — no 500.
+
+        Regression: with neither name nor email, the old label expression
+        produced ``None`` and ``GlobalSearchItem`` raised ``ValidationError``
+        (500 at the API). The label must fall back to ``external_id``.
+        """
+        service, mock_db = self._make_service()
+
+        row = self._make_db_row(
+            "u1", name=None, email=None, external_id="ext-123"
+        )
+        mock_db.execute.return_value = [row]
+
+        results = await service._search_users("%ext-123%", 10)
+        assert len(results) == 1
+        assert results[0].label == "ext-123"
+        assert results[0].subtitle is None
+
+    @pytest.mark.asyncio
+    async def test_search_users_all_null_falls_back_to_id(self) -> None:
+        """Row with name=email=external_id=None labels by ``str(id)``.
+
+        Regression: the label chain ends with ``or str(row.id)`` so a
+        fully anonymous row can never produce a ``None`` label (which
+        would raise ``ValidationError`` in ``GlobalSearchItem``).
+        """
+        service, mock_db = self._make_service()
+
+        row = self._make_db_row(
+            "u1", name=None, email=None, external_id=None
+        )
+        mock_db.execute.return_value = [row]
+
+        results = await service._search_users("%u1%", 10)
+        assert len(results) == 1
+        assert results[0].label == str(row.id)
         assert results[0].subtitle is None
