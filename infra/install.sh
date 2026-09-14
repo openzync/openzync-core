@@ -295,7 +295,30 @@ do_install() {
     REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
     BACKEND_COMPOSE="${REPO_ROOT}/infra/docker-compose.backend.yml"
     FRONTEND_COMPOSE="$( { cd "${REPO_ROOT}/../openzync-frontend/deploy" && pwd; } 2>/dev/null || true)/docker-compose.yml"
-    [[ -f "$BACKEND_COMPOSE" ]] || die "backend compose not found — run from an openzync-core checkout"
+    if [[ ! -f "$BACKEND_COMPOSE" ]]; then
+        SRC_DIR="${INSTALL_DIR}/src"
+        CORE_REF="${OZ_INSTALL_REF:-master}"
+        mkdir -p "$SRC_DIR"
+        if [[ ! -f "${SRC_DIR}/openzync-core/infra/docker-compose.backend.yml" ]]; then
+            log "backend compose not found — cloning openzync-core (${CORE_REF}) into ${SRC_DIR}/openzync-core ..."
+            git clone --depth 1 -b "$CORE_REF" https://github.com/openzync/openzync-core.git "${SRC_DIR}/openzync-core" || die "failed to clone openzync-core (${CORE_REF}) — check network/git and re-run"
+        else
+            git -C "${SRC_DIR}/openzync-core" pull --ff-only >/dev/null 2>&1 || log "WARN: failed to update ${SRC_DIR}/openzync-core — continuing with existing checkout"
+        fi
+        [[ -f "${SRC_DIR}/openzync-core/infra/docker-compose.backend.yml" ]] || die "backend compose still missing after checkout — expected ${SRC_DIR}/openzync-core/infra/docker-compose.backend.yml"
+        REPO_ROOT="${SRC_DIR}/openzync-core"
+        BACKEND_COMPOSE="${REPO_ROOT}/infra/docker-compose.backend.yml"
+        FRONTEND_COMPOSE="$( { cd "${REPO_ROOT}/../openzync-frontend/deploy" && pwd; } 2>/dev/null || true)/docker-compose.yml"
+        if [[ ! -f "${FRONTEND_COMPOSE:-/nonexistent}" ]] && [[ ! -f "${SRC_DIR}/openzync-frontend/deploy/docker-compose.yml" ]]; then
+            log "frontend checkout not found — cloning openzync-frontend (${CORE_REF}) into ${SRC_DIR}/openzync-frontend ..."
+            git clone --depth 1 -b "$CORE_REF" https://github.com/openzync/openzync-frontend.git "${SRC_DIR}/openzync-frontend" >/dev/null 2>&1 || log "WARN: failed to clone openzync-frontend — continuing without frontend"
+        elif [[ -f "${SRC_DIR}/openzync-frontend/deploy/docker-compose.yml" ]]; then
+            git -C "${SRC_DIR}/openzync-frontend" pull --ff-only >/dev/null 2>&1 || log "WARN: failed to update ${SRC_DIR}/openzync-frontend — continuing with existing checkout"
+        fi
+        if [[ ! -f "${FRONTEND_COMPOSE:-/nonexistent}" ]] && [[ -f "${SRC_DIR}/openzync-frontend/deploy/docker-compose.yml" ]]; then
+            FRONTEND_COMPOSE="${SRC_DIR}/openzync-frontend/deploy/docker-compose.yml"
+        fi
+    fi
 
     # ── Interactive choices (every choice prompted; sane defaults) ──
     local front_ans db_ans front_env
