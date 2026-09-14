@@ -1136,7 +1136,7 @@ class FactRepository:
     # ── Vector Search ─────────────────────────────────────────────────────────
 
     async def search_by_vector(
-        self, embedding: list[float], project_id: UUID, limit: int = 50
+        self, embedding: list[float], project_id: UUID, org_id: UUID, limit: int = 50
     ) -> list[dict[str, Any]]:
         """Search facts by vector similarity (pgvector cosine distance).
 
@@ -1147,6 +1147,7 @@ class FactRepository:
         Args:
             embedding: The query embedding vector.
             project_id: Scope results to this project.
+            org_id: Tenant scope for multi-tenant isolation.
             limit: Maximum results (capped at 200).
 
         Returns:
@@ -1163,6 +1164,7 @@ class FactRepository:
                        1 - (embedding <=> :embedding) AS score
                 FROM facts
                 WHERE project_id = :project_id
+                  AND organization_id = :org_id
                   AND embedding IS NOT NULL
                   AND (invalid_at IS NULL OR invalid_at > :effective_at)
                   AND (valid_from IS NULL OR valid_from <= :effective_at)
@@ -1174,6 +1176,7 @@ class FactRepository:
             {
                 "embedding": embedding,
                 "project_id": project_id,
+                "org_id": org_id,
                 "limit": effective_limit,
                 "effective_at": now,
             },

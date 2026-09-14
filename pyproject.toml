@@ -189,6 +189,7 @@ markers = [
     "integration: Integration tests — real DB/Redis via testcontainers.",
     "e2e: End-to-end API flow tests with httpx.AsyncClient.",
     "slow: Tests that take longer than 5 seconds.",
+    "security: Cross-tenant isolation tests — real DB/Redis via testcontainers.",
 ]
 
 [tool.coverage.run]
