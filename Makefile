@@ -15,7 +15,7 @@
 #   make docker-down      # Stop infrastructure containers
 # ──────────────────────────────────────────────────────────────────────────────
 
-.PHONY: dev install lint test test-all test-coverage test-coverage-ci test-coverage-report test-coverage-html migrate migrate-new docker-up docker-up-local docker-down docker-down-local docker-logs docker-logs-local docker-reset docker-reset-local docs-install docs-build docs-watch docs-clean docs-apidoc changelog-check changelog-build clean
+.PHONY: dev install lint test test-all test-coverage test-coverage-ci test-coverage-report test-coverage-html migrate migrate-new docker-up docker-up-local docker-down docker-down-local docker-logs docker-logs-local docker-reset docker-reset-local docs-install docs-build docs-watch docs-clean docs-apidoc changelog-check changelog-build clean test-install
 
 # ── Variables ─────────────────────────────────────────────────────────────────
 
@@ -172,3 +172,8 @@ clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
 	find . -type f -name '*.pyc' -delete
 	rm -rf .pytest_cache .coverage coverage.xml htmlcov .mypy_cache .ruff_cache
+
+# ── Installer tests (sandboxed: /tmp/oz-install-test, :18080/:13000/:15432) ──
+# Usage: make test-install [CASE=T1,T2]  (CASE filters, e.g. CASE=T4,T6)
+test-install:
+	CASE="$(CASE)" bash scripts/test_install.sh

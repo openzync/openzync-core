@@ -1,0 +1,86 @@
+name: install-suite
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      CASE:
+        description: "Subset filter e.g. T4,T6 (empty runs full matrix)"
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  install-full:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # ChatOps gate: always run on dispatch; on issue_comment require all of:
+    # PR context + /test-install prefix + trusted author.
+    # Rationale (pwn-request guard): issue_comment runs with a write-token on
+    # the base repo while checking out untrusted PR code, so restrict to
+    # OWNER/MEMBER/COLLABORATOR.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       startsWith(github.event.comment.body, '/test-install') &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+    steps:
+      - name: Acknowledge trigger comment
+        if: github.event_name == 'issue_comment'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions -f content=eyes || true
+      - name: Resolve PR head SHA
+        if: github.event_name == 'issue_comment'
+        id: pr-sha
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "sha=$(gh pr view "${{ github.event.issue.number }}" --json headRefOid --jq .headRefOid)" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: github.event_name == 'issue_comment'
+        with:
+          path: openzync-core
+          ref: ${{ steps.pr-sha.outputs.sha }}
+      - uses: actions/checkout@v4
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          path: openzync-core
+      - uses: actions/checkout@v4
+        with:
+          repository: openzync/openzync-frontend
+          path: openzync-frontend
+      - name: Resolve CASE filter
+        id: case
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_CASE: ${{ inputs.CASE }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "value=$INPUT_CASE" >> "$GITHUB_OUTPUT"
+          else
+            value="$(echo "$COMMENT_BODY" | sed 's|^/test-install||' | tr -d ' \t\n\r')"
+            echo "value=$value" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run installer suite (full or CASE-filtered)
+        working-directory: openzync-core
+        shell: bash
+        run: |
+          set -o pipefail
+          CASE="${{ steps.case.outputs.value }}" make test-install 2>&1 | tee install-suite.log
+      - name: Upload suite log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-suite-log
+          path: openzync-core/install-suite.log
+          retention-days: 30
+          if-no-files-found: warn
