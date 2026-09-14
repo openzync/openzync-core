@@ -39,6 +39,7 @@ OPENBAO_DATA_VOL="openzync-dev-openbao-data"
 OPENBAO_INIT_VOL="openzync-dev-openbao-init"
 POSTGRES_CONTAINER="openzync-dev-postgres"
 POSTGRES_IMAGE="pgvector/pgvector:pg15"   # postgres 15 + pgvector (app uses vector extension)
+POSTGRES_DATA_VOL="openzync-dev-postgres-data"
 REDIS_CONTAINER="openzync-dev-redis"
 REDIS_IMAGE="redis:7-alpine"
 REDIS_DATA_VOL="openzync-dev-redis-data"
@@ -70,6 +71,34 @@ wait_redis_port() {
         sleep 1
     done
     log "FATAL: redis ${container} did not become ready within 30s."
+    exit 1
+}
+
+# ── Host-port guards (port-less-container fail-fast) ─────────────────────────
+# In-container readiness (pg_isready / redis-cli via docker exec) passes even
+# when the host port was never published. These probe the HOST side; on
+# failure the caller fail-fasts with the exact fix instead of crashing later
+# (e.g. Connection refused at platform_seed).
+host_port_listening() { ss -tlnp 2>/dev/null | grep -q ":$1"; }
+host_postgres_ping() {
+    if command -v pg_isready >/dev/null 2>&1; then
+        pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1
+    else
+        host_port_listening 5432
+    fi
+}
+host_redis_ping() {  # $1 = host port
+    if command -v redis-cli >/dev/null 2>&1; then
+        redis-cli -h 127.0.0.1 -p "$1" PING >/dev/null 2>&1
+    else
+        host_port_listening "$1"
+    fi
+}
+portless_fatal() {  # $1 = container, $2 = host port
+    cat >&2 <<EOF
+[dev_preflight] FATAL: container $1 is running but host port 127.0.0.1:$2 is not reachable (port-less container — recreated without the -p publish flag).
+Fix: docker rm -f $1 && scripts/dev_preflight.sh up
+EOF
     exit 1
 }
 
@@ -121,10 +150,12 @@ ensure_postgres() {
         log "Postgres already running — skipping."
         docker exec "$POSTGRES_CONTAINER" pg_isready -U postgres -h localhost >/dev/null 2>&1 \
             || log "WARN: postgres running but pg_isready failed."
+        host_postgres_ping || portless_fatal "$POSTGRES_CONTAINER" 5432
     elif container_exists "$POSTGRES_CONTAINER"; then
         log "Starting postgres container ${POSTGRES_CONTAINER} ..."
-        docker start "$POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+        docker start "$POSTGRES_CONTAINER"
         wait_postgres
+        host_postgres_ping || portless_fatal "$POSTGRES_CONTAINER" 5432
     else
         if ! grep -q '^OZ_DATABASE_URL=' "$SECRETS_FILE"; then
             local pw
@@ -134,12 +165,15 @@ ensure_postgres() {
         fi
         local pw
         pw="$(sed -n 's|^OZ_DATABASE_URL=postgresql+asyncpg://openzync:\([^@]*\)@.*|\1|p' "$SECRETS_FILE")"
+        ensure_volume "$POSTGRES_DATA_VOL"
         log "Creating postgres container ${POSTGRES_CONTAINER} ..."
         docker run -d --name "$POSTGRES_CONTAINER" --restart unless-stopped \
             -e POSTGRES_PASSWORD="$pw" \
             -p 127.0.0.1:5432:5432 \
+            -v "$POSTGRES_DATA_VOL:/var/lib/postgresql/data" \
             "$POSTGRES_IMAGE" >/dev/null
         wait_postgres
+        host_postgres_ping || portless_fatal "$POSTGRES_CONTAINER" 5432
         docker exec "$POSTGRES_CONTAINER" psql -U postgres -v ON_ERROR_STOP=1 \
             -c "CREATE ROLE openzync LOGIN PASSWORD '${pw}';" \
             -c "CREATE DATABASE openzync OWNER openzync;" >/dev/null
@@ -157,10 +191,12 @@ ensure_redis() {
         log "Redis already running — skipping."
         docker exec "$REDIS_CONTAINER" redis-cli PING >/dev/null 2>&1 \
             || log "WARN: redis running but PING failed."
+        host_redis_ping 6379 || portless_fatal "$REDIS_CONTAINER" 6379
     elif container_exists "$REDIS_CONTAINER"; then
         log "Starting redis container ${REDIS_CONTAINER} ..."
-        docker start "$REDIS_CONTAINER" >/dev/null
+        docker start "$REDIS_CONTAINER"
         wait_redis_port "$REDIS_CONTAINER"
+        host_redis_ping 6379 || portless_fatal "$REDIS_CONTAINER" 6379
     else
         # Fail fast if another process holds :6379 (e.g. a local redis-server
         # or the compose stack) — same guard style as openbao :8200 below.
@@ -180,6 +216,7 @@ EOF
             -v "$REDIS_DATA_VOL:/data" \
             "$REDIS_IMAGE" >/dev/null
         wait_redis_port "$REDIS_CONTAINER"
+        host_redis_ping 6379 || portless_fatal "$REDIS_CONTAINER" 6379
     fi
 }
 
@@ -189,10 +226,12 @@ ensure_falkordb() {
         log "FalkorDB already running — skipping."
         docker exec "$FALKORDB_CONTAINER" redis-cli PING >/dev/null 2>&1 \
             || log "WARN: falkordb running but PING failed."
+        host_redis_ping 6380 || portless_fatal "$FALKORDB_CONTAINER" 6380
     elif container_exists "$FALKORDB_CONTAINER"; then
         log "Starting FalkorDB container ${FALKORDB_CONTAINER} ..."
-        docker start "$FALKORDB_CONTAINER" >/dev/null
+        docker start "$FALKORDB_CONTAINER"
         wait_redis_port "$FALKORDB_CONTAINER"
+        host_redis_ping 6380 || portless_fatal "$FALKORDB_CONTAINER" 6380
     else
         # Fail fast if another process holds :6380 — same guard style as :8200.
         if ss -tlnp 2>/dev/null | grep -q ':6380' \
@@ -212,6 +251,7 @@ EOF
             -v "$FALKORDB_DATA_VOL:/data" \
             "$FALKORDB_IMAGE" >/dev/null
         wait_redis_port "$FALKORDB_CONTAINER"
+        host_redis_ping 6380 || portless_fatal "$FALKORDB_CONTAINER" 6380
     fi
 }
 
@@ -221,7 +261,7 @@ ensure_mailpit() {
         log "Mailpit already running — skipping."
     elif container_exists mailpit; then
         log "Starting mailpit ..."
-        docker start mailpit >/dev/null 2>&1 || true
+        docker start mailpit
     else
         log "Creating mailpit container ..."
         docker run -d --name mailpit --restart unless-stopped \
@@ -241,7 +281,7 @@ ensure_openbao() {
             || log "WARN: openbao running but health check failed (may still be sealed)."
     elif container_exists "$OPENBAO_CONTAINER"; then
         log "Starting OpenBao container ${OPENBAO_CONTAINER} ..."
-        docker start "$OPENBAO_CONTAINER" >/dev/null 2>&1 || true
+        docker start "$OPENBAO_CONTAINER"
     else
         # Fail fast if another process/container holds :8200 (e.g. the compose
         # stack's openzync-openbao) — docker's "port is already allocated"
@@ -355,18 +395,24 @@ status() {
     else
         echo "OpenBao: DOWN / sealed"
     fi
-    if container_exists "$POSTGRES_CONTAINER" && docker ps --format '{{.Names}}' | grep -qx "$POSTGRES_CONTAINER"; then
+    if container_running "$POSTGRES_CONTAINER" && host_postgres_ping; then
         echo "Postgres: UP"
+    elif container_running "$POSTGRES_CONTAINER"; then
+        echo "Postgres: DEGRADED (port-less container — host :5432 dead; fix: docker rm -f $POSTGRES_CONTAINER)"
     else
         echo "Postgres: DOWN"
     fi
-    if container_exists "$REDIS_CONTAINER" && container_running "$REDIS_CONTAINER"; then
+    if container_running "$REDIS_CONTAINER" && host_redis_ping 6379; then
         echo "Redis: UP (127.0.0.1:6379)"
+    elif container_running "$REDIS_CONTAINER"; then
+        echo "Redis: DEGRADED (port-less container — host :6379 dead; fix: docker rm -f $REDIS_CONTAINER)"
     else
         echo "Redis: DOWN"
     fi
-    if container_exists "$FALKORDB_CONTAINER" && container_running "$FALKORDB_CONTAINER"; then
+    if container_running "$FALKORDB_CONTAINER" && host_redis_ping 6380; then
         echo "FalkorDB: UP (127.0.0.1:6380)"
+    elif container_running "$FALKORDB_CONTAINER"; then
+        echo "FalkorDB: DEGRADED (port-less container — host :6380 dead; fix: docker rm -f $FALKORDB_CONTAINER)"
     else
         echo "FalkorDB: DOWN"
     fi
