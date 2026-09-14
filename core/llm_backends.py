@@ -341,6 +341,9 @@ class OpenAIBackend(LLMBackend):
             response = await self._client.embeddings.create(
                 model=model,
                 input=texts,
+                # openai SDK v2 omits encoding_format (defaults to base64),
+                # which NVIDIA NIM rejects with 400 - request float explicitly.
+                encoding_format="float",
             )
         except Exception as exc:
             logger.error(
@@ -519,6 +522,7 @@ class AzureBackend(LLMBackend):
             response = await self._client.embeddings.create(
                 model=deployment,
                 input=texts,
+                encoding_format="float",
             )
         except Exception as exc:
             logger.error("azure.embed_error", extra={"error": str(exc)})
@@ -839,6 +843,7 @@ class OpenAILikeBackend(LLMBackend):
             response = await self._client.embeddings.create(
                 model=model,
                 input=texts,
+                encoding_format="float",
             )
         except Exception as exc:
             logger.error(

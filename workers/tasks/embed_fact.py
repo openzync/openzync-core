@@ -8,14 +8,67 @@ Queue: high-priority (real-time ingestion).
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import structlog
 
 from workers.tasks.base import with_retry
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 logger = structlog.get_logger()
 
 
-@with_retry(max_retries=3, base_delay_s=2.0)
+def _is_retryable(exc: Exception) -> bool:
+    """Return True when an embedding error is worth retrying.
+
+    4xx client errors (detected via the ``status_code`` attribute, which
+    covers ``openai.BadRequestError`` and its siblings without importing
+    the SDK) are permanent — retrying cannot succeed — so they return
+    False, except 408 (timeout) and 429 (rate-limit) which are transient.
+    Everything else (5xx, timeouts, network errors, no status) is retried.
+    """
+    status_code = getattr(exc, "status_code", None)
+    return status_code in (408, 429) or not (
+        isinstance(status_code, int) and 400 <= status_code <= 499
+    )
+
+
+async def _retire_fact(
+    session_factory: Callable[..., Any],
+    engine: Any,
+    own_engine: bool,
+    fact_id: str,
+) -> None:
+    """Mark a fact as permanently unembeddable without storing a vector.
+
+    Sets ``embedded_at`` with ``embedding`` left NULL so
+    ``reconcile_enrichment`` stops re-enqueueing the fact. Disposes the
+    engine when this worker created it.
+
+    Args:
+        session_factory: Async session factory bound to the worker's engine.
+        engine: The worker's async engine (disposed when ``own_engine``).
+        own_engine: True when this worker created the engine itself.
+        fact_id: UUID of the fact to retire.
+    """
+    # Any keeps sqlalchemy out of module top-level (ARQ lazy-import convention).
+    from sqlalchemy import text
+
+    try:
+        async with session_factory() as db:
+            await db.execute(
+                text("UPDATE facts SET embedded_at = now() WHERE id = :id"),
+                {"id": fact_id},
+            )
+            await db.commit()
+    finally:
+        if own_engine:
+            await engine.dispose()
+
+
+@with_retry(max_retries=3, base_delay_s=2.0, is_retryable=_is_retryable)
 async def embed_fact(
     ctx: object,
     fact_id: str,
@@ -147,11 +200,22 @@ async def embed_fact(
         result = await llm.embed([content], model=_embedding_model)
         embedding = result.embeddings[0]
     except Exception as e:
-        logger.error(
-            "embed_fact.embedding_failed",
-            fact_id=fact_id,
-            error=str(e),
-        )
+        if not _is_retryable(e):
+            # Permanent 4xx (bad request, unknown model, rejected params):
+            # retrying cannot succeed, so retire the fact and raise.
+            logger.error(
+                "embed_fact.embedding_non_retryable",
+                fact_id=fact_id,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            await _retire_fact(session_factory, engine, _own_engine, fact_id)
+        else:
+            logger.error(
+                "embed_fact.embedding_failed",
+                fact_id=fact_id,
+                error=str(e),
+            )
         raise
 
     # ── 3. Validate dimension matches config ──────────────────────────────
@@ -167,18 +231,7 @@ async def embed_fact(
         # stays NULL) so reconcile_enrichment stops re-enqueueing it, then
         # raise.  Transient failures (LLM/network) are NOT retired — they
         # stay retryable via with_retry.
-        try:
-            async with session_factory() as db:
-                await db.execute(
-                    text(
-                        "UPDATE facts SET embedded_at = now() WHERE id = :id"
-                    ),
-                    {"id": fact_id},
-                )
-                await db.commit()
-        finally:
-            if _own_engine:
-                await engine.dispose()
+        await _retire_fact(session_factory, engine, _own_engine, fact_id)
         logger.error(
             "embed_fact.dimension_mismatch_retired",
             fact_id=fact_id,
