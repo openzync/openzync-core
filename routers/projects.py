@@ -10,13 +10,15 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Path, Query, Request, status
+from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import audit_action
+from core.exceptions import AuthenticationError
 from dependencies.auth import require_permission
 from dependencies.db import get_db
 from dependencies.project_auth import require_project_membership
+from repositories.project_pin_repository import ProjectPinRepository
 from repositories.project_repository import ProjectRepository
 from schemas.projects import (
     AddMemberRequest,
@@ -35,7 +37,7 @@ router = APIRouter(prefix="/v1/projects", tags=["projects"])
 
 async def _get_project_service(db: AsyncSession = Depends(get_db)) -> ProjectService:
     """Factory for request-scoped ProjectService."""
-    return ProjectService(repo=ProjectRepository(db))
+    return ProjectService(repo=ProjectRepository(db), pin_repo=ProjectPinRepository(db))
 
 
 # ── Create ──────────────────────────────────────────────────────────────────
@@ -75,6 +77,7 @@ async def list_projects(
     request: Request,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    pinned_only: bool = Query(default=False),
     _: None = Depends(require_permission("project:read")),
     service: ProjectService = Depends(_get_project_service),
 ) -> list[ProjectResponse]:
@@ -99,6 +102,7 @@ async def list_projects(
         user_id=user_id,
         limit=limit,
         offset=offset,
+        pinned_only=pinned_only,
     )
 
 
@@ -167,15 +171,81 @@ async def archive_project(
     project_id: UUID = Path(...),
     request: Request = None,
     service: ProjectService = Depends(_get_project_service),
-) -> None:
+) -> Response:
     """Archive a project (soft-delete, preserves all data).
 
     Requires owner role.
     """
+    # note: return an explicit empty Response — returning None here makes
+    # FastAPI serialize a JSON `null` body on the 204, and uvicorn rejects
+    # a non-empty body on 204 (RuntimeError during send). That transport
+    # error propagates into get_db teardown and rolls back the archive
+    # AFTER 204 headers are flushed — a silent client/server divergence.
+    # pin/unpin below already follow this pattern.
     await service.archive_project(
         organization_id=request.state.org_id,
         project_id=project_id,
     )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ── Pins ────────────────────────────────────────────────────────────────────
+
+
+@router.post(
+    "/{project_id}/pin",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:read")),
+    ],
+)
+@audit_action("project.pin", "project", "Project pinned")
+async def pin_project(
+    request: Request,
+    project_id: UUID = Path(...),
+    service: ProjectService = Depends(_get_project_service),
+) -> Response:
+    """Pin a project for the dashboard user (idempotent, max 3 pins)."""
+    if getattr(request.state, "auth_type", None) == "api_key":
+        raise AuthenticationError("Pins require dashboard auth")
+    raw_user_id: str | None = getattr(request.state, "user_id", None)
+    if raw_user_id is None:
+        raise AuthenticationError("Pins require dashboard auth")
+    await service.pin_project(
+        organization_id=request.state.org_id,
+        user_id=UUID(raw_user_id),
+        project_id=project_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete(
+    "/{project_id}/pin",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[
+        Depends(require_project_membership),
+        Depends(require_permission("project:read")),
+    ],
+)
+@audit_action("project.unpin", "project", "Project unpinned")
+async def unpin_project(
+    request: Request,
+    project_id: UUID = Path(...),
+    service: ProjectService = Depends(_get_project_service),
+) -> Response:
+    """Remove the dashboard user's pin on a project (no-op if absent)."""
+    if getattr(request.state, "auth_type", None) == "api_key":
+        raise AuthenticationError("Pins require dashboard auth")
+    raw_user_id: str | None = getattr(request.state, "user_id", None)
+    if raw_user_id is None:
+        raise AuthenticationError("Pins require dashboard auth")
+    await service.unpin_project(
+        organization_id=request.state.org_id,
+        user_id=UUID(raw_user_id),
+        project_id=project_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ── Members ─────────────────────────────────────────────────────────────────

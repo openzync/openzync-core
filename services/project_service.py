@@ -11,6 +11,7 @@ import logging
 from uuid import UUID
 
 from core.exceptions import NotFoundError, ValidationError
+from repositories.project_pin_repository import ProjectPinRepository
 from repositories.project_repository import ProjectRepository
 from schemas.projects import (
     AddMemberRequest,
@@ -22,16 +23,21 @@ from schemas.projects import (
 
 logger = logging.getLogger(__name__)
 
+MAX_PINS = 3
+"""Maximum pinned projects per user per organization."""
+
 
 class ProjectService:
     """Orchestrates project and member lifecycle operations.
 
     Args:
         repo: The project repository instance (request-scoped).
+        pin_repo: The project-pin repository instance (request-scoped).
     """
 
-    def __init__(self, repo: ProjectRepository) -> None:
+    def __init__(self, repo: ProjectRepository, pin_repo: ProjectPinRepository) -> None:
         self._repo = repo
+        self._pin_repo = pin_repo
 
     # ── Create ──────────────────────────────────────────────────────────────
 
@@ -143,12 +149,16 @@ class ProjectService:
         user_id: UUID | None,
         limit: int = 50,
         offset: int = 0,
+        pinned_only: bool = False,
     ) -> list[ProjectResponse]:
         """List non-archived projects in an organisation.
 
         When ``user_id`` is provided, only projects where the user is a
         member are returned.  When ``user_id`` is ``None`` (API key auth),
-        all non-archived projects in the org are returned.
+        all non-archived projects in the org are returned with
+        ``is_pinned=False``.  Each entry carries ``is_pinned`` for the
+        requesting user; ``pinned_only=True`` returns just their pins,
+        most recently pinned first.
 
         Args:
             organization_id: Tenant scope.
@@ -156,7 +166,45 @@ class ProjectService:
                 API-key-authenticated requests.
             limit: Maximum results per page (capped at 200).
             offset: Number of results to skip.
+            pinned_only: Return only the user's pinned projects.
+
+        Raises:
+            ValidationError: If ``pinned_only`` is set without a user
+                (API-key callers have no pins).
         """
+        if pinned_only and user_id is None:
+            raise ValidationError(
+                message="pinned_only requires dashboard authentication",
+                detail={"pinned_only": pinned_only},
+            )
+
+        pinned_ids: set[UUID] = set()
+        if user_id is not None:
+            pinned_ids = await self._pin_repo.get_pinned_ids(organization_id, user_id)
+            if pinned_only:
+                projects = await self._pin_repo.list_pinned_projects(
+                    organization_id=organization_id,
+                    user_id=user_id,
+                    limit=limit,
+                    offset=offset,
+                )
+                counts = await self._repo.count_members_for_projects(
+                    [p.id for p in projects]
+                )
+                return [
+                    ProjectResponse(
+                        id=p.id,
+                        name=p.name,
+                        description=p.description or "",
+                        created_by=p.created_by,
+                        member_count=counts.get(p.id, 0),
+                        is_pinned=True,
+                        created_at=p.created_at,
+                        updated_at=p.updated_at,
+                    )
+                    for p in projects
+                ]
+
         projects = await self._repo.list(
             organization_id=organization_id,
             user_id=user_id,
@@ -173,6 +221,7 @@ class ProjectService:
                 description=p.description or "",
                 created_by=p.created_by,
                 member_count=counts.get(p.id, 0),
+                is_pinned=(p.id in pinned_ids),
                 created_at=p.created_at,
                 updated_at=p.updated_at,
             )
@@ -251,6 +300,90 @@ class ProjectService:
             extra={
                 "org_id": str(organization_id),
                 "project_id": str(project_id),
+            },
+        )
+
+    # ── Pins ──────────────────────────────────────────────────────────────────
+
+    async def pin_project(
+        self,
+        organization_id: UUID,
+        user_id: UUID,
+        project_id: UUID,
+    ) -> None:
+        """Pin a project for a user (idempotent).
+
+        Guards, in order: project exists and is unarchived, caller is a
+        member, already pinned (no-op), pin limit (``MAX_PINS``).
+
+        Args:
+            organization_id: Tenant scope.
+            user_id: The user pinning the project.
+            project_id: The project to pin.
+
+        Raises:
+            NotFoundError: If the project does not exist, is archived,
+                or the user is not a member.
+            ValidationError: If the user already has ``MAX_PINS`` pins.
+        """
+        project = await self._repo.get_by_id(organization_id, project_id)
+        if project is None:
+            raise NotFoundError(
+                message=f"Project {project_id} not found",
+                detail={"project_id": str(project_id)},
+            )
+        if project.is_archived:
+            raise NotFoundError(
+                message=f"Project {project_id} not found",
+                detail={"project_id": str(project_id)},
+            )
+        member = await self._repo.get_member(project_id, user_id)
+        if member is None:
+            raise NotFoundError(
+                message=f"Membership not found for user {user_id}",
+                detail={"user_id": str(user_id)},
+            )
+        if await self._pin_repo.is_pinned(organization_id, user_id, project_id):
+            return
+        pinned = await self._pin_repo.pin_if_under_limit(
+            organization_id, user_id, project_id, MAX_PINS
+        )
+        if pinned is None:
+            raise ValidationError(
+                message=f"Pin limit reached (max {MAX_PINS} pinned projects)",
+                detail={"limit": MAX_PINS},
+            )
+
+        logger.info(
+            "project_service.project_pinned",
+            extra={
+                "org_id": str(organization_id),
+                "project_id": str(project_id),
+                "user_id": str(user_id),
+            },
+        )
+
+    async def unpin_project(
+        self,
+        organization_id: UUID,
+        user_id: UUID,
+        project_id: UUID,
+    ) -> None:
+        """Remove a user's pin on a project (no-op if absent).
+
+        Args:
+            organization_id: Tenant scope.
+            user_id: The user unpinning the project.
+            project_id: The project to unpin.
+        """
+        await self._pin_repo.unpin(organization_id, user_id, project_id)
+
+        logger.info(
+            "project_service.project_unpinned",
+            extra={
+                "org_id": str(organization_id),
+                "project_id": str(project_id),
+                "user_id": str(user_id),
             },
         )
 

@@ -92,16 +92,16 @@ benchmark:
 # ── Database ──────────────────────────────────────────────────────────────────
 
 migrate:
-	alembic upgrade head
+	./scripts/migrate.sh upgrade head
 
 migrate-check:
-	alembic check
+	./scripts/migrate.sh check
 
 migrate-new:
-	@read -p "Migration name: " name; alembic revision --autogenerate -m "$$name"
+	@read -p "Migration name: " name; ./scripts/migrate.sh revision --autogenerate -m "$$name"
 
 migrate-downgrade:
-	alembic downgrade -1
+	./scripts/migrate.sh downgrade -1
 
 # ── Docker ────────────────────────────────────────────────────────────────────
 

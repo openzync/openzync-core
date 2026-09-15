@@ -34,7 +34,8 @@ class TestProjectService:
     def _make_service(self) -> tuple[ProjectService, AsyncMock]:
         """Create a ProjectService with a mocked repository."""
         mock_repo = AsyncMock()
-        service = ProjectService(repo=mock_repo)
+        mock_pin_repo = AsyncMock()
+        service = ProjectService(repo=mock_repo, pin_repo=mock_pin_repo)
         return service, mock_repo
 
     def _make_mock_project(self, **kwargs: object) -> MagicMock:
