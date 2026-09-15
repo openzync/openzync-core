@@ -148,6 +148,10 @@ class ProjectResponse(BaseModel):
     is_archived: bool = Field(
         default=False, description="Whether the project is archived."
     )
+    is_pinned: bool = Field(
+        default=False,
+        description="Whether the requesting user pinned this project.",
+    )
     member_count: int = Field(
         default=0, ge=0, description="Number of members in this project."
     )
@@ -186,6 +190,10 @@ class ProjectListResponse(BaseModel):
     name: str = Field(..., description="Human-readable project name.")
     is_archived: bool = Field(
         default=False, description="Whether the project is archived."
+    )
+    is_pinned: bool = Field(
+        default=False,
+        description="Whether the requesting user pinned this project.",
     )
     member_count: int = Field(
         default=0, ge=0, description="Number of members in this project."

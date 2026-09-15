@@ -16,6 +16,7 @@ from models.llm_usage import LLMUsage
 from models.organization import Organization
 from models.project import Project
 from models.project_member import ProjectMember
+from models.project_pin import ProjectPin
 from models.prompt_template import PromptTemplate
 from models.refresh_token import RefreshToken
 from models.session import Session
@@ -30,6 +31,7 @@ __all__: list[str] = [
     "Organization",
     "Project",
     "ProjectMember",
+    "ProjectPin",
     "ApiKey",
     "User",
     "Session",
