@@ -295,11 +295,14 @@ class ProjectService:
                 detail={"project_id": str(project_id)},
             )
 
+        freed = await self._pin_repo.delete_for_project(project_id)
+
         logger.info(
             "project_service.project_archived",
             extra={
                 "org_id": str(organization_id),
                 "project_id": str(project_id),
+                "pins_removed": freed,
             },
         )
 

@@ -18,7 +18,7 @@ from schemas.projects import (
     CreateProjectRequest,
     UpdateProjectRequest,
 )
-from services.project_service import ProjectService
+from services.project_service import MAX_PINS, ProjectService
 
 
 @pytest.mark.unit
@@ -31,12 +31,12 @@ class TestProjectService:
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
-    def _make_service(self) -> tuple[ProjectService, AsyncMock]:
-        """Create a ProjectService with a mocked repository."""
+    def _make_service(self) -> tuple[ProjectService, AsyncMock, AsyncMock]:
+        """Create a ProjectService with mocked project and pin repositories."""
         mock_repo = AsyncMock()
         mock_pin_repo = AsyncMock()
         service = ProjectService(repo=mock_repo, pin_repo=mock_pin_repo)
-        return service, mock_repo
+        return service, mock_repo, mock_pin_repo
 
     def _make_mock_project(self, **kwargs: object) -> MagicMock:
         """Mock a Project ORM instance."""
@@ -65,7 +65,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_create_project_success(self) -> None:
         """Creating a project returns the response."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.get_by_name.return_value = None
         mock_repo.create.return_value = self._make_mock_project(name="New Project")
         payload = CreateProjectRequest(name="New Project")
@@ -86,7 +86,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_create_project_duplicate_name_raises_validation(self) -> None:
         """Creating a project with a duplicate name raises ValidationError."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.get_by_name.return_value = self._make_mock_project()
         payload = CreateProjectRequest(name="Existing Project")
 
@@ -103,7 +103,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_get_project_found(self) -> None:
         """Getting a project returns the response."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.get_by_id.return_value = self._make_mock_project()
         mock_repo.count_members.return_value = 3
 
@@ -118,7 +118,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_get_project_not_found_raises_404(self) -> None:
         """Getting a non-existent project raises NotFoundError."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.get_by_id.return_value = None
 
         with pytest.raises(NotFoundError):
@@ -132,7 +132,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_list_projects_returns_projects(self) -> None:
         """Listing projects returns all projects the user is a member of."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_projects = [
             self._make_mock_project(name="Project A", id=uuid4()),
             self._make_mock_project(name="Project B", id=uuid4()),
@@ -163,7 +163,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_list_projects_empty(self) -> None:
         """Listing projects returns empty list when the user has none."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.list.return_value = []
         mock_repo.count_members_for_projects.return_value = {}
 
@@ -178,7 +178,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_update_project_success(self) -> None:
         """Updating a project returns the updated response."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.get_by_name.return_value = None
         mock_repo.update.return_value = self._make_mock_project(
             name="Updated Name",
@@ -202,7 +202,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_update_project_duplicate_name_raises_validation(self) -> None:
         """Updating with a conflicting name raises ValidationError."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         other_project = self._make_mock_project(
             id=uuid4(),  # different project
             name="Conflicting Name",
@@ -221,7 +221,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_update_project_self_name_no_conflict(self) -> None:
         """Updating with the same name does not raise (name belongs to self)."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         same_project = self._make_mock_project(name="Same Name")
         mock_repo.get_by_name.return_value = same_project
         mock_repo.update.return_value = same_project
@@ -240,7 +240,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_update_project_not_found_raises_404(self) -> None:
         """Updating a non-existent project raises NotFoundError."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.get_by_name.return_value = None
         mock_repo.update.return_value = None
         payload = UpdateProjectRequest(name="Ghost Project")
@@ -256,8 +256,8 @@ class TestProjectService:
 
     @pytest.mark.asyncio
     async def test_archive_project_success(self) -> None:
-        """Archiving a project succeeds."""
-        service, mock_repo = self._make_service()
+        """Archiving a project succeeds and auto-unpins it."""
+        service, mock_repo, mock_pin_repo = self._make_service()
         mock_repo.archive.return_value = self._make_mock_project()
 
         await service.archive_project(
@@ -265,11 +265,12 @@ class TestProjectService:
             project_id=self.PROJECT_ID,
         )
         mock_repo.archive.assert_awaited_once()
+        mock_pin_repo.delete_for_project.assert_awaited_once_with(self.PROJECT_ID)
 
     @pytest.mark.asyncio
     async def test_archive_project_not_found_raises_404(self) -> None:
         """Archiving a non-existent project raises NotFoundError."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.archive.return_value = None
 
         with pytest.raises(NotFoundError):
@@ -283,7 +284,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_add_member_success(self) -> None:
         """Adding a member returns the membership."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.get_member.return_value = None
         new_user_id = uuid4()
         mock_repo.add_member.return_value = self._make_mock_member(
@@ -302,7 +303,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_add_member_duplicate_raises_validation(self) -> None:
         """Adding an existing member raises ValidationError."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.get_member.return_value = self._make_mock_member()
         payload = AddMemberRequest(user_id=self.USER_ID, role="member")
 
@@ -318,7 +319,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_remove_member_success(self) -> None:
         """Removing a member succeeds."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.get_member.return_value = self._make_mock_member(role="member")
         mock_repo.list_members.return_value = [
             self._make_mock_member(role="owner", user_id=self.USER_ID),
@@ -335,7 +336,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_remove_last_owner_raises_validation(self) -> None:
         """Removing the last owner raises ValidationError."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.get_member.return_value = self._make_mock_member(role="owner")
         mock_repo.list_members.return_value = [
             self._make_mock_member(role="owner", user_id=self.USER_ID),
@@ -351,7 +352,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_remove_member_not_found_raises_404(self) -> None:
         """Removing a non-existent member raises NotFoundError."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.get_member.return_value = None
 
         with pytest.raises(NotFoundError):
@@ -363,7 +364,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_remove_member_repo_fails_raises_404(self) -> None:
         """When the repo returns False, raise NotFoundError."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.get_member.return_value = self._make_mock_member(role="member")
         mock_repo.list_members.return_value = [
             self._make_mock_member(role="owner", user_id=self.USER_ID),
@@ -382,7 +383,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_list_members_returns_members(self) -> None:
         """Listing members returns all members."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.list_members.return_value = [
             self._make_mock_member(role="owner"),
             self._make_mock_member(role="member", user_id=uuid4()),
@@ -398,7 +399,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_update_member_role_success(self) -> None:
         """Changing a member's role succeeds."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         target_user = uuid4()
         mock_repo.get_member.return_value = self._make_mock_member(
             user_id=target_user, role="member"
@@ -417,7 +418,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_update_member_role_last_owner_downgrade_raises(self) -> None:
         """Downgrading the last owner raises ValidationError."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.get_member.return_value = self._make_mock_member(role="owner")
         mock_repo.list_members.return_value = [
             self._make_mock_member(role="owner", user_id=self.USER_ID),
@@ -434,7 +435,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_update_member_role_not_found_raises_404(self) -> None:
         """Updating a non-existent member raises NotFoundError."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.get_member.return_value = None
 
         with pytest.raises(NotFoundError):
@@ -447,7 +448,7 @@ class TestProjectService:
     @pytest.mark.asyncio
     async def test_update_member_role_repo_fails_raises_404(self) -> None:
         """When the repo returns None after get_member succeeds, raise NotFoundError."""
-        service, mock_repo = self._make_service()
+        service, mock_repo, _ = self._make_service()
         mock_repo.get_member.return_value = self._make_mock_member(role="member")
         mock_repo.list_members.return_value = [
             self._make_mock_member(role="owner", user_id=self.USER_ID),
@@ -461,3 +462,91 @@ class TestProjectService:
                 user_id=uuid4(),
                 role="owner",
             )
+
+    # ── Pins ───────────────────────────────────────────────────────────────────
+
+    def _make_pinnable_project(self) -> MagicMock:
+        """Mock an unarchived Project ORM instance eligible for pinning."""
+        project = self._make_mock_project()
+        project.is_archived = False
+        return project
+
+    @pytest.mark.asyncio
+    async def test_pin_project_limit_raises_validation(self) -> None:
+        """pin_if_under_limit None raises ValidationError with limit detail."""
+        service, mock_repo, mock_pin_repo = self._make_service()
+        mock_repo.get_by_id.return_value = self._make_pinnable_project()
+        mock_repo.get_member.return_value = self._make_mock_member()
+        mock_pin_repo.is_pinned.return_value = False
+        mock_pin_repo.pin_if_under_limit.return_value = None
+
+        with pytest.raises(ValidationError) as exc_info:
+            await service.pin_project(
+                organization_id=self.ORG_ID,
+                user_id=self.USER_ID,
+                project_id=self.PROJECT_ID,
+            )
+        assert exc_info.value.detail == {"limit": MAX_PINS}
+
+    @pytest.mark.asyncio
+    async def test_pin_project_already_pinned_is_idempotent(self) -> None:
+        """Re-pinning returns early without attempting an insert."""
+        service, mock_repo, mock_pin_repo = self._make_service()
+        mock_repo.get_by_id.return_value = self._make_pinnable_project()
+        mock_repo.get_member.return_value = self._make_mock_member()
+        mock_pin_repo.is_pinned.return_value = True
+
+        await service.pin_project(
+            organization_id=self.ORG_ID,
+            user_id=self.USER_ID,
+            project_id=self.PROJECT_ID,
+        )
+        mock_pin_repo.pin_if_under_limit.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unpin_project_success(self) -> None:
+        """Unpinning an existing pin deletes the row."""
+        service, _mock_repo, mock_pin_repo = self._make_service()
+        mock_pin_repo.unpin.return_value = True
+
+        await service.unpin_project(
+            organization_id=self.ORG_ID,
+            user_id=self.USER_ID,
+            project_id=self.PROJECT_ID,
+        )
+        mock_pin_repo.unpin.assert_awaited_once_with(
+            self.ORG_ID, self.USER_ID, self.PROJECT_ID
+        )
+
+    @pytest.mark.asyncio
+    async def test_unpin_project_absent_is_noop(self) -> None:
+        """Unpinning a missing pin is a no-op (no error raised)."""
+        service, _mock_repo, mock_pin_repo = self._make_service()
+        mock_pin_repo.unpin.return_value = False
+
+        await service.unpin_project(
+            organization_id=self.ORG_ID,
+            user_id=self.USER_ID,
+            project_id=self.PROJECT_ID,
+        )
+        mock_pin_repo.unpin.assert_awaited_once_with(
+            self.ORG_ID, self.USER_ID, self.PROJECT_ID
+        )
+
+    @pytest.mark.asyncio
+    async def test_pin_project_at_max_pins_raises_validation(self) -> None:
+        """A 4th pin at the limit raises ValidationError (unit scope, no DB)."""
+        service, mock_repo, mock_pin_repo = self._make_service()
+        mock_repo.get_by_id.return_value = self._make_pinnable_project()
+        mock_repo.get_member.return_value = self._make_mock_member()
+        mock_pin_repo.is_pinned.return_value = False
+        mock_pin_repo.count_for_user.return_value = MAX_PINS
+        mock_pin_repo.pin_if_under_limit.return_value = None
+
+        with pytest.raises(ValidationError) as exc_info:
+            await service.pin_project(
+                organization_id=self.ORG_ID,
+                user_id=self.USER_ID,
+                project_id=self.PROJECT_ID,
+            )
+        assert exc_info.value.detail == {"limit": MAX_PINS}
