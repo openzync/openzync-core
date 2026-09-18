@@ -7,6 +7,7 @@ and enrichment metadata (e.g., extracted facts, classifications).
 
 import uuid
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -20,6 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.embeddings import CANONICAL_EMBED_DIM
 from models.base import Base, TimestampMixin
 
 
@@ -34,9 +36,9 @@ class Episode(TimestampMixin, Base):
         role: Message role — one of ``user``, ``assistant``, ``system``, ``tool``.
         content: Message body text. Max length 65536 characters.
         metadata: Arbitrary JSONB metadata.
-        embedding: pgvector embedding (placeholder — ``vector(768)``
-            frozen canonical dim via Alembic migration 0054). Nullable;
-            populated after enrichment.
+        embedding: pgvector embedding (native ``VECTOR(768)`` — frozen
+            canonical dim, see migration 0054). Nullable; populated
+            after enrichment.
         token_count: Approximate token count for the message.
         sequence_number: Order within the session (0-based).
         enrichment_status: Bitmask tracking which enrichment passes have been
@@ -82,10 +84,14 @@ class Episode(TimestampMixin, Base):
         default=dict,
         server_default="{}",
     )
-    # note: Embedding uses Text as a stand-in type because pgvector
-    # may not be installed in the dev/test environment. The actual DDL is
-    # ``vector(768)`` (frozen canonical dim — see migration 0054).
-    embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # note: Native ``VECTOR`` type matching the ``vector(768)`` DDL from
+    # migration 0054 (frozen canonical dim — no new migration needed).
+    # The asyncpg vector codec is registered per pooled connection in
+    # ``core.db.init_db_engine`` so full-ORM reads decode the column
+    # instead of crashing on the unknown ``vector`` OID.
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(CANONICAL_EMBED_DIM), nullable=True
+    )
     token_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,

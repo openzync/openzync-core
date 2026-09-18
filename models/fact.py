@@ -8,8 +8,8 @@ from a single episode via the enrichment pipeline.
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    ARRAY,
     TIMESTAMP,
     Float,
     ForeignKey,
@@ -19,6 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.embeddings import CANONICAL_EMBED_DIM
 from models.base import Base, TimestampMixin
 
 
@@ -49,8 +50,8 @@ class Fact(TimestampMixin, Base):
         superseded_by_fact_id: ID of the fact that superseded/invalidated
             this one; NULL for retractions/expiry. Self-FK preserves
             lineage when the successor is deleted.
-        embedding: pgvector embedding placeholder (``vector(768)`` frozen
-            canonical dim via Alembic migration 0054).
+        embedding: pgvector embedding (native ``VECTOR(768)`` — frozen
+            canonical dim, see migration 0054).
         embedded_at: Timestamp of the last embedding attempt. Set on success
             and on permanent failure (dimension mismatch); ``NULL`` means the
             fact was never attempted and is eligible for reconcile repair.
@@ -137,11 +138,15 @@ class Fact(TimestampMixin, Base):
             "successor is deleted."
         ),
     )
-    # note: Text is a stand-in for ``vector(768)`` (frozen canonical dim —
-    # see migration 0054). The Alembic migration alters this column when
-    # pgvector is available.
+    # note: Native ``VECTOR`` type matching the ``vector(768)`` DDL from
+    # migration 0054 (frozen canonical dim — no new migration needed).
+    # The asyncpg vector codec is registered per pooled connection in
+    # ``core.db.init_db_engine`` so full-ORM reads decode the column
+    # instead of crashing on the unknown ``vector`` OID.
     embedding: Mapped[list[float] | None] = mapped_column(
-        ARRAY(Float), nullable=True, default=None,
+        Vector(CANONICAL_EMBED_DIM),
+        nullable=True,
+        default=None,
     )
     embedded_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True,
