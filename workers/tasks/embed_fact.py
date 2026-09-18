@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from core.exceptions import SearchLegFailedError
 from workers.tasks.base import with_retry
 
 if TYPE_CHECKING:
@@ -96,6 +97,9 @@ async def embed_fact(
         **kwargs: Additional context (org_id, user_id) forwarded from the caller.
 
     Raises:
+        SearchLegFailedError: If the org config cannot be fetched or no
+            embedding backend is configured (same taxonomy as
+            ``embed_episode`` — ARQ retries).
         ExternalServiceError: If the provider returns a non-canonical-dim
             vector.
     """
@@ -181,15 +185,22 @@ async def embed_fact(
                 org_id=_org_id,
                 exc_info=True,
             )
-            raise RuntimeError(
-                f"Failed to fetch org config for org {_org_id}"
+            raise SearchLegFailedError(
+                leg_name="embedding",
+                message=f"Failed to fetch org config for org {_org_id}: {exc}",
+                original_error=str(exc),
             ) from exc
 
     if org_cfg is None:
-        raise RuntimeError(f"Org config not found for org {_org_id}")
+        raise SearchLegFailedError(
+            leg_name="embedding",
+            message=f"Org config not found for org {_org_id}",
+        )
     if org_cfg.embedding_backend is None:
-        raise RuntimeError(
-            f"No embedding backend configured for org {_org_id}"
+        raise SearchLegFailedError(
+            leg_name="embedding",
+            message=f"No embedding backend configured for org {_org_id}",
+            original_error=f"org_cfg.embedding_backend is None for org {_org_id}",
         )
 
     _embedding_backend = org_cfg.embedding_backend

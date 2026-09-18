@@ -371,11 +371,17 @@ class FalkorGraphBackend(GraphBackend):
         """
         return {
             "id": str(row[_O_ID]) if row[_O_ID] else "",
-            "organization_id": str(row[_O_ORG_ID]) if len(row) > _O_ORG_ID and row[_O_ORG_ID] else "",
-            "project_id": str(row[_O_PROJECT_ID]) if len(row) > _O_PROJECT_ID and row[_O_PROJECT_ID] else "",
+            "organization_id": str(row[_O_ORG_ID])
+            if len(row) > _O_ORG_ID and row[_O_ORG_ID]
+            else "",
+            "project_id": str(row[_O_PROJECT_ID])
+            if len(row) > _O_PROJECT_ID and row[_O_PROJECT_ID]
+            else "",
             "subject_entity_id": str(row[_O_SUBJECT_ID]) if row[_O_SUBJECT_ID] else "",
             "related_entity_id": (
-                str(row[_O_RELATED_ID]) if len(row) > _O_RELATED_ID and row[_O_RELATED_ID] else None
+                str(row[_O_RELATED_ID])
+                if len(row) > _O_RELATED_ID and row[_O_RELATED_ID]
+                else None
             ),
             "observation_type": str(row[_O_TYPE]) if row[_O_TYPE] else "",
             "content": str(row[_O_CONTENT]) if row[_O_CONTENT] else "",
@@ -388,15 +394,17 @@ class FalkorGraphBackend(GraphBackend):
             "supporting_relationship_ids": [],
             "valid_from": (
                 row[_O_VALID_FROM].isoformat()
-                if len(row) > _O_VALID_FROM
-                and hasattr(row[_O_VALID_FROM], "isoformat")
-                else str(row[_O_VALID_FROM]) if len(row) > _O_VALID_FROM and row[_O_VALID_FROM] else None
+                if len(row) > _O_VALID_FROM and hasattr(row[_O_VALID_FROM], "isoformat")
+                else str(row[_O_VALID_FROM])
+                if len(row) > _O_VALID_FROM and row[_O_VALID_FROM]
+                else None
             ),
             "valid_to": (
                 row[_O_VALID_TO].isoformat()
-                if len(row) > _O_VALID_TO
-                and hasattr(row[_O_VALID_TO], "isoformat")
-                else str(row[_O_VALID_TO]) if len(row) > _O_VALID_TO and row[_O_VALID_TO] else None
+                if len(row) > _O_VALID_TO and hasattr(row[_O_VALID_TO], "isoformat")
+                else str(row[_O_VALID_TO])
+                if len(row) > _O_VALID_TO and row[_O_VALID_TO]
+                else None
             ),
             "observation_metadata": (
                 FalkorGraphBackend._parse_json_field(row[_O_METADATA])
@@ -405,15 +413,17 @@ class FalkorGraphBackend(GraphBackend):
             ),
             "created_at": (
                 row[_O_CREATED].isoformat()
-                if len(row) > _O_CREATED
-                and hasattr(row[_O_CREATED], "isoformat")
-                else str(row[_O_CREATED]) if len(row) > _O_CREATED and row[_O_CREATED] else None
+                if len(row) > _O_CREATED and hasattr(row[_O_CREATED], "isoformat")
+                else str(row[_O_CREATED])
+                if len(row) > _O_CREATED and row[_O_CREATED]
+                else None
             ),
             "updated_at": (
                 row[_O_UPDATED].isoformat()
-                if len(row) > _O_UPDATED
-                and hasattr(row[_O_UPDATED], "isoformat")
-                else str(row[_O_UPDATED]) if len(row) > _O_UPDATED and row[_O_UPDATED] else None
+                if len(row) > _O_UPDATED and hasattr(row[_O_UPDATED], "isoformat")
+                else str(row[_O_UPDATED])
+                if len(row) > _O_UPDATED and row[_O_UPDATED]
+                else None
             ),
         }
 
@@ -438,9 +448,10 @@ class FalkorGraphBackend(GraphBackend):
             ),
             "created_at": (
                 row[_E_CREATED].isoformat()
-                if len(row) > _E_CREATED
-                and hasattr(row[_E_CREATED], "isoformat")
-                else str(row[_E_CREATED]) if row[_E_CREATED] else None
+                if len(row) > _E_CREATED and hasattr(row[_E_CREATED], "isoformat")
+                else str(row[_E_CREATED])
+                if row[_E_CREATED]
+                else None
             ),
         }
 
@@ -469,21 +480,24 @@ class FalkorGraphBackend(GraphBackend):
             ),
             "valid_from": (
                 row[_R_VALID_FROM].isoformat()
-                if len(row) > _R_VALID_FROM
-                and hasattr(row[_R_VALID_FROM], "isoformat")
-                else str(row[_R_VALID_FROM]) if len(row) > _R_VALID_FROM and row[_R_VALID_FROM] else None
+                if len(row) > _R_VALID_FROM and hasattr(row[_R_VALID_FROM], "isoformat")
+                else str(row[_R_VALID_FROM])
+                if len(row) > _R_VALID_FROM and row[_R_VALID_FROM]
+                else None
             ),
             "valid_to": (
                 row[_R_VALID_TO].isoformat()
-                if len(row) > _R_VALID_TO
-                and hasattr(row[_R_VALID_TO], "isoformat")
-                else str(row[_R_VALID_TO]) if len(row) > _R_VALID_TO and row[_R_VALID_TO] else None
+                if len(row) > _R_VALID_TO and hasattr(row[_R_VALID_TO], "isoformat")
+                else str(row[_R_VALID_TO])
+                if len(row) > _R_VALID_TO and row[_R_VALID_TO]
+                else None
             ),
             "created_at": (
                 row[_R_CREATED].isoformat()
-                if len(row) > _R_CREATED
-                and hasattr(row[_R_CREATED], "isoformat")
-                else str(row[_R_CREATED]) if len(row) > _R_CREATED and row[_R_CREATED] else None
+                if len(row) > _R_CREATED and hasattr(row[_R_CREATED], "isoformat")
+                else str(row[_R_CREATED])
+                if len(row) > _R_CREATED and row[_R_CREATED]
+                else None
             ),
         }
 
@@ -838,7 +852,9 @@ class FalkorGraphBackend(GraphBackend):
             "rel_id": rel_id,
             "org_id": str(org_id),
             "project_id": str(project_id),
-            "properties": orjson.dumps(properties if properties is not None else {}).decode("utf-8"),
+            "properties": orjson.dumps(
+                properties if properties is not None else {}
+            ).decode("utf-8"),
             "confidence": confidence if confidence is not None else 1.0,
             "valid_from": valid_from.isoformat() if valid_from else None,
             "valid_to": valid_to.isoformat() if valid_to else None,
@@ -1681,13 +1697,15 @@ class FalkorGraphBackend(GraphBackend):
                 seen.add(entity_id_str)
 
                 # Add the matched entity itself with distance 0
-                results.append({
-                    "id": entity_id_str,
-                    "name": entity.get("name", ""),
-                    "type": entity.get("type", ""),
-                    "summary": entity.get("summary", ""),
-                    "distance": 0,
-                })
+                results.append(
+                    {
+                        "id": entity_id_str,
+                        "name": entity.get("name", ""),
+                        "type": entity.get("type", ""),
+                        "summary": entity.get("summary", ""),
+                        "distance": 0,
+                    }
+                )
 
                 # BFS up to max_depth
                 try:
@@ -1721,13 +1739,15 @@ class FalkorGraphBackend(GraphBackend):
                     depth = node.get("depth", 1)
                     if node_id and node_id not in seen:
                         seen.add(node_id)
-                        results.append({
-                            "id": node_id,
-                            "name": node.get("name", ""),
-                            "type": node.get("type", ""),
-                            "summary": node.get("summary", ""),
-                            "distance": depth,
-                        })
+                        results.append(
+                            {
+                                "id": node_id,
+                                "name": node.get("name", ""),
+                                "type": node.get("type", ""),
+                                "summary": node.get("summary", ""),
+                                "distance": depth,
+                            }
+                        )
 
             # Sort by distance (closest first), limit to max_results
             results.sort(key=lambda x: x.get("distance", 99))
@@ -1939,13 +1959,17 @@ class FalkorGraphBackend(GraphBackend):
             )
             pairs = []
             for row in result.result_set:
-                pairs.append({
-                    "entity_a_id": str(row[0]) if row[0] else "",
-                    "entity_a_name": str(row[1]) if row[1] else "",
-                    "entity_b_id": str(row[2]) if row[2] else "",
-                    "entity_b_name": str(row[3]) if row[3] else "",
-                    "co_count": int(row[4]) if len(row) > 4 and row[4] is not None else 0,
-                })
+                pairs.append(
+                    {
+                        "entity_a_id": str(row[0]) if row[0] else "",
+                        "entity_a_name": str(row[1]) if row[1] else "",
+                        "entity_b_id": str(row[2]) if row[2] else "",
+                        "entity_b_name": str(row[3]) if row[3] else "",
+                        "co_count": int(row[4])
+                        if len(row) > 4 and row[4] is not None
+                        else 0,
+                    }
+                )
             return pairs
         except Exception as exc:
             logger.error(
@@ -2221,9 +2245,7 @@ class FalkorGraphBackend(GraphBackend):
                 {"ids": all_ids},
             )
             found_ids: list[str] = (
-                list(check_result.result_set[0][0])
-                if check_result.result_set
-                else []
+                list(check_result.result_set[0][0]) if check_result.result_set else []
             )
             missing = [eid for eid in all_ids if eid not in found_ids]
             if missing:
@@ -2325,7 +2347,9 @@ class FalkorGraphBackend(GraphBackend):
                         "now": now_str,
                     },
                 )
-                rewired_count += len(inc_result.result_set) if inc_result.result_set else 0
+                rewired_count += (
+                    len(inc_result.result_set) if inc_result.result_set else 0
+                )
             except Exception as exc:
                 logger.error(
                     "falkordb_graph.merge_entities.incoming_rewire_failed",
@@ -2373,7 +2397,9 @@ class FalkorGraphBackend(GraphBackend):
                         "now": now_str,
                     },
                 )
-                rewired_count += len(out_result.result_set) if out_result.result_set else 0
+                rewired_count += (
+                    len(out_result.result_set) if out_result.result_set else 0
+                )
             except Exception as exc:
                 logger.error(
                     "falkordb_graph.merge_entities.outgoing_rewire_failed",
@@ -2563,9 +2589,7 @@ class FalkorGraphBackend(GraphBackend):
         now_str = datetime.now(UTC).isoformat()
 
         supporting_fact_strs: list[str] = (
-            [str(fid) for fid in supporting_fact_ids]
-            if supporting_fact_ids
-            else []
+            [str(fid) for fid in supporting_fact_ids] if supporting_fact_ids else []
         )
         supporting_rel_strs: list[str] = (
             [str(rid) for rid in supporting_relationship_ids]
@@ -2620,8 +2644,12 @@ class FalkorGraphBackend(GraphBackend):
                     "project_id": str(project_id),
                     "content": content,
                     "confidence": confidence,
-                    "supporting_fact_ids": orjson.dumps(supporting_fact_strs).decode("utf-8"),
-                    "supporting_rel_ids": orjson.dumps(supporting_rel_strs).decode("utf-8"),
+                    "supporting_fact_ids": orjson.dumps(supporting_fact_strs).decode(
+                        "utf-8"
+                    ),
+                    "supporting_rel_ids": orjson.dumps(supporting_rel_strs).decode(
+                        "utf-8"
+                    ),
                     "metadata": orjson.dumps(
                         observation_metadata if observation_metadata is not None else {}
                     ).decode("utf-8"),

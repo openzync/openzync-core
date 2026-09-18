@@ -19,6 +19,14 @@ logger = logging.getLogger(__name__)
 
 LlmBackend = Literal["ollama", "openai", "openai_like", "azure", "anthropic"]
 
+EmbeddingBackend = Literal["ollama", "openai", "openai_like", "azure", "anthropic"]
+"""Embedding provider — same registry as ``core.llm._create_backend``.
+
+Constrained (not free-form ``str``) so unknown values fail at write
+(422) and, for rows stored before the constraint, at read via the
+named-422 wrapper in ``core.org_config.get_org_config``.
+"""
+
 # ── System-managed field sets ──────────────────────────────────────────────
 # These fields are overridden at the system level (via OpenBao / env vars)
 # and cannot be set through org_config when the corresponding system
@@ -142,7 +150,7 @@ class OrgConfigBase(BaseModel):
     )
 
     # ── Embeddings ─────────────────────────────────────────────────────────
-    embedding_backend: str | None = Field(
+    embedding_backend: EmbeddingBackend | None = Field(
         default=None,
         description="Embedding provider.  Falls back to LLM_BACKEND when empty.",
     )
@@ -341,7 +349,9 @@ class OrgConfigBase(BaseModel):
         }
         invalid = [t for t in v if t not in allowed]
         if invalid:
-            raise ValueError(f"Invalid PII types: {invalid}. Allowed: {sorted(allowed)}")
+            raise ValueError(
+                f"Invalid PII types: {invalid}. Allowed: {sorted(allowed)}"
+            )
         return v
 
     # ── Helpers for downstream callers ───────────────────────────────────────
@@ -366,8 +376,6 @@ class OrgConfigBase(BaseModel):
             d["embedding_api_key"] = self.embedding_api_key
         if self.embedding_openai_like_base_url is not None:
             d["embedding_openai_like_base_url"] = self.embedding_openai_like_base_url
-        if self.embedding_model is not None:
-            d["embedding_model"] = self.embedding_model
         if self.llm_model is not None:
             d["openai_model"] = self.llm_model
             d["llm_model"] = self.llm_model
@@ -396,15 +404,13 @@ class OrgConfigBase(BaseModel):
         """Return embedding config as a flat dict.
 
         Only non-``None`` fields are included.  Used by worker tasks that
-        read embedding settings directly.
+        read embedding settings directly.  Frozen legacy fields
+        (``embedding_model`` / ``embedding_dim``) are never forwarded —
+        the canonical model/dim come from ``core.embeddings``.
         """
         d: dict[str, str | int] = {}
         if self.embedding_backend is not None:
             d["embedding_backend"] = self.embedding_backend
-        if self.embedding_model is not None:
-            d["embedding_model"] = self.embedding_model
-        if self.embedding_dim is not None:
-            d["embedding_dim"] = self.embedding_dim
         if self.embedding_api_key is not None:
             d["embedding_api_key"] = self.embedding_api_key
         if self.embedding_openai_like_base_url is not None:
@@ -463,7 +469,7 @@ class UpdateOrgConfigRequest(BaseModel):
         "enrichment (defaults to ON when unset).",
     )
     prompt_caching: PromptCachingOrgConfig | None = None
-    embedding_backend: str | None = None
+    embedding_backend: EmbeddingBackend | None = None
     embedding_model: str | None = Field(
         default=None,
         description="DEPRECATED (frozen): rejected with 400 embedding_frozen.",
@@ -559,7 +565,9 @@ class UpdateOrgConfigRequest(BaseModel):
         }
         invalid = [t for t in v if t not in allowed]
         if invalid:
-            raise ValueError(f"Invalid PII types: {invalid}. Allowed: {sorted(allowed)}")
+            raise ValueError(
+                f"Invalid PII types: {invalid}. Allowed: {sorted(allowed)}"
+            )
         return v
 
 
