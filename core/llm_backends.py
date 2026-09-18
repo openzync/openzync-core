@@ -21,6 +21,7 @@ from typing import Any, ClassVar
 
 import httpx
 
+from core.exceptions import ExternalServiceError
 from core.llm import (
     ChatResponse,
     EmbeddingResponse,
@@ -248,6 +249,15 @@ class OpenAIBackend(LLMBackend):
                 )
                 elapsed = time.monotonic() - start
 
+                if not response.choices:
+                    logger.error(
+                        "llm.empty_choices",
+                        extra={"provider": "openai", "model": model},
+                    )
+                    raise ExternalServiceError(
+                        message=f"OpenAI returned no choices for model {model}",
+                        detail={"provider": "openai", "model": model},
+                    )
                 choice = response.choices[0]
                 content = choice.message.content
                 if content is None:
@@ -300,6 +310,10 @@ class OpenAIBackend(LLMBackend):
 
                 return ChatResponse(content=content, model=model, usage=usage)
 
+            except ExternalServiceError:
+                # Guard failure (e.g. empty choices) is deterministic — retrying
+                # cannot help, so fail fast instead of burning backoff retries.
+                raise
             except Exception as exc:
                 last_exception = exc
                 # Retry on 429 (rate limit) or 5xx server errors.
@@ -441,6 +455,18 @@ class AzureBackend(LLMBackend):
                 )
                 elapsed = time.monotonic() - start
 
+                if not response.choices:
+                    logger.error(
+                        "llm.empty_choices",
+                        extra={"provider": "azure", "model": deployment},
+                    )
+                    raise ExternalServiceError(
+                        message=(
+                            "Azure OpenAI returned no choices "
+                            f"for deployment {deployment}"
+                        ),
+                        detail={"provider": "azure", "model": deployment},
+                    )
                 choice = response.choices[0]
                 content = choice.message.content
                 if content is None:
@@ -760,6 +786,18 @@ class OpenAILikeBackend(LLMBackend):
                 )
                 elapsed = time.monotonic() - start
 
+                if not response.choices:
+                    logger.error(
+                        "llm.empty_choices",
+                        extra={"provider": "openai_like", "model": model},
+                    )
+                    raise ExternalServiceError(
+                        message=(
+                            "OpenAI-like backend returned no choices "
+                            f"for model {model}"
+                        ),
+                        detail={"provider": "openai_like", "model": model},
+                    )
                 choice = response.choices[0]
                 content = choice.message.content
                 if content is None:
@@ -802,6 +840,10 @@ class OpenAILikeBackend(LLMBackend):
 
                 return ChatResponse(content=content, model=model, usage=usage)
 
+            except ExternalServiceError:
+                # Guard failure (e.g. empty choices) is deterministic — retrying
+                # cannot help, so fail fast instead of burning backoff retries.
+                raise
             except Exception as exc:
                 last_exception = exc
                 # Retry on 429 (rate limit) or 5xx server errors.

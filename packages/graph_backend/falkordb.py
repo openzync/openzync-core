@@ -58,17 +58,26 @@ MAX_TRAVERSAL_DEPTH: int = 5
 
 # ── Schema bootstrap queries ───────────────────────────────────────────────
 
+_SCHEMA_VERSION: int = 2
+"""Schema bootstrap version.
+
+Bumped to 2 when the Neo4j-5 ``RANGE``/``FULLTEXT`` DDL was replaced with
+FalkorDB v4 ``CREATE INDEX ON`` + ``db.idx.fulltext.createNodeIndex``.
+Tenants marked with an older version re-run bootstrap exactly once.
+"""
+
 _DEFINE_QUERIES: list[str] = [
-    # Range index for entity upsert (MERGE on name)
-    "CREATE RANGE INDEX FOR (n:Entity) ON (n.name);",
-    # Full-text BM25 index for entity name + summary search
-    "CREATE FULLTEXT INDEX FOR (n:Entity) ON (n.name, n.summary) OPTIONS {language: 'english'};",
-    # Range index for episode stub lookup
-    "CREATE RANGE INDEX FOR (n:Episode) ON (n.id);",
-    # Range index for session stub lookup
-    "CREATE RANGE INDEX FOR (n:Session) ON (n.id);",
-    # Range index for observation upsert (MERGE on subject_entity_id + observation_type)
-    "CREATE RANGE INDEX FOR (n:Observation) ON (n.subject_entity_id, n.observation_type);",
+    # Exact-match index for entity upsert (MERGE on name).
+    "CREATE INDEX ON :Entity(name)",
+    # Full-text BM25 index for entity name + summary search.
+    "CALL db.idx.fulltext.createNodeIndex('Entity', 'name', 'summary')",
+    # Exact-match index for episode stub lookup.
+    "CREATE INDEX ON :Episode(id)",
+    # Exact-match index for session stub lookup.
+    "CREATE INDEX ON :Session(id)",
+    # Exact-match index for observation upsert
+    # (MERGE on subject_entity_id + observation_type).
+    "CREATE INDEX ON :Observation(subject_entity_id,observation_type)",
 ]
 
 # ── Pagination helpers ────────────────────────────────────────────────────
@@ -155,8 +164,9 @@ class FalkorGraphBackend(GraphBackend):
     ) -> None:
         self._client = client
         self._max_depth = min(max_traversal_depth, MAX_TRAVERSAL_DEPTH)
-        # Per-graph-key flag to run index bootstrap only once per tenant.
-        self._schema_ensured: dict[str, bool] = {}
+        # Per-graph-key bootstrap version; tenants below _SCHEMA_VERSION
+        # re-run _ensure_schema exactly once (one-shot upgrade guard).
+        self._schema_ensured: dict[str, int] = {}
 
     # ── Internal Helpers ──────────────────────────────────────────────────
 
@@ -171,32 +181,50 @@ class FalkorGraphBackend(GraphBackend):
         key = f"openzync_{org_id}_{project_id}"
         return self._client.select_graph(key)
 
-    async def _ensure_schema(self, graph) -> None:
-        """Idempotently create FalkorDB indexes on a tenant graph.
+    async def _ensure_schema(self, graph: Any, key: str) -> None:
+        """Create FalkorDB indexes for one tenant graph, once per version.
 
-        FalkorDB returns an "already exists" message for duplicate index
-        creation rather than raising an error, so this is safe to call
-        multiple times.
+        Runs every statement in :data:`_DEFINE_QUERIES`. A per-statement
+        "already exists" error is tolerated (idempotent re-run); any other
+        error raises — schema bootstrap must never fail silently, or every
+        later query silently degrades to a full label scan.
+
+        On success records :data:`_SCHEMA_VERSION` for ``key``, so a fixed
+        bootstrap re-executes exactly once per tenant after an upgrade.
+
+        Args:
+            graph: The per-tenant FalkorDB graph handle.
+            key: Tenant graph key (``openzync_{org_id}_{project_id}``).
+
+        Raises:
+            ExternalServiceError: If any index statement fails for a reason
+                other than the index already existing.
         """
-        try:
-            for q in _DEFINE_QUERIES:
-                await graph.query(q)
-        except Exception as exc:
-            err_str = str(exc).lower()
-            if "already exists" in err_str:
-                logger.info(
-                    "falkordb_graph.schema_already_exists",
-                    extra={"graph_key": graph.name},
+        for query in _DEFINE_QUERIES:
+            try:
+                await graph.query(query)
+            except Exception as exc:
+                if "already exists" in str(exc).lower():
+                    logger.debug(
+                        "falkordb_graph.schema_index_exists",
+                        extra={"graph_key": key, "query": query},
+                    )
+                    continue
+                logger.error(
+                    "falkordb_graph.schema_bootstrap_failed",
+                    extra={
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                        "graph_key": key,
+                        "query": query,
+                    },
                 )
-                return
-            logger.warning(
-                "falkordb_graph.schema_bootstrap_failed",
-                extra={
-                    "error": str(exc),
-                    "error_type": type(exc).__name__,
-                    "graph_key": graph.name,
-                },
-            )
+                raise ExternalServiceError(
+                    message=f"FalkorDB schema bootstrap failed: {exc}",
+                    detail={"graph_key": key, "query": query},
+                ) from exc
+        self._schema_ensured[key] = _SCHEMA_VERSION
+        logger.info("falkordb_graph.schema_ensured", extra={"graph_key": key})
 
     @staticmethod
     def _sanitize_edge_type(name: str) -> str:
@@ -491,9 +519,8 @@ class FalkorGraphBackend(GraphBackend):
             )
 
         key = f"openzync_{org_id}_{project_id}"
-        if not self._schema_ensured.get(key):
-            await self._ensure_schema(graph)
-            self._schema_ensured[key] = True
+        if self._schema_ensured.get(key) != _SCHEMA_VERSION:
+            await self._ensure_schema(graph, key)
 
         name_lower = name.lower().strip()
         summary_val = summary if summary is not None else ""
@@ -515,10 +542,10 @@ class FalkorGraphBackend(GraphBackend):
                     n.updated_at = $now
                 ON MATCH SET
                     n.entity_type = CASE
-                        WHEN n.entity_type = 'Custom' AND $type != 'Custom'
+                        WHEN n.entity_type = 'Custom' AND $type <> 'Custom'
                         THEN $type ELSE n.entity_type
                     END,
-                    n.summary = CASE WHEN $summary != '' THEN $summary ELSE n.summary END,
+                    n.summary = CASE WHEN $summary <> '' THEN $summary ELSE n.summary END,
                     n.updated_at = $now
                 RETURN n.id, n.name, n.entity_type, n.summary, n.attributes, n.created_at
                 """,
