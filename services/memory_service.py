@@ -33,12 +33,18 @@ if TYPE_CHECKING:
 # Import for type hints only; blob uploads are processed before passing to
 # the worker, and UploadFile isn't available in the worker context.
 from fastapi import UploadFile  # noqa: TCH002 — used in method signature
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import get_arq
 from core.config import get_settings
 from core.events import EventType
-from core.exceptions import ConflictError, NotFoundError
+from core.exceptions import (
+    ConflictError,
+    NotFoundError,
+    PIIUnavailableError,
+    ValidationError,
+)
 from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
@@ -142,14 +148,21 @@ class MemoryService:
            raise ``ConflictError`` if the key was used with a different body.
         2. Resolve the session.
         3. Compute content hash for content-level dedup (via IdempotencyService).
-        4. Redis fast-path pre-check for dedup (fast-path ONLY — the
-           authoritative arbiter is the ingest_dedup claim in step 5).
-        5. Atomically claim the batch in ``ingest_dedup`` (DB-level dedup,
-           TOCTOU-safe — the claim shares the caller's transaction).
-        6. Get next sequence number for ordered insertion.
-        7. Build episode dicts from validated messages.
-        8. PII detection & redaction (if enabled in org quotas).
-        9. Batch-insert episodes into PostgreSQL.
+        4. Redis fast-path pre-check for dedup (fast-path ONLY — never
+           relied on for correctness).
+        5. Atomically claim the batch: Lua ``claim_content_hash`` (Redis,
+           REPLAY returns the winner's ``job_id`` without inserting) then
+           the ``ingest_dedup`` unique claim (PostgreSQL, the authoritative
+           arbiter inside this transaction).
+        6. Lock the session row (``SELECT ... FOR UPDATE``) and take
+           ``MAX(sequence_number) + 1`` for ordered insertion.
+        7. Build episode dicts from validated messages (server-assigned
+           ``sequence_number`` — the request schema carries none).
+        8. PII detection & redaction, fail-closed (OpenBao only; fetch or
+           redaction failure raises ``PIIUnavailableError`` → 503).
+           Block-mode ``ValidationError`` downgrades to mask.
+        9. Batch-insert episodes into PostgreSQL (``IntegrityError`` on a
+           lost seq race → ``ConflictError`` for client retry).
         10. Upload blobs to S3 and persist blob records.
         11. Enqueue ARQ enrichment tasks (enrich_episode, embed_episode,
             link_entities_to_episode) + blob text extraction tasks.
@@ -179,7 +192,10 @@ class MemoryService:
 
         Raises:
             ConflictError: If ``idempotency_key`` was already used with a
-                different request body.
+                different request body, or a concurrent ingest won the
+                sequence-number race (retry the request).
+            PIIUnavailableError: If the PII policy cannot be fetched or
+                redaction fails — nothing is persisted.
         """
         # ── Step 1: Idempotency check ────────────────────────────────────
         if idempotency_key is not None:
@@ -249,12 +265,38 @@ class MemoryService:
             )
 
         # ── Step 4: Claim the batch (TOCTOU-safe dedup) ──────────────────
-        # job_id is generated before the claim so the accepted ingest can be
-        # referenced by both the dedup row and the ARQ enrichment tasks.
-        # The claim shares the caller's transaction: it commits atomically
-        # with the episodes below, and a concurrent identical submission
-        # that loses the claim returns a duplicate response instead.
+        # job_id is generated before the claims so the accepted ingest can
+        # be referenced by the Redis claim, the dedup row, and the ARQ
+        # enrichment tasks.  REPLAY (Redis Lua claim lost, or DB claim
+        # lost to a concurrent identical submission) returns the winner's
+        # job_id without inserting anything.
+        # note: No episodes.content_hash column — the batch-level
+        # ingest_dedup unique claim below is already the DB arbiter; a
+        # per-episode UNIQUE(org_id, content_hash) on a batch hash would
+        # reject every multi-episode batch on its second row.
         job_id = uuid4()
+        claim = await self._idem.claim_content_hash(
+            str(org_id),
+            str(created_by),
+            str(session_id),
+            msgs,
+            payload=str(job_id),
+        )
+        if not claim.won:
+            logger.info(
+                "memory.content_dedup_hit",
+                extra={
+                    "content_hash": content_hash[:16] + "...",
+                    "existing_job_id": claim.winner,
+                    "project_id": str(project_id),
+                },
+            )
+            return IngestMemoryResponse(
+                job_id=claim.winner,
+                episode_count=len(messages),
+                status="accepted",
+                message="Content already ingested; returning existing job_id",
+            )
         if not await self._dedup_repo.insert_or_none(
             project_id=project_id,
             session_id=session_id,
@@ -281,10 +323,14 @@ class MemoryService:
                 message="Content already ingested; returning existing job_id",
             )
 
-        # ── Step 5: Get next sequence number ──────────────────────────────
+        # ── Step 5: Lock the session row, then take the next seq ─────────
+        # The FOR UPDATE lock serializes concurrent ingests into this
+        # session; it is held until the commit below because every step
+        # shares this request-scoped session/transaction.
+        await self._session_repo.get_by_id_for_update(session_id)
         start_seq = await self._episode_repo.get_next_sequence(session_id)
 
-        # ── Step 6: Build episode dicts ───────────────────────────────────
+        # ── Step 6: Build episode dicts (server-assigned seq) ─────────────
         episode_dicts = [
             {
                 "role": msg.role,
@@ -296,7 +342,7 @@ class MemoryService:
             for i, msg in enumerate(messages)
         ]
 
-        # ── Step 7: PII detection & redaction ─────────────────────────────
+        # ── Step 7: PII detection & redaction (fail-closed) ───────────────
         pii_config_raw = await self._get_org_pii_config(org_id)
         pii_mode = (
             pii_config_raw.get("mode", "mask")
@@ -305,25 +351,41 @@ class MemoryService:
         )
 
         if pii_mode != "off":
-            from services.pii_service import PIIService
-
-            pii_service = PIIService(pii_config_raw)
+            trace_id = structlog.contextvars.get_contextvars().get(
+                "request_id", str(job_id)
+            )
             for msg_dict in episode_dicts:
-                content = msg_dict["content"]
-                redacted, detections, was_blocked = await pii_service.process_message(
-                    content
+                msg_dict["content"] = await self._redact_content(
+                    pii_config_raw,
+                    msg_dict["content"],
+                    org_id=org_id,
+                    trace_id=trace_id,
                 )
-                if redacted != content:
-                    msg_dict["content"] = redacted
 
         # ── Step 8: Batch-insert episodes ────────────────────────────────
-        episodes = await self._episode_repo.batch_create(
-            organization_id=org_id,
-            session_id=session_id,
-            project_id=project_id,
-            user_id=created_by,
-            messages=episode_dicts,
-        )
+        try:
+            episodes = await self._episode_repo.batch_create(
+                organization_id=org_id,
+                session_id=session_id,
+                project_id=project_id,
+                user_id=created_by,
+                messages=episode_dicts,
+            )
+        except IntegrityError as exc:
+            # Lost the seq race despite the row lock (or a colliding
+            # legacy row) — the unique index held; retry the request.
+            logger.warning(
+                "memory.sequence_conflict",
+                extra={
+                    "session_id": str(session_id),
+                    "project_id": str(project_id),
+                    "org_id": str(org_id),
+                    "job_id": str(job_id),
+                },
+            )
+            raise ConflictError(
+                "Sequence conflict during ingest — retry the request"
+            ) from exc
         logger.info(
             "memory.episodes_created",
             extra={
@@ -534,73 +596,127 @@ class MemoryService:
     # ── PII Config ────────────────────────────────────────────────────────────
 
     async def _get_org_pii_config(self, org_id: UUID) -> dict:
-        """Fetch PII configuration for an org — OpenBao first, quotas fallback.
+        """Fetch PII configuration for an org — OpenBao only, fail-closed.
 
-        Read-through: first try ``core.org_config.get_org_config`` via OpenBao.
-        If ``pii_mode`` is not ``None``, construct the PII dict from the four
-        org-config fields (only non-None values included). Otherwise fallback
-        to the legacy ``organizations.quotas -> 'pii'`` path for backward
-        compat with orgs that still store PII in quotas.
+        Any fetch failure raises ``PIIUnavailableError`` (→ 503 +
+        ``Retry-After``) instead of falling back to a default: persisting
+        content without a known redaction policy is worse than rejecting
+        the request.  The legacy ``organizations.quotas -> 'pii'`` fallback
+        was deleted (BREAKING for orgs that still store PII in quotas —
+        migrate them to OpenBao org config).
+
+        A successful fetch with ``pii_mode`` unset means "not configured",
+        which keeps the previous effective default of ``mask``.
 
         Args:
             org_id: The organization UUID.
 
         Returns:
-            The PII config dict (possibly empty).  Returns ``{}`` if the
-            organization does not exist or has no PII config.
+            The PII config dict.
+
+        Raises:
+            PIIUnavailableError: If the config cannot be fetched.
         """
-        # ── Try OpenBao org_config first ─────────────────────────────────
+        trace_id = structlog.contextvars.get_contextvars().get("request_id", "unknown")
         try:
             from core.org_config import get_org_config
 
-            org_cfg = None
             if self._bao_client is not None:
                 org_cfg = await get_org_config(
                     org_id, redis=None, bao_client=self._bao_client
                 )
             else:
                 # Lazy temporary client — mirrors _process_blobs pattern.
-                # Fail-open: any error falls through to quotas fallback.
-                try:
-                    from core.config import BootstrapSettings
-                    from core.openbao import OpenBaoClient
+                from core.config import BootstrapSettings
+                from core.openbao import OpenBaoClient
 
-                    bootstrap = BootstrapSettings()
-                    async with OpenBaoClient(
-                        bootstrap.OPENBAO_ADDR,
-                        bootstrap.OPENBAO_ROLE_ID,
-                        bootstrap.OPENBAO_SECRET_ID,
-                        timeout=10.0,
-                    ) as _tmp_bao:
-                        org_cfg = await get_org_config(
-                            org_id, redis=None, bao_client=_tmp_bao
-                        )
-                except Exception:
-                    logger.warning(
-                        "memory.org_pii_config_fetch_failed",
-                        extra={"org_id": str(org_id)},
-                        exc_info=True,
+                bootstrap = BootstrapSettings()
+                async with OpenBaoClient(
+                    bootstrap.OPENBAO_ADDR,
+                    bootstrap.OPENBAO_ROLE_ID,
+                    bootstrap.OPENBAO_SECRET_ID,
+                    timeout=10.0,
+                ) as _tmp_bao:
+                    org_cfg = await get_org_config(
+                        org_id, redis=None, bao_client=_tmp_bao
                     )
-                    org_cfg = None
-
-            if org_cfg is not None and org_cfg.pii_mode is not None:
-                pii: dict[str, Any] = {"mode": org_cfg.pii_mode}
-                if org_cfg.pii_sensitivity is not None:
-                    pii["sensitivity"] = org_cfg.pii_sensitivity
-                if org_cfg.pii_enabled_types is not None:
-                    pii["enabled_types"] = org_cfg.pii_enabled_types
-                if org_cfg.pii_min_confidence is not None:
-                    pii["min_confidence"] = org_cfg.pii_min_confidence
-                return pii
-        except Exception:
-            logger.warning(
-                "memory.org_pii_config_fetch_failed",
-                extra={"org_id": str(org_id)},
+        except Exception as exc:
+            logger.error(
+                "pii.fail_closed",
+                extra={"org_id": str(org_id), "trace_id": trace_id},
                 exc_info=True,
             )
+            raise PIIUnavailableError("pii_unavailable") from exc
 
-        # ── Fallback: legacy quotas->'pii' ────────────────────────────────
-        return await self._org_repo.get_pii_config(org_id)
+        if org_cfg is None:
+            logger.error(
+                "pii.fail_closed",
+                extra={"org_id": str(org_id), "trace_id": trace_id},
+            )
+            raise PIIUnavailableError("pii_unavailable")
+
+        if org_cfg.pii_mode is None:
+            return {"mode": "mask"}
+
+        pii: dict[str, Any] = {"mode": org_cfg.pii_mode}
+        if org_cfg.pii_sensitivity is not None:
+            pii["sensitivity"] = org_cfg.pii_sensitivity
+        if org_cfg.pii_enabled_types is not None:
+            pii["enabled_types"] = org_cfg.pii_enabled_types
+        if org_cfg.pii_min_confidence is not None:
+            pii["min_confidence"] = org_cfg.pii_min_confidence
+        return pii
+
+    async def _redact_content(
+        self,
+        pii_config: dict[str, Any],
+        content: str,
+        *,
+        org_id: UUID,
+        trace_id: str,
+    ) -> str:
+        """Redact PII from message content, fail-closed.
+
+        A block-mode ``ValidationError`` downgrades to a single mask pass
+        (preserved semantic — the message is still stored, redacted).  Any
+        other redaction failure raises ``PIIUnavailableError``: the message
+        is never persisted unredacted.  Detections and content are never
+        logged — only org/trace identifiers.
+
+        Args:
+            pii_config: The PII config dict from :meth:`_get_org_pii_config`.
+            content: The raw message content.
+            org_id: The organization UUID (log context only).
+            trace_id: The request trace ID (log context only).
+
+        Returns:
+            The redacted content (unchanged when nothing was detected).
+
+        Raises:
+            PIIUnavailableError: If redaction fails unexpectedly.
+        """
+        from services.pii_service import PIIService
+
+        try:
+            try:
+                service = PIIService(pii_config)
+                redacted, _, _ = await service.process_message(content)
+            except ValidationError:
+                mask_service = PIIService({**pii_config, "mode": "mask"})
+                redacted, _, _ = await mask_service.process_message(content)
+                logger.info(
+                    "memory.pii_blocked_redacted",
+                    extra={"org_id": str(org_id), "trace_id": trace_id},
+                )
+            return redacted
+        except PIIUnavailableError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "pii.fail_closed",
+                extra={"org_id": str(org_id), "trace_id": trace_id},
+            )
+            raise PIIUnavailableError("pii_unavailable") from exc
 
     # ── ARQ Task Enqueue ─────────────────────────────────────────────────────
 

@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -120,6 +121,16 @@ class Episode(TimestampMixin, Base):
         ),
         Index("ix_episode_session_sequence", "session_id", "sequence_number"),
         Index("ix_episode_user_id", "user_id"),
+        # Final guard against concurrent ingests minting the same seq:
+        # partial so soft-deleted rows never block reuse of their number.
+        # Mirrors migration 0053 (uq_episodes_session_sequence).
+        Index(
+            "uq_episodes_session_sequence",
+            "session_id",
+            "sequence_number",
+            unique=True,
+            postgresql_where=text("is_deleted = false"),
+        ),
     )
 
     def __repr__(self) -> str:

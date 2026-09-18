@@ -14,7 +14,13 @@ from uuid import UUID
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.cursor import decode_cursor, encode_cursor
+from core.cursor import (
+    decode_cursor,
+    decode_versioned_cursor,
+    encode_cursor,
+    encode_versioned_cursor,
+)
+from core.exceptions import CursorExpiredError
 from models.episode import Episode
 from models.fact import Fact
 from models.graph_observation import GraphObservation
@@ -249,9 +255,11 @@ class SessionRepository:
             cursor_seq, cursor_id = self._decode_message_cursor(cursor)
             query = query.where(
                 or_(
+                    and_(
+                        Episode.sequence_number == cursor_seq,
+                        Episode.id > cursor_id,
+                    ),
                     Episode.sequence_number > cursor_seq,
-                    Episode.sequence_number == cursor_seq,
-                    Episode.id > cursor_id,
                 )
             )
 
@@ -279,9 +287,10 @@ class SessionRepository:
     async def next_sequence_number(self, session_id: UUID) -> int:
         """Get the next sequence number for a session.
 
-        Uses ``SELECT COALESCE(MAX(seq), -1) + 1``, which is thread-safe
-        because the increment happens within the same transaction as the
-        subsequent INSERT.
+        Consolidated onto the single canonical implementation
+        (:meth:`EpisodeRepository.get_next_sequence`) — one helper for
+        ``MAX(sequence_number) + 1`` over live rows.  Retained under this
+        name for existing callers.
 
         Args:
             session_id: The session's UUID.
@@ -289,12 +298,32 @@ class SessionRepository:
         Returns:
             The next available ``sequence_number`` (0-based).
         """
+        from repositories.episode_repository import EpisodeRepository
+
+        return await EpisodeRepository(self._db).get_next_sequence(session_id)
+
+    # ── Row Lock ──────────────────────────────────────────────────────────
+
+    async def get_by_id_for_update(self, session_id: UUID) -> Session | None:
+        """Lock and return a session by ID with ``SELECT ... FOR UPDATE``.
+
+        Acquires a row-level lock held until the transaction commits.
+        ``MemoryService.ingest`` takes this lock before ``MAX(seq) + 1``
+        so concurrent ingests into the same session serialize instead of
+        minting duplicate ``sequence_number`` values.
+
+        Args:
+            session_id: The session's UUID.
+
+        Returns:
+            The Session if found and not soft-deleted, ``None`` otherwise.
+        """
         result = await self._db.execute(
-            select(func.coalesce(func.max(Episode.sequence_number), -1) + 1).where(
-                Episode.session_id == session_id
-            )
+            select(Session)
+            .where(Session.id == session_id, Session.is_deleted.is_(False))
+            .with_for_update()
         )
-        return result.scalar()
+        return result.scalar_one_or_none()
 
     # ── Update Metadata ─────────────────────────────────────────────────────
 
@@ -641,22 +670,26 @@ class SessionRepository:
 
     @staticmethod
     def _encode_message_cursor(sequence_number: int, episode_id: UUID) -> str:
-        """Encode a message cursor as a URL-safe base64 string.
+        """Encode a message cursor inside the versioned envelope.
 
-        Format: ``{sequence_number}|{episode_id_hex}``
+        Format: ``v1:{sequence_number}|{episode_id_hex}``, base64-encoded.
+        Pre-versioning cursors are rejected on decode (BREAKING).
         """
-        return encode_cursor(f"{sequence_number}|{episode_id.hex}")
+        return encode_versioned_cursor(f"{sequence_number}|{episode_id.hex}")
 
     @staticmethod
     def _decode_message_cursor(cursor: str) -> tuple[int, UUID]:
         """Decode a message cursor back into ``(sequence_number, episode_id)``.
 
         Raises:
-            ValueError: If the cursor is malformed.
+            CursorExpiredError: If the cursor is malformed or versioned
+                differently (HTTP 400 ``cursor_expired``).
         """
         try:
-            raw = decode_cursor(cursor)
+            raw = decode_versioned_cursor(cursor)
             seq_str, id_hex = raw.split("|", 1)
             return int(seq_str), UUID(hex=id_hex)
         except (ValueError, TypeError) as e:
-            raise ValueError(f"Invalid message cursor: {e}") from e
+            # CursorExpiredError subclasses ValueError, so version and
+            # format failures land here with the repo-specific prefix.
+            raise CursorExpiredError(f"Invalid message cursor: {e}") from e

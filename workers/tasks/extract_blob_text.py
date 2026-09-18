@@ -20,7 +20,12 @@ bit before running and skips if already set.
 
 Bitmask:
     Sets ``episodes.enrichment_status`` bit 7
-    (``ENRICHMENT_BLOB_TEXT``) on success.
+    (``ENRICHMENT_BLOB_TEXT``) on success — including unsupported MIME
+    types (dispatch returns ``None``: nothing to extract, work complete).
+
+Fail-closed: corrupt input, missing extractor libraries, a missing PII
+policy, and redaction failures all propagate (no bit, no commit) so
+``@with_retry`` retries.  Nothing is ever stored unredacted.
 """
 
 from __future__ import annotations
@@ -43,69 +48,75 @@ logger = structlog.get_logger(__name__)
 def _extract_pdf(data: bytes) -> str | None:
     """Extract text from a PDF using PyMuPDF (fitz).
 
+    Only a missing library is reported here — decode failures propagate
+    so the task retries instead of marking the blob done with no text.
+
     Args:
         data: Raw PDF bytes.
 
     Returns:
-        Extracted text, or ``None`` if extraction fails.
+        Extracted text, or ``None`` when the PDF holds no text.
+
+    Raises:
+        ImportError: If PyMuPDF is not installed.
+        Exception: If the PDF is corrupt or unreadable (retryable).
     """
     try:
         import fitz  # PyMuPDF — optional dependency
+    except ImportError:
+        logger.warning("extract_blob_text.pymupdf_not_available")
+        raise
 
-        doc = fitz.open(stream=data, filetype="pdf")
+    doc = fitz.open(stream=data, filetype="pdf")
+    try:
         text_parts: list[str] = []
         for page in doc:
             text_parts.append(page.get_text())
+    finally:
         doc.close()
-        result = "\n".join(text_parts).strip()
-        return result if result else None
-    except ImportError:
-        logger.warning("extract_blob_text.pymupdf_not_available")
-        return None
-    except Exception:
-        logger.exception("extract_blob_text.pdf_extraction_failed")
-        return None
+    result = "\n".join(text_parts).strip()
+    return result if result else None
 
 
 def _extract_docx(data: bytes) -> str | None:
     """Extract text from a DOCX file using python-docx.
 
+    Only a missing library is reported here — decode failures propagate
+    so the task retries instead of marking the blob done with no text.
+
     Args:
         data: Raw DOCX bytes.
 
     Returns:
-        Extracted text, or ``None`` if extraction fails.
+        Extracted text, or ``None`` when the document holds no text.
+
+    Raises:
+        ImportError: If python-docx is not installed.
+        Exception: If the DOCX is corrupt or unreadable (retryable).
     """
     try:
         from docx import Document  # python-docx — optional dependency
-
-        doc = Document(io.BytesIO(data))
-        text_parts = [p.text for p in doc.paragraphs if p.text.strip()]
-        result = "\n".join(text_parts).strip()
-        return result if result else None
     except ImportError:
         logger.warning("extract_blob_text.docx_not_available")
-        return None
-    except Exception:
-        logger.exception("extract_blob_text.docx_extraction_failed")
-        return None
+        raise
+
+    doc = Document(io.BytesIO(data))
+    text_parts = [p.text for p in doc.paragraphs if p.text.strip()]
+    result = "\n".join(text_parts).strip()
+    return result if result else None
 
 
 def _extract_text_plain(data: bytes) -> str | None:
-    """Decode raw bytes as UTF-8 text.
+    """Decode raw bytes as UTF-8 text (lossy — never raises).
 
     Args:
         data: Raw bytes.
 
     Returns:
-        Decoded text, or ``None`` if decoding fails.
+        Decoded text, or ``None`` when the payload holds no text.
     """
-    try:
-        text_content = data.decode("utf-8", errors="replace").strip()
-        return text_content if text_content else None
-    except Exception:
-        logger.exception("extract_blob_text.text_decode_failed")
-        return None
+    text_content = data.decode("utf-8", errors="replace").strip()
+    return text_content if text_content else None
 
 
 async def _extract_image_ocr(data: bytes) -> str | None:
@@ -119,31 +130,31 @@ async def _extract_image_ocr(data: bytes) -> str | None:
         data: Raw image bytes (PNG, JPEG, WebP, TIFF, BMP, etc.).
 
     Returns:
-        Extracted text, or ``None`` if OCR fails or dependencies are
-        unavailable.
+        Extracted text, or ``None`` when the image holds no text.
+
+    Raises:
+        ImportError: If OCR dependencies are not installed.
+        Exception: If OCR processing fails (retryable).
     """
     try:
         import pytesseract
         from PIL import Image
-
-        image = Image.open(io.BytesIO(data))
-        text = await asyncio.to_thread(
-            pytesseract.image_to_string,
-            image,
-            lang="eng",
-            config="--psm 3",  # Automatic page segmentation
-        )
-        result = text.strip()
-        return result if result else None
     except ImportError:
         logger.warning(
             "extract_blob_text.ocr_not_available",
             extra={"detail": "Install pytesseract and Pillow for OCR support."},
         )
-        return None
-    except Exception:
-        logger.exception("extract_blob_text.ocr_failed")
-        return None
+        raise
+
+    image = Image.open(io.BytesIO(data))
+    text = await asyncio.to_thread(
+        pytesseract.image_to_string,
+        image,
+        lang="eng",
+        config="--psm 3",  # Automatic page segmentation
+    )
+    result = text.strip()
+    return result if result else None
 
 
 # ── MIME type dispatch ───────────────────────────────────────────────────────
@@ -157,8 +168,12 @@ async def _dispatch_extraction(mime_type: str, data: bytes) -> str | None:
         data: Raw file bytes.
 
     Returns:
-        Extracted text, or ``None`` if the type is not supported or
-    extraction fails.
+        Extracted text, or ``None`` when the type is unsupported (the
+        caller then marks the work complete without storing text).
+
+    Raises:
+        Exception: Propagates extractor failures (corrupt input, missing
+            libraries) so the caller retries instead of marking success.
     """
     if mime_type.startswith("text/"):
         # text/plain, text/csv, text/markdown, etc.
@@ -240,6 +255,112 @@ async def _get_org_storage_config(
     }
 
 
+# ── Helper: resolve org PII config (fail-closed) ───────────────────────────
+
+
+async def _redact_extracted_text(
+    extracted_text: str,
+    *,
+    org_id: str,
+    bao_client: object | None,
+    trace_id: str,
+    log: structlog.typing.FilteringBoundLogger,
+) -> str:
+    """Redact PII from extracted blob text, fail-closed.
+
+    Fetches the org PII policy from OpenBao (no quotas fallback).  A
+    missing client, a fetch failure, or a redaction failure raises
+    ``PIIUnavailableError`` — the caller then skips
+    ``update_extracted_text``, skips the ``ENRICHMENT_BLOB_TEXT`` bit, and
+    lets ``@with_retry`` retry.  A block-mode ``ValidationError``
+    downgrades to a single mask pass (preserved semantic).
+
+    Args:
+        extracted_text: Raw text from the MIME extractor.
+        org_id: The organization UUID string (log context only).
+        bao_client: An authenticated OpenBao client from the ARQ context.
+        trace_id: Request trace ID for end-to-end correlation.
+        log: Bound structlog logger.
+
+    Returns:
+        The redacted text (unchanged when mode is ``off`` or clean).
+
+    Raises:
+        PIIUnavailableError: If the policy cannot be fetched or redaction
+            fails — never store unredacted text.
+    """
+    from core.exceptions import PIIUnavailableError, ValidationError
+
+    if bao_client is None:
+        logger.error(
+            "pii.fail_closed",
+            org_id=org_id,
+            trace_id=trace_id,
+            reason="no OpenBao client in worker context",
+        )
+        raise PIIUnavailableError("pii_unavailable")
+
+    try:
+        from core.org_config import get_org_config
+
+        org_cfg = await get_org_config(
+            UUID(org_id),
+            redis=None,
+            bao_client=bao_client,  # type: ignore[arg-type]
+        )
+    except Exception as exc:
+        logger.error(
+            "pii.fail_closed",
+            org_id=org_id,
+            trace_id=trace_id,
+            exc_info=True,
+        )
+        raise PIIUnavailableError("pii_unavailable") from exc
+
+    if org_cfg is None or org_cfg.pii_mode is None:
+        if org_cfg is None:
+            logger.error(
+                "pii.fail_closed",
+                org_id=org_id,
+                trace_id=trace_id,
+                reason="org config not found",
+            )
+            raise PIIUnavailableError("pii_unavailable")
+        pii_config: dict = {"mode": "mask"}
+    else:
+        pii_config = {"mode": org_cfg.pii_mode}
+        if org_cfg.pii_sensitivity is not None:
+            pii_config["sensitivity"] = org_cfg.pii_sensitivity
+        if org_cfg.pii_enabled_types is not None:
+            pii_config["enabled_types"] = org_cfg.pii_enabled_types
+        if org_cfg.pii_min_confidence is not None:
+            pii_config["min_confidence"] = org_cfg.pii_min_confidence
+
+    if pii_config.get("mode", "mask") == "off":
+        return extracted_text
+
+    from services.pii_service import PIIService
+
+    try:
+        try:
+            pii_service = PIIService(pii_config)
+            redacted, _, _ = await pii_service.process_message(extracted_text)
+        except ValidationError:
+            mask_service = PIIService({**pii_config, "mode": "mask"})
+            redacted, _, _ = await mask_service.process_message(extracted_text)
+            log.info("extract_blob_text.pii_blocked_redacted")
+        return redacted
+    except PIIUnavailableError:
+        raise
+    except Exception as exc:
+        logger.error(
+            "pii.fail_closed",
+            org_id=org_id,
+            trace_id=trace_id,
+        )
+        raise PIIUnavailableError("pii_unavailable") from exc
+
+
 # ── Main task ────────────────────────────────────────────────────────────────
 
 
@@ -280,7 +401,10 @@ async def extract_blob_text(
         trace_id: Request trace ID for end-to-end correlation.
 
     Raises:
-        Exception: Re-raises after retry exhaustion.
+        PIIUnavailableError: If the PII policy cannot be fetched or
+            redaction fails — nothing is stored, nothing commits.
+        Exception: On corrupt input, missing extractor libraries, or
+            download failure — re-raised after retry exhaustion.
     """
     if trace_id:
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
@@ -356,72 +480,24 @@ async def extract_blob_text(
                 raise
 
             # ── Extract text based on MIME type ─────────────────────────
+            # Raises on corrupt input or missing libs (retryable) — the
+            # bit below is NOT set and nothing commits on that path.
+            # Dispatch returns None only for unsupported types, which keeps
+            # the set-bit path (nothing to extract, work is complete).
             extracted_text = await _dispatch_extraction(mime_type, data)
 
-            # ── PII redaction (fail-open, never crash worker) ─────────
-            # Read-through: try OpenBao org_config first, fallback to quotas.
+            # ── PII redaction (fail-closed) ─────────────────────────────
+            # Raises PIIUnavailableError when the policy cannot be fetched
+            # or redaction fails — update_extracted_text, the enrichment
+            # bit, and the commit are all skipped and @with_retry retries.
             if extracted_text is not None:
-                try:
-                    pii_config: dict = {}
-                    org_cfg = None
-                    if bao_client is not None:
-                        try:
-                            from core.org_config import get_org_config
-
-                            org_cfg = await get_org_config(
-                                UUID(org_id), redis=None, bao_client=bao_client
-                            )
-                        except Exception:
-                            logger.warning(
-                                "extract_blob_text.org_pii_config_fetch_failed",
-                                org_id=org_id,
-                                exc_info=True,
-                            )
-                    if org_cfg is not None and org_cfg.pii_mode is not None:
-                        pii_config = {"mode": org_cfg.pii_mode}
-                        if org_cfg.pii_sensitivity is not None:
-                            pii_config["sensitivity"] = org_cfg.pii_sensitivity
-                        if org_cfg.pii_enabled_types is not None:
-                            pii_config["enabled_types"] = org_cfg.pii_enabled_types
-                        if org_cfg.pii_min_confidence is not None:
-                            pii_config["min_confidence"] = org_cfg.pii_min_confidence
-                    else:
-                        # Fallback: legacy quotas->'pii'
-                        result = await db.execute(
-                            text(
-                                "SELECT quotas->'pii' AS pii_config "
-                                "FROM organizations WHERE id = :org_id"
-                            ),
-                            {"org_id": UUID(org_id)},
-                        )
-                        row = result.one_or_none()
-                        pii_config = row[0] if row is not None else None
-                        if not isinstance(pii_config, dict):
-                            pii_config = {}
-
-                    if pii_config.get("mode", "mask") != "off":
-                        from core.exceptions import ValidationError
-                        from services.pii_service import PIIService
-
-                        pii_service = PIIService(pii_config)
-                        try:
-                            redacted, _, _ = await pii_service.process_message(
-                                extracted_text
-                            )
-                            extracted_text = redacted
-                        except ValidationError:
-                            mask_cfg = {**pii_config, "mode": "mask"}
-                            mask_service = PIIService(mask_cfg)
-                            redacted, _, _ = await mask_service.process_message(
-                                extracted_text
-                            )
-                            extracted_text = redacted
-                            log.info("extract_blob_text.pii_blocked_redacted")
-                except Exception:
-                    log.warning(
-                        "extract_blob_text.pii_redaction_failed",
-                        exc_info=True,
-                    )
+                extracted_text = await _redact_extracted_text(
+                    extracted_text,
+                    org_id=org_id,
+                    bao_client=bao_client,
+                    trace_id=trace_id,
+                    log=log,
+                )
 
             if extracted_text:
                 await blob_repo.update_extracted_text(UUID(blob_id), extracted_text)

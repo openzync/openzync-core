@@ -29,6 +29,14 @@ Usage
         await service.store_idempotency_key(key, body_hash, response_data, org_id)
 
     # Content-level
+    # Atomic claim (preferred — single Lua GET-or-SET, no TOCTOU):
+    claim = await service.claim_content_hash(
+        org_id, user_id, session_id, messages, payload=job_id
+    )
+    if not claim.won:
+        return claim.winner  # duplicate — replay winner payload (e.g. job_id)
+    # ... proceed with ingestion ...
+    # Legacy fast-path pair (best-effort only, never authoritative):
     existing = await service.check_content_hash(org_id, user_id, session_id, messages)
     if existing:
         return  # duplicate content — replay existing payload (e.g. job_id)
@@ -107,6 +115,44 @@ class IdempotencyResult:
             f"has_response={self.response_data is not None}, "
             f"message={self.message!r})"
         )
+
+
+class ContentHashClaim:
+    """Outcome of an atomic content-hash claim.
+
+    Attributes:
+        won: ``True`` when this caller won the claim and must proceed
+            with ingestion; ``False`` on a duplicate.
+        winner: The winning payload — the winner's ``job_id`` when
+            ``won`` is ``True``, the earlier winner's payload on replay.
+    """
+
+    __slots__ = ("won", "winner")
+
+    def __init__(self, won: bool, winner: str) -> None:
+        self.won = won
+        self.winner = winner
+
+    def __repr__(self) -> str:
+        return f"ContentHashClaim(won={self.won}, winner={self.winner!r})"
+
+
+# Single atomic claim: GET → replay the winner's payload when present,
+# else SET NX EX the caller's payload.  Runs as one Lua script so the
+# check-and-set is indivisible — concurrent identical submissions cannot
+# both win, closing the TOCTOU window of check-then-store.
+_CLAIM_CONTENT_HASH_LUA: str = """
+local existing = redis.call('GET', KEYS[1])
+if existing then
+  return {0, existing}
+end
+local ok = redis.call('SET', KEYS[1], ARGV[1], 'NX', 'EX', ARGV[2])
+if ok then
+  return {1, ARGV[1]}
+else
+  return {0, redis.call('GET', KEYS[1])}
+end
+"""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -411,11 +457,12 @@ class IdempotencyService:
         cache_key = self._content_prefix + content_hash
         value = payload if payload is not None else content_hash
 
-        # ⚠️ TOCTOU: the check-then-set is not atomic — two concurrent
-        # identical requests can both pass check_content_hash and both
-        # ingest; SETNX only dedups the *store* (the first caller's payload
-        # wins the value), not the ingestion side effects.  A DB uniqueness
-        # column on the content hash would close the window.
+        # ⚠️ Not an atomic arbiter: ``SET NX`` wins the *value* but a
+        # concurrent caller may already have passed ``check_content_hash``
+        # and be ingesting.  Treat check+store as a best-effort fast path
+        # only — correctness comes from the atomic ``claim_content_hash``
+        # (Lua GET-or-SET) and the ``ingest_dedup`` unique claim
+        # (PostgreSQL).  Callers must never ingest on this check alone.
         set_ok = await self._redis.set(cache_key, value, nx=True, ex=self._content_ttl)
         if set_ok:
             logger.debug(
@@ -435,6 +482,66 @@ class IdempotencyService:
             )
 
         return content_hash
+
+    async def claim_content_hash(
+        self,
+        org_id: str,
+        user_id: str,
+        session_id: str,
+        messages: list[dict[str, Any]],
+        *,
+        payload: str,
+    ) -> ContentHashClaim:
+        """Atomically claim a content hash via a single Lua script.
+
+        ``GET`` replays the winner's payload when the hash was already
+        claimed; otherwise ``SET NX EX`` stores the caller's payload and
+        reports a win.  The script is indivisible, so concurrent identical
+        submissions cannot both win — exactly one caller proceeds to
+        ingest, the losers replay the winner's payload (e.g. ``job_id``)
+        without inserting anything.
+
+        Args:
+            org_id: Organisation UUID string.
+            user_id: User UUID string.
+            session_id: Session UUID string.
+            messages: List of message dicts.
+            payload: Value stored on a win (the winner's ``job_id``).
+
+        Returns:
+            A :class:`ContentHashClaim` — ``won=True`` means proceed with
+            ingestion; ``won=False`` means replay ``winner`` instead.
+        """
+        content_hash = self.compute_content_hash(org_id, user_id, session_id, messages)
+        cache_key = self._content_prefix + content_hash
+
+        # ``eval`` is typed as returning ``str`` in redis-py's stubs but
+        # returns the script's reply (a two-element list here) at runtime.
+        eval_fn: Any = self._redis.eval
+        raw: Any = await eval_fn(
+            _CLAIM_CONTENT_HASH_LUA, 1, cache_key, payload, self._content_ttl
+        )
+        won_flag, winner = raw[0], raw[1]
+        won = won_flag == 1 or won_flag == b"1" or won_flag == "1"
+        if isinstance(winner, bytes):
+            winner = winner.decode("utf-8")
+
+        if won:
+            logger.debug(
+                "idempotency.content_hash_claim_won",
+                extra={"content_hash": content_hash[:16] + "..."},
+            )
+        else:
+            logger.info(
+                "idempotency.content_hash_claim_replay",
+                extra={
+                    "org_id": org_id,
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "message_count": len(messages),
+                },
+            )
+        return ContentHashClaim(won=won, winner=winner)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Worker-level idempotency

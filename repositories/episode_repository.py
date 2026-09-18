@@ -14,15 +14,16 @@ Key patterns:
 
 from __future__ import annotations
 
-import base64
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
 import orjson
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.cursor import decode_versioned_cursor, encode_versioned_cursor
+from core.exceptions import CursorExpiredError
 from models.episode import Episode
 
 # ╠ This file contains NO business logic — only query construction.
@@ -58,17 +59,28 @@ class EpisodeRepository:
         Uses raw SQL to include ``organization_id`` and ``project_id``
         (the schema requires them for RLS and project isolation).
 
+        Each message dict MUST carry a server-assigned ``sequence_number``
+        (``MemoryService`` computes ``MAX+1`` under a session row lock);
+        client-supplied values are never accepted at the ingest boundary
+        (the request schema has no such field). The ``or i`` fallback
+        exists only for ad-hoc callers that insert unordered batches.
+
         Args:
             organization_id: Tenant scope (included for RLS enforcement).
             project_id: Project scope (included for project isolation).
             session_id: The parent session's UUID.
             user_id: The creating user's UUID.
             messages: List of message dicts, each containing ``role``,
-                ``content``, ``metadata``, and optionally ``created_at``.
+                ``content``, ``metadata``, ``sequence_number``, and
+                optionally ``created_at``.
 
         Returns:
             A list of ``Episode`` ORM instances with generated fields
             populated (id, sequence_number, timestamps, etc.).
+
+        Raises:
+            sqlalchemy.exc.IntegrityError: On ``(session_id,
+                sequence_number)`` collision — callers retry the request.
         """
         if not messages:
             return []
@@ -172,9 +184,11 @@ class EpisodeRepository:
             cursor_seq, cursor_id = self._decode_cursor(cursor)
             query = query.where(
                 or_(
+                    and_(
+                        Episode.sequence_number == cursor_seq,
+                        Episode.id > cursor_id,
+                    ),
                     Episode.sequence_number > cursor_seq,
-                    Episode.sequence_number == cursor_seq,
-                    Episode.id > cursor_id,
                 )
             )
 
@@ -222,11 +236,17 @@ class EpisodeRepository:
 
         if cursor is not None:
             cursor_seq, cursor_id = self._decode_cursor(cursor)
+            # ⚠️ Ordering here is created_at DESC while the cursor is
+            # (sequence_number, id) — keyset filter and order disagree, so
+            # pages can still skip/duplicate when created_at and seq diverge.
+            # Align ORDER BY with the cursor (or vice versa) as follow-up.
             query = query.where(
                 or_(
+                    and_(
+                        Episode.sequence_number == cursor_seq,
+                        Episode.id > cursor_id,
+                    ),
                     Episode.sequence_number > cursor_seq,
-                    Episode.sequence_number == cursor_seq,
-                    Episode.id > cursor_id,
                 )
             )
 
@@ -252,9 +272,16 @@ class EpisodeRepository:
     async def get_next_sequence(self, session_id: UUID) -> int:
         """Get the next available sequence number for a session.
 
-        Uses ``SELECT COALESCE(MAX(sequence_number), -1) + 1``, which is
-        safe within a transaction because the increment and subsequent
-        INSERT share the same snapshot.
+        Canonical ``MAX(sequence_number) + 1`` helper (over live rows) —
+        the single implementation also used by
+        ``SessionRepository.next_sequence_number``.
+
+        NOT race-safe on its own: callers must hold the parent Session
+        row lock (``SELECT ... FOR UPDATE``) across this call and the
+        subsequent INSERT.  The partial unique index
+        ``uq_episodes_session_sequence`` is the final guard — a lost race
+        surfaces as ``IntegrityError``, which callers convert to a
+        retryable ``ConflictError``.
 
         Args:
             session_id: The session's UUID.
@@ -533,10 +560,11 @@ class EpisodeRepository:
 
     @staticmethod
     def _encode_cursor(sequence_number: int, episode_id: UUID) -> str:
-        """Encode ``(sequence_number, episode_id)`` into an opaque base64 cursor.
+        """Encode ``(sequence_number, episode_id)`` into an opaque cursor.
 
-        Format: ``{sequence_number}|{episode_id_hex}``, then base64-encoded
-        with padding stripped.
+        Format: versioned envelope ``v1:{sequence_number}|{episode_id_hex}``,
+        then base64-encoded with padding stripped. Pre-versioning cursors
+        are rejected on decode (BREAKING — restart pagination).
 
         Args:
             sequence_number: The sequence number of the last item.
@@ -545,8 +573,7 @@ class EpisodeRepository:
         Returns:
             URL-safe base64 string.
         """
-        raw = f"{sequence_number}|{episode_id.hex}"
-        return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+        return encode_versioned_cursor(f"{sequence_number}|{episode_id.hex}")
 
     @staticmethod
     def _decode_cursor(cursor: str) -> tuple[int, UUID]:
@@ -559,15 +586,14 @@ class EpisodeRepository:
             Tuple of ``(sequence_number, episode_id)``.
 
         Raises:
-            ValueError: If the cursor is malformed.
+            CursorExpiredError: If the cursor is malformed or versioned
+                differently (HTTP 400 ``cursor_expired``).
         """
         try:
-            # Restore padding stripped by rstrip("=")
-            padding = 4 - len(cursor) % 4
-            if padding != 4:
-                cursor += "=" * padding
-            raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+            raw = decode_versioned_cursor(cursor)
             seq_str, id_hex = raw.split("|", 1)
             return int(seq_str), UUID(hex=id_hex)
         except (ValueError, TypeError) as e:
-            raise ValueError(f"Invalid episode cursor: {e}") from e
+            # CursorExpiredError subclasses ValueError, so version and
+            # format failures land here with the repo-specific prefix.
+            raise CursorExpiredError(f"Invalid episode cursor: {e}") from e
