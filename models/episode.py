@@ -34,8 +34,9 @@ class Episode(TimestampMixin, Base):
         role: Message role — one of ``user``, ``assistant``, ``system``, ``tool``.
         content: Message body text. Max length 65536 characters.
         metadata: Arbitrary JSONB metadata.
-        embedding: pgvector embedding (placeholder — migrated to ``vector(1536)``
-            via Alembic). Nullable; populated after enrichment.
+        embedding: pgvector embedding (placeholder — ``vector(768)``
+            frozen canonical dim via Alembic migration 0054). Nullable;
+            populated after enrichment.
         token_count: Approximate token count for the message.
         sequence_number: Order within the session (0-based).
         enrichment_status: Bitmask tracking which enrichment passes have been
@@ -82,8 +83,8 @@ class Episode(TimestampMixin, Base):
         server_default="{}",
     )
     # note: Embedding uses Text as a stand-in type because pgvector
-    # may not be installed in the dev/test environment. The actual DDL must
-    # use ``vector(1536)`` — the Alembic migration will handle this.
+    # may not be installed in the dev/test environment. The actual DDL is
+    # ``vector(768)`` (frozen canonical dim — see migration 0054).
     embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
     token_count: Mapped[int] = mapped_column(
         Integer,

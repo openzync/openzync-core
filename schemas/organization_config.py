@@ -148,13 +148,18 @@ class OrgConfigBase(BaseModel):
     )
     embedding_model: str | None = Field(
         default=None,
-        description="Embedding model name/tag.",
+        description="DEPRECATED (frozen): embedding model is fixed to the "
+        "canonical model (snowflake-arctic-embed-m-v1.5, 768 dims). "
+        "Setting this via PATCH/PUT is rejected with 400 embedding_frozen. "
+        "Read-only legacy value.",
     )
     embedding_dim: int | None = Field(
         default=None,
         ge=64,
         le=4096,
-        description="Output dimensionality of the embedding model.",
+        description="DEPRECATED (frozen): embedding dimension is fixed to "
+        "768. Setting this via PATCH/PUT is rejected with 400 "
+        "embedding_frozen. Read-only legacy value.",
     )
     embedding_api_key: str | None = Field(
         default=None,
@@ -459,8 +464,16 @@ class UpdateOrgConfigRequest(BaseModel):
     )
     prompt_caching: PromptCachingOrgConfig | None = None
     embedding_backend: str | None = None
-    embedding_model: str | None = None
-    embedding_dim: int | None = Field(default=None, ge=64, le=4096)
+    embedding_model: str | None = Field(
+        default=None,
+        description="DEPRECATED (frozen): rejected with 400 embedding_frozen.",
+    )
+    embedding_dim: int | None = Field(
+        default=None,
+        ge=64,
+        le=4096,
+        description="DEPRECATED (frozen): rejected with 400 embedding_frozen.",
+    )
     embedding_api_key: str | None = None
     embedding_openai_like_base_url: str | None = None
     graph_backend: str | None = Field(

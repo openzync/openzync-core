@@ -303,7 +303,10 @@ class HybridRetriever:
     async def _embed_query(self, query: str) -> list[float]:
         """Generate an embedding vector for a search query.
 
-        Uses the configured LLM backend's embedding model.
+        Embeds with the frozen canonical model
+        (``core.embeddings.resolve_embed_model``) and rejects any vector
+        that is not exactly ``CANONICAL_EMBED_DIM`` — fail loud, never
+        search with a wrong-dim vector.
 
         Args:
             query: Natural-language query text.
@@ -312,10 +315,14 @@ class HybridRetriever:
             A list of floats representing the query embedding.
 
         Raises:
-            SearchLegFailedError: If embedding generation fails or returns
-                no embeddings.
+            SearchLegFailedError: If embedding generation fails, returns
+                no embeddings, or returns a non-canonical-dim vector.
         """
         try:
+            from core.embeddings import (
+                resolve_embed_model,
+                validate_embedding_dim,
+            )
             from core.llm import resolve_backend
 
             org_config_dict = (
@@ -328,13 +335,17 @@ class HybridRetriever:
                 org_config=org_config_dict,
                 mode="embedding",
             )
-            response = await backend.embed(
-                [query],
-                model=self._org_config.embedding_model if self._org_config else None,
+            model = resolve_embed_model(
+                self._org_config.embedding_backend if self._org_config else None
             )
+            response = await backend.embed([query], model=model)
             if response.embeddings and len(response.embeddings) > 0:
-                self._last_query_embedding_dim = len(response.embeddings[0])
-                return response.embeddings[0]
+                query_embedding = response.embeddings[0]
+                validate_embedding_dim(
+                    query_embedding, source="hybrid_retriever._embed_query"
+                )
+                self._last_query_embedding_dim = len(query_embedding)
+                return query_embedding
             raise SearchLegFailedError(
                 leg_name="embedding",
                 original_error="Embedding response contained no embeddings.",
@@ -362,8 +373,11 @@ class HybridRetriever:
         embedding.  The embedding is generated once upstream in
         ``hybrid_search`` and shared across both vector legs.
 
-        The ``embedding`` column is ``vector(768)`` — cast via
-        :class:`pgvector.sqlalchemy.Vector` at query time.
+        The ``embedding`` column is ``VECTOR(768)`` — the frozen
+        canonical dimension (``core.embeddings.CANONICAL_EMBED_DIM``).
+        The cast is a no-op type assertion that keeps the SQLAlchemy
+        ``<=>`` operator typed; the query vector is validated to exactly
+        768 dims upstream in ``_embed_query``.
 
         Args:
             query_embedding: Precomputed embedding vector for the query.
@@ -374,19 +388,15 @@ class HybridRetriever:
             A list of result dicts with ``id``, ``content``, ``role``,
             ``score``, and ``created_at`` keys.
         """
-        dim: int = (
-            self._org_config.embedding_dim
-            if self._org_config and self._org_config.embedding_dim
-            else 1536
-        )
-
         from pgvector.sqlalchemy import (
             Vector,  # lazy: numpy CPU compat; caught by outer try/except
         )
 
+        from core.embeddings import CANONICAL_EMBED_DIM
+
         vector_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
-        embedding_col = cast(Episode.embedding, Vector(dim))
-        query_literal = literal_column(f"'{vector_str}'::vector({dim})")
+        embedding_col = cast(Episode.embedding, Vector(CANONICAL_EMBED_DIM))
+        query_literal = literal_column(f"'{vector_str}'::vector({CANONICAL_EMBED_DIM})")
 
         stmt = (
             select(
@@ -406,7 +416,7 @@ class HybridRetriever:
                 Episode.project_id == project_id,
                 Episode.is_deleted.is_(False),
                 Episode.embedding.isnot(None),
-                func.cardinality(Episode.embedding) > 0,
+                func.vector_dims(Episode.embedding) > 0,
             )
             .order_by(text("score DESC"))
             .limit(limit)
@@ -448,22 +458,20 @@ class HybridRetriever:
         """
         effective_time = query_time or datetime.now(UTC)
 
-        # Resolve embedding dimension from org config so the runtime
-        # ``::vector(N)`` cast matches the model that produced the data.
-        # Defaults to 1536 (text-embedding-3-small) when not configured.
-        dim: int = (
-            self._org_config.embedding_dim
-            if self._org_config and self._org_config.embedding_dim
-            else 1536
-        )
-
+        # Frozen canonical dim — the ``facts.embedding`` column is
+        # ``VECTOR(768)`` and the query vector is validated to exactly
+        # 768 dims upstream in ``_embed_query``.
         from pgvector.sqlalchemy import (
             Vector,  # lazy: numpy CPU compat; caught by outer try/except
         )
 
+        from core.embeddings import CANONICAL_EMBED_DIM
+
         vector_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
-        embedding_col = cast(Fact.embedding, Vector(dim))
-        query_literal = literal_column(f"'{vector_str}'::vector({dim})")
+        embedding_col = cast(Fact.embedding, Vector(CANONICAL_EMBED_DIM))
+        query_literal = literal_column(
+            f"'{vector_str}'::vector({CANONICAL_EMBED_DIM})"
+        )
 
         stmt = (
             select(
@@ -493,7 +501,7 @@ class HybridRetriever:
                 Fact.valid_from.is_(None) | (Fact.valid_from <= effective_time),
                 Fact.valid_to.is_(None) | (Fact.valid_to > effective_time),
                 Fact.embedding.isnot(None),
-                func.cardinality(Fact.embedding) > 0,
+                func.vector_dims(Fact.embedding) > 0,
             )
             .order_by(text("score DESC"))
             .limit(limit)

@@ -49,8 +49,8 @@ class Fact(TimestampMixin, Base):
         superseded_by_fact_id: ID of the fact that superseded/invalidated
             this one; NULL for retractions/expiry. Self-FK preserves
             lineage when the successor is deleted.
-        embedding: pgvector embedding placeholder (migrated to
-            ``vector(1536)`` via Alembic).
+        embedding: pgvector embedding placeholder (``vector(768)`` frozen
+            canonical dim via Alembic migration 0054).
         embedded_at: Timestamp of the last embedding attempt. Set on success
             and on permanent failure (dimension mismatch); ``NULL`` means the
             fact was never attempted and is eligible for reconcile repair.
@@ -137,8 +137,9 @@ class Fact(TimestampMixin, Base):
             "successor is deleted."
         ),
     )
-    # note: Text is a stand-in for ``vector(1536)``. The Alembic
-    # migration will alter this column when pgvector is available.
+    # note: Text is a stand-in for ``vector(768)`` (frozen canonical dim —
+    # see migration 0054). The Alembic migration alters this column when
+    # pgvector is available.
     embedding: Mapped[list[float] | None] = mapped_column(
         ARRAY(Float), nullable=True, default=None,
     )

@@ -1,0 +1,1 @@
+Fix FalkorDB v4 dialect (`<>` comparisons, v4 index DDL, loud schema bootstrap with a versioned re-run guard) and fail fast with a named error when OpenAI/Azure/OpenAI-like chat returns no choices instead of indexing into an empty list.

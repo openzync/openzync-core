@@ -196,6 +196,27 @@ class PayloadTooLargeError(AppError):
         super().__init__(message=message, detail=detail)
 
 
+class EmbeddingFrozenError(AppError):
+    """Per-org embedding model/dimension override rejected — freeze enforced.
+
+    Embeddings are frozen to the canonical model/dimension (see
+    ``core.embeddings`` and migration 0054). ``embedding_model`` and
+    ``embedding_dim`` can no longer be set via org config; only
+    ``embedding_backend`` plus provider routing fields (endpoints/keys)
+    remain configurable.
+    """
+
+    status_code: int = 400
+    code: str = "embedding_frozen"
+
+    def __init__(
+        self,
+        message: str = "Embedding model and dimension are frozen.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
 class EntityNotFoundError(AppError):
     """Requested graph entity node does not exist."""
 
@@ -520,6 +541,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         PIIUnavailableError: 503,
         LLMConfigurationError: 502,
         PayloadTooLargeError: 413,
+        EmbeddingFrozenError: 400,
         EntityNotFoundError: 404,
         EdgeNotFoundError: 404,
         EpisodeNotFoundError: 404,

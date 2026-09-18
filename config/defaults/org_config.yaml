@@ -19,8 +19,10 @@ llm_temperature: 0.0
 llm_max_tokens: 4096
 
 embedding_backend: openai
-embedding_model: text-embedding-3-small
-embedding_dim: 1536
+# NOTE: embedding model/dimension are frozen platform-wide
+# (snowflake-arctic-embed-m-v1.5, 768 dims — see core/embeddings.py).
+# embedding_model / embedding_dim must NOT be seeded here: PATCH/PUT
+# rejects them with 400 embedding_frozen.
 
 graph_backend: falkordb
 graph_search_type: hybrid

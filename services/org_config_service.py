@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+from core.exceptions import EmbeddingFrozenError
 from core.openbao import OpenBaoClient
 from core.org_config import (
     get_org_config,
@@ -27,6 +28,13 @@ from schemas.organization_config import (
     OrgConfigBase,
     OrgConfigResponse,
     UpdateOrgConfigRequest,
+)
+
+#: Per-org embedding fields frozen to the canonical model/dimension
+#: (``core.embeddings``). Setting any of these via the API is rejected
+#: with ``EmbeddingFrozenError`` (400 ``embedding_frozen``).
+FROZEN_EMBEDDING_FIELDS: frozenset[str] = frozenset(
+    {"embedding_model", "embedding_dim"}
 )
 
 
@@ -79,13 +87,38 @@ class OrgConfigService:
         set to ``None`` are removed from the stored config.  The cache is
         invalidated after the update.
 
+        ``embedding_model`` / ``embedding_dim`` are frozen to the
+        canonical model/dimension — providing either raises
+        :class:`EmbeddingFrozenError` (400 ``embedding_frozen``).
+
         Args:
             org_id: The organization UUID.
             payload: The fields to update.
 
         Returns:
             The freshly stored config after the update.
+
+        Raises:
+            EmbeddingFrozenError: If *payload* sets a frozen embedding field.
         """
+        from core.embeddings import CANONICAL_EMBED_DIM, CANONICAL_EMBED_MODEL
+
+        provided = set(payload.model_dump(exclude_unset=True))
+        frozen = FROZEN_EMBEDDING_FIELDS & provided
+        if frozen:
+            raise EmbeddingFrozenError(
+                message=(
+                    "Embedding model and dimension are frozen and cannot be "
+                    f"configured per-org: {', '.join(sorted(frozen))}. "
+                    f"Canonical model is {CANONICAL_EMBED_MODEL} "
+                    f"({CANONICAL_EMBED_DIM} dims)."
+                ),
+                detail={
+                    "fields": sorted(frozen),
+                    "canonical_model": CANONICAL_EMBED_MODEL,
+                    "canonical_dim": CANONICAL_EMBED_DIM,
+                },
+            )
         return await core_update_org_config(
             org_id,
             update_data=payload,
