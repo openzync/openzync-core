@@ -23,9 +23,11 @@ Bitmask:
     (``ENRICHMENT_BLOB_TEXT``) on success — including unsupported MIME
     types (dispatch returns ``None``: nothing to extract, work complete).
 
-Fail-closed: corrupt input, missing extractor libraries, a missing PII
-policy, and redaction failures all propagate (no bit, no commit) so
-``@with_retry`` retries.  Nothing is ever stored unredacted.
+Fail-closed: corrupt input, a missing PII policy, and redaction failures
+propagate (no bit, no commit) so ``@with_retry`` retries. Missing
+extractor libraries (``ImportError``) fail fast via ``is_retryable`` —
+a deployment problem retries cannot heal. Nothing is ever stored
+unredacted.
 """
 
 from __future__ import annotations
@@ -364,7 +366,19 @@ async def _redact_extracted_text(
 # ── Main task ────────────────────────────────────────────────────────────────
 
 
-@with_retry(max_retries=2, base_delay_s=2.0)
+def _is_retryable(exc: BaseException) -> bool:
+    """Retry everything except a missing optional dependency.
+
+    ``ImportError`` (PyMuPDF, python-docx, pytesseract/Pillow) is a
+    deployment problem — retrying burns ``@with_retry`` attempts for a
+    failure that cannot self-heal. It fails fast to the outer handler,
+    which logs the failure site and re-raises. Corrupt input, download
+    failures, and PII outages stay retryable (transient or self-healing).
+    """
+    return not isinstance(exc, ImportError)
+
+
+@with_retry(max_retries=2, base_delay_s=2.0, is_retryable=_is_retryable)
 async def extract_blob_text(
     ctx: object,
     *,
@@ -403,8 +417,10 @@ async def extract_blob_text(
     Raises:
         PIIUnavailableError: If the PII policy cannot be fetched or
             redaction fails — nothing is stored, nothing commits.
-        Exception: On corrupt input, missing extractor libraries, or
-            download failure — re-raised after retry exhaustion.
+        ImportError: If an extractor library is missing — fails fast
+            (``is_retryable`` excludes it), re-raised without retries.
+        Exception: On corrupt input or download failure — re-raised
+            after retry exhaustion.
     """
     if trace_id:
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
@@ -519,11 +535,16 @@ async def extract_blob_text(
             log.info("extract_blob_text.complete")
 
     except Exception:
+        # Failure-site log: blob_id + mime identify the poison input without
+        # opening the payload; storage_key locates the S3 object for replay.
         log.exception(
             "extract_blob_text.failed",
             blob_id=blob_id,
             org_id=org_id,
             episode_id=episode_id,
+            mime_type=mime_type,
+            file_name=file_name,
+            storage_key=storage_key,
         )
         raise
     finally:

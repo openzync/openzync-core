@@ -91,7 +91,15 @@ class EpisodeRepository:
 
         for i, msg in enumerate(messages):
             episode_id = uuid4()
-            seq = msg.get("sequence_number", i)
+            # Explicit None (or a non-int) falls back to the loop index —
+            # ``dict.get`` alone would pass NULL through and violate NOT NULL.
+            # ``isinstance`` (not ``or``) preserves a valid 0 sequence number.
+            _raw_seq = msg.get("sequence_number", i)
+            seq = (
+                _raw_seq
+                if isinstance(_raw_seq, int) and not isinstance(_raw_seq, bool)
+                else i
+            )
 
             params[f"id_{i}"] = episode_id
             params[f"org_id_{i}"] = organization_id
@@ -217,7 +225,11 @@ class EpisodeRepository:
         limit: int = 100,
         cursor: str | None = None,
     ) -> tuple[list[Episode], str | None]:
-        """Get paginated episodes for a project, ordered by created_at DESC.
+        """Get paginated episodes for a project, ordered by sequence_number ASC.
+
+        The ``(sequence_number, id)`` keyset cursor matches this ordering
+        (same contract as :meth:`get_by_session_id`) — cross-session
+        sequence numbers interleave, but pagination stays gap-free.
 
         Args:
             project_id: The project's UUID.
@@ -236,10 +248,6 @@ class EpisodeRepository:
 
         if cursor is not None:
             cursor_seq, cursor_id = self._decode_cursor(cursor)
-            # ⚠️ Ordering here is created_at DESC while the cursor is
-            # (sequence_number, id) — keyset filter and order disagree, so
-            # pages can still skip/duplicate when created_at and seq diverge.
-            # Align ORDER BY with the cursor (or vice versa) as follow-up.
             query = query.where(
                 or_(
                     and_(
@@ -251,7 +259,7 @@ class EpisodeRepository:
             )
 
         query = query.order_by(
-            Episode.created_at.desc(), Episode.id.asc()
+            Episode.sequence_number.asc(), Episode.id.asc()
         ).limit(effective_limit)
 
         result = await self._db.execute(query)
@@ -593,7 +601,9 @@ class EpisodeRepository:
             raw = decode_versioned_cursor(cursor)
             seq_str, id_hex = raw.split("|", 1)
             return int(seq_str), UUID(hex=id_hex)
+        except CursorExpiredError:
+            raise
         except (ValueError, TypeError) as e:
-            # CursorExpiredError subclasses ValueError, so version and
-            # format failures land here with the repo-specific prefix.
+            # CursorExpiredError subclasses ValueError, so it is
+            # re-raised above before this generic format-failure handler.
             raise CursorExpiredError(f"Invalid episode cursor: {e}") from e

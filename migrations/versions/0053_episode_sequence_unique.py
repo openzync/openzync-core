@@ -21,6 +21,19 @@ colliding numbers have no canonical original order beyond the bump, and
 re-colliding rows would violate nothing but reintroduce the bug.  The
 downgrade is therefore index-only (documented, not silent).
 
+Runbook:
+- Offline migration — schedule a maintenance window. The renumbering
+  UPDATE rewrites colliding live rows; concurrent ingests into affected
+  sessions can hit ``uq_episodes_session_sequence`` violations mid-run
+  (clients retry on 409) or claim sequence numbers the bump then moves.
+- No LOCK TABLE — the script takes no explicit table lock; it relies on
+  MVCC snapshot semantics for the CTE. Keep the window short instead.
+- Renumbering is irreversible and leaves gaps: bumped duplicates land at
+  ``MAX+1, MAX+2, ...`` above every live number, so the per-session
+  sequence space stays dense below the old MAX but sparse above it —
+  expected, not corruption. Downgrade drops the index only and never
+  restores the original numbers.
+
 Revision ID: 0053
 Revises: 0052
 Create Date: 2026-09-18

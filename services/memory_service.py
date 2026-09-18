@@ -80,6 +80,39 @@ ARQ_QUEUE = "high"
 """ARQ queue name for ingestion-related background tasks."""
 
 
+def _encode_claim_payload(job_id: UUID, episode_count: int) -> str:
+    """Encode the dedup claim payload as ``"{job_id}:{episode_count}"``.
+
+    The count travels with the claim so a replay returns the winner's
+    ``episode_count`` instead of recomputing it from the loser's request.
+    """
+    return f"{job_id}:{episode_count}"
+
+
+def _decode_claim_payload(
+    payload: str, *, fallback_count: int
+) -> tuple[str, int]:
+    """Split a claim payload into ``(job_id, episode_count)``.
+
+    Legacy payloads stored a bare ``job_id`` (no ``:count`` suffix) —
+    those fall back to ``fallback_count``.
+
+    Args:
+        payload: The stored claim value (winner's payload on replay).
+        fallback_count: Count to use when the payload carries none.
+
+    Returns:
+        Tuple of ``(job_id, episode_count)``.
+    """
+    job_id, sep, count_str = payload.partition(":")
+    if not sep:
+        return payload, fallback_count
+    try:
+        return job_id, int(count_str)
+    except ValueError:
+        return job_id, fallback_count
+
+
 class MemoryService:
     """Service layer for message ingestion and memory management.
 
@@ -154,15 +187,16 @@ class MemoryService:
            REPLAY returns the winner's ``job_id`` without inserting) then
            the ``ingest_dedup`` unique claim (PostgreSQL, the authoritative
            arbiter inside this transaction).
-        6. Lock the session row (``SELECT ... FOR UPDATE``) and take
-           ``MAX(sequence_number) + 1`` for ordered insertion.
-        7. Build episode dicts from validated messages (server-assigned
-           ``sequence_number`` — the request schema carries none).
-        8. PII detection & redaction, fail-closed (OpenBao only; fetch or
-           redaction failure raises ``PIIUnavailableError`` → 503).
-           Block-mode ``ValidationError`` downgrades to mask.
-        9. Batch-insert episodes into PostgreSQL (``IntegrityError`` on a
-           lost seq race → ``ConflictError`` for client retry).
+        6. Build episode dicts from validated messages (server-assigned
+            ``sequence_number`` — the request schema carries none).
+        7. PII detection & redaction, fail-closed (OpenBao only; fetch or
+            redaction failure raises ``PIIUnavailableError`` → 503).
+            Runs BEFORE the row lock — network I/O never holds the lock.
+            Block-mode ``ValidationError`` downgrades to mask.
+        8. Lock the session row (``SELECT ... FOR UPDATE``), take
+            ``MAX(sequence_number) + 1``, assign numbers, and batch-insert
+            episodes into PostgreSQL (``IntegrityError`` on a lost seq
+            race → ``ConflictError`` for client retry).
         10. Upload blobs to S3 and persist blob records.
         11. Enqueue ARQ enrichment tasks (enrich_episode, embed_episode,
             link_entities_to_episode) + blob text extraction tasks.
@@ -257,9 +291,12 @@ class MemoryService:
                     "project_id": str(project_id),
                 },
             )
+            winner_job_id, winner_count = _decode_claim_payload(
+                existing_job_id, fallback_count=len(messages)
+            )
             return IngestMemoryResponse(
-                job_id=existing_job_id,
-                episode_count=len(messages),
+                job_id=winner_job_id,
+                episode_count=winner_count,
                 status="accepted",
                 message="Content already ingested; returning existing job_id",
             )
@@ -280,7 +317,7 @@ class MemoryService:
             str(created_by),
             str(session_id),
             msgs,
-            payload=str(job_id),
+            payload=_encode_claim_payload(job_id, len(messages)),
         )
         if not claim.won:
             logger.info(
@@ -291,9 +328,12 @@ class MemoryService:
                     "project_id": str(project_id),
                 },
             )
+            winner_job_id, winner_count = _decode_claim_payload(
+                claim.winner, fallback_count=len(messages)
+            )
             return IngestMemoryResponse(
-                job_id=claim.winner,
-                episode_count=len(messages),
+                job_id=winner_job_id,
+                episode_count=winner_count,
                 status="accepted",
                 message="Content already ingested; returning existing job_id",
             )
@@ -316,6 +356,10 @@ class MemoryService:
                     "project_id": str(project_id),
                 },
             )
+            # The DB row stores only the winner's job_id (no count) — but
+            # the losing claim lost on the same content_hash, which covers
+            # the full message list, so cardinalities are identical and
+            # len(messages) IS the winner's episode_count here.
             return IngestMemoryResponse(
                 job_id=str(prior_job_id) if prior_job_id else None,
                 episode_count=len(messages),
@@ -323,26 +367,23 @@ class MemoryService:
                 message="Content already ingested; returning existing job_id",
             )
 
-        # ── Step 5: Lock the session row, then take the next seq ─────────
-        # The FOR UPDATE lock serializes concurrent ingests into this
-        # session; it is held until the commit below because every step
-        # shares this request-scoped session/transaction.
-        await self._session_repo.get_by_id_for_update(session_id)
-        start_seq = await self._episode_repo.get_next_sequence(session_id)
-
-        # ── Step 6: Build episode dicts (server-assigned seq) ─────────────
+        # ── Step 5: Build episode dicts (no sequence numbers yet) ─────────
+        # Sequence numbers are assigned AFTER the row lock below, so the
+        # lock is held only across MAX+1 + INSERT — never across network I/O.
         episode_dicts = [
             {
                 "role": msg.role,
                 "content": msg.content,
                 "metadata": msg.metadata,
                 "created_at": msg.created_at,
-                "sequence_number": start_seq + i,
             }
-            for i, msg in enumerate(messages)
+            for msg in messages
         ]
 
-        # ── Step 7: PII detection & redaction (fail-closed) ───────────────
+        # ── Step 6: PII detection & redaction (fail-closed, BEFORE lock) ──
+        # OpenBao is network I/O with unbounded latency — fetching it
+        # while holding SELECT ... FOR UPDATE would serialize every
+        # concurrent ingest behind the slowest PII fetch.
         pii_config_raw = await self._get_org_pii_config(org_id)
         pii_mode = (
             pii_config_raw.get("mode", "mask")
@@ -361,6 +402,16 @@ class MemoryService:
                     org_id=org_id,
                     trace_id=trace_id,
                 )
+
+        # ── Step 7: Lock the session row, assign seq numbers ───────────────
+        # The FOR UPDATE lock serializes concurrent ingests into this
+        # session; it is held only across MAX(sequence_number)+1, seq
+        # assignment, and the batch INSERT below (all local work + one
+        # round-trip — no network I/O under lock).
+        await self._session_repo.get_by_id_for_update(session_id)
+        start_seq = await self._episode_repo.get_next_sequence(session_id)
+        for i, msg_dict in enumerate(episode_dicts):
+            msg_dict["sequence_number"] = start_seq + i
 
         # ── Step 8: Batch-insert episodes ────────────────────────────────
         try:

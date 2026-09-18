@@ -689,7 +689,9 @@ class SessionRepository:
             raw = decode_versioned_cursor(cursor)
             seq_str, id_hex = raw.split("|", 1)
             return int(seq_str), UUID(hex=id_hex)
+        except CursorExpiredError:
+            raise
         except (ValueError, TypeError) as e:
-            # CursorExpiredError subclasses ValueError, so version and
-            # format failures land here with the repo-specific prefix.
+            # CursorExpiredError subclasses ValueError, so it is
+            # re-raised above before this generic format-failure handler.
             raise CursorExpiredError(f"Invalid message cursor: {e}") from e
