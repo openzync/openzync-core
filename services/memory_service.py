@@ -18,6 +18,7 @@ expressions in this file.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -537,19 +538,36 @@ class MemoryService:
         self,
         org_id: UUID,
         project_id: UUID,
+        *,
+        confirm: str,
+        actor_id: UUID,
     ) -> tuple[int, int]:
         """Soft-delete all memory (episodes + facts) for a project.
 
         This is the GDPR / memory-wipe operation for a project. It does
-        **not** delete sessions — only the data within them.
+        **not** delete sessions — only the data within them. The wipe only
+        proceeds when ``confirm`` exactly equals the target project ID;
+        anything else is rejected before any write. A successful wipe is
+        recorded as a destructive-action audit log entry.
 
         Args:
             org_id: The authenticated organization UUID.
             project_id: The project UUID.
+            confirm: Must equal ``str(project_id)`` — proves intent.
+            actor_id: The authenticated user's UUID (audit attribution).
 
         Returns:
             Tuple of ``(episodes_deleted, facts_deleted)`` counts.
+
+        Raises:
+            ValidationError: If ``confirm`` does not match ``project_id``
+                (→ 422, nothing is deleted).
         """
+        if confirm != str(project_id):
+            raise ValidationError(
+                "confirm does not match project_id — memory wipe rejected"
+            )
+
         episodes_deleted = await self._episode_repo.soft_delete_by_project(project_id)
         facts_deleted = await self._fact_repo.soft_delete_by_project(project_id)
 
@@ -558,6 +576,24 @@ class MemoryService:
             extra={
                 "project_id": str(project_id),
                 "org_id": str(org_id),
+                "episodes_deleted": episodes_deleted,
+                "facts_deleted": facts_deleted,
+            },
+        )
+
+        from services.audit_log_service import AuditLogService
+
+        await AuditLogService(self._db).log_action(
+            organization_id=org_id,
+            actor_id=str(actor_id),
+            actor_type="user",
+            action="memory.wipe",
+            resource_type="memory",
+            resource_id=str(project_id),
+            details={
+                "project_id": str(project_id),
+                "confirm": "matched",
+                "timestamp": datetime.now(UTC).isoformat(),
                 "episodes_deleted": episodes_deleted,
                 "facts_deleted": facts_deleted,
             },
