@@ -24,7 +24,9 @@ from typing import Any
 from uuid import UUID
 
 import redis.asyncio
+from pydantic import ValidationError as PydanticValidationError
 
+from core.exceptions import ValidationError as OrgConfigValidationError
 from core.openbao import OpenBaoClient
 from core.openbao_exceptions import OpenBaoConnectionError
 from schemas.organization_config import (
@@ -43,6 +45,27 @@ CACHE_KEY_PREFIX: str = "org_config"
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
+
+def _invalid_field_names(exc: PydanticValidationError) -> list[str]:
+    """Extract stored field names from a pydantic error — names only.
+
+    ``exc.errors()`` carries the rejected ``input`` values, which may be
+    secrets (API keys, connection strings).  Only the ``loc`` field names
+    are ever surfaced — never values.
+
+    Args:
+        exc: The pydantic ``ValidationError`` from config parsing.
+
+    Returns:
+        Sorted stored field names that failed validation.
+    """
+    fields: set[str] = set()
+    for err in exc.errors():
+        loc = err.get("loc")
+        if loc:
+            fields.add(str(loc[0]))
+    return sorted(fields)
 
 
 async def get_org_config(
@@ -71,6 +94,8 @@ async def get_org_config(
 
     Raises:
         OpenBaoConnectionError: If *bao_client* is ``None``.
+        ValidationError: If the stored config fails schema validation
+            (poisoned field values written before stricter constraints).
     """
     if bao_client is None:
         raise OpenBaoConnectionError("OpenBao client required for org config reads")
@@ -82,7 +107,26 @@ async def get_org_config(
         try:
             cached = await redis.get(cache_key)
             if cached:
-                return OrgConfigBase.model_validate_json(cached)
+                try:
+                    return OrgConfigBase.model_validate_json(cached)
+                except PydanticValidationError as exc:
+                    # Poisoned cache entry — drop it and fall through to
+                    # OpenBao (authoritative).  Field names only, never values.
+                    logger.warning(
+                        "org_config.cache_invalid",
+                        extra={
+                            "org_id": str(org_id),
+                            "fields": _invalid_field_names(exc),
+                        },
+                    )
+                    try:
+                        await redis.delete(cache_key)
+                    except Exception:
+                        logger.error(
+                            "org_config.cache_invalidation_failed",
+                            extra={"org_id": str(org_id)},
+                            exc_info=True,
+                        )
         except Exception:
             logger.error(
                 "org_config.cache_read_failed",
@@ -105,12 +149,38 @@ async def get_org_config(
         # (postgres removed in v1.1.0 → 410 Gone).
         if not raw.get("graph_backend"):
             raw = {**raw, "graph_backend": "falkordb"}
-        org_config = OrgConfigBase(**raw)
+        try:
+            org_config = OrgConfigBase(**raw)
+        except PydanticValidationError as exc:
+            # Stored config predates a stricter constraint (e.g. an
+            # embedding_backend outside the known provider set).  Surface
+            # a named 422 identifying the field — never a bare-500
+            # pydantic error and never secret values.
+            fields = _invalid_field_names(exc)
+            logger.warning(
+                "org_config.stored_config_invalid",
+                extra={"org_id": str(org_id), "fields": fields},
+            )
+            raise OrgConfigValidationError(
+                message=(
+                    "Stored org config failed validation in field(s): "
+                    f"{', '.join(fields) or 'unknown'}. "
+                    "Fix via PATCH /admin/org/config."
+                ),
+                detail={"org_id": str(org_id), "fields": fields},
+                # Break the chain: the pydantic cause renders rejected
+                # input values (potentially secrets) into its string, so
+                # it must never surface via a future exc_info traceback
+                # log.  Field names are already captured above and in
+                # the raised detail — nothing is lost.
+            ) from None
 
     # 3. Write to cache (best-effort)
     if not skip_cache and redis is not None:
         try:
-            await redis.setex(cache_key, ORG_CONFIG_CACHE_TTL, org_config.model_dump_json())
+            await redis.setex(
+                cache_key, ORG_CONFIG_CACHE_TTL, org_config.model_dump_json()
+            )
         except Exception:
             logger.error(
                 "org_config.cache_write_failed",
@@ -177,7 +247,9 @@ async def update_org_config(
             )
 
     # 5. Re-read from OpenBao (cache is cold — forces fresh read)
-    return await get_org_config(org_id, redis=redis, bao_client=bao_client, skip_cache=True)
+    return await get_org_config(
+        org_id, redis=redis, bao_client=bao_client, skip_cache=True
+    )
 
 
 def build_cache_key(org_id: UUID) -> str:

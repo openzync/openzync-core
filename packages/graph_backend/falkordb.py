@@ -58,17 +58,26 @@ MAX_TRAVERSAL_DEPTH: int = 5
 
 # ── Schema bootstrap queries ───────────────────────────────────────────────
 
+_SCHEMA_VERSION: int = 2
+"""Schema bootstrap version.
+
+Bumped to 2 when the Neo4j-5 ``RANGE``/``FULLTEXT`` DDL was replaced with
+FalkorDB v4 ``CREATE INDEX ON`` + ``db.idx.fulltext.createNodeIndex``.
+Tenants marked with an older version re-run bootstrap exactly once.
+"""
+
 _DEFINE_QUERIES: list[str] = [
-    # Range index for entity upsert (MERGE on name)
-    "CREATE RANGE INDEX FOR (n:Entity) ON (n.name);",
-    # Full-text BM25 index for entity name + summary search
-    "CREATE FULLTEXT INDEX FOR (n:Entity) ON (n.name, n.summary) OPTIONS {language: 'english'};",
-    # Range index for episode stub lookup
-    "CREATE RANGE INDEX FOR (n:Episode) ON (n.id);",
-    # Range index for session stub lookup
-    "CREATE RANGE INDEX FOR (n:Session) ON (n.id);",
-    # Range index for observation upsert (MERGE on subject_entity_id + observation_type)
-    "CREATE RANGE INDEX FOR (n:Observation) ON (n.subject_entity_id, n.observation_type);",
+    # Exact-match index for entity upsert (MERGE on name).
+    "CREATE INDEX ON :Entity(name)",
+    # Full-text BM25 index for entity name + summary search.
+    "CALL db.idx.fulltext.createNodeIndex('Entity', 'name', 'summary')",
+    # Exact-match index for episode stub lookup.
+    "CREATE INDEX ON :Episode(id)",
+    # Exact-match index for session stub lookup.
+    "CREATE INDEX ON :Session(id)",
+    # Exact-match index for observation upsert
+    # (MERGE on subject_entity_id + observation_type).
+    "CREATE INDEX ON :Observation(subject_entity_id,observation_type)",
 ]
 
 # ── Pagination helpers ────────────────────────────────────────────────────
@@ -155,8 +164,9 @@ class FalkorGraphBackend(GraphBackend):
     ) -> None:
         self._client = client
         self._max_depth = min(max_traversal_depth, MAX_TRAVERSAL_DEPTH)
-        # Per-graph-key flag to run index bootstrap only once per tenant.
-        self._schema_ensured: dict[str, bool] = {}
+        # Per-graph-key bootstrap version; tenants below _SCHEMA_VERSION
+        # re-run _ensure_schema exactly once (one-shot upgrade guard).
+        self._schema_ensured: dict[str, int] = {}
 
     # ── Internal Helpers ──────────────────────────────────────────────────
 
@@ -171,32 +181,50 @@ class FalkorGraphBackend(GraphBackend):
         key = f"openzync_{org_id}_{project_id}"
         return self._client.select_graph(key)
 
-    async def _ensure_schema(self, graph) -> None:
-        """Idempotently create FalkorDB indexes on a tenant graph.
+    async def _ensure_schema(self, graph: Any, key: str) -> None:
+        """Create FalkorDB indexes for one tenant graph, once per version.
 
-        FalkorDB returns an "already exists" message for duplicate index
-        creation rather than raising an error, so this is safe to call
-        multiple times.
+        Runs every statement in :data:`_DEFINE_QUERIES`. A per-statement
+        "already exists" error is tolerated (idempotent re-run); any other
+        error raises — schema bootstrap must never fail silently, or every
+        later query silently degrades to a full label scan.
+
+        On success records :data:`_SCHEMA_VERSION` for ``key``, so a fixed
+        bootstrap re-executes exactly once per tenant after an upgrade.
+
+        Args:
+            graph: The per-tenant FalkorDB graph handle.
+            key: Tenant graph key (``openzync_{org_id}_{project_id}``).
+
+        Raises:
+            ExternalServiceError: If any index statement fails for a reason
+                other than the index already existing.
         """
-        try:
-            for q in _DEFINE_QUERIES:
-                await graph.query(q)
-        except Exception as exc:
-            err_str = str(exc).lower()
-            if "already exists" in err_str:
-                logger.info(
-                    "falkordb_graph.schema_already_exists",
-                    extra={"graph_key": graph.name},
+        for query in _DEFINE_QUERIES:
+            try:
+                await graph.query(query)
+            except Exception as exc:
+                if "already exists" in str(exc).lower():
+                    logger.debug(
+                        "falkordb_graph.schema_index_exists",
+                        extra={"graph_key": key, "query": query},
+                    )
+                    continue
+                logger.error(
+                    "falkordb_graph.schema_bootstrap_failed",
+                    extra={
+                        "error": str(exc),
+                        "error_type": type(exc).__name__,
+                        "graph_key": key,
+                        "query": query,
+                    },
                 )
-                return
-            logger.warning(
-                "falkordb_graph.schema_bootstrap_failed",
-                extra={
-                    "error": str(exc),
-                    "error_type": type(exc).__name__,
-                    "graph_key": graph.name,
-                },
-            )
+                raise ExternalServiceError(
+                    message=f"FalkorDB schema bootstrap failed: {exc}",
+                    detail={"graph_key": key, "query": query},
+                ) from exc
+        self._schema_ensured[key] = _SCHEMA_VERSION
+        logger.info("falkordb_graph.schema_ensured", extra={"graph_key": key})
 
     @staticmethod
     def _sanitize_edge_type(name: str) -> str:
@@ -343,11 +371,17 @@ class FalkorGraphBackend(GraphBackend):
         """
         return {
             "id": str(row[_O_ID]) if row[_O_ID] else "",
-            "organization_id": str(row[_O_ORG_ID]) if len(row) > _O_ORG_ID and row[_O_ORG_ID] else "",
-            "project_id": str(row[_O_PROJECT_ID]) if len(row) > _O_PROJECT_ID and row[_O_PROJECT_ID] else "",
+            "organization_id": str(row[_O_ORG_ID])
+            if len(row) > _O_ORG_ID and row[_O_ORG_ID]
+            else "",
+            "project_id": str(row[_O_PROJECT_ID])
+            if len(row) > _O_PROJECT_ID and row[_O_PROJECT_ID]
+            else "",
             "subject_entity_id": str(row[_O_SUBJECT_ID]) if row[_O_SUBJECT_ID] else "",
             "related_entity_id": (
-                str(row[_O_RELATED_ID]) if len(row) > _O_RELATED_ID and row[_O_RELATED_ID] else None
+                str(row[_O_RELATED_ID])
+                if len(row) > _O_RELATED_ID and row[_O_RELATED_ID]
+                else None
             ),
             "observation_type": str(row[_O_TYPE]) if row[_O_TYPE] else "",
             "content": str(row[_O_CONTENT]) if row[_O_CONTENT] else "",
@@ -360,15 +394,17 @@ class FalkorGraphBackend(GraphBackend):
             "supporting_relationship_ids": [],
             "valid_from": (
                 row[_O_VALID_FROM].isoformat()
-                if len(row) > _O_VALID_FROM
-                and hasattr(row[_O_VALID_FROM], "isoformat")
-                else str(row[_O_VALID_FROM]) if len(row) > _O_VALID_FROM and row[_O_VALID_FROM] else None
+                if len(row) > _O_VALID_FROM and hasattr(row[_O_VALID_FROM], "isoformat")
+                else str(row[_O_VALID_FROM])
+                if len(row) > _O_VALID_FROM and row[_O_VALID_FROM]
+                else None
             ),
             "valid_to": (
                 row[_O_VALID_TO].isoformat()
-                if len(row) > _O_VALID_TO
-                and hasattr(row[_O_VALID_TO], "isoformat")
-                else str(row[_O_VALID_TO]) if len(row) > _O_VALID_TO and row[_O_VALID_TO] else None
+                if len(row) > _O_VALID_TO and hasattr(row[_O_VALID_TO], "isoformat")
+                else str(row[_O_VALID_TO])
+                if len(row) > _O_VALID_TO and row[_O_VALID_TO]
+                else None
             ),
             "observation_metadata": (
                 FalkorGraphBackend._parse_json_field(row[_O_METADATA])
@@ -377,15 +413,17 @@ class FalkorGraphBackend(GraphBackend):
             ),
             "created_at": (
                 row[_O_CREATED].isoformat()
-                if len(row) > _O_CREATED
-                and hasattr(row[_O_CREATED], "isoformat")
-                else str(row[_O_CREATED]) if len(row) > _O_CREATED and row[_O_CREATED] else None
+                if len(row) > _O_CREATED and hasattr(row[_O_CREATED], "isoformat")
+                else str(row[_O_CREATED])
+                if len(row) > _O_CREATED and row[_O_CREATED]
+                else None
             ),
             "updated_at": (
                 row[_O_UPDATED].isoformat()
-                if len(row) > _O_UPDATED
-                and hasattr(row[_O_UPDATED], "isoformat")
-                else str(row[_O_UPDATED]) if len(row) > _O_UPDATED and row[_O_UPDATED] else None
+                if len(row) > _O_UPDATED and hasattr(row[_O_UPDATED], "isoformat")
+                else str(row[_O_UPDATED])
+                if len(row) > _O_UPDATED and row[_O_UPDATED]
+                else None
             ),
         }
 
@@ -410,9 +448,10 @@ class FalkorGraphBackend(GraphBackend):
             ),
             "created_at": (
                 row[_E_CREATED].isoformat()
-                if len(row) > _E_CREATED
-                and hasattr(row[_E_CREATED], "isoformat")
-                else str(row[_E_CREATED]) if row[_E_CREATED] else None
+                if len(row) > _E_CREATED and hasattr(row[_E_CREATED], "isoformat")
+                else str(row[_E_CREATED])
+                if row[_E_CREATED]
+                else None
             ),
         }
 
@@ -441,21 +480,24 @@ class FalkorGraphBackend(GraphBackend):
             ),
             "valid_from": (
                 row[_R_VALID_FROM].isoformat()
-                if len(row) > _R_VALID_FROM
-                and hasattr(row[_R_VALID_FROM], "isoformat")
-                else str(row[_R_VALID_FROM]) if len(row) > _R_VALID_FROM and row[_R_VALID_FROM] else None
+                if len(row) > _R_VALID_FROM and hasattr(row[_R_VALID_FROM], "isoformat")
+                else str(row[_R_VALID_FROM])
+                if len(row) > _R_VALID_FROM and row[_R_VALID_FROM]
+                else None
             ),
             "valid_to": (
                 row[_R_VALID_TO].isoformat()
-                if len(row) > _R_VALID_TO
-                and hasattr(row[_R_VALID_TO], "isoformat")
-                else str(row[_R_VALID_TO]) if len(row) > _R_VALID_TO and row[_R_VALID_TO] else None
+                if len(row) > _R_VALID_TO and hasattr(row[_R_VALID_TO], "isoformat")
+                else str(row[_R_VALID_TO])
+                if len(row) > _R_VALID_TO and row[_R_VALID_TO]
+                else None
             ),
             "created_at": (
                 row[_R_CREATED].isoformat()
-                if len(row) > _R_CREATED
-                and hasattr(row[_R_CREATED], "isoformat")
-                else str(row[_R_CREATED]) if len(row) > _R_CREATED and row[_R_CREATED] else None
+                if len(row) > _R_CREATED and hasattr(row[_R_CREATED], "isoformat")
+                else str(row[_R_CREATED])
+                if len(row) > _R_CREATED and row[_R_CREATED]
+                else None
             ),
         }
 
@@ -491,9 +533,8 @@ class FalkorGraphBackend(GraphBackend):
             )
 
         key = f"openzync_{org_id}_{project_id}"
-        if not self._schema_ensured.get(key):
-            await self._ensure_schema(graph)
-            self._schema_ensured[key] = True
+        if self._schema_ensured.get(key) != _SCHEMA_VERSION:
+            await self._ensure_schema(graph, key)
 
         name_lower = name.lower().strip()
         summary_val = summary if summary is not None else ""
@@ -515,10 +556,10 @@ class FalkorGraphBackend(GraphBackend):
                     n.updated_at = $now
                 ON MATCH SET
                     n.entity_type = CASE
-                        WHEN n.entity_type = 'Custom' AND $type != 'Custom'
+                        WHEN n.entity_type = 'Custom' AND $type <> 'Custom'
                         THEN $type ELSE n.entity_type
                     END,
-                    n.summary = CASE WHEN $summary != '' THEN $summary ELSE n.summary END,
+                    n.summary = CASE WHEN $summary <> '' THEN $summary ELSE n.summary END,
                     n.updated_at = $now
                 RETURN n.id, n.name, n.entity_type, n.summary, n.attributes, n.created_at
                 """,
@@ -811,7 +852,9 @@ class FalkorGraphBackend(GraphBackend):
             "rel_id": rel_id,
             "org_id": str(org_id),
             "project_id": str(project_id),
-            "properties": orjson.dumps(properties if properties is not None else {}).decode("utf-8"),
+            "properties": orjson.dumps(
+                properties if properties is not None else {}
+            ).decode("utf-8"),
             "confidence": confidence if confidence is not None else 1.0,
             "valid_from": valid_from.isoformat() if valid_from else None,
             "valid_to": valid_to.isoformat() if valid_to else None,
@@ -1654,13 +1697,15 @@ class FalkorGraphBackend(GraphBackend):
                 seen.add(entity_id_str)
 
                 # Add the matched entity itself with distance 0
-                results.append({
-                    "id": entity_id_str,
-                    "name": entity.get("name", ""),
-                    "type": entity.get("type", ""),
-                    "summary": entity.get("summary", ""),
-                    "distance": 0,
-                })
+                results.append(
+                    {
+                        "id": entity_id_str,
+                        "name": entity.get("name", ""),
+                        "type": entity.get("type", ""),
+                        "summary": entity.get("summary", ""),
+                        "distance": 0,
+                    }
+                )
 
                 # BFS up to max_depth
                 try:
@@ -1694,13 +1739,15 @@ class FalkorGraphBackend(GraphBackend):
                     depth = node.get("depth", 1)
                     if node_id and node_id not in seen:
                         seen.add(node_id)
-                        results.append({
-                            "id": node_id,
-                            "name": node.get("name", ""),
-                            "type": node.get("type", ""),
-                            "summary": node.get("summary", ""),
-                            "distance": depth,
-                        })
+                        results.append(
+                            {
+                                "id": node_id,
+                                "name": node.get("name", ""),
+                                "type": node.get("type", ""),
+                                "summary": node.get("summary", ""),
+                                "distance": depth,
+                            }
+                        )
 
             # Sort by distance (closest first), limit to max_results
             results.sort(key=lambda x: x.get("distance", 99))
@@ -1912,13 +1959,17 @@ class FalkorGraphBackend(GraphBackend):
             )
             pairs = []
             for row in result.result_set:
-                pairs.append({
-                    "entity_a_id": str(row[0]) if row[0] else "",
-                    "entity_a_name": str(row[1]) if row[1] else "",
-                    "entity_b_id": str(row[2]) if row[2] else "",
-                    "entity_b_name": str(row[3]) if row[3] else "",
-                    "co_count": int(row[4]) if len(row) > 4 and row[4] is not None else 0,
-                })
+                pairs.append(
+                    {
+                        "entity_a_id": str(row[0]) if row[0] else "",
+                        "entity_a_name": str(row[1]) if row[1] else "",
+                        "entity_b_id": str(row[2]) if row[2] else "",
+                        "entity_b_name": str(row[3]) if row[3] else "",
+                        "co_count": int(row[4])
+                        if len(row) > 4 and row[4] is not None
+                        else 0,
+                    }
+                )
             return pairs
         except Exception as exc:
             logger.error(
@@ -2194,9 +2245,7 @@ class FalkorGraphBackend(GraphBackend):
                 {"ids": all_ids},
             )
             found_ids: list[str] = (
-                list(check_result.result_set[0][0])
-                if check_result.result_set
-                else []
+                list(check_result.result_set[0][0]) if check_result.result_set else []
             )
             missing = [eid for eid in all_ids if eid not in found_ids]
             if missing:
@@ -2298,7 +2347,9 @@ class FalkorGraphBackend(GraphBackend):
                         "now": now_str,
                     },
                 )
-                rewired_count += len(inc_result.result_set) if inc_result.result_set else 0
+                rewired_count += (
+                    len(inc_result.result_set) if inc_result.result_set else 0
+                )
             except Exception as exc:
                 logger.error(
                     "falkordb_graph.merge_entities.incoming_rewire_failed",
@@ -2346,7 +2397,9 @@ class FalkorGraphBackend(GraphBackend):
                         "now": now_str,
                     },
                 )
-                rewired_count += len(out_result.result_set) if out_result.result_set else 0
+                rewired_count += (
+                    len(out_result.result_set) if out_result.result_set else 0
+                )
             except Exception as exc:
                 logger.error(
                     "falkordb_graph.merge_entities.outgoing_rewire_failed",
@@ -2536,9 +2589,7 @@ class FalkorGraphBackend(GraphBackend):
         now_str = datetime.now(UTC).isoformat()
 
         supporting_fact_strs: list[str] = (
-            [str(fid) for fid in supporting_fact_ids]
-            if supporting_fact_ids
-            else []
+            [str(fid) for fid in supporting_fact_ids] if supporting_fact_ids else []
         )
         supporting_rel_strs: list[str] = (
             [str(rid) for rid in supporting_relationship_ids]
@@ -2593,8 +2644,12 @@ class FalkorGraphBackend(GraphBackend):
                     "project_id": str(project_id),
                     "content": content,
                     "confidence": confidence,
-                    "supporting_fact_ids": orjson.dumps(supporting_fact_strs).decode("utf-8"),
-                    "supporting_rel_ids": orjson.dumps(supporting_rel_strs).decode("utf-8"),
+                    "supporting_fact_ids": orjson.dumps(supporting_fact_strs).decode(
+                        "utf-8"
+                    ),
+                    "supporting_rel_ids": orjson.dumps(supporting_rel_strs).decode(
+                        "utf-8"
+                    ),
                     "metadata": orjson.dumps(
                         observation_metadata if observation_metadata is not None else {}
                     ).decode("utf-8"),

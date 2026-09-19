@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 __all__ = [
     "BlobMetadata",
     "BlobResponse",
+    "DeleteMemoryConfirm",
     "DeleteMemoryResponse",
     "IngestMemoryRequest",
     "IngestMemoryResponse",
@@ -195,6 +196,22 @@ class BlobResponse(BaseModel):
     blob_index: int = 0
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DeleteMemoryConfirm(BaseModel):
+    """Confirm body for ``DELETE /v1/projects/{project_id}/memory``.
+
+    The destructive wipe only proceeds when ``confirm`` exactly equals the
+    path ``project_id`` — any other value is rejected with 422.
+
+    Attributes:
+        confirm: The target project ID, echoed back to prove intent.
+    """
+
+    confirm: str = Field(
+        ...,
+        description="Must equal the path project_id to confirm the wipe.",
+    )
 
 
 class DeleteMemoryResponse(BaseModel):

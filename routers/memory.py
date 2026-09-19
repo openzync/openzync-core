@@ -22,6 +22,7 @@ from uuid import UUID
 import orjson
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     File,
     Form,
@@ -38,7 +39,11 @@ from core.audit import audit_action
 from dependencies.auth import get_current_user_id, require_permission
 from dependencies.project_auth import require_project_membership
 from dependencies.services import get_memory_service
-from schemas.memory import IngestMemoryRequest, IngestMemoryResponse
+from schemas.memory import (
+    DeleteMemoryConfirm,
+    IngestMemoryRequest,
+    IngestMemoryResponse,
+)
 from services.idempotency_service import IdempotencyService
 from services.memory_service import MemoryService
 
@@ -199,32 +204,39 @@ async def ingest_messages(
     "",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete all project memory",
-    description="Soft-delete all episodes and facts for a project. This is "
+    description="Soft-delete all episodes and facts for a project. Requires "
+    "a JSON body ``{\"confirm\": \"<project_id>\"}`` matching the path "
+    "project — any other value is rejected with 422. This is "
     "the data wipe operation — all sessions are preserved, but all message "
     "history and extracted facts are invalidated.",
     responses={
         204: {"description": "Memory deleted successfully (no content)."},
         401: {"description": "Missing or invalid authentication."},
         403: {"description": "Not a member of this project."},
+        422: {"description": "Confirm body missing or not matching the project ID."},
     },
 )
 @audit_action("memory.wipe", "memory", "Memory wiped")
 async def delete_project_memory(
     request: Request,
+    body: DeleteMemoryConfirm = Body(...),
     service: MemoryService = Depends(get_memory_service),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:write")),
+    actor: UUID = Depends(get_current_user_id),
 ) -> None:
     """Delete all memory for a project.
 
     Soft-deletes all episodes (messages) and facts for the given project.
     Sessions remain intact. This operation is **not** reversible — deleted
     data is marked as inactive but preserved for a 30-day GDPR grace period
-    before hard-purge.
+    before hard-purge. The ``confirm`` body must echo the path project ID.
     """
     org_id = UUID(request.state.org_id)
     project_id = UUID(request.path_params["project_id"])
     await service.delete_project_memory(
         org_id=org_id,
         project_id=project_id,
+        confirm=body.confirm,
+        actor_id=actor,
     )

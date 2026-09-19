@@ -23,6 +23,7 @@ from uuid import UUID
 import orjson
 import structlog
 
+from core.embeddings import CANONICAL_EMBED_DIM
 from middleware.metrics import context_latency_seconds
 from packages.reranker import RerankerFactory
 from services.cache_service import CacheService
@@ -192,11 +193,7 @@ class ContextService:
                     top_episode=None,
                     top_fact=None,
                     query_embedding_dim=None,
-                    configured_embedding_dim=(
-                        self._retriever._org_config.embedding_dim
-                        if self._retriever._org_config
-                        else None
-                    ),
+                    configured_embedding_dim=CANONICAL_EMBED_DIM,
                 )
                 return {
                     "context": cached,
@@ -321,11 +318,7 @@ class ContextService:
             top_episode=_preview(results.get("episodes", [])),
             top_fact=_preview(results.get("facts", [])),
             query_embedding_dim=results.get("query_embedding_dim"),
-            configured_embedding_dim=(
-                self._retriever._org_config.embedding_dim
-                if self._retriever._org_config
-                else None
-            ),
+            configured_embedding_dim=CANONICAL_EMBED_DIM,
         )
 
         return {

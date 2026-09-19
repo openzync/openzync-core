@@ -20,6 +20,9 @@ from fastapi.responses import JSONResponse
 
 logger = structlog.get_logger(__name__)
 
+PII_RETRY_AFTER_SECONDS: int = 30
+"""``Retry-After`` delay for ``pii_unavailable`` (503) problem responses."""
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Exception hierarchy
@@ -188,6 +191,27 @@ class PayloadTooLargeError(AppError):
     def __init__(
         self,
         message: str = "The request body is too large.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class EmbeddingFrozenError(AppError):
+    """Per-org embedding model/dimension override rejected — freeze enforced.
+
+    Embeddings are frozen to the canonical model/dimension (see
+    ``core.embeddings`` and migration 0054). ``embedding_model`` and
+    ``embedding_dim`` can no longer be set via org config; only
+    ``embedding_backend`` plus provider routing fields (endpoints/keys)
+    remain configurable.
+    """
+
+    status_code: int = 400
+    code: str = "embedding_frozen"
+
+    def __init__(
+        self,
+        message: str = "Embedding model and dimension are frozen.",
         detail: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message=message, detail=detail)
@@ -412,6 +436,47 @@ class GoneError(AppError, ValueError):
         super().__init__(message=message, detail=detail)
 
 
+class CursorExpiredError(ValidationError, ValueError):
+    """Pagination cursor is malformed, stale, or from an older cursor version.
+
+    Subclasses both ``ValidationError`` (so the FastAPI handler maps it to
+    a 400 ``cursor_expired`` problem response instead of a 500) and
+    ``ValueError`` (so existing ``pytest.raises(ValueError)`` contracts and
+    any ``except ValueError`` guards keep working).  Same pattern as
+    :class:`GoneError`.
+    """
+
+    status_code: int = 400
+    code: str = "cursor_expired"
+
+    def __init__(
+        self,
+        message: str = "The pagination cursor is invalid or expired.",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
+class PIIUnavailableError(ExternalServiceError):
+    """PII policy or redaction backend could not be reached (fail-closed).
+
+    A subclass of :class:`ExternalServiceError` so existing
+    ``except ExternalServiceError`` guards still catch it, but mapped to
+    HTTP 503 with a ``Retry-After`` header — the client should retry the
+    request rather than assume content was safely redacted.
+    """
+
+    status_code: int = 503
+    code: str = "pii_unavailable"
+
+    def __init__(
+        self,
+        message: str = "pii_unavailable",
+        detail: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message=message, detail=detail)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # RFC 7807 Problem Details
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -422,8 +487,14 @@ def _to_problem_json(request: Request, exc: AppError) -> JSONResponse:
 
     https://www.rfc-editor.org/rfc/rfc7807
     """
+    headers: dict[str, str] | None = None
+    if exc.code == PIIUnavailableError.code:
+        # Fail-closed dependency: tell the client exactly how long to wait
+        # before retrying instead of assuming content was safely redacted.
+        headers = {"Retry-After": str(PII_RETRY_AFTER_SECONDS)}
     response = JSONResponse(
         status_code=exc.status_code,
+        headers=headers,
         content={
             "type": f"https://errors.openzync.tech/{exc.code}",
             "title": exc.code.replace("_", " ").title(),
@@ -460,14 +531,17 @@ def register_exception_handlers(app: FastAPI) -> None:
     handlers: dict[type[AppError], int] = {
         NotFoundError: 404,
         ValidationError: 422,
+        CursorExpiredError: 400,
         AuthenticationError: 401,
         AuthorizationError: 403,
         ConflictError: 409,
         RateLimitError: 429,
         InsufficientCreditsError: 402,
         ExternalServiceError: 502,
+        PIIUnavailableError: 503,
         LLMConfigurationError: 502,
         PayloadTooLargeError: 413,
+        EmbeddingFrozenError: 400,
         EntityNotFoundError: 404,
         EdgeNotFoundError: 404,
         EpisodeNotFoundError: 404,

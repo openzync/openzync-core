@@ -7,6 +7,7 @@ and enrichment metadata (e.g., extracted facts, classifications).
 
 import uuid
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
@@ -15,10 +16,12 @@ from sqlalchemy import (
     Integer,
     Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from core.embeddings import CANONICAL_EMBED_DIM
 from models.base import Base, TimestampMixin
 
 
@@ -33,8 +36,9 @@ class Episode(TimestampMixin, Base):
         role: Message role — one of ``user``, ``assistant``, ``system``, ``tool``.
         content: Message body text. Max length 65536 characters.
         metadata: Arbitrary JSONB metadata.
-        embedding: pgvector embedding (placeholder — migrated to ``vector(1536)``
-            via Alembic). Nullable; populated after enrichment.
+        embedding: pgvector embedding (native ``VECTOR(768)`` — frozen
+            canonical dim, see migration 0054). Nullable; populated
+            after enrichment.
         token_count: Approximate token count for the message.
         sequence_number: Order within the session (0-based).
         enrichment_status: Bitmask tracking which enrichment passes have been
@@ -80,10 +84,14 @@ class Episode(TimestampMixin, Base):
         default=dict,
         server_default="{}",
     )
-    # note: Embedding uses Text as a stand-in type because pgvector
-    # may not be installed in the dev/test environment. The actual DDL must
-    # use ``vector(1536)`` — the Alembic migration will handle this.
-    embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # note: Native ``VECTOR`` type matching the ``vector(768)`` DDL from
+    # migration 0054 (frozen canonical dim — no new migration needed).
+    # The asyncpg vector codec is registered per pooled connection in
+    # ``core.db.init_db_engine`` so full-ORM reads decode the column
+    # instead of crashing on the unknown ``vector`` OID.
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(CANONICAL_EMBED_DIM), nullable=True
+    )
     token_count: Mapped[int] = mapped_column(
         Integer,
         nullable=False,
@@ -120,6 +128,16 @@ class Episode(TimestampMixin, Base):
         ),
         Index("ix_episode_session_sequence", "session_id", "sequence_number"),
         Index("ix_episode_user_id", "user_id"),
+        # Final guard against concurrent ingests minting the same seq:
+        # partial so soft-deleted rows never block reuse of their number.
+        # Mirrors migration 0053 (uq_episodes_session_sequence).
+        Index(
+            "uq_episodes_session_sequence",
+            "session_id",
+            "sequence_number",
+            unique=True,
+            postgresql_where=text("is_deleted = false"),
+        ),
     )
 
     def __repr__(self) -> str:

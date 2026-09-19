@@ -38,6 +38,8 @@ from __future__ import annotations
 from typing import Any
 
 import sqlalchemy as sa
+from pgvector.asyncpg import register_vector
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -82,7 +84,39 @@ def init_db_engine(database_url: str, **kwargs: Any) -> AsyncEngine:
         connect_args={"statement_cache_size": 0},
         **kwargs,
     )
+    _register_pgvector_codec(engine)
     return engine
+
+
+def _register_pgvector_codec(engine: AsyncEngine) -> None:
+    """Register the pgvector asyncpg codec on every pooled connection.
+
+    ``episodes.embedding`` / ``facts.embedding`` are native ``VECTOR(768)``
+    (migration 0054) mapped with ``pgvector.sqlalchemy.Vector``. asyncpg
+    cannot decode the ``vector`` type OID without an explicit codec, so any
+    full-ORM read loading the column crashes. This listener registers
+    ``pgvector.asyncpg.register_vector`` on each new pooled connection —
+    the same hook the SQLAlchemy asyncpg dialect uses for its own
+    JSON/JSONB codecs in ``on_connect``.
+
+    Recipe verified against pgvector==0.4.2 (``async def
+    register_vector(conn, schema='public')``) and SQLAlchemy==2.0.50
+    (``AsyncAdapt_asyncpg_connection`` exposes ``await_`` and the raw
+    asyncpg connection as ``_connection``).
+
+    Args:
+        engine: A genuine :class:`AsyncEngine`. Doubles that patch
+            ``create_async_engine`` in unit tests are not real engines, so
+            the listener is skipped for them — codec setup only applies to
+            live pools, and registration failures always raise loud at
+            first connect, never degrade silently.
+    """
+    if not isinstance(engine, AsyncEngine):
+        return
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _on_connect(dbapi_conn, _connection_record) -> None:
+        dbapi_conn.await_(register_vector(dbapi_conn._connection))
 
 
 async def close_db_engine(engine: AsyncEngine) -> None:

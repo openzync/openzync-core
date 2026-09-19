@@ -160,8 +160,8 @@ async def _repair_missing_fact_embeddings(
     Fact embedding state is tracked by ``facts.embedded_at``: facts are
     eligible for repair only when never attempted (``embedding IS NULL AND
     embedded_at IS NULL``) and not retracted (``invalid_at IS NULL``).  Facts
-    retired by ``embed_fact`` (dimension mismatch) have ``embedded_at`` set
-    and are excluded.  Orgs without ``embedding_backend``/``embedding_dim``
+    retired by ``embed_fact`` (permanent 4xx) have ``embedded_at`` set
+    and are excluded.  Orgs without ``embedding_backend``
     configured are skipped so a misconfigured org does not churn the queue
     every tick.
 
@@ -223,11 +223,7 @@ async def _repair_missing_fact_embeddings(
     enqueued: int = 0
     for org_id, org_facts in by_org.items():
         org_cfg = await _resolve_fact_org_config(ctx, org_id)
-        if (
-            org_cfg is None
-            or org_cfg.embedding_backend is None
-            or org_cfg.embedding_dim is None
-        ):
+        if org_cfg is None or org_cfg.embedding_backend is None:
             logger.info(
                 "reconcile_enrichment.fact_embedding_skipped_misconfigured",
                 org_id=org_id,

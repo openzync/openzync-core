@@ -29,11 +29,13 @@ async def embed_episode(
 ) -> None:
     """Generate an embedding for an episode and store it in pgvector.
 
-    The embedding backend, model, and dimension come exclusively from the
-    per-org config (``org_cfg.embedding_backend`` / ``embedding_model`` /
-    ``embedding_dim``) resolved from the ``organizations.config`` JSONB
-    column.  There is no env-var fallback — if any required field is
-    ``None`` the task raises ``SearchLegFailedError`` so ARQ retries.
+    The embedding backend comes from the per-org config
+    (``org_cfg.embedding_backend``); the model is the frozen canonical
+    model (``core.embeddings.resolve_embed_model``). There is no env-var
+    fallback — if no backend is configured the task raises
+    ``SearchLegFailedError`` so ARQ retries. Any vector that is not
+    exactly ``CANONICAL_EMBED_DIM`` raises ``ExternalServiceError`` and
+    is never stored.
 
     Args:
         ctx: ARQ worker context (unused — required by ARQ contract).
@@ -48,8 +50,8 @@ async def embed_episode(
         EpisodeNotFoundError: If no episode exists for ``episode_id``.
         SearchLegFailedError: If org config fetch fails, org is not found,
             or no embedding backend is configured.
-        ValueError: If the embedding dimension does not match
-            the per-org config ``embedding_dim``.
+        ExternalServiceError: If the provider returns a non-canonical-dim
+            vector.
     """
     if trace_id:
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
@@ -61,6 +63,12 @@ async def embed_episode(
 
     from core.config import settings
     from core.db import get_async_session
+    from core.embeddings import (
+        CANONICAL_EMBED_DIM,
+        format_vector_literal,
+        resolve_embed_model,
+        validate_embedding_dim,
+    )
     from core.llm import resolve_backend
     from core.org_config import get_org_config
     from repositories.episode_repository import EpisodeRepository
@@ -160,8 +168,7 @@ async def embed_episode(
         )
 
     _embedding_backend = org_cfg.embedding_backend
-    _embedding_model = org_cfg.embedding_model
-    _embedding_dim = org_cfg.embedding_dim
+    _embedding_model = resolve_embed_model(org_cfg.embedding_backend)
     _org_config_dict = org_cfg.to_llm_config_dict()
 
     # ── 3. Resolve the embedding backend ──────────────────────────────────
@@ -183,26 +190,25 @@ async def embed_episode(
         )
         raise
 
-    # ── 5. Validate dimension matches config ──────────────────────────────
-    if len(embedding) != _embedding_dim:
-        logger.error(
-            "embed_episode.dimension_mismatch",
-            episode_id=episode_id,
-            got=len(embedding),
-            expected=_embedding_dim,
-        )
-        raise ValueError(
-            f"Embedding dimension mismatch: got {len(embedding)}, "
-            f"expected {_embedding_dim}"
-        )
+    # ── 5. Validate canonical dimension — fail loud, never store ─────────
+    validate_embedding_dim(embedding, source="embed_episode")
 
     # ── 4. Store in pgvector and update enrichment_status ─────────────────
+    # No pgvector asyncpg codec is registered, so the vector goes in as an
+    # explicit ``[...]`` literal with a static ``::vector(768)`` cast. The
+    # dimension was validated above — the cast cannot silently reshape.
 
     try:
         async with session_factory() as db:
             await db.execute(
-                text("UPDATE episodes SET embedding = :embedding WHERE id = :id"),
-                {"embedding": embedding, "id": episode_id},
+                text(
+                    "UPDATE episodes SET embedding = "  # noqa: S608
+                    f"CAST(:embedding AS vector({CANONICAL_EMBED_DIM})) "
+                    "WHERE id = :id"
+                    # S608 justification: interpolates the int constant
+                    # CANONICAL_EMBED_DIM into a static CAST, never user input.
+                ),
+                {"embedding": format_vector_literal(embedding), "id": episode_id},
             )
             # Set bit 1 on enrichment_status to mark completion.
             episode_repo = EpisodeRepository(db)

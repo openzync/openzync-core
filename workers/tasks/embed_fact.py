@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from core.exceptions import SearchLegFailedError
 from workers.tasks.base import with_retry
 
 if TYPE_CHECKING:
@@ -78,11 +79,14 @@ async def embed_fact(
 ) -> None:
     """Generate an embedding for a fact and store it in ``facts.embedding``.
 
-    The embedding backend, model, and dimension come exclusively from the
-    per-org config (``org_cfg.embedding_backend`` / ``embedding_model`` /
-    ``embedding_dim``) resolved from the ``organizations.config`` JSONB
-    column.  There is no env-var fallback — if any required field is
-    ``None`` the task logs a warning and returns early.
+    The embedding backend comes from the per-org config
+    (``org_cfg.embedding_backend``); the model is the frozen canonical
+    model (``core.embeddings.resolve_embed_model``). There is no env-var
+    fallback — if no backend is configured the task raises. Any vector
+    that is not exactly ``CANONICAL_EMBED_DIM`` raises
+    ``ExternalServiceError`` and is never stored (no retire — a dim
+    mismatch under the freeze means the provider serves the wrong model
+    and must stay loud until fixed).
 
     Args:
         ctx: ARQ worker context (unused — required by ARQ contract).
@@ -93,8 +97,11 @@ async def embed_fact(
         **kwargs: Additional context (org_id, user_id) forwarded from the caller.
 
     Raises:
-        ValueError: If the embedding dimension does not match
-            the per-org config ``embedding_dim``.
+        SearchLegFailedError: If the org config cannot be fetched or no
+            embedding backend is configured (same taxonomy as
+            ``embed_episode`` — ARQ retries).
+        ExternalServiceError: If the provider returns a non-canonical-dim
+            vector.
     """
     if trace_id:
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
@@ -104,6 +111,12 @@ async def embed_fact(
 
     from core.config import settings
     from core.db import get_async_session
+    from core.embeddings import (
+        CANONICAL_EMBED_DIM,
+        format_vector_literal,
+        resolve_embed_model,
+        validate_embedding_dim,
+    )
     from core.llm import resolve_backend
 
     logger.info("embed_fact.started", fact_id=fact_id, trace_id=trace_id)
@@ -172,20 +185,26 @@ async def embed_fact(
                 org_id=_org_id,
                 exc_info=True,
             )
-            raise RuntimeError(
-                f"Failed to fetch org config for org {_org_id}"
+            raise SearchLegFailedError(
+                leg_name="embedding",
+                message=f"Failed to fetch org config for org {_org_id}: {exc}",
+                original_error=str(exc),
             ) from exc
 
     if org_cfg is None:
-        raise RuntimeError(f"Org config not found for org {_org_id}")
+        raise SearchLegFailedError(
+            leg_name="embedding",
+            message=f"Org config not found for org {_org_id}",
+        )
     if org_cfg.embedding_backend is None:
-        raise RuntimeError(
-            f"No embedding backend configured for org {_org_id}"
+        raise SearchLegFailedError(
+            leg_name="embedding",
+            message=f"No embedding backend configured for org {_org_id}",
+            original_error=f"org_cfg.embedding_backend is None for org {_org_id}",
         )
 
     _embedding_backend = org_cfg.embedding_backend
-    _embedding_model = org_cfg.embedding_model
-    _embedding_dim = org_cfg.embedding_dim
+    _embedding_model = resolve_embed_model(org_cfg.embedding_backend)
     _org_config_dict = org_cfg.to_llm_config_dict()
 
     # ── 1. Resolve the embedding backend ──────────────────────────────────
@@ -218,40 +237,27 @@ async def embed_fact(
             )
         raise
 
-    # ── 3. Validate dimension matches config ──────────────────────────────
-    if len(embedding) != _embedding_dim:
-        logger.error(
-            "embed_fact.dimension_mismatch",
-            fact_id=fact_id,
-            got=len(embedding),
-            expected=_embedding_dim,
-        )
-        # Permanent failure — the configured model can never produce the
-        # expected dimension.  Retire the fact (embedded_at set, embedding
-        # stays NULL) so reconcile_enrichment stops re-enqueueing it, then
-        # raise.  Transient failures (LLM/network) are NOT retired — they
-        # stay retryable via with_retry.
-        await _retire_fact(session_factory, engine, _own_engine, fact_id)
-        logger.error(
-            "embed_fact.dimension_mismatch_retired",
-            fact_id=fact_id,
-            got=len(embedding),
-            expected=_embedding_dim,
-        )
-        raise ValueError(
-            f"Embedding dimension mismatch: got {len(embedding)}, "
-            f"expected {_embedding_dim}"
-        )
+    # ── 3. Validate canonical dimension — fail loud, never store ─────────
+    # Deliberately no retire: under the freeze a dim mismatch means the
+    # provider serves the wrong model (operator fix required). The fact
+    # stays NULL/NULL so reconcile keeps it visible via re-enqueue.
+    validate_embedding_dim(embedding, source="embed_fact")
 
     # ── 4. Store in pgvector ──────────────────────────────────────────────
+    # No pgvector asyncpg codec is registered, so the vector goes in as an
+    # explicit ``[...]`` literal with a static ``::vector(768)`` cast. The
+    # dimension was validated above — the cast cannot silently reshape.
     try:
         async with session_factory() as db:
             await db.execute(
                 text(
-                    "UPDATE facts SET embedding = :embedding, "
+                    "UPDATE facts SET embedding = "  # noqa: S608
+                    f"CAST(:embedding AS vector({CANONICAL_EMBED_DIM})), "
                     "embedded_at = now() WHERE id = :id"
+                    # S608 justification: interpolates the int constant
+                    # CANONICAL_EMBED_DIM into a static CAST, never user input.
                 ),
-                {"embedding": embedding, "id": fact_id},
+                {"embedding": format_vector_literal(embedding), "id": fact_id},
             )
             await db.commit()
 

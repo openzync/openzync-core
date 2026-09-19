@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import Float, Select, cast, func, literal, literal_column, select, text
+from sqlalchemy import Float, Select, Text, bindparam, cast, func, literal, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import SearchLegFailedError
@@ -75,10 +75,14 @@ class HybridRetriever:
         no embedding has been generated yet (e.g. all vector legs failed).  Used
         by callers for diagnostic logging to detect dimension mismatches."""
         self._rerank_top_k: int = (
-            org_config.reranker_top_k if org_config and org_config.reranker_top_k else DEFAULT_RERANK_TOP_K
+            org_config.reranker_top_k
+            if org_config and org_config.reranker_top_k
+            else DEFAULT_RERANK_TOP_K
         )
         self._rerank_top_n: int = (
-            org_config.reranker_top_n if org_config and org_config.reranker_top_n else DEFAULT_RERANK_TOP_N
+            org_config.reranker_top_n
+            if org_config and org_config.reranker_top_n
+            else DEFAULT_RERANK_TOP_N
         )
 
     # ── Public API ──────────────────────────────────────────────────────────────
@@ -155,7 +159,9 @@ class HybridRetriever:
         fact_bm25_results: list[dict[str, Any]] = []
         entity_results: list[dict[str, Any]] = []
 
-        retrieval_limit = max(limit, self._rerank_top_k) if self._reranker is not None else limit
+        retrieval_limit = (
+            max(limit, self._rerank_top_k) if self._reranker is not None else limit
+        )
 
         # Vector search for episodes and facts
         try:
@@ -165,11 +171,17 @@ class HybridRetriever:
         except Exception as exc:
             logger.error(
                 "hybrid_retriever.episode_vector_failed",
-                extra={"project_id": str(project_id), "query": query, "leg": "episode_vector"},
+                extra={
+                    "project_id": str(project_id),
+                    "query": query,
+                    "leg": "episode_vector",
+                },
                 exc_info=True,
             )
             await self._db.rollback()
-            raise SearchLegFailedError(leg_name="episode_vector", original_error=str(exc)) from exc
+            raise SearchLegFailedError(
+                leg_name="episode_vector", original_error=str(exc)
+            ) from exc
 
         try:
             fact_vector_results = await self._vector_search_facts(
@@ -178,11 +190,17 @@ class HybridRetriever:
         except Exception as exc:
             logger.error(
                 "hybrid_retriever.fact_vector_failed",
-                extra={"project_id": str(project_id), "query": query, "leg": "fact_vector"},
+                extra={
+                    "project_id": str(project_id),
+                    "query": query,
+                    "leg": "fact_vector",
+                },
                 exc_info=True,
             )
             await self._db.rollback()
-            raise SearchLegFailedError(leg_name="fact_vector", original_error=str(exc)) from exc
+            raise SearchLegFailedError(
+                leg_name="fact_vector", original_error=str(exc)
+            ) from exc
 
         # BM25 search for episodes and facts
         try:
@@ -192,11 +210,17 @@ class HybridRetriever:
         except Exception as exc:
             logger.error(
                 "hybrid_retriever.episode_bm25_failed",
-                extra={"project_id": str(project_id), "query": query, "leg": "episode_bm25"},
+                extra={
+                    "project_id": str(project_id),
+                    "query": query,
+                    "leg": "episode_bm25",
+                },
                 exc_info=True,
             )
             await self._db.rollback()
-            raise SearchLegFailedError(leg_name="episode_bm25", original_error=str(exc)) from exc
+            raise SearchLegFailedError(
+                leg_name="episode_bm25", original_error=str(exc)
+            ) from exc
 
         try:
             fact_bm25_results = await self._bm25_search_facts(
@@ -205,11 +229,17 @@ class HybridRetriever:
         except Exception as exc:
             logger.error(
                 "hybrid_retriever.fact_bm25_failed",
-                extra={"project_id": str(project_id), "query": query, "leg": "fact_bm25"},
+                extra={
+                    "project_id": str(project_id),
+                    "query": query,
+                    "leg": "fact_bm25",
+                },
                 exc_info=True,
             )
             await self._db.rollback()
-            raise SearchLegFailedError(leg_name="fact_bm25", original_error=str(exc)) from exc
+            raise SearchLegFailedError(
+                leg_name="fact_bm25", original_error=str(exc)
+            ) from exc
 
         # Graph BFS via entity name search
         try:
@@ -221,11 +251,17 @@ class HybridRetriever:
         except Exception as exc:
             logger.error(
                 "hybrid_retriever.graph_bfs_failed",
-                extra={"project_id": str(project_id), "query": query, "leg": "graph_bfs"},
+                extra={
+                    "project_id": str(project_id),
+                    "query": query,
+                    "leg": "graph_bfs",
+                },
                 exc_info=True,
             )
             await self._db.rollback()
-            raise SearchLegFailedError(leg_name="graph_bfs", original_error=str(exc)) from exc
+            raise SearchLegFailedError(
+                leg_name="graph_bfs", original_error=str(exc)
+            ) from exc
 
         # ── RRF merge per type ────────────────────────────────────────────
         # Use rerank_top_k as the RRF candidate pool size when re-ranking is active
@@ -249,10 +285,14 @@ class HybridRetriever:
             _rerank_start = time.monotonic()
             try:
                 merged_episodes = await self._reranker.rerank(
-                    query, merged_episodes, top_n=self._rerank_top_n,
+                    query,
+                    merged_episodes,
+                    top_n=self._rerank_top_n,
                 )
                 merged_facts = await self._reranker.rerank(
-                    query, merged_facts, top_n=self._rerank_top_n,
+                    query,
+                    merged_facts,
+                    top_n=self._rerank_top_n,
                 )
                 _rerank_elapsed = time.monotonic() - _rerank_start
                 reranker_latency_seconds.labels(
@@ -268,7 +308,9 @@ class HybridRetriever:
                     },
                     exc_info=True,
                 )
-                raise SearchLegFailedError(leg_name="reranker", original_error=str(exc)) from exc
+                raise SearchLegFailedError(
+                    leg_name="reranker", original_error=str(exc)
+                ) from exc
 
         graph_search_latency_seconds.labels(org_id=str(self._org_id)).observe(
             time.monotonic() - _search_start
@@ -303,7 +345,10 @@ class HybridRetriever:
     async def _embed_query(self, query: str) -> list[float]:
         """Generate an embedding vector for a search query.
 
-        Uses the configured LLM backend's embedding model.
+        Embeds with the frozen canonical model
+        (``core.embeddings.resolve_embed_model``) and rejects any vector
+        that is not exactly ``CANONICAL_EMBED_DIM`` — fail loud, never
+        search with a wrong-dim vector.
 
         Args:
             query: Natural-language query text.
@@ -312,10 +357,14 @@ class HybridRetriever:
             A list of floats representing the query embedding.
 
         Raises:
-            SearchLegFailedError: If embedding generation fails or returns
-                no embeddings.
+            SearchLegFailedError: If embedding generation fails, returns
+                no embeddings, or returns a non-canonical-dim vector.
         """
         try:
+            from core.embeddings import (
+                resolve_embed_model,
+                validate_embedding_dim,
+            )
             from core.llm import resolve_backend
 
             org_config_dict = (
@@ -328,13 +377,17 @@ class HybridRetriever:
                 org_config=org_config_dict,
                 mode="embedding",
             )
-            response = await backend.embed(
-                [query],
-                model=self._org_config.embedding_model if self._org_config else None,
+            model = resolve_embed_model(
+                self._org_config.embedding_backend if self._org_config else None
             )
+            response = await backend.embed([query], model=model)
             if response.embeddings and len(response.embeddings) > 0:
-                self._last_query_embedding_dim = len(response.embeddings[0])
-                return response.embeddings[0]
+                query_embedding = response.embeddings[0]
+                validate_embedding_dim(
+                    query_embedding, source="hybrid_retriever._embed_query"
+                )
+                self._last_query_embedding_dim = len(query_embedding)
+                return query_embedding
             raise SearchLegFailedError(
                 leg_name="embedding",
                 original_error="Embedding response contained no embeddings.",
@@ -347,7 +400,9 @@ class HybridRetriever:
                 extra={"query": query[:100], "leg": "embedding"},
                 exc_info=True,
             )
-            raise SearchLegFailedError(leg_name="embedding", original_error=str(exc)) from exc
+            raise SearchLegFailedError(
+                leg_name="embedding", original_error=str(exc)
+            ) from exc
 
     async def _vector_search_episodes(
         self,
@@ -362,8 +417,11 @@ class HybridRetriever:
         embedding.  The embedding is generated once upstream in
         ``hybrid_search`` and shared across both vector legs.
 
-        The ``embedding`` column is ``vector(768)`` — cast via
-        :class:`pgvector.sqlalchemy.Vector` at query time.
+        The ``embedding`` column is ``VECTOR(768)`` — the frozen
+        canonical dimension (``core.embeddings.CANONICAL_EMBED_DIM``).
+        The cast is a no-op type assertion that keeps the SQLAlchemy
+        ``<=>`` operator typed; the query vector is validated to exactly
+        768 dims upstream in ``_embed_query``.
 
         Args:
             query_embedding: Precomputed embedding vector for the query.
@@ -374,19 +432,20 @@ class HybridRetriever:
             A list of result dicts with ``id``, ``content``, ``role``,
             ``score``, and ``created_at`` keys.
         """
-        dim: int = (
-            self._org_config.embedding_dim
-            if self._org_config and self._org_config.embedding_dim
-            else 1536
-        )
-
         from pgvector.sqlalchemy import (
             Vector,  # lazy: numpy CPU compat; caught by outer try/except
         )
 
-        vector_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
-        embedding_col = cast(Episode.embedding, Vector(dim))
-        query_literal = literal_column(f"'{vector_str}'::vector({dim})")
+        from core.embeddings import CANONICAL_EMBED_DIM, format_vector_literal
+
+        embedding_col = cast(Episode.embedding, Vector(CANONICAL_EMBED_DIM))
+        # Bound parameter + static CAST — the vector value never enters the
+        # SQL string, so float formatting can never break out of the literal.
+        vector_literal = format_vector_literal(query_embedding)
+        query_literal = cast(
+            bindparam("embedding", value=vector_literal, type_=Text()),
+            Vector(CANONICAL_EMBED_DIM),
+        )
 
         stmt = (
             select(
@@ -406,7 +465,7 @@ class HybridRetriever:
                 Episode.project_id == project_id,
                 Episode.is_deleted.is_(False),
                 Episode.embedding.isnot(None),
-                func.cardinality(Episode.embedding) > 0,
+                func.vector_dims(Episode.embedding) > 0,
             )
             .order_by(text("score DESC"))
             .limit(limit)
@@ -448,22 +507,23 @@ class HybridRetriever:
         """
         effective_time = query_time or datetime.now(UTC)
 
-        # Resolve embedding dimension from org config so the runtime
-        # ``::vector(N)`` cast matches the model that produced the data.
-        # Defaults to 1536 (text-embedding-3-small) when not configured.
-        dim: int = (
-            self._org_config.embedding_dim
-            if self._org_config and self._org_config.embedding_dim
-            else 1536
-        )
-
+        # Frozen canonical dim — the ``facts.embedding`` column is
+        # ``VECTOR(768)`` and the query vector is validated to exactly
+        # 768 dims upstream in ``_embed_query``.
         from pgvector.sqlalchemy import (
             Vector,  # lazy: numpy CPU compat; caught by outer try/except
         )
 
-        vector_str = "[" + ",".join(str(x) for x in query_embedding) + "]"
-        embedding_col = cast(Fact.embedding, Vector(dim))
-        query_literal = literal_column(f"'{vector_str}'::vector({dim})")
+        from core.embeddings import CANONICAL_EMBED_DIM, format_vector_literal
+
+        embedding_col = cast(Fact.embedding, Vector(CANONICAL_EMBED_DIM))
+        # Bound parameter + static CAST — same injection-safe pattern as
+        # ``_vector_search_episodes``.
+        vector_literal = format_vector_literal(query_embedding)
+        query_literal = cast(
+            bindparam("embedding", value=vector_literal, type_=Text()),
+            Vector(CANONICAL_EMBED_DIM),
+        )
 
         stmt = (
             select(
@@ -493,7 +553,7 @@ class HybridRetriever:
                 Fact.valid_from.is_(None) | (Fact.valid_from <= effective_time),
                 Fact.valid_to.is_(None) | (Fact.valid_to > effective_time),
                 Fact.embedding.isnot(None),
-                func.cardinality(Fact.embedding) > 0,
+                func.vector_dims(Fact.embedding) > 0,
             )
             .order_by(text("score DESC"))
             .limit(limit)

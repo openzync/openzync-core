@@ -21,6 +21,7 @@ from typing import Any, ClassVar
 
 import httpx
 
+from core.exceptions import ExternalServiceError
 from core.llm import (
     ChatResponse,
     EmbeddingResponse,
@@ -53,10 +54,19 @@ class OllamaBackend(LLMBackend):
     DEFAULT_EMBED_MODEL: ClassVar[str] = "nomic-embed-text"
     DEFAULT_EMBED_DIM: ClassVar[int] = 768
 
-    def __init__(self, base_url: str = "http://localhost:11434") -> None:
+    def __init__(
+        self, base_url: str = "http://localhost:11434", model: str | None = None
+    ) -> None:
+        """Create an Ollama backend.
+
+        Args:
+            base_url: Base URL of the Ollama REST API.
+            model: Chat model name.  Defaults to
+                :attr:`DEFAULT_CHAT_MODEL` when ``None`` or empty.
+        """
         self._base_url = base_url.rstrip("/")
         # Model defaults are class constants — no env-var fallback.
-        self._chat_model = self.DEFAULT_CHAT_MODEL
+        self._chat_model = model or self.DEFAULT_CHAT_MODEL
         self._embed_model = self.DEFAULT_EMBED_MODEL
 
     # ── LLMBackend ─────────────────────────────────────────────────────────
@@ -69,23 +79,54 @@ class OllamaBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self.DEFAULT_EMBED_DIM
 
-    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
+    async def _chat(
+        self,
+        messages: list[dict],
+        cache_config: PromptCachingConfig | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
         """Send a chat completion request to Ollama's ``/api/chat``.
 
-        Supported kwargs (forwarded to Ollama):
-            ``model``, ``temperature``, ``top_p``, ``max_tokens``, ``stream``.
+        Sampling/token-limit kwargs are mapped into Ollama's native
+        ``options`` object: ``temperature`` → ``options["temperature"]``,
+        ``top_p`` → ``options["top_p"]``, ``max_tokens``/``num_predict``
+        → ``options["num_predict"]`` (``max_tokens`` wins when both are
+        given; defaults to 2048 when neither is).  The payload is exactly
+        ``model``/``messages``/``stream``/``options`` — any other kwargs
+        are dropped, never passed through at the top level.
+
+        Raises:
+            RuntimeError: On HTTP error, chained from the original
+                :class:`httpx.HTTPStatusError` with the model name,
+                status code, and first 500 chars of the response body.
         """
         model = kwargs.pop("model", self._chat_model)
+        temperature = kwargs.pop("temperature", None)
+        top_p = kwargs.pop("top_p", None)
+        max_tokens = kwargs.pop("max_tokens", None)
+        num_predict = kwargs.pop("num_predict", None)
 
         if cache_config and cache_config.enabled:
             logger.debug("ollama.cache_unsupported", extra={"model": model})
+
+        options: dict[str, Any] = {}
+        if temperature is not None:
+            options["temperature"] = temperature
+        if top_p is not None:
+            options["top_p"] = top_p
+        # max_tokens takes precedence over an explicit num_predict.
+        if max_tokens is not None:
+            options["num_predict"] = max_tokens
+        elif num_predict is not None:
+            options["num_predict"] = num_predict
+        else:
+            options["num_predict"] = 2048
 
         payload = {
             "model": model,
             "messages": messages,
             "stream": False,
-            "num_predict": 2048,
-            **kwargs,
+            "options": options,
         }
 
         start = time.monotonic()
@@ -95,15 +136,19 @@ class OllamaBackend(LLMBackend):
                 resp.raise_for_status()
                 data = resp.json()
         except httpx.HTTPStatusError as exc:
+            body = exc.response.text[:500]
             logger.error(
                 "ollama.chat_http_error",
                 extra={
                     "status_code": exc.response.status_code,
-                    "detail": exc.response.text[:500],
+                    "detail": body,
                     "model": model,
                 },
             )
-            raise
+            raise RuntimeError(
+                f"Ollama chat failed for model {model}: "
+                f"{exc.response.status_code} {body}"
+            ) from exc
         except httpx.TimeoutException:
             logger.error("ollama.chat_timeout", extra={"model": model})
             raise
@@ -128,7 +173,9 @@ class OllamaBackend(LLMBackend):
             },
         )
 
-        return ChatResponse(content=content, model=data.get("model", model), usage=usage)
+        return ChatResponse(
+            content=content, model=data.get("model", model), usage=usage
+        )
 
     async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:
         """Generate embeddings via Ollama's ``/api/embeddings`` endpoint.
@@ -144,7 +191,9 @@ class OllamaBackend(LLMBackend):
 
         try:
             async with httpx.AsyncClient(timeout=120) as client:
-                resp = await client.post(f"{self._base_url}/api/embeddings", json=payload)
+                resp = await client.post(
+                    f"{self._base_url}/api/embeddings", json=payload
+                )
                 resp.raise_for_status()
                 data = resp.json()
         except httpx.HTTPStatusError as exc:
@@ -172,7 +221,9 @@ class OllamaBackend(LLMBackend):
         else:
             embeddings = []
         if not embeddings:
-            raise ValueError(f"Empty embedding response for model {model}. Response: {str(data)[:200]}")
+            raise ValueError(
+                f"Empty embedding response for model {model}. Response: {str(data)[:200]}"
+            )
         dim = len(embeddings[0])
 
         logger.info(
@@ -185,7 +236,9 @@ class OllamaBackend(LLMBackend):
             },
         )
 
-        return EmbeddingResponse(embeddings=embeddings, model=data.get("model", model), dim=dim)
+        return EmbeddingResponse(
+            embeddings=embeddings, model=data.get("model", model), dim=dim
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -227,7 +280,12 @@ class OpenAIBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self.DEFAULT_EMBED_DIM
 
-    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
+    async def _chat(
+        self,
+        messages: list[dict],
+        cache_config: PromptCachingConfig | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
         """Send a chat completion request.
 
         Supported kwargs: ``temperature``, ``max_tokens``, ``top_p``,
@@ -248,6 +306,15 @@ class OpenAIBackend(LLMBackend):
                 )
                 elapsed = time.monotonic() - start
 
+                if not response.choices:
+                    logger.error(
+                        "llm.empty_choices",
+                        extra={"provider": "openai", "model": model},
+                    )
+                    raise ExternalServiceError(
+                        message=f"OpenAI returned no choices for model {model}",
+                        detail={"provider": "openai", "model": model},
+                    )
                 choice = response.choices[0]
                 content = choice.message.content
                 if content is None:
@@ -274,9 +341,21 @@ class OpenAIBackend(LLMBackend):
                 usage_data = response.usage
                 cached_tokens = 0
                 cache_write_tokens = 0
-                if usage_data and hasattr(usage_data, 'prompt_tokens_details') and usage_data.prompt_tokens_details:
-                    cached_tokens = getattr(usage_data.prompt_tokens_details, 'cached_tokens', 0) or 0
-                    cache_write_tokens = getattr(usage_data.prompt_tokens_details, 'cache_write_tokens', 0) or 0
+                if (
+                    usage_data
+                    and hasattr(usage_data, "prompt_tokens_details")
+                    and usage_data.prompt_tokens_details
+                ):
+                    cached_tokens = (
+                        getattr(usage_data.prompt_tokens_details, "cached_tokens", 0)
+                        or 0
+                    )
+                    cache_write_tokens = (
+                        getattr(
+                            usage_data.prompt_tokens_details, "cache_write_tokens", 0
+                        )
+                        or 0
+                    )
 
                 usage = TokenUsage(
                     prompt_tokens=usage_data.prompt_tokens if usage_data else 0,
@@ -300,10 +379,19 @@ class OpenAIBackend(LLMBackend):
 
                 return ChatResponse(content=content, model=model, usage=usage)
 
+            except ExternalServiceError:
+                # Guard failure (e.g. empty choices) is deterministic — retrying
+                # cannot help, so fail fast instead of burning backoff retries.
+                raise
             except Exception as exc:
                 last_exception = exc
                 # Retry on 429 (rate limit) or 5xx server errors.
-                if hasattr(exc, "status_code") and exc.status_code in (429, 500, 502, 503):
+                if hasattr(exc, "status_code") and exc.status_code in (
+                    429,
+                    500,
+                    502,
+                    503,
+                ):
                     wait = 2**attempt  # exponential backoff: 2, 4, 8s
                     logger.warning(
                         "openai.retrying",
@@ -327,7 +415,9 @@ class OpenAIBackend(LLMBackend):
             "openai.chat_retries_exhausted",
             extra={"model": model, "last_error": str(last_exception)},
         )
-        raise RuntimeError(f"OpenAI chat failed after {self.MAX_RETRIES} retries: {last_exception}") from last_exception
+        raise RuntimeError(
+            f"OpenAI chat failed after {self.MAX_RETRIES} retries: {last_exception}"
+        ) from last_exception
 
     async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:
         """Generate embeddings via OpenAI's embeddings API.
@@ -420,7 +510,12 @@ class AzureBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self.DEFAULT_EMBED_DIM
 
-    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
+    async def _chat(
+        self,
+        messages: list[dict],
+        cache_config: PromptCachingConfig | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
         """Send a chat completion request to Azure OpenAI.
 
         Supported kwargs: ``temperature``, ``max_tokens``, ``top_p``, etc.
@@ -441,6 +536,18 @@ class AzureBackend(LLMBackend):
                 )
                 elapsed = time.monotonic() - start
 
+                if not response.choices:
+                    logger.error(
+                        "llm.empty_choices",
+                        extra={"provider": "azure", "model": deployment},
+                    )
+                    raise ExternalServiceError(
+                        message=(
+                            "Azure OpenAI returned no choices "
+                            f"for deployment {deployment}"
+                        ),
+                        detail={"provider": "azure", "model": deployment},
+                    )
                 choice = response.choices[0]
                 content = choice.message.content
                 if content is None:
@@ -467,9 +574,21 @@ class AzureBackend(LLMBackend):
                 usage_data = response.usage
                 cached_tokens = 0
                 cache_write_tokens = 0
-                if usage_data and hasattr(usage_data, 'prompt_tokens_details') and usage_data.prompt_tokens_details:
-                    cached_tokens = getattr(usage_data.prompt_tokens_details, 'cached_tokens', 0) or 0
-                    cache_write_tokens = getattr(usage_data.prompt_tokens_details, 'cache_write_tokens', 0) or 0
+                if (
+                    usage_data
+                    and hasattr(usage_data, "prompt_tokens_details")
+                    and usage_data.prompt_tokens_details
+                ):
+                    cached_tokens = (
+                        getattr(usage_data.prompt_tokens_details, "cached_tokens", 0)
+                        or 0
+                    )
+                    cache_write_tokens = (
+                        getattr(
+                            usage_data.prompt_tokens_details, "cache_write_tokens", 0
+                        )
+                        or 0
+                    )
 
                 usage = TokenUsage(
                     prompt_tokens=usage_data.prompt_tokens if usage_data else 0,
@@ -493,9 +612,18 @@ class AzureBackend(LLMBackend):
 
                 return ChatResponse(content=content, model=deployment, usage=usage)
 
+            except ExternalServiceError:
+                # Guard failure (e.g. empty choices) is deterministic — retrying
+                # cannot help, so fail fast instead of burning backoff retries.
+                raise
             except Exception as exc:
                 last_exception = exc
-                if hasattr(exc, "status_code") and exc.status_code in (429, 500, 502, 503):
+                if hasattr(exc, "status_code") and exc.status_code in (
+                    429,
+                    500,
+                    502,
+                    503,
+                ):
                     wait = 2**attempt
                     logger.warning(
                         "azure.retrying",
@@ -569,7 +697,12 @@ class AnthropicBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return 0  # Anthropic does not offer a public embedding API.
 
-    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
+    async def _chat(
+        self,
+        messages: list[dict],
+        cache_config: PromptCachingConfig | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
         """Send a chat completion request to the Anthropic API.
 
         Handles Anthropic's ``system`` message convention: if the first
@@ -638,8 +771,14 @@ class AnthropicBackend(LLMBackend):
                 usage = TokenUsage(
                     prompt_tokens=response.usage.input_tokens,
                     completion_tokens=response.usage.output_tokens,
-                    cache_read_input_tokens=getattr(response.usage, 'cache_read_input_tokens', 0) or 0,
-                    cache_creation_input_tokens=getattr(response.usage, 'cache_creation_input_tokens', 0) or 0,
+                    cache_read_input_tokens=getattr(
+                        response.usage, "cache_read_input_tokens", 0
+                    )
+                    or 0,
+                    cache_creation_input_tokens=getattr(
+                        response.usage, "cache_creation_input_tokens", 0
+                    )
+                    or 0,
                 )
 
                 logger.info(
@@ -739,7 +878,12 @@ class OpenAILikeBackend(LLMBackend):
     def embedding_dim(self) -> int:
         return self._embedding_dim
 
-    async def _chat(self, messages: list[dict], cache_config: PromptCachingConfig | None = None, **kwargs: Any) -> ChatResponse:
+    async def _chat(
+        self,
+        messages: list[dict],
+        cache_config: PromptCachingConfig | None = None,
+        **kwargs: Any,
+    ) -> ChatResponse:
         """Send a chat completion request.
 
         Supported kwargs: ``temperature``, ``max_tokens``, ``top_p``,
@@ -760,6 +904,17 @@ class OpenAILikeBackend(LLMBackend):
                 )
                 elapsed = time.monotonic() - start
 
+                if not response.choices:
+                    logger.error(
+                        "llm.empty_choices",
+                        extra={"provider": "openai_like", "model": model},
+                    )
+                    raise ExternalServiceError(
+                        message=(
+                            f"OpenAI-like backend returned no choices for model {model}"
+                        ),
+                        detail={"provider": "openai_like", "model": model},
+                    )
                 choice = response.choices[0]
                 content = choice.message.content
                 if content is None:
@@ -802,10 +957,19 @@ class OpenAILikeBackend(LLMBackend):
 
                 return ChatResponse(content=content, model=model, usage=usage)
 
+            except ExternalServiceError:
+                # Guard failure (e.g. empty choices) is deterministic — retrying
+                # cannot help, so fail fast instead of burning backoff retries.
+                raise
             except Exception as exc:
                 last_exception = exc
                 # Retry on 429 (rate limit) or 5xx server errors.
-                if hasattr(exc, "status_code") and exc.status_code in (429, 500, 502, 503):
+                if hasattr(exc, "status_code") and exc.status_code in (
+                    429,
+                    500,
+                    502,
+                    503,
+                ):
                     wait = 2**attempt  # exponential backoff: 2, 4, 8s
                     logger.warning(
                         "openai_like.retrying",
@@ -829,7 +993,9 @@ class OpenAILikeBackend(LLMBackend):
             "openai_like.chat_retries_exhausted",
             extra={"model": model, "last_error": str(last_exception)},
         )
-        raise RuntimeError(f"OpenAI-like chat failed after {self.MAX_RETRIES} retries: {last_exception}") from last_exception
+        raise RuntimeError(
+            f"OpenAI-like chat failed after {self.MAX_RETRIES} retries: {last_exception}"
+        ) from last_exception
 
     async def embed(self, texts: list[str], **kwargs: Any) -> EmbeddingResponse:
         """Generate embeddings via the OpenAI-compatible embeddings API.
