@@ -693,7 +693,10 @@ async def _create_backend(
                 "Ollama backend requires ollama_base_url in per-org "
                 "configuration.  Set it via PATCH /admin/org/config."
             )
-        instance: LLMBackend = backend_cls(base_url=config["ollama_base_url"])  # type: ignore[call-arg]
+        instance: LLMBackend = backend_cls(
+            base_url=config["ollama_base_url"],
+            model=config.get("llm_model") or config.get("model"),
+        )  # type: ignore[call-arg]
     elif provider == "openai":
         if config is None or not config.get("openai_api_key"):
             raise LLMConfigurationError(

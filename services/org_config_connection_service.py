@@ -220,7 +220,10 @@ class OrgConfigConnectionService:
             from core.llm import resolve_backend
 
             backend = await resolve_backend(org_config=merged.to_llm_config_dict())
-            await backend.chat([{"role": "user", "content": "ping"}], max_tokens=1)
+            chat_kwargs: dict[str, Any] = {"max_tokens": 1}
+            if merged.llm_model is not None:
+                chat_kwargs["model"] = merged.llm_model
+            await backend.chat([{"role": "user", "content": "ping"}], **chat_kwargs)
             return self._success(start, f"llm ok via {backend.model_name}")
         except asyncio.CancelledError:
             raise

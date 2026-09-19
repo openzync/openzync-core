@@ -54,10 +54,19 @@ class OllamaBackend(LLMBackend):
     DEFAULT_EMBED_MODEL: ClassVar[str] = "nomic-embed-text"
     DEFAULT_EMBED_DIM: ClassVar[int] = 768
 
-    def __init__(self, base_url: str = "http://localhost:11434") -> None:
+    def __init__(
+        self, base_url: str = "http://localhost:11434", model: str | None = None
+    ) -> None:
+        """Create an Ollama backend.
+
+        Args:
+            base_url: Base URL of the Ollama REST API.
+            model: Chat model name.  Defaults to
+                :attr:`DEFAULT_CHAT_MODEL` when ``None`` or empty.
+        """
         self._base_url = base_url.rstrip("/")
         # Model defaults are class constants — no env-var fallback.
-        self._chat_model = self.DEFAULT_CHAT_MODEL
+        self._chat_model = model or self.DEFAULT_CHAT_MODEL
         self._embed_model = self.DEFAULT_EMBED_MODEL
 
     # ── LLMBackend ─────────────────────────────────────────────────────────
@@ -78,20 +87,46 @@ class OllamaBackend(LLMBackend):
     ) -> ChatResponse:
         """Send a chat completion request to Ollama's ``/api/chat``.
 
-        Supported kwargs (forwarded to Ollama):
-            ``model``, ``temperature``, ``top_p``, ``max_tokens``, ``stream``.
+        Sampling/token-limit kwargs are mapped into Ollama's native
+        ``options`` object: ``temperature`` → ``options["temperature"]``,
+        ``top_p`` → ``options["top_p"]``, ``max_tokens``/``num_predict``
+        → ``options["num_predict"]`` (``max_tokens`` wins when both are
+        given; defaults to 2048 when neither is).  The payload is exactly
+        ``model``/``messages``/``stream``/``options`` — any other kwargs
+        are dropped, never passed through at the top level.
+
+        Raises:
+            RuntimeError: On HTTP error, chained from the original
+                :class:`httpx.HTTPStatusError` with the model name,
+                status code, and first 500 chars of the response body.
         """
         model = kwargs.pop("model", self._chat_model)
+        temperature = kwargs.pop("temperature", None)
+        top_p = kwargs.pop("top_p", None)
+        max_tokens = kwargs.pop("max_tokens", None)
+        num_predict = kwargs.pop("num_predict", None)
 
         if cache_config and cache_config.enabled:
             logger.debug("ollama.cache_unsupported", extra={"model": model})
+
+        options: dict[str, Any] = {}
+        if temperature is not None:
+            options["temperature"] = temperature
+        if top_p is not None:
+            options["top_p"] = top_p
+        # max_tokens takes precedence over an explicit num_predict.
+        if max_tokens is not None:
+            options["num_predict"] = max_tokens
+        elif num_predict is not None:
+            options["num_predict"] = num_predict
+        else:
+            options["num_predict"] = 2048
 
         payload = {
             "model": model,
             "messages": messages,
             "stream": False,
-            "num_predict": 2048,
-            **kwargs,
+            "options": options,
         }
 
         start = time.monotonic()
@@ -101,15 +136,19 @@ class OllamaBackend(LLMBackend):
                 resp.raise_for_status()
                 data = resp.json()
         except httpx.HTTPStatusError as exc:
+            body = exc.response.text[:500]
             logger.error(
                 "ollama.chat_http_error",
                 extra={
                     "status_code": exc.response.status_code,
-                    "detail": exc.response.text[:500],
+                    "detail": body,
                     "model": model,
                 },
             )
-            raise
+            raise RuntimeError(
+                f"Ollama chat failed for model {model}: "
+                f"{exc.response.status_code} {body}"
+            ) from exc
         except httpx.TimeoutException:
             logger.error("ollama.chat_timeout", extra={"model": model})
             raise
