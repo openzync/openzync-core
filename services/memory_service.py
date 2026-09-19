@@ -272,35 +272,40 @@ class MemoryService:
             },
         )
 
-        # ── Step 3: Content-level dedup ──────────────────────────────────
+        # ── Step 3: Content-level dedup pre-check (metrics/log ONLY) ─────
+        # Best-effort Redis peek for observability — NEVER authoritative.
+        # TOCTOU: a check-then-set gate here would let two concurrent
+        # identical submissions both pass. The ONLY ingest gate is the
+        # atomic claim in Step 4 (Redis Lua GET-or-SET, then the
+        # ingest_dedup UNIQUE claim as DB backstop).
         msgs = [m.model_dump() for m in messages]
         content_hash = self._idem.compute_content_hash(
             str(org_id), str(created_by), str(session_id), msgs
         )
-        # Redis fast-path pre-check ONLY — never relied on for correctness.
-        # The authoritative dedup arbiter is the ingest_dedup claim below,
-        # which serializes concurrent identical submissions in the DB.
-        existing_job_id = await self._idem.check_content_hash(
-            str(org_id), str(created_by), str(session_id), msgs
-        )
-        if existing_job_id is not None:
-            logger.info(
-                "memory.content_dedup_hit",
+        try:
+            _peek = await self._idem.check_content_hash(
+                str(org_id), str(created_by), str(session_id), msgs
+            )
+        except Exception:
+            _peek = None
+            logger.warning(
+                "memory.content_dedup_peek_failed",
                 extra={
                     "content_hash": content_hash[:16] + "...",
-                    "existing_job_id": existing_job_id,
                     "project_id": str(project_id),
                 },
             )
-            winner_job_id, winner_count = _decode_claim_payload(
-                existing_job_id, fallback_count=len(messages)
+        if _peek is not None:
+            logger.info(
+                "memory.content_dedup_peek_hit",
+                extra={
+                    "content_hash": content_hash[:16] + "...",
+                    "peek_job_id": _peek,
+                    "project_id": str(project_id),
+                },
             )
-            return IngestMemoryResponse(
-                job_id=winner_job_id,
-                episode_count=winner_count,
-                status="accepted",
-                message="Content already ingested; returning existing job_id",
-            )
+        # note: intentionally NO early return here — every caller falls
+        # through to the atomic claim below, which is the sole arbiter.
 
         # ── Step 4: Claim the batch (TOCTOU-safe dedup) ──────────────────
         # job_id is generated before the claims so the accepted ingest can
@@ -338,12 +343,40 @@ class MemoryService:
                 status="accepted",
                 message="Content already ingested; returning existing job_id",
             )
-        if not await self._dedup_repo.insert_or_none(
-            project_id=project_id,
-            session_id=session_id,
-            content_hash=content_hash,
-            job_id=job_id,
-        ):
+        # Backstop: ingest_dedup UNIQUE(project, session, hash) is the DB
+        # arbiter for races the Redis claim cannot see (Redis eviction,
+        # failover, or TTL expiry between claim and insert). ON CONFLICT
+        # DO NOTHING reports the loss; IntegrityError covers any path
+        # that still raises — both replay the winner, never insert twice.
+        try:
+            _claimed = await self._dedup_repo.insert_or_none(
+                project_id=project_id,
+                session_id=session_id,
+                content_hash=content_hash,
+                job_id=job_id,
+            )
+        except IntegrityError:
+            logger.info(
+                "memory.content_dedup_hit",
+                extra={
+                    "content_hash": content_hash,
+                    "project_id": str(project_id),
+                    "via": "integrity_error",
+                },
+            )
+            await self._db.rollback()
+            prior_job_id = await self._dedup_repo.get_job_id(
+                project_id=project_id,
+                session_id=session_id,
+                content_hash=content_hash,
+            )
+            return IngestMemoryResponse(
+                job_id=str(prior_job_id) if prior_job_id else None,
+                episode_count=len(messages),
+                status="accepted",
+                message="Content already ingested; returning existing job_id",
+            )
+        if not _claimed:
             prior_job_id = await self._dedup_repo.get_job_id(
                 project_id=project_id,
                 session_id=session_id,
@@ -505,9 +538,10 @@ class MemoryService:
                 idempotency_key, body_hash or "", response.model_dump(), str(org_id)
             )
 
-        await self._idem.store_content_hash(
-            str(org_id), str(created_by), str(session_id), msgs, payload=str(job_id)
-        )
+        # note: no store_content_hash here — the Step 4 Lua claim already
+        # SET the Redis key (payload = job_id) atomically on win. A
+        # post-ingest check-then-store would re-open the TOCTOU window;
+        # store_content_hash remains for non-ingest writers only.
 
         # ── Step 12: Invalidate context cache for this project ───────────
         await self._invalidate_context_cache(str(org_id), str(project_id))

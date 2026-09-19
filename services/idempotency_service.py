@@ -389,9 +389,15 @@ class IdempotencyService:
         session_id: str,
         messages: list[dict[str, Any]],
     ) -> str | None:
-        """Check whether identical content has already been ingested.
+        """Peek at a content hash (metrics/log best-effort ONLY).
 
-        Computes the SHA-256 hash and looks it up in Redis.
+        Computes the SHA-256 hash and looks it up in Redis for
+        observability (dedup-peek hit counters, debug logs). The return
+        value must NEVER gate ingestion — a check-then-act gate here is
+        a TOCTOU race: two concurrent identical submissions can both
+        read ``None`` and both ingest. The sole ingest arbiter is
+        :meth:`claim_content_hash` (atomic Lua GET-or-SET) with the
+        ``ingest_dedup`` UNIQUE claim as DB backstop.
 
         Args:
             org_id: Organisation UUID string.
@@ -401,7 +407,8 @@ class IdempotencyService:
 
         Returns:
             The stored payload (e.g. the original ``job_id``) if this
-            content was already ingested, ``None`` if it is new.
+            content was already ingested, ``None`` if it is new — hint
+            only, not a decision.
         """
         content_hash = self.compute_content_hash(
             org_id, user_id, session_id, messages
@@ -432,13 +439,14 @@ class IdempotencyService:
         *,
         payload: str | None = None,
     ) -> str:
-        """Store a content hash in Redis with TTL.
+        """Refresh a content-hash key (metrics/log best-effort ONLY).
 
-        Uses ``SETNX`` to atomically store only if absent, preventing
-        a race where two concurrent ingestions of the same content both
-        pass ``check_content_hash``.  When ``payload`` is given it is
-        stored as the Redis value (e.g. the ``job_id`` to replay);
-        otherwise the hash itself is stored.
+        Uses ``SET NX`` so the first writer's value wins. This is NOT an
+        ingest gate and must never be paired with :meth:`check_content_hash`
+        as a check-then-set decision — that pair is TOCTOU-unsafe.
+        Ingest callers rely solely on :meth:`claim_content_hash`; this
+        helper exists for non-ingest writers (backfills, repairs) and for
+        refreshing TTL after a won claim.
 
         Args:
             org_id: Organisation UUID string.
