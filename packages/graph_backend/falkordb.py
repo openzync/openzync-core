@@ -140,8 +140,8 @@ def _decode_offset_cursor(cursor: str | None) -> int:
         return 0
     try:
         decoded = orjson.loads(base64.b64decode(cursor))
-        return int(decoded.get("o", 0))
-    except (orjson.JSONDecodeError, ValueError, TypeError):
+        return max(0, int(decoded.get("o", 0)))
+    except (orjson.JSONDecodeError, ValueError, TypeError, AttributeError):
         logger.warning("falkordb_graph.invalid_cursor", extra={"cursor": cursor})
         return 0
 
@@ -267,7 +267,7 @@ class FalkorGraphBackend(GraphBackend):
                     },
                 )
                 raise ExternalServiceError(
-                    message=f"FalkorDB schema bootstrap failed: {exc}",
+                    message="FalkorDB schema bootstrap failed",
                     detail={"graph_key": key, "query": query},
                 ) from exc
         self._schema_ensured[key] = _SCHEMA_VERSION
@@ -1585,6 +1585,7 @@ class FalkorGraphBackend(GraphBackend):
                 WHERE {where_clause}
                 RETURN n.id, n.name, n.entity_type, n.summary, n.attributes, n.created_at
                 ORDER BY {order_clause}, n.id ASC
+                SKIP {int(offset)}
                 LIMIT {limit + 1}
                 """,
                 params,
@@ -1609,7 +1610,7 @@ class FalkorGraphBackend(GraphBackend):
                 },
             )
             raise ExternalServiceError(
-                message=f"Failed to list entities: {exc}",
+                message="Failed to list entities",
                 detail={"org_id": str(org_id)},
             ) from exc
 
@@ -1633,6 +1634,17 @@ class FalkorGraphBackend(GraphBackend):
             A dict with ``items`` (list of edge dicts), ``next_cursor``,
             and ``has_more``.
         """
+        # ValidationError sources must stay above the try (ValidationError is not a ValueError; in-try raises would 502).
+        type_filter = ""
+        if predicate:
+            try:
+                safe_pred = self._sanitize_edge_type(predicate)
+            except ValueError as err:
+                raise ValidationError(
+                    f"Invalid predicate: {predicate[:100]!r}"
+                ) from err
+            type_filter = f"AND type(r) = '{safe_pred}'"
+
         graph = self._get_graph(org_id, project_id)
         if graph is None:
             return {"items": [], "next_cursor": None, "has_more": False}
@@ -1646,10 +1658,6 @@ class FalkorGraphBackend(GraphBackend):
         )
 
         params: dict[str, object] = {"eid": str(entity_id)}
-        type_filter = ""
-        if predicate:
-            safe_pred = self._sanitize_edge_type(predicate)
-            type_filter = f"AND type(r) = '{safe_pred}'"
 
         try:
             result = await graph.query(
@@ -1659,7 +1667,8 @@ class FalkorGraphBackend(GraphBackend):
                 RETURN r.id, r.source_id, r.target_id, type(r) AS rel_type,
                        r.properties, r.fact, r.confidence,
                        r.valid_from, r.valid_to, r.created_at
-                ORDER BY {order_clause}
+                ORDER BY {order_clause}, r.id ASC
+                  SKIP {int(offset)}
                 LIMIT {limit + 1}
                 """,
                 params,
@@ -1673,6 +1682,7 @@ class FalkorGraphBackend(GraphBackend):
                 next_cursor = _encode_offset_cursor(offset + len(items))
 
             return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
+        # ValidationError sources must stay above the try (ValidationError is not a ValueError; in-try raises would 502).
         except ValueError:
             raise
         except Exception as exc:
@@ -1686,7 +1696,7 @@ class FalkorGraphBackend(GraphBackend):
                 },
             )
             raise ExternalServiceError(
-                message=f"Failed to list edges for entity {entity_id}: {exc}",
+                message=f"Failed to list edges for entity {entity_id}",
                 detail={"org_id": str(org_id), "entity_id": str(entity_id)},
             ) from exc
 
@@ -2817,7 +2827,8 @@ class FalkorGraphBackend(GraphBackend):
                        o.observation_metadata, o.created_at,
                        o.valid_from, o.valid_to, o.updated_at,
                        o.organization_id, o.project_id
-                ORDER BY {order_clause}
+                ORDER BY {order_clause}, o.id ASC
+                  SKIP {int(offset)}
                 LIMIT {limit + 1}
                 """,
                 params,

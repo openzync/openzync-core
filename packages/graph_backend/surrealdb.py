@@ -186,8 +186,8 @@ def _decode_offset_cursor(cursor: str | None) -> int:
         return 0
     try:
         decoded = orjson.loads(base64.b64decode(cursor))
-        return int(decoded.get("o", 0))
-    except (orjson.JSONDecodeError, ValueError, TypeError):
+        return max(0, int(decoded.get("o", 0)))
+    except (orjson.JSONDecodeError, ValueError, TypeError, AttributeError):
         logger.warning("surreal_graph.invalid_cursor", extra={"cursor": cursor})
         return 0
 
@@ -282,7 +282,7 @@ class SurrealGraphBackend(GraphBackend):
                 extra={"error": str(exc)},
             )
             raise ExternalServiceError(
-                message=f"SurrealDB schema bootstrap failed: {exc}",
+                message="SurrealDB schema bootstrap failed",
                 detail={"error": str(exc)},
             ) from exc
         self._schema_ensured = True
@@ -1154,7 +1154,7 @@ class SurrealGraphBackend(GraphBackend):
                 },
             )
             raise ExternalServiceError(
-                message=f"Failed to list entities: {exc}",
+                message="Failed to list entities",
                 detail={"org_id": str(org_id)},
             ) from exc
 
@@ -1198,17 +1198,26 @@ class SurrealGraphBackend(GraphBackend):
             "eid": RecordID("entity", str(entity_id)),
         }
 
+        safe_pred = ""
+        # ValidationError sources must stay above the try (ValidationError is not a ValueError; in-try raises would 502).
+        if predicate:
+            try:
+                safe_pred = self._sanitize_edge_type(predicate)
+            except ValueError as err:
+                raise ValidationError(
+                    f"Invalid predicate: {predicate[:100]!r}"
+                ) from err
+
         try:
             # Expired edges (invalid_at set) are omitted from the listing —
             # the square-bracket filter applies to the intermediate edge
             # records before the arrow resolves (same pattern as traverse).
             if predicate:
-                safe_pred = self._sanitize_edge_type(predicate)
                 result = await self._surreal.query(
                     f"""
                     SELECT *, meta::tb(id) AS edge_table_name
                     FROM (SELECT VALUE ->{safe_pred}[WHERE invalid_at IS NONE] FROM $eid)
-                    ORDER BY {order_clause}
+                    ORDER BY {order_clause}, id ASC
                     LIMIT {limit + 1} START {offset};
                     """,
                     params,
@@ -1218,7 +1227,7 @@ class SurrealGraphBackend(GraphBackend):
                     f"""
                     SELECT *, meta::tb(id) AS edge_table_name
                     FROM (SELECT VALUE <->?[WHERE invalid_at IS NONE] FROM $eid)
-                    ORDER BY {order_clause}
+                    ORDER BY {order_clause}, id ASC
                     LIMIT {limit + 1} START {offset};
                     """,
                     params,
@@ -1233,6 +1242,7 @@ class SurrealGraphBackend(GraphBackend):
                 next_cursor = _encode_offset_cursor(offset + len(items))
 
             return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
+        # ValidationError sources must stay above the try (ValidationError is not a ValueError; in-try raises would 502).
         except ValueError:
             raise
         except Exception as exc:
@@ -1246,7 +1256,7 @@ class SurrealGraphBackend(GraphBackend):
                 },
             )
             raise ExternalServiceError(
-                message=f"Failed to list edges for entity {entity_id}: {exc}",
+                message=f"Failed to list edges for entity {entity_id}",
                 detail={"org_id": str(org_id), "entity_id": str(entity_id)},
             ) from exc
 
@@ -2423,7 +2433,7 @@ class SurrealGraphBackend(GraphBackend):
                 },
             )
             raise ExternalServiceError(
-                message=f"Failed to get observations: {exc}",
+                message="Failed to get observations",
                 detail={"org_id": str(org_id)},
             ) from exc
 
