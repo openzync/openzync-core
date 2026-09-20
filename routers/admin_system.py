@@ -55,6 +55,7 @@ from schemas.organization_config import (
     OrgConfigResponse,
     UpdateOrgConfigRequest,
 )
+from schemas.sorting import OrgMemberSortBy, OrgSortBy, SortDir, SortSpec
 from schemas.system_config import SystemConfigResponse, SystemConfigUpdate
 from services.email_service import EmailService
 from services.org_config_service import OrgConfigService
@@ -281,6 +282,8 @@ async def list_all_orgs(
     page: int = 1,
     limit: int = 50,
     status: str | None = None,
+    sort_by: OrgSortBy | None = None,
+    sort_dir: SortDir = "desc",
     _org_id: str = Depends(require_superadmin),  # noqa: B008
     service: OrganizationService = Depends(_get_org_service),  # noqa: B008
 ) -> SystemOrgListResponse:
@@ -290,13 +293,20 @@ async def list_all_orgs(
         page: 1-based page number.
         limit: Page size (clamped to 1..200).
         status: Optional lifecycle filter (pending/approved/rejected).
+        sort_by: Whitelisted key (``name``, ``created_at``).
+        sort_dir: ``"asc"`` or ``"desc"``.
         service: Superadmin OrganizationService (bypass session).
         _org_id: Platform org UUID (superadmin-gated).
 
     Returns:
         A paginated :class:`SystemOrgListResponse`.
     """
-    orgs, total = await service.list_all_orgs(status=status, page=page, limit=limit)
+    orgs, total = await service.list_all_orgs(
+        status=status,
+        page=page,
+        limit=limit,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
+    )
     return SystemOrgListResponse(
         data=[
             SystemOrgListItem(
@@ -327,6 +337,8 @@ async def list_org_members(
     org_id: UUID,
     page: int = 1,
     limit: int = 50,
+    sort_by: OrgMemberSortBy | None = None,
+    sort_dir: SortDir = "asc",
     _org_id: str = Depends(require_superadmin),  # noqa: B008
     service: OrganizationService = Depends(_get_org_service),  # noqa: B008
 ) -> SystemOrgMembersResponse:
@@ -336,6 +348,8 @@ async def list_org_members(
         org_id: The target organization UUID.
         page: 1-based page number.
         limit: Page size (clamped to 1..200).
+        sort_by: Whitelisted key (``created_at``, ``name``, ``email``).
+        sort_dir: ``"asc"`` or ``"desc"``.
         _org_id: Platform org UUID (superadmin-gated).
         service: Superadmin OrganizationService (bypass session).
 
@@ -347,7 +361,10 @@ async def list_org_members(
     """
     try:
         users, total = await service.list_org_members(
-            org_id, page=page, limit=limit
+            org_id,
+            page=page,
+            limit=limit,
+            sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
         )
     except NotFoundError:
         raise HTTPException(

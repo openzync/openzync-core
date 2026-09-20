@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import Response
 
@@ -35,6 +35,7 @@ from schemas.prompt_templates import (
     SetPromptTemplateRequest,
     SystemPromptGroupsResponse,
 )
+from schemas.sorting import PromptSortBy, SortDir, SortSpec
 
 # ── Router ─────────────────────────────────────────────────────────────────
 
@@ -56,14 +57,23 @@ router = APIRouter(
 async def list_prompt_templates(
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_permission("configuration:read")),
+    sort_by: PromptSortBy | None = Query(
+        default=None, description="Sort key (default name)."
+    ),
+    sort_dir: SortDir = Query(
+        default="asc", description="Sort direction (default asc)."
+    ),
 ) -> PromptTemplateListResponse:
     """List all prompt template names with override status.
 
     Returns one entry per template name — includes the current version,
     whether the org has customised it, and its last-updated timestamp.
+    Default ``name/asc``.
     """
     repo = PromptTemplateRepository(db)
-    templates = await repo.list_names(uuid.UUID(org_id))
+    templates = await repo.list_names(
+        uuid.UUID(org_id), sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir)
+    )
     return PromptTemplateListResponse(
         data=[PromptTemplateSummary(**t) for t in templates],
     )

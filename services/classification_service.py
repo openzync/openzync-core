@@ -10,6 +10,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from core.exceptions import NotFoundError
+from core.sorting import SortSpec
 from repositories.dialog_classification_repository import (
     DialogClassificationRepository,
 )
@@ -36,18 +37,23 @@ class ClassificationService:
         org_id: UUID,
         session_id: UUID,
         project_id: UUID | None = None,
+        sort: SortSpec | None = None,
     ) -> list[ClassificationResponse]:
         """Return all classifications for episodes in a session.
+
+        Default ``sequence_number ASC`` (locked); ``created_at`` alt
+        offered without breaking the default.
 
         Args:
             org_id: The authenticated organization UUID.
             session_id: The session UUID.
             project_id: Optional project UUID for intra-org isolation
                 of the session ownership check.
+            sort: Validated sort spec (forwarded opaque to the repository).
 
         Returns:
             List of ``ClassificationResponse`` objects, ordered by episode
-            sequence number.  May be empty if no classifications exist yet.
+            sequence number by default.  May be empty if no classifications exist yet.
 
         Raises:
             NotFoundError: If the session does not exist.
@@ -59,7 +65,7 @@ class ClassificationService:
         if session is None:
             raise NotFoundError(f"Session '{session_id}' not found")
 
-        classifications = await self._repo.get_by_session(org_id, session_id)
+        classifications = await self._repo.get_by_session(org_id, session_id, sort=sort)
         if not classifications:
             return []
 

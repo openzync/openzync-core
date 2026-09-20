@@ -19,6 +19,7 @@ from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.sorting import SortSpec
 from routers.admin_schemas import router
 from schemas.extraction_schemas import UpdateExtractionSchemaRequest
 
@@ -208,7 +209,10 @@ class TestListSchemas:
         response = await client.get("/v1/admin/schemas?type=classification")
         assert response.status_code == 200
         mock_schema_service.list_schemas.assert_awaited_once_with(
-            org_id=ORG_ID, schema_type="classification", is_active=None
+            org_id=ORG_ID,
+            schema_type="classification",
+            is_active=None,
+            sort=SortSpec(None, "desc"),
         )
 
     async def test_filters_by_is_active(
@@ -221,7 +225,7 @@ class TestListSchemas:
         response = await client.get("/v1/admin/schemas?is_active=true")
         assert response.status_code == 200
         mock_schema_service.list_schemas.assert_awaited_once_with(
-            org_id=ORG_ID, schema_type=None, is_active=True
+            org_id=ORG_ID, schema_type=None, is_active=True, sort=SortSpec(None, "desc")
         )
 
     async def test_returns_422_on_invalid_type_filter(

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.auth import require_permission
@@ -29,6 +29,7 @@ from schemas.classifications import (
     ClassificationListResponse,
     ClassificationResponse,
 )
+from schemas.sorting import ClassificationSortBy, SortDir, SortSpec
 from services.classification_service import ClassificationService
 
 router = APIRouter(
@@ -59,6 +60,14 @@ def _get_classification_service(
 async def list_classifications(
     request: Request,
     session_id: UUID = Path(...),
+    sort_by: ClassificationSortBy | None = Query(
+        default=None,
+        description="Sort key (default sequence_number, locked).",
+    ),
+    sort_dir: SortDir = Query(
+        default="asc",
+        description="Sort direction (default asc).",
+    ),
     service: ClassificationService = Depends(_get_classification_service),
 ) -> ClassificationListResponse:
     """List all classifications for episodes in a session.
@@ -72,6 +81,7 @@ async def list_classifications(
         org_id=org_id,
         session_id=session_id,
         project_id=project_id,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
     return ClassificationListResponse(
         data=classifications,

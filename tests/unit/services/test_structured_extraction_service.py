@@ -12,6 +12,7 @@ from uuid import UUID
 import pytest
 
 from core.exceptions import NotFoundError
+from core.sorting import SortSpec
 from models.structured_extraction import StructuredExtraction
 from schemas.structured_extractions import (
     StructuredExtractionListResponse,
@@ -87,7 +88,23 @@ class TestStructuredExtractionService:
         mock_session_repo.get_by_uuid.assert_awaited_once_with(
             org_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=None,
         )
-        mock_repo.get_by_session.assert_awaited_once_with(self.ORG_ID, self.SESSION_ID)
+        mock_repo.get_by_session.assert_awaited_once_with(
+            self.ORG_ID, self.SESSION_ID, sort=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_session_extractions_forwards_sort(self) -> None:
+        """An explicit SortSpec is forwarded opaque to the repository."""
+        service, mock_repo, mock_session_repo = self._make_service()
+        mock_session_repo.get_by_uuid.return_value = self._make_session_mock()
+        mock_repo.get_by_session.return_value = []
+        spec = SortSpec(sort_by="created_at", sort_dir="asc")
+
+        await service.get_session_extractions(self.ORG_ID, self.SESSION_ID, sort=spec)
+
+        mock_repo.get_by_session.assert_awaited_once_with(
+            self.ORG_ID, self.SESSION_ID, sort=spec
+        )
 
     @pytest.mark.asyncio
     async def test_get_session_extractions_session_not_found_raises(self) -> None:

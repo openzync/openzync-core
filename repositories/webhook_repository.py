@@ -8,7 +8,14 @@ import orjson
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.sorting import SortSpec, resolve_order_by
 from models.webhook import WebhookEndpoint
+
+WEBHOOK_SORTABLE_COLUMNS = {
+    "name": WebhookEndpoint.name,
+    "created_at": WebhookEndpoint.created_at,
+}
+"""Sortable columns for webhooks (default created_at/desc)."""
 
 
 class WebhookRepository:
@@ -27,12 +34,31 @@ class WebhookRepository:
     async def get_by_organization(
         self,
         organization_id: uuid.UUID,
+        sort: SortSpec | None = None,
     ) -> list[WebhookEndpoint]:
-        """Fetch all endpoints for an organization."""
+        """Fetch all endpoints for an organization.
+
+        Default ``created_at/desc``; whitelist ``name``, ``created_at``.
+
+        Args:
+            organization_id: Tenant scope.
+            sort: Validated sort spec.
+        """
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "desc")
         result = await self._db.execute(
             select(WebhookEndpoint)
             .where(WebhookEndpoint.organization_id == organization_id)
-            .order_by(WebhookEndpoint.created_at.desc())
+            .order_by(
+                *resolve_order_by(
+                    WEBHOOK_SORTABLE_COLUMNS,
+                    WebhookEndpoint.id,
+                    req_sort,
+                    req_dir,
+                    default_sort_by="created_at",
+                    default_dir="desc",
+                )
+            )
         )
         return list(result.scalars().all())
 

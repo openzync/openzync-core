@@ -26,6 +26,7 @@ from dependencies.db import get_db
 from dependencies.org_config import get_org_config
 from dependencies.project_auth import require_project_membership
 from schemas.organization_config import OrgConfigBase
+from schemas.sorting import SearchSort
 from services.hybrid_retriever import HybridRetriever
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,11 @@ async def search_memory(
         "Valid values: ``episodes``, ``facts``, ``entities``, "
         "``communities``.",
     ),
+    sort: SearchSort = Query(
+        default="relevance",
+        description="Result order — ``relevance`` (RRF) or ``recent`` "
+        "(created_at DESC per source type).",
+    ),
     db: AsyncSession = Depends(get_db),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:read")),
@@ -95,6 +101,7 @@ async def search_memory(
         query: The search query string.
         limit: Maximum results per source type.
         types: Comma-separated result type filter.
+        sort: Result order — ``relevance`` or ``recent``.
         db: An async SQLAlchemy session (injected).
         org_config: Org-level configuration (injected).
 
@@ -140,6 +147,7 @@ async def search_memory(
         query=query,
         project_id=project_id,
         limit=limit,
+        sort=sort,
     )
 
     # ── Filter by requested types ───────────────────────────────────────

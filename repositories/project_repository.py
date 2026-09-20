@@ -11,8 +11,22 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.sorting import SortSpec, resolve_order_by
 from models.project import Project
 from models.project_member import ProjectMember
+
+PROJECT_SORTABLE_COLUMNS = {
+    "name": Project.name,
+    "created_at": Project.created_at,
+    "updated_at": Project.updated_at,
+}
+"""Sortable columns for GET /v1/projects (default created_at/desc)."""
+
+PROJECT_MEMBER_SORTABLE_COLUMNS = {
+    "created_at": ProjectMember.created_at,
+    "role": ProjectMember.role,
+}
+"""Sortable columns for project members (default created_at/asc)."""
 
 
 class ProjectRepository:
@@ -108,6 +122,7 @@ class ProjectRepository:
         user_id: UUID | None,
         limit: int = 50,
         offset: int = 0,
+        sort: SortSpec | None = None,
     ) -> list[Project]:
         """List non-archived projects in an organisation.
 
@@ -115,17 +130,23 @@ class ProjectRepository:
         member are returned.  When ``user_id`` is ``None`` (API key auth),
         all non-archived projects in the org are returned.
 
+        Default ``created_at/desc``; whitelist ``name``, ``created_at``,
+        ``updated_at``.
+
         Args:
             organization_id: Tenant scope.
             user_id: The authenticated user's UUID, or ``None`` for
                 API-key-authenticated requests.
             limit: Maximum results per page (capped at 200).
             offset: Number of results to skip.
+            sort: Validated sort spec.
 
         Returns:
             A list of Project ORM instances.
         """
         effective_limit = min(limit, 200)
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "desc")
 
         query = select(Project).where(
             Project.organization_id == organization_id,
@@ -141,7 +162,16 @@ class ProjectRepository:
 
         result = await self._db.execute(
             query
-            .order_by(Project.created_at.desc())
+            .order_by(
+                *resolve_order_by(
+                    PROJECT_SORTABLE_COLUMNS,
+                    Project.id,
+                    req_sort,
+                    req_dir,
+                    default_sort_by="created_at",
+                    default_dir="desc",
+                )
+            )
             .limit(effective_limit)
             .offset(offset)
         )
@@ -297,20 +327,35 @@ class ProjectRepository:
         return result.scalar_one_or_none()
 
     async def list_members(
-        self, project_id: UUID
+        self, project_id: UUID,
+        sort: SortSpec | None = None,
     ) -> list[ProjectMember]:
         """List all members of a project.
 
+        Default ``created_at/asc``; whitelist ``created_at``, ``role``.
+
         Args:
             project_id: The project's UUID.
+            sort: Validated sort spec.
 
         Returns:
             A list of ProjectMember ORM instances.
         """
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "asc")
         result = await self._db.execute(
             select(ProjectMember)
             .where(ProjectMember.project_id == project_id)
-            .order_by(ProjectMember.created_at.asc())
+            .order_by(
+                *resolve_order_by(
+                    PROJECT_MEMBER_SORTABLE_COLUMNS,
+                    ProjectMember.id,
+                    req_sort,
+                    req_dir,
+                    default_sort_by="created_at",
+                    default_dir="asc",
+                )
+            )
         )
         return list(result.scalars().all())
 

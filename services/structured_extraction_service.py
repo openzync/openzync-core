@@ -10,6 +10,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from core.exceptions import NotFoundError
+from core.sorting import SortSpec
 from repositories.session_repository import SessionRepository
 from repositories.structured_extraction_repository import (
     StructuredExtractionRepository,
@@ -36,18 +37,23 @@ class StructuredExtractionService:
         org_id: UUID,
         session_id: UUID,
         project_id: UUID | None = None,
+        sort: SortSpec | None = None,
     ) -> StructuredExtractionListResponse:
         """Return all extractions for episodes in a session.
+
+        Default ``sequence_number ASC`` (locked); ``created_at`` alt
+        offered without breaking the default.
 
         Args:
             org_id: The authenticated organization UUID.
             session_id: The session UUID.
             project_id: Optional project UUID for intra-org isolation
                 of the session ownership check.
+            sort: Validated sort spec (forwarded opaque to the repository).
 
         Returns:
             ``StructuredExtractionListResponse`` with items ordered by
-            episode sequence number.  May be empty if no extractions exist.
+            episode sequence number by default.  May be empty if no extractions exist.
 
         Raises:
             NotFoundError: If the session does not exist.
@@ -59,7 +65,7 @@ class StructuredExtractionService:
         if session is None:
             raise NotFoundError(f"Session '{session_id}' not found")
 
-        extractions = await self._repo.get_by_session(org_id, session_id)
+        extractions = await self._repo.get_by_session(org_id, session_id, sort=sort)
         return StructuredExtractionListResponse(
             items=[
                 StructuredExtractionResponse.model_validate(e)

@@ -36,6 +36,13 @@ from schemas.graph import (
     PaginatedGraphEdges,
     PaginatedGraphNodes,
 )
+from schemas.sorting import (
+    CommunitySortBy,
+    GraphEdgeSortBy,
+    GraphNodeSortBy,
+    SortDir,
+    SortSpec,
+)
 from services.graph_service import GraphService
 
 router = APIRouter(
@@ -83,6 +90,14 @@ async def list_graph_nodes(
         default=None,
         description="Opaque cursor for pagination from a previous response.",
     ),
+    sort_by: GraphNodeSortBy | None = Query(
+        default=None,
+        description="Sort key (default created_at).",
+    ),
+    sort_dir: SortDir = Query(
+        default="asc",
+        description="Sort direction (default asc).",
+    ),
     service: GraphService = Depends(get_graph_service),
 ) -> GraphNodesListResponse:
     """List entity nodes with optional type filter and cursor pagination."""
@@ -96,6 +111,7 @@ async def list_graph_nodes(
         session_id=session_id,
         limit=limit,
         cursor=cursor,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
 
     return GraphNodesListResponse(
@@ -239,6 +255,14 @@ async def list_graph_edges(
         default=None,
         description="Opaque cursor for pagination from a previous response.",
     ),
+    sort_by: GraphEdgeSortBy | None = Query(
+        default=None,
+        description="Sort key (default created_at).",
+    ),
+    sort_dir: SortDir = Query(
+        default="desc",
+        description="Sort direction (default desc).",
+    ),
     service: GraphService = Depends(get_graph_service),
 ) -> GraphEdgesListResponse:
     """List relationship edges with optional predicate filtering."""
@@ -276,6 +300,7 @@ async def list_graph_edges(
         predicate=predicate,
         limit=limit,
         cursor=cursor,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
 
     return GraphEdgesListResponse(
@@ -309,6 +334,14 @@ async def list_graph_edges(
 )
 async def list_communities(
     request: Request,
+    sort_by: CommunitySortBy | None = Query(
+        default=None,
+        description="Sort key (default created_at).",
+    ),
+    sort_dir: SortDir = Query(
+        default="asc",
+        description="Sort direction (default asc).",
+    ),
     service: GraphService = Depends(get_graph_service),
 ) -> GraphCommunitiesListResponse:
     """List community summary nodes."""
@@ -318,6 +351,7 @@ async def list_communities(
     communities = await service.get_communities(
         org_id=org_id,
         project_id=project_id,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
 
     return GraphCommunitiesListResponse(

@@ -34,6 +34,7 @@ from schemas.extraction_schemas import (
     UpdateExtractionSchemaRequest,
 )
 from schemas.organization_config import OrgConfigBase
+from schemas.sorting import AdminSchemaSortBy, SortDir, SortSpec
 from services.schema_service import SchemaService
 
 router = APIRouter(
@@ -86,6 +87,14 @@ async def list_schemas(
         default=None,
         description="Filter by active status",
     ),
+    sort_by: AdminSchemaSortBy | None = Query(
+        default=None,
+        description="Sort key (default created_at).",
+    ),
+    sort_dir: SortDir = Query(
+        default="desc",
+        description="Sort direction (default desc).",
+    ),
     service: SchemaService = Depends(_get_schema_service),
     org_id: str = Depends(require_permission("configuration:read")),
 ) -> ExtractionSchemaListResponse:
@@ -98,6 +107,7 @@ async def list_schemas(
         org_id=UUID(org_id),
         schema_type=type,
         is_active=is_active,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
     return ExtractionSchemaListResponse(
         data=schemas,

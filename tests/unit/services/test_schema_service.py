@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from core.exceptions import ConflictError, NotFoundError, ValidationError
+from core.sorting import SortSpec
 from models.extraction_schema import ExtractionSchema
 from schemas.extraction_schemas import (
     CreateExtractionSchemaRequest,
@@ -213,7 +214,20 @@ class TestSchemaService:
         assert result[0].name == "Schema A"
         assert result[1].name == "Schema B"
         mock_repo.get_all.assert_awaited_once_with(
-            org_id=self.ORG_ID, schema_type=None, is_active=None,
+            org_id=self.ORG_ID, schema_type=None, is_active=None, sort=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_schemas_forwards_sort(self) -> None:
+        """An explicit SortSpec is forwarded opaque to the repository."""
+        service, mock_repo = self._make_service()
+        mock_repo.get_all.return_value = []
+        spec = SortSpec(sort_by="name", sort_dir="asc")
+
+        await service.list_schemas(self.ORG_ID, sort=spec)
+
+        mock_repo.get_all.assert_awaited_once_with(
+            org_id=self.ORG_ID, schema_type=None, is_active=None, sort=spec,
         )
 
     @pytest.mark.asyncio
@@ -227,7 +241,7 @@ class TestSchemaService:
         assert len(result) == 1
         assert result[0].name == "Classification"
         mock_repo.get_all.assert_awaited_once_with(
-            org_id=self.ORG_ID, schema_type="classification", is_active=True,
+            org_id=self.ORG_ID, schema_type="classification", is_active=True, sort=None,
         )
 
     @pytest.mark.asyncio

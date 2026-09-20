@@ -19,6 +19,7 @@ from core.exceptions import (
     GraphBackendUnavailableError,
     NotFoundError,
 )
+from core.sorting import SortSpec
 from packages.graph_backend.interface import GraphBackend
 from repositories.fact_repository import FactRepository
 from repositories.user_repository import UserRepository
@@ -91,6 +92,7 @@ class GraphService:
         limit: int = 50,
         cursor: str | None = None,
         session_id: UUID | None = None,
+        sort: SortSpec | None = None,
     ) -> dict[str, Any]:
         """List entity nodes with optional type filter and cursor pagination.
 
@@ -99,6 +101,9 @@ class GraphService:
         supported for session-scoped queries — all matching entities are
         returned in a single page.
 
+        Default ``created_at/asc``; whitelist ``name``, ``created_at``,
+        ``entity_type``.
+
         Args:
             org_id: The authenticated organization UUID.
             project_id: The project UUID for intra-org isolation.
@@ -106,6 +111,7 @@ class GraphService:
             limit: Maximum results per page (max 200).
             cursor: Opaque cursor for pagination.
             session_id: Optional session UUID to scope entities.
+            sort: Validated sort spec (forwarded opaque to the backend).
 
         Returns:
             A dict with ``items``, ``next_cursor``, and ``has_more`` keys.
@@ -154,6 +160,7 @@ class GraphService:
             entity_type=entity_type,
             limit=min(limit, 200),
             cursor=cursor,
+            sort=sort,
         )
 
     async def get_entity(
@@ -236,6 +243,7 @@ class GraphService:
         predicate: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        sort: SortSpec | None = None,
     ) -> dict[str, Any]:
         """List relationship edges with optional filters.
 
@@ -243,6 +251,9 @@ class GraphService:
         If ``subject_ids`` is provided, fetches edges for all given entities
         in parallel and deduplicates by ``(sorted source_id, target_id)``.
         Returns empty when neither is provided.
+
+        Default ``created_at/desc``; whitelist ``created_at``,
+        ``predicate``.
 
         Args:
             org_id: The authenticated organization UUID.
@@ -252,6 +263,7 @@ class GraphService:
             predicate: Optional filter by edge label.
             limit: Maximum results per page (per-subject cap in batch mode).
             cursor: Opaque cursor for pagination.
+            sort: Validated sort spec (forwarded opaque to the backend).
 
         Returns:
             A dict with ``items``, ``next_cursor``, and ``has_more`` keys.
@@ -278,6 +290,7 @@ class GraphService:
                     entity_id=eid,
                     predicate=predicate,
                     limit=per_subject_limit,
+                    sort=sort,
                 )
                 for eid in subject_ids
             ])
@@ -301,6 +314,7 @@ class GraphService:
                 predicate=predicate,
                 limit=min(limit, 200),
                 cursor=cursor,
+                sort=sort,
             )
 
         # no subject provided — warn and return empty
@@ -314,6 +328,7 @@ class GraphService:
         self,
         org_id: UUID,
         project_id: UUID,
+        sort: SortSpec | None = None,
     ) -> list[dict[str, Any]]:
         """List community summary nodes.
 
@@ -321,9 +336,16 @@ class GraphService:
         worker, which runs Label Propagation on the entity graph and stores
         community entities in ``graph_entities`` with ``entity_type='community'``.
 
+        Default ``created_at/asc`` (backend default, preserved);
+        whitelist ``name``, ``created_at``, ``member_count``
+        (``member_count`` sorts in Python post-fetch — the full
+        community list fits one page).
+
         Args:
             org_id: The authenticated organization UUID.
             project_id: The project UUID for intra-org isolation.
+            sort: Validated sort spec (forwarded opaque; ``member_count``
+                sorts in Python post-fetch).
 
         Returns:
             A list of community dicts with ``id``, ``name``, ``summary``,
@@ -333,21 +355,48 @@ class GraphService:
             GraphBackendUnavailableError: If the graph backend is not
                 available for this organization.
         """
+        from core.exceptions import ValidationError
+
         if self._backend is None:
             raise GraphBackendUnavailableError(
                 "Graph backend is not available for this organization.",
                 detail={"operation": "get_communities"},
             )
 
+        spec = sort if sort is not None else SortSpec()
+        req_sort = spec.sort_by
+        _sort_dir = spec.sort_dir
+        req_dir = _sort_dir if req_sort is not None else "asc"
+        if req_sort is not None and req_sort not in (
+            "name",
+            "created_at",
+            "member_count",
+        ):
+            raise ValidationError(f"Invalid sort_by: {req_sort!r}")
+        if req_dir not in ("asc", "desc"):
+            raise ValidationError(f"Invalid sort_dir: {req_dir!r}")
+
+        backend_sort = (
+            SortSpec(sort_by=req_sort, sort_dir=req_dir)
+            if req_sort != "member_count"
+            else None
+        )
         result = await self._backend.list_entities(
             org_id=org_id,
             project_id=project_id,
             entity_type="community",
             limit=200,
+            sort=backend_sort,
         )
         items: list[dict[str, Any]] = result.get("items", [])
         # member_count is stored in attributes at creation time
         for item in items:
             attrs = item["attributes"] if item.get("attributes") is not None else {}
             item["member_count"] = attrs.get("member_count", 0)
+        if req_sort == "member_count":
+            # note: explicit key selection — no getattr on raw input.
+            items.sort(
+                key=lambda d: (d.get("member_count", 0), d.get("name") or ""),
+                reverse=(req_dir == "desc"),
+            )
         return items

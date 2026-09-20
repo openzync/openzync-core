@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.exceptions import ConflictError, NotFoundError
 from core.openbao import OpenBaoClient
 from core.org_codes import generate_org_code
+from core.sorting import SortSpec
 from models.organization import Organization
 from models.user import User
 from repositories.organization_repository import OrganizationRepository
@@ -306,6 +307,7 @@ class OrganizationService:
         status: str | None = None,
         page: int = 1,
         limit: int = 50,
+        sort: SortSpec | None = None,
     ) -> tuple[list[Organization], int]:
         """List every organization (pending/approved/rejected) for a superadmin.
 
@@ -313,17 +315,24 @@ class OrganizationService:
             status: Optional lifecycle filter (pending/approved/rejected).
             page: 1-based page number.
             limit: Page size (clamped to 1..200 by the repository).
+            sort: Validated sort spec (forwarded opaque to the repository).
 
         Returns:
             A tuple of ``(orgs_on_page, total_matching_count)``.
         """
-        return await self._repo.list_all(status=status, page=page, limit=limit)
+        return await self._repo.list_all(
+            status=status,
+            page=page,
+            limit=limit,
+            sort=sort,
+        )
 
     async def list_org_members(
         self,
         org_id: UUID,
         page: int = 1,
         limit: int = 50,
+        sort: SortSpec | None = None,
     ) -> tuple[list[User], int]:
         """List a target org's dashboard users (superadmin cross-org view).
 
@@ -331,6 +340,7 @@ class OrganizationService:
             org_id: The target organization UUID.
             page: 1-based page number.
             limit: Page size (clamped to 1..200 by the repository).
+            sort: Validated sort spec (forwarded opaque to the repository).
 
         Returns:
             A tuple of ``(users_on_page, total_matching_count)``.
@@ -342,7 +352,10 @@ class OrganizationService:
         if org is None:
             raise NotFoundError(f"Organization {org_id} not found.")
         return await UserRepository(self._db).list_by_org(
-            org_id, page=page, limit=limit
+            org_id,
+            page=page,
+            limit=limit,
+            sort=sort,
         )
 
     @staticmethod

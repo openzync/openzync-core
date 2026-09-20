@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import ValidationError
 from repositories.user_repository import UserRepository
 
 pytestmark = pytest.mark.unit
@@ -386,7 +387,10 @@ class TestUserRepository:
     ) -> None:
         """list decodes cursor and applies pagination."""
         valid_cursor = repo._encode_cursor(
-            datetime(2024, 1, 1), UUID("00000000-0000-0000-0000-000000000099")
+            "created_at",
+            "desc",
+            datetime(2024, 1, 1).isoformat(),
+            UUID("00000000-0000-0000-0000-000000000099"),
         )
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = []
@@ -600,23 +604,31 @@ class TestUserRepository:
 
     def test_encode_cursor(self, repo: UserRepository) -> None:
         """_encode_cursor produces a valid base64 string."""
-        dt = datetime(2024, 1, 1, tzinfo=UTC)
-        encoded = repo._encode_cursor(dt, self.USER_ID)
+        encoded = repo._encode_cursor(
+            "created_at",
+            "desc",
+            datetime(2024, 1, 1, tzinfo=UTC).isoformat(),
+            self.USER_ID,
+        )
         assert isinstance(encoded, str)
         assert len(encoded) > 0
 
     def test_decode_cursor_roundtrip(self, repo: UserRepository) -> None:
         """_encode_cursor → _decode_cursor roundtrips correctly."""
         dt = datetime(2024, 6, 15, 12, 30, 0, tzinfo=UTC)
-        encoded = repo._encode_cursor(dt, self.USER_ID)
-        decoded_dt, decoded_id = repo._decode_cursor(encoded)
+        encoded = repo._encode_cursor(
+            "created_at", "desc", dt.isoformat(), self.USER_ID
+        )
+        sort_by, sort_dir, value, decoded_id = repo._decode_cursor(encoded)
 
-        assert decoded_dt == dt
+        assert sort_by == "created_at"
+        assert sort_dir == "desc"
+        assert datetime.fromisoformat(value) == dt
         assert decoded_id == self.USER_ID
 
     def test_decode_cursor_invalid_raises(
         self, repo: UserRepository
     ) -> None:
-        """_decode_cursor raises ValueError for malformed input."""
-        with pytest.raises(ValueError, match="Invalid cursor"):
+        """_decode_cursor raises ValidationError for malformed input."""
+        with pytest.raises(ValidationError, match="Invalid cursor"):
             repo._decode_cursor("not-base64!!!")

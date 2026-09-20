@@ -11,6 +11,7 @@ import logging
 from uuid import UUID
 
 from core.exceptions import NotFoundError, ValidationError
+from core.sorting import SortSpec
 from repositories.project_pin_repository import ProjectPinRepository
 from repositories.project_repository import ProjectRepository
 from schemas.projects import (
@@ -150,6 +151,7 @@ class ProjectService:
         limit: int = 50,
         offset: int = 0,
         pinned_only: bool = False,
+        sort: SortSpec | None = None,
     ) -> list[ProjectResponse]:
         """List non-archived projects in an organisation.
 
@@ -160,6 +162,10 @@ class ProjectService:
         requesting user; ``pinned_only=True`` returns just their pins,
         most recently pinned first.
 
+        Default ``created_at/desc`` (``pinned_at/desc`` for pinned_only);
+        whitelist ``name``, ``created_at``, ``updated_at`` (plus
+        ``pinned_at`` when ``pinned_only``).
+
         Args:
             organization_id: Tenant scope.
             user_id: The authenticated user's UUID, or ``None`` for
@@ -167,6 +173,7 @@ class ProjectService:
             limit: Maximum results per page (capped at 200).
             offset: Number of results to skip.
             pinned_only: Return only the user's pinned projects.
+            sort: Validated sort spec (forwarded opaque to the repository).
 
         Raises:
             ValidationError: If ``pinned_only`` is set without a user
@@ -187,6 +194,7 @@ class ProjectService:
                     user_id=user_id,
                     limit=limit,
                     offset=offset,
+                    sort=sort,
                 )
                 counts = await self._repo.count_members_for_projects(
                     [p.id for p in projects]
@@ -210,6 +218,7 @@ class ProjectService:
             user_id=user_id,
             limit=limit,
             offset=offset,
+            sort=sort,
         )
         # Batch-load member counts for all projects in a single query
         project_ids = [p.id for p in projects]
@@ -482,9 +491,13 @@ class ProjectService:
     async def list_members(
         self,
         project_id: UUID,
+        sort: SortSpec | None = None,
     ) -> list[ProjectMemberResponse]:
-        """List all members of a project."""
-        members = await self._repo.list_members(project_id)
+        """List all members of a project.
+
+        Default ``created_at/asc``; whitelist ``created_at``, ``role``.
+        """
+        members = await self._repo.list_members(project_id, sort=sort)
         return [
             ProjectMemberResponse(
                 id=m.id,

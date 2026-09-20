@@ -13,6 +13,7 @@ from uuid import UUID, uuid4
 import pytest
 
 from core.exceptions import NotFoundError, ValidationError
+from core.sorting import SortSpec
 from schemas.projects import (
     AddMemberRequest,
     CreateProjectRequest,
@@ -158,6 +159,7 @@ class TestProjectService:
             user_id=self.USER_ID,
             limit=10,
             offset=0,
+            sort=None,
         )
 
     @pytest.mark.asyncio
@@ -172,6 +174,27 @@ class TestProjectService:
             user_id=self.USER_ID,
         )
         assert results == []
+
+    @pytest.mark.asyncio
+    async def test_list_projects_forwards_sort(self) -> None:
+        """An explicit SortSpec is forwarded opaque to the repository."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.list.return_value = []
+        mock_repo.count_members_for_projects.return_value = {}
+        spec = SortSpec(sort_by="name", sort_dir="asc")
+
+        await service.list_projects(
+            organization_id=self.ORG_ID,
+            user_id=self.USER_ID,
+            sort=spec,
+        )
+        mock_repo.list.assert_awaited_once_with(
+            organization_id=self.ORG_ID,
+            user_id=self.USER_ID,
+            limit=50,
+            offset=0,
+            sort=spec,
+        )
 
     # ── Update ───────────────────────────────────────────────────────────────
 

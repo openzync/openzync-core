@@ -19,6 +19,7 @@ from dependencies.project_auth import require_project_membership
 from dependencies.services import get_graph_backend_for_project
 from packages.graph_backend.interface import GraphBackend
 from schemas.observation import ObservationListResponse
+from schemas.sorting import ObservationSortBy, SortDir, SortSpec
 from services.observation_query_service import ObservationQueryService
 
 router = APIRouter(
@@ -71,6 +72,14 @@ async def list_observations(
         le=200,
         description="Maximum results per page.",
     ),
+    sort_by: ObservationSortBy | None = Query(
+        default=None,
+        description="Sort key (default created_at; name maps to content).",
+    ),
+    sort_dir: SortDir = Query(
+        default="asc",
+        description="Sort direction (default asc).",
+    ),
     service: ObservationQueryService = Depends(_get_observation_query_service),
 ) -> ObservationListResponse:
     """List observations for the current project.
@@ -86,4 +95,5 @@ async def list_observations(
         subject_entity_id=subject_entity_id,
         observation_type=observation_type,
         limit=limit,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )

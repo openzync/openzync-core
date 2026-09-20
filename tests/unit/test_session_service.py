@@ -10,6 +10,7 @@ import pytest
 
 from core.events import EventType
 from core.exceptions import ConflictError, NotFoundError, ValidationError
+from core.sorting import SortSpec
 from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.session_repository import SessionRepository
 from services.session_service import SessionService
@@ -336,8 +337,32 @@ class TestSessionService:
             limit=25,
             cursor="test-cursor",
             include_closed=False,
+            sort=None,
         )
         assert len(result.data) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_forwards_sort(self) -> None:
+        """An explicit SortSpec is forwarded opaque to the repository."""
+        service, mock_repo = self._make_service()
+        mock_repo.list.return_value = ([], None)
+        mock_repo.batch_get_stats.return_value = {}
+        spec = SortSpec(sort_by="created_at", sort_dir="asc")
+
+        await service.list_sessions(
+            org_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            sort=spec,
+        )
+
+        mock_repo.list.assert_awaited_once_with(
+            org_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            limit=50,
+            cursor=None,
+            include_closed=False,
+            sort=spec,
+        )
 
     # ═════════════════════════════════════════════════════════════════════════
     # New tests: get messages

@@ -18,6 +18,7 @@ import pytest
 from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
+from core.sorting import SortSpec
 from routers.admin_webhooks import router
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -146,7 +147,9 @@ class TestListWebhooks:
         assert "data" in body
         assert len(body["data"]) == 1
         assert body["data"][0]["name"] == "test-hook"
-        mock_service.list_endpoints.assert_awaited_once_with(ORG_ID)
+        mock_service.list_endpoints.assert_awaited_once_with(
+            ORG_ID, sort=SortSpec(None, "desc")
+        )
 
 
 # ── GET /{endpoint_id} — get single ──────────────────────────────────────────

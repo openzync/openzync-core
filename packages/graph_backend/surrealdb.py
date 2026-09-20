@@ -47,8 +47,55 @@ from core.exceptions import (
     ExternalServiceError,
     GraphBackendUnavailableError,
     NotFoundError,
+    ValidationError,
 )
+from core.sorting import SortSpec
 from packages.graph_backend.interface import GraphBackend
+
+SURREAL_NODE_SORTABLE = {
+    "name": "name",
+    "created_at": "created_at",
+    "entity_type": "entity_type",
+}
+"""Whitelisted SurrealQL ORDER BY fragments for nodes (default created_at/asc)."""
+
+SURREAL_EDGE_SORTABLE = {
+    "created_at": "created_at",
+    "predicate": "edge_table_name",
+}
+"""Whitelisted SurrealQL ORDER BY fragments for edges (default created_at/desc)."""
+
+SURREAL_OBSERVATION_SORTABLE = {
+    # note: observations have no name field — "name" maps to content.
+    "name": "content",
+    "created_at": "created_at",
+}
+"""Whitelisted SurrealQL ORDER BY fragments for observations."""
+
+
+def _resolve_surreal_sort(
+    whitelist: dict[str, str],
+    sort_by: str | None,
+    sort_dir: str,
+    default_sort: str,
+    default_dir: str,
+) -> str:
+    """Validate sort params and return a SurrealQL ``ORDER BY`` fragment.
+
+    Only values from ``whitelist`` are ever returned — never raw input.
+
+    Raises:
+        ValidationError: On unknown ``sort_by``/``sort_dir`` (HTTP 422).
+    """
+    key = sort_by if sort_by is not None else default_sort
+    if key not in whitelist:
+        raise ValidationError(f"Invalid sort_by: {key!r}")
+    if sort_dir not in ("asc", "desc"):
+        raise ValidationError(f"Invalid sort_dir: {sort_dir!r}")
+    eff_dir = sort_dir if sort_by is not None else default_dir
+    order_kw = "ASC" if eff_dir == "asc" else "DESC"
+    return f"{whitelist[key]} {order_kw}"
+
 
 logger = structlog.get_logger(__name__)
 
@@ -1039,8 +1086,12 @@ class SurrealGraphBackend(GraphBackend):
         entity_type: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        sort: SortSpec | None = None,
     ) -> dict:
         """List entity nodes with optional type filter and offset pagination.
+
+        Default ``created_at/asc``; whitelist ``name``, ``created_at``,
+        ``entity_type``. Offset cursors are sort-safe.
 
         Uses ``LIMIT + 1`` to detect whether more results exist, and returns
         an opaque base64-encoded cursor for the next page.
@@ -1054,6 +1105,11 @@ class SurrealGraphBackend(GraphBackend):
 
         limit = min(limit, 200)
         offset = _decode_offset_cursor(cursor)
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "asc")
+        order_clause = _resolve_surreal_sort(
+            SURREAL_NODE_SORTABLE, req_sort, req_dir, "created_at", "asc"
+        )
 
         params: dict[str, Any] = {
             "org_id": str(org_id),
@@ -1073,7 +1129,7 @@ class SurrealGraphBackend(GraphBackend):
                 f"""
                 SELECT * FROM entity
                 WHERE {where_clause}
-                ORDER BY created_at ASC, id ASC
+                ORDER BY {order_clause}, id ASC
                 LIMIT {limit + 1} START {offset};
                 """,
                 params,
@@ -1111,8 +1167,12 @@ class SurrealGraphBackend(GraphBackend):
         predicate: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        sort: SortSpec | None = None,
     ) -> dict:
         """List all edges incident to a specific entity node.
+
+        Default ``created_at/desc``; whitelist ``created_at``,
+        ``predicate``. Offset cursors are sort-safe.
 
         With ``predicate``: queries a specific edge table by name.
         Without ``predicate``: uses the ``<->?`` wildcard to discover all
@@ -1128,6 +1188,11 @@ class SurrealGraphBackend(GraphBackend):
 
         limit = min(limit, 200)
         offset = _decode_offset_cursor(cursor)
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "desc")
+        order_clause = _resolve_surreal_sort(
+            SURREAL_EDGE_SORTABLE, req_sort, req_dir, "created_at", "desc"
+        )
 
         params: dict[str, Any] = {
             "eid": RecordID("entity", str(entity_id)),
@@ -1143,7 +1208,7 @@ class SurrealGraphBackend(GraphBackend):
                     f"""
                     SELECT *, meta::tb(id) AS edge_table_name
                     FROM (SELECT VALUE ->{safe_pred}[WHERE invalid_at IS NONE] FROM $eid)
-                    ORDER BY created_at DESC
+                    ORDER BY {order_clause}
                     LIMIT {limit + 1} START {offset};
                     """,
                     params,
@@ -1153,7 +1218,7 @@ class SurrealGraphBackend(GraphBackend):
                     f"""
                     SELECT *, meta::tb(id) AS edge_table_name
                     FROM (SELECT VALUE <->?[WHERE invalid_at IS NONE] FROM $eid)
-                    ORDER BY created_at DESC
+                    ORDER BY {order_clause}
                     LIMIT {limit + 1} START {offset};
                     """,
                     params,
@@ -2283,11 +2348,15 @@ class SurrealGraphBackend(GraphBackend):
         observation_type: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        sort: SortSpec | None = None,
     ) -> dict[str, Any]:
         """List observations with optional filters and cursor pagination.
 
+        Default ``created_at/desc`` (preserved); whitelist ``name``
+        (maps to ``content``), ``created_at``. Offset cursors are
+        sort-safe.
+
         Uses offset-based pagination (same pattern as :meth:`list_entities`).
-        Results are ordered by ``created_at DESC`` (most recent first).
 
         Returns:
             A dict with ``items``, ``next_cursor``, and ``has_more``.
@@ -2297,6 +2366,15 @@ class SurrealGraphBackend(GraphBackend):
 
         limit = min(limit, 200)
         offset = _decode_offset_cursor(cursor)
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "desc")
+        order_clause = _resolve_surreal_sort(
+            SURREAL_OBSERVATION_SORTABLE,
+            req_sort,
+            req_dir,
+            "created_at",
+            "desc",
+        )
 
         params: dict[str, Any] = {
             "org_id": str(org_id),
@@ -2319,7 +2397,7 @@ class SurrealGraphBackend(GraphBackend):
                 f"""
                 SELECT * FROM observation
                 WHERE {where_clause}
-                ORDER BY created_at DESC, id ASC
+                ORDER BY {order_clause}, id ASC
                 LIMIT {limit + 1} START {offset};
                 """,
                 params,

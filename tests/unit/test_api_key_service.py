@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from core.sorting import SortSpec
 from schemas.api_keys import CreateApiKeyRequest
 from services.api_key_service import ApiKeyService
 
@@ -138,6 +139,26 @@ class TestApiKeyService:
             organization_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
             include_revoked=False,
+            sort=None,
+        )
+
+    async def test_list_project_keys_forwards_sort(self) -> None:
+        """An explicit SortSpec is forwarded opaque to the repository."""
+        service, mock_repo = self._make_service()
+        mock_repo.list_by_org.return_value = []
+        spec = SortSpec(sort_by="name", sort_dir="asc")
+
+        await service.list_project_keys(
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            sort=spec,
+        )
+
+        mock_repo.list_by_org.assert_awaited_once_with(
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            include_revoked=False,
+            sort=spec,
         )
 
     async def test_list_project_keys_empty(self) -> None:

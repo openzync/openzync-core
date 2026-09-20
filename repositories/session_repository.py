@@ -21,11 +21,25 @@ from core.cursor import (
     encode_versioned_cursor,
 )
 from core.exceptions import CursorExpiredError
+from core.sorting import SortSpec, resolve_order_by
 from models.episode import Episode
 from models.fact import Fact
 from models.graph_observation import GraphObservation
 from models.project import Project
 from models.session import Session
+
+SESSION_SORTABLE_COLUMNS = {
+    "external_id": Session.external_id,
+    "created_at": Session.created_at,
+    "updated_at": Session.updated_at,
+}
+"""Sortable columns for project sessions (default created_at/desc)."""
+
+MESSAGE_SORTABLE_COLUMNS = {
+    "sequence_number": Episode.sequence_number,
+    "created_at": Episode.created_at,
+}
+"""Sortable columns for session messages (default sequence_number/asc)."""
 
 
 class SessionRepository:
@@ -141,13 +155,16 @@ class SessionRepository:
         limit: int = 50,
         cursor: str | None = None,
         include_closed: bool = False,
+        sort: SortSpec | None = None,
     ) -> tuple[list[Session], str | None]:
         """List sessions for a project with cursor-based pagination, scoped to org.
 
         By default excludes closed sessions (``closed_at IS NOT NULL``).
+        Default order ``created_at DESC`` (most-recent-first); cursor
+        encodes ``sort_by:sort_dir`` and fails closed (422) on mismatch.
 
-        Pagination uses a composite cursor of ``(created_at DESC, id ASC)``
-        for stable, most-recent-first ordering.
+        Pagination uses a composite cursor of ``(sort_col, id)`` for
+        stable ordering.
 
         Args:
             org_id: The organization UUID for tenant isolation.
@@ -155,12 +172,18 @@ class SessionRepository:
             limit: Maximum results per page (capped at 200).
             cursor: Opaque base64 cursor from a previous page.
             include_closed: If ``True``, include closed sessions.
+            sort: Validated sort spec (whitelist ``external_id``,
+                ``created_at``, ``updated_at``).
 
         Returns:
             A tuple of ``(sessions, next_cursor)``.  ``next_cursor`` is
             ``None`` when there are no more pages.
         """
+        from core.exceptions import ValidationError
+
         effective_limit = min(limit, 200) + 1  # +1 to detect has_more
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "desc")
 
         query = (
             select(Session)
@@ -175,21 +198,45 @@ class SessionRepository:
         if not include_closed:
             query = query.where(Session.closed_at.is_(None))
 
-        # Cursor: composite (created_at DESC, id) for most-recent-first
+        if req_sort not in SESSION_SORTABLE_COLUMNS:
+            raise ValidationError(f"Invalid sort_by: {req_sort!r}")
+        if req_dir not in ("asc", "desc"):
+            raise ValidationError(f"Invalid sort_dir: {req_dir!r}")
+
+        # Cursor: composite (sort_col, id) — sort-aware, fail-closed.
         if cursor is not None:
-            cursor_at, cursor_id = self._decode_cursor(cursor)
-            query = query.where(
-                or_(
-                    Session.created_at < cursor_at,
-                    and_(
-                        Session.created_at == cursor_at,
-                        Session.id > cursor_id,
-                    ),
+            c_sort, c_dir, c_val, c_id = self._decode_sort_cursor(cursor)
+            if c_sort != req_sort or c_dir != req_dir:
+                raise ValidationError(
+                    "Cursor sort mismatch — restart pagination "
+                    f"(cursor {c_sort}:{c_dir} vs request {req_sort}:{req_dir})"
                 )
-            )
+            col = SESSION_SORTABLE_COLUMNS[req_sort]
+            if req_sort in ("created_at", "updated_at"):
+                try:
+                    c_at = datetime.fromisoformat(c_val)
+                except ValueError as e:
+                    raise ValidationError(f"Invalid cursor: {e}") from e
+                cmp = col > c_at if req_dir == "asc" else col < c_at
+                query = query.where(
+                    or_(
+                        cmp,
+                        and_(col == c_at, Session.id > c_id),
+                    )
+                )
+            else:
+                cmp = col > c_val if req_dir == "asc" else col < c_val
+                query = query.where(or_(cmp, and_(col == c_val, Session.id > c_id)))
 
         query = query.order_by(
-            Session.created_at.desc(), Session.id.asc()
+            *resolve_order_by(
+                SESSION_SORTABLE_COLUMNS,
+                Session.id,
+                req_sort,
+                req_dir,
+                default_sort_by="created_at",
+                default_dir="desc",
+            )
         ).limit(effective_limit)
 
         result = await self._db.execute(query)
@@ -201,7 +248,13 @@ class SessionRepository:
         next_cursor: str | None = None
         if has_more and sessions:
             last = sessions[-1]
-            next_cursor = self._encode_cursor(last.created_at, last.id)
+            if req_sort == "created_at":
+                val = last.created_at.isoformat()
+            elif req_sort == "updated_at":
+                val = last.updated_at.isoformat()
+            else:
+                val = last.external_id
+            next_cursor = self._encode_sort_cursor(req_sort, req_dir, val, last.id)
 
         return sessions, next_cursor
 
@@ -213,8 +266,13 @@ class SessionRepository:
         session_id: UUID,
         limit: int = 100,
         cursor: str | None = None,
+        sort: SortSpec | None = None,
     ) -> tuple[list[Episode], str | None]:
-        """Get paginated messages for a session, ordered by sequence_number.
+        """Get paginated messages for a session.
+
+        Default ``sequence_number ASC`` is locked (deterministic, tie-free).
+        ``created_at`` is offered as an alt without breaking the default.
+        Cursor encodes ``sort_by:sort_dir`` and fails closed (422).
 
         Uses ``sequence_number`` (monotonically increasing per session) for
         deterministic ordering — avoids timestamp-tie issues when multiple
@@ -225,10 +283,14 @@ class SessionRepository:
             session_id: The session's UUID.
             limit: Maximum results per page (capped at 500).
             cursor: Opaque base64 cursor from a previous page.
+            sort: Validated sort spec (whitelist ``sequence_number``,
+                ``created_at``).
 
         Returns:
             A tuple of ``(messages, next_cursor)``.
         """
+        from core.exceptions import ValidationError
+
         effective_limit = min(limit, 500) + 1  # +1 to detect has_more
 
         # Verify the session belongs to the organization before fetching messages.
@@ -245,26 +307,53 @@ class SessionRepository:
         if session_result.scalar_one_or_none() is None:
             return [], None
 
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("sequence_number", "asc")
+        if req_sort not in MESSAGE_SORTABLE_COLUMNS:
+            raise ValidationError(f"Invalid sort_by: {req_sort!r}")
+        if req_dir not in ("asc", "desc"):
+            raise ValidationError(f"Invalid sort_dir: {req_dir!r}")
+
         query = select(Episode).where(
             Episode.session_id == session_id,
             Episode.is_deleted.is_(False),
         )
 
-        # Cursor: composite (sequence_number ASC, id ASC)
+        # Cursor: composite (sort_col, id) — sort-aware, fail-closed.
         if cursor is not None:
-            cursor_seq, cursor_id = self._decode_message_cursor(cursor)
-            query = query.where(
-                or_(
-                    and_(
-                        Episode.sequence_number == cursor_seq,
-                        Episode.id > cursor_id,
-                    ),
-                    Episode.sequence_number > cursor_seq,
-                )
+            c_sort, c_dir, c_val, c_id = self._decode_sort_cursor(
+                cursor, versioned=True
             )
+            if c_sort != req_sort or c_dir != req_dir:
+                raise ValidationError(
+                    "Cursor sort mismatch — restart pagination "
+                    f"(cursor {c_sort}:{c_dir} vs request {req_sort}:{req_dir})"
+                )
+            col = MESSAGE_SORTABLE_COLUMNS[req_sort]
+            if req_sort == "sequence_number":
+                try:
+                    c_seq = int(c_val)
+                except ValueError as e:
+                    raise ValidationError(f"Invalid cursor: {e}") from e
+                cmp = col > c_seq if req_dir == "asc" else col < c_seq
+                query = query.where(or_(cmp, and_(col == c_seq, Episode.id > c_id)))
+            else:
+                try:
+                    c_at = datetime.fromisoformat(c_val)
+                except ValueError as e:
+                    raise ValidationError(f"Invalid cursor: {e}") from e
+                cmp = col > c_at if req_dir == "asc" else col < c_at
+                query = query.where(or_(cmp, and_(col == c_at, Episode.id > c_id)))
 
         query = query.order_by(
-            Episode.sequence_number.asc(), Episode.id.asc()
+            *resolve_order_by(
+                MESSAGE_SORTABLE_COLUMNS,
+                Episode.id,
+                req_sort,
+                req_dir,
+                default_sort_by="sequence_number",
+                default_dir="asc",
+            )
         ).limit(effective_limit)
 
         result = await self._db.execute(query)
@@ -276,8 +365,13 @@ class SessionRepository:
         next_cursor: str | None = None
         if has_more and messages:
             last = messages[-1]
-            next_cursor = self._encode_message_cursor(
-                last.sequence_number, last.id
+            val = (
+                str(last.sequence_number)
+                if req_sort == "sequence_number"
+                else last.created_at.isoformat()
+            )
+            next_cursor = self._encode_sort_cursor(
+                req_sort, req_dir, val, last.id, versioned=True
             )
 
         return messages, next_cursor
@@ -647,51 +741,60 @@ class SessionRepository:
     # ── Cursor helpers ──────────────────────────────────────────────────────
 
     @staticmethod
-    def _encode_cursor(created_at: datetime, session_id: UUID) -> str:
-        """Encode a composite cursor as a URL-safe base64 string.
+    def _encode_sort_cursor(
+        sort_by: str,
+        sort_dir: str,
+        value: str,
+        row_id: UUID,
+        versioned: bool = False,
+    ) -> str:
+        """Encode ``sort_by:sort_dir:value|id`` as an opaque cursor.
 
-        Format: ``{created_at_isoformat}|{session_id_hex}``
+        Args:
+            sort_by: Whitelisted sort key embedded for fail-closed checks.
+            sort_dir: ``"asc"`` or ``"desc"``.
+            value: Sort-column value (ISO for datetimes, raw for text/int).
+            row_id: Tiebreak UUID of the last item.
+            versioned: Wrap in the ``v1:`` envelope (messages only).
+
+        Returns:
+            URL-safe base64 string (padding stripped).
         """
-        return encode_cursor(f"{created_at.isoformat()}|{session_id.hex}")
+        payload = f"{sort_by}:{sort_dir}:{value}|{row_id.hex}"
+        if versioned:
+            return encode_versioned_cursor(payload)
+        return encode_cursor(payload)
 
     @staticmethod
-    def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
-        """Decode a composite cursor back into ``(created_at, session_id)``.
+    def _decode_sort_cursor(
+        cursor: str, versioned: bool = False
+    ) -> tuple[str, str, str, UUID]:
+        """Decode cursor to ``(sort_by, sort_dir, value, id)`` (fail-closed).
+
+        Args:
+            cursor: Opaque cursor string from a previous response.
+            versioned: Unwrap the ``v1:`` envelope first (messages only).
+
+        Returns:
+            Tuple of ``(sort_by, sort_dir, value, id)``.
 
         Raises:
-            ValueError: If the cursor is malformed.
+            ValidationError: If malformed or sort prefix missing (422).
         """
+        from core.exceptions import ValidationError
+
         try:
-            raw = decode_cursor(cursor)
-            at_str, id_hex = raw.split("|", 1)
-            return datetime.fromisoformat(at_str), UUID(hex=id_hex)
-        except (ValueError, TypeError) as e:
-            raise ValueError(f"Invalid session cursor: {e}") from e
-
-    @staticmethod
-    def _encode_message_cursor(sequence_number: int, episode_id: UUID) -> str:
-        """Encode a message cursor inside the versioned envelope.
-
-        Format: ``v1:{sequence_number}|{episode_id_hex}``, base64-encoded.
-        Pre-versioning cursors are rejected on decode (BREAKING).
-        """
-        return encode_versioned_cursor(f"{sequence_number}|{episode_id.hex}")
-
-    @staticmethod
-    def _decode_message_cursor(cursor: str) -> tuple[int, UUID]:
-        """Decode a message cursor back into ``(sequence_number, episode_id)``.
-
-        Raises:
-            CursorExpiredError: If the cursor is malformed or versioned
-                differently (HTTP 400 ``cursor_expired``).
-        """
-        try:
-            raw = decode_versioned_cursor(cursor)
-            seq_str, id_hex = raw.split("|", 1)
-            return int(seq_str), UUID(hex=id_hex)
-        except CursorExpiredError:
-            raise
-        except (ValueError, TypeError) as e:
-            # CursorExpiredError subclasses ValueError, so it is
-            # re-raised above before this generic format-failure handler.
-            raise CursorExpiredError(f"Invalid message cursor: {e}") from e
+            if versioned:
+                raw = decode_versioned_cursor(cursor)
+            else:
+                raw = decode_cursor(cursor)
+            prefix, _, id_hex = raw.rpartition("|")
+            sort_by, _, rest = prefix.partition(":")
+            sort_dir, _, value = rest.partition(":")
+            if not sort_by or not sort_dir or not id_hex:
+                raise ValueError("missing sort prefix")
+            if sort_dir not in ("asc", "desc"):
+                raise ValueError(f"unknown dir {sort_dir!r}")
+            return sort_by, sort_dir, value, UUID(hex=id_hex)
+        except (ValueError, TypeError, CursorExpiredError) as e:
+            raise ValidationError(f"Invalid cursor: {e}") from e

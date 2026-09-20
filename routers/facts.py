@@ -36,6 +36,7 @@ from schemas.facts import (
     FactRetractRequest,
     PaginatedFactsResponse,
 )
+from schemas.sorting import FactHistorySortBy, ProjectFactSortBy, SortDir, SortSpec
 from services.fact_service import FactService
 
 router = APIRouter(
@@ -137,6 +138,14 @@ async def list_facts_at_time(
         ge=0,
         description="Number of facts to skip (offset pagination).",
     ),
+    sort_by: ProjectFactSortBy | None = Query(
+        default=None,
+        description="Sort key (default valid_from).",
+    ),
+    sort_dir: SortDir = Query(
+        default="desc",
+        description="Sort direction (default desc).",
+    ),
     repo: FactRepository = Depends(_get_fact_repository),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:read")),
@@ -152,6 +161,8 @@ async def list_facts_at_time(
         as_of: Effective-at timestamp; ``None`` resolves to now.
         limit: Max facts per page.
         offset: Pagination offset.
+        sort_by: Whitelisted sort key.
+        sort_dir: Sort direction.
         repo: Request-scoped FactRepository (injected).
         _: Project membership gate (injected).
 
@@ -174,6 +185,7 @@ async def list_facts_at_time(
         organization_id=org_id,
         limit=limit + 1,
         offset=offset,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
     has_more = len(facts) > limit
     page = facts[:limit]
@@ -271,6 +283,14 @@ async def get_fact_history(
         ge=0,
         description="Number of events to skip (offset pagination).",
     ),  # noqa: B008
+    sort_by: FactHistorySortBy | None = Query(
+        default=None,
+        description="Sort key (at_time only).",
+    ),  # noqa: B008
+    sort_dir: SortDir = Query(
+        default="desc",
+        description="Sort direction (default desc).",
+    ),  # noqa: B008
     service: FactService = Depends(get_fact_service),  # noqa: B008
     _: None = Depends(require_project_membership),  # noqa: B008
     _perm: None = Depends(require_permission("project:read")),  # noqa: B008
@@ -285,6 +305,8 @@ async def get_fact_history(
         fact_id: The fact whose lineage to fetch.
         limit: Max events per page (1–200).
         offset: Number of events to skip.
+        sort_by: Whitelisted sort key (``at_time`` only).
+        sort_dir: Sort direction.
         service: Request-scoped FactService (injected).
         _: Project membership gate (injected).
 
@@ -300,5 +322,6 @@ async def get_fact_history(
         project_id=project_id,
         limit=limit,
         offset=offset,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
     return FactHistoryResponse(fact=result["fact"], events=result["events"])

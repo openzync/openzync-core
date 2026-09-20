@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from core.sorting import SortSpec
 from schemas.observation import ObservationListResponse
 from services.observation_query_service import ObservationQueryService
 
@@ -94,6 +95,7 @@ class TestObservationQueryService:
             observation_type=None,
             limit=50,
             cursor=None,
+            sort=None,
         )
 
     @pytest.mark.asyncio
@@ -127,6 +129,7 @@ class TestObservationQueryService:
             observation_type="temporal_pattern",
             limit=50,
             cursor=None,
+            sort=None,
         )
 
     @pytest.mark.asyncio
@@ -176,6 +179,34 @@ class TestObservationQueryService:
             observation_type=None,
             limit=10,
             cursor="cursor_abc_123",
+            sort=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_observations_forwards_sort(self) -> None:
+        """An explicit SortSpec is forwarded opaque to the graph backend."""
+        service, mock_backend = self._make_service()
+        mock_backend.get_observations.return_value = {
+            "items": [],
+            "next_cursor": None,
+            "has_more": False,
+        }
+        spec = SortSpec(sort_by="created_at", sort_dir="desc")
+
+        await service.get_observations(
+            org_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            sort=spec,
+        )
+
+        mock_backend.get_observations.assert_awaited_once_with(
+            org_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            subject_entity_id=None,
+            observation_type=None,
+            limit=50,
+            cursor=None,
+            sort=spec,
         )
 
     @pytest.mark.asyncio

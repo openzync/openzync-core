@@ -27,6 +27,7 @@ from schemas.projects import (
     ProjectResponse,
     UpdateProjectRequest,
 )
+from schemas.sorting import ProjectMemberSortBy, ProjectSortBy, SortDir, SortSpec
 from services.project_service import ProjectService
 
 router = APIRouter(prefix="/v1/projects", tags=["projects"])
@@ -78,6 +79,14 @@ async def list_projects(
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     pinned_only: bool = Query(default=False),
+    sort_by: ProjectSortBy | None = Query(
+        default=None,
+        description="Sort key (default created_at, pinned_at for pinned_only).",
+    ),
+    sort_dir: SortDir = Query(
+        default="desc",
+        description="Sort direction (default desc).",
+    ),
     _: None = Depends(require_permission("project:read")),
     service: ProjectService = Depends(_get_project_service),
 ) -> list[ProjectResponse]:
@@ -103,6 +112,7 @@ async def list_projects(
         limit=limit,
         offset=offset,
         pinned_only=pinned_only,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
 
 
@@ -286,13 +296,23 @@ async def add_member(
 )
 async def list_members(
     project_id: UUID = Path(...),
+    sort_by: ProjectMemberSortBy | None = Query(
+        default=None,
+        description="Sort key (default created_at).",
+    ),
+    sort_dir: SortDir = Query(
+        default="asc",
+        description="Sort direction (default asc).",
+    ),
     service: ProjectService = Depends(_get_project_service),
 ) -> list[ProjectMemberResponse]:
     """List all members of a project.
 
     Requires membership.
     """
-    return await service.list_members(project_id=project_id)
+    return await service.list_members(
+        project_id=project_id, sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir)
+    )
 
 
 @router.delete(

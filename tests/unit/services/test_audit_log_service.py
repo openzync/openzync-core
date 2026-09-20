@@ -10,6 +10,7 @@ from uuid import UUID
 
 import pytest
 
+from core.sorting import SortSpec
 from services.audit_log_service import AuditLogService
 
 
@@ -160,6 +161,35 @@ class TestAuditLogService:
             created_before=None,
             limit=50,
             offset=0,
+            sort=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_query_logs_forwards_sort(self) -> None:
+        """An explicit SortSpec is forwarded opaque to the repository."""
+        service, mock_repo = self._make_service()
+        mock_repo.list.return_value = ([], 0)
+        spec = SortSpec(sort_by="created_at", sort_dir="desc")
+
+        await service.query_logs(
+            organization_id=self.ORG_ID,
+            sort=spec,
+        )
+
+        mock_repo.list.assert_awaited_once_with(
+            organization_id=self.ORG_ID,
+            action=None,
+            actor_id=None,
+            actor_type=None,
+            resource_type=None,
+            resource_id=None,
+            status_code=None,
+            exclude_prefix=None,
+            created_after=None,
+            created_before=None,
+            limit=50,
+            offset=0,
+            sort=spec,
         )
 
     @pytest.mark.asyncio
@@ -192,6 +222,7 @@ class TestAuditLogService:
             created_before=None,
             limit=10,
             offset=5,
+            sort=None,
         )
 
     @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dependencies.auth import get_current_user_id, require_permission
 from dependencies.db import get_db
 from schemas.search import GlobalSearchResponse
+from schemas.sorting import SearchSort
 from services.global_search_service import GlobalSearchService
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,11 @@ async def global_search(
     request: Request,  # noqa: ARG001 — kept for consistency with existing patterns
     query: str = Query(..., alias="q", min_length=1, max_length=200, description="Search query string."),
     limit: int = Query(default=10, ge=1, le=50, description="Maximum results."),
+    sort: SearchSort = Query(
+        default="relevance",
+        description="Result order — ``relevance`` (type, label) or "
+        "``recent`` (created_at DESC).",
+    ),
     db: AsyncSession = Depends(get_db),
     user_id: UUID = Depends(get_current_user_id),
     # require_permission already depends on require_org_id and returns it —
@@ -54,6 +60,7 @@ async def global_search(
         request: The incoming HTTP request (unused, kept for pattern consistency).
         query: The search query (1–200 characters).
         limit: Maximum results to return (1–50, default 10).
+        sort: Result order — ``relevance`` or ``recent``.
         db: An async SQLAlchemy session (injected).
         org_id: The authenticated organization ID (injected).
         user_id: The authenticated user's UUID (injected).
@@ -63,5 +70,5 @@ async def global_search(
         original query string.
     """
     service = GlobalSearchService(db, UUID(org_id), user_id)
-    results = await service.search(query, limit=limit)
+    results = await service.search(query, limit=limit, sort=sort)
     return GlobalSearchResponse(results=results, query=query)

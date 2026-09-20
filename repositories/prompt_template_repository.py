@@ -23,6 +23,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.prompt_manifest import load_manifest
+from core.sorting import SortSpec
 from models.prompt_template import PromptTemplate
 
 logger = logging.getLogger(__name__)
@@ -574,21 +575,34 @@ class PromptTemplateRepository:
     async def list_names(
         self,
         org_id: UUID,
+        sort: SortSpec | None = None,
     ) -> list[dict]:
         """List all distinct template names with metadata for an org.
 
         Returns one entry per template name that the org has a version
         for (seeded or custom).  All entries are ``is_customised = True``
-        since the org owns every row.
+        since the org owns every row. Default ``name/asc`` (preserves
+        current order); whitelist ``name``, ``type``, ``updated_at``
+        (``created_at`` maps to ``updated_at`` in this grouped view).
 
         Args:
             org_id: The organisation UUID.
+            sort: Validated sort spec (``name``, ``created_at``,
+                ``type``).
 
         Returns:
             A list of dicts with keys: ``name``, ``version``,
             ``description``, ``type``, ``is_default_for_type``,
             ``updated_at``, ``is_customised``.
         """
+        from core.exceptions import ValidationError
+
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("name", "asc")
+        if req_sort not in ("name", "created_at", "type"):
+            raise ValidationError(f"Invalid sort_by: {req_sort!r}")
+        if req_dir not in ("asc", "desc"):
+            raise ValidationError(f"Invalid sort_dir: {req_dir!r}")
         result = await self._db.execute(
             select(
                 PromptTemplate.template_name,
@@ -619,7 +633,18 @@ class PromptTemplateRepository:
                 "updated_at": row.updated_at,
             }
 
-        return list(seen.values())
+        items = list(seen.values())
+        # note: explicit key selection — no getattr on raw input.
+
+        def _sort_key(item: dict) -> tuple[str, str]:
+            if req_sort == "type":
+                return (item["type"] or "", item["name"])
+            if req_sort == "created_at":
+                return (str(item["updated_at"]), item["name"])
+            return (item["name"], "")
+
+        items.sort(key=_sort_key, reverse=(req_dir == "desc"))
+        return items
 
     async def list_versions(
         self,

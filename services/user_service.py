@@ -23,6 +23,7 @@ from core.rbac import (
     invalidate_permissions,
     invalidate_role,
 )
+from core.sorting import SortSpec
 from models.user import User
 from repositories.user_repository import UserRepository
 from schemas.users import UserListResponse, UserResponse, UserResponseWithStats
@@ -509,6 +510,7 @@ class UserService:
         search: str | None = None,
         created_after: datetime | None = None,
         created_before: datetime | None = None,
+        sort: SortSpec | None = None,
     ) -> UserListResponse:
         """List users with cursor-based pagination and optional filters.
 
@@ -519,6 +521,7 @@ class UserService:
             search: Fuzzy match against external_id, name, email, metadata.
             created_after: Only users created on or after this timestamp.
             created_before: Only users created before this timestamp.
+            sort: Validated sort spec (forwarded opaque to the repository).
 
         Returns:
             A :class:`UserListResponse` with the current page.
@@ -536,6 +539,7 @@ class UserService:
             search=search,
             created_after=created_after,
             created_before=created_before,
+            sort=sort,
         )
 
         return UserListResponse(

@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 import orjson
 import pytest
 
+from core.sorting import SortSpec
 from models.webhook import WebhookEndpoint
 from services.webhook_service import WebhookService, sign_payload
 
@@ -144,7 +145,18 @@ class TestWebhookService:
         assert endpoints[0]["name"] == "Test Endpoint"
         assert endpoints[0]["url"] == "https://example.com/hook"
         assert endpoints[0]["is_active"] is True
-        mock_repo.get_by_organization.assert_awaited_once_with(self.ORG_ID)
+        mock_repo.get_by_organization.assert_awaited_once_with(self.ORG_ID, sort=None)
+
+    @pytest.mark.asyncio
+    async def test_list_endpoints_forwards_sort(self) -> None:
+        """An explicit SortSpec is forwarded opaque to the repository."""
+        service, mock_repo = self._make_service()
+        mock_repo.get_by_organization.return_value = []
+        spec = SortSpec(sort_by="name", sort_dir="asc")
+
+        await service.list_endpoints(self.ORG_ID, sort=spec)
+
+        mock_repo.get_by_organization.assert_awaited_once_with(self.ORG_ID, sort=spec)
 
     @pytest.mark.asyncio
     async def test_list_endpoints_empty(self) -> None:

@@ -31,6 +31,13 @@ from schemas.sessions import (
     SessionListResponse,
     SessionResponse,
 )
+from schemas.sorting import (
+    MessageSortBy,
+    SessionFactSortBy,
+    SessionSortBy,
+    SortDir,
+    SortSpec,
+)
 from services.fact_service import FactService
 from services.session_service import SessionService
 
@@ -115,11 +122,19 @@ async def list_sessions(
         default=False,
         description="If true, include closed sessions in the results.",
     ),
+    sort_by: SessionSortBy | None = Query(
+        default=None,
+        description="Sort key (default created_at).",
+    ),
+    sort_dir: SortDir = Query(
+        default="desc",
+        description="Sort direction (default desc).",
+    ),
 ) -> PaginatedResponse[SessionListResponse]:
     """List sessions for a project with pagination.
 
     Excludes closed sessions by default.  Set ``include_closed=true``
-    to include them.
+    to include them. Cursors encode sort — mismatch fails with 422.
     """
     return await service.list_sessions(
         org_id=org_id,
@@ -127,6 +142,7 @@ async def list_sessions(
         limit=limit,
         cursor=cursor,
         include_closed=include_closed,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
 
 
@@ -193,11 +209,19 @@ async def get_session_messages(
         description="Opaque cursor from a previous messages response for "
         "pagination.",
     ),
+    sort_by: MessageSortBy | None = Query(
+        default=None,
+        description="Sort key (default sequence_number, locked).",
+    ),
+    sort_dir: SortDir = Query(
+        default="asc",
+        description="Sort direction (default asc).",
+    ),
 ) -> PaginatedResponse[MessageResponse]:
     """Get paginated messages for a session.
 
-    Messages are ordered by ``sequence_number`` for deterministic
-    ordering (not by ``created_at``, which can have ties).
+    Messages are ordered by ``sequence_number`` by default for
+    deterministic ordering (not by ``created_at``, which can have ties).
     """
     return await service.get_messages(
         org_id=org_id,
@@ -205,6 +229,7 @@ async def get_session_messages(
         limit=limit,
         cursor=cursor,
         project_id=project_id,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
 
 
@@ -239,6 +264,14 @@ async def get_session_facts(
         default=None,
         description="Opaque cursor from a previous facts response.",
     ),
+    sort_by: SessionFactSortBy | None = Query(
+        default=None,
+        description="Sort key (default created_at).",
+    ),
+    sort_dir: SortDir = Query(
+        default="desc",
+        description="Sort direction (default desc).",
+    ),
 ) -> PaginatedResponse[FactResponse]:
     """Get paginated facts for a session.
 
@@ -254,6 +287,7 @@ async def get_session_facts(
         session_id=session_id,
         limit=limit,
         cursor=cursor,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
 
     items = [FactResponse.model_validate(f) for f in facts]

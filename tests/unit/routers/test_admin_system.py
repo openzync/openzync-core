@@ -23,6 +23,7 @@ from fastapi import FastAPI, Request
 from httpx import ASGITransport, AsyncClient
 
 from core.config import PLATFORM_ORG_ID
+from core.sorting import SortSpec
 from dependencies.auth import require_superadmin
 from dependencies.db import get_db, get_db_superadmin
 from routers.admin_system import (
@@ -118,7 +119,7 @@ async def test_list_org_members_returns_paginated_members() -> None:
     assert body["data"][1]["role"] == "admin"
 
     service.list_org_members.assert_awaited_once_with(
-        ORG_ID, page=1, limit=50
+        ORG_ID, page=1, limit=50, sort=SortSpec(None, "asc")
     )
 
 
@@ -145,7 +146,7 @@ async def test_list_org_members_missing_org_404() -> None:
     assert resp.status_code == 404, resp.text
     assert "not found" in resp.json()["detail"].lower()
     service.list_org_members.assert_awaited_once_with(
-        ORG_ID, page=1, limit=50
+        ORG_ID, page=1, limit=50, sort=SortSpec(None, "asc")
     )
 
 
@@ -171,7 +172,7 @@ async def test_list_org_members_respects_pagination_params() -> None:
     assert resp.json()["page"] == 2
     assert resp.json()["limit"] == 10
     service.list_org_members.assert_awaited_once_with(
-        ORG_ID, page=2, limit=10
+        ORG_ID, page=2, limit=10, sort=SortSpec(None, "asc")
     )
 
 
@@ -320,6 +321,7 @@ async def test_list_all_orgs_filters_by_status() -> None:
         status="pending",
         page=1,
         limit=20,
+        sort=SortSpec(None, "desc"),
     )
 
 

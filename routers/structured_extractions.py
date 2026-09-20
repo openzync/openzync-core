@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.auth import require_permission
@@ -24,6 +24,7 @@ from repositories.session_repository import SessionRepository
 from repositories.structured_extraction_repository import (
     StructuredExtractionRepository,
 )
+from schemas.sorting import ExtractionSortBy, SortDir, SortSpec
 from schemas.structured_extractions import (
     StructuredExtractionListResponse,
     StructuredExtractionResponse,
@@ -59,6 +60,14 @@ def _get_extraction_service(
 async def list_structured_extractions(
     request: Request,
     session_id: UUID = Path(...),
+    sort_by: ExtractionSortBy | None = Query(
+        default=None,
+        description="Sort key (default sequence_number, locked).",
+    ),
+    sort_dir: SortDir = Query(
+        default="asc",
+        description="Sort direction (default asc).",
+    ),
     service: StructuredExtractionService = Depends(_get_extraction_service),
 ) -> StructuredExtractionListResponse:
     """List all structured extractions for episodes in a session.
@@ -73,6 +82,7 @@ async def list_structured_extractions(
         org_id=org_id,
         session_id=session_id,
         project_id=project_id,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
 
 

@@ -12,8 +12,17 @@ from sqlalchemy import Uuid, delete, func, insert, literal, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.sorting import SortSpec, resolve_order_by
 from models.project import Project
 from models.project_pin import ProjectPin
+
+PINNED_PROJECT_SORTABLE_COLUMNS = {
+    "pinned_at": ProjectPin.pinned_at,
+    "name": Project.name,
+    "created_at": Project.created_at,
+    "updated_at": Project.updated_at,
+}
+"""Sortable columns for pinned projects (default pinned_at/desc)."""
 
 
 class ProjectPinRepository:
@@ -252,21 +261,28 @@ class ProjectPinRepository:
         user_id: UUID,
         limit: int = 50,
         offset: int = 0,
+        sort: SortSpec | None = None,
     ) -> list[Project]:
         """List a user's pinned projects, most recently pinned first.
 
         Archived projects are excluded even if a pin row still exists.
+        Default ``pinned_at/desc``; whitelist ``pinned_at``, ``name``,
+        ``created_at``, ``updated_at``.
 
         Args:
             organization_id: Tenant scope.
             user_id: The user whose pinned projects to list.
             limit: Maximum results per page (capped at 200).
             offset: Number of results to skip.
+            sort: Validated sort spec.
 
         Returns:
-            A list of Project ORM instances ordered by ``pinned_at`` DESC.
+            A list of Project ORM instances ordered by ``pinned_at`` DESC
+            by default.
         """
         effective_limit = min(limit, 200)
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("pinned_at", "desc")
         result = await self._db.execute(
             select(Project)
             .join(ProjectPin, Project.id == ProjectPin.project_id)
@@ -276,7 +292,16 @@ class ProjectPinRepository:
                 Project.organization_id == organization_id,
                 Project.is_archived.is_(False),
             )
-            .order_by(ProjectPin.pinned_at.desc())
+            .order_by(
+                *resolve_order_by(
+                    PINNED_PROJECT_SORTABLE_COLUMNS,
+                    Project.id,
+                    req_sort,
+                    req_dir,
+                    default_sort_by="pinned_at",
+                    default_dir="desc",
+                )
+            )
             .limit(effective_limit)
             .offset(offset)
         )

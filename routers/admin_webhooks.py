@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette.responses import Response
 
 from core.audit import audit_action
 from dependencies.auth import require_permission
 from dependencies.services import get_webhook_service
+from schemas.sorting import SortDir, SortSpec, WebhookSortBy
 from schemas.webhook import (
     CreateWebhookRequest,
     UpdateWebhookRequest,
@@ -53,9 +54,17 @@ async def list_event_types() -> dict:
 async def list_webhooks(
     service: WebhookService = Depends(get_webhook_service),
     org_id: str = Depends(require_permission("configuration:read")),
+    sort_by: WebhookSortBy | None = Query(
+        default=None, description="Sort key (default created_at)."
+    ),
+    sort_dir: SortDir = Query(
+        default="desc", description="Sort direction (default desc)."
+    ),
 ) -> dict:
     """List all webhook endpoints for the authenticated organization."""
-    endpoints = await service.list_endpoints(uuid.UUID(org_id))
+    endpoints = await service.list_endpoints(
+        uuid.UUID(org_id), sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir)
+    )
     return {"data": endpoints}
 
 

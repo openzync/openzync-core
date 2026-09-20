@@ -15,6 +15,7 @@ from uuid import UUID
 import redis.asyncio as aioredis
 import structlog
 
+from core.sorting import SortSpec
 from models.api_key import ApiKey
 from repositories.api_key_repository import ApiKeyRepository
 from schemas.api_keys import CreateApiKeyRequest
@@ -98,21 +99,27 @@ class ApiKeyService:
         self,
         organization_id: UUID,
         project_id: UUID,
+        sort: SortSpec | None = None,
     ) -> list[ApiKey]:
         """List all non-revoked API keys for a project.
+
+        Default ``created_at/desc``; whitelist ``name``, ``created_at``,
+        ``last_used_at``.
 
         Args:
             organization_id: The owning organization UUID.
             project_id: The project UUID to list keys for.
+            sort: Validated sort spec (forwarded opaque to the repository).
 
         Returns:
-            A list of ``ApiKey`` records, newest first.
+            A list of ``ApiKey`` records, newest first by default.
         """
         return list(
             await self._repo.list_by_org(
                 organization_id=organization_id,
                 project_id=project_id,
                 include_revoked=False,
+                sort=sort,
             )
         )
 

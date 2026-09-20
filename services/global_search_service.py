@@ -29,18 +29,30 @@ class GlobalSearchService:
         self._db = db
         self._org_id = org_id
         self._user_id = user_id
+        self._recent_keys: dict[str, str] = {}
+        """Sort-only ``id → created_at ISO`` map for ``sort=recent``."""
 
-    async def search(self, query: str, limit: int = 10) -> list[GlobalSearchItem]:
+    async def search(
+        self, query: str, limit: int = 10, sort: str = "relevance"
+    ) -> list[GlobalSearchItem]:
         """Run a global search across projects, users, and sessions.
 
         Args:
             query: The search query string (used in ILIKE patterns).
             limit: Maximum total results across all entity types.
+            sort: ``"relevance"`` (type then label alphabetically) or
+                ``"recent"`` (``created_at DESC`` across all types,
+                applied server-side; ``created_at`` is sort-only and
+                never leaves the server in the response shape).
 
         Returns:
             A flat list of :class:`GlobalSearchItem` sorted by type then
-            label alphabetically.
+            label alphabetically (relevance) or by recency (recent).
         """
+        if sort not in ("relevance", "recent"):
+            from core.exceptions import ValidationError
+
+            raise ValidationError(f"Invalid sort: {sort!r}")
         pattern = f"%{query}%"
         per_type = max(1, limit // 3)
 
@@ -51,6 +63,12 @@ class GlobalSearchService:
         s_results = await self._search_sessions(pattern, per_type)
 
         all_results: list[GlobalSearchItem] = [*p_results, *u_results, *s_results]
+        if sort == "recent":
+            all_results.sort(
+                key=lambda r: (self._recent_keys.get(r.id, ""), r.id),
+                reverse=True,
+            )
+            return all_results[:limit]
         all_results.sort(key=lambda r: (r.type, r.label))
         return all_results[:limit]
 
@@ -59,7 +77,7 @@ class GlobalSearchService:
     async def _search_projects(self, pattern: str, limit: int) -> list[GlobalSearchItem]:
         """Search projects the user is a member of."""
         stmt = text("""
-            SELECT p.id, p.name, p.description
+            SELECT p.id, p.name, p.description, p.created_at
             FROM projects p
             JOIN project_members pm ON p.id = pm.project_id
             WHERE p.organization_id = :org_id
@@ -72,21 +90,24 @@ class GlobalSearchService:
             stmt,
             {"org_id": str(self._org_id), "user_id": str(self._user_id), "pattern": pattern, "limit": limit},
         )
-        return [
-            GlobalSearchItem(
+        items: list[GlobalSearchItem] = []
+        for row in rows:
+            item = GlobalSearchItem(
                 type="project",
                 id=str(row.id),
                 label=row.name,
                 subtitle=row.description,
                 href=f"/projects/{row.id}",
             )
-            for row in rows
-        ]
+            items.append(item)
+            created = row.created_at.isoformat() if row.created_at else ""
+            self._recent_keys[item.id] = created
+        return items
 
     async def _search_users(self, pattern: str, limit: int) -> list[GlobalSearchItem]:
         """Search users in the same organization."""
         stmt = text("""
-            SELECT id, name, email, external_id
+            SELECT id, name, email, external_id, created_at
             FROM users
             WHERE organization_id = :org_id
               AND is_deleted = false
@@ -106,21 +127,23 @@ class GlobalSearchService:
             else:
                 label = row.name or row.external_id or str(row.id)
                 subtitle = None
-            results.append(
-                GlobalSearchItem(
-                    type="user",
-                    id=str(row.id),
-                    label=label,
-                    subtitle=subtitle,
-                    href=f"/users/{row.id}",
-                )
+            item = GlobalSearchItem(
+                type="user",
+                id=str(row.id),
+                label=label,
+                subtitle=subtitle,
+                href=f"/users/{row.id}",
             )
+            results.append(item)
+            created = row.created_at.isoformat() if row.created_at else ""
+            self._recent_keys[item.id] = created
         return results
 
     async def _search_sessions(self, pattern: str, limit: int) -> list[GlobalSearchItem]:
         """Search sessions within projects the user is a member of."""
         stmt = text("""
-            SELECT s.id, s.external_id, s.project_id, p.name as project_name
+            SELECT s.id, s.external_id, s.project_id, p.name as project_name,
+                   s.created_at
             FROM sessions s
             JOIN projects p ON s.project_id = p.id
             JOIN project_members pm ON p.id = pm.project_id
@@ -134,13 +157,16 @@ class GlobalSearchService:
             stmt,
             {"org_id": str(self._org_id), "user_id": str(self._user_id), "pattern": pattern, "limit": limit},
         )
-        return [
-            GlobalSearchItem(
+        items: list[GlobalSearchItem] = []
+        for row in rows:
+            item = GlobalSearchItem(
                 type="session",
                 id=str(row.id),
                 label=row.external_id,
                 subtitle=row.project_name,
                 href=f"/projects/{row.project_id}/sessions/{row.id}",
             )
-            for row in rows
-        ]
+            items.append(item)
+            created = row.created_at.isoformat() if row.created_at else ""
+            self._recent_keys[item.id] = created
+        return items

@@ -28,6 +28,7 @@ from dependencies.org_config import get_org_config
 from dependencies.project_auth import require_project_membership
 from schemas.context import ContextResponse
 from schemas.organization_config import OrgConfigBase
+from schemas.sorting import SearchSort
 from services.context_service import ContextService
 
 logger = logging.getLogger(__name__)
@@ -80,6 +81,11 @@ async def get_context(
         "retrieval. Facts superseded before this instant are excluded. "
         "Defaults to now.",
     ),
+    sort: SearchSort = Query(
+        default="relevance",
+        description="Result order — ``relevance`` (RRF) or ``recent`` "
+        "(created_at DESC per source type). Part of the Redis cache key.",
+    ),
     db: AsyncSession = Depends(get_db),
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:read")),
@@ -110,6 +116,7 @@ async def get_context(
         limit: Maximum items per source type.
         format: Output format (``"text"`` or ``"json"``).
         as_of: Effective-at timestamp for fact retrieval (None = now).
+        sort: Result order — ``relevance`` or ``recent``.
         db: An async SQLAlchemy session (injected).
         org_config: Org-level configuration (injected).
 
@@ -162,6 +169,7 @@ async def get_context(
         limit=limit,
         format=format,
         as_of=as_of,
+        sort=sort,
     )
 
     # Set X-Cache header for observability
