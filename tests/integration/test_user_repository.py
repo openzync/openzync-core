@@ -183,10 +183,14 @@ class TestUserRepository:
         now = datetime.now(UTC)
         uid = UUID("12345678-1234-5678-1234-567812345678")
 
-        cursor = UserRepository._encode_cursor(now, uid)
-        decoded_at, decoded_id = UserRepository._decode_cursor(cursor)
+        cursor = UserRepository._encode_cursor(
+            "created_at", "desc", now.isoformat(), uid
+        )
+        sort_by, sort_dir, value, decoded_id = UserRepository._decode_cursor(cursor)
 
-        assert decoded_at.replace(tzinfo=UTC) == now
+        assert sort_by == "created_at"
+        assert sort_dir == "desc"
+        assert datetime.fromisoformat(value).replace(tzinfo=UTC) == now
         assert decoded_id == uid
 
     async def test_claim_invite_returns_identity_and_clears_token(self, engine) -> None:

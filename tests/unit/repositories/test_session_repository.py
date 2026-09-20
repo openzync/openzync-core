@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.exceptions import CursorExpiredError
+from core.exceptions import ValidationError
 from repositories.session_repository import SessionRepository
 
 pytestmark = pytest.mark.unit
@@ -202,8 +202,11 @@ class TestSessionRepository:
         self, repo: SessionRepository, mock_db: AsyncMock
     ) -> None:
         """list decodes cursor and applies pagination."""
-        valid_cursor = repo._encode_cursor(
-            datetime(2024, 1, 1), UUID("00000000-0000-0000-0000-000000000099")
+        valid_cursor = repo._encode_sort_cursor(
+            "created_at",
+            "desc",
+            datetime(2024, 1, 1).isoformat(),
+            UUID("00000000-0000-0000-0000-000000000099"),
         )
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = []
@@ -292,8 +295,12 @@ class TestSessionRepository:
         self, repo: SessionRepository, mock_db: AsyncMock
     ) -> None:
         """get_messages applies cursor pagination."""
-        valid_cursor = repo._encode_message_cursor(
-            5, UUID("00000000-0000-0000-0000-000000000099")
+        valid_cursor = repo._encode_sort_cursor(
+            "sequence_number",
+            "asc",
+            "5",
+            UUID("00000000-0000-0000-0000-000000000099"),
+            versioned=True,
         )
         mock_session_check = MagicMock()
         mock_session_check.scalar_one_or_none.return_value = self.SESSION_ID
@@ -617,47 +624,58 @@ class TestSessionRepository:
     def test_encode_decode_cursor_roundtrip(
         self, repo: SessionRepository
     ) -> None:
-        """_encode_cursor and _decode_cursor round-trip correctly."""
+        """_encode_sort_cursor and _decode_sort_cursor round-trip correctly."""
         dt = datetime(2024, 6, 15, 12, 30, 0)
-        encoded = repo._encode_cursor(dt, self.SESSION_ID)
-        decoded_dt, decoded_id = repo._decode_cursor(encoded)
+        encoded = repo._encode_sort_cursor(
+            "created_at", "desc", dt.isoformat(), self.SESSION_ID
+        )
+        sort_by, sort_dir, value, decoded_id = repo._decode_sort_cursor(encoded)
 
-        assert decoded_dt == dt
+        assert sort_by == "created_at"
+        assert sort_dir == "desc"
+        assert datetime.fromisoformat(value) == dt
         assert decoded_id == self.SESSION_ID
 
     def test_decode_cursor_invalid_raises(
         self, repo: SessionRepository
     ) -> None:
-        """_decode_cursor raises ValueError for malformed input."""
-        with pytest.raises(ValueError, match="Invalid session cursor"):
-            repo._decode_cursor("not-base64!!!")
+        """_decode_sort_cursor raises ValidationError for malformed input."""
+        with pytest.raises(ValidationError, match="Invalid cursor"):
+            repo._decode_sort_cursor("not-base64!!!")
 
     def test_encode_decode_message_cursor_roundtrip(
         self, repo: SessionRepository
     ) -> None:
-        """_encode_message_cursor and _decode_message_cursor round-trip."""
-        encoded = repo._encode_message_cursor(42, self.EPISODE_ID)
-        decoded_seq, decoded_id = repo._decode_message_cursor(encoded)
+        """Versioned _encode_sort_cursor/_decode_sort_cursor round-trip."""
+        encoded = repo._encode_sort_cursor(
+            "sequence_number", "asc", "42", self.EPISODE_ID, versioned=True
+        )
+        sort_by, sort_dir, value, decoded_id = repo._decode_sort_cursor(
+            encoded, versioned=True
+        )
 
-        assert decoded_seq == 42
+        assert sort_by == "sequence_number"
+        assert sort_dir == "asc"
+        assert value == "42"
         assert decoded_id == self.EPISODE_ID
 
     def test_decode_message_cursor_invalid_raises(
         self, repo: SessionRepository
     ) -> None:
-        """_decode_message_cursor raises for malformed input.
+        """_decode_sort_cursor raises for malformed versioned input.
 
         The versioned envelope rejects tampered cursors with a unified
-        ``Invalid cursor`` message (observed prod contract — not the old
-        ``Invalid message cursor`` text).
+        ``Invalid cursor`` message (fail-closed 422).
         """
-        with pytest.raises(CursorExpiredError, match="Invalid cursor"):
-            repo._decode_message_cursor("bad-data!!!")
+        with pytest.raises(ValidationError, match="Invalid cursor"):
+            repo._decode_sort_cursor("bad-data!!!", versioned=True)
 
     def test_decode_message_cursor_short_cursor_raises(
         self, repo: SessionRepository
     ) -> None:
         """A truncated cursor that breaks the version envelope is rejected."""
-        valid = repo._encode_message_cursor(42, self.EPISODE_ID)
-        with pytest.raises(CursorExpiredError, match="Invalid cursor"):
-            repo._decode_message_cursor(valid[:4])
+        valid = repo._encode_sort_cursor(
+            "sequence_number", "asc", "42", self.EPISODE_ID, versioned=True
+        )
+        with pytest.raises(ValidationError, match="Invalid cursor"):
+            repo._decode_sort_cursor(valid[:4], versioned=True)

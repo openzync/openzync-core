@@ -16,6 +16,7 @@ from uuid import UUID
 import pytest
 import yaml
 
+from core.sorting import SortSpec
 from schemas.organizations import CreateOrgRequest, CreateOrgResponse
 from services.organization_service import OrganizationService, OrgCodeInfo
 
@@ -399,7 +400,22 @@ class TestOrganizationService:
         assert orgs == []
         assert total == 0
         mock_repo.list_all.assert_awaited_once_with(
-            status="pending", page=2, limit=20
+            status="pending", page=2, limit=20, sort=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_all_orgs_forwards_sort(
+        self,
+    ) -> None:
+        """list_all_orgs forwards an explicit SortSpec to the repo."""
+        service, mock_repo, _ = self._make_service()
+        mock_repo.list_all.return_value = ([], 0)
+        spec = SortSpec(sort_by="name", sort_dir="asc")
+
+        await service.list_all_orgs(sort=spec)
+
+        mock_repo.list_all.assert_awaited_once_with(
+            status=None, page=1, limit=50, sort=spec
         )
 
     @pytest.mark.asyncio
@@ -424,7 +440,7 @@ class TestOrganizationService:
         assert total == 1
         mock_repo.get_by_id.assert_awaited_once_with(self.ORG_ID)
         mock_user_repo.list_by_org.assert_awaited_once_with(
-            self.ORG_ID, page=1, limit=50
+            self.ORG_ID, page=1, limit=50, sort=None
         )
 
     @pytest.mark.asyncio

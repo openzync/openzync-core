@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from core.exceptions import GraphBackendUnavailableError, NotFoundError
+from core.sorting import SortSpec
 from packages.graph_backend.postgres import PostgresGraphBackend
 from schemas.facts import FactTriple
 from services.fact_invalidation_service import (
@@ -463,6 +464,7 @@ class TestFactHistory:
             organization_id=self.ORG_ID,
             limit=10,
             offset=5,
+            sort=None,
         )
 
     @pytest.mark.asyncio
@@ -501,10 +503,30 @@ class TestFactHistory:
 
         service._fact_repo.get_fact_history.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_history_forwards_sort(self, service: FactService) -> None:
+        """An explicit SortSpec is forwarded opaque to the repository."""
+        service._fact_repo.get_by_id.return_value = self._full_fact()
+        service._fact_repo.get_fact_history.return_value = []
+        spec = SortSpec(sort_by="at_time", sort_dir="desc")
+
+        await service.get_fact_history(
+            self.FACT_1_ID,
+            organization_id=self.ORG_ID,
+            project_id=self.PROJECT_ID,
+            sort=spec,
+        )
+
+        service._fact_repo.get_fact_history.assert_awaited_once_with(
+            self.FACT_1_ID,
+            organization_id=self.ORG_ID,
+            limit=50,
+            offset=0,
+            sort=spec,
+        )
+
 
 # ── Graph edge sync wiring (Phase 3) ──────────────────────────────────────────
-
-
 class TestFactServiceGraphSync:
     """ingest_facts wires the resolved graph backend into edge expiry.
 

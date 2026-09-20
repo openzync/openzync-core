@@ -13,6 +13,7 @@ from core.exceptions import (
     GraphBackendUnavailableError,
     NotFoundError,
 )
+from core.sorting import SortSpec
 from services.graph_service import GraphService
 
 
@@ -217,6 +218,7 @@ class TestGraphService:
         mock_backend.list_entity_edges.assert_awaited_once_with(
             org_id=self.ORG_ID, project_id=self.PROJECT_ID,
             entity_id=subject_id, predicate=None, limit=50, cursor=None,
+            sort=None,
         )
 
     @pytest.mark.asyncio
@@ -296,6 +298,7 @@ class TestGraphService:
         mock_backend.list_entity_edges.assert_awaited_once_with(
             org_id=self.ORG_ID, project_id=self.PROJECT_ID,
             entity_id=subject_id, predicate="knows", limit=50, cursor=None,
+            sort=None,
         )
 
     # ── get_communities ────────────────────────────────────────────────────
@@ -336,6 +339,7 @@ class TestGraphService:
         mock_backend.list_entities.assert_awaited_once_with(
             org_id=self.ORG_ID, project_id=self.PROJECT_ID,
             entity_type="community", limit=200,
+            sort=SortSpec(sort_by=None, sort_dir="asc"),
         )
 
     @pytest.mark.asyncio
@@ -361,3 +365,40 @@ class TestGraphService:
 
         assert len(result) == 1
         assert result[0]["member_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_get_communities_member_count_sorts_in_python(self) -> None:
+        """member_count sort stays in Python — backend receives sort=None."""
+        mock_backend = AsyncMock()
+        mock_backend.list_entities.return_value = {
+            "items": [
+                {
+                    "id": uuid4(),
+                    "name": "B",
+                    "entity_type": "community",
+                    "summary": "",
+                    "attributes": {"member_count": 1},
+                },
+                {
+                    "id": uuid4(),
+                    "name": "A",
+                    "entity_type": "community",
+                    "summary": "",
+                    "attributes": {"member_count": 9},
+                },
+            ],
+            "next_cursor": None,
+            "has_more": False,
+        }
+        service = GraphService(graph_backend=mock_backend)
+
+        result = await service.get_communities(
+            self.ORG_ID, self.PROJECT_ID,
+            sort=SortSpec(sort_by="member_count", sort_dir="desc"),
+        )
+
+        mock_backend.list_entities.assert_awaited_once_with(
+            org_id=self.ORG_ID, project_id=self.PROJECT_ID,
+            entity_type="community", limit=200, sort=None,
+        )
+        assert [c["member_count"] for c in result] == [9, 1]
