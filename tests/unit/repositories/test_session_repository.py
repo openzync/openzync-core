@@ -9,6 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import CursorExpiredError
 from repositories.session_repository import SessionRepository
 
 pytestmark = pytest.mark.unit
@@ -644,6 +645,19 @@ class TestSessionRepository:
     def test_decode_message_cursor_invalid_raises(
         self, repo: SessionRepository
     ) -> None:
-        """_decode_message_cursor raises ValueError for malformed input."""
-        with pytest.raises(ValueError, match="Invalid message cursor"):
+        """_decode_message_cursor raises for malformed input.
+
+        The versioned envelope rejects tampered cursors with a unified
+        ``Invalid cursor`` message (observed prod contract — not the old
+        ``Invalid message cursor`` text).
+        """
+        with pytest.raises(CursorExpiredError, match="Invalid cursor"):
             repo._decode_message_cursor("bad-data!!!")
+
+    def test_decode_message_cursor_short_cursor_raises(
+        self, repo: SessionRepository
+    ) -> None:
+        """A truncated cursor that breaks the version envelope is rejected."""
+        valid = repo._encode_message_cursor(42, self.EPISODE_ID)
+        with pytest.raises(CursorExpiredError, match="Invalid cursor"):
+            repo._decode_message_cursor(valid[:4])

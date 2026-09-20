@@ -19,7 +19,7 @@ from httpx import ASGITransport, AsyncClient
 from pydantic_core import ValidationError as PydanticCoreValidationError
 from starlette.requests import Request
 
-from core.exceptions import ConflictError, register_exception_handlers
+from core.exceptions import ConflictError, ValidationError, register_exception_handlers
 from dependencies.auth import get_current_user_id
 from dependencies.project_auth import require_project_membership
 from dependencies.services import get_memory_service
@@ -212,11 +212,15 @@ async def test_ingest_messages_422_missing_messages() -> None:
 
 @pytest.mark.asyncio
 async def test_delete_project_memory_204() -> None:
-    """DELETE returns 204 with no content."""
+    """DELETE with a matching ``confirm`` body returns 204 with no content."""
     app = _create_app()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.delete(f"/v1/projects/{PROJECT_ID}/memory")
+        resp = await client.request(
+            "DELETE",
+            f"/v1/projects/{PROJECT_ID}/memory",
+            json={"confirm": str(PROJECT_ID)},
+        )
 
     assert resp.status_code == 204
     assert resp.text == ""
@@ -224,7 +228,47 @@ async def test_delete_project_memory_204() -> None:
     MOCK_MEMORY_SERVICE.delete_project_memory.assert_awaited_once_with(
         org_id=ORG_ID,
         project_id=PROJECT_ID,
+        confirm=str(PROJECT_ID),
+        actor_id=USER_ID,
     )
+
+
+@pytest.mark.asyncio
+async def test_delete_project_memory_422_confirm_mismatch() -> None:
+    """DELETE with a non-matching ``confirm`` body returns 422."""
+    MOCK_MEMORY_SERVICE.delete_project_memory.side_effect = ValidationError(
+        "confirm does not match project_id — memory wipe rejected"
+    )
+
+    app = _create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.request(
+            "DELETE",
+            f"/v1/projects/{PROJECT_ID}/memory",
+            json={"confirm": "00000000-0000-0000-0000-000000000000"},
+        )
+
+    assert resp.status_code == 422
+    body = resp.json()
+    assert body["status"] == 422
+    assert "confirm" in body["detail"]
+
+
+@pytest.mark.asyncio
+async def test_delete_project_memory_422_missing_confirm() -> None:
+    """DELETE without a ``confirm`` body returns 422 (schema-level)."""
+    app = _create_app()
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.request(
+            "DELETE",
+            f"/v1/projects/{PROJECT_ID}/memory",
+            json={},
+        )
+
+    assert resp.status_code == 422
+    MOCK_MEMORY_SERVICE.delete_project_memory.assert_not_awaited()
 
 
 @pytest.mark.asyncio

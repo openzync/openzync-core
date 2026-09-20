@@ -718,17 +718,34 @@ class TestSearchExcludesSuperseded:
         )
         new_id = r2.created[0].id
 
-        vec = [0.0] * 1536
+        vec = [0.0] * 768
         async with AsyncSession(engine) as db:
+            from core.embeddings import CANONICAL_EMBED_DIM, format_vector_literal
+
+            vector_literal = format_vector_literal(vec)
             await db.execute(
-                sa_text("UPDATE facts SET embedding = :vec WHERE id = :id"),
-                {"vec": vec, "id": old_id},
+                sa_text(
+                    "UPDATE facts SET embedding = "
+                    "CAST(:v AS vector(768)) WHERE id = :id"
+                ),
+                {"v": vector_literal, "id": old_id},
             )
             await db.execute(
-                sa_text("UPDATE facts SET embedding = :vec WHERE id = :id"),
-                {"vec": vec, "id": new_id},
+                sa_text(
+                    "UPDATE facts SET embedding = "
+                    "CAST(:v AS vector(768)) WHERE id = :id"
+                ),
+                {"v": vector_literal, "id": new_id},
             )
             await db.commit()
+        assert CANONICAL_EMBED_DIM == 768
+
+        # The supersession closed the old fact: valid_to is set on the
+        # loser, open on the winner.
+        rows = await _spo_rows(engine, "Cobalt")
+        assert len(rows) == 2
+        assert rows[0].valid_to == T1
+        assert rows[1].valid_to is None
 
         db = AsyncSession(engine, expire_on_commit=False)
         try:

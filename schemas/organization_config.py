@@ -405,12 +405,21 @@ class OrgConfigBase(BaseModel):
 
         Only non-``None`` fields are included.  Used by worker tasks that
         read embedding settings directly.  Frozen legacy fields
-        (``embedding_model`` / ``embedding_dim``) are never forwarded —
-        the canonical model/dim come from ``core.embeddings``.
+        (``embedding_model`` / ``embedding_dim``) are passed through
+        read-only — writes are still rejected with 400
+        ``embedding_frozen`` in ``services/org_config_service.py``.
+        Callers needing a guaranteed value must read via ``.get()``
+        with the canonical model/dim from ``core.embeddings`` as default.
         """
         d: dict[str, str | int] = {}
         if self.embedding_backend is not None:
             d["embedding_backend"] = self.embedding_backend
+        # ⚠️ FROZEN READ-ONLY: passthrough for legacy readers only.
+        # Writes stay rejected in OrgConfigService — no write path here.
+        if self.embedding_model is not None:
+            d["embedding_model"] = self.embedding_model
+        if self.embedding_dim is not None:
+            d["embedding_dim"] = self.embedding_dim
         if self.embedding_api_key is not None:
             d["embedding_api_key"] = self.embedding_api_key
         if self.embedding_openai_like_base_url is not None:

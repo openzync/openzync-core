@@ -7,6 +7,8 @@ from uuid import uuid4
 
 import pytest
 
+from core.exceptions import ExternalServiceError, SearchLegFailedError
+
 _FACT_ID = str(uuid4())
 _ORG_ID = str(uuid4())
 _CONTENT = "Test fact content for embedding."
@@ -40,13 +42,13 @@ class TestEmbedFact:
         cfg = MagicMock()
         cfg.embedding_backend = overrides.get("embedding_backend", "openai")
         cfg.embedding_model = overrides.get("embedding_model", "text-embedding-3-small")
-        cfg.embedding_dim = overrides.get("embedding_dim", 1536)
+        cfg.embedding_dim = overrides.get("embedding_dim", 768)
         return cfg
 
     @pytest.mark.asyncio
     async def test_success(self) -> None:
         """Fact embedding generated and stored successfully."""
-        embedding = [0.2] * 1536
+        embedding = [0.2] * 768
 
         with (
             patch("core.org_config.get_org_config") as mock_cfg,
@@ -146,7 +148,7 @@ class TestEmbedFact:
     @pytest.mark.asyncio
     async def test_empty_content(self) -> None:
         """Empty content still generates embedding."""
-        embedding = [0.2] * 1536
+        embedding = [0.2] * 768
 
         with (
             patch("core.org_config.get_org_config") as mock_cfg,
@@ -183,14 +185,19 @@ class TestEmbedFact:
 
     @pytest.mark.asyncio
     async def test_dimension_mismatch(self) -> None:
-        """Embedding dimension mismatch raises ValueError."""
+        """A non-canonical-dim vector raises ExternalServiceError (fail loud).
+
+        This is the single negative-dim case: the canonical model is
+        ``snowflake-arctic-embed-m-v1.5`` at 768 dims — anything else is
+        refused, never stored.
+        """
         embedding = [0.2] * 512  # Wrong dimension
 
         with (
             patch("core.org_config.get_org_config") as mock_cfg,
             patch("core.llm.resolve_backend") as mock_llm_cls,
         ):
-            mock_cfg.return_value = self._make_org_config(embedding_dim=1536)
+            mock_cfg.return_value = self._make_org_config(embedding_dim=768)
 
             mock_llm = AsyncMock()
             mock_result = MagicMock()
@@ -203,7 +210,7 @@ class TestEmbedFact:
 
             from workers.tasks.embed_fact import embed_fact
 
-            with pytest.raises(ValueError, match="dimension mismatch"):
+            with pytest.raises(ExternalServiceError, match="dimension mismatch"):
                 await embed_fact(
                     ctx=ctx,
                     fact_id=_FACT_ID,
@@ -216,7 +223,7 @@ class TestEmbedFact:
     @pytest.mark.asyncio
     async def test_no_db_engine_in_ctx(self) -> None:
         """Missing db_engine → creates own engine + session factory, disposes."""
-        embedding = [0.2] * 1536
+        embedding = [0.2] * 768
 
         with (
             patch("core.org_config.get_org_config") as mock_cfg,
@@ -261,7 +268,7 @@ class TestEmbedFact:
     @pytest.mark.asyncio
     async def test_content_fetched_from_db(self) -> None:
         """Content not provided → fetched from DB successfully."""
-        embedding = [0.2] * 1536
+        embedding = [0.2] * 768
         db_content = "fact content from database"
 
         with (
@@ -295,7 +302,7 @@ class TestEmbedFact:
     @pytest.mark.asyncio
     async def test_no_bao_client_in_ctx(self) -> None:
         """No openbao_client in ctx → uses BootstrapSettings + OpenBaoClient."""
-        embedding = [0.2] * 1536
+        embedding = [0.2] * 768
 
         with (
             patch("core.org_config.get_org_config") as mock_cfg,
@@ -335,7 +342,7 @@ class TestEmbedFact:
 
     @pytest.mark.asyncio
     async def test_org_config_none(self) -> None:
-        """get_org_config returns None → raises RuntimeError."""
+        """get_org_config returns None → SearchLegFailedError (no backend)."""
         with (
             patch("core.org_config.get_org_config") as mock_cfg,
         ):
@@ -344,7 +351,7 @@ class TestEmbedFact:
             db = self._make_db()
             from workers.tasks.embed_fact import embed_fact
 
-            with pytest.raises(RuntimeError, match="Org config not found"):
+            with pytest.raises(SearchLegFailedError, match="Org config not found"):
                 await embed_fact(
                     ctx=self._ctx(db),
                     fact_id=_FACT_ID,
@@ -354,10 +361,10 @@ class TestEmbedFact:
 
     @pytest.mark.asyncio
     async def test_org_config_fetch_raises(self) -> None:
-        """get_org_config raises → caught, logged, re-raised as RuntimeError.
+        """get_org_config raises → wrapped as SearchLegFailedError.
 
-        Covers the except Exception block (lines 116-122) in the org config
-        fetch try/except.
+        Covers the except Exception block in the org config fetch
+        try/except — the fetch failure becomes a leg failure (ARQ retries).
         """
         with (
             patch("core.org_config.get_org_config") as mock_cfg,
@@ -367,7 +374,7 @@ class TestEmbedFact:
             db = self._make_db()
             from workers.tasks.embed_fact import embed_fact
 
-            with pytest.raises(RuntimeError, match="Failed to fetch org config"):
+            with pytest.raises(SearchLegFailedError, match="Failed to fetch org config"):
                 await embed_fact(
                     ctx=self._ctx(db),
                     fact_id=_FACT_ID,
@@ -437,7 +444,7 @@ class TestEmbedFactRetryBehaviour:
         cfg = MagicMock()
         cfg.embedding_backend = overrides.get("embedding_backend", "openai")
         cfg.embedding_model = overrides.get("embedding_model", "text-embedding-3-small")
-        cfg.embedding_dim = overrides.get("embedding_dim", 1536)
+        cfg.embedding_dim = overrides.get("embedding_dim", 768)
         return cfg
 
     @staticmethod
@@ -480,12 +487,12 @@ class TestEmbedFactRetryBehaviour:
             # Fact retired: embedded_at set, embedding stays NULL.
             executed = self._executed_sql(db)
             assert any("embedded_at" in sql for sql in executed)
-            assert not any("embedding = :embedding" in sql for sql in executed)
+            assert not any("CAST(:embedding AS vector(768))" in sql for sql in executed)
 
     @pytest.mark.asyncio
     async def test_transient_error_retries_then_succeeds(self) -> None:
         """A transient failure is retried and a later success is stored."""
-        embedding = [0.2] * 1536
+        embedding = [0.2] * 768
         with (
             patch("core.org_config.get_org_config") as mock_cfg,
             patch("core.llm.resolve_backend") as mock_llm_cls,
@@ -514,4 +521,6 @@ class TestEmbedFactRetryBehaviour:
             assert mock_llm.embed.call_count == 2
             mock_sleep.assert_awaited_once()
             executed = self._executed_sql(db)
-            assert any("embedding = :embedding" in sql for sql in executed)
+            assert any(
+                "CAST(:embedding AS vector(768))" in sql for sql in executed
+            )

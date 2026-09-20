@@ -151,9 +151,11 @@ class TestMemoryWipe:
             f"Expected at least 5 episodes before wipe, got {before_count}"
         )
 
-        # Wipe
-        delete_resp = await isolated_auth_client.delete(
+        # Wipe — confirm body must echo the path project ID.
+        delete_resp = await isolated_auth_client.request(
+            "DELETE",
             f"/v1/projects/{isolated_project_id}/memory",
+            json={"confirm": str(isolated_project_id)},
         )
         assert delete_resp.status_code == 204, (
             f"Expected 204, got {delete_resp.status_code}: {delete_resp.text}"
@@ -166,6 +168,55 @@ class TestMemoryWipe:
         )
         assert after_count == 0, (
             f"Expected 0 episodes after wipe, got {after_count}"
+        )
+
+    # ── Wrong / missing confirm → 422 ────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_wipe_confirm_mismatch_returns_422(
+        self,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
+    ) -> None:
+        """DELETE with a non-matching ``confirm`` → 422, nothing deleted."""
+        await self._create_user_and_ingest(
+            isolated_auth_client,
+            isolated_project_id,
+            external_id="wipe_mismatch_user",
+            session_id="wipe_mismatch_session",
+            message_count=2,
+        )
+
+        delete_resp = await isolated_auth_client.request(
+            "DELETE",
+            f"/v1/projects/{isolated_project_id}/memory",
+            json={"confirm": "00000000-0000-0000-0000-000000000000"},
+        )
+        assert delete_resp.status_code == 422, (
+            f"Expected 422, got {delete_resp.status_code}: {delete_resp.text}"
+        )
+        body = delete_resp.json()
+        assert "confirm" in body.get("detail", "")
+
+        # Nothing was wiped — episodes still visible.
+        assert await self._count_episodes(
+            isolated_auth_client, isolated_project_id
+        ) >= 2
+
+    @pytest.mark.asyncio
+    async def test_wipe_missing_confirm_returns_422(
+        self,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
+    ) -> None:
+        """DELETE without a ``confirm`` body → 422."""
+        delete_resp = await isolated_auth_client.request(
+            "DELETE",
+            f"/v1/projects/{isolated_project_id}/memory",
+            json={},
+        )
+        assert delete_resp.status_code == 422, (
+            f"Expected 422, got {delete_resp.status_code}: {delete_resp.text}"
         )
 
     # ═════════════════════════════════════════════════════════════════════════
@@ -194,16 +245,20 @@ class TestMemoryWipe:
         )
 
         # First wipe
-        resp1 = await isolated_auth_client.delete(
+        resp1 = await isolated_auth_client.request(
+            "DELETE",
             f"/v1/projects/{isolated_project_id}/memory",
+            json={"confirm": str(isolated_project_id)},
         )
         assert resp1.status_code == 204, (
             f"First wipe expected 204, got {resp1.status_code}: {resp1.text}"
         )
 
         # Second wipe — must also be 204
-        resp2 = await isolated_auth_client.delete(
+        resp2 = await isolated_auth_client.request(
+            "DELETE",
             f"/v1/projects/{isolated_project_id}/memory",
+            json={"confirm": str(isolated_project_id)},
         )
         assert resp2.status_code == 204, (
             f"Second (idempotent) wipe expected 204, "
@@ -297,8 +352,10 @@ class TestMemoryWipe:
         )
 
         # Wipe
-        delete_resp = await isolated_auth_client.delete(
+        delete_resp = await isolated_auth_client.request(
+            "DELETE",
             f"/v1/projects/{isolated_project_id}/memory",
+            json={"confirm": str(isolated_project_id)},
         )
         assert delete_resp.status_code == 204
 
