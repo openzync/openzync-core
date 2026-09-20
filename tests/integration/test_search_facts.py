@@ -64,7 +64,7 @@ class _FakeEmbedResponse:
 class _FakeEmbedBackend:
     async def embed(self, texts, model=None) -> _FakeEmbedResponse:
         return _FakeEmbedResponse(
-            embeddings=[[0.0] * 1536 for _ in texts]
+            embeddings=[[0.0] * 768 for _ in texts]
         )
 
 
@@ -80,9 +80,9 @@ def _fake_embedding_backend(monkeypatch) -> None:
 
     ``HybridRetriever._embed_query`` imports ``core.llm.resolve_backend``
     at call time; in the test environment no embedding backend is
-    configured, so resolution raises and the whole search 503s.  The fake
-    returns a 1536-dim zero vector per text — matching the
-    ``episodes.embedding`` ``vector(1536)`` column so the pgvector ``<=>``
+    configured, so resolution raises and the whole search 503s.      The fake
+    returns a 768-dim zero vector per text — matching the
+    ``episodes.embedding`` ``vector(768)`` column so the pgvector ``<=>``
     operator works.
     """
     monkeypatch.setattr("core.llm.resolve_backend", _fake_resolve_backend)

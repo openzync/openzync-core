@@ -130,6 +130,30 @@ class TestOrgConfigBaseToDict:
         d = cfg.to_embedding_config_dict()
         assert d == {}
 
+    def test_to_embedding_config_dict_get_with_canonical_defaults(self) -> None:
+        """Callers must read via ``.get()`` with canonical defaults.
+
+        ``to_embedding_config_dict`` omits ``None`` fields (frozen legacy
+        ``embedding_model``/``embedding_dim`` pass through read-only), so
+        callers needing a guaranteed value default to the canonical
+        model/dim from ``core.embeddings``. No prod callers exist today —
+        this pins the documented contract.
+        """
+        from core.embeddings import CANONICAL_EMBED_DIM, CANONICAL_EMBED_MODEL
+
+        d = OrgConfigBase().to_embedding_config_dict()
+        assert d.get("embedding_model", CANONICAL_EMBED_MODEL) == CANONICAL_EMBED_MODEL
+        assert d.get("embedding_dim", CANONICAL_EMBED_DIM) == CANONICAL_EMBED_DIM
+
+        # Explicit legacy values still pass through untouched.
+        legacy = OrgConfigBase(
+            embedding_model="text-embedding-3-small", embedding_dim=1536
+        ).to_embedding_config_dict()
+        assert legacy.get("embedding_model", CANONICAL_EMBED_MODEL) == (
+            "text-embedding-3-small"
+        )
+        assert legacy.get("embedding_dim", CANONICAL_EMBED_DIM) == 1536
+
 
 class TestUpdateOrgConfigRequest:
     """Validate the partial-update request schema."""

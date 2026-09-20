@@ -602,9 +602,11 @@ class TestMemoryIngestion:
         )
         assert ingest_resp.status_code == 202
 
-        # Wipe memory
-        delete_resp = await isolated_auth_client.delete(
+        # Wipe memory — confirm body must echo the path project ID.
+        delete_resp = await isolated_auth_client.request(
+            "DELETE",
             f"/v1/projects/{isolated_project_id}/memory",
+            json={"confirm": str(isolated_project_id)},
         )
         assert delete_resp.status_code == 204, (
             f"Expected 204 on memory wipe, "

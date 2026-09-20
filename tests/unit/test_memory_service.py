@@ -10,9 +10,10 @@ from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.events import EventType
-from core.exceptions import ConflictError, NotFoundError
+from core.exceptions import ConflictError, NotFoundError, ValidationError
 from schemas.memory import IngestMemoryResponse, Message
 from services.idempotency_service import (
+    ContentHashClaim,
     IdempotencyResult,
     IdempotencyService,
     IdempotencyStatus,
@@ -154,16 +155,43 @@ class TestMemoryService:
 
     @pytest.mark.asyncio
     async def test_delete_user_memory(self, service: MemoryService) -> None:
-        """Delete memory soft-deletes episodes and facts."""
+        """Delete memory soft-deletes episodes and facts (confirm-gated)."""
         service._episode_repo.soft_delete_by_project.return_value = 5
         service._fact_repo.soft_delete_by_project.return_value = 3
 
         with patch.object(service, "_invalidate_context_cache"):
             episodes, facts = await service.delete_project_memory(
-                org_id=self.ORG_ID, project_id=self.PROJECT_ID,
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                confirm=str(self.PROJECT_ID),
+                actor_id=self.USER_ID,
             )
         assert episodes == 5
         assert facts == 3
+        service._episode_repo.soft_delete_by_project.assert_awaited_once_with(
+            self.PROJECT_ID
+        )
+        service._fact_repo.soft_delete_by_project.assert_awaited_once_with(
+            self.PROJECT_ID
+        )
+
+    @pytest.mark.asyncio
+    async def test_delete_user_memory_confirm_mismatch(
+        self, service: MemoryService
+    ) -> None:
+        """A non-matching ``confirm`` rejects the wipe before any write."""
+        with (
+            patch.object(service, "_invalidate_context_cache"),
+            pytest.raises(ValidationError, match="confirm does not match"),
+        ):
+            await service.delete_project_memory(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                confirm="00000000-0000-0000-0000-000000000000",
+                actor_id=self.USER_ID,
+            )
+        service._episode_repo.soft_delete_by_project.assert_not_awaited()
+        service._fact_repo.soft_delete_by_project.assert_not_awaited()
 
     def test_compute_content_hash_is_deterministic(self) -> None:
         """Same inputs produce the same hash; metadata/blobs participate."""
@@ -310,14 +338,26 @@ class TestMemoryService:
 
     @pytest.mark.asyncio
     async def test_ingest_content_dedup_hit(self, service: MemoryService) -> None:
-        """Ingest returns existing job_id when content hash matches."""
+        """Lua claim lost → replay the winner's job_id without inserting.
+
+        The Redis peek (``check_content_hash``) is observability-only: a
+        peek hit still falls through to the atomic Step 4 claim (TOCTOU —
+        check-then-set would let concurrent duplicates both pass). The
+        Lua ``claim_content_hash`` is the arbiter — on loss it returns the
+        winner's payload and ingest replays it.
+        """
         service._session_repo.get_by_external_id.return_value = MagicMock(
             id=uuid4(), external_id="session-abc",
         )
-        existing_job_id = "existing-job-123"
-        service._idem.check_content_hash.return_value = existing_job_id
+        winner_job_id = str(uuid4())
+        service._idem.claim_content_hash.return_value = ContentHashClaim(
+            won=False, winner=f"{winner_job_id}:2",
+        )
 
-        with patch.object(service, "_enqueue_arq_tasks") as mock_enqueue:
+        with (
+            patch.object(service, "_enqueue_arq_tasks") as mock_enqueue,
+            patch.object(service, "_get_org_pii_config", return_value={"mode": "off"}),
+        ):
             result = await service.ingest(
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
@@ -325,12 +365,54 @@ class TestMemoryService:
                 session_external_id="session-abc",
                 messages=self._sample_messages(),
             )
-        assert result.job_id == existing_job_id
+        # Same job_id as the winner, same episode count — replayed, not new.
+        assert result.job_id == winner_job_id
+        assert result.episode_count == 2
         assert result.status == "accepted"
-        # Redis fast-path pre-check short-circuits before the ingest_dedup
-        # claim — the DB claim must not be reached on a hash hit.
-        service._dedup_repo.insert_or_none.assert_not_awaited()
+        # Peek ran (metrics only), Lua claim arbitrated, DB claim skipped.
         service._idem.check_content_hash.assert_awaited_once()
+        service._idem.claim_content_hash.assert_awaited_once()
+        service._dedup_repo.insert_or_none.assert_not_awaited()
+        service._episode_repo.batch_create.assert_not_called()
+        mock_enqueue.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_ingest_content_dedup_db_claim_lost(
+        self, service: MemoryService
+    ) -> None:
+        """Claim won in Redis but lost the DB ``insert_or_none`` race.
+
+        The ``ingest_dedup`` UNIQUE backstop (ON CONFLICT DO NOTHING) is
+        the arbiter for races Redis cannot see (eviction/failover/TTL
+        expiry). A falsy insert replays the winner via ``get_job_id`` —
+        nothing is inserted twice.
+        """
+        service._session_repo.get_by_external_id.return_value = MagicMock(
+            id=uuid4(), external_id="session-abc",
+        )
+        winner_job_id = uuid4()
+        service._idem.claim_content_hash.return_value = ContentHashClaim(
+            won=True, winner="",
+        )
+        service._dedup_repo.insert_or_none.return_value = None
+        service._dedup_repo.get_job_id.return_value = winner_job_id
+
+        with (
+            patch.object(service, "_enqueue_arq_tasks") as mock_enqueue,
+            patch.object(service, "_get_org_pii_config", return_value={"mode": "off"}),
+        ):
+            result = await service.ingest(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                created_by=self.USER_ID,
+                session_external_id="session-abc",
+                messages=self._sample_messages(),
+            )
+        assert result.job_id == str(winner_job_id)
+        assert result.status == "accepted"
+        service._dedup_repo.insert_or_none.assert_awaited_once()
+        service._dedup_repo.get_job_id.assert_awaited_once()
+        service._episode_repo.batch_create.assert_not_called()
         mock_enqueue.assert_not_called()
 
     # ------------------------------------------------------------------
@@ -585,12 +667,33 @@ class TestMemoryServiceInternal:
 
     @pytest.mark.asyncio
     async def test_get_org_pii_config(self, service: MemoryService) -> None:
-        """_get_org_pii_config delegates to org_repo.get_pii_config."""
-        expected = {"mode": "mask", "patterns": ["email", "phone"]}
-        service._org_repo.get_pii_config.return_value = expected
-        result = await service._get_org_pii_config(self.ORG_ID)
-        assert result == expected
-        service._org_repo.get_pii_config.assert_awaited_once_with(self.ORG_ID)
+        """_get_org_pii_config reads the OpenBao org config (fail-closed).
+
+        Observed prod contract: the legacy ``org_repo.get_pii_config``
+        path is gone — config comes from ``core.org_config.get_org_config``
+        via the service's OpenBao client, mapped to the flat PII dict.
+        """
+        service._bao_client = MagicMock()
+        org_cfg = MagicMock()
+        org_cfg.pii_mode = "mask"
+        org_cfg.pii_sensitivity = "high"
+        org_cfg.pii_enabled_types = ["email", "phone"]
+        org_cfg.pii_min_confidence = 0.8
+        with patch(
+            "core.org_config.get_org_config",
+            AsyncMock(return_value=org_cfg),
+        ) as mock_get_config:
+            result = await service._get_org_pii_config(self.ORG_ID)
+
+        assert result == {
+            "mode": "mask",
+            "sensitivity": "high",
+            "enabled_types": ["email", "phone"],
+            "min_confidence": 0.8,
+        }
+        mock_get_config.assert_awaited_once_with(
+            self.ORG_ID, redis=None, bao_client=service._bao_client
+        )
 
     # ── _invalidate_context_cache ────────────────────────────────────
 
@@ -792,7 +895,7 @@ class TestMemoryServiceInfrastructure:
     async def test_ingest_with_idempotency_key(
         self, service: MemoryService,
     ) -> None:
-        """Happy path with key: stores idempotency entry and content hash."""
+        """Happy path with key: stores idempotency entry, never content hash."""
         service._session_repo.get_by_external_id.return_value = MagicMock(
             id=uuid4(), external_id="session-abc",
         )
@@ -819,13 +922,15 @@ class TestMemoryServiceInfrastructure:
         service._idem.check_idempotency_key.assert_awaited_once_with(
             "my-key", "", str(self.ORG_ID)
         )
-        # Step 9: response cached under the key, content hash stored with payload
+        # Step 9: response cached under the key …
         service._idem.store_idempotency_key.assert_awaited_once_with(
             "my-key", "", ANY, str(self.ORG_ID),
         )
-        service._idem.store_content_hash.assert_awaited_once()
-        _args, kwargs = service._idem.store_content_hash.call_args
-        assert kwargs["payload"] == result.job_id
+        # … but the content hash is NEVER stored post-ingest: the Step 4
+        # Lua claim already SET the Redis key atomically on win, and a
+        # post-ingest check-then-store would re-open the TOCTOU window.
+        # store_content_hash remains for non-ingest writers only.
+        service._idem.store_content_hash.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_resolve_session_with_uuid_fallback(

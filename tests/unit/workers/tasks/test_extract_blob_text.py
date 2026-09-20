@@ -87,24 +87,26 @@ class TestExtractPdf:
         assert result == "Page 1\nPage 2\nPage 3"
 
     def test_returns_none_when_fitz_not_installed(self) -> None:
-        """Missing PyMuPDF dependency returns None."""
+        """Missing PyMuPDF dependency raises ImportError (fail-fast, no retry)."""
         from workers.tasks.extract_blob_text import _extract_pdf
 
-        with patch.dict("sys.modules", {"fitz": None}):
-            result = _extract_pdf(b"data")
-
-        assert result is None
+        with (
+            patch.dict("sys.modules", {"fitz": None}),
+            pytest.raises(ImportError),
+        ):
+            _extract_pdf(b"data")
 
     def test_returns_none_on_extraction_failure(self) -> None:
-        """Exception during PDF open/read returns None."""
+        """Exception during PDF open/read propagates (retryable)."""
         from workers.tasks.extract_blob_text import _extract_pdf
 
         mock_fitz = MagicMock()
         mock_fitz.open.side_effect = RuntimeError("Corrupt PDF")
-        with patch.dict("sys.modules", {"fitz": mock_fitz}):
-            result = _extract_pdf(b"corrupt data")
-
-        assert result is None
+        with (
+            patch.dict("sys.modules", {"fitz": mock_fitz}),
+            pytest.raises(RuntimeError, match="Corrupt PDF"),
+        ):
+            _extract_pdf(b"corrupt data")
 
     def test_returns_none_for_empty_result(self) -> None:
         """Empty text after stripping returns None."""
@@ -177,24 +179,26 @@ class TestExtractDocx:
         assert result == "Real content"
 
     def test_returns_none_when_docx_not_installed(self) -> None:
-        """Missing python-docx returns None."""
+        """Missing python-docx raises ImportError (fail-fast, no retry)."""
         from workers.tasks.extract_blob_text import _extract_docx
 
-        with patch.dict("sys.modules", {"docx": None}):
-            result = _extract_docx(b"data")
-
-        assert result is None
+        with (
+            patch.dict("sys.modules", {"docx": None}),
+            pytest.raises(ImportError),
+        ):
+            _extract_docx(b"data")
 
     def test_returns_none_on_extraction_failure(self) -> None:
-        """Exception during DOCX parsing returns None."""
+        """Exception during DOCX parsing propagates (retryable)."""
         from workers.tasks.extract_blob_text import _extract_docx
 
         mock_docx = MagicMock()
         mock_docx.Document.side_effect = ValueError("Corrupt DOCX")
-        with patch.dict("sys.modules", {"docx": mock_docx}):
-            result = _extract_docx(b"corrupt data")
-
-        assert result is None
+        with (
+            patch.dict("sys.modules", {"docx": mock_docx}),
+            pytest.raises(ValueError, match="Corrupt DOCX"),
+        ):
+            _extract_docx(b"corrupt data")
 
     def test_returns_none_when_all_paragraphs_empty(self) -> None:
         """All-empty paragraphs result in None."""
@@ -283,17 +287,18 @@ class TestExtractImageOcr:
 
     @pytest.mark.asyncio
     async def test_returns_none_when_deps_missing(self) -> None:
-        """Missing pytesseract / Pillow returns None."""
+        """Missing pytesseract / Pillow raises ImportError (fail-fast)."""
         from workers.tasks.extract_blob_text import _extract_image_ocr
 
-        with patch.dict("sys.modules", {"pytesseract": None, "PIL": None}):
-            result = await _extract_image_ocr(b"image bytes")
-
-        assert result is None
+        with (
+            patch.dict("sys.modules", {"pytesseract": None, "PIL": None}),
+            pytest.raises(ImportError),
+        ):
+            await _extract_image_ocr(b"image bytes")
 
     @pytest.mark.asyncio
     async def test_returns_none_on_ocr_failure(self) -> None:
-        """Exception during OCR returns None."""
+        """Exception during OCR propagates (retryable)."""
         from workers.tasks.extract_blob_text import _extract_image_ocr
 
         mock_pyt = MagicMock()
@@ -302,10 +307,9 @@ class TestExtractImageOcr:
         with (
             patch.dict("sys.modules", {"pytesseract": mock_pyt, "PIL": mock_pil}),
             patch("asyncio.to_thread", AsyncMock(side_effect=RuntimeError("OCR failed"))),
+            pytest.raises(RuntimeError, match="OCR failed"),
         ):
-            result = await _extract_image_ocr(b"image bytes")
-
-        assert result is None
+            await _extract_image_ocr(b"image bytes")
 
     @pytest.mark.asyncio
     async def test_returns_none_for_empty_result(self) -> None:
@@ -757,7 +761,12 @@ class TestExtractBlobText:
 
     @pytest.mark.asyncio
     async def test_happy_path_full_pipeline(self) -> None:
-        """Complete flow: download → extract → store → set bit → commit."""
+        """Complete flow: download → extract → PII redact → store → set bit → commit.
+
+        PII redaction is fail-closed: the prod pipeline raises
+        ``PIIUnavailableError`` without a reachable policy, so the happy
+        path mocks the redaction step and asserts no such error escapes.
+        """
         from workers.tasks.extract_blob_text import extract_blob_text
 
         db = self._make_db()
@@ -777,6 +786,10 @@ class TestExtractBlobText:
                 "workers.tasks.extract_blob_text._dispatch_extraction",
                 AsyncMock(return_value="extracted text content"),
             ),
+            patch(
+                "workers.tasks.extract_blob_text._redact_extracted_text",
+                AsyncMock(return_value="extracted text content"),
+            ) as mock_redact,
         ):
             # Repos
             mock_blob_repo = AsyncMock()
@@ -812,6 +825,9 @@ class TestExtractBlobText:
 
             # Assertions
             mock_storage.download.assert_awaited_once_with(_STORAGE_KEY)
+            # PII redaction ran on the extracted text (fail-closed step mocked
+            # to a passthrough — no PIIUnavailableError on the happy path).
+            mock_redact.assert_awaited_once()
             mock_blob_repo.update_extracted_text.assert_awaited_once_with(
                 UUID(_BLOB_ID), "extracted text content"
             )
