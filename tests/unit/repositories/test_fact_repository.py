@@ -470,20 +470,14 @@ class TestFactRepository:
     async def test_list_by_session_with_cursor(
         self, repo: FactRepository, mock_db: AsyncMock
     ) -> None:
-        """list_by_session decodes cursor and filters."""
-        mock_result = MagicMock()
-        mock_result.fetchall.return_value = []
-        mock_db.execute.return_value = mock_result
-
-        facts, cursor = await repo.list_by_session(
-            organization_id=self.ORG_ID,
-            session_id=self.SESSION_ID,
-            limit=10,
-            cursor="some-cursor",
-        )
-
-        assert facts == []
-        assert cursor is None
+        """list_by_session fails closed on an undecodable cursor."""
+        with pytest.raises(ValidationError, match="cursor"):
+            await repo.list_by_session(
+                organization_id=self.ORG_ID,
+                session_id=self.SESSION_ID,
+                limit=10,
+                cursor="some-cursor",
+            )
 
     async def test_list_by_session_empty(
         self, repo: FactRepository, mock_db: AsyncMock

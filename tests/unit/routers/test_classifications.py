@@ -14,6 +14,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from core.sorting import SortSpec
 from dependencies.db import get_db
 from dependencies.project_auth import require_project_membership
 from routers.classifications import _get_classification_service, router
@@ -110,6 +111,7 @@ async def test_list_classifications_success() -> None:
         org_id=ORG_ID,
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
+        sort=SortSpec(None, "asc"),
     )
 
 

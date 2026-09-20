@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.sorting import SortSpec
 from dependencies.auth import (
     get_dashboard_user,
     require_org_id,
@@ -111,7 +112,9 @@ async def test_list_prompt_templates_success() -> None:
     assert len(body["data"]) == 2
     assert body["data"][0]["name"] == "extract_facts"
     assert body["data"][1]["name"] == "summarize"
-    repo_instance.list_names.assert_awaited_once_with(ORG_ID)
+    repo_instance.list_names.assert_awaited_once_with(
+        ORG_ID, sort=SortSpec(None, "asc")
+    )
 
 
 @pytest.mark.asyncio

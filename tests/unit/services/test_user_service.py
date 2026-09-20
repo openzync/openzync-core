@@ -12,6 +12,7 @@ from uuid import UUID
 import pytest
 
 from core.exceptions import ConflictError, NotFoundError, ValidationError
+from core.sorting import SortSpec
 from schemas.users import UserListResponse, UserResponse, UserResponseWithStats
 from services.user_service import UserService
 
@@ -465,6 +466,7 @@ class TestUserService:
             search=None,
             created_after=None,
             created_before=None,
+            sort=None,
         )
 
     @pytest.mark.asyncio
@@ -499,6 +501,26 @@ class TestUserService:
             search=search,
             created_after=created_after,
             created_before=created_before,
+            sort=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_users_forwards_sort(self) -> None:
+        """An explicit SortSpec is forwarded opaque to the repository."""
+        service, mock_repo = self._make_service()
+        mock_repo.list.return_value = ([], None)
+        spec = SortSpec(sort_by="created_at", sort_dir="desc")
+
+        await service.list_users(organization_id=self.ORG_ID, sort=spec)
+
+        mock_repo.list.assert_awaited_once_with(
+            organization_id=self.ORG_ID,
+            limit=50,
+            cursor=None,
+            search=None,
+            created_after=None,
+            created_before=None,
+            sort=spec,
         )
 
     @pytest.mark.asyncio
