@@ -50,8 +50,8 @@ class TokenUsage:
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
-    cache_read_input_tokens: int = 0       # tokens served from provider cache
-    cache_creation_input_tokens: int = 0   # tokens written to provider cache
+    cache_read_input_tokens: int = 0  # tokens served from provider cache
+    cache_creation_input_tokens: int = 0  # tokens written to provider cache
 
     @property
     def total_tokens(self) -> int:
@@ -287,7 +287,9 @@ class LLMBackend(ABC):
         messages = self._inject_schema_instr(messages, response_model)
 
         for attempt in range(retries + 1):
-            response: ChatResponse = await self._chat(messages, cache_config=cache_config, **kwargs)
+            response: ChatResponse = await self._chat(
+                messages, cache_config=cache_config, **kwargs
+            )
 
             # ── Try clean model_validate_json first ───────────────────────────
             try:
@@ -302,9 +304,7 @@ class LLMBackend(ABC):
             extracted: Any = self._extract_json(response.content)
             if extracted is not None:
                 try:
-                    response.validated_data = response_model.model_validate(
-                        extracted
-                    )
+                    response.validated_data = response_model.model_validate(extracted)
                     # Normalise content to clean JSON so callers can use
                     # ``model_validate_json()`` without pre-processing.
                     response.content = orjson.dumps(extracted).decode()
@@ -319,7 +319,9 @@ class LLMBackend(ABC):
                     f"after {retries + 1} attempt(s).",
                     model_name=self.model_name,
                     content_preview=response.content[:300],
-                    validation_error=_last_validation_error(response.content, response_model),
+                    validation_error=_last_validation_error(
+                        response.content, response_model
+                    ),
                 )
 
             messages = self._build_retry_messages(
@@ -381,7 +383,10 @@ class LLMBackend(ABC):
 
         if messages and messages[0].get("role") == "system":
             return [
-                {**messages[0], "content": f"{messages[0]['content']}\n\n{instruction}"},
+                {
+                    **messages[0],
+                    "content": f"{messages[0]['content']}\n\n{instruction}",
+                },
                 *messages[1:],
             ]
 
@@ -517,7 +522,10 @@ class LLMBackendRegistry:
                 f"LLM backend '{name}' is already registered as {cls._backends[name].__name__}"
             )
         cls._backends[name] = backend_cls
-        logger.debug("llm.backend_registered", extra={"backend_name": name, "cls": backend_cls.__name__})
+        logger.debug(
+            "llm.backend_registered",
+            extra={"backend_name": name, "cls": backend_cls.__name__},
+        )
 
     @classmethod
     def get(cls, name: str) -> type[LLMBackend]:
@@ -602,8 +610,8 @@ async def resolve_backend(
         An initialised ``LLMBackend`` instance.
 
     Raises:
-        LLMConfigurationError: If no backend could be resolved.
-        ValueError: If the resolved provider name is unknown.
+        LLMConfigurationError: If no backend could be resolved, or the
+            resolved provider name is unknown.
     """
     provider_name: str | None = None
 
@@ -674,8 +682,8 @@ async def _create_backend(
         An initialised ``LLMBackend`` instance.
 
     Raises:
-        LLMConfigurationError: If a required config field is missing or empty.
-        ValueError: If *provider* is not recognised.
+        LLMConfigurationError: If a required config field is missing or
+            empty, or *provider* is not recognised.
     """
     backend_cls = LLMBackendRegistry.get(provider)
 
@@ -685,7 +693,10 @@ async def _create_backend(
                 "Ollama backend requires ollama_base_url in per-org "
                 "configuration.  Set it via PATCH /admin/org/config."
             )
-        instance: LLMBackend = backend_cls(base_url=config["ollama_base_url"])  # type: ignore[call-arg]
+        instance: LLMBackend = backend_cls(
+            base_url=config["ollama_base_url"],
+            model=config.get("llm_model") or config.get("model"),
+        )  # type: ignore[call-arg]
     elif provider == "openai":
         if config is None or not config.get("openai_api_key"):
             raise LLMConfigurationError(
@@ -703,10 +714,16 @@ async def _create_backend(
                     "embedding_openai_like_base_url in per-org "
                     "configuration.  Set it via PATCH /admin/org/config."
                 )
+            # Frozen contract: per-org ``embedding_model`` is rejected at the
+            # schema layer and never forwarded, so there is nothing to read
+            # from *config* here.  Resolve the model from the canonical
+            # policy instead; workers also pass it per ``embed()`` call.
+            from core.embeddings import resolve_embed_model
+
             instance = backend_cls(
                 base_url=config["embedding_openai_like_base_url"],
                 api_key=config.get("embedding_api_key"),
-                model=config.get("embedding_model"),
+                model=resolve_embed_model(provider),
             )
         else:
             if config is None or not config.get("openai_like_base_url"):
@@ -750,6 +767,13 @@ async def _create_backend(
         model = config.get("anthropic_model")
         instance = backend_cls(api_key=api_key, model=model)
     else:
-        raise ValueError(f"Unknown provider: {provider}")
+        # ⚠️ Named error (not bare ValueError): unknown providers must
+        # surface as a structured problem response, never a plain-500.
+        # Unreachable from org-config flows — the EmbeddingBackend/LlmBackend
+        # Literals reject unknown values at write (422) and read (named 422).
+        raise LLMConfigurationError(
+            f"Unknown provider: {provider}. Expected one of: ollama, openai, "
+            "openai_like, azure, anthropic."
+        )
 
     return instance

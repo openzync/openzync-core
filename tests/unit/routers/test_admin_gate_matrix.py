@@ -38,7 +38,7 @@ router sources):
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -68,7 +68,12 @@ from routers import (
 )
 from routers.admin import _get_admin_org_service
 from routers.admin_org_code import _get_org_service
+from routers.admin_schemas import _get_schema_service
 from routers.users import get_user_summary_service
+from schemas.extraction_schemas import (
+    PreviewExtractionResponse,
+    SchemaTemplateResponse,
+)
 from schemas.organizations import CreateOrgResponse
 from schemas.user_summary import UserSummaryResponse
 from services.organization_service import OrgCodeInfo
@@ -145,6 +150,8 @@ ADMIN_GATED_ENDPOINTS: list[tuple[str, str, dict, dict]] = [
     # extraction schemas (require_org_admin / require_scope("admin"))
     ("POST", "/v1/admin/schemas", {}, {}),
     ("GET", "/v1/admin/schemas", {}, {}),
+    ("GET", "/v1/admin/schemas/templates", {}, {}),
+    ("POST", "/v1/admin/schemas/preview", {}, {}),
     ("GET", "/v1/admin/schemas/{schema_id}", {"schema_id": str(SCHEMA_ID)}, {}),
     ("PUT", "/v1/admin/schemas/{schema_id}", {"schema_id": str(SCHEMA_ID)}, {}),
     ("DELETE", "/v1/admin/schemas/{schema_id}", {"schema_id": str(SCHEMA_ID)}, {}),
@@ -224,6 +231,13 @@ def _make_app(
     from dependencies.services import get_invite_service
 
     app.dependency_overrides[get_invite_service] = lambda: AsyncMock()
+    # Same for the org-config dependency used by POST /preview: it reads
+    # OpenBao/Redis infrastructure that the harness mocks at app.state.
+    # Overriding it with seeded defaults keeps the gate as the decider.
+    from dependencies.org_config import get_org_config as get_org_config_dep
+    from schemas.organization_config import OrgConfigBase
+
+    app.dependency_overrides[get_org_config_dep] = lambda: OrgConfigBase()
 
     if authenticated:
 
@@ -436,6 +450,64 @@ async def test_superadmin_role_passes_bootstrap_201() -> None:
     assert resp.status_code == 201, resp.text
     assert resp.json()["organization_name"] == "Acme Corp"
     service.create_organization.assert_awaited_once()
+
+
+# ── Positive controls: schema templates + preview (admin passes) ─────────────
+
+
+@pytest.mark.asyncio
+async def test_admin_role_passes_schema_templates_200() -> None:
+    """Admin role gets 200 through the REAL gate on GET /templates."""
+    app = _make_app(authenticated=True)
+    # list_templates is sync in prod — a MagicMock (not AsyncMock) stub.
+    service = MagicMock()
+    service.list_templates.return_value = [
+        SchemaTemplateResponse(
+            key="invoice",
+            name="Invoice",
+            description="Invoice template",
+            json_schema={"type": "object"},
+            sample_text="sample",
+        )
+    ]
+    app.dependency_overrides[_get_schema_service] = lambda: service
+
+    with patch(
+        "dependencies.auth.get_org_role", new=AsyncMock(return_value="admin"),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.get("/v1/admin/schemas/templates")
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()[0]["key"] == "invoice"
+
+
+@pytest.mark.asyncio
+async def test_admin_role_passes_schema_preview_200() -> None:
+    """Admin role gets 200 through the REAL gate on POST /preview."""
+    app = _make_app(authenticated=True)
+    service = AsyncMock()
+    service.preview_extraction.return_value = PreviewExtractionResponse(
+        data={}, validation_errors=[],
+    )
+    app.dependency_overrides[_get_schema_service] = lambda: service
+
+    with patch(
+        "dependencies.auth.get_org_role", new=AsyncMock(return_value="admin"),
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp = await client.post(
+                "/v1/admin/schemas/preview",
+                json={
+                    "json_schema": {"type": "object"},
+                    "sample_text": "hello world",
+                },
+            )
+
+    assert resp.status_code == 200, resp.text
+    service.preview_extraction.assert_awaited_once()
 
 
 # ── Coverage guard: matrix must match every actually-gated route ──────────────

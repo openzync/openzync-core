@@ -39,13 +39,13 @@ class TestEmbedEpisode:
         cfg = MagicMock()
         cfg.embedding_backend = overrides.get("embedding_backend", "openai")
         cfg.embedding_model = overrides.get("embedding_model", "text-embedding-3-small")
-        cfg.embedding_dim = overrides.get("embedding_dim", 1536)
+        cfg.embedding_dim = overrides.get("embedding_dim", 768)
         return cfg
 
     @pytest.mark.asyncio
     async def test_success(self) -> None:
         """Embedding generated and stored successfully."""
-        embedding = [0.1] * 1536
+        embedding = [0.1] * 768
 
         with (
             patch("workers.tasks.base.with_retry", lambda **kw: lambda f: f),
@@ -203,48 +203,9 @@ class TestEmbedEpisode:
                 )
 
     @pytest.mark.asyncio
-    async def test_dimension_mismatch(self) -> None:
-        """Embedding dimension mismatch raises ValueError."""
-        embedding = [0.1] * 512  # Wrong dimension
-
-        with (
-            patch("workers.tasks.base.with_retry", lambda **kw: lambda f: f),
-            patch("core.org_config.get_org_config") as mock_cfg,
-            patch("core.llm.resolve_backend") as mock_llm_cls,
-            patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
-        ):
-            mock_cfg.return_value = self._make_org_config(embedding_dim=1536)
-
-            mock_llm = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.embeddings = [embedding]
-            mock_llm.embed.return_value = mock_result
-            mock_llm_cls.return_value = mock_llm
-
-            episode = MagicMock()
-            episode.id = _EPISODE_ID
-            episode.enrichment_status = 0
-
-            mock_repo = AsyncMock()
-            mock_repo.get_by_id.return_value = episode
-            mock_repo_cls.return_value = mock_repo
-
-            db = self._make_db()
-            from workers.tasks.embed_episode import embed_episode
-
-            with pytest.raises(ValueError, match="dimension mismatch"):
-                await embed_episode(
-                    ctx=self._ctx(db),
-                    episode_id=_EPISODE_ID,
-                    org_id=_ORG_ID,
-                    project_id=_PROJECT_ID,
-                    content=_CONTENT,
-                )
-
-    @pytest.mark.asyncio
     async def test_empty_content(self) -> None:
         """Empty content generates embedding (still valid)."""
-        embedding = [0.1] * 1536
+        embedding = [0.1] * 768
 
         with (
             patch("workers.tasks.base.with_retry", lambda **kw: lambda f: f),
@@ -285,7 +246,7 @@ class TestEmbedEpisode:
     @pytest.mark.asyncio
     async def test_db_content_fetch(self) -> None:
         """When content is None, fetch from DB."""
-        embedding = [0.1] * 1536
+        embedding = [0.1] * 768
 
         with (
             patch("workers.tasks.base.with_retry", lambda **kw: lambda f: f),

@@ -18,6 +18,7 @@ expressions in this file.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -33,12 +34,18 @@ if TYPE_CHECKING:
 # Import for type hints only; blob uploads are processed before passing to
 # the worker, and UploadFile isn't available in the worker context.
 from fastapi import UploadFile  # noqa: TCH002 — used in method signature
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import get_arq
 from core.config import get_settings
 from core.events import EventType
-from core.exceptions import ConflictError, NotFoundError
+from core.exceptions import (
+    ConflictError,
+    NotFoundError,
+    PIIUnavailableError,
+    ValidationError,
+)
 from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
@@ -72,6 +79,39 @@ ARQ_TASKS = [
 
 ARQ_QUEUE = "high"
 """ARQ queue name for ingestion-related background tasks."""
+
+
+def _encode_claim_payload(job_id: UUID, episode_count: int) -> str:
+    """Encode the dedup claim payload as ``"{job_id}:{episode_count}"``.
+
+    The count travels with the claim so a replay returns the winner's
+    ``episode_count`` instead of recomputing it from the loser's request.
+    """
+    return f"{job_id}:{episode_count}"
+
+
+def _decode_claim_payload(
+    payload: str, *, fallback_count: int
+) -> tuple[str, int]:
+    """Split a claim payload into ``(job_id, episode_count)``.
+
+    Legacy payloads stored a bare ``job_id`` (no ``:count`` suffix) —
+    those fall back to ``fallback_count``.
+
+    Args:
+        payload: The stored claim value (winner's payload on replay).
+        fallback_count: Count to use when the payload carries none.
+
+    Returns:
+        Tuple of ``(job_id, episode_count)``.
+    """
+    job_id, sep, count_str = payload.partition(":")
+    if not sep:
+        return payload, fallback_count
+    try:
+        return job_id, int(count_str)
+    except ValueError:
+        return job_id, fallback_count
 
 
 class MemoryService:
@@ -142,14 +182,22 @@ class MemoryService:
            raise ``ConflictError`` if the key was used with a different body.
         2. Resolve the session.
         3. Compute content hash for content-level dedup (via IdempotencyService).
-        4. Redis fast-path pre-check for dedup (fast-path ONLY — the
-           authoritative arbiter is the ingest_dedup claim in step 5).
-        5. Atomically claim the batch in ``ingest_dedup`` (DB-level dedup,
-           TOCTOU-safe — the claim shares the caller's transaction).
-        6. Get next sequence number for ordered insertion.
-        7. Build episode dicts from validated messages.
-        8. PII detection & redaction (if enabled in org quotas).
-        9. Batch-insert episodes into PostgreSQL.
+        4. Redis fast-path pre-check for dedup (fast-path ONLY — never
+           relied on for correctness).
+        5. Atomically claim the batch: Lua ``claim_content_hash`` (Redis,
+           REPLAY returns the winner's ``job_id`` without inserting) then
+           the ``ingest_dedup`` unique claim (PostgreSQL, the authoritative
+           arbiter inside this transaction).
+        6. Build episode dicts from validated messages (server-assigned
+            ``sequence_number`` — the request schema carries none).
+        7. PII detection & redaction, fail-closed (OpenBao only; fetch or
+            redaction failure raises ``PIIUnavailableError`` → 503).
+            Runs BEFORE the row lock — network I/O never holds the lock.
+            Block-mode ``ValidationError`` downgrades to mask.
+        8. Lock the session row (``SELECT ... FOR UPDATE``), take
+            ``MAX(sequence_number) + 1``, assign numbers, and batch-insert
+            episodes into PostgreSQL (``IntegrityError`` on a lost seq
+            race → ``ConflictError`` for client retry).
         10. Upload blobs to S3 and persist blob records.
         11. Enqueue ARQ enrichment tasks (enrich_episode, embed_episode,
             link_entities_to_episode) + blob text extraction tasks.
@@ -179,7 +227,10 @@ class MemoryService:
 
         Raises:
             ConflictError: If ``idempotency_key`` was already used with a
-                different request body.
+                different request body, or a concurrent ingest won the
+                sequence-number race (retry the request).
+            PIIUnavailableError: If the PII policy cannot be fetched or
+                redaction fails — nothing is persisted.
         """
         # ── Step 1: Idempotency check ────────────────────────────────────
         if idempotency_key is not None:
@@ -221,46 +272,111 @@ class MemoryService:
             },
         )
 
-        # ── Step 3: Content-level dedup ──────────────────────────────────
+        # ── Step 3: Content-level dedup pre-check (metrics/log ONLY) ─────
+        # Best-effort Redis peek for observability — NEVER authoritative.
+        # TOCTOU: a check-then-set gate here would let two concurrent
+        # identical submissions both pass. The ONLY ingest gate is the
+        # atomic claim in Step 4 (Redis Lua GET-or-SET, then the
+        # ingest_dedup UNIQUE claim as DB backstop).
         msgs = [m.model_dump() for m in messages]
         content_hash = self._idem.compute_content_hash(
             str(org_id), str(created_by), str(session_id), msgs
         )
-        # Redis fast-path pre-check ONLY — never relied on for correctness.
-        # The authoritative dedup arbiter is the ingest_dedup claim below,
-        # which serializes concurrent identical submissions in the DB.
-        existing_job_id = await self._idem.check_content_hash(
-            str(org_id), str(created_by), str(session_id), msgs
+        try:
+            _peek = await self._idem.check_content_hash(
+                str(org_id), str(created_by), str(session_id), msgs
+            )
+        except Exception:
+            _peek = None
+            logger.warning(
+                "memory.content_dedup_peek_failed",
+                extra={
+                    "content_hash": content_hash[:16] + "...",
+                    "project_id": str(project_id),
+                },
+            )
+        if _peek is not None:
+            logger.info(
+                "memory.content_dedup_peek_hit",
+                extra={
+                    "content_hash": content_hash[:16] + "...",
+                    "peek_job_id": _peek,
+                    "project_id": str(project_id),
+                },
+            )
+        # note: intentionally NO early return here — every caller falls
+        # through to the atomic claim below, which is the sole arbiter.
+
+        # ── Step 4: Claim the batch (TOCTOU-safe dedup) ──────────────────
+        # job_id is generated before the claims so the accepted ingest can
+        # be referenced by the Redis claim, the dedup row, and the ARQ
+        # enrichment tasks.  REPLAY (Redis Lua claim lost, or DB claim
+        # lost to a concurrent identical submission) returns the winner's
+        # job_id without inserting anything.
+        # note: No episodes.content_hash column — the batch-level
+        # ingest_dedup unique claim below is already the DB arbiter; a
+        # per-episode UNIQUE(org_id, content_hash) on a batch hash would
+        # reject every multi-episode batch on its second row.
+        job_id = uuid4()
+        claim = await self._idem.claim_content_hash(
+            str(org_id),
+            str(created_by),
+            str(session_id),
+            msgs,
+            payload=_encode_claim_payload(job_id, len(messages)),
         )
-        if existing_job_id is not None:
+        if not claim.won:
             logger.info(
                 "memory.content_dedup_hit",
                 extra={
                     "content_hash": content_hash[:16] + "...",
-                    "existing_job_id": existing_job_id,
+                    "existing_job_id": claim.winner,
                     "project_id": str(project_id),
                 },
             )
+            winner_job_id, winner_count = _decode_claim_payload(
+                claim.winner, fallback_count=len(messages)
+            )
             return IngestMemoryResponse(
-                job_id=existing_job_id,
+                job_id=winner_job_id,
+                episode_count=winner_count,
+                status="accepted",
+                message="Content already ingested; returning existing job_id",
+            )
+        # Backstop: ingest_dedup UNIQUE(project, session, hash) is the DB
+        # arbiter for races the Redis claim cannot see (Redis eviction,
+        # failover, or TTL expiry between claim and insert). ON CONFLICT
+        # DO NOTHING reports the loss; IntegrityError covers any path
+        # that still raises — both replay the winner, never insert twice.
+        try:
+            _claimed = await self._dedup_repo.insert_or_none(
+                project_id=project_id,
+                session_id=session_id,
+                content_hash=content_hash,
+                job_id=job_id,
+            )
+        except IntegrityError:
+            logger.info(
+                "memory.content_dedup_hit",
+                extra={
+                    "content_hash": content_hash,
+                    "project_id": str(project_id),
+                    "via": "integrity_error",
+                },
+            )
+            await self._db.rollback()
+            prior_job_id = await self._dedup_repo.get_job_id(
+                project_id=project_id,
+                session_id=session_id,
+                content_hash=content_hash,
+            )
+            return IngestMemoryResponse(
+                job_id=str(prior_job_id) if prior_job_id else None,
                 episode_count=len(messages),
                 status="accepted",
                 message="Content already ingested; returning existing job_id",
             )
-
-        # ── Step 4: Claim the batch (TOCTOU-safe dedup) ──────────────────
-        # job_id is generated before the claim so the accepted ingest can be
-        # referenced by both the dedup row and the ARQ enrichment tasks.
-        # The claim shares the caller's transaction: it commits atomically
-        # with the episodes below, and a concurrent identical submission
-        # that loses the claim returns a duplicate response instead.
-        job_id = uuid4()
-        if not await self._dedup_repo.insert_or_none(
-            project_id=project_id,
-            session_id=session_id,
-            content_hash=content_hash,
-            job_id=job_id,
-        ):
+        if not _claimed:
             prior_job_id = await self._dedup_repo.get_job_id(
                 project_id=project_id,
                 session_id=session_id,
@@ -274,6 +390,10 @@ class MemoryService:
                     "project_id": str(project_id),
                 },
             )
+            # The DB row stores only the winner's job_id (no count) — but
+            # the losing claim lost on the same content_hash, which covers
+            # the full message list, so cardinalities are identical and
+            # len(messages) IS the winner's episode_count here.
             return IngestMemoryResponse(
                 job_id=str(prior_job_id) if prior_job_id else None,
                 episode_count=len(messages),
@@ -281,22 +401,23 @@ class MemoryService:
                 message="Content already ingested; returning existing job_id",
             )
 
-        # ── Step 5: Get next sequence number ──────────────────────────────
-        start_seq = await self._episode_repo.get_next_sequence(session_id)
-
-        # ── Step 6: Build episode dicts ───────────────────────────────────
+        # ── Step 5: Build episode dicts (no sequence numbers yet) ─────────
+        # Sequence numbers are assigned AFTER the row lock below, so the
+        # lock is held only across MAX+1 + INSERT — never across network I/O.
         episode_dicts = [
             {
                 "role": msg.role,
                 "content": msg.content,
                 "metadata": msg.metadata,
                 "created_at": msg.created_at,
-                "sequence_number": start_seq + i,
             }
-            for i, msg in enumerate(messages)
+            for msg in messages
         ]
 
-        # ── Step 7: PII detection & redaction ─────────────────────────────
+        # ── Step 6: PII detection & redaction (fail-closed, BEFORE lock) ──
+        # OpenBao is network I/O with unbounded latency — fetching it
+        # while holding SELECT ... FOR UPDATE would serialize every
+        # concurrent ingest behind the slowest PII fetch.
         pii_config_raw = await self._get_org_pii_config(org_id)
         pii_mode = (
             pii_config_raw.get("mode", "mask")
@@ -305,25 +426,51 @@ class MemoryService:
         )
 
         if pii_mode != "off":
-            from services.pii_service import PIIService
-
-            pii_service = PIIService(pii_config_raw)
+            trace_id = structlog.contextvars.get_contextvars().get(
+                "request_id", str(job_id)
+            )
             for msg_dict in episode_dicts:
-                content = msg_dict["content"]
-                redacted, detections, was_blocked = await pii_service.process_message(
-                    content
+                msg_dict["content"] = await self._redact_content(
+                    pii_config_raw,
+                    msg_dict["content"],
+                    org_id=org_id,
+                    trace_id=trace_id,
                 )
-                if redacted != content:
-                    msg_dict["content"] = redacted
+
+        # ── Step 7: Lock the session row, assign seq numbers ───────────────
+        # The FOR UPDATE lock serializes concurrent ingests into this
+        # session; it is held only across MAX(sequence_number)+1, seq
+        # assignment, and the batch INSERT below (all local work + one
+        # round-trip — no network I/O under lock).
+        await self._session_repo.get_by_id_for_update(session_id)
+        start_seq = await self._episode_repo.get_next_sequence(session_id)
+        for i, msg_dict in enumerate(episode_dicts):
+            msg_dict["sequence_number"] = start_seq + i
 
         # ── Step 8: Batch-insert episodes ────────────────────────────────
-        episodes = await self._episode_repo.batch_create(
-            organization_id=org_id,
-            session_id=session_id,
-            project_id=project_id,
-            user_id=created_by,
-            messages=episode_dicts,
-        )
+        try:
+            episodes = await self._episode_repo.batch_create(
+                organization_id=org_id,
+                session_id=session_id,
+                project_id=project_id,
+                user_id=created_by,
+                messages=episode_dicts,
+            )
+        except IntegrityError as exc:
+            # Lost the seq race despite the row lock (or a colliding
+            # legacy row) — the unique index held; retry the request.
+            logger.warning(
+                "memory.sequence_conflict",
+                extra={
+                    "session_id": str(session_id),
+                    "project_id": str(project_id),
+                    "org_id": str(org_id),
+                    "job_id": str(job_id),
+                },
+            )
+            raise ConflictError(
+                "Sequence conflict during ingest — retry the request"
+            ) from exc
         logger.info(
             "memory.episodes_created",
             extra={
@@ -391,9 +538,10 @@ class MemoryService:
                 idempotency_key, body_hash or "", response.model_dump(), str(org_id)
             )
 
-        await self._idem.store_content_hash(
-            str(org_id), str(created_by), str(session_id), msgs, payload=str(job_id)
-        )
+        # note: no store_content_hash here — the Step 4 Lua claim already
+        # SET the Redis key (payload = job_id) atomically on win. A
+        # post-ingest check-then-store would re-open the TOCTOU window;
+        # store_content_hash remains for non-ingest writers only.
 
         # ── Step 12: Invalidate context cache for this project ───────────
         await self._invalidate_context_cache(str(org_id), str(project_id))
@@ -424,19 +572,36 @@ class MemoryService:
         self,
         org_id: UUID,
         project_id: UUID,
+        *,
+        confirm: str,
+        actor_id: UUID,
     ) -> tuple[int, int]:
         """Soft-delete all memory (episodes + facts) for a project.
 
         This is the GDPR / memory-wipe operation for a project. It does
-        **not** delete sessions — only the data within them.
+        **not** delete sessions — only the data within them. The wipe only
+        proceeds when ``confirm`` exactly equals the target project ID;
+        anything else is rejected before any write. A successful wipe is
+        recorded as a destructive-action audit log entry.
 
         Args:
             org_id: The authenticated organization UUID.
             project_id: The project UUID.
+            confirm: Must equal ``str(project_id)`` — proves intent.
+            actor_id: The authenticated user's UUID (audit attribution).
 
         Returns:
             Tuple of ``(episodes_deleted, facts_deleted)`` counts.
+
+        Raises:
+            ValidationError: If ``confirm`` does not match ``project_id``
+                (→ 422, nothing is deleted).
         """
+        if confirm != str(project_id):
+            raise ValidationError(
+                "confirm does not match project_id — memory wipe rejected"
+            )
+
         episodes_deleted = await self._episode_repo.soft_delete_by_project(project_id)
         facts_deleted = await self._fact_repo.soft_delete_by_project(project_id)
 
@@ -445,6 +610,24 @@ class MemoryService:
             extra={
                 "project_id": str(project_id),
                 "org_id": str(org_id),
+                "episodes_deleted": episodes_deleted,
+                "facts_deleted": facts_deleted,
+            },
+        )
+
+        from services.audit_log_service import AuditLogService
+
+        await AuditLogService(self._db).log_action(
+            organization_id=org_id,
+            actor_id=str(actor_id),
+            actor_type="user",
+            action="memory.wipe",
+            resource_type="memory",
+            resource_id=str(project_id),
+            details={
+                "project_id": str(project_id),
+                "confirm": "matched",
+                "timestamp": datetime.now(UTC).isoformat(),
                 "episodes_deleted": episodes_deleted,
                 "facts_deleted": facts_deleted,
             },
@@ -534,73 +717,127 @@ class MemoryService:
     # ── PII Config ────────────────────────────────────────────────────────────
 
     async def _get_org_pii_config(self, org_id: UUID) -> dict:
-        """Fetch PII configuration for an org — OpenBao first, quotas fallback.
+        """Fetch PII configuration for an org — OpenBao only, fail-closed.
 
-        Read-through: first try ``core.org_config.get_org_config`` via OpenBao.
-        If ``pii_mode`` is not ``None``, construct the PII dict from the four
-        org-config fields (only non-None values included). Otherwise fallback
-        to the legacy ``organizations.quotas -> 'pii'`` path for backward
-        compat with orgs that still store PII in quotas.
+        Any fetch failure raises ``PIIUnavailableError`` (→ 503 +
+        ``Retry-After``) instead of falling back to a default: persisting
+        content without a known redaction policy is worse than rejecting
+        the request.  The legacy ``organizations.quotas -> 'pii'`` fallback
+        was deleted (BREAKING for orgs that still store PII in quotas —
+        migrate them to OpenBao org config).
+
+        A successful fetch with ``pii_mode`` unset means "not configured",
+        which keeps the previous effective default of ``mask``.
 
         Args:
             org_id: The organization UUID.
 
         Returns:
-            The PII config dict (possibly empty).  Returns ``{}`` if the
-            organization does not exist or has no PII config.
+            The PII config dict.
+
+        Raises:
+            PIIUnavailableError: If the config cannot be fetched.
         """
-        # ── Try OpenBao org_config first ─────────────────────────────────
+        trace_id = structlog.contextvars.get_contextvars().get("request_id", "unknown")
         try:
             from core.org_config import get_org_config
 
-            org_cfg = None
             if self._bao_client is not None:
                 org_cfg = await get_org_config(
                     org_id, redis=None, bao_client=self._bao_client
                 )
             else:
                 # Lazy temporary client — mirrors _process_blobs pattern.
-                # Fail-open: any error falls through to quotas fallback.
-                try:
-                    from core.config import BootstrapSettings
-                    from core.openbao import OpenBaoClient
+                from core.config import BootstrapSettings
+                from core.openbao import OpenBaoClient
 
-                    bootstrap = BootstrapSettings()
-                    async with OpenBaoClient(
-                        bootstrap.OPENBAO_ADDR,
-                        bootstrap.OPENBAO_ROLE_ID,
-                        bootstrap.OPENBAO_SECRET_ID,
-                        timeout=10.0,
-                    ) as _tmp_bao:
-                        org_cfg = await get_org_config(
-                            org_id, redis=None, bao_client=_tmp_bao
-                        )
-                except Exception:
-                    logger.warning(
-                        "memory.org_pii_config_fetch_failed",
-                        extra={"org_id": str(org_id)},
-                        exc_info=True,
+                bootstrap = BootstrapSettings()
+                async with OpenBaoClient(
+                    bootstrap.OPENBAO_ADDR,
+                    bootstrap.OPENBAO_ROLE_ID,
+                    bootstrap.OPENBAO_SECRET_ID,
+                    timeout=10.0,
+                ) as _tmp_bao:
+                    org_cfg = await get_org_config(
+                        org_id, redis=None, bao_client=_tmp_bao
                     )
-                    org_cfg = None
-
-            if org_cfg is not None and org_cfg.pii_mode is not None:
-                pii: dict[str, Any] = {"mode": org_cfg.pii_mode}
-                if org_cfg.pii_sensitivity is not None:
-                    pii["sensitivity"] = org_cfg.pii_sensitivity
-                if org_cfg.pii_enabled_types is not None:
-                    pii["enabled_types"] = org_cfg.pii_enabled_types
-                if org_cfg.pii_min_confidence is not None:
-                    pii["min_confidence"] = org_cfg.pii_min_confidence
-                return pii
-        except Exception:
-            logger.warning(
-                "memory.org_pii_config_fetch_failed",
-                extra={"org_id": str(org_id)},
+        except Exception as exc:
+            logger.error(
+                "pii.fail_closed",
+                extra={"org_id": str(org_id), "trace_id": trace_id},
                 exc_info=True,
             )
+            raise PIIUnavailableError("pii_unavailable") from exc
 
-        # ── Fallback: legacy quotas->'pii' ────────────────────────────────
-        return await self._org_repo.get_pii_config(org_id)
+        if org_cfg is None:
+            logger.error(
+                "pii.fail_closed",
+                extra={"org_id": str(org_id), "trace_id": trace_id},
+            )
+            raise PIIUnavailableError("pii_unavailable")
+
+        if org_cfg.pii_mode is None:
+            return {"mode": "mask"}
+
+        pii: dict[str, Any] = {"mode": org_cfg.pii_mode}
+        if org_cfg.pii_sensitivity is not None:
+            pii["sensitivity"] = org_cfg.pii_sensitivity
+        if org_cfg.pii_enabled_types is not None:
+            pii["enabled_types"] = org_cfg.pii_enabled_types
+        if org_cfg.pii_min_confidence is not None:
+            pii["min_confidence"] = org_cfg.pii_min_confidence
+        return pii
+
+    async def _redact_content(
+        self,
+        pii_config: dict[str, Any],
+        content: str,
+        *,
+        org_id: UUID,
+        trace_id: str,
+    ) -> str:
+        """Redact PII from message content, fail-closed.
+
+        A block-mode ``ValidationError`` downgrades to a single mask pass
+        (preserved semantic — the message is still stored, redacted).  Any
+        other redaction failure raises ``PIIUnavailableError``: the message
+        is never persisted unredacted.  Detections and content are never
+        logged — only org/trace identifiers.
+
+        Args:
+            pii_config: The PII config dict from :meth:`_get_org_pii_config`.
+            content: The raw message content.
+            org_id: The organization UUID (log context only).
+            trace_id: The request trace ID (log context only).
+
+        Returns:
+            The redacted content (unchanged when nothing was detected).
+
+        Raises:
+            PIIUnavailableError: If redaction fails unexpectedly.
+        """
+        from services.pii_service import PIIService
+
+        try:
+            try:
+                service = PIIService(pii_config)
+                redacted, _, _ = await service.process_message(content)
+            except ValidationError:
+                mask_service = PIIService({**pii_config, "mode": "mask"})
+                redacted, _, _ = await mask_service.process_message(content)
+                logger.info(
+                    "memory.pii_blocked_redacted",
+                    extra={"org_id": str(org_id), "trace_id": trace_id},
+                )
+            return redacted
+        except PIIUnavailableError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "pii.fail_closed",
+                extra={"org_id": str(org_id), "trace_id": trace_id},
+            )
+            raise PIIUnavailableError("pii_unavailable") from exc
 
     # ── ARQ Task Enqueue ─────────────────────────────────────────────────────
 

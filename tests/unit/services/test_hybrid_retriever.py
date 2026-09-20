@@ -295,6 +295,110 @@ class TestHybridRetriever:
         mock_db.rollback.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_hybrid_search_embed_query_failure_raises(self) -> None:
+        """When the shared embed step fails, hybrid_search raises — no silent fallback.
+
+        The embedding is generated once upstream; its failure propagates
+        as ``SearchLegFailedError(leg="embedding")`` before any leg runs —
+        the search never degrades to BM25-only results.
+        """
+        service, mock_db = self._make_service()
+        service._embed_query = AsyncMock(
+            side_effect=SearchLegFailedError(
+                leg_name="embedding",
+                original_error="embedding API timeout",
+            ),
+        )
+        service._vector_search_episodes = AsyncMock()
+        service._vector_search_facts = AsyncMock()
+        service._bm25_search_episodes = AsyncMock()
+        service._bm25_search_facts = AsyncMock()
+        service._graph_bfs_search = AsyncMock()
+
+        with pytest.raises(SearchLegFailedError) as exc_info:
+            await service.hybrid_search("query", self.PROJECT_ID)
+
+        assert exc_info.value.detail.get("leg") == "embedding"
+        # No leg executed — a failed embed never falls back to keyword legs.
+        service._vector_search_episodes.assert_not_awaited()
+        service._vector_search_facts.assert_not_awaited()
+        service._bm25_search_episodes.assert_not_awaited()
+        service._bm25_search_facts.assert_not_awaited()
+        service._graph_bfs_search.assert_not_awaited()
+        mock_db.rollback.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_hybrid_search_embed_query_failure_discards_ready_legs(
+        self,
+    ) -> None:
+        """Ready leg results are discarded when the embed step fails.
+
+        Even with every leg mocked to return data, an embed failure
+        raises instead of returning partial results.
+        """
+        service, _mock_db = self._make_service()
+        service._embed_query = AsyncMock(
+            side_effect=SearchLegFailedError(
+                leg_name="embedding",
+                original_error="dimension mismatch",
+            ),
+        )
+        service._vector_search_episodes = AsyncMock(
+            return_value=[self._make_item("v1", 0.9)]
+        )
+        service._vector_search_facts = AsyncMock(
+            return_value=[self._make_item("vf1", 0.85)]
+        )
+        service._bm25_search_episodes = AsyncMock(
+            return_value=[self._make_item("b1", 0.8)]
+        )
+        service._bm25_search_facts = AsyncMock(
+            return_value=[self._make_item("bf1", 0.75)]
+        )
+        service._graph_bfs_search = AsyncMock(
+            return_value=[self._make_item("e1", 1.0)]
+        )
+
+        with pytest.raises(SearchLegFailedError) as exc_info:
+            await service.hybrid_search("query", self.PROJECT_ID)
+
+        assert exc_info.value.detail.get("leg") == "embedding"
+
+    @pytest.mark.asyncio
+    async def test_hybrid_search_vector_leg_failure_discards_other_leg_results(
+        self,
+    ) -> None:
+        """A failing vector leg discards surviving legs' results — no partial return.
+
+        The fact/BM25/graph legs all return data, but the episode vector
+        leg fails: the search raises ``SearchLegFailedError`` instead of
+        silently returning the surviving legs' results.
+        """
+        service, mock_db = self._make_service()
+
+        service._vector_search_episodes = AsyncMock(
+            side_effect=RuntimeError("pgvector down"),
+        )
+        service._vector_search_facts = AsyncMock(
+            return_value=[self._make_item("vf1", 0.85)]
+        )
+        service._bm25_search_episodes = AsyncMock(
+            return_value=[self._make_item("b1", 0.8)]
+        )
+        service._bm25_search_facts = AsyncMock(
+            return_value=[self._make_item("bf1", 0.75)]
+        )
+        service._graph_bfs_search = AsyncMock(
+            return_value=[self._make_item("e1", 1.0)]
+        )
+
+        with pytest.raises(SearchLegFailedError) as exc_info:
+            await service.hybrid_search("query", self.PROJECT_ID)
+
+        assert "episode_vector" in str(exc_info.value)
+        mock_db.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_hybrid_search_empty_query(self) -> None:
         """Empty query string does not cause errors — legs handle it."""
         service, _mock_db = self._make_service()
@@ -488,15 +592,16 @@ class TestEmbedQuery:
     @pytest.mark.asyncio
     async def test_embed_query_success(self) -> None:
         """Happy path: returns the embedding vector from the LLM backend."""
+        embedding = [0.1] * 768  # canonical dim (snowflake-arctic-embed-m-v1.5)
         mock_backend = AsyncMock()
-        mock_backend.embed = AsyncMock(return_value=MagicMock(embeddings=[[0.1, 0.2, 0.3]]))
+        mock_backend.embed = AsyncMock(return_value=MagicMock(embeddings=[embedding]))
 
         mock_resolve = AsyncMock(return_value=mock_backend)
         with patch("core.llm.resolve_backend", mock_resolve):
             service, _ = self._make_service()
             result = await service._embed_query("test query")
 
-        assert result == [0.1, 0.2, 0.3]
+        assert result == embedding
         mock_resolve.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -530,9 +635,10 @@ class TestEmbedQuery:
     @pytest.mark.asyncio
     async def test_embed_query_tracks_embedding_dim(self) -> None:
         """``_last_query_embedding_dim`` is set to the length of the embedding vector."""
+        embedding = [0.1] * 768  # canonical dim (snowflake-arctic-embed-m-v1.5)
         mock_backend = AsyncMock()
         mock_backend.embed = AsyncMock(
-            return_value=MagicMock(embeddings=[[0.1, 0.2, 0.3, 0.4, 0.5]]),
+            return_value=MagicMock(embeddings=[embedding]),
         )
 
         mock_resolve = AsyncMock(return_value=mock_backend)
@@ -542,21 +648,29 @@ class TestEmbedQuery:
 
             await service._embed_query("test")
 
-        assert service._last_query_embedding_dim == 5
+        assert service._last_query_embedding_dim == 768
 
     @pytest.mark.asyncio
     async def test_embed_query_with_org_config(self) -> None:
-        """With org_config, the provider and model are passed to resolve_backend."""
+        """With org_config, the provider and canonical model go to resolve_backend.
+
+        The embedding model is frozen: ``resolve_embed_model`` maps the
+        backend to the canonical ``snowflake-arctic-embed-m-v1.5`` — the
+        legacy per-org ``embedding_model`` value is never forwarded.
+        """
+        from core.embeddings import CANONICAL_EMBED_MODEL
+
         mock_org_config = MagicMock()
         mock_org_config.to_llm_config_dict.return_value = {"provider": "openai"}
         mock_org_config.embedding_backend = "openai"
         mock_org_config.embedding_model = "text-embedding-3-small"
-        mock_org_config.embedding_dim = 1536
+        mock_org_config.embedding_dim = 768
         mock_org_config.reranker_top_k = None
         mock_org_config.reranker_top_n = None
 
+        embedding = [0.1] * 768  # canonical dim (snowflake-arctic-embed-m-v1.5)
         mock_backend = AsyncMock()
-        mock_backend.embed = AsyncMock(return_value=MagicMock(embeddings=[[0.1, 0.2, 0.3]]))
+        mock_backend.embed = AsyncMock(return_value=MagicMock(embeddings=[embedding]))
 
         mock_db = AsyncMock()
         service = HybridRetriever(
@@ -569,7 +683,7 @@ class TestEmbedQuery:
         with patch("core.llm.resolve_backend", mock_resolve):
             result = await service._embed_query("test")
 
-        assert result == [0.1, 0.2, 0.3]
+        assert result == embedding
         mock_resolve.assert_awaited_once_with(
             provider="openai",
             org_config={"provider": "openai"},
@@ -577,7 +691,7 @@ class TestEmbedQuery:
         )
         mock_backend.embed.assert_awaited_once_with(
             ["test"],
-            model="text-embedding-3-small",
+            model=CANONICAL_EMBED_MODEL,
         )
 
 

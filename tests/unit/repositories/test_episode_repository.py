@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import CursorExpiredError
 from repositories.episode_repository import EpisodeRepository
 
 pytestmark = pytest.mark.unit
@@ -519,6 +520,25 @@ class TestEpisodeRepository:
     def test_decode_cursor_invalid_raises(
         self,
     ) -> None:
-        """_decode_cursor raises ValueError for invalid input."""
-        with pytest.raises(ValueError, match="Invalid episode cursor"):
+        """_decode_cursor raises CursorExpiredError for invalid input.
+
+        The versioned envelope rejects tampered cursors with a unified
+        ``Invalid cursor`` message (observed prod contract — not the old
+        per-repo ``Invalid episode cursor`` text).
+        """
+        with pytest.raises(CursorExpiredError, match="Invalid cursor"):
             EpisodeRepository._decode_cursor("!!!invalid!!!")
+
+    def test_decode_cursor_short_cursor_raises(
+        self,
+    ) -> None:
+        """A truncated cursor that breaks the version envelope is rejected.
+
+        Truncation past the ``v1:`` envelope fails in
+        ``decode_versioned_cursor`` with the unified ``Invalid cursor``
+        message (an inner payload truncation would instead surface the
+        per-type ``Invalid episode cursor`` text — both observed).
+        """
+        valid = EpisodeRepository._encode_cursor(42, self.EPISODE_ID)
+        with pytest.raises(CursorExpiredError, match="Invalid cursor"):
+            EpisodeRepository._decode_cursor(valid[:4])

@@ -20,12 +20,18 @@ from repositories.extraction_schema_repository import (
     ExtractionSchemaRepository,
 )
 from schemas.extraction_schemas import (
+    SCHEMA_TEMPLATES,
     CreateExtractionSchemaRequest,
     ExtractionSchemaResponse,
+    PreviewExtractionResponse,
+    SchemaTemplateResponse,
     UpdateExtractionSchemaRequest,
 )
 
 logger = logging.getLogger(__name__)
+
+PREVIEW_MAX_TOKENS = 2000
+"""Token cap for schema extraction previews (cost guardrail)."""
 
 # Valid classification schema keys and their expected types
 _CLASSIFICATION_SCHEMA_KEYS = {
@@ -102,9 +108,7 @@ class SchemaService:
             schema_type=schema_type,
             is_active=is_active,
         )
-        return [
-            ExtractionSchemaResponse.model_validate(s) for s in schemas
-        ]
+        return [ExtractionSchemaResponse.model_validate(s) for s in schemas]
 
     async def get_schema(
         self,
@@ -118,9 +122,7 @@ class SchemaService:
         """
         schema = await self._repo.get_by_id(org_id, schema_id)
         if schema is None:
-            raise NotFoundError(
-                f"Schema '{schema_id}' not found in this organization"
-            )
+            raise NotFoundError(f"Schema '{schema_id}' not found in this organization")
         return ExtractionSchemaResponse.model_validate(schema)
 
     async def update_schema(
@@ -140,9 +142,7 @@ class SchemaService:
         """
         schema = await self._repo.get_by_id(org_id, schema_id)
         if schema is None:
-            raise NotFoundError(
-                f"Schema '{schema_id}' not found in this organization"
-            )
+            raise NotFoundError(f"Schema '{schema_id}' not found in this organization")
 
         # Build update dict from non-None fields (excluding type)
         update_kwargs: dict = {}
@@ -178,6 +178,101 @@ class SchemaService:
 
         return ExtractionSchemaResponse.model_validate(updated)
 
+    def list_templates(self) -> list[SchemaTemplateResponse]:
+        """Return the static starter schema template catalogue.
+
+        No I/O is performed — the catalogue is a module-level constant,
+        so this is a plain sync method.
+
+        Returns:
+            The six starter templates (invoice, contact, order,
+            meeting notes, feedback, receipt).
+        """
+        return list(SCHEMA_TEMPLATES)
+
+    async def preview_extraction(
+        self,
+        *,
+        json_schema: dict,
+        sample_text: str,
+        prompt_template: str | None = None,
+        llm_config: dict | None = None,
+    ) -> PreviewExtractionResponse:
+        """Run a no-persist extraction preview against a candidate schema.
+
+        Validates the schema, renders the shared extraction prompt, calls
+        the org's LLM backend (capped at ``PREVIEW_MAX_TOKENS``), and
+        validates the extracted data — returning mismatches as data
+        instead of raising.  Performs zero DB writes.
+
+        Args:
+            json_schema: Candidate JSON Schema (draft-07) document.
+            sample_text: Raw text to extract from.
+            prompt_template: Optional raw Jinja2 prompt override.
+            llm_config: Org LLM config dict (from
+                ``OrgConfigBase.to_llm_config_dict()``); required to
+                resolve the backend.
+
+        Returns:
+            The extracted object plus field-level validation errors
+            (empty when the extraction conforms to the schema).
+
+        Raises:
+            ValidationError: If *json_schema* itself is not a valid
+                JSON Schema.
+            LLMConfigurationError: If no LLM backend is configured.
+            ExternalServiceError: If the LLM call fails.
+        """
+        # Lazy imports — keeps the service import graph light and mirrors
+        # the worker/API convention for optional/heavy dependencies.
+        from core.llm import resolve_backend  # noqa: PLC0415
+        from workers.tasks.extract_structured import (  # noqa: PLC0415
+            PREVIEW_SCHEMA_NAME,
+            build_extraction_prompt,
+            collect_schema_validation_errors,
+            parse_extraction_json,
+        )
+
+        self._validate_json_schema(json_schema)
+
+        prompt = build_extraction_prompt(
+            json_schema, sample_text, template_text=prompt_template
+        )
+        logger.debug(
+            "schema.preview_prompt_built prompt_chars=%d sample_chars=%d",
+            len(prompt),
+            len(sample_text),
+        )
+
+        backend = await resolve_backend(org_config=llm_config)
+        response = await backend.chat(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a structured data extraction system. "
+                        "Output ONLY valid JSON."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.0,
+            max_tokens=PREVIEW_MAX_TOKENS,
+        )
+
+        parsed = parse_extraction_json(response.content)
+        if not isinstance(parsed, dict):
+            return PreviewExtractionResponse(
+                data={},
+                validation_errors=["LLM output is not a JSON object"],
+            )
+
+        data = parsed.get(PREVIEW_SCHEMA_NAME, parsed)
+        if not isinstance(data, dict):
+            data = {}
+        errors = collect_schema_validation_errors(data, json_schema)
+        return PreviewExtractionResponse(data=data, validation_errors=errors)
+
     async def delete_schema(
         self,
         org_id: UUID,
@@ -190,9 +285,7 @@ class SchemaService:
         """
         schema = await self._repo.get_by_id(org_id, schema_id)
         if schema is None:
-            raise NotFoundError(
-                f"Schema '{schema_id}' not found in this organization"
-            )
+            raise NotFoundError(f"Schema '{schema_id}' not found in this organization")
         await self._repo.soft_delete(schema)
 
     # ── Private validation helpers ───────────────────────────────────────
@@ -212,9 +305,7 @@ class SchemaService:
         All keys are optional — only those present are validated.
         """
         if not isinstance(json_schema, dict):
-            raise ValidationError(
-                "Classification schema must be a JSON object"
-            )
+            raise ValidationError("Classification schema must be a JSON object")
 
         for key, expected_type in _CLASSIFICATION_SCHEMA_KEYS.items():
             value = json_schema.get(key)
@@ -248,13 +339,17 @@ class SchemaService:
             raise ValidationError("JSON Schema must be a JSON object")
 
         try:
-            import jsonschema
+            import jsonschema  # noqa: PLC0415 — optional dependency
 
             jsonschema.Draft7Validator.check_schema(json_schema)
         except ImportError:
             # jsonschema is optional — skip validation if not installed
-            logger.warning("jsonschema library not available — skipping schema validation")
+            logger.warning(
+                "jsonschema library not available — skipping schema validation"
+            )
         except jsonschema.SchemaError as exc:
+            path = ".".join(str(p) for p in exc.path)
+            location = f" at '{path}'" if path else " at schema root"
             raise ValidationError(
-                f"Invalid JSON Schema: {exc.message}"
+                f"Invalid JSON Schema{location}: {exc.message}"
             ) from exc

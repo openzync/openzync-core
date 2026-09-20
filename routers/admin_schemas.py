@@ -1,11 +1,13 @@
 """Schema CRUD API — manage extraction and classification schemas per organization.
 
 Endpoints:
-    POST   /v1/admin/schemas        — Create a new schema (requires ``admin`` scope)
-    GET    /v1/admin/schemas        — List schemas for the org (authenticated)
-    GET    /v1/admin/schemas/{id}   — Get a single schema by ID
-    PUT    /v1/admin/schemas/{id}   — Update a schema (requires ``admin`` scope)
-    DELETE /v1/admin/schemas/{id}   — Soft-delete a schema (requires ``admin`` scope)
+    POST   /v1/admin/schemas          — Create a new schema (requires ``admin`` scope)
+    GET    /v1/admin/schemas          — List schemas for the org (authenticated)
+    POST   /v1/admin/schemas/preview  — Preview extraction (no persistence)
+    GET    /v1/admin/schemas/templates — List static starter templates
+    GET    /v1/admin/schemas/{id}     — Get a single schema by ID
+    PUT    /v1/admin/schemas/{id}     — Update a schema (requires ``admin`` scope)
+    DELETE /v1/admin/schemas/{id}     — Soft-delete a schema (requires ``admin`` scope)
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.audit import audit_action
 from dependencies.auth import require_permission
 from dependencies.db import get_db
+from dependencies.org_config import get_org_config as get_org_config_dep
 from repositories.extraction_schema_repository import (
     ExtractionSchemaRepository,
 )
@@ -25,8 +28,12 @@ from schemas.extraction_schemas import (
     CreateExtractionSchemaRequest,
     ExtractionSchemaListResponse,
     ExtractionSchemaResponse,
+    PreviewExtractionRequest,
+    PreviewExtractionResponse,
+    SchemaTemplateResponse,
     UpdateExtractionSchemaRequest,
 )
+from schemas.organization_config import OrgConfigBase
 from services.schema_service import SchemaService
 
 router = APIRouter(
@@ -96,6 +103,50 @@ async def list_schemas(
         data=schemas,
         total=len(schemas),
     )
+
+
+@router.post(
+    "/preview",
+    response_model=PreviewExtractionResponse,
+)
+async def preview_schema_extraction(
+    payload: PreviewExtractionRequest,
+    service: SchemaService = Depends(_get_schema_service),
+    org_config: OrgConfigBase = Depends(get_org_config_dep),
+    org_id: str = Depends(require_permission("configuration:read")),
+) -> PreviewExtractionResponse:
+    """Preview structured extraction against a candidate schema.
+
+    Renders the shared extraction prompt for ``payload.json_schema`` and
+    ``payload.sample_text``, calls the org's LLM backend, and returns the
+    extracted data with field-level validation errors.  Performs no DB
+    writes — the schema is validated but never persisted.
+    """
+    return await service.preview_extraction(
+        json_schema=payload.json_schema,
+        sample_text=payload.sample_text,
+        prompt_template=payload.prompt_template,
+        llm_config=org_config.to_llm_config_dict(),
+    )
+
+
+# note: static routes (``/templates``) must precede ``/{schema_id}`` so
+# FastAPI does not capture the literal as a UUID path parameter.
+@router.get(
+    "/templates",
+    response_model=list[SchemaTemplateResponse],
+)
+async def list_schema_templates(
+    service: SchemaService = Depends(_get_schema_service),
+    org_id: str = Depends(require_permission("configuration:read")),
+) -> list[SchemaTemplateResponse]:
+    """List the static starter schema templates.
+
+    Returns six ready-to-use templates (invoice, contact, order, meeting
+    notes, feedback, receipt), each with a JSON Schema and sample text
+    suitable for :func:`preview_schema_extraction`.  No DB access.
+    """
+    return service.list_templates()
 
 
 @router.get(

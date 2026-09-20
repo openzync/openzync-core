@@ -220,7 +220,10 @@ class OrgConfigConnectionService:
             from core.llm import resolve_backend
 
             backend = await resolve_backend(org_config=merged.to_llm_config_dict())
-            await backend.chat([{"role": "user", "content": "ping"}], max_tokens=1)
+            chat_kwargs: dict[str, Any] = {"max_tokens": 1}
+            if merged.llm_model is not None:
+                chat_kwargs["model"] = merged.llm_model
+            await backend.chat([{"role": "user", "content": "ping"}], **chat_kwargs)
             return self._success(start, f"llm ok via {backend.model_name}")
         except asyncio.CancelledError:
             raise
@@ -228,13 +231,21 @@ class OrgConfigConnectionService:
             return self._failure(start, f"llm probe failed: {exc}")
 
     async def _probe_embeddings(self, merged: OrgConfigBase) -> ProbeResult:
-        """Single-vector embed plus dimensionality check."""
+        """Single-vector embed plus frozen-dimension check.
+
+        Embeds with the frozen canonical model
+        (``core.embeddings.resolve_embed_model``) and requires exactly
+        ``CANONICAL_EMBED_DIM`` dims. Dim-incompatible providers fail the
+        probe — per-org ``embedding_model``/``embedding_dim`` overrides are
+        frozen and ignored here.
+        """
         start = time.perf_counter()
         if not merged.embedding_backend:
             return self._failure(
                 start, "embeddings probe failed: embedding_backend is not configured"
             )
         try:
+            from core.embeddings import CANONICAL_EMBED_DIM, resolve_embed_model
             from core.llm import resolve_backend
 
             backend = await resolve_backend(
@@ -242,19 +253,18 @@ class OrgConfigConnectionService:
                 org_config=merged.to_llm_config_dict(),
                 mode="embedding",
             )
-            embed_kwargs: dict[str, str] = {}
-            if merged.embedding_model is not None:
-                embed_kwargs["model"] = merged.embedding_model
-            response = await backend.embed(["ping"], **embed_kwargs)
+            model = resolve_embed_model(merged.embedding_backend)
+            response = await backend.embed(["ping"], model=model)
             vectors = response.embeddings
             if not vectors or not vectors[0]:
                 return self._failure(start, "embeddings probe failed: empty response")
             dim = len(vectors[0])
-            if merged.embedding_dim is not None and dim != merged.embedding_dim:
+            if dim != CANONICAL_EMBED_DIM:
                 return self._failure(
                     start,
                     "embeddings dim mismatch: got "
-                    f"{dim}, expected {merged.embedding_dim}",
+                    f"{dim}, expected canonical {CANONICAL_EMBED_DIM} "
+                    f"(model={model})",
                 )
             return self._success(
                 start, f"embeddings ok dim={dim} model={response.model}"
