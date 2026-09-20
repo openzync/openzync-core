@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from dependencies.auth import require_permission
 from dependencies.db import get_db
 from schemas.audit_log import AuditLogListResponse, AuditLogResponse
+from schemas.sorting import AuditLogSortBy, SortDir, SortSpec
 from services.audit_log_service import AuditLogService
 
 router = APIRouter(
@@ -51,6 +52,12 @@ async def list_audit_logs(
     created_before: str | None = Query(None, description="Include entries before this ISO 8601 timestamp"),
     limit: int = Query(default=50, ge=1, le=500, description="Max entries per page"),
     offset: int = Query(default=0, ge=0, description="Number of entries to skip"),
+    sort_by: AuditLogSortBy | None = Query(
+        default=None, description="Sort key (default created_at)."
+    ),
+    sort_dir: SortDir = Query(
+        default="desc", description="Sort direction (default desc)."
+    ),
 ) -> AuditLogListResponse:
     """Get paginated audit log entries for the admin dashboard.
 
@@ -71,6 +78,8 @@ async def list_audit_logs(
         created_before: Optional end date filter.
         limit: Page size.
         offset: Pagination offset.
+        sort_by: Whitelisted sort key.
+        sort_dir: Sort direction.
 
     Returns:
         Paginated list of audit log entries with total count.
@@ -91,6 +100,7 @@ async def list_audit_logs(
         created_before=created_before,
         limit=limit,
         offset=offset,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
 
     items = [

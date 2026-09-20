@@ -30,6 +30,7 @@ import orjson
 
 from core.arq import get_arq
 from core.config import get_settings
+from core.sorting import SortSpec
 from middleware.metrics import webhook_emit_failures_total
 from models.webhook import WebhookEndpoint
 from repositories.webhook_repository import WebhookRepository
@@ -77,10 +78,15 @@ class WebhookService:
     # ── Endpoint management ─────────────────────────────────────────────────
 
     async def list_endpoints(
-        self, organization_id: uuid.UUID,
+        self,
+        organization_id: uuid.UUID,
+        sort: SortSpec | None = None,
     ) -> list[dict]:
-        """List all webhook endpoints for an organization."""
-        endpoints = await self._repo.get_by_organization(organization_id)
+        """List all webhook endpoints for an organization.
+
+        Default ``created_at/desc``; whitelist ``name``, ``created_at``.
+        """
+        endpoints = await self._repo.get_by_organization(organization_id, sort=sort)
         return [self._serialize(e) for e in endpoints]
 
     async def get_endpoint(

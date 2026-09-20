@@ -12,7 +12,14 @@ from uuid import UUID
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.sorting import SortSpec, resolve_order_by
 from models.organization import Organization
+
+ORG_SORTABLE_COLUMNS = {
+    "name": Organization.name,
+    "created_at": Organization.created_at,
+}
+"""Sortable columns for admin org listing (default created_at/desc)."""
 
 
 class OrganizationRepository:
@@ -80,23 +87,28 @@ class OrganizationRepository:
         status: str | None = None,
         page: int = 1,
         limit: int = 50,
+        sort: SortSpec | None = None,
     ) -> tuple[list[Organization], int]:
         """List all organizations (superadmin view, requires RLS bypass).
 
         Intended for the platform super-admin org listing — every org
-        including pending and rejected, newest first.
+        including pending and rejected, newest first by default.
 
         Args:
             status: Optional lifecycle filter — ``pending``, ``approved``,
                 or ``rejected``.  ``None`` returns every status.
             page: 1-based page number.
             limit: Page size (clamped to 1..200).
+            sort: Validated sort spec (whitelist ``name``,
+                ``created_at``).
 
         Returns:
             A tuple of ``(orgs_on_page, total_matching_count)``.
         """
         effective_limit = min(max(limit, 1), 200)
         effective_page = max(page, 1)
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "desc")
 
         base = select(Organization)
         if status is not None:
@@ -107,11 +119,20 @@ class OrganizationRepository:
         ).scalar() or 0
 
         result = await self._db.execute(
-            base.order_by(Organization.created_at.desc())
+            base.order_by(
+                *resolve_order_by(
+                    ORG_SORTABLE_COLUMNS,
+                    Organization.id,
+                    req_sort,
+                    req_dir,
+                    default_sort_by="created_at",
+                    default_dir="desc",
+                )
+            )
             .offset((effective_page - 1) * effective_limit)
             .limit(effective_limit)
         )
-        return result.scalars().all(), total
+        return list(result.scalars().all()), total
 
     async def approve_if_pending(self, org_id: UUID) -> bool:
         """Atomically flip a ``pending`` org to ``approved``.

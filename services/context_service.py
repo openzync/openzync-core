@@ -129,11 +129,12 @@ class ContextService:
         limit: int = 20,
         format: str = "text",  # noqa: A002
         as_of: datetime | None = None,
+        sort: str = "relevance",
     ) -> dict:
         """Assemble a context block for a project from a natural-language query.
 
         Full pipeline:
-        1. Build a cache key from (org_id, project_id, query, as_of) and
+        1. Build a cache key from (org_id, project_id, query, as_of, sort) and
            check Redis — different effective-at timestamps get distinct
            keys so a cached as-of result never poisons another timestamp's
            30s cache window.
@@ -152,6 +153,8 @@ class ContextService:
             as_of: Effective-at timestamp (UTC) for fact retrieval.  Facts
                 superseded before this instant are excluded.  ``None``
                 means "now".
+            sort: ``"relevance"`` (default RRF ranking) or ``"recent"``
+                (``created_at DESC`` per source type).
 
         Returns:
             A dict with:
@@ -171,6 +174,7 @@ class ContextService:
                 str(project_id),
                 query,
                 as_of=as_of.isoformat() if as_of is not None else None,
+                sort=sort,
             )
             cached = await self._cache.get(cache_key)
             if cached is not None:
@@ -210,7 +214,7 @@ class ContextService:
         # Step 2 — Run hybrid search
         # ═══════════════════════════════════════════════════════════════════
         results = await self._retriever.hybrid_search(
-            query, project_id, limit, query_time=as_of
+            query, project_id, limit, query_time=as_of, sort=sort
         )
 
         # ═══════════════════════════════════════════════════════════════════

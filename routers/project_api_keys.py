@@ -13,7 +13,7 @@ from __future__ import annotations
 from uuid import UUID
 
 import redis.asyncio as aioredis
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import audit_action
@@ -28,6 +28,7 @@ from schemas.api_keys import (
     ApiKeyResponse,
     CreateApiKeyRequest,
 )
+from schemas.sorting import ApiKeySortBy, SortDir, SortSpec
 from services.api_key_service import ApiKeyService
 
 router = APIRouter(
@@ -59,6 +60,12 @@ async def list_api_keys(
     _: None = Depends(require_project_membership),
     _perm: None = Depends(require_permission("project:manage")),
     org_id: str = Depends(require_org_id),
+    sort_by: ApiKeySortBy | None = Query(
+        default=None, description="Sort key (default created_at)."
+    ),
+    sort_dir: SortDir = Query(
+        default="desc", description="Sort direction (default desc)."
+    ),
 ) -> ApiKeyListResponse:
     """List non-revoked API keys for the project.
 
@@ -67,6 +74,8 @@ async def list_api_keys(
         service: API key service.
         _: Project owner auth guard.
         org_id: Authenticated organization ID.
+        sort_by: Whitelisted sort key.
+        sort_dir: Sort direction.
 
     Returns:
         List of API keys with metadata.
@@ -74,6 +83,7 @@ async def list_api_keys(
     keys = await service.list_project_keys(
         organization_id=UUID(org_id),
         project_id=project_id,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
     return ApiKeyListResponse(
         data=[ApiKeyResponse.model_validate(k) for k in keys],

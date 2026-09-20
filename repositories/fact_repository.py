@@ -24,10 +24,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.cursor import decode_cursor, encode_cursor
 from core.exceptions import ValidationError
+from core.sorting import SortSpec
 from models.fact import Fact
 from models.fact_invalidation_event import FactInvalidationEvent
 
 logger = logging.getLogger(__name__)
+
+SESSION_FACT_SORTABLE_SQL = {
+    "created_at": "f.created_at",
+    "confidence": "f.confidence",
+    "subject": "f.subject",
+}
+"""Whitelisted ORDER BY fragments for session facts (default created_at/desc)."""
+
+PROJECT_FACT_SORTABLE_SQL = {
+    "valid_from": "f.valid_from",
+    "created_at": "f.created_at",
+    "confidence": "f.confidence",
+    "subject": "f.subject",
+}
+"""Whitelisted ORDER BY fragments for project facts (default valid_from/desc)."""
 
 
 def _effective_at_clause(t: datetime):
@@ -749,29 +765,37 @@ class FactRepository:
         organization_id: UUID | None = None,
         limit: int = 50,
         offset: int = 0,
+        sort: SortSpec | None = None,
     ) -> list[dict[str, Any]]:
         """Return the invalidation lineage of a fact, newest first.
 
         Matches events where the fact is either the retired one
         (``old_fact_id``) or the successor (``new_fact_id``), so both the
         fact's own history and the facts it replaced appear.
+        Default ``at_time/desc``; only ``at_time`` is sortable.
 
         Args:
             fact_id: The fact whose lineage to fetch.
             organization_id: Optional tenant filter for defense-in-depth.
             limit: Maximum results (capped at 200).
             offset: Number of results to skip (for pagination).
+            sort: Validated sort spec (``at_time`` only).
 
         Returns:
             List of event dicts with keys ``id``, ``old_fact_id``,
             ``new_fact_id``, ``kind``, ``reason``, ``at_time``,
             ``source_episode_id`` (UUIDs str-ified, timestamps ISO-8601),
-            ordered by ``at_time`` descending.
+            ordered by ``at_time`` descending by default.
         """
         from sqlalchemy import select
 
-        effective_limit = min(limit, 200)
+        from core.sorting import resolve_order_by
 
+        effective_limit = min(limit, 200)
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("at_time", "desc")
+
+        sortable = {"at_time": FactInvalidationEvent.at_time}
         stmt = (
             select(
                 FactInvalidationEvent.id,
@@ -788,7 +812,16 @@ class FactRepository:
                     FactInvalidationEvent.new_fact_id == fact_id,
                 )
             )
-            .order_by(FactInvalidationEvent.at_time.desc())
+            .order_by(
+                *resolve_order_by(
+                    sortable,
+                    FactInvalidationEvent.id,
+                    req_sort,
+                    req_dir,
+                    default_sort_by="at_time",
+                    default_dir="desc",
+                )
+            )
             .limit(effective_limit)
             .offset(offset)
         )
@@ -856,6 +889,7 @@ class FactRepository:
         organization_id: UUID | None = None,
         limit: int = 50,
         offset: int = 0,
+        sort: SortSpec | None = None,
     ) -> list[Fact]:
         """Return facts effective at a specific point in time.
 
@@ -875,6 +909,9 @@ class FactRepository:
         As-of semantics: ``:t`` is the requested ``timestamp``, so a fact
         superseded *after* that instant is still returned.
 
+        Default ``valid_from/desc``; whitelist ``valid_from``,
+        ``created_at``, ``confidence``, ``subject``.
+
         Args:
             project_id: Project scope.
             timestamp: Point in time to query.  Facts whose valid range
@@ -882,19 +919,42 @@ class FactRepository:
             organization_id: Optional tenant filter for defense-in-depth.
             limit: Maximum number of results to return (capped at 200).
             offset: Number of results to skip (for pagination).
+            sort: Validated sort spec.
 
         Returns:
             A list of ``Fact`` ORM instances effective at ``timestamp``.
         """
         from sqlalchemy import select
 
-        effective_limit = min(limit, 200)
+        from core.sorting import resolve_order_by
 
+        effective_limit = min(limit, 200)
+        spec = sort if sort is not None else SortSpec()
+
+        sortable = {
+            "valid_from": Fact.valid_from,
+            "created_at": Fact.created_at,
+            "confidence": Fact.confidence,
+            "subject": Fact.subject,
+        }
+        if spec.sort_by is None:
+            # note: byte-preserved default — valid_from DESC NULLS LAST.
+            order_clauses = [Fact.valid_from.desc().nullslast(), Fact.id.asc()]
+        else:
+            req_sort, req_dir = spec.effective("valid_from", "desc")
+            order_clauses = resolve_order_by(
+                sortable,
+                Fact.id,
+                req_sort,
+                req_dir,
+                default_sort_by="valid_from",
+                default_dir="desc",
+            )
         stmt = (
             select(Fact)
             .where(Fact.project_id == project_id)
             .where(_effective_at_clause(timestamp))
-            .order_by(Fact.valid_from.desc().nullslast())
+            .order_by(*order_clauses)
             .limit(effective_limit)
             .offset(offset)
         )
@@ -1004,10 +1064,15 @@ class FactRepository:
         session_id: UUID,
         limit: int = 50,
         cursor: str | None = None,
+        sort: SortSpec | None = None,
     ) -> tuple[list[dict[str, Any]], str | None]:
         """List non-invalidated facts for episodes in a session.
 
-        Paginated by ``created_at DESC, id ASC`` using an opaque base64
+        Default ``created_at DESC, id DESC`` (byte-preserved). Cursor
+        encodes ``sort_by:sort_dir`` and fails closed (422) on mismatch.
+        Whitelist: ``created_at``, ``confidence``, ``subject``.
+
+        Paginated by ``created_at DESC, id`` using an opaque base64
         cursor.  Facts without a ``source_episode_id`` are excluded since
         they cannot be scoped to a session.
 
@@ -1016,6 +1081,8 @@ class FactRepository:
             session_id: The session to fetch facts for.
             limit: Max results (1–200).
             cursor: Opaque base64 cursor from a previous page.
+            sort: Validated sort spec (whitelist ``created_at``,
+                ``confidence``, ``subject``).
 
         Returns:
             Tuple of (list of fact dicts, next_cursor or None).  Each dict
@@ -1024,24 +1091,47 @@ class FactRepository:
         """
         from sqlalchemy import text as sql_text
 
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "desc")
+        if req_sort not in SESSION_FACT_SORTABLE_SQL:
+            raise ValidationError(f"Invalid sort_by: {req_sort!r}")
+        if req_dir not in ("asc", "desc"):
+            raise ValidationError(f"Invalid sort_dir: {req_dir!r}")
+
         effective_limit = min(limit, 200) + 1  # +1 to detect has_more
         now = datetime.now(UTC)
 
-        # Decode cursor
-        cursor_created: datetime | None = None
+        # Decode sort-aware cursor (fail-closed 422 on mismatch).
+        cursor_val: str | None = None
         cursor_id: UUID | None = None
         if cursor:
             try:
                 decoded = decode_cursor(cursor)
-                parts = decoded.split("|")
-                if len(parts) == 2:
-                    cursor_created = datetime.fromisoformat(parts[0])
-                    cursor_id = UUID(parts[1])
-            except (ValueError, TypeError):
-                logger.warning(
-                    "fact_repository.invalid_cursor",
-                    extra={"cursor": cursor},
-                )
+                prefix, _, id_hex = decoded.rpartition("|")
+                c_sort, _, rest = prefix.partition(":")
+                c_dir, _, c_val = rest.partition(":")
+                if not c_sort or not c_dir or not id_hex:
+                    raise ValueError("missing sort prefix")
+                if c_sort != req_sort or c_dir != req_dir:
+                    raise ValidationError(
+                        "Cursor sort mismatch — restart pagination "
+                        f"(cursor {c_sort}:{c_dir} vs "
+                        f"request {req_sort}:{req_dir})"
+                    )
+                cursor_val = c_val
+                cursor_id = UUID(id_hex)
+            except ValidationError:
+                raise
+            except (ValueError, TypeError) as e:
+                raise ValidationError(f"Invalid cursor: {e}") from e
+
+        # note: ORDER BY fragment comes from the whitelist dict only —
+        # never from raw input (no text()/f-string/getattr on user data).
+        order_col = SESSION_FACT_SORTABLE_SQL[req_sort]
+        order_kw = "ASC" if req_dir == "asc" else "DESC"
+        # note: default created_at/desc keeps id DESC to preserve the
+        # current order byte-for-byte; custom sorts use id ASC tiebreak.
+        tiebreak = "DESC" if (req_sort == "created_at" and req_dir == "desc") else "ASC"
 
         base_query = """
             SELECT f.id, f.content, f.subject, f.predicate,
@@ -1060,43 +1150,36 @@ class FactRepository:
               AND (f.valid_to IS NULL OR f.valid_to > :effective_at)
         """
 
-        if cursor_id is not None:
-            stmt = sql_text(
-                base_query
-                + """
-                AND (f.created_at, f.id) < (:cursor_created, :cursor_id)
-                ORDER BY f.created_at DESC, f.id DESC
-                LIMIT :limit
-                """
-            )
-            result = await self._db.execute(
-                stmt,
-                {
-                    "org_id": organization_id,
-                    "session_id": session_id,
-                    "cursor_created": cursor_created,
-                    "cursor_id": cursor_id,
-                    "limit": effective_limit,
-                    "effective_at": now,
-                },
-            )
-        else:
-            stmt = sql_text(
-                base_query
-                + """
-                ORDER BY f.created_at DESC, f.id DESC
-                LIMIT :limit
-                """
-            )
-            result = await self._db.execute(
-                stmt,
-                {
-                    "org_id": organization_id,
-                    "session_id": session_id,
-                    "limit": effective_limit,
-                    "effective_at": now,
-                },
-            )
+        params: dict[str, Any] = {
+            "org_id": organization_id,
+            "session_id": session_id,
+            "limit": effective_limit,
+            "effective_at": now,
+        }
+        keyset = ""
+        if cursor_id is not None and cursor_val is not None:
+            op = ">" if req_dir == "asc" else "<"
+            keyset = f" AND ({order_col}, f.id) {op} (:cursor_val, :cursor_id)"
+            if req_sort == "created_at":
+                try:
+                    params["cursor_val"] = datetime.fromisoformat(cursor_val)
+                except ValueError as e:
+                    raise ValidationError(f"Invalid cursor: {e}") from e
+            elif req_sort == "confidence":
+                try:
+                    params["cursor_val"] = float(cursor_val)
+                except ValueError as e:
+                    raise ValidationError(f"Invalid cursor: {e}") from e
+            else:
+                params["cursor_val"] = cursor_val
+            params["cursor_id"] = cursor_id
+        stmt = sql_text(
+            base_query
+            + keyset
+            + f" ORDER BY {order_col} {order_kw}, f.id {tiebreak}"
+            + " LIMIT :limit"
+        )
+        result = await self._db.execute(stmt, params)
 
         rows = result.fetchall()
         has_more = len(rows) == effective_limit
@@ -1128,7 +1211,13 @@ class FactRepository:
         next_cursor: str | None = None
         if has_more and facts:
             last = facts[-1]
-            raw = f"{last['created_at']}|{last['id']}"
+            if req_sort == "created_at":
+                sort_val = last["created_at"] or ""
+            elif req_sort == "confidence":
+                sort_val = str(last["confidence"])
+            else:
+                sort_val = last["subject"] or ""
+            raw = f"{req_sort}:{req_dir}:{sort_val}|{last['id']}"
             next_cursor = encode_cursor(raw)
 
         return facts, next_cursor

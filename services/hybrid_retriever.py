@@ -93,6 +93,7 @@ class HybridRetriever:
         project_id: UUID,
         limit: int = 20,
         query_time: datetime | None = None,
+        sort: str = "relevance",
     ) -> dict[str, Any]:
         """Run hybrid search across all sources and return RRF-merged results.
 
@@ -120,6 +121,9 @@ class HybridRetriever:
                 Episodes are not temporally validatable and ignore this.
                 The graph-BFS leg traverses edges effective at this
                 instant (as-of).
+            sort: ``"relevance"`` (default RRF ranking) or ``"recent"``
+                (``created_at DESC`` per source type, applied server-side
+                after merging).
 
         Returns:
             A dict with:
@@ -267,6 +271,11 @@ class HybridRetriever:
         # Use rerank_top_k as the RRF candidate pool size when re-ranking is active
         rrf_top_n = self._rerank_top_k if self._reranker is not None else limit
 
+        if sort not in ("relevance", "recent"):
+            from core.exceptions import ValidationError
+
+            raise ValidationError(f"Invalid sort: {sort!r}")
+
         merged_episodes = self._rrf_merge(
             [episode_vector_results, episode_bm25_results],
             top_n=rrf_top_n,
@@ -280,8 +289,29 @@ class HybridRetriever:
         # Entities: BFS results directly (single source, no merge needed)
         entities = entity_results[:limit]
 
+        if sort == "recent":
+            # note: recent re-sorts merged pages by created_at DESC
+            # server-side (items carry ISO created_at; missing → first).
+            merged_episodes = sorted(
+                merged_episodes,
+                key=lambda d: (d.get("created_at") or "", d.get("id") or ""),
+                reverse=True,
+            )
+            merged_facts = sorted(
+                merged_facts,
+                key=lambda d: (d.get("created_at") or "", d.get("id") or ""),
+                reverse=True,
+            )
+            entities = sorted(
+                entities,
+                key=lambda d: (d.get("created_at") or "", d.get("id") or ""),
+                reverse=True,
+            )
+
         # ── Re-ranking step ───────────────────────────────────────────────
-        if self._reranker is not None:
+        # note: reranking is a relevance operation — skipped for
+        # sort=recent (recency ordering must survive).
+        if self._reranker is not None and sort == "relevance":
             _rerank_start = time.monotonic()
             try:
                 merged_episodes = await self._reranker.rerank(

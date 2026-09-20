@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from core.sorting import SortSpec
 from packages.graph_backend.interface import GraphBackend
 from schemas.observation import ObservationListResponse, ObservationResponse
 
@@ -37,8 +38,12 @@ class ObservationQueryService:
         observation_type: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        sort: SortSpec | None = None,
     ) -> ObservationListResponse:
         """List observations for a project with optional filters.
+
+        Default order is backend-specific (preserved); whitelist ``name``
+        (maps to ``content``), ``created_at``.
 
         Args:
             org_id: Organisational scope for RLS enforcement.
@@ -49,6 +54,7 @@ class ObservationQueryService:
                 ``behavioral_pattern``).
             limit: Maximum number of results per page (default 50, max 200).
             cursor: Opaque cursor for cursor-based pagination.
+            sort: Validated sort spec (forwarded opaque to the backend).
 
         Returns:
             An ``ObservationListResponse`` with the current page of
@@ -64,6 +70,7 @@ class ObservationQueryService:
             observation_type=observation_type,
             limit=limit,
             cursor=cursor,
+            sort=sort,
         )
 
         # ── Batch-resolve entity IDs to human-readable names ──────────────

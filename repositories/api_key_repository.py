@@ -13,7 +13,15 @@ from sqlalchemy import func, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.sorting import SortSpec, resolve_order_by
 from models.api_key import ApiKey
+
+API_KEY_SORTABLE_COLUMNS = {
+    "name": ApiKey.name,
+    "created_at": ApiKey.created_at,
+    "last_used_at": ApiKey.last_used_at,
+}
+"""Sortable columns for API keys (default created_at/desc)."""
 
 
 class ApiKeyRepository:
@@ -27,17 +35,23 @@ class ApiKeyRepository:
         organization_id: uuid.UUID,
         include_revoked: bool = False,
         project_id: uuid.UUID | None = None,
+        sort: SortSpec | None = None,
     ) -> Sequence[ApiKey]:
         """List API keys for an organization, filtered by project scope.
+
+        Default ``created_at/desc``; whitelist ``name``, ``created_at``,
+        ``last_used_at``.
 
         Args:
             organization_id: Tenant scope.
             include_revoked: If ``True``, include revoked keys.
             project_id: When provided, only keys scoped to this exact
                 project are returned.
+            sort: Validated sort spec.
 
         Returns:
-            All matching ApiKey records, ordered by creation date (newest first).
+            All matching ApiKey records, ordered by creation date (newest first)
+            by default.
         """
         query = select(ApiKey).where(
             ApiKey.organization_id == organization_id,
@@ -46,7 +60,18 @@ class ApiKeyRepository:
             query = query.where(ApiKey.project_id == project_id)
         if not include_revoked:
             query = query.where(ApiKey.is_revoked.is_(False))
-        query = query.order_by(ApiKey.created_at.desc())
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "desc")
+        query = query.order_by(
+            *resolve_order_by(
+                API_KEY_SORTABLE_COLUMNS,
+                ApiKey.id,
+                req_sort,
+                req_dir,
+                default_sort_by="created_at",
+                default_dir="desc",
+            )
+        )
 
         result = await self._db.execute(query)
         return result.scalars().all()

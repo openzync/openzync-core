@@ -28,6 +28,7 @@ from core.arq import get_arq
 from core.config import get_settings
 from core.events import EventType
 from core.exceptions import NotFoundError
+from core.sorting import SortSpec
 from repositories.fact_repository import FactRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
@@ -403,6 +404,7 @@ class FactService:
         project_id: UUID,
         limit: int = 50,
         offset: int = 0,
+        sort: SortSpec | None = None,
     ) -> dict[str, Any]:
         """Fetch a fact and its invalidation-lineage events.
 
@@ -417,6 +419,7 @@ class FactService:
                 project or ``NotFoundError`` is raised.
             limit: Maximum events (capped at 200 by the repository).
             offset: Number of events to skip (offset pagination).
+            sort: Validated sort spec (forwarded opaque to the repository).
 
         Returns:
             A dict with ``fact`` serialized in the ``FactResponse`` shape
@@ -441,6 +444,7 @@ class FactService:
             organization_id=organization_id,
             limit=limit,
             offset=offset,
+            sort=sort,
         )
         return {
             "fact": FactResponse.model_validate(fact),
@@ -623,6 +627,7 @@ class FactService:
         session_id: UUID,
         limit: int = 50,
         cursor: str | None = None,
+        sort: SortSpec | None = None,
     ) -> tuple[list[dict[str, Any]], str | None]:
         """List non-invalidated facts extracted from a session's messages.
 
@@ -631,6 +636,7 @@ class FactService:
             session_id: The session to fetch facts for.
             limit: Max results per page (1–200).
             cursor: Opaque base64 cursor from a previous page.
+            sort: Validated sort spec (forwarded opaque to the repository).
 
         Returns:
             Tuple of (list of fact dicts, next_cursor or None).
@@ -640,4 +646,5 @@ class FactService:
             session_id=session_id,
             limit=limit,
             cursor=cursor,
+            sort=sort,
         )

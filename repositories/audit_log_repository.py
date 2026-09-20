@@ -12,7 +12,16 @@ from uuid import UUID
 from sqlalchemy import func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.sorting import SortSpec, resolve_order_by
 from models.audit_log import AuditLog
+
+AUDIT_LOG_SORTABLE_COLUMNS = {
+    "created_at": AuditLog.created_at,
+    "action": AuditLog.action,
+    "status_code": AuditLog.details["status_code"].as_integer(),
+    "actor_id": AuditLog.actor_id,
+}
+"""Sortable columns for admin audit logs (default created_at/desc)."""
 
 
 def _parse_iso(ts: str) -> datetime:
@@ -100,8 +109,12 @@ class AuditLogRepository:
         created_before: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        sort: SortSpec | None = None,
     ) -> tuple[list[AuditLog], int]:
         """Query audit log entries with optional filters.
+
+        Default ``created_at/desc``; whitelist ``created_at``, ``action``,
+        ``status_code`` (``details->>status_code``), ``actor_id``.
 
         Args:
             organization_id: Filter by org (passed from service).
@@ -118,6 +131,7 @@ class AuditLogRepository:
                 — include entries before this.
             limit: Max entries per page.
             offset: Pagination offset.
+            sort: Validated sort spec.
 
         Returns:
             Tuple of (entries, total_count).
@@ -162,10 +176,20 @@ class AuditLogRepository:
         total_result = await self._db.execute(count_base)
         total: int = total_result.scalar() or 0
 
-        # Paginated query — newest first
+        # Paginated query — newest first by default
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "desc")
         query = (
-            base
-            .order_by(AuditLog.created_at.desc())
+            base.order_by(
+                *resolve_order_by(
+                    AUDIT_LOG_SORTABLE_COLUMNS,
+                    AuditLog.id,
+                    req_sort,
+                    req_dir,
+                    default_sort_by="created_at",
+                    default_dir="desc",
+                )
+            )
             .limit(limit)
             .offset(offset)
         )

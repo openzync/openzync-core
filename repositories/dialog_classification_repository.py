@@ -11,8 +11,15 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.sorting import SortSpec, resolve_order_by
 from models.dialog_classification import DialogClassification
 from models.episode import Episode
+
+CLASSIFICATION_SORTABLE_COLUMNS = {
+    "sequence_number": Episode.sequence_number,
+    "created_at": Episode.created_at,
+}
+"""Sortable columns for classifications (default sequence_number/asc)."""
 
 
 class DialogClassificationRepository:
@@ -22,13 +29,24 @@ class DialogClassificationRepository:
         self._db = db
 
     async def get_by_session(
-        self, org_id: UUID, session_id: UUID
+        self,
+        org_id: UUID,
+        session_id: UUID,
+        sort: SortSpec | None = None,
     ) -> list[DialogClassification]:
         """Return all classifications for episodes in a session.
 
         Joins ``dialog_classifications`` with ``episodes`` to scope by
-        session.  Results are ordered by episode sequence number.
+        session. Default ``sequence_number ASC`` (locked); ``created_at``
+        offered as an alt without breaking the default.
+
+        Args:
+            org_id: Tenant scope.
+            session_id: The session UUID.
+            sort: Validated sort spec.
         """
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("sequence_number", "asc")
         result = await self._db.execute(
             select(DialogClassification)
             .join(Episode, Episode.id == DialogClassification.episode_id)
@@ -37,7 +55,16 @@ class DialogClassificationRepository:
                 DialogClassification.organization_id == org_id,
                 Episode.is_deleted == False,
             )
-            .order_by(Episode.sequence_number)
+            .order_by(
+                *resolve_order_by(
+                    CLASSIFICATION_SORTABLE_COLUMNS,
+                    Episode.id,
+                    req_sort,
+                    req_dir,
+                    default_sort_by="sequence_number",
+                    default_dir="asc",
+                )
+            )
         )
         return list(result.scalars().all())
 

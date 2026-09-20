@@ -13,6 +13,7 @@ from uuid import UUID
 
 from core.events import EventType
 from core.exceptions import ConflictError, NotFoundError, ValidationError
+from core.sorting import SortSpec
 from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.session_repository import SessionRepository
 from schemas.common import PaginatedResponse
@@ -225,10 +226,12 @@ class SessionService:
         limit: int = 50,
         cursor: str | None = None,
         include_closed: bool = False,
+        sort: SortSpec | None = None,
     ) -> PaginatedResponse[SessionListResponse]:
         """List sessions for a project with cursor-based pagination.
 
         By default returns open (non-closed, non-deleted) sessions.
+        Default order ``created_at DESC``.
 
         Args:
             org_id: The organization UUID for tenant isolation.
@@ -236,6 +239,7 @@ class SessionService:
             limit: Maximum items per page (1–200).
             cursor: Opaque base64 cursor from a previous page.
             include_closed: If ``True``, include closed sessions.
+            sort: Validated sort spec (forwarded opaque to the repository).
 
         Returns:
             A paginated response with lightweight session items.
@@ -252,6 +256,7 @@ class SessionService:
             limit=limit,
             cursor=cursor,
             include_closed=include_closed,
+            sort=sort,
         )
 
         # Batch-load message and fact counts — one query instead of N+1.
@@ -284,11 +289,13 @@ class SessionService:
         limit: int = 100,
         cursor: str | None = None,
         project_id: UUID | None = None,
+        sort: SortSpec | None = None,
     ) -> PaginatedResponse[MessageResponse]:
         """Get paginated messages for a session.
 
-        Messages are ordered by ``sequence_number`` for deterministic,
-        tie-free ordering.
+        Messages are ordered by ``sequence_number`` by default for
+        deterministic, tie-free ordering. ``created_at`` is offered as
+        an alt without breaking the default.
 
         Args:
             org_id: The organization UUID for tenant isolation.
@@ -296,6 +303,7 @@ class SessionService:
             limit: Maximum items per page (1–500).
             cursor: Opaque base64 cursor from a previous page.
             project_id: Optional project UUID for intra-org isolation.
+            sort: Validated sort spec (forwarded opaque to the repository).
 
         Returns:
             A paginated response with message items.
@@ -319,6 +327,7 @@ class SessionService:
             session_id=session_id,
             limit=limit,
             cursor=cursor,
+            sort=sort,
         )
 
         # Load blob attachments for each episode and build an episode→blobs map.

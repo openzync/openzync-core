@@ -17,6 +17,8 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from core.sorting import SortSpec
+
 
 class GraphBackend(ABC):
     """Abstract interface for graph database operations.
@@ -222,8 +224,13 @@ class GraphBackend(ABC):
         entity_type: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        sort: SortSpec | None = None,
     ) -> dict[str, Any]:
         """List entity nodes with optional type filter and cursor pagination.
+
+        Default order is backend-specific (PostgreSQL/FalkorDB:
+        ``created_at ASC``); whitelist ``name``, ``created_at``,
+        ``entity_type``.
 
         Args:
             org_id: Organisational scope.
@@ -231,6 +238,8 @@ class GraphBackend(ABC):
             entity_type: Optional filter by entity type (e.g. ``"Person"``).
             limit: Maximum results per page (max 200).
             cursor: Opaque cursor for cursor-based pagination.
+            sort: Validated sort spec (whitelist ``name``,
+                ``created_at``, ``entity_type``).
 
         Returns:
             A dict with ``items`` (list of entity dicts), ``next_cursor``
@@ -248,8 +257,12 @@ class GraphBackend(ABC):
         predicate: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        sort: SortSpec | None = None,
     ) -> dict[str, Any]:
         """List all edges incident to a specific entity node.
+
+        Default order is backend-specific (``created_at DESC``);
+        whitelist ``created_at``, ``predicate``.
 
         Args:
             org_id: Organisational scope.
@@ -258,6 +271,8 @@ class GraphBackend(ABC):
             predicate: Optional filter by edge label.
             limit: Maximum results per page (max 200).
             cursor: Opaque cursor for cursor-based pagination.
+            sort: Validated sort spec (whitelist ``created_at``,
+                ``predicate``).
 
         Returns:
             A dict with ``items`` (list of edge dicts), ``next_cursor``
@@ -619,8 +634,13 @@ class GraphBackend(ABC):
         observation_type: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        sort: SortSpec | None = None,
     ) -> dict[str, Any]:
         """List observations with optional filters and cursor pagination.
+
+        Default order is backend-specific (PostgreSQL: ``created_at ASC``;
+        FalkorDB/SurrealDB: ``created_at DESC``); whitelist ``name``
+        (maps to ``content``), ``created_at``.
 
         Args:
             org_id: Organisational scope.
@@ -630,6 +650,8 @@ class GraphBackend(ABC):
             observation_type: Optional filter — only observations of this type.
             limit: Maximum results per page. Defaults to 50.
             cursor: Opaque cursor for cursor-based pagination.
+            sort: Validated sort spec (whitelist ``name``,
+                ``created_at``).
 
         Returns:
             A dict with ``items`` (list of observation dicts),

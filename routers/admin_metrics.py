@@ -34,6 +34,7 @@ from schemas.admin_metrics import (
     GraphStats,
     MetricsSummaryResponse,
 )
+from schemas.sorting import MonitorTargetSortBy, SortDir
 from services.metrics_service import MetricsService
 
 router = APIRouter(
@@ -545,8 +546,21 @@ async def run_org_query(
 )
 async def get_prometheus_targets(
     _org_id: str = Depends(require_permission("members:read")),
+    sort_by: MonitorTargetSortBy | None = Query(
+        default=None,
+        description="Sort key — ``name`` (job), ``created_at`` "
+        "(last_scrape), ``type`` (instance), ``status`` (health).",
+    ),
+    sort_dir: SortDir = Query(
+        default="asc",
+        description="Sort direction (default asc).",
+    ),
 ) -> dict:
     """Get Prometheus scrape target health.
+
+    Default order is the Prometheus response order (preserved); sort keys
+    map to target fields (``name``→job, ``created_at``→last_scrape,
+    ``type``→instance, ``status``→health).
 
     Returns:
         Dict with ``targets`` list and ``status``.
@@ -574,6 +588,19 @@ async def get_prometheus_targets(
             "last_scrape": t.get("lastScrape", ""),
             "last_error": t.get("lastError", "") or None,
         })
+
+    if sort_by is not None:
+        # note: explicit key selection — no getattr on raw input.
+        def _target_key(target: dict) -> tuple[str, str]:
+            if sort_by == "name":
+                return (target["job"], target["instance"])
+            if sort_by == "created_at":
+                return (target["last_scrape"], target["job"])
+            if sort_by == "type":
+                return (target["instance"], target["job"])
+            return (target["health"], target["job"])
+
+        targets.sort(key=_target_key, reverse=(sort_dir == "desc"))
 
     return {"status": "ok", "targets": targets}
 

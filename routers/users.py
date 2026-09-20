@@ -30,6 +30,7 @@ from schemas.custom_instructions import (
     CustomInstructionsResponse,
     SetCustomInstructionsRequest,
 )
+from schemas.sorting import SortDir, SortSpec, UserSortBy
 from schemas.user_summary import UserSummaryResponse, UserSummaryTriggerResponse
 from schemas.users import (
     CreateUserRequest,
@@ -112,11 +113,20 @@ async def list_users(
         default=None,
         description="Only users created before this ISO-8601 timestamp.",
     ),
+    sort_by: UserSortBy | None = Query(
+        default=None,
+        description="Sort key (default created_at).",
+    ),
+    sort_dir: SortDir = Query(
+        default="desc",
+        description="Sort direction (default desc).",
+    ),
 ) -> UserListResponse:
     """List users with pagination and search.
 
     Supports cursor-based pagination, multi-field search, and date-range
-    filtering. All filters are composable.
+    filtering. All filters are composable. Cursors encode sort — a cursor
+    from a different sort fails with 422.
     """
     return await service.list_users(
         organization_id=UUID(org_id),
@@ -125,6 +135,7 @@ async def list_users(
         search=search,
         created_after=created_after,
         created_before=created_before,
+        sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )
 
 

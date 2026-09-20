@@ -28,6 +28,7 @@ from core.exceptions import (
     GraphBackendUnavailableError,
     NotFoundError,
 )
+from core.sorting import SortSpec
 from packages.graph_backend.interface import GraphBackend
 
 logger = structlog.get_logger(__name__)
@@ -129,24 +130,74 @@ LIMIT :limit
 OFFSET :offset
 """
 
-LIST_ENTITIES_SQL = """
-SELECT ge.id, ge.name, ge.entity_type, ge.summary,
-       ge.attributes, ge.created_at
-FROM graph_entities ge
-WHERE {where_clause}
-ORDER BY ge.created_at ASC, ge.id ASC
-LIMIT :limit
-"""
+GRAPH_NODE_SORTABLE_SQL = {
+    "name": "ge.name",
+    "created_at": "ge.created_at",
+    "entity_type": "ge.entity_type",
+}
+"""Whitelisted ORDER BY fragments for graph nodes (default created_at/asc)."""
 
-LIST_RELATIONSHIPS_SQL = """
-SELECT r.id, r.source_id, r.target_id, r.relationship_type,
-       r.properties, r.fact, r.confidence,
-       r.valid_from, r.valid_to, r.created_at
-FROM graph_relationships r
-WHERE {where_clause}
-ORDER BY r.created_at DESC
-LIMIT :limit
-"""
+GRAPH_EDGE_SORTABLE_SQL = {
+    "created_at": "r.created_at",
+    "predicate": "r.relationship_type",
+}
+"""Whitelisted ORDER BY fragments for graph edges (default created_at/desc)."""
+
+OBSERVATION_SORTABLE_SQL = {
+    # note: observations have no name column — "name" maps to content.
+    "name": "o.content",
+    "created_at": "o.created_at",
+}
+"""Whitelisted ORDER BY fragments for observations (default created_at/asc)."""
+
+
+def _resolve_graph_sort(
+    whitelist: dict[str, str],
+    id_col: str,
+    sort_by: str | None,
+    sort_dir: str,
+    default_sort: str,
+    default_dir: str,
+) -> tuple[str, str, str]:
+    """Validate sort params and return ``(order_col, dir_kw, tiebreak)``.
+
+    Only values from ``whitelist`` are ever returned — never raw input.
+
+    Raises:
+        ValidationError: On unknown ``sort_by``/``sort_dir`` (HTTP 422).
+    """
+    from core.exceptions import ValidationError
+
+    key = sort_by if sort_by is not None else default_sort
+    if key not in whitelist:
+        raise ValidationError(f"Invalid sort_by: {key!r}")
+    if sort_dir not in ("asc", "desc"):
+        raise ValidationError(f"Invalid sort_dir: {sort_dir!r}")
+    eff_dir = sort_dir if sort_by is not None else default_dir
+    order_kw = "ASC" if eff_dir == "asc" else "DESC"
+    return whitelist[key], order_kw, f"{id_col} ASC"
+
+
+def _decode_sort_keyset_cursor(
+    cursor: str, default_sort: str, default_dir: str
+) -> tuple[str, str, str, str]:
+    """Decode ``{"s","d","c","i"}`` keyset cursor (fail-closed 422).
+
+    Legacy cursors without ``"s"``/``"d"`` are treated as the method
+    default so existing pagination keeps working.
+
+    Raises:
+        ValidationError: If malformed (HTTP 422).
+    """
+    from core.exceptions import ValidationError
+
+    try:
+        decoded = orjson.loads(base64.b64decode(cursor))
+        c_sort = decoded.get("s", default_sort)
+        c_dir = decoded.get("d", default_dir)
+        return c_sort, c_dir, decoded["c"], decoded["i"]
+    except (ValueError, TypeError, KeyError) as e:
+        raise ValidationError(f"Invalid cursor: {e}") from e
 
 
 class PostgresGraphBackend(GraphBackend):
@@ -1151,14 +1202,30 @@ class PostgresGraphBackend(GraphBackend):
         entity_type: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        sort: SortSpec | None = None,
     ) -> dict:
         """List entities with cursor-based pagination.
 
-        Cursor format: base64-encoded JSON ``{"c": "<created_at>", "i": "<id>"}``
-        matching the pattern used by ``UserRepository`` and ``SessionRepository``.
-        Scoped to the given project.
+        Cursor format: base64-encoded JSON
+        ``{"s": sort, "d": dir, "c": value, "i": id}`` (legacy
+        ``{"c", "i"}`` cursors are treated as the ``created_at/asc``
+        default). Sort mismatch fails closed (422). Default
+        ``created_at/asc``; whitelist ``name``, ``created_at``,
+        ``entity_type``. Scoped to the given project.
         """
+        from core.exceptions import ValidationError
+
         limit = min(limit, 200)
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "asc")
+        order_col, order_kw, tiebreak = _resolve_graph_sort(
+            GRAPH_NODE_SORTABLE_SQL,
+            "ge.id",
+            req_sort,
+            req_dir,
+            "created_at",
+            "asc",
+        )
 
         where_clause = "ge.organization_id = :org_id AND ge.project_id = :project_id"
         params: dict[str, object] = {
@@ -1173,21 +1240,32 @@ class PostgresGraphBackend(GraphBackend):
 
         if cursor:
             try:
-                decoded = orjson.loads(base64.b64decode(cursor))
-                cursor_created_at = decoded["c"]
-                cursor_id = decoded["i"]
-                where_clause += (
-                    " AND (ge.created_at, ge.id) > (:cursor_ts, :cursor_id::uuid)"
+                c_sort, c_dir, c_val, c_id = _decode_sort_keyset_cursor(
+                    cursor, "created_at", "asc"
                 )
-                params["cursor_ts"] = cursor_created_at
-                params["cursor_id"] = cursor_id
-            except Exception:
-                logger.warning(
-                    "pg_graph.list_entities.invalid_cursor", extra={"cursor": cursor}
-                )
+                if c_sort != req_sort or c_dir != req_dir:
+                    raise ValidationError(
+                        "Cursor sort mismatch — restart pagination "
+                        f"(cursor {c_sort}:{c_dir} vs "
+                        f"request {req_sort}:{req_dir})"
+                    )
+                op = ">" if req_dir == "asc" else "<"
+                keyset = f"({order_col}, ge.id) {op} (:cursor_val, :cursor_id::uuid)"
+                where_clause += f" AND {keyset}"
+                params["cursor_val"] = c_val
+                params["cursor_id"] = c_id
+            except ValidationError:
+                raise
 
         try:
-            query = LIST_ENTITIES_SQL.format(where_clause=where_clause)
+            query = (
+                "SELECT ge.id, ge.name, ge.entity_type, ge.summary,\n"
+                "       ge.attributes, ge.created_at\n"
+                "FROM graph_entities ge\n"
+                f"WHERE {where_clause}\n"
+                f"ORDER BY {order_col} {order_kw}, {tiebreak}\n"
+                "LIMIT :limit"
+            )
             result = await self._db.execute(text(query), params)
             rows = result.all()
             has_more = len(rows) > limit
@@ -1196,7 +1274,15 @@ class PostgresGraphBackend(GraphBackend):
             next_cursor = None
             if has_more and items:
                 last = items[-1]
-                cursor_payload = orjson.dumps({"c": last["created_at"], "i": last["id"]})
+                if req_sort == "name":
+                    sort_val = last["name"]
+                elif req_sort == "entity_type":
+                    sort_val = last.get("entity_type") or ""
+                else:
+                    sort_val = last["created_at"]
+                cursor_payload = orjson.dumps(
+                    {"s": req_sort, "d": req_dir, "c": sort_val, "i": last["id"]}
+                )
                 next_cursor = base64.b64encode(cursor_payload).decode()
 
             return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
@@ -1224,9 +1310,27 @@ class PostgresGraphBackend(GraphBackend):
         predicate: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        sort: SortSpec | None = None,
     ) -> dict:
-        """List all edges incident to an entity with cursor pagination."""
+        """List all edges incident to an entity with cursor pagination.
+
+        Default ``created_at/desc`` (byte-preserved, no tiebreak);
+        whitelist ``created_at``, ``predicate``. Custom sorts append
+        ``id ASC`` tiebreak. Sort-aware cursor, fail-closed (422).
+        """
+        from core.exceptions import ValidationError
+
         limit = min(limit, 200)
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "desc")
+        order_col, order_kw, tiebreak = _resolve_graph_sort(
+            GRAPH_EDGE_SORTABLE_SQL,
+            "r.id",
+            req_sort,
+            req_dir,
+            "created_at",
+            "desc",
+        )
 
         conditions = """
             r.organization_id = :org_id
@@ -1247,20 +1351,40 @@ class PostgresGraphBackend(GraphBackend):
 
         if cursor:
             try:
-                decoded = orjson.loads(base64.b64decode(cursor))
-                conditions += (
-                    " AND (r.created_at, r.id) > (:cursor_ts, :cursor_id::uuid)"
+                c_sort, c_dir, c_val, c_id = _decode_sort_keyset_cursor(
+                    cursor, "created_at", "desc"
                 )
-                params["cursor_ts"] = decoded["c"]
-                params["cursor_id"] = decoded["i"]
-            except Exception:
-                logger.warning(
-                    "pg_graph.list_entity_edges.invalid_cursor",
-                    extra={"cursor": cursor},
-                )
+                if c_sort != req_sort or c_dir != req_dir:
+                    raise ValidationError(
+                        "Cursor sort mismatch — restart pagination "
+                        f"(cursor {c_sort}:{c_dir} vs "
+                        f"request {req_sort}:{req_dir})"
+                    )
+                op = ">" if req_dir == "asc" else "<"
+                keyset = f"({order_col}, r.id) {op} (:cursor_val, :cursor_id::uuid)"
+                conditions += f" AND {keyset}"
+                params["cursor_val"] = c_val
+                params["cursor_id"] = c_id
+            except ValidationError:
+                raise
 
         try:
-            query = LIST_RELATIONSHIPS_SQL.format(where_clause=conditions)
+            # note: default order keeps the legacy shape byte-for-byte
+            # (no id tiebreak); custom sorts append it.
+            order_clause = (
+                f"{order_col} {order_kw}"
+                if sort is None or sort.sort_by is None
+                else f"{order_col} {order_kw}, {tiebreak}"
+            )
+            query = (
+                "SELECT r.id, r.source_id, r.target_id, r.relationship_type,\n"
+                "       r.properties, r.fact, r.confidence,\n"
+                "       r.valid_from, r.valid_to, r.created_at\n"
+                "FROM graph_relationships r\n"
+                f"WHERE {conditions}\n"
+                f"ORDER BY {order_clause}\n"
+                "LIMIT :limit"
+            )
             result = await self._db.execute(text(query), params)
             rows = result.all()
             has_more = len(rows) > limit
@@ -1269,7 +1393,14 @@ class PostgresGraphBackend(GraphBackend):
             next_cursor = None
             if has_more and items:
                 last = items[-1]
-                cursor_payload = orjson.dumps({"c": last["created_at"], "i": last["id"]})
+                sort_val = (
+                    last.get("type") or ""
+                    if req_sort == "predicate"
+                    else last["created_at"]
+                )
+                cursor_payload = orjson.dumps(
+                    {"s": req_sort, "d": req_dir, "c": sort_val, "i": last["id"]}
+                )
                 next_cursor = base64.b64encode(cursor_payload).decode()
 
             return {"items": items, "next_cursor": next_cursor, "has_more": has_more}
@@ -1971,9 +2102,26 @@ class PostgresGraphBackend(GraphBackend):
         observation_type: str | None = None,
         limit: int = 50,
         cursor: str | None = None,
+        sort: SortSpec | None = None,
     ) -> dict[str, Any]:
-        """List observations with optional filters and cursor pagination."""
+        """List observations with optional filters and cursor pagination.
+
+        Default ``created_at/asc``; whitelist ``name`` (maps to
+        ``content``), ``created_at``. Sort-aware cursor, fail-closed.
+        """
+        from core.exceptions import ValidationError
+
         limit = min(limit, 200)
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "asc")
+        order_col, order_kw, tiebreak = _resolve_graph_sort(
+            OBSERVATION_SORTABLE_SQL,
+            "o.id",
+            req_sort,
+            req_dir,
+            "created_at",
+            "asc",
+        )
 
         where_clause = (
             "o.organization_id = :org_id AND o.project_id = :project_id"
@@ -1994,19 +2142,22 @@ class PostgresGraphBackend(GraphBackend):
 
         if cursor:
             try:
-                decoded = orjson.loads(base64.b64decode(cursor))
-                cursor_created_at = decoded["c"]
-                cursor_id = decoded["i"]
-                where_clause += (
-                    " AND (o.created_at, o.id) > (:cursor_ts, :cursor_id::uuid)"
+                c_sort, c_dir, c_val, c_id = _decode_sort_keyset_cursor(
+                    cursor, "created_at", "asc"
                 )
-                params["cursor_ts"] = cursor_created_at
-                params["cursor_id"] = cursor_id
-            except Exception:
-                logger.warning(
-                    "pg_graph.get_observations.invalid_cursor",
-                    extra={"cursor": cursor},
-                )
+                if c_sort != req_sort or c_dir != req_dir:
+                    raise ValidationError(
+                        "Cursor sort mismatch — restart pagination "
+                        f"(cursor {c_sort}:{c_dir} vs "
+                        f"request {req_sort}:{req_dir})"
+                    )
+                op = ">" if req_dir == "asc" else "<"
+                keyset = f"({order_col}, o.id) {op} (:cursor_val, :cursor_id::uuid)"
+                where_clause += f" AND {keyset}"
+                params["cursor_val"] = c_val
+                params["cursor_id"] = c_id
+            except ValidationError:
+                raise
 
         try:
             result = await self._db.execute(
@@ -2019,7 +2170,7 @@ class PostgresGraphBackend(GraphBackend):
                            o.created_at, o.updated_at
                     FROM graph_observations o
                     WHERE {where_clause}
-                    ORDER BY o.created_at ASC, o.id ASC
+                    ORDER BY {order_col} {order_kw}, {tiebreak}
                     LIMIT :limit
                 """),
                 params,
@@ -2031,10 +2182,14 @@ class PostgresGraphBackend(GraphBackend):
             next_cursor = None
             if has_more and items:
                 last = items[-1]
-                cursor_payload = orjson.dumps({
-                    "c": last["created_at"],
-                    "i": last["id"],
-                })
+                sort_val = (
+                    last.get("content") or ""
+                    if req_sort == "name"
+                    else last["created_at"]
+                )
+                cursor_payload = orjson.dumps(
+                    {"s": req_sort, "d": req_dir, "c": sort_val, "i": last["id"]}
+                )
                 next_cursor = base64.b64encode(cursor_payload).decode()
 
             return {"items": items, "next_cursor": next_cursor, "has_more": has_more}

@@ -21,10 +21,21 @@ from sqlalchemy import String, func, or_, select
 from sqlalchemy import update as sa_update
 
 from core.cursor import decode_cursor, encode_cursor
+from core.exceptions import ValidationError
+from core.sorting import SortSpec, resolve_order_by
 from models.episode import Episode
 from models.fact import Fact
 from models.session import Session
 from models.user import User
+
+# ⚠️ Whitelist only — keys must match schemas/sorting.py UserSortBy.
+USER_SORTABLE_COLUMNS = {
+    "external_id": User.external_id,
+    "name": User.name,
+    "email": User.email,
+    "created_at": User.created_at,
+}
+"""Sortable columns for GET /v1/users (default created_at/desc)."""
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -564,11 +575,12 @@ class UserRepository:
         created_after: datetime | None = None,
         created_before: datetime | None = None,
         include_deleted: bool = False,
+        sort: SortSpec | None = None,
     ) -> tuple[list[User], str | None]:
         """List users with cursor-based pagination and optional filters.
 
-        Cursor is a base64-encoded composite of ``(created_at, id)``.
-        Filters are composable — any combination of search, date range.
+        Cursor is a base64-encoded ``sort_by:sort_dir:value|id`` composite
+        (fail-closed 422 on sort mismatch). Default ``created_at/desc``.
 
         Args:
             organization_id: Tenant scope (always applied).
@@ -579,6 +591,8 @@ class UserRepository:
             created_after: Only users created on or after this timestamp.
             created_before: Only users created before this timestamp.
             include_deleted: If ``True``, include soft-deleted users.
+            sort: Validated sort spec (whitelist ``external_id``,
+                ``name``, ``email``, ``created_at``).
 
         Returns:
             Tuple of ``(users_list, next_cursor_string)``.
@@ -586,27 +600,67 @@ class UserRepository:
         """
         # ╠ LIMIT + 1 to detect has_more without a separate COUNT query
         effective_limit = min(limit, 200) + 1
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "desc")
 
         query = select(User).where(User.organization_id == organization_id)
 
         if not include_deleted:
             query = query.where(User.is_deleted.is_(False))
 
-        # Cursor pagination: composite WHERE clause
-        # Correct semantics: (created_at, id) > (cursor_at, cursor_id)
+        # Cursor pagination: sort-aware composite WHERE clause.
+        # Fail-closed 422 when the cursor's sort does not match request.
         if cursor is not None:
             from sqlalchemy import and_
 
-            cursor_at, cursor_id = self._decode_cursor(cursor)
-            query = query.where(
-                or_(
-                    User.created_at > cursor_at,
-                    and_(
-                        User.created_at == cursor_at,
-                        User.id > cursor_id,
-                    ),
+            c_sort_by, c_sort_dir, cursor_val, cursor_id = self._decode_cursor(cursor)
+            if c_sort_by != req_sort or c_sort_dir != req_dir:
+                raise ValidationError(
+                    "Cursor sort mismatch — restart pagination "
+                    f"(cursor {c_sort_by}:{c_sort_dir} vs "
+                    f"request {req_sort}:{req_dir})"
                 )
-            )
+            col = USER_SORTABLE_COLUMNS[req_sort]
+            if req_sort == "created_at":
+                try:
+                    cursor_at = datetime.fromisoformat(cursor_val)
+                except ValueError as e:
+                    raise ValidationError(f"Invalid cursor: {e}") from e
+                if req_dir == "asc":
+                    query = query.where(
+                        or_(
+                            User.created_at > cursor_at,
+                            and_(
+                                User.created_at == cursor_at,
+                                User.id > cursor_id,
+                            ),
+                        )
+                    )
+                else:
+                    query = query.where(
+                        or_(
+                            User.created_at < cursor_at,
+                            and_(
+                                User.created_at == cursor_at,
+                                User.id > cursor_id,
+                            ),
+                        )
+                    )
+            else:
+                if req_dir == "asc":
+                    query = query.where(
+                        or_(
+                            col > cursor_val,
+                            and_(col == cursor_val, User.id > cursor_id),
+                        )
+                    )
+                else:
+                    query = query.where(
+                        or_(
+                            col < cursor_val,
+                            and_(col == cursor_val, User.id > cursor_id),
+                        )
+                    )
 
         # Search: multi-field ILIKE
         if search:
@@ -627,9 +681,16 @@ class UserRepository:
         if created_before is not None:
             query = query.where(User.created_at < created_before)
 
-        # Consistent ordering for cursor stability
+        # Consistent ordering for cursor stability (default created_at/desc).
         query = query.order_by(
-            User.created_at.asc(), User.id.asc()
+            *resolve_order_by(
+                USER_SORTABLE_COLUMNS,
+                User.id,
+                req_sort,
+                req_dir,
+                default_sort_by="created_at",
+                default_dir="desc",
+            )
         ).limit(effective_limit)
 
         result = await self._db.execute(query)
@@ -637,12 +698,22 @@ class UserRepository:
 
         # Detect has_more and strip the extra row
         has_more = len(rows) == effective_limit
-        users = rows[:limit] if has_more else list(rows)
+        users = list(rows[:limit]) if has_more else list(rows)
 
         next_cursor: str | None = None
         if has_more and users:
             last = users[-1]
-            next_cursor = self._encode_cursor(last.created_at, last.id)
+            eff_sort, eff_dir = req_sort, req_dir
+            # note: sort value encoded as ISO for datetimes, raw for text.
+            if eff_sort == "created_at":
+                val = last.created_at.isoformat()
+            elif eff_sort == "external_id":
+                val = last.external_id
+            elif eff_sort == "name":
+                val = last.name or ""
+            else:
+                val = last.email or ""
+            next_cursor = self._encode_cursor(eff_sort, eff_dir, val, last.id)
 
         return users, next_cursor
 
@@ -651,22 +722,28 @@ class UserRepository:
         organization_id: UUID,
         page: int = 1,
         limit: int = 50,
+        sort: SortSpec | None = None,
     ) -> tuple[list[User], int]:
         """List an organization's dashboard users with offset pagination.
 
         Offset-based counterpart to :meth:`list` (which uses cursors) —
         for the platform super-admin members listing, where the response
         shape is ``data/total/page/limit`` like the orgs list.  Soft-
-        deleted users are excluded.
+        deleted users are excluded. Default ``created_at/asc``.
 
         Args:
             organization_id: Tenant scope (always applied).
             page: 1-based page number.
             limit: Page size (clamped to 1..200).
+            sort: Validated sort spec (whitelist ``created_at``,
+                ``name``, ``email``).
 
         Returns:
             A tuple of ``(users_on_page, total_matching_count)``.
         """
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "asc")
+
         effective_limit = min(max(limit, 1), 200)
         effective_page = max(page, 1)
 
@@ -679,17 +756,31 @@ class UserRepository:
         )
         total = (await self._db.execute(total_stmt)).scalar() or 0
 
+        org_sortable = {
+            "created_at": User.created_at,
+            "name": User.name,
+            "email": User.email,
+        }
         result = await self._db.execute(
             select(User)
             .where(
                 User.organization_id == organization_id,
                 User.is_deleted.is_(False),
             )
-            .order_by(User.created_at.asc(), User.id.asc())
+            .order_by(
+                *resolve_order_by(
+                    org_sortable,
+                    User.id,
+                    req_sort,
+                    req_dir,
+                    default_sort_by="created_at",
+                    default_dir="asc",
+                )
+            )
             .offset((effective_page - 1) * effective_limit)
             .limit(effective_limit)
         )
-        return result.scalars().all(), total
+        return list(result.scalars().all()), total
 
     # ── Aggregate Stats ─────────────────────────────────────────────────────
 
@@ -886,36 +977,45 @@ class UserRepository:
     # ── Cursor Helpers ──────────────────────────────────────────────────────
 
     @staticmethod
-    def _encode_cursor(created_at: datetime, user_id: UUID) -> str:
-        """Encode ``(created_at, id)`` into an opaque base64 cursor string.
-
-        Format: ISO timestamp + ``|`` + UUID hex, then base64-encoded.
+    def _encode_cursor(
+        sort_by: str, sort_dir: str, value: str, user_id: UUID
+    ) -> str:
+        """Encode ``sort_by:sort_dir:value|id`` as opaque base64 cursor.
 
         Args:
-            created_at: The ``created_at`` timestamp of the last item.
-            user_id: The ``id`` UUID of the last item.
+            sort_by: Whitelisted sort key embedded for fail-closed checks.
+            sort_dir: ``"asc"`` or ``"desc"`` embedded for fail-closed.
+            value: Sort-column value (ISO for datetimes, raw for text).
+            user_id: The ``id`` UUID tiebreak of the last item.
 
         Returns:
             URL-safe base64 string (padding stripped).
         """
-        return encode_cursor(f"{created_at.isoformat()}|{user_id.hex}")
+        return encode_cursor(f"{sort_by}:{sort_dir}:{value}|{user_id.hex}")
 
     @staticmethod
-    def _decode_cursor(cursor: str) -> tuple[datetime, UUID]:
-        """Decode a cursor string back to ``(created_at, id)``.
+    def _decode_cursor(cursor: str) -> tuple[str, str, str, UUID]:
+        """Decode cursor to ``(sort_by, sort_dir, value, id)``.
 
         Args:
-            cursor: The opaque cursor string from a previous response.
-
-        Returns:
-            Tuple of ``(created_at, id)``.
+            cursor: Opaque cursor string from a previous response.
 
         Raises:
-            ValueError: If the cursor is malformed or cannot be decoded.
+            ValidationError: If malformed (fail-closed 422).
         """
         try:
             raw = decode_cursor(cursor)
-            at_str, id_hex = raw.split("|", 1)
-            return datetime.fromisoformat(at_str), UUID(hex=id_hex)
+            prefix, _, id_hex = raw.rpartition("|")
+            sort_by, _, rest = prefix.partition(":")
+            sort_dir, _, value = rest.partition(":")
+            if not sort_by or not sort_dir or not id_hex:
+                raise ValueError("missing sort prefix")
+            if sort_by not in USER_SORTABLE_COLUMNS:
+                raise ValueError(f"unknown sort {sort_by!r}")
+            if sort_dir not in ("asc", "desc"):
+                raise ValueError(f"unknown dir {sort_dir!r}")
+            return sort_by, sort_dir, value, UUID(hex=id_hex)
+        except ValidationError:
+            raise
         except (ValueError, TypeError) as e:
-            raise ValueError(f"Invalid cursor: {e}") from e
+            raise ValidationError(f"Invalid cursor: {e}") from e

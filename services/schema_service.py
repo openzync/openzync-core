@@ -16,6 +16,7 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 
 from core.exceptions import ConflictError, NotFoundError, ValidationError
+from core.sorting import SortSpec
 from repositories.extraction_schema_repository import (
     ExtractionSchemaRepository,
 )
@@ -101,12 +102,18 @@ class SchemaService:
         org_id: UUID,
         schema_type: str | None = None,
         is_active: bool | None = None,
+        sort: SortSpec | None = None,
     ) -> list[ExtractionSchemaResponse]:
-        """List schemas for an organization with optional filters."""
+        """List schemas for an organization with optional filters.
+
+        Default ``created_at/desc``; whitelist ``name``, ``created_at``,
+        ``type``.
+        """
         schemas = await self._repo.get_all(
             org_id=org_id,
             schema_type=schema_type,
             is_active=is_active,
+            sort=sort,
         )
         return [ExtractionSchemaResponse.model_validate(s) for s in schemas]
 

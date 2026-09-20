@@ -11,7 +11,15 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.sorting import SortSpec, resolve_order_by
 from models.extraction_schema import ExtractionSchema
+
+EXTRACTION_SCHEMA_SORTABLE_COLUMNS = {
+    "name": ExtractionSchema.name,
+    "created_at": ExtractionSchema.created_at,
+    "type": ExtractionSchema.type,
+}
+"""Sortable columns for admin schemas (default created_at/desc)."""
 
 
 class ExtractionSchemaRepository:
@@ -47,8 +55,13 @@ class ExtractionSchemaRepository:
         org_id: UUID,
         schema_type: str | None = None,
         is_active: bool | None = None,
+        sort: SortSpec | None = None,
     ) -> list[ExtractionSchema]:
-        """List schemas for an organization, with optional type/active filters."""
+        """List schemas for an organization, with optional type/active filters.
+
+        Default ``created_at/desc``; whitelist ``name``, ``created_at``,
+        ``type``.
+        """
         query = select(ExtractionSchema).where(
             ExtractionSchema.organization_id == org_id
         )
@@ -56,7 +69,18 @@ class ExtractionSchemaRepository:
             query = query.where(ExtractionSchema.type == schema_type)
         if is_active is not None:
             query = query.where(ExtractionSchema.is_active == is_active)
-        query = query.order_by(ExtractionSchema.created_at.desc())
+        spec = sort if sort is not None else SortSpec()
+        req_sort, req_dir = spec.effective("created_at", "desc")
+        query = query.order_by(
+            *resolve_order_by(
+                EXTRACTION_SCHEMA_SORTABLE_COLUMNS,
+                ExtractionSchema.id,
+                req_sort,
+                req_dir,
+                default_sort_by="created_at",
+                default_dir="desc",
+            )
+        )
         result = await self._db.execute(query)
         return list(result.scalars().all())
 

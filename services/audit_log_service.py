@@ -12,6 +12,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.sorting import SortSpec
 from repositories.audit_log_repository import AuditLogRepository
 
 logger = logging.getLogger(__name__)
@@ -93,8 +94,12 @@ class AuditLogService:
         created_before: str | None = None,
         limit: int = 50,
         offset: int = 0,
+        sort: SortSpec | None = None,
     ) -> tuple[list, int]:
         """Query audit log entries with optional filters.
+
+        Default ``created_at/desc``; whitelist ``created_at``, ``action``,
+        ``status_code``, ``actor_id``.
 
         Args:
             organization_id: Filter by organization (from auth context).
@@ -109,6 +114,7 @@ class AuditLogService:
             created_before: ISO 8601 — include entries before this.
             limit: Max entries per page.
             offset: Pagination offset.
+            sort: Validated sort spec (forwarded opaque to the repository).
 
         Returns:
             Tuple of (list of AuditLog ORM objects, total_count).
@@ -126,4 +132,5 @@ class AuditLogService:
             created_before=created_before,
             limit=limit,
             offset=offset,
+            sort=sort,
         )
