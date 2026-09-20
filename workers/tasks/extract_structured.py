@@ -9,6 +9,7 @@ ARQ task was retired in favour of ``enrich_episode``.
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import orjson
@@ -23,6 +24,148 @@ if TYPE_CHECKING:
     from repositories.episode_repository import EpisodeRepository
 
 logger = structlog.get_logger()
+
+PREVIEW_SCHEMA_NAME = "preview"
+"""Schema entry name used when rendering a single-schema extraction prompt."""
+
+_PROMPTS_DIR = (
+    Path(__file__).resolve().parent.parent.parent / "services" / "worker" / "prompts"
+)
+"""On-disk prompt catalogue (same files seeded into the DB at signup)."""
+
+
+def _load_extraction_template(template_text: str | None) -> str:
+    """Return the extraction template text, defaulting to the on-disk file.
+
+    Args:
+        template_text: Optional raw Jinja2 override (e.g. a per-schema
+            ``prompt_template``).  When ``None`` the canonical
+            ``extract_structured_v1.jinja2`` file is read from disk.
+
+    Returns:
+        The raw Jinja2 template text.
+    """
+    if template_text:
+        return template_text
+    return (_PROMPTS_DIR / "extract_structured_v1.jinja2").read_text()
+
+
+def build_extraction_prompt(
+    schema: dict, text: str, *, template_text: str | None = None
+) -> str:
+    """Render the structured-extraction prompt for one schema and one text.
+
+    Renders ``extract_structured_v1.jinja2`` with the same variables the
+    combined ``enrich_episode`` pass uses: ``schemas`` (a one-element list
+    of ``{name, json_schema}`` dicts) and ``conversation`` (the raw text).
+
+    Args:
+        schema: JSON Schema dict describing the fields to extract.
+        text: Raw conversation or sample text to extract from.
+        template_text: Optional raw Jinja2 override.  Defaults to the
+            on-disk ``extract_structured_v1.jinja2``.
+
+    Returns:
+        The rendered prompt string, ready for the LLM.
+    """
+    from jinja2 import Environment  # noqa: PLC0415 — render-only dependency
+
+    # S701: plain-text LLM prompt, not HTML — escaping would corrupt schema JSON.
+    template = Environment(autoescape=False).from_string(  # noqa: S701
+        _load_extraction_template(template_text)
+    )
+    return template.render(
+        schemas=[{"name": PREVIEW_SCHEMA_NAME, "json_schema": schema}],
+        conversation=text,
+    )
+
+
+def collect_schema_validation_errors(data: dict, schema: dict) -> list[str]:
+    """Validate *data* against *schema*, returning field-level error strings.
+
+    Non-raising counterpart to :func:`_validate_against_schema` for paths
+    (like schema preview) that report mismatches instead of failing.
+
+    Args:
+        data: The extracted data to validate.
+        schema: The JSON Schema definition to validate against.
+
+    Returns:
+        Human-readable ``"<dotted.path>: <message>"`` strings sorted by
+        path (bare message for root-level errors); empty when *data*
+        conforms to *schema*.
+    """
+    import jsonschema  # noqa: PLC0415 — optional dependency
+
+    validator = jsonschema.Draft7Validator(schema)
+    errors = sorted(
+        validator.iter_errors(data),
+        key=lambda e: [str(p) for p in e.path],
+    )
+    formatted: list[str] = []
+    for error in errors:
+        path = ".".join(str(p) for p in error.absolute_path)
+        formatted.append(f"{path}: {error.message}" if path else error.message)
+    return formatted
+
+
+def parse_extraction_json(raw: str) -> Any:
+    """Parse LLM extraction output into a JSON value, tolerating fences.
+
+    Strips markdown code fences, finds the first JSON object or array,
+    and parses it.  Returns ``None`` when no parseable value is found.
+
+    Args:
+        raw: Raw LLM response text.
+
+    Returns:
+        The parsed JSON value (usually a ``dict``), or ``None``.
+        ``Any`` because the LLM may emit any JSON shape.
+    """
+    import orjson  # noqa: PLC0415 — parse-only dependency
+
+    text = raw.strip()
+    if "```json" in text:
+        text = text.split("```json", 1)[1].split("```", 1)[0].strip()
+    elif "```" in text:
+        text = text.split("```", 1)[1].split("```", 1)[0].strip()
+
+    brace = text.find("{")
+    bracket = text.find("[")
+    if bracket >= 0 and (brace < 0 or bracket < brace):
+        brace = bracket
+    if brace < 0:
+        return None
+    text = text[brace:]
+
+    try:
+        return orjson.loads(text.encode())
+    except orjson.JSONDecodeError:
+        pass
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for index, char in enumerate(text):
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+        elif char == '"':
+            in_string = True
+        elif char in "{[":
+            depth += 1
+        elif char in "}]":
+            depth -= 1
+            if depth == 0:
+                try:
+                    return orjson.loads(text[: index + 1].encode())
+                except orjson.JSONDecodeError:
+                    return None
+    return None
 
 
 # ── Private helpers ────────────────────────────────────────────────────────────
@@ -85,9 +228,7 @@ async def process_structured_output(
         )
         return
 
-    schema_map: dict[str, dict[str, Any]] = {
-        s["name"]: s for s in schemas
-    }
+    schema_map: dict[str, dict[str, Any]] = {s["name"]: s for s in schemas}
 
     inserted_count = 0
     for schema_name, data in parsed.items():
@@ -111,9 +252,7 @@ async def process_structured_output(
             )
             continue
 
-        cleaned: dict[str, object] = {
-            k: v for k, v in data.items() if v is not None
-        }
+        cleaned: dict[str, object] = {k: v for k, v in data.items() if v is not None}
 
         type_defaults: dict[str, object] = {
             "string": "unknown",
@@ -178,5 +317,3 @@ async def process_structured_output(
         )
 
     await db.flush()
-
-
