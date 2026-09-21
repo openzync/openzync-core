@@ -499,7 +499,7 @@ class TestCreateEntity:
         """Database error → ExternalServiceError."""
         _configure_db_error(backend, mock_db, mock_surreal, mock_falkordb_client)
 
-        with pytest.raises(ExternalServiceError, match="Failed to create entity|DB connection lost|surreal not reachable|falkordb connection refused"):
+        with pytest.raises(ExternalServiceError, match="Failed to create entity|DB connection lost|surreal not reachable|falkordb connection refused|FalkorDB schema bootstrap failed"):
             await backend.create_entity(
                 org_id=ORG_ID,
                 project_id=PROJ_ID,

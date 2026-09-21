@@ -26,7 +26,7 @@ import pytest
 
 pytest.importorskip("falkordb")
 
-from core.exceptions import ExternalServiceError, NotFoundError
+from core.exceptions import ExternalServiceError, NotFoundError, ValidationError
 from packages.graph_backend.falkordb import (
     FalkorGraphBackend,
     _decode_offset_cursor,
@@ -357,7 +357,7 @@ class TestFalkorGraphBackendEntityCrud:
         """FalkorDB error is wrapped in ``ExternalServiceError``."""
         mock_graph.query.side_effect = RuntimeError("DB connection lost")
 
-        with pytest.raises(ExternalServiceError, match="DB connection lost"):
+        with pytest.raises(ExternalServiceError, match="FalkorDB schema bootstrap failed"):
             await backend.create_entity(
                 org_id=ORG_ID,
                 project_id=PROJ_ID,
@@ -1129,7 +1129,7 @@ class TestFalkorGraphBackendSearchAndListing:
     ) -> None:
         """FalkorDB error is wrapped in ``ExternalServiceError``."""
         mock_graph.query.side_effect = RuntimeError("list failed")
-        with pytest.raises(ExternalServiceError, match="list failed"):
+        with pytest.raises(ExternalServiceError, match="Failed to list entities"):
             await backend.list_entities(ORG_ID, PROJ_ID)
 
     # ── list_entity_edges ─────────────────────────────────────────────────
@@ -1179,8 +1179,8 @@ class TestFalkorGraphBackendSearchAndListing:
     async def test_list_entity_edges_invalid_predicate(
         backend: FalkorGraphBackend,
     ) -> None:
-        """Invalid predicate type raises ``ValueError``."""
-        with pytest.raises(ValueError, match="Unsafe edge type"):
+        """Invalid predicate type raises ``ValidationError``."""
+        with pytest.raises(ValidationError, match="Invalid predicate"):
             await backend.list_entity_edges(
                 org_id=ORG_ID,
                 project_id=PROJ_ID,
@@ -1202,7 +1202,7 @@ class TestFalkorGraphBackendSearchAndListing:
     ) -> None:
         """FalkorDB error is wrapped in ``ExternalServiceError``."""
         mock_graph.query.side_effect = RuntimeError("edges failed")
-        with pytest.raises(ExternalServiceError, match="edges failed"):
+        with pytest.raises(ExternalServiceError, match="Failed to list edges for entity"):
             await backend.list_entity_edges(ORG_ID, PROJ_ID, ENTITY_ID)
 
     # ── get_entity_with_edges ─────────────────────────────────────────────
