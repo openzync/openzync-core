@@ -195,8 +195,11 @@ def _decode_sort_keyset_cursor(
         decoded = orjson.loads(base64.b64decode(cursor))
         c_sort = decoded.get("s", default_sort)
         c_dir = decoded.get("d", default_dir)
+        # note: validate the tiebreak id up front so garbage cursors fail
+        # closed with 422 instead of 500ing at SQL bind time.
+        UUID(str(decoded["i"]))
         return c_sort, c_dir, decoded["c"], decoded["i"]
-    except (ValueError, TypeError, KeyError) as e:
+    except (ValueError, TypeError, KeyError, AttributeError) as e:
         raise ValidationError(f"Invalid cursor: {e}") from e
 
 
@@ -1229,8 +1232,8 @@ class PostgresGraphBackend(GraphBackend):
 
         where_clause = "ge.organization_id = :org_id AND ge.project_id = :project_id"
         params: dict[str, object] = {
-            "org_id": str(org_id),
-            "project_id": str(project_id),
+            "org_id": org_id,
+            "project_id": project_id,
             "limit": limit + 1,
         }
 
@@ -1250,10 +1253,10 @@ class PostgresGraphBackend(GraphBackend):
                         f"request {req_sort}:{req_dir})"
                     )
                 op = ">" if req_dir == "asc" else "<"
-                keyset = f"({order_col}, ge.id) {op} (:cursor_val, :cursor_id::uuid)"
+                keyset = f"({order_col}, ge.id) {op} (:cursor_val, :cursor_id)"
                 where_clause += f" AND {keyset}"
                 params["cursor_val"] = c_val
-                params["cursor_id"] = c_id
+                params["cursor_id"] = UUID(c_id)
             except ValidationError:
                 raise
 
@@ -1297,7 +1300,7 @@ class PostgresGraphBackend(GraphBackend):
                 },
             )
             raise ExternalServiceError(
-                message=f"Failed to list entities: {exc}",
+                message="Failed to list entities",
                 detail={"org_id": str(org_id)},
             ) from exc
 
@@ -1339,9 +1342,9 @@ class PostgresGraphBackend(GraphBackend):
             AND r.invalid_at IS NULL
         """
         params: dict[str, object] = {
-            "org_id": str(org_id),
-            "project_id": str(project_id),
-            "eid": str(entity_id),
+            "org_id": org_id,
+            "project_id": project_id,
+            "eid": entity_id,
             "limit": limit + 1,
         }
 
@@ -1361,10 +1364,10 @@ class PostgresGraphBackend(GraphBackend):
                         f"request {req_sort}:{req_dir})"
                     )
                 op = ">" if req_dir == "asc" else "<"
-                keyset = f"({order_col}, r.id) {op} (:cursor_val, :cursor_id::uuid)"
+                keyset = f"({order_col}, r.id) {op} (:cursor_val, :cursor_id)"
                 conditions += f" AND {keyset}"
                 params["cursor_val"] = c_val
-                params["cursor_id"] = c_id
+                params["cursor_id"] = UUID(c_id)
             except ValidationError:
                 raise
 
@@ -1415,7 +1418,7 @@ class PostgresGraphBackend(GraphBackend):
                 },
             )
             raise ExternalServiceError(
-                message=f"Failed to list edges for entity {entity_id}: {exc}",
+                message=f"Failed to list edges for entity {entity_id}",
                 detail={"org_id": str(org_id), "entity_id": str(entity_id)},
             ) from exc
 
@@ -2127,14 +2130,14 @@ class PostgresGraphBackend(GraphBackend):
             "o.organization_id = :org_id AND o.project_id = :project_id"
         )
         params: dict[str, object] = {
-            "org_id": str(org_id),
-            "project_id": str(project_id),
+            "org_id": org_id,
+            "project_id": project_id,
             "limit": limit + 1,
         }
 
         if subject_entity_id is not None:
             where_clause += " AND o.subject_entity_id = :subject_id"
-            params["subject_id"] = str(subject_entity_id)
+            params["subject_id"] = subject_entity_id
 
         if observation_type is not None:
             where_clause += " AND o.observation_type = :obs_type"
@@ -2152,10 +2155,10 @@ class PostgresGraphBackend(GraphBackend):
                         f"request {req_sort}:{req_dir})"
                     )
                 op = ">" if req_dir == "asc" else "<"
-                keyset = f"({order_col}, o.id) {op} (:cursor_val, :cursor_id::uuid)"
+                keyset = f"({order_col}, o.id) {op} (:cursor_val, :cursor_id)"
                 where_clause += f" AND {keyset}"
                 params["cursor_val"] = c_val
-                params["cursor_id"] = c_id
+                params["cursor_id"] = UUID(c_id)
             except ValidationError:
                 raise
 
@@ -2205,7 +2208,7 @@ class PostgresGraphBackend(GraphBackend):
                 },
             )
             raise ExternalServiceError(
-                message=f"Failed to get observations: {exc}",
+                message="Failed to get observations",
                 detail={"org_id": str(org_id)},
             ) from exc
 

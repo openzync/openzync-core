@@ -228,7 +228,7 @@ class GraphBackend(ABC):
     ) -> dict[str, Any]:
         """List entity nodes with optional type filter and cursor pagination.
 
-        Default order is backend-specific (PostgreSQL/FalkorDB:
+        Default order is backend-specific (PostgreSQL/FalkorDB/SurrealDB:
         ``created_at ASC``); whitelist ``name``, ``created_at``,
         ``entity_type``.
 
