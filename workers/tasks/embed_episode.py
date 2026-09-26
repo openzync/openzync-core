@@ -71,6 +71,7 @@ async def embed_episode(
     from core.llm import resolve_backend
     from core.org_config import get_org_config
     from repositories.episode_repository import EpisodeRepository
+    from repositories.project_repository import ProjectRepository
 
     logger.info(
         "embed_episode.started",
@@ -116,6 +117,20 @@ async def embed_episode(
                 "embed_episode.skipped_already_done",
                 episode_id=episode_id,
                 enrichment_status=episode.enrichment_status,
+            )
+            return
+
+        # Archived-project guard: pause-and-resume. Fail-closed (missing
+        # row counts as archived). Early return sets no bits, so
+        # un-archiving resumes via reconcile or retry.
+        if await ProjectRepository(idempotency_db).is_archived(
+            uuid.UUID(org_id), uuid.UUID(project_id)
+        ):
+            logger.info(
+                "embed_episode.project_archived_skipping",
+                episode_id=episode_id,
+                org_id=org_id,
+                project_id=project_id,
             )
             return
 

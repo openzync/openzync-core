@@ -340,6 +340,7 @@ async def get_memory_service(
         org_repo=OrganizationRepository(db),
         webhook_service=webhook,
         blob_repo=EpisodeBlobRepository(db),
+        project_repo=ProjectRepository(db),
         bao_client=bao_client,
     )
 

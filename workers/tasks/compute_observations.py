@@ -85,6 +85,7 @@ async def compute_observations(
     from core.config import settings
     from core.db import get_async_session
     from repositories.episode_repository import EpisodeRepository
+    from repositories.project_repository import ProjectRepository
     from services.observation_service import ObservationService
     from workers.backend import resolve_graph_backend
 
@@ -178,6 +179,18 @@ async def compute_observations(
                     "compute_observations.already_done",
                     episode_id=episode_id,
                     enrichment_status=episode.enrichment_status,
+                )
+                return
+
+            # Archived-project guard: pause-and-resume. Fail-closed
+            # (missing row counts as archived). Early return sets no
+            # bits, so un-archiving resumes via reconcile or retry.
+            if await ProjectRepository(db).is_archived(UUID(org_id), UUID(project_id)):
+                logger.info(
+                    "compute_observations.project_archived_skipping",
+                    episode_id=episode_id,
+                    org_id=org_id,
+                    project_id=project_id,
                 )
                 return
 

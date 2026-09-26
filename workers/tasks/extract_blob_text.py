@@ -440,6 +440,7 @@ async def extract_blob_text(
     from core.db import get_async_session
     from repositories.episode_blob_repository import EpisodeBlobRepository
     from repositories.episode_repository import EpisodeRepository
+    from repositories.project_repository import ProjectRepository
 
     # ── Resolve DB engine from ARQ context or create one ──────────────────
     engine = ctx.get("db_engine") if isinstance(ctx, dict) else None
@@ -481,6 +482,18 @@ async def extract_blob_text(
 
             if episode.enrichment_status & ENRICHMENT_BLOB_TEXT:
                 log.info("extract_blob_text.already_done")
+                return
+
+            # Archived-project guard: pause-and-resume. Fail-closed
+            # (missing row counts as archived). Early return sets no
+            # bits, so un-archiving resumes via reconcile or retry.
+            if await ProjectRepository(db).is_archived(UUID(org_id), UUID(project_id)):
+                log.info(
+                    "extract_blob_text.project_archived_skipping",
+                    episode_id=episode_id,
+                    org_id=org_id,
+                    project_id=project_id,
+                )
                 return
 
             # ── Fetch org storage config ────────────────────────────────

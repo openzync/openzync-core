@@ -177,6 +177,7 @@ async def _repair_missing_fact_embeddings(
     from sqlalchemy import select, text
 
     from models.fact import Fact
+    from models.project import Project
 
     rows: list[dict[str, Any]] = []
     async with session_factory() as db:
@@ -195,6 +196,9 @@ async def _repair_missing_fact_embeddings(
                 Fact.embedding.is_(None),
                 Fact.embedded_at.is_(None),
                 Fact.invalid_at.is_(None),
+                Fact.project_id.not_in(
+                    select(Project.id).where(Project.is_archived.is_(True))
+                ),
             )
             .order_by(Fact.created_at.asc())
             .limit(RECONCILE_BATCH_SIZE)
@@ -329,6 +333,7 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
     from sqlalchemy import select, text
 
     from models.episode import Episode
+    from models.project import Project
 
     cutoff = datetime.now(UTC) - timedelta(minutes=STALE_AFTER_MINUTES)
 
@@ -350,6 +355,9 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
             ).where(
                 Episode.enrichment_status != ENRICHMENT_ALL,
                 Episode.updated_at < cutoff,
+                Episode.project_id.not_in(
+                    select(Project.id).where(Project.is_archived.is_(True))
+                ),
             )
             .order_by(Episode.updated_at.asc())
             .limit(RECONCILE_BATCH_SIZE)

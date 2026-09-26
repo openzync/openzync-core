@@ -116,6 +116,38 @@ class ProjectRepository:
         )
         return result.scalar_one_or_none()
 
+    async def is_archived(
+        self, organization_id: UUID, project_id: UUID
+    ) -> bool:
+        """Check whether a project is archived (or missing).
+
+        Single-column SELECT scoped to the org. Fail-closed: returns
+        ``True`` when the row is missing so episode workers skip work
+        instead of burning billable I/O on a project that is gone.
+
+        Worker-session note: episode workers set the ``app.org_id`` RLS
+        GUC (not ``app.bypass_rls``), so the org-scoped predicate
+        matches their session semantics — no unscoped variant needed.
+
+        Args:
+            organization_id: Tenant scope.
+            project_id: The project's UUID.
+
+        Returns:
+            ``True`` if the project is archived or does not exist,
+            ``False`` otherwise.
+        """
+        result = await self._db.execute(
+            select(Project.is_archived).where(
+                Project.id == project_id,
+                Project.organization_id == organization_id,
+            )
+        )
+        flag = result.scalar_one_or_none()
+        if flag is None:
+            return True
+        return flag
+
     async def list(
         self,
         organization_id: UUID,

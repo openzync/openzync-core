@@ -161,6 +161,7 @@ async def enrich_episode(
     from repositories.episode_blob_repository import EpisodeBlobRepository
     from repositories.episode_repository import EpisodeRepository
     from repositories.fact_repository import FactRepository
+    from repositories.project_repository import ProjectRepository
     from schemas.llm_outputs import (
         CombinedLLMOutput,
         EntityExtractionOutput,
@@ -223,6 +224,20 @@ async def enrich_episode(
             )
             if episode.enrichment_status & llm_bits == llm_bits:
                 log.info("enrich_episode.already_done")
+                return
+
+            # ── 2b. Archived-project guard: pause-and-resume ────────────
+            # Fail-closed (missing row counts as archived). Early return
+            # sets no bits, so un-archiving resumes via reconcile or retry.
+            if await ProjectRepository(db).is_archived(
+                uuid.UUID(org_id), uuid.UUID(project_id)
+            ):
+                log.info(
+                    "enrich_episode.project_archived_skipping",
+                    episode_id=episode_id,
+                    org_id=org_id,
+                    project_id=project_id,
+                )
                 return
 
             user_id: str = str(episode.user_id)

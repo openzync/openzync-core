@@ -51,6 +51,7 @@ from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
 from repositories.ingest_dedup_repository import IngestDedupRepository
 from repositories.organization_repository import OrganizationRepository
+from repositories.project_repository import ProjectRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
 from schemas.memory import IngestMemoryResponse, Message
@@ -144,6 +145,7 @@ class MemoryService:
         idempotency_service: IdempotencyService | None = None,
         dedup_repo: IngestDedupRepository | None = None,
         bao_client: Any | None = None,
+        project_repo: ProjectRepository | None = None,
     ) -> None:
         self._db = db
         self._redis = redis_client
@@ -159,6 +161,7 @@ class MemoryService:
         self._org_repo = org_repo or OrganizationRepository(db)
         self._blob_repo = blob_repo or EpisodeBlobRepository(db)
         self._dedup_repo = dedup_repo or IngestDedupRepository(db)
+        self._project_repo = project_repo or ProjectRepository(db)
 
     # ──────────────────────────────────────────────────────────────────────────
     # Public API
@@ -229,9 +232,21 @@ class MemoryService:
             ConflictError: If ``idempotency_key`` was already used with a
                 different request body, or a concurrent ingest won the
                 sequence-number race (retry the request).
+            NotFoundError: If the project does not exist or is archived.
             PIIUnavailableError: If the PII policy cannot be fetched or
                 redaction fails — nothing is persisted.
         """
+        # ── Step 0: Block ingests to archived projects ───────────────────
+        # get_by_id filters is_archived=False, so archived and missing
+        # both surface as None → NotFoundError, consistent with project
+        # routes. Runs before idempotency so no state is claimed.
+        project = await self._project_repo.get_by_id(org_id, project_id)
+        if project is None:
+            raise NotFoundError(
+                message=f"Project {project_id} not found",
+                detail={"project_id": str(project_id)},
+            )
+
         # ── Step 1: Idempotency check ────────────────────────────────────
         if idempotency_key is not None:
             result = await self._idem.check_idempotency_key(
