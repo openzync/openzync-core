@@ -58,13 +58,17 @@ def validate_embedding_dim(vec: list[float], *, source: str) -> None:
         source: Caller name for the error detail (e.g. ``"embed_fact"``).
 
     Raises:
-        ExternalServiceError: If ``len(vec) != CANONICAL_EMBED_DIM``.
+        ExternalServiceError: If ``len(vec) != CANONICAL_EMBED_DIM`` or any
+            element is not a float/int.
     """
-    if len(vec) != CANONICAL_EMBED_DIM:
+    if len(vec) != CANONICAL_EMBED_DIM or not all(
+        isinstance(v, (float, int)) and not isinstance(v, bool) for v in vec
+    ):
         raise ExternalServiceError(
             message=(
-                f"Embedding dimension mismatch in {source}: got {len(vec)}, "
-                f"expected canonical {CANONICAL_EMBED_DIM}. Refusing to store."
+                f"Invalid embedding in {source}: len {len(vec)} "
+                f"(expected canonical {CANONICAL_EMBED_DIM} float elements). "
+                "Refusing to store."
             ),
             detail={
                 "source": source,

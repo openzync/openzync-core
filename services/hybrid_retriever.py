@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import Float, Select, bindparam, cast, func, literal, select, text
+from sqlalchemy import Select, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import SearchLegFailedError
@@ -462,44 +462,30 @@ class HybridRetriever:
             A list of result dicts with ``id``, ``content``, ``role``,
             ``score``, and ``created_at`` keys.
         """
-        from pgvector.sqlalchemy import (
-            Vector,  # lazy: numpy CPU compat; caught by outer try/except
-        )
-
         from core.embeddings import CANONICAL_EMBED_DIM
 
-        embedding_col = cast(Episode.embedding, Vector(CANONICAL_EMBED_DIM))
-        # Native ``list[float]`` bound as ``Vector`` — the pgvector asyncpg
-        # codec (registered via ``init_db_engine``) encodes it; a ``str``
-        # literal here breaks decoding (asyncpg DataError).
-        query_literal = bindparam(
-            "embedding",
-            value=query_embedding,
-            type_=Vector(CANONICAL_EMBED_DIM),
-        )
-
-        stmt = (
-            select(
-                Episode.id,
-                Episode.content,
-                Episode.role,
-                Episode.created_at,
-                (
-                    literal(1.0, Float)
-                    - func.coalesce(
-                        embedding_col.op("<=>")(query_literal),
-                        literal(1.0, Float),
-                    )
-                ).label("score"),
-            )
-            .where(
-                Episode.project_id == project_id,
-                Episode.is_deleted.is_(False),
-                Episode.embedding.isnot(None),
-                func.vector_dims(Episode.embedding) > 0,
-            )
-            .order_by(text("score DESC"))
-            .limit(limit)
+        # Raw ``text()`` — the pgvector asyncpg codec (registered via
+        # ``init_db_engine``) encodes the native ``list[float]`` directly;
+        # binding through ``Vector``'s bind_processor stringified it and the
+        # codec re-encoded the string (asyncpg DataError → 503). Mirrors
+        # ``workers/tasks/embed_episode.py``.
+        stmt = text(
+            "SELECT id, content, role, created_at, "  # noqa: S608
+            "1.0 - coalesce(embedding <=> "
+            f"CAST(:embedding AS vector({CANONICAL_EMBED_DIM})), 1.0) AS score "
+            "FROM episodes "
+            "WHERE project_id = :project_id "
+            "AND is_deleted = false "
+            "AND embedding IS NOT NULL "
+            "AND vector_dims(embedding) > 0 "
+            "ORDER BY score DESC "
+            "LIMIT :limit"
+            # S608 justification: interpolates the int constant
+            # CANONICAL_EMBED_DIM into a static CAST, never user input.
+        ).bindparams(
+            embedding=query_embedding,
+            project_id=project_id,
+            limit=limit,
         )
         results = await self._execute_ranked_query(stmt)
         if results:
@@ -538,56 +524,30 @@ class HybridRetriever:
         """
         effective_time = query_time or datetime.now(UTC)
 
-        # Frozen canonical dim — the ``facts.embedding`` column is
-        # ``VECTOR(768)`` and the query vector is validated to exactly
-        # 768 dims upstream in ``_embed_query``.
-        from pgvector.sqlalchemy import (
-            Vector,  # lazy: numpy CPU compat; caught by outer try/except
-        )
-
         from core.embeddings import CANONICAL_EMBED_DIM
 
-        embedding_col = cast(Fact.embedding, Vector(CANONICAL_EMBED_DIM))
-        # Native ``list[float]`` bound as ``Vector`` — same codec contract
-        # as ``_vector_search_episodes``.
-        query_literal = bindparam(
-            "embedding",
-            value=query_embedding,
-            type_=Vector(CANONICAL_EMBED_DIM),
-        )
-
-        stmt = (
-            select(
-                Fact.id,
-                Fact.content,
-                Fact.subject,
-                Fact.predicate,
-                Fact.object,
-                Fact.confidence,
-                Fact.created_at,
-                Fact.valid_from,
-                Fact.valid_to,
-                Fact.invalid_at,
-                (
-                    literal(1.0, Float)
-                    - func.coalesce(
-                        embedding_col.op("<=>")(query_literal),
-                        literal(1.0, Float),
-                    )
-                ).label("score"),
-            )
-            .where(
-                Fact.project_id == project_id,
-                # Effective-at predicate — superseded facts (valid_to set)
-                # are excluded without conflating retraction (invalid_at).
-                Fact.invalid_at.is_(None) | (Fact.invalid_at > effective_time),
-                Fact.valid_from.is_(None) | (Fact.valid_from <= effective_time),
-                Fact.valid_to.is_(None) | (Fact.valid_to > effective_time),
-                Fact.embedding.isnot(None),
-                func.vector_dims(Fact.embedding) > 0,
-            )
-            .order_by(text("score DESC"))
-            .limit(limit)
+        # Raw ``text()`` — same codec contract as ``_vector_search_episodes``.
+        stmt = text(
+            "SELECT id, content, subject, predicate, object, "  # noqa: S608
+            "confidence, created_at, valid_from, valid_to, invalid_at, "
+            "1.0 - coalesce(embedding <=> "
+            f"CAST(:embedding AS vector({CANONICAL_EMBED_DIM})), 1.0) AS score "
+            "FROM facts "
+            "WHERE project_id = :project_id "
+            "AND (invalid_at IS NULL OR invalid_at > :effective_time) "
+            "AND (valid_from IS NULL OR valid_from <= :effective_time) "
+            "AND (valid_to IS NULL OR valid_to > :effective_time) "
+            "AND embedding IS NOT NULL "
+            "AND vector_dims(embedding) > 0 "
+            "ORDER BY score DESC "
+            "LIMIT :limit"
+            # S608 justification: interpolates the int constant
+            # CANONICAL_EMBED_DIM into a static CAST, never user input.
+        ).bindparams(
+            embedding=query_embedding,
+            project_id=project_id,
+            effective_time=effective_time,
+            limit=limit,
         )
         results = await self._execute_ranked_query(stmt)
         if results:
