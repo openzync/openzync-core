@@ -176,7 +176,7 @@ async def _prom_range(promql: str, days: int) -> list[list]:
 
 
 async def _episodes_per_day(
-    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
+    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: UUID | None
 ) -> dict:
     conditions = [
         Episode.organization_id == org_uuid,
@@ -184,7 +184,7 @@ async def _episodes_per_day(
         Episode.created_at >= func.now() - text(f"interval '{days} days'"),
     ]
     if project_id:
-        conditions.append(Episode.project_id == UUID(project_id))
+        conditions.append(Episode.project_id == project_id)
     stmt = (
         select(
             func.date_trunc("day", Episode.created_at).label("date"),
@@ -201,7 +201,7 @@ async def _episodes_per_day(
 
 
 async def _messages_per_day(
-    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
+    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: UUID | None
 ) -> dict:
     # Episodes = message turns; same query shape as episodes_per_day
     conditions = [
@@ -210,7 +210,7 @@ async def _messages_per_day(
         Episode.created_at >= func.now() - text(f"interval '{days} days'"),
     ]
     if project_id:
-        conditions.append(Episode.project_id == UUID(project_id))
+        conditions.append(Episode.project_id == project_id)
     stmt = (
         select(
             func.date_trunc("day", Episode.created_at).label("date"),
@@ -227,7 +227,7 @@ async def _messages_per_day(
 
 
 async def _users_per_day(
-    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
+    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: UUID | None
 ) -> dict:
     stmt = (
         select(
@@ -249,14 +249,14 @@ async def _users_per_day(
 
 
 async def _entities_per_day(
-    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
+    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: UUID | None
 ) -> dict:
     conditions = [
         GraphEntity.organization_id == org_uuid,
         GraphEntity.created_at >= func.now() - text(f"interval '{days} days'"),
     ]
     if project_id:
-        conditions.append(GraphEntity.project_id == UUID(project_id))
+        conditions.append(GraphEntity.project_id == project_id)
     stmt = (
         select(
             func.date_trunc("day", GraphEntity.created_at).label("date"),
@@ -273,14 +273,14 @@ async def _entities_per_day(
 
 
 async def _facts_per_day(
-    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
+    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: UUID | None
 ) -> dict:
     conditions = [
         Fact.organization_id == org_uuid,
         Fact.created_at >= func.now() - text(f"interval '{days} days'"),
     ]
     if project_id:
-        conditions.append(Fact.project_id == UUID(project_id))
+        conditions.append(Fact.project_id == project_id)
     stmt = (
         select(
             func.date_trunc("day", Fact.created_at).label("date"),
@@ -297,14 +297,14 @@ async def _facts_per_day(
 
 
 async def _enrichment_progress(
-    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
+    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: UUID | None
 ) -> dict:
     conditions = [
         Episode.organization_id == org_uuid,
         Episode.is_deleted.is_(False),
     ]
     if project_id:
-        conditions.append(Episode.project_id == UUID(project_id))
+        conditions.append(Episode.project_id == project_id)
     stmt = (
         select(
             Episode.enrichment_status,
@@ -330,14 +330,14 @@ async def _enrichment_progress(
 
 
 async def _top_projects_by_episodes(
-    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
+    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: UUID | None
 ) -> dict:
     conditions = [
         Episode.organization_id == org_uuid,
         Episode.is_deleted.is_(False),
     ]
     if project_id:
-        conditions.append(Episode.project_id == UUID(project_id))
+        conditions.append(Episode.project_id == project_id)
     stmt = (
         select(
             Episode.project_id,
@@ -361,14 +361,14 @@ async def _top_projects_by_episodes(
 
 
 async def _top_users_by_messages(
-    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
+    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: UUID | None
 ) -> dict:
     conditions = [
         Episode.organization_id == org_uuid,
         Episode.is_deleted.is_(False),
     ]
     if project_id:
-        conditions.append(Episode.project_id == UUID(project_id))
+        conditions.append(Episode.project_id == project_id)
     stmt = (
         select(
             Episode.user_id,
@@ -395,7 +395,7 @@ async def _top_users_by_messages(
 
 
 async def _error_rate_by_day(
-    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
+    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: UUID | None
 ) -> dict:
     promql = f'sum(increase(openzync_http_requests_total{{status="5xx",org_id="{org_uuid}"}}[1d]))'
     rows = await _prom_range(promql, days)
@@ -405,7 +405,7 @@ async def _error_rate_by_day(
 
 
 async def _latency_percentiles(
-    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
+    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: UUID | None
 ) -> dict:
     queries = {
         "overall_p50": f'histogram_quantile(0.50, sum(rate(openzync_http_request_duration_seconds_bucket{{org_id="{org_uuid}"}}[5m])) by (le)) * 1000',
@@ -428,7 +428,7 @@ async def _latency_percentiles(
 
 
 async def _queue_depth_over_time(
-    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
+    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: UUID | None
 ) -> dict:
     # Was Prometheus, now DB: pending enrichments (enrichment_status != 63) per day
     conditions = [
@@ -438,7 +438,7 @@ async def _queue_depth_over_time(
         Episode.created_at >= func.now() - text(f"interval '{days} days'"),
     ]
     if project_id:
-        conditions.append(Episode.project_id == UUID(project_id))
+        conditions.append(Episode.project_id == project_id)
     stmt = (
         select(
             func.date_trunc("day", Episode.created_at).label("date"),
@@ -455,7 +455,7 @@ async def _queue_depth_over_time(
 
 
 async def _context_retrieval_rate(
-    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: str | None
+    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: UUID | None
 ) -> dict:
     promql = f'sum(rate(openzync_context_latency_seconds_count{{org_id="{org_uuid}"}}[5m]))'
     rows = await _prom_range(promql, days)
@@ -512,7 +512,9 @@ async def run_org_query(
     query: str = Query(..., description="Query name (see /metrics/queries)"),
     days: int = Query(default=7, ge=1, le=365, description="Look-back window in days"),
     limit: int = Query(default=20, ge=1, le=100, description="Max results"),
-    project_id: str | None = Query(default=None, description="Optional project UUID filter"),
+    project_id: UUID | None = Query(
+        default=None, description="Optional project UUID filter"
+    ),
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_permission("members:read")),
     prom: MetricsService = Depends(_get_metrics_service),

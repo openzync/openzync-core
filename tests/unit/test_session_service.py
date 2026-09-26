@@ -457,7 +457,10 @@ class TestSessionService:
         mock_blob.file_name = "photo.png"
         mock_blob.mime_type = "image/png"
         mock_blob.file_size = 1024
-        mock_blob_repo.get_by_episode = AsyncMock(return_value=[mock_blob])
+        # Batch contract: one get_by_episodes call returns {episode_id: [blobs]}.
+        mock_blob_repo.get_by_episodes = AsyncMock(
+            return_value={episode.id: [mock_blob]}
+        )
 
         result = await service.get_messages(
             org_id=self.ORG_ID,
@@ -472,14 +475,17 @@ class TestSessionService:
         assert msg.blobs[0].file_name == "photo.png"
         assert msg.blobs[0].mime_type == "image/png"
         assert msg.blobs[0].file_size == 1024
-        mock_blob_repo.get_by_episode.assert_awaited_once_with(episode.id)
+        # download_url is resolved later (or left None) — never in this batch path.
+        assert msg.blobs[0].download_url is None
+        mock_blob_repo.get_by_episodes.assert_awaited_once_with([episode.id])
+        mock_blob_repo.get_by_episode.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_messages_blob_load_failure(self) -> None:
-        """Blob loading failure does not prevent messages from being returned."""
+        """Blob loading failure propagates — no silent blob-less page."""
         mock_repo = AsyncMock(spec=SessionRepository)
         mock_blob_repo = AsyncMock(spec=EpisodeBlobRepository)
-        mock_blob_repo.get_by_episode = AsyncMock(
+        mock_blob_repo.get_by_episodes = AsyncMock(
             side_effect=RuntimeError("S3 down")
         )
         service = SessionService(repo=mock_repo, blob_repo=mock_blob_repo)
@@ -491,15 +497,11 @@ class TestSessionService:
         )
         mock_repo.get_messages.return_value = ([episode], None)
 
-        result = await service.get_messages(
-            org_id=self.ORG_ID,
-            session_id=mock_session.id,
-        )
-
-        # Messages are still returned despite blob loading failure.
-        assert len(result.data) == 1
-        assert result.data[0].content == "Blob fail"
-        assert result.data[0].blobs == []
+        with pytest.raises(RuntimeError, match="S3 down"):
+            await service.get_messages(
+                org_id=self.ORG_ID,
+                session_id=mock_session.id,
+            )
 
     # ═════════════════════════════════════════════════════════════════════════
     # New tests: delete with webhook

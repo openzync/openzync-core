@@ -113,7 +113,6 @@ async def embed_fact(
     from core.db import get_async_session
     from core.embeddings import (
         CANONICAL_EMBED_DIM,
-        format_vector_literal,
         resolve_embed_model,
         validate_embedding_dim,
     )
@@ -244,9 +243,11 @@ async def embed_fact(
     validate_embedding_dim(embedding, source="embed_fact")
 
     # ── 4. Store in pgvector ──────────────────────────────────────────────
-    # No pgvector asyncpg codec is registered, so the vector goes in as an
-    # explicit ``[...]`` literal with a static ``::vector(768)`` cast. The
-    # dimension was validated above — the cast cannot silently reshape.
+    # The pgvector asyncpg codec IS registered via ``init_db_engine``, so
+    # the vector goes in as native ``list[float]`` — the codec encodes it
+    # and the static ``::vector(768)`` cast only asserts the dimension.
+    # Passing a ``str`` literal here breaks decoding (asyncpg DataError).
+    # The dimension was validated above — the cast cannot silently reshape.
     try:
         async with session_factory() as db:
             await db.execute(
@@ -257,7 +258,7 @@ async def embed_fact(
                     # S608 justification: interpolates the int constant
                     # CANONICAL_EMBED_DIM into a static CAST, never user input.
                 ),
-                {"embedding": format_vector_literal(embedding), "id": fact_id},
+                {"embedding": embedding, "id": fact_id},
             )
             await db.commit()
 

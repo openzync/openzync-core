@@ -25,6 +25,7 @@ from schemas.admin_metrics import (
 
 ORG_ID = UUID("00000000-0000-0000-0000-000000000001")
 USER_ID = UUID("00000000-0000-0000-0000-000000000002")
+PROJECT_ID = UUID("00000000-0000-0000-0000-000000000003")
 
 
 @pytest.fixture(autouse=True)
@@ -185,6 +186,55 @@ async def test_get_org_query_unknown_returns_422() -> None:
     assert resp.status_code == 422
     body = resp.json()
     assert "detail" in body
+
+
+@pytest.mark.asyncio
+async def test_get_org_query_invalid_project_id_returns_422() -> None:
+    """Non-UUID project_id → 422 (typed ``UUID | None`` Query validation)."""
+    app, _ = _create_app()
+    transport = ASGITransport(app=app)
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get(
+            "/metrics/query",
+            params={"query": "episodes_per_day", "project_id": "not-a-uuid"},
+        )
+
+    assert resp.status_code == 422
+    # FastAPI's request-validation payload names the offending query param.
+    errors = resp.json()["detail"]
+    assert any(
+        err.get("loc") == ["query", "project_id"] for err in errors
+    ), errors
+
+
+@pytest.mark.asyncio
+async def test_get_org_query_with_valid_project_id_returns_200() -> None:
+    """Valid UUID project_id is passed through to the handler (still 200)."""
+    app, db_mock = _create_app()
+    transport = ASGITransport(app=app)
+
+    # Same row shape as test_get_org_query_success — handler iterates `result`.
+    mock_result = MagicMock()
+    mock_result.__iter__ = MagicMock(return_value=iter([
+        MagicMock(date="2026-08-18", count=42),
+    ]))
+    db_mock.execute.return_value = mock_result
+
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get(
+            "/metrics/query",
+            params={
+                "query": "episodes_per_day",
+                "days": 7,
+                "project_id": str(PROJECT_ID),
+            },
+        )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["query"] == "episodes_per_day"
+    assert body["rows"] == [["2026-08-18", 42]]
 
 
 # ── /metrics/targets ────────────────────────────────────────────────────────────

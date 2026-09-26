@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import Float, Select, Text, bindparam, cast, func, literal, select, text
+from sqlalchemy import Float, Select, bindparam, cast, func, literal, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import SearchLegFailedError
@@ -466,15 +466,16 @@ class HybridRetriever:
             Vector,  # lazy: numpy CPU compat; caught by outer try/except
         )
 
-        from core.embeddings import CANONICAL_EMBED_DIM, format_vector_literal
+        from core.embeddings import CANONICAL_EMBED_DIM
 
         embedding_col = cast(Episode.embedding, Vector(CANONICAL_EMBED_DIM))
-        # Bound parameter + static CAST — the vector value never enters the
-        # SQL string, so float formatting can never break out of the literal.
-        vector_literal = format_vector_literal(query_embedding)
-        query_literal = cast(
-            bindparam("embedding", value=vector_literal, type_=Text()),
-            Vector(CANONICAL_EMBED_DIM),
+        # Native ``list[float]`` bound as ``Vector`` — the pgvector asyncpg
+        # codec (registered via ``init_db_engine``) encodes it; a ``str``
+        # literal here breaks decoding (asyncpg DataError).
+        query_literal = bindparam(
+            "embedding",
+            value=query_embedding,
+            type_=Vector(CANONICAL_EMBED_DIM),
         )
 
         stmt = (
@@ -544,15 +545,15 @@ class HybridRetriever:
             Vector,  # lazy: numpy CPU compat; caught by outer try/except
         )
 
-        from core.embeddings import CANONICAL_EMBED_DIM, format_vector_literal
+        from core.embeddings import CANONICAL_EMBED_DIM
 
         embedding_col = cast(Fact.embedding, Vector(CANONICAL_EMBED_DIM))
-        # Bound parameter + static CAST — same injection-safe pattern as
-        # ``_vector_search_episodes``.
-        vector_literal = format_vector_literal(query_embedding)
-        query_literal = cast(
-            bindparam("embedding", value=vector_literal, type_=Text()),
-            Vector(CANONICAL_EMBED_DIM),
+        # Native ``list[float]`` bound as ``Vector`` — same codec contract
+        # as ``_vector_search_episodes``.
+        query_literal = bindparam(
+            "embedding",
+            value=query_embedding,
+            type_=Vector(CANONICAL_EMBED_DIM),
         )
 
         stmt = (

@@ -32,6 +32,7 @@ from core.exceptions import (
     ExternalServiceError,
     GraphBackendUnavailableError,
     NotFoundError,
+    ValidationError,
 )
 from packages.graph_backend.surrealdb import (
     SurrealGraphBackend,
@@ -201,8 +202,9 @@ class TestSurrealGraphBackendHelpers:
         assert _decode_offset_cursor(None) == 0
         assert _decode_offset_cursor("") == 0
 
-        # Invalid base64 → 0 (graceful)
-        assert _decode_offset_cursor("!!!invalid!!!") == 0
+        # Invalid base64 → ValidationError (fail-closed, maps to HTTP 422)
+        with pytest.raises(ValidationError, match="Invalid cursor"):
+            _decode_offset_cursor("!!!invalid!!!")
 
     @staticmethod
     def test_require_connection_raises(backend: SurrealGraphBackend) -> None:

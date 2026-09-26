@@ -284,9 +284,18 @@ class TestBlobStoragePresignedUrl:
         assert url == "https://presigned.url/test"
         mock_s3.generate_presigned_url.assert_awaited_once_with(
             "get_object",
-            Params={"Bucket": "openzync-blobs", "Key": "path/to/file"},
+            Params={
+                "Bucket": "openzync-blobs",
+                "Key": "path/to/file",
+                # WHY: attachment is the sole inline-render/XSS control for
+                # client-claimed MIME — presign must always force download.
+                "ResponseContentDisposition": "attachment",
+            },
             ExpiresIn=600,
         )
+        # The generated URL string itself need not embed the disposition
+        # (query-param signing is opaque), but the Params contract above
+        # is what S3 signs into every issued URL.
 
     @pytest.mark.asyncio
     async def test_presigned_url_default_expiry(self) -> None:

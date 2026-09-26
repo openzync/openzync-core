@@ -251,7 +251,14 @@ class BlobStorage:
             ) as s3:
                 url = await s3.generate_presigned_url(
                     "get_object",
-                    Params={"Bucket": self._config.bucket_name, "Key": key},
+                    Params={
+                        "Bucket": self._config.bucket_name,
+                        "Key": key,
+                        # WHY: attachment is the sole inline-render/XSS
+                        # control for client-claimed MIME — never remove it
+                        # or add inline serving.
+                        "ResponseContentDisposition": "attachment",
+                    },
                     ExpiresIn=expires_in,
                 )
             logger.info(

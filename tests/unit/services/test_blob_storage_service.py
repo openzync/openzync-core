@@ -5,6 +5,7 @@ FastAPI's ``UploadFile`` is replaced with a lightweight MagicMock.
 """
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -38,16 +39,22 @@ class TestBlobStorageService:
 
     def _make_upload_file(
         self, filename: str = "test.pdf", content: bytes = b"hello world",
-        content_type: str = "application/pdf",
+        content_type: str | None = "application/pdf",
     ) -> MagicMock:
-        """Build a MagicMock mimicking FastAPI's UploadFile."""
+        """Build a MagicMock mimicking FastAPI's UploadFile.
+
+        ``read`` is a two-step side_effect: the chunked reader calls
+        ``read()`` once for the payload, then again for EOF (``b""``).
+        A bare ``return_value=content`` would loop forever on a truthy
+        payload and never terminate.
+        """
         upload_file = MagicMock(spec=UploadFile)
         upload_file.filename = filename
         upload_file.content_type = content_type
-        upload_file.read = AsyncMock(return_value=content)
+        upload_file.read = AsyncMock(side_effect=[content, b""])
         return upload_file
 
-    def _make_storage_config(self, **overrides: dict) -> dict:
+    def _make_storage_config(self, **overrides: Any) -> dict:
         """Build a minimal blob storage config dict."""
         config = {
             "backend": "s3",
@@ -166,6 +173,101 @@ class TestBlobStorageService:
                 ],
                 storage_config=self._make_storage_config(),
             )
+
+    @pytest.mark.asyncio
+    async def test_upload_oversized_stops_reading_mid_stream(self) -> None:
+        """Chunked read aborts as soon as the cap is exceeded — rest unread."""
+        service, _mock_db, _mock_blob_repo = self._make_service()
+
+        upload_file = self._make_upload_file(content=b"")
+        # 1 MiB cap: first chunk fills it exactly (ok), second exceeds → raise.
+        # Third chunk must never be consumed.
+        chunk = b"x" * (1024 * 1024)
+        upload_file.read = AsyncMock(side_effect=[chunk, chunk, b"never-read"])
+
+        with pytest.raises(PayloadTooLargeError, match="exceeds limit"):
+            await service.upload_blobs(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                episode_id=self.EPISODE_ID,
+                session_id=self.SESSION_ID,
+                created_by=self.USER_ID,
+                uploaded_files=[upload_file],
+                blob_metadatas=[
+                    BlobMetadata(blob_id=0, mime_type="application/pdf", file_name="big.pdf"),
+                ],
+                storage_config=self._make_storage_config(max_blob_size_mb=1),
+            )
+
+        # Mid-stream abort: only 2 of 3 chunks consumed.
+        assert upload_file.read.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_upload_unsupported_mime_rejected_before_read(self) -> None:
+        """Disallowed MIME → ValidationError naming the type; bytes never read."""
+        service, _mock_db, _mock_blob_repo = self._make_service()
+
+        upload_file = self._make_upload_file(content_type="application/x-msdownload")
+
+        with pytest.raises(
+            ValidationError,
+            match="Unsupported MIME type 'application/x-msdownload'",
+        ):
+            await service.upload_blobs(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                episode_id=self.EPISODE_ID,
+                session_id=self.SESSION_ID,
+                created_by=self.USER_ID,
+                uploaded_files=[upload_file],
+                blob_metadatas=[
+                    BlobMetadata(
+                        blob_id=0,
+                        mime_type="application/x-msdownload",
+                        file_name="payload.exe",
+                    ),
+                ],
+                storage_config=self._make_storage_config(),
+            )
+
+        upload_file.read.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_upload_normalizes_param_mime_type(self) -> None:
+        """Uppercase/param'd MIME is normalized once — S3 + DB agree on bare type."""
+        service, _mock_db, mock_blob_repo = self._make_service()
+
+        upload_file = self._make_upload_file(content_type="Application/PDF; charset=x")
+        mock_blob_repo.batch_create.return_value = [MagicMock(id=uuid4())]
+
+        with patch(
+            "services.blob_storage_service.BlobStorage",
+        ) as mock_storage_cls:
+            mock_storage = AsyncMock()
+            mock_storage_cls.return_value = mock_storage
+
+            await service.upload_blobs(
+                org_id=self.ORG_ID,
+                project_id=self.PROJECT_ID,
+                episode_id=self.EPISODE_ID,
+                session_id=self.SESSION_ID,
+                created_by=self.USER_ID,
+                uploaded_files=[upload_file],
+                blob_metadatas=[
+                    BlobMetadata(
+                        blob_id=0,
+                        mime_type="Application/PDF; charset=x",
+                        file_name="test.pdf",
+                    ),
+                ],
+                storage_config=self._make_storage_config(),
+            )
+
+        # S3 ContentType and DB record agree on the bare lowercase type.
+        _, kwargs = mock_storage.upload.await_args
+        assert kwargs["mime_type"] == "application/pdf"
+        stored = mock_blob_repo.batch_create.await_args.kwargs["blobs"][0]
+        assert stored["mime_type"] == "application/pdf"
 
     @pytest.mark.asyncio
     async def test_upload_empty_blobs_returns_empty_list(self) -> None:

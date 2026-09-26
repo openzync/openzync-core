@@ -29,6 +29,81 @@ if TYPE_CHECKING:
 
 logger = structlog.get_logger(__name__)
 
+# Single source of truth for uploadable MIME types — mirrors the dispatch
+# table in workers/tasks/extract_blob_text.py::_dispatch_extraction. Types
+# the extractor cannot process are rejected at the upload boundary (422)
+# instead of becoming a silent no-op extraction job later.
+_ALLOWED_UPLOAD_MIME_TYPES: frozenset[str] = frozenset(
+    {
+        "application/pdf",
+        "application/msword",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/octet-stream",
+    }
+)
+
+_UPLOAD_CHUNK_BYTES = 1024 * 1024  # 1 MiB
+
+
+def normalize_upload_mime(mime_type: str) -> str:
+    """Strip MIME parameters and lowercase for matching and storage.
+
+    Clients may send ``"TEXT/PDF; charset=binary"`` — the allowlist and the
+    stored S3 ContentType / DB value must agree on the bare lowercase type.
+
+    Args:
+        mime_type: Raw content type from metadata or the upload.
+
+    Returns:
+        The bare lowercase media type (e.g. ``application/pdf``).
+    """
+    return mime_type.split(";")[0].strip().lower()
+
+
+def is_allowed_upload_mime(mime_type: str) -> bool:
+    """Return whether a MIME type is accepted at the blob upload boundary.
+
+    Args:
+        mime_type: Normalized (parameter-stripped, lowercase) content type.
+
+    Returns:
+        ``True`` if ``extract_blob_text`` supports the type.
+    """
+    return (
+        mime_type in _ALLOWED_UPLOAD_MIME_TYPES
+        or mime_type.startswith("text/")
+        or mime_type.startswith("image/")
+    )
+
+
+async def _read_upload_bounded(
+    upload_file: UploadFile,
+    max_bytes: int,
+    file_name: str,
+) -> bytes:
+    """Read an upload in 1 MiB chunks, aborting as soon as the cap is exceeded.
+
+    Args:
+        upload_file: Multipart upload to read from.
+        max_bytes: Maximum allowed total size in bytes.
+        file_name: Original file name, used in the error message.
+
+    Returns:
+        The complete file bytes when under *max_bytes*.
+
+    Raises:
+        PayloadTooLargeError: Once the running total exceeds *max_bytes* —
+            remaining chunks are never read.
+    """
+    buffer = bytearray()
+    while chunk := await upload_file.read(_UPLOAD_CHUNK_BYTES):
+        buffer.extend(chunk)
+        if len(buffer) > max_bytes:
+            raise PayloadTooLargeError(
+                f"Blob {file_name} exceeds limit of {max_bytes} bytes"
+            )
+    return bytes(buffer)
+
 
 class BlobStorageService:
     """Orchestrates blob upload with S3 storage and DB record creation.
@@ -93,8 +168,9 @@ class BlobStorageService:
             List of created ``EpisodeBlob`` ORM instances.
 
         Raises:
-            ValidationError: If blob metadata references are out of range,
-                or the total blob count exceeds ``MAX_BLOBS_PER_REQUEST``.
+            ValidationError: If blob metadata references are out of range, the
+                total blob count exceeds ``MAX_BLOBS_PER_REQUEST``, or a
+                blob's MIME type is not in the allowlist.
             PayloadTooLargeError: If any blob exceeds the size limit.
             S3StorageError: If the S3 upload fails.
         """
@@ -119,18 +195,24 @@ class BlobStorageService:
                 )
 
             upload_file = uploaded_files[meta.blob_id]
-            data = await upload_file.read()
-
-            if len(data) > max_bytes:
-                raise PayloadTooLargeError(
-                    f"Blob {meta.file_name} "
-                    f"({len(data)} bytes) exceeds limit of {max_bytes} bytes"
+            file_name = meta.file_name or upload_file.filename or "unnamed"
+            # Single normalized value — drives the allowlist check, the S3
+            # ContentType, and the DB record so they can never disagree.
+            mime_type = normalize_upload_mime(
+                meta.mime_type
+                or upload_file.content_type
+                or "application/octet-stream"
+            )
+            # Reject before reading any bytes — unsupported types never
+            # reach S3 or the extraction queue.
+            if not is_allowed_upload_mime(mime_type):
+                raise ValidationError(
+                    f"Unsupported MIME type {mime_type!r} for blob {file_name}"
                 )
 
+            data = await _read_upload_bounded(upload_file, max_bytes, file_name)
             content_hash = hashlib.sha256(data).hexdigest()
             blob_index = meta.blob_id  # use blob_id as index
-            file_name = meta.file_name or upload_file.filename or "unnamed"
-            mime_type = meta.mime_type or upload_file.content_type or "application/octet-stream"
 
             key = storage.build_key(
                 org_id=str(org_id),

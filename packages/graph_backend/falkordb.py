@@ -135,15 +135,29 @@ def _decode_offset_cursor(cursor: str | None) -> int:
 
     Cursor format: ``{"o": <offset>}`` serialised with ``orjson`` then
     base64-encoded.
+
+    Args:
+        cursor: Opaque cursor string, or ``None``/empty for the first page.
+
+    Returns:
+        The decoded non-negative offset; ``0`` when *cursor* is absent.
+
+    Raises:
+        ValidationError: If the cursor is present but malformed (HTTP 422).
+            Fail-closed: silently restarting at 0 would re-serve page 1.
     """
     if not cursor:
         return 0
     try:
         decoded = orjson.loads(base64.b64decode(cursor))
         return max(0, int(decoded.get("o", 0)))
-    except (orjson.JSONDecodeError, ValueError, TypeError, AttributeError):
-        logger.warning("falkordb_graph.invalid_cursor", extra={"cursor": cursor})
-        return 0
+    except (
+        orjson.JSONDecodeError,
+        ValueError,
+        TypeError,
+        AttributeError,
+    ) as e:
+        raise ValidationError(f"Invalid cursor: {e}") from e
 
 
 def _encode_offset_cursor(offset: int) -> str:

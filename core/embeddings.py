@@ -72,16 +72,3 @@ def validate_embedding_dim(vec: list[float], *, source: str) -> None:
                 "expected": CANONICAL_EMBED_DIM,
             },
         )
-
-
-def format_vector_literal(vec: list[float]) -> str:
-    """Format an embedding as a pgvector input literal (``[0.1,0.2,...]``).
-
-    Args:
-        vec: The embedding vector (must already pass
-            :func:`validate_embedding_dim`).
-
-    Returns:
-        The ``[...]`` literal suitable for ``CAST(:embedding AS vector(768))``.
-    """
-    return "[" + ",".join(str(x) for x in vec) + "]"

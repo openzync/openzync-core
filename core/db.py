@@ -97,7 +97,10 @@ def _register_pgvector_codec(engine: AsyncEngine) -> None:
     full-ORM read loading the column crashes. This listener registers
     ``pgvector.asyncpg.register_vector`` on each new pooled connection —
     the same hook the SQLAlchemy asyncpg dialect uses for its own
-    JSON/JSONB codecs in ``on_connect``.
+    JSON/JSONB codecs in ``on_connect``. Write paths bind native
+    ``list[float]`` via this codec (``CAST(:embedding AS vector(768))``
+    only asserts the dimension) — never ``str`` literals, which the
+    codec cannot decode.
 
     Recipe verified against pgvector==0.4.2 (``async def
     register_vector(conn, schema='public')``) and SQLAlchemy==2.0.50
