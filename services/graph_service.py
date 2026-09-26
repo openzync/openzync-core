@@ -21,6 +21,7 @@ from core.exceptions import (
 )
 from core.sorting import SortSpec
 from packages.graph_backend.interface import GraphBackend
+from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
 from repositories.user_repository import UserRepository
 from services.webhook_service import WebhookService
@@ -42,6 +43,9 @@ class GraphService:
         fact_repo: Optional ``FactRepository`` for session-scoped entity
             queries. When provided, ``get_entities`` accepts a ``session_id``
             to scope results to entities linked to a specific session.
+        episode_repo: Optional ``EpisodeRepository`` used to resolve
+            episode IDs for a ``session_id`` — the graph holds no
+            session linkage, so episode IDs are resolved from Postgres.
     """
 
     def __init__(
@@ -50,11 +54,13 @@ class GraphService:
         user_repo: UserRepository | None = None,
         fact_repo: FactRepository | None = None,
         webhook_service: WebhookService | None = None,
+        episode_repo: EpisodeRepository | None = None,
     ) -> None:
         self._backend = graph_backend
         self._user_repo = user_repo
         self._fact_repo = fact_repo
         self._webhook_service = webhook_service
+        self._episode_repo = episode_repo
 
     # ── User validation (moved from router layer) ───────────────────────────────
 
@@ -126,12 +132,36 @@ class GraphService:
                 detail={"operation": "get_entities"},
             )
 
-        # Session-scoped query — delegate to graph backend.
+        # Session-scoped query — resolve episode IDs from Postgres, then
+        # traverse Episode→Entity in the graph backend.  Session nodes do
+        # not exist in the graph (no HAS_EPISODE edges / session_id on
+        # prod data), so backend-side session traversal always yields [].
         if session_id is not None:
-            entities = await self._backend.get_entities_for_session(
+            if self._episode_repo is None:
+                raise GraphBackendUnavailableError(
+                    "Episode repository is not configured for "
+                    "session-scoped graph queries.",
+                    detail={
+                        "operation": "get_entities",
+                        "session_id": str(session_id),
+                    },
+                )
+            episodes, next_cursor = await self._episode_repo.get_by_session_id(
+                session_id, limit=500
+            )
+            if next_cursor is not None:
+                logger.warning(
+                    "graph_service.session_episodes_truncated",
+                    extra={
+                        "org_id": str(org_id),
+                        "session_id": str(session_id),
+                    },
+                )
+            entities = await self._backend.get_entities_for_episodes(
                 org_id=org_id,
                 project_id=project_id,
-                session_id=session_id,
+                episode_ids=[ep.id for ep in episodes],
+                limit=200,
             )
 
             # Apply optional entity_type filter client-side

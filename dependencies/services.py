@@ -465,6 +465,7 @@ async def get_graph_service(
         user_repo=UserRepository(db),
         fact_repo=FactRepository(db),
         webhook_service=webhook,
+        episode_repo=EpisodeRepository(db),
     )
 
 

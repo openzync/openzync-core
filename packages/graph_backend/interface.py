@@ -385,6 +385,15 @@ class GraphBackend(ABC):
 
         Traverses session → episodes → episode_entity_links → entities.
 
+        .. deprecated::
+            Legacy — kept for backward compatibility, do not remove.
+            Session linkage lives outside the graph on prod data:
+            FalkorDB ``:Session`` stubs are never created and SurrealDB
+            episode records carry no ``session_id``, so this always
+            returns ``[]`` there.  Use
+            :meth:`get_entities_for_episodes` with caller-resolved
+            episode IDs instead.
+
         Args:
             org_id: Organisational scope.
             project_id: Project scope.
@@ -424,6 +433,39 @@ class GraphBackend(ABC):
                 comes from ``episode_ids``.
             episode_ids: Episode UUIDs belonging to the user's sessions.
             limit: Maximum entities to return (default 50, max 200).
+
+        Returns:
+            List of entity dicts with ``id``, ``name``, ``entity_type``,
+            ``summary`` keys.
+        """
+        ...
+
+    @abstractmethod
+    async def get_entities_for_episodes(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        episode_ids: list[UUID],
+        *,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Return distinct graph entities linked to the given episodes.
+
+        Same return shape as :meth:`get_entities_for_session` — a list
+        of entity dicts with ``id``, ``name``, ``entity_type``,
+        ``summary`` keys, capped at ``limit`` entries.
+
+        The caller resolves ``episode_ids`` (e.g. from the episodes
+        table) because session linkage lives outside the graph: neither
+        FalkorDB stub nodes nor SurrealDB episode records carry a
+        ``session_id``.  An empty ``episode_ids`` list returns ``[]``
+        without touching the backend.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            episode_ids: Episode UUIDs to scope the lookup to.
+            limit: Maximum entities to return (default 200, max 200).
 
         Returns:
             List of entity dicts with ``id``, ``name``, ``entity_type``,

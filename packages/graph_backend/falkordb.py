@@ -873,10 +873,14 @@ class FalkorGraphBackend(GraphBackend):
     ) -> dict:
         """Create or update a directed relationship between two entities.
 
-        Uses ``MERGE`` on the pattern ``(s)-[r:TYPE]->(t)`` within the
-        per-tenant graph.  ``ON MATCH`` updates properties, confidence
-        (takes the max), and temporal validity fields — matching the upsert
-        behaviour of the Postgres and SurrealDB backends.
+        ``MATCH``es both endpoint nodes first, then ``MERGE``s only the
+        edge ``(s)-[r:TYPE]->(t)``.  Never ``MERGE``s a full
+        ``(s)-[r]->(t)`` pattern with node property maps — FalkorDB does
+        not bind the pre-existing endpoints for such patterns and instead
+        creates bare duplicate ``:Entity`` nodes carrying only ``id``.
+        ``ON MATCH`` updates properties, confidence (takes the max), and
+        temporal validity fields — matching the upsert behaviour of the
+        Postgres and SurrealDB backends.
 
         A UUID is generated for each relationship and stored as ``r.id`` so
         the backend can reference specific relationships.  ``source_id`` and
@@ -899,6 +903,7 @@ class FalkorGraphBackend(GraphBackend):
 
         Raises:
             ValueError: If the relationship type contains unsafe characters.
+            NotFoundError: If either endpoint entity does not exist.
             ExternalServiceError: If the query fails.
         """
         graph = self._get_graph(org_id, project_id)
@@ -930,7 +935,8 @@ class FalkorGraphBackend(GraphBackend):
         try:
             result = await graph.query(
                 f"""
-                MERGE (s:Entity {{id: $source_id}})-[r:{safe_type}]->(t:Entity {{id: $target_id}})
+                MATCH (s:Entity {{id: $source_id}}), (t:Entity {{id: $target_id}})
+                MERGE (s)-[r:{safe_type}]->(t)
                 ON CREATE SET
                     r.id = $rel_id,
                     r.organization_id = $org_id,
@@ -959,6 +965,21 @@ class FalkorGraphBackend(GraphBackend):
                 """,
                 params,
             )
+            # MATCH-first: zero rows means an endpoint is missing — the
+            # MERGE never ran, so fail loud instead of creating nodes.
+            if not result.result_set:
+                raise NotFoundError(
+                    message=(
+                        f"Cannot create relationship '{relationship_type}': "
+                        f"source {source_id} or target {target_id} not found"
+                    ),
+                    detail={
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                        "source_id": str(source_id),
+                        "target_id": str(target_id),
+                    },
+                )
             row = result.result_set[0]
             relationship = self._row_to_relationship(row)
 
@@ -974,7 +995,7 @@ class FalkorGraphBackend(GraphBackend):
                 },
             )
             return relationship
-        except ValueError:
+        except (ValueError, NotFoundError):
             raise
         except Exception as exc:
             logger.error(
@@ -1914,6 +1935,7 @@ class FalkorGraphBackend(GraphBackend):
                 """
                 MATCH (ep:Episode {id: $episode_id})
                 MATCH (en:Entity {id: $entity_id})
+                // Safe: ep/en bound by MATCH above — MERGE creates edge only.
                 MERGE (ep)-[:MENTIONS]->(en)
                 """,
                 {
@@ -2077,6 +2099,77 @@ class FalkorGraphBackend(GraphBackend):
                 detail={
                     "org_id": str(org_id),
                     "user_id": str(user_id),
+                },
+            ) from exc
+
+    async def get_entities_for_episodes(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        episode_ids: list[UUID],
+        *,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Return distinct entities linked to the given episodes.
+
+        Matches ``(:Episode)-[:MENTIONS]->(:Entity)`` stubs by episode
+        id — the same traversal as :meth:`get_entities_for_user`,
+        minus the user scope.  Read-only: endpoint MATCH only, no
+        MERGE/CREATE, so the FalkorDB pattern-MERGE ghost-node hazard
+        does not apply.
+
+        Args:
+            org_id: Organisational scope (log scope — tenant isolation
+                comes from the per-project graph key).
+            project_id: Project scope (selects the tenant graph key).
+            episode_ids: Episode UUIDs to scope the lookup to.
+            limit: Maximum entities to return (default 200, max 200).
+
+        Returns:
+            List of entity dicts with ``id``, ``name``, ``entity_type``,
+            ``summary`` keys.
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            return []
+        if not episode_ids:
+            return []
+        limit = max(1, min(int(limit), 200))
+
+        try:
+            result = await graph.query(
+                f"""
+                MATCH (ep:Episode)-[:MENTIONS]->(en:Entity)
+                WHERE ep.id IN $episode_ids
+                RETURN DISTINCT en.id, en.name, en.entity_type, en.summary
+                LIMIT {limit}
+                """,
+                {"episode_ids": [str(e) for e in episode_ids]},
+            )
+            return [
+                {
+                    "id": str(row[0]) if row[0] else "",
+                    "name": str(row[1]) if row[1] else "",
+                    "entity_type": str(row[2]) if row[2] else "",
+                    "summary": str(row[3]) if len(row) > 3 and row[3] else "",
+                }
+                for row in result.result_set
+            ]
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.get_entities_for_episodes_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "episode_count": len(episode_ids),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get entities for episodes: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "episode_count": len(episode_ids),
                 },
             ) from exc
 
@@ -2493,6 +2586,7 @@ class FalkorGraphBackend(GraphBackend):
                     WHERE s.id <> $canonical_id
                       AND r.invalid_at IS NULL
                     MATCH (canon:Entity {{id: $canonical_id}})
+                    // Safe: s/canon bound by MATCH above — MERGE creates edge only.
                     MERGE (s)-[nr:{safe_type}]->(canon)
                     ON CREATE SET
                         nr.id = r.id,
@@ -2543,6 +2637,7 @@ class FalkorGraphBackend(GraphBackend):
                     WHERE t.id <> $canonical_id
                       AND r.invalid_at IS NULL
                     MATCH (canon:Entity {{id: $canonical_id}})
+                    // Safe: canon/t bound by MATCH above — MERGE creates edge only.
                     MERGE (canon)-[nr:{safe_type}]->(t)
                     ON CREATE SET
                         nr.id = r.id,

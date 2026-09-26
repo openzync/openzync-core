@@ -1672,6 +1672,87 @@ class SurrealGraphBackend(GraphBackend):
                 },
             ) from exc
 
+    async def get_entities_for_episodes(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        episode_ids: list[UUID],
+        *,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Return distinct entities linked to the given episodes.
+
+        Queries the ``has_entity`` edge table directly by episode
+        RecordID — the same pattern as :meth:`get_entities_for_user`,
+        minus the user scope.  Episode records are never traversed:
+        :meth:`link_entity_to_episode` creates edges with RecordID
+        references but never creates ``episode`` records (or populates
+        ``session_id``).
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            episode_ids: Episode UUIDs to scope the lookup to.
+            limit: Maximum entities to return (default 200, max 200).
+
+        Returns:
+            List of entity dicts with ``id``, ``name``, ``entity_type``,
+            ``summary`` keys.
+        """
+        if not episode_ids:
+            return []
+        await self._ensure_schema()
+        self._require_connection()
+        limit = max(1, min(int(limit), 200))
+
+        params: dict[str, Any] = {
+            "org_id": str(org_id),
+            "project_id": str(project_id),
+            "episode_rids": [RecordID("episode", str(e)) for e in episode_ids],
+            "limit": limit,
+        }
+
+        try:
+            result = await self._surreal.query(
+                """
+                SELECT DISTINCT out.id AS id, out.name AS name,
+                    out.entity_type AS entity_type, out.summary AS summary
+                FROM has_entity
+                WHERE organization_id = $org_id
+                  AND project_id = $project_id
+                  AND in IN $episode_rids
+                LIMIT $limit;
+                """,
+                params,
+            )
+            rows = result if result is not None else []
+            return [
+                {
+                    "id": self._record_id_to_str(r.get("id")),
+                    "name": r.get("name", ""),
+                    "entity_type": r.get("entity_type", ""),
+                    "summary": r.get("summary") if r.get("summary") is not None else "",
+                }
+                for r in rows
+            ]
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.get_entities_for_episodes_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "episode_count": len(episode_ids),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get entities for episodes: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "episode_count": len(episode_ids),
+                },
+            ) from exc
+
     async def get_co_occurring_entity_pairs(
         self,
         org_id: UUID,
