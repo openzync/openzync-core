@@ -420,10 +420,20 @@ class GraphService:
             sort=backend_sort,
         )
         items: list[dict[str, Any]] = result.get("items", [])
-        # member_count is stored in attributes at creation time
+        # member_count is computed at read time from MEMBER_OF edges so
+        # reruns and manual edits stay consistent without a stored counter.
+        # Cross-backend contract: relationship dicts carry "type".
+        relationships = await self._backend.get_all_relationships(org_id, project_id)
+        member_counts: dict[str, int] = {}
+        for rel in relationships:
+            if rel.get("type", rel.get("relationship_type", "")) != "member_of":
+                continue
+            target_id = str(rel.get("target_id", ""))
+            if not target_id:
+                continue
+            member_counts[target_id] = member_counts.get(target_id, 0) + 1
         for item in items:
-            attrs = item["attributes"] if item.get("attributes") is not None else {}
-            item["member_count"] = attrs.get("member_count", 0)
+            item["member_count"] = member_counts.get(str(item.get("id", "")), 0)
         if req_sort == "member_count":
             # note: explicit key selection — no getattr on raw input.
             items.sort(

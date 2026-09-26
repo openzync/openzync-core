@@ -67,6 +67,12 @@ class TestSummariseCommunity:
         mock_backend.get_all_relationships.return_value = []
         mock_backend.create_entity.return_value = {"id": str(uuid4())}
         mock_backend.create_relationship_bulk = AsyncMock()
+        mock_backend.list_entities.return_value = {
+            "items": [],
+            "next_cursor": None,
+            "has_more": False,
+        }
+        mock_backend.delete_entity.return_value = True
 
         with (
             patch("workers.tasks.summarise_community.resolve_graph_backend", return_value=mock_backend),
@@ -197,6 +203,12 @@ class TestSummariseCommunity:
         mock_backend.get_all_relationships.return_value = []
         mock_backend.create_entity.return_value = {"id": str(uuid4())}
         mock_backend.create_relationship_bulk = AsyncMock()
+        mock_backend.list_entities.return_value = {
+            "items": [],
+            "next_cursor": None,
+            "has_more": False,
+        }
+        mock_backend.delete_entity.return_value = True
 
         with (
             patch("workers.tasks.summarise_community.resolve_graph_backend", return_value=mock_backend),

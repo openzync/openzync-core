@@ -1,0 +1,1 @@
+Fixed FalkorDB `create_relationship` cloning endpoint nodes: the edge-pattern `MERGE` created bare duplicate `:Entity` nodes (id only, no name/type) and attached new edges to the duplicates instead of the real entities. Endpoints are now `MATCH`ed first and only the edge is merged; a missing endpoint raises `NotFoundError` instead of silently ghosting.
