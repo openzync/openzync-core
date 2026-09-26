@@ -20,7 +20,7 @@ from uuid import UUID
 
 import orjson
 import structlog
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import (
@@ -1559,6 +1559,76 @@ class PostgresGraphBackend(GraphBackend):
                 detail={
                     "org_id": str(org_id),
                     "session_id": str(session_id),
+                },
+            ) from exc
+
+    async def get_entities_for_user(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        user_id: UUID,
+        episode_ids: list[UUID],
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return distinct entities linked to a user's episodes.
+
+        Joins the PG link tables via the user's sessions — the native
+        equivalent of the FalkorDB/SurrealDB episode-id-filtered traversal.
+        """
+        if not episode_ids:
+            return []
+        limit = max(1, min(int(limit), 200))
+        try:
+            result = await self._db.execute(
+                text("""
+                    SELECT DISTINCT ge.id, ge.name, ge.entity_type, ge.summary
+                    FROM graph_entities ge
+                    JOIN graph_episode_entities gee ON ge.id = gee.entity_id
+                    JOIN episodes e ON e.id = gee.episode_id
+                    JOIN sessions s ON e.session_id = s.id
+                    WHERE s.user_id = :user_id
+                      AND s.organization_id = :org_id
+                      AND ge.organization_id = :org_id
+                      AND ge.project_id = :project_id
+                      AND gee.episode_id IN :episode_ids
+                      AND e.is_deleted = false
+                      AND s.is_deleted = false
+                      AND ge.is_merged = false
+                    LIMIT :limit
+                """).bindparams(bindparam("episode_ids", expanding=True)),
+                {
+                    "user_id": user_id,
+                    "org_id": org_id,
+                    "project_id": project_id,
+                    "episode_ids": [str(e) for e in episode_ids],
+                    "limit": limit,
+                },
+            )
+            return [
+                {
+                    "id": str(row.id),
+                    "name": row.name,
+                    "entity_type": row.entity_type,
+                    "summary": row.summary if row.summary else "",
+                }
+                for row in result.all()
+            ]
+        except Exception as exc:
+            logger.error(
+                "pg_graph.get_entities_for_user_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "user_id": str(user_id),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get entities for user {user_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                 },
             ) from exc
 

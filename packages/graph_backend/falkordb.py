@@ -246,9 +246,11 @@ class FalkorGraphBackend(GraphBackend):
         """Create FalkorDB indexes for one tenant graph, once per version.
 
         Runs every statement in :data:`_DEFINE_QUERIES`. A per-statement
-        "already exists" error is tolerated (idempotent re-run); any other
-        error raises — schema bootstrap must never fail silently, or every
-        later query silently degrades to a full label scan.
+        "already exists" / "already indexed" error is tolerated (idempotent
+        re-run — FalkorDB v4 reports re-created indexes as "already
+        indexed", not "already exists"); any other error raises — schema
+        bootstrap must never fail silently, or every later query silently
+        degrades to a full label scan.
 
         On success records :data:`_SCHEMA_VERSION` for ``key``, so a fixed
         bootstrap re-executes exactly once per tenant after an upgrade.
@@ -265,7 +267,10 @@ class FalkorGraphBackend(GraphBackend):
             try:
                 await graph.query(query)
             except Exception as exc:
-                if "already exists" in str(exc).lower():
+                msg = str(exc).lower()
+                if "already exists" in msg or "already indexed" in msg:
+                    # Index pre-exists from an earlier bootstrap — expected
+                    # on every restart, not an error.
                     logger.debug(
                         "falkordb_graph.schema_index_exists",
                         extra={"graph_key": key, "query": query},
@@ -1996,6 +2001,82 @@ class FalkorGraphBackend(GraphBackend):
                 detail={
                     "org_id": str(org_id),
                     "session_id": str(session_id),
+                },
+            ) from exc
+
+    async def get_entities_for_user(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        user_id: UUID,
+        episode_ids: list[UUID],
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return distinct entities linked to a user's episodes.
+
+        Matches ``(:Episode)-[:MENTIONS]->(:Entity)`` stubs by episode id —
+        deliberately NOT via ``(:Session)-[:HAS_EPISODE]``: session stub
+        nodes are never created (``_ensure_session_node`` has no callers),
+        so session traversal always yields ``[]``.  Episode stubs and
+        ``MENTIONS`` edges are created by :meth:`link_entity_to_episode`,
+        making episode-id filtering the only traversal that sees prod data.
+
+        Args:
+            org_id: Organisational scope (log scope — tenant isolation
+                comes from the per-project graph key).
+            project_id: Project scope (selects the tenant graph key).
+            user_id: User UUID — log scope only; episode scoping comes
+                from ``episode_ids`` (the graph stores no user linkage).
+            episode_ids: Episode UUIDs belonging to the user's sessions.
+            limit: Maximum entities to return (default 50, max 200).
+
+        Returns:
+            List of entity dicts with ``id``, ``name``, ``entity_type``,
+            ``summary`` keys.
+        """
+        graph = self._get_graph(org_id, project_id)
+        if graph is None:
+            return []
+        if not episode_ids:
+            return []
+        limit = max(1, min(int(limit), 200))
+
+        try:
+            result = await graph.query(
+                f"""
+                MATCH (ep:Episode)-[:MENTIONS]->(en:Entity)
+                WHERE ep.id IN $episode_ids
+                RETURN DISTINCT en.id, en.name, en.entity_type, en.summary
+                LIMIT {limit}
+                """,
+                {"episode_ids": [str(e) for e in episode_ids]},
+            )
+            return [
+                {
+                    "id": str(row[0]) if row[0] else "",
+                    "name": str(row[1]) if row[1] else "",
+                    "entity_type": str(row[2]) if row[2] else "",
+                    "summary": str(row[3]) if len(row) > 3 and row[3] else "",
+                }
+                for row in result.result_set
+            ]
+        except Exception as exc:
+            logger.error(
+                "falkordb_graph.get_entities_for_user_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "user_id": str(user_id),
+                    "episode_count": len(episode_ids),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get entities for user {user_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                 },
             ) from exc
 

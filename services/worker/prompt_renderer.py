@@ -33,11 +33,14 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import orjson
+import structlog
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from packages.graph_backend.interface import GraphBackend
+
+logger = structlog.get_logger(__name__)
 
 # ── Module layout ──────────────────────────────────────────────────────────────
 # 1. DataSource enum — every DB-backed variable type the system knows about
@@ -175,6 +178,12 @@ TYPE_DATA_SOURCES: dict[str, set[DataSource]] = {
 # ── 3. Provider functions — one per DataSource ──────────────────────────────
 
 _RECENT_HISTORY_WINDOW: int = 10
+
+_USER_ENTITIES_LIMIT: int = 50
+"""Max entity entries returned for user context (mirrors the old LIMIT 50)."""
+
+_USER_ENTITIES_EPISODE_CAP: int = 500
+"""Max most-recent user episodes resolved into backend episode-id filters."""
 
 
 async def _fetch_episode_content(
@@ -689,31 +698,134 @@ async def _fetch_user_entities(
     db: AsyncSession,
     org_id: UUID,
     user_id: UUID | None,
-    **_: Any,
+    graph_backend: GraphBackend | None,
+    project_id: UUID | None,
+    **extra: Any,
 ) -> dict[str, Any]:
-    """Fetch distinct graph entities linked to a user's sessions.
+    """Fetch distinct graph entities linked to a user's episodes.
 
-    Returns ``{"entities": [...]}`` or empty list if no user_id.
+    Resolves the user's episode IDs from PostgreSQL (core ``episodes`` /
+    ``sessions`` tables — not graph stub tables), groups them by project,
+    and delegates entity lookup to the graph backend's
+    ``get_entities_for_user``.
+
+    Returns ``{"entities": [{"name", "entity_type"}]}`` — identical shape
+    to the previous PG-stub query — or an empty list if no user_id or no
+    episodes.
+
+    Raises:
+        GraphBackendUnavailableError: If ``graph_backend`` is ``None``.
+            Graph-disabled orgs skip upstream (the callers that resolve
+            ``None`` never reach this provider with entity needs) — a
+            ``None`` backend here is a wiring bug, never a steady state,
+            so it fails loud instead of silently returning no entities.
     """
     if user_id is None:
         return {"entities": []}
+    if graph_backend is None:
+        from core.exceptions import (  # noqa: PLC0415 — lazy import
+            GraphBackendUnavailableError,
+        )
+
+        logger.error(
+            "prompt_renderer.user_entities_no_backend",
+            org_id=str(org_id),
+            user_id=str(user_id),
+        )
+        raise GraphBackendUnavailableError(
+            f"No graph backend resolved for user entities (org {org_id}) — "
+            "refusing to return an empty entity list that would silently "
+            "degrade extraction context."
+        )
 
     from sqlalchemy import text  # noqa: PLC0415 — lazy import
 
+    params: dict[str, Any] = {"user_id": user_id, "org_id": org_id}
+    project_filter = ""
+    if project_id is not None:
+        project_filter = "AND e.project_id = :project_id"
+        params["project_id"] = project_id
+    # Bound cap on the IN-list — most-recent episodes first.
+    params["cap"] = _USER_ENTITIES_EPISODE_CAP
+    # project_filter is a static literal ("" or a fixed AND clause), never
+    # user input; all values are bound parameters — not an injection vector.
     result = await db.execute(
-        text("""
-            SELECT DISTINCT ge.name, ge.entity_type
-            FROM graph_entities ge
-            JOIN graph_episode_entities gee ON ge.id = gee.entity_id
-            JOIN episodes e ON gee.episode_id = e.id
-            JOIN sessions s ON e.session_id = s.id
-            WHERE s.user_id = :user_id AND s.organization_id = :org_id
-            LIMIT 50
-        """),
-        {"user_id": user_id, "org_id": org_id},
+        text(
+            "SELECT e.id, e.project_id "  # noqa: S608
+            "FROM episodes e "  # noqa: S608
+            "JOIN sessions s ON e.session_id = s.id "  # noqa: S608
+            "WHERE s.user_id = :user_id AND s.organization_id = :org_id "  # noqa: S608
+            "AND e.is_deleted = false AND s.is_deleted = false "  # noqa: S608
+            f"{project_filter} "  # noqa: S608
+            "ORDER BY e.created_at DESC "  # noqa: S608
+            "LIMIT :cap"  # noqa: S608
+        ),
+        params,
     )
-    entities = [{"name": r[0], "entity_type": r[1]} for r in result.fetchall()]
-    return {"entities": entities}
+    by_project: dict[str, list[UUID]] = {}
+    for row in result.fetchall():
+        by_project.setdefault(str(row[1]), []).append(UUID(str(row[0])))
+    if not by_project:
+        return {"entities": []}
+
+    # Fresh session for the Postgres backend's stale-session leak
+    # (same rationale as _fetch_session_entities).
+    db_session_factory = extra.get("db_session_factory")
+    backend = graph_backend
+    if db_session_factory is not None:
+        from packages.graph_backend.postgres import (  # noqa: PLC0415
+            PostgresGraphBackend,
+        )
+
+        if isinstance(graph_backend, PostgresGraphBackend):
+            async with db_session_factory() as fresh_db:
+                backend = PostgresGraphBackend(db=fresh_db)
+                return {
+                    "entities": await _collect_user_entities(
+                        backend, org_id, user_id, by_project
+                    )
+                }
+
+    # SurrealDB and FalkorDB manage their own connections — safe to use
+    # the backend's internal session directly.
+    return {
+        "entities": await _collect_user_entities(backend, org_id, user_id, by_project)
+    }
+
+
+async def _collect_user_entities(
+    backend: GraphBackend,
+    org_id: UUID,
+    user_id: UUID,
+    by_project: dict[str, list[UUID]],
+) -> list[dict[str, str]]:
+    """Fan out ``get_entities_for_user`` per project and merge results.
+
+    Dedupes by entity id across projects and caps at 50 entries,
+    mirroring the previous ``LIMIT 50`` PG-stub query.
+    """
+    seen: set[str] = set()
+    merged: list[dict[str, str]] = []
+    for project_key, episode_ids in by_project.items():
+        entities = await backend.get_entities_for_user(
+            org_id=org_id,
+            project_id=UUID(project_key),
+            user_id=user_id,
+            episode_ids=episode_ids,
+        )
+        for entity in entities:
+            entity_id = str(entity.get("id", ""))
+            if entity_id and entity_id not in seen:
+                seen.add(entity_id)
+                merged.append(
+                    {
+                        "name": str(entity.get("name", "")),
+                        "entity_type": str(entity.get("entity_type", "")),
+                    }
+                )
+                if len(merged) >= _USER_ENTITIES_LIMIT:
+                    return merged
+    return merged
 
 
 async def _fetch_user_classifications(
@@ -863,6 +975,12 @@ async def render_prompt(
             existing facts for delta extraction.
         user_id: User UUID.  Used to fetch user-specific data
             (episodes, facts, entities, classifications).
+        project_id: Project UUID.  Scopes session/user entity lookups;
+            passed through to the graph backend.
+        graph_backend: Resolved graph backend for entity providers.
+            ``None`` is fail-loud on entity paths (raises
+            ``GraphBackendUnavailableError``) — callers needing entity
+            context must resolve the backend before rendering.
         db_session_factory: Session factory for DB access.  Required
             for auto-injection (and template resolution from DB).
         return_context: If ``True``, returns ``(prompt, context_dict)``

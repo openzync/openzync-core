@@ -334,7 +334,8 @@ class GraphService:
 
         Communities are created by the scheduled ``summarise_community`` ARQ
         worker, which runs Label Propagation on the entity graph and stores
-        community entities in ``graph_entities`` with ``entity_type='community'``.
+        community entities in the graph backend with
+        ``entity_type='community'``.
 
         Default ``created_at/asc`` (backend default, preserved);
         whitelist ``name``, ``created_at``, ``member_count``

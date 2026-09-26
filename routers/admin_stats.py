@@ -15,26 +15,74 @@ from __future__ import annotations
 from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from dependencies.auth import require_permission
 from dependencies.db import get_db
+from dependencies.org_config import get_org_config
 from models.dialog_classification import DialogClassification
 from models.episode import Episode
 from models.fact import Fact
-from models.graph_entity import GraphEntity
 from models.graph_observation import GraphObservation
 from models.project import Project
 from models.session import Session
 from models.structured_extraction import StructuredExtraction
+from packages.graph_backend.interface import GraphBackend
 from schemas.admin_stats import OrgStatsResponse, UsageStatsResponse
+from schemas.organization_config import OrgConfigBase
+from services.graph_stats_service import GraphStatsService
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(
     prefix="/v1/admin/stats",
     tags=["Admin - Stats"],
 )
+
+
+async def _resolve_graph_backend(
+    request: Request,
+    db: AsyncSession,
+    org_config: OrgConfigBase,
+    org_id: UUID,
+) -> GraphBackend | None:
+    """Resolve the org-configured graph backend, fail-soft to ``None``.
+
+    Same pattern as the ``context``/``search`` routers.  Admin usage stats
+    degrade (node counts read as zero) instead of failing when the graph
+    is unavailable — every degraded path logs.
+    """
+    dispatcher = getattr(request.app.state, "graph_backend_dispatcher", None)
+    if dispatcher is None:
+        logger.warning("admin_stats.no_graph_dispatcher")
+        return None
+    surreal = None
+    if org_config.graph_backend == "surrealdb":
+        pool = getattr(request.app.state, "surreal_connection_pool", None)
+        if pool is not None:
+            try:
+                surreal = await pool.get_or_create(org_id, org_config)
+            except Exception as exc:
+                logger.warning(
+                    "admin_stats.surreal_connection_failed",
+                    error=str(exc),
+                )
+                return None
+    try:
+        return dispatcher.resolve_and_create(
+            org_config,
+            db,
+            surreal=surreal,
+            falkordb_client=getattr(request.app.state, "falkordb_client", None),
+        )
+    except Exception as exc:
+        # Unavailable, unknown, or retired (postgres → GoneError) backends
+        # all degrade to zeros here — never fail the usage endpoint.
+        logger.warning("admin_stats.graph_backend_unresolved", error=str(exc))
+        return None
 
 
 def _resolve_window(
@@ -154,12 +202,14 @@ async def get_org_stats(
     ),
 )
 async def get_usage_stats(
+    request: Request,
     days: int | None = Query(default=None, ge=1, le=365),
     from_date: date | None = Query(default=None, alias="from"),
     to_date: date | None = Query(default=None, alias="to"),
     project_id: UUID | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_permission("members:read")),
+    org_config: OrgConfigBase = Depends(get_org_config),
 ) -> list[UsageStatsResponse]:
     """Get daily usage statistics for the organization.
 
@@ -167,6 +217,7 @@ async def get_usage_stats(
     last 30 days.
 
     Args:
+        request: FastAPI request (graph backend dispatcher + pools).
         days: Look-back window in days (default 30 when no window provided, max 365).
             Ignored if from/to provided.
         from_date: Inclusive start date (YYYY-MM-DD).
@@ -174,6 +225,7 @@ async def get_usage_stats(
         project_id: Optional project scope.
         db: Async database session.
         org_id: Authenticated organization ID.
+        org_config: Org config (graph backend selection).
 
     Returns:
         List of daily usage data points, newest first.
@@ -345,29 +397,18 @@ async def get_usage_stats(
         date_str = str(row.date.date()) if hasattr(row.date, "date") else str(row.date)
         _ensure(date_str)["classification_count"] = row.count
 
-    # Daily node counts (graph entities)
-    node_conds = [
-        GraphEntity.organization_id == org_uuid,
-        GraphEntity.created_at >= start,
-    ]
-    if end_exclusive is not None:
-        node_conds.append(GraphEntity.created_at < end_exclusive)
-    if project_id is not None:
-        node_conds.append(GraphEntity.project_id == project_id)
-    node_stmt = (
-        select(
-            func.date_trunc("day", GraphEntity.created_at).label("date"),
-            func.count(GraphEntity.id).label("count"),
-        )
-        .select_from(GraphEntity)
-        .where(*node_conds)
-        .group_by(text("date"))
-        .order_by(text("date DESC"))
+    # Daily node counts (graph entities — backend-backed, not the PG stub).
+    # The PG graph_entities table is never written by the FalkorDB/SurrealDB
+    # paths, so counts come from the backend's get_all_entities bucketed
+    # per day in Python.  Response keys are unchanged.
+    backend = await _resolve_graph_backend(request, db, org_config, org_uuid)
+    stats = GraphStatsService(db, backend)
+    node_project_ids = await stats.resolve_project_ids(org_uuid, project_id)
+    node_per_day = await stats.entity_counts_per_day(
+        org_uuid, node_project_ids, start, end_exclusive
     )
-    result = await db.execute(node_stmt)
-    for row in result:
-        date_str = str(row.date.date()) if hasattr(row.date, "date") else str(row.date)
-        _ensure(date_str)["node_count"] = row.count
+    for node_day, node_count in node_per_day.items():
+        _ensure(node_day)["node_count"] = node_count
 
     # Daily edge counts (graph_relationships via raw SQL — no ORM model)
     edge_params: dict[str, object] = {"org_id": str(org_uuid), "start": start}

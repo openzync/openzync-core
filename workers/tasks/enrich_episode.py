@@ -242,6 +242,34 @@ async def enrich_episode(
 
             user_id: str = str(episode.user_id)
 
+            # ── 2c. Resolve graph backend BEFORE render — the
+            # SESSION_ENTITIES provider needs it for known_entities;
+            # without it render silently injects [].  Same fail-loud
+            # contract as §6b: configured-but-unresolvable raises,
+            # disabled (None) renders with empty known_entities.
+            graph_backend = None
+            try:
+                graph_backend = await resolve_graph_backend(
+                    ctx if isinstance(ctx, dict) else {},
+                    uuid.UUID(org_id),
+                    db,
+                )
+            except GraphBackendUnavailableError:
+                log.error(
+                    "enrich_episode.graph_backend_unavailable",
+                    org_id=org_id,
+                    episode_id=episode_id,
+                )
+                raise
+            except Exception:
+                log.error(
+                    "enrich_episode.graph_backend_resolve_failed",
+                    org_id=org_id,
+                    episode_id=episode_id,
+                    exc_info=True,
+                )
+                raise
+
             # ── 3. Render prompt with auto-injected context ──────────────
             try:
                 system_prompt, prompt_ctx = await render_prompt(
@@ -251,6 +279,7 @@ async def enrich_episode(
                     session_id=session_id,
                     user_id=user_id,
                     project_id=project_id,
+                    graph_backend=graph_backend,
                     db_session_factory=session_factory,
                     return_context=True,
                     metadata=metadata,
@@ -382,39 +411,12 @@ async def enrich_episode(
                 and org_cfg.llm_fact_invalidation_enabled is not False
             )
 
-            # ── 6b. Resolve graph backend (shared across sections) ──────
+            # ── 6b. Graph backend (resolved pre-render in §2c, reused) ──
             # No Postgres fallback here: a disabled org ("none" / no config)
             # resolves to None → entities section skips persistence but still
-            # sets the bit; a configured-but-unavailable backend raises and
-            # fails the task via ARQ retry so the bit is never set without
-            # entities actually being persisted.
-            graph_backend = None
-            try:
-                graph_backend = await resolve_graph_backend(
-                    ctx if isinstance(ctx, dict) else {},
-                    uuid.UUID(org_id),
-                    db,
-                )
-            except GraphBackendUnavailableError:
-                # A CONFIGURED backend that can't be resolved is a broken
-                # backend, not a disabled one — abort the task so no
-                # enrichment bit gets set and reconcile/retry re-runs it.
-                # Swallowing here would mark entities done without persisting
-                # them (permanent silent data loss).
-                log.error(
-                    "enrich_episode.graph_backend_unavailable",
-                    org_id=org_id,
-                    episode_id=episode_id,
-                )
-                raise
-            except Exception:
-                log.error(
-                    "enrich_episode.graph_backend_resolve_failed",
-                    org_id=org_id,
-                    episode_id=episode_id,
-                    exc_info=True,
-                )
-                raise
+            # sets the bit; a configured-but-unavailable backend raised in
+            # §2c and fails the task via ARQ retry so the bit is never set
+            # without entities actually being persisted.
 
             # Build shared repos
             entity_repo = (

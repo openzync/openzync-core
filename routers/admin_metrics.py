@@ -14,33 +14,85 @@ All endpoints require API key or JWT authentication.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from uuid import UUID
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import get_settings
+from core.exceptions import GraphBackendUnavailableError
 from dependencies.auth import require_permission
 from dependencies.db import get_db
+from dependencies.org_config import get_org_config
 from models.episode import Episode
 from models.fact import Fact
-from models.graph_entity import GraphEntity
 from models.user import User
+from packages.graph_backend.interface import GraphBackend
 from schemas.admin_metrics import (
     EpisodeStats,
     GraphStats,
     MetricsSummaryResponse,
 )
+from schemas.organization_config import OrgConfigBase
 from schemas.sorting import MonitorTargetSortBy, SortDir
+from services.graph_stats_service import GraphStatsService
 from services.metrics_service import MetricsService
+
+logger = structlog.get_logger(__name__)
 
 router = APIRouter(
     prefix="/metrics",
     tags=["Admin - Metrics"],
 )
+
+
+async def _resolve_graph_backend(
+    request: Request,
+    db: AsyncSession,
+    org_config: OrgConfigBase,
+    org_id: UUID,
+) -> GraphBackend | None:
+    """Resolve the org-configured graph backend, fail-soft to ``None``.
+
+    Mirrors the ``context``/``search`` router pattern (dispatcher from app
+    state, SurrealDB pool only when configured).  Unlike worker paths, admin
+    observability degrades to zeros instead of failing — a down graph must
+    not take down the whole metrics summary.  Every degraded path logs.
+    """
+    dispatcher = getattr(request.app.state, "graph_backend_dispatcher", None)
+    if dispatcher is None:
+        logger.warning("admin_metrics.no_graph_dispatcher")
+        return None
+    surreal = None
+    if org_config.graph_backend == "surrealdb":
+        pool = getattr(request.app.state, "surreal_connection_pool", None)
+        if pool is not None:
+            try:
+                surreal = await pool.get_or_create(org_id, org_config)
+            except Exception as exc:
+                logger.warning(
+                    "admin_metrics.surreal_connection_failed",
+                    error=str(exc),
+                )
+                return None
+    try:
+        return dispatcher.resolve_and_create(
+            org_config,
+            db,
+            surreal=surreal,
+            falkordb_client=getattr(request.app.state, "falkordb_client", None),
+        )
+    except (GraphBackendUnavailableError, ValueError) as exc:
+        logger.warning("admin_metrics.graph_backend_unresolved", error=str(exc))
+        return None
+    except Exception as exc:
+        # GoneError (postgres) included — PG graph backend is retired.
+        logger.warning("admin_metrics.graph_backend_failed", error=str(exc))
+        return None
 
 
 # ── Dependency ────────────────────────────────────────────────────────────────
@@ -66,8 +118,10 @@ def _get_metrics_service() -> MetricsService:
     ),
 )
 async def get_metrics_summary(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_permission("members:read")),
+    org_config: OrgConfigBase = Depends(get_org_config),
     prom: MetricsService = Depends(_get_metrics_service),
 ) -> MetricsSummaryResponse:
     """Get aggregated metrics for the admin dashboard.
@@ -76,10 +130,11 @@ async def get_metrics_summary(
     DB counts are scoped to the authenticated organization.
     """
     org_uuid = UUID(org_id)
+    backend = await _resolve_graph_backend(request, db, org_config, org_uuid)
 
     # ── DB counts (run concurrently) ─────────────────────────────────────
     episode_stats, graph_stats, user_count = await _fetch_db_counts(
-        db, org_uuid
+        db, org_uuid, backend
     )
 
     # ── Prometheus metrics (org-scoped) ──────────────────────────────────
@@ -249,26 +304,28 @@ async def _users_per_day(
 
 
 async def _entities_per_day(
-    db: AsyncSession, org_uuid: UUID, days: int, limit: int, project_id: UUID | None
+    db: AsyncSession,
+    org_uuid: UUID,
+    days: int,
+    limit: int,
+    project_id: UUID | None,
+    backend: GraphBackend | None = None,
 ) -> dict:
-    conditions = [
-        GraphEntity.organization_id == org_uuid,
-        GraphEntity.created_at >= func.now() - text(f"interval '{days} days'"),
-    ]
-    if project_id:
-        conditions.append(GraphEntity.project_id == project_id)
-    stmt = (
-        select(
-            func.date_trunc("day", GraphEntity.created_at).label("date"),
-            func.count(GraphEntity.id).label("count"),
-        )
-        .select_from(GraphEntity)
-        .where(*conditions)
-        .group_by(text("date"))
-        .order_by(text("date DESC"))
+    stats = GraphStatsService(db, backend)
+    project_ids = await stats.resolve_project_ids(org_uuid, project_id)
+    cutoff = datetime.now(UTC) - timedelta(days=days)
+    per_day = await stats.entity_counts_per_day(
+        org_uuid, project_ids, cutoff, None
     )
-    result = await db.execute(stmt)
-    rows = [[str(r.date), r.count] for r in result]
+    # Row shape preserved: [[<midnight-UTC datetime str>, count]], newest first
+    # (matches the old date_trunc PG output format).
+    rows = [
+        [
+            str(datetime.combine(date.fromisoformat(day), time.min, tzinfo=UTC)),
+            count,
+        ]
+        for day, count in sorted(per_day.items(), reverse=True)
+    ]
     return _result("entities_per_day", True, ["date", "count"], rows, {"days": days})
 
 
@@ -509,6 +566,7 @@ async def list_queries() -> dict:
     description="Runs a predefined query scoped to the authenticated organization.",
 )
 async def run_org_query(
+    request: Request,
     query: str = Query(..., description="Query name (see /metrics/queries)"),
     days: int = Query(default=7, ge=1, le=365, description="Look-back window in days"),
     limit: int = Query(default=20, ge=1, le=100, description="Max results"),
@@ -517,6 +575,7 @@ async def run_org_query(
     ),
     db: AsyncSession = Depends(get_db),
     org_id: str = Depends(require_permission("members:read")),
+    org_config: OrgConfigBase = Depends(get_org_config),
     prom: MetricsService = Depends(_get_metrics_service),
 ) -> dict:
     """Run a predefined metric query scoped to the authenticated org.
@@ -534,6 +593,13 @@ async def run_org_query(
             status_code=422,
             detail=f"Unknown query. Available: {available}",
         )
+    if query == "entities_per_day":
+        # Only the entities handler needs the graph backend — resolved
+        # per-request like the context/search routers resolve theirs.
+        backend = await _resolve_graph_backend(
+            request, db, org_config, UUID(org_id)
+        )
+        return await _entities_per_day(db, UUID(org_id), days, limit, project_id, backend)
     return await handler(db, UUID(org_id), days, limit, project_id)
 
 
@@ -611,13 +677,15 @@ async def get_prometheus_targets(
 
 
 async def _fetch_db_counts(
-    db: AsyncSession, org_id: UUID
+    db: AsyncSession, org_id: UUID, backend: GraphBackend | None
 ) -> tuple[EpisodeStats, GraphStats, int]:
     """Run all DB count queries for the admin summary.
 
     Args:
         db: Async database session.
         org_id: Organization UUID for tenant isolation.
+        backend: Resolved graph backend for entity counts (``None`` →
+            zeros, degraded — see :func:`_resolve_graph_backend`).
 
     Returns:
         Tuple of (EpisodeStats, GraphStats, user_count).
@@ -698,21 +766,12 @@ async def _fetch_db_counts(
         ) if episodes_total > 0 else 0.0,
     )
 
-    # ── Graph counts ────────────────────────────────────────────────────
-    entities_result = await db.execute(
-        select(func.count(GraphEntity.id)).where(
-            GraphEntity.organization_id == org_id,
-        )
-    )
-    entities_total = entities_result.scalar() or 0
-
-    entities_24h_result = await db.execute(
-        select(func.count(GraphEntity.id)).where(
-            GraphEntity.organization_id == org_id,
-            GraphEntity.created_at >= func.now() - text("interval '24 hours'"),
-        )
-    )
-    entities_24h = entities_24h_result.scalar() or 0
+    # ── Graph counts (backend-backed, org-wide fan-out) ─────────────
+    # The PG graph_entities stub is never written by the FalkorDB/SurrealDB
+    # paths — counts come from the backend's get_all_entities + len().
+    stats = GraphStatsService(db, backend)
+    project_ids = await stats.resolve_project_ids(org_id, None)
+    entities_total, entities_24h = await stats.entity_totals(org_id, project_ids)
 
     graph_stats = GraphStats(
         entities_total=entities_total,

@@ -397,6 +397,41 @@ class GraphBackend(ABC):
         ...
 
     @abstractmethod
+    async def get_entities_for_user(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        user_id: UUID,
+        episode_ids: list[UUID],
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return distinct graph entities linked to a user's episodes.
+
+        Same return shape as :meth:`get_entities_for_session` — a list of
+        entity dicts with ``id``, ``name``, ``entity_type``, ``summary``
+        keys, capped at ``limit`` entries.
+
+        The caller resolves ``episode_ids`` (e.g. from the sessions table)
+        because graph backends store no user linkage — neither FalkorDB stub
+        nodes nor SurrealDB episode records carry a ``user_id``.  An empty
+        ``episode_ids`` list returns ``[]`` without touching the backend.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            user_id: UUID of the user — log scope only; episode scoping
+                comes from ``episode_ids``.
+            episode_ids: Episode UUIDs belonging to the user's sessions.
+            limit: Maximum entities to return (default 50, max 200).
+
+        Returns:
+            List of entity dicts with ``id``, ``name``, ``entity_type``,
+            ``summary`` keys.
+        """
+        ...
+
+    @abstractmethod
     async def get_co_occurring_entity_pairs(
         self,
         org_id: UUID,

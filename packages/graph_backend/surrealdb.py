@@ -273,7 +273,9 @@ class SurrealGraphBackend(GraphBackend):
         so duplicate ``DEFINE`` calls return ``InternalError`` with "already
         exists".  This method catches that specific error and treats it as a
         no-op, making schema bootstrap truly idempotent regardless of
-        SurrealDB version or backend instance lifecycle.
+        SurrealDB version or backend instance lifecycle.  Variant messages
+        ("already indexed") and variant error types across driver versions
+        are tolerated identically — anything else raises.
         """
         if self._schema_ensured or self._surreal is None:
             return
@@ -282,7 +284,8 @@ class SurrealGraphBackend(GraphBackend):
         except InternalError as exc:
             # SurrealDB 3.x rejects duplicate DEFINE statements with
             # "already exists" — this is harmless, treat as idempotent.
-            if "already exists" in str(exc).lower():
+            msg = str(exc).lower()
+            if "already exists" in msg or "already indexed" in msg:
                 logger.debug(
                     "surreal_graph.schema_already_exists",
                     extra={"error": str(exc)},
@@ -291,6 +294,17 @@ class SurrealGraphBackend(GraphBackend):
                 return
             raise  # some other InternalError — let the outer handler deal with it
         except Exception as exc:
+            # Variant error types across driver versions surface the same
+            # duplicate-DEFINE message outside InternalError — tolerate
+            # identically, never log pre-existing schema as an error.
+            msg = str(exc).lower()
+            if "already exists" in msg or "already indexed" in msg:
+                logger.debug(
+                    "surreal_graph.schema_already_exists",
+                    extra={"error": str(exc)},
+                )
+                self._schema_ensured = True
+                return
             logger.error(
                 "surreal_graph.schema_bootstrap_failed",
                 extra={"error": str(exc)},
@@ -1571,6 +1585,90 @@ class SurrealGraphBackend(GraphBackend):
                 detail={
                     "org_id": str(org_id),
                     "session_id": str(session_id),
+                },
+            ) from exc
+
+    async def get_entities_for_user(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        user_id: UUID,
+        episode_ids: list[UUID],
+        *,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """Return distinct entities linked to a user's episodes.
+
+        Queries the ``has_entity`` edge table directly by episode RecordID —
+        deliberately NOT via ``episode`` records: :meth:`link_entity_to_episode`
+        creates edges with RecordID references but never creates ``episode``
+        records (or populates ``session_id``), so episode-record traversal
+        always yields ``[]`` on prod data.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            user_id: User UUID — log scope only; episode scoping comes
+                from ``episode_ids`` (the graph stores no user linkage).
+            episode_ids: Episode UUIDs belonging to the user's sessions.
+            limit: Maximum entities to return (default 50, max 200).
+
+        Returns:
+            List of entity dicts with ``id``, ``name``, ``entity_type``,
+            ``summary`` keys.
+        """
+        if not episode_ids:
+            return []
+        await self._ensure_schema()
+        self._require_connection()
+        limit = max(1, min(int(limit), 200))
+
+        params: dict[str, Any] = {
+            "org_id": str(org_id),
+            "project_id": str(project_id),
+            "episode_rids": [RecordID("episode", str(e)) for e in episode_ids],
+            "limit": limit,
+        }
+
+        try:
+            result = await self._surreal.query(
+                """
+                SELECT DISTINCT out.id AS id, out.name AS name,
+                    out.entity_type AS entity_type, out.summary AS summary
+                FROM has_entity
+                WHERE organization_id = $org_id
+                  AND project_id = $project_id
+                  AND in IN $episode_rids
+                LIMIT $limit;
+                """,
+                params,
+            )
+            rows = result if result is not None else []
+            return [
+                {
+                    "id": self._record_id_to_str(r.get("id")),
+                    "name": r.get("name", ""),
+                    "entity_type": r.get("entity_type", ""),
+                    "summary": r.get("summary") if r.get("summary") is not None else "",
+                }
+                for r in rows
+            ]
+        except Exception as exc:
+            logger.error(
+                "surreal_graph.get_entities_for_user_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "user_id": str(user_id),
+                    "episode_count": len(episode_ids),
+                    "error": str(exc),
+                },
+            )
+            raise ExternalServiceError(
+                message=f"Failed to get entities for user {user_id}: {exc}",
+                detail={
+                    "org_id": str(org_id),
+                    "user_id": str(user_id),
                 },
             ) from exc
 

@@ -1,12 +1,15 @@
-"""Link entities to episode via graph_episode_entities join table.
+"""Link entities to episode via the graph backend.
 
 Runs after entity extraction is complete (or alongside it).  Reads the
-extracted entities from the graph backend and links them to this episode
-in the ``graph_episode_entities`` join table.
+extracted entities from the graph backend and records entity–episode
+links with ``backend.link_entity_to_episode`` (FalkorDB ``MENTIONS`` edges
+on ``:Episode`` stub nodes, SurrealDB ``has_entity`` edges).  No
+PostgreSQL join-table writes — the ``graph_episode_entities`` table is
+legacy and no longer on this path.
 
 Previously this worker created a Graphiti ``EpisodicNode`` for each
-episode.  That pattern is replaced by storing entity–episode links in
-PostgreSQL, eliminating the need for a separate graph database.
+episode.  That pattern is replaced by backend-native entity–episode
+links, eliminating the need for a separate graph database.
 """
 
 from __future__ import annotations
@@ -40,16 +43,18 @@ async def link_entities_to_episode(
     trace_id: str = "",
     metadata: dict | None = None,
 ) -> None:
-    """Link entities extracted from this episode via graph_episode_entities.
+    """Link entities extracted from this episode via the graph backend.
 
-    PostgreSQL is the authoritative store — if this task fails, the episode
-    data is not lost and can be retried.
+    PostgreSQL holds the episode row and enrichment bit — if this task
+    fails, the episode data is not lost and can be retried.
 
     Flow:
     1. Bootstrap a temporary DB engine
     2. Get the episode row
-    3. Search for entities in graph_entities by name/content match
-    4. Link matching entities via INSERT INTO graph_episode_entities
+    3. Search for entities via ``backend.bulk_search_entities`` by
+       name/content match
+    4. Link matching entities via ``backend.link_entity_to_episode``
+       (backend-native edge, no PG join-table INSERT)
     5. Set enrichment_status bit 3
 
     Args:

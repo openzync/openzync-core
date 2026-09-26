@@ -94,8 +94,41 @@ async def generate_user_summary(
         session_factory = get_async_session(engine)
 
     # ── 1-4. Render prompt with auto-injected context ─────────────────────
+    # Resolve the graph backend BEFORE rendering — the user-entities
+    # provider fails loud on a None backend (a missing backend here is a
+    # wiring bug, never a steady state).  Graph-disabled orgs resolve to
+    # None and skip entity context via the GraphBackendUnavailableError
+    # path below, mirroring enrich_episode's section-2 skip.
+    from core.exceptions import GraphBackendUnavailableError
     from core.llm import build_cache_config, resolve_backend
     from services.usage_service import record_llm_usage
+    from workers.backend import resolve_graph_backend
+
+    graph_backend = None
+    try:
+        async with session_factory() as _backend_db:
+            graph_backend = await resolve_graph_backend(
+                ctx if isinstance(ctx, dict) else {},
+                uuid.UUID(org_id),
+                _backend_db,
+            )
+    except GraphBackendUnavailableError:
+        logger.error(
+            "user_summary.graph_backend_unavailable",
+            org_id=org_id,
+            user_id=user_id,
+        )
+        raise
+    if graph_backend is None:
+        logger.warning(
+            "user_summary.graph_disabled_entities_skipped",
+            org_id=org_id,
+            user_id=user_id,
+        )
+        raise GraphBackendUnavailableError(
+            f"Graph disabled for org {org_id} — user summary requires "
+            "entity context; refusing to render without it."
+        )
 
     try:
         prompt_text = await render_prompt(
@@ -103,6 +136,7 @@ async def generate_user_summary(
             org_id=org_id,
             user_id=user_id,
             project_id=project_id,
+            graph_backend=graph_backend,
             db_session_factory=session_factory,
         )
     except Exception:
