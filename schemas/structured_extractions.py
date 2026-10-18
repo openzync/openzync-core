@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class StructuredExtractionResponse(BaseModel):
@@ -29,4 +29,6 @@ class StructuredExtractionListResponse(BaseModel):
     """Response model for listing structured extractions within a session."""
 
     items: list[StructuredExtractionResponse]
-    total: int
+    total: int = Field(description="Full collection total, not the current page count.")
+    next_cursor: str | None = None
+    has_more: bool = False

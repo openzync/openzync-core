@@ -13,8 +13,9 @@ pagination from the first page.
 from __future__ import annotations
 
 import base64
+from uuid import UUID
 
-from core.exceptions import CursorExpiredError
+from core.exceptions import CursorExpiredError, ValidationError
 
 CURSOR_VERSION: str = "v1"
 """Current cursor envelope version. Bump when a payload format changes."""
@@ -90,3 +91,31 @@ def decode_versioned_cursor(cursor: str) -> str:
             f"(expected {CURSOR_VERSION!r}) — restart pagination"
         )
     return payload
+
+
+def decode_page_cursor(cursor: str) -> tuple[str, str, str, UUID]:
+    """Decode a ``sort_by:sort_dir:value|id_hex`` page cursor (fail-closed).
+
+    Shared by repositories implementing the ``SessionRepository.list``
+    keyset pattern — the cursor embeds the request's sort so a sort
+    change mid-pagination fails loudly instead of skipping rows.
+
+    Args:
+        cursor: Opaque cursor string from a previous page response.
+
+    Returns:
+        Tuple of ``(sort_by, sort_dir, value, tiebreak_id)``.
+
+    Raises:
+        ValidationError: If malformed or the sort prefix is missing (422).
+    """
+    try:
+        raw = decode_cursor(cursor)
+        prefix, _, id_hex = raw.rpartition("|")
+        sort_by, _, rest = prefix.partition(":")
+        sort_dir, _, value = rest.partition(":")
+        if not sort_by or sort_dir not in ("asc", "desc") or not id_hex:
+            raise ValueError("missing sort prefix")
+        return sort_by, sort_dir, value, UUID(hex=id_hex)
+    except (ValueError, TypeError) as e:
+        raise ValidationError(f"Invalid cursor: {e}") from e

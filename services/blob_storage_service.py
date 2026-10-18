@@ -76,15 +76,18 @@ def is_allowed_upload_mime(mime_type: str) -> bool:
     )
 
 
-async def _read_upload_bounded(
-    upload_file: UploadFile,
+async def read_upload_bounded(
+    upload_file: UploadFile | bytes,
     max_bytes: int,
     file_name: str,
 ) -> bytes:
     """Read an upload in 1 MiB chunks, aborting as soon as the cap is exceeded.
 
+    Accepts pre-read bytes (fast-path) — callers that already consumed the
+    one-shot ``UploadFile`` stream pass bytes to avoid a 0-byte second read.
+
     Args:
-        upload_file: Multipart upload to read from.
+        upload_file: Multipart upload to read from, or pre-read bytes.
         max_bytes: Maximum allowed total size in bytes.
         file_name: Original file name, used in the error message.
 
@@ -95,6 +98,12 @@ async def _read_upload_bounded(
         PayloadTooLargeError: Once the running total exceeds *max_bytes* —
             remaining chunks are never read.
     """
+    if isinstance(upload_file, bytes):
+        if len(upload_file) > max_bytes:
+            raise PayloadTooLargeError(
+                f"Blob {file_name} exceeds limit of {max_bytes} bytes"
+            )
+        return upload_file
     buffer = bytearray()
     while chunk := await upload_file.read(_UPLOAD_CHUNK_BYTES):
         buffer.extend(chunk)
@@ -140,7 +149,7 @@ class BlobStorageService:
         episode_id: UUID,
         session_id: UUID,
         created_by: UUID,
-        uploaded_files: Sequence[UploadFile],
+        uploaded_files: Sequence[UploadFile | bytes],
         blob_metadatas: Sequence[BlobMetadata],
         storage_config: dict[str, Any],
     ) -> list[EpisodeBlob]:
@@ -157,7 +166,8 @@ class BlobStorageService:
             session_id: Session UUID.
             created_by: User UUID.
             uploaded_files: The ``UploadFile`` objects from the multipart
-                request.
+                request, or pre-read bytes (one entry per file — bytes
+                avoid re-reading the one-shot upload stream).
             blob_metadatas: List of dicts with ``blob_id``, ``file_name``,
                 ``mime_type`` keys from the request's ``BlobMetadata``
                 schemas.  The ``blob_id`` indexes into ``uploaded_files``.
@@ -195,14 +205,15 @@ class BlobStorageService:
                 )
 
             upload_file = uploaded_files[meta.blob_id]
-            file_name = meta.file_name or upload_file.filename or "unnamed"
+            if isinstance(upload_file, bytes):
+                file_name = meta.file_name or "unnamed"
+                fallback_mime = "application/octet-stream"
+            else:
+                file_name = meta.file_name or upload_file.filename or "unnamed"
+                fallback_mime = upload_file.content_type or "application/octet-stream"
             # Single normalized value — drives the allowlist check, the S3
             # ContentType, and the DB record so they can never disagree.
-            mime_type = normalize_upload_mime(
-                meta.mime_type
-                or upload_file.content_type
-                or "application/octet-stream"
-            )
+            mime_type = normalize_upload_mime(meta.mime_type or fallback_mime)
             # Reject before reading any bytes — unsupported types never
             # reach S3 or the extraction queue.
             if not is_allowed_upload_mime(mime_type):
@@ -210,7 +221,7 @@ class BlobStorageService:
                     f"Unsupported MIME type {mime_type!r} for blob {file_name}"
                 )
 
-            data = await _read_upload_bounded(upload_file, max_bytes, file_name)
+            data = await read_upload_bounded(upload_file, max_bytes, file_name)
             content_hash = hashlib.sha256(data).hexdigest()
             blob_index = meta.blob_id  # use blob_id as index
 
@@ -262,14 +273,17 @@ class BlobStorageService:
     ) -> None:
         """Delete blobs from S3 storage.
 
-        Best-effort: logs failures but does not raise. Callers should
-        commit the DB deletion regardless of S3 result — lifecycle
-        policies provide the safety net for orphaned objects.
+        Fail-loud: an S3 failure raises ``S3StorageError`` so callers can
+        retry instead of silently leaking objects (or deleting DB rows
+        for bytes that still exist).
 
         Args:
             blob_records: List of EpisodeBlob ORM instances to delete.
             storage_config: Org storage config dict from
                 ``OrgConfigBase.to_blob_storage_config()``.
+
+        Raises:
+            S3StorageError: If any S3 delete fails.
         """
         if not blob_records:
             return
@@ -280,17 +294,18 @@ class BlobStorageService:
         for blob in blob_records:
             try:
                 await storage.delete(blob.storage_key)
-                logger.info(
-                    "blob_storage_service.delete_success",
-                    blob_id=str(blob.id),
-                    key=blob.storage_key,
-                )
             except S3StorageError:
                 logger.warning(
                     "blob_storage_service.delete_failed",
                     blob_id=str(blob.id),
                     key=blob.storage_key,
                 )
+                raise
+            logger.info(
+                "blob_storage_service.delete_success",
+                blob_id=str(blob.id),
+                key=blob.storage_key,
+            )
 
     # ── Validation ──────────────────────────────────────────────────────────
 

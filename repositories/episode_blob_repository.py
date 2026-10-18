@@ -200,6 +200,22 @@ class EpisodeBlobRepository:
         )
         return list(result.scalars().all())
 
+    async def get_by_project(self, project_id: UUID) -> list[EpisodeBlob]:
+        """Get all blobs for a project.
+
+        Args:
+            project_id: The project UUID.
+
+        Returns:
+            List of ``EpisodeBlob`` instances, ordered by creation time.
+        """
+        result = await self._db.execute(
+            select(EpisodeBlob)
+            .where(EpisodeBlob.project_id == project_id)
+            .order_by(EpisodeBlob.created_at)
+        )
+        return list(result.scalars().all())
+
     async def get_by_id(self, blob_id: UUID) -> EpisodeBlob | None:
         """Get a single blob by its UUID.
 

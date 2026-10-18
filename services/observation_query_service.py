@@ -58,7 +58,8 @@ class ObservationQueryService:
 
         Returns:
             An ``ObservationListResponse`` with the current page of
-            observations and resolved entity names.
+            observations and resolved entity names. ``total`` is the
+            page count (the backend returns no collection total).
 
         Raises:
             GraphBackendUnavailableError: If the graph backend is unreachable.
@@ -104,4 +105,9 @@ class ObservationQueryService:
         items = [
             ObservationResponse.model_validate(item) for item in result["items"]
         ]
-        return ObservationListResponse(data=items, total=len(items))
+        return ObservationListResponse(
+            data=items,
+            total=len(items),
+            next_cursor=result.get("next_cursor"),
+            has_more=result.get("has_more", False),
+        )

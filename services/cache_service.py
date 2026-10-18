@@ -285,18 +285,22 @@ class CacheService:
         query: str,
         as_of: str | None = None,
         sort: str = "relevance",
+        format: str = "text",  # noqa: A002
+        limit: int = 20,
     ) -> str:
         """Build a namespaced cache key for context assembly results.
 
-        Key format: ``ctx:{org_id}:{project_id}[:{as_of}][:{sort}]:{query_hash}``
+        Format: ``ctx:{org}:{proj}[:{as_of}][:{sort}]:{fmt}:{lim}:{qhash}``
 
         The query is SHA-256 hashed to keep keys a bounded length
         regardless of query length.  An optional ``as_of`` ISO timestamp
         segment keeps effective-at results from poisoning the default
         (now) cache and from colliding with other timestamps.  A
         non-default ``sort`` segment keeps relevance/recent orderings
-        from colliding.  The ``ctx:{org_id}:{project_id}:`` prefix is
-        preserved so project-wide invalidation via
+        from colliding.  ``format`` and ``limit`` are always included —
+        a cached ``text``/``limit=20`` result must never serve a
+        ``json``/``limit=50`` request.  The ``ctx:{org_id}:{project_id}:``
+        prefix is preserved so project-wide invalidation via
         ``ctx:{org_id}:{project_id}:*`` keeps working.
 
         Args:
@@ -307,6 +311,9 @@ class CacheService:
                 segment (plain "now" queries keep the legacy key shape).
             sort: ``"relevance"`` (omitted — legacy key shape) or
                 ``"recent"`` (appended as a segment).
+            format: Output format — ``"text"`` or ``"json"`` (always
+                included; no legacy omission).
+            limit: Max items per source type (always included).
 
         Returns:
             A namespaced Redis key string.
@@ -317,6 +324,8 @@ class CacheService:
             parts.append(as_of)
         if sort != "relevance":
             parts.append(sort)
+        parts.append(format)
+        parts.append(str(limit))
         parts.append(query_hash)
         return ":".join(parts)
 

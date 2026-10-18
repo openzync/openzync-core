@@ -95,12 +95,22 @@ class ObservationListResponse(BaseModel):
 
     Attributes:
         data: List of observation responses for the current page.
-        total: Total number of observations matching the query.
+        total: Number of observations in this page (the graph backend
+            returns no collection total — use ``has_more``/``next_cursor``
+            to page through the full set).
+        next_cursor: Opaque cursor for the next page (None when exhausted).
+        has_more: Whether more pages exist.
     """
 
     data: list[ObservationResponse] = Field(
         ..., description="List of observations for the current page.",
     )
     total: int = Field(
-        ..., ge=0, description="Total number of matching observations.",
+        ..., ge=0, description="Number of observations in this page.",
+    )
+    next_cursor: str | None = Field(
+        default=None, description="Opaque cursor for the next page.",
+    )
+    has_more: bool = Field(
+        default=False, description="Whether more pages exist.",
     )

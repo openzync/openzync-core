@@ -70,7 +70,7 @@ ENV PATH=/root/.local/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Worker exposes an aiohttp /health endpoint on settings.HEALTH_PORT (default 8080)
+# Worker exposes an aiohttp /health endpoint on settings.HEALTH_PORT (default 8081)
 # managed by the ARQ worker loop. The 30s start-period covers the OpenBao Agent
 # auth + render cycle; if /health is not up by then, the container is unhealthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s \

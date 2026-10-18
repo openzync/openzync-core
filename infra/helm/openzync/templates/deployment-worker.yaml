@@ -21,20 +21,30 @@ spec:
         - name: worker
           image: "{{ .Values.global.imageRegistry }}/{{ .Values.worker.image.repository }}:{{ .Values.worker.image.tag }}"
           imagePullPolicy: {{ .Values.worker.image.pullPolicy }}
+          ports:
+            - name: health
+              containerPort: 8081
           envFrom:
             - configMapRef:
                 name: {{ include "openzync.fullname" . }}-config
             - secretRef:
                 name: {{ include "openzync.fullname" . }}-secrets
                 optional: true
+          # Worker serves /health on HEALTH_PORT (default 8081 — see
+          # services/worker/worker_settings.py, worker.py health server).
           livenessProbe:
-            exec:
-              command:
-                - python
-                - "-c"
-                - "import redis; r=redis.from_url('$REDIS_URL'); r.ping()"
+            httpGet:
+              path: /health
+              port: health
             initialDelaySeconds: {{ .Values.worker.health.initialDelaySeconds }}
             periodSeconds: {{ .Values.worker.health.periodSeconds }}
             timeoutSeconds: {{ .Values.worker.health.timeoutSeconds }}
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: health
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
           resources:
             {{- toYaml .Values.worker.resources | nindent 12 }}

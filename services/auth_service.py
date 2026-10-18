@@ -1296,7 +1296,8 @@ class AuthService:
         Raises:
             NotFoundError: If the user no longer exists.
             ValidationError: If password change is requested without
-                valid current password.
+                valid current password, or email change is requested
+                without valid current password.
             ConflictError: If the new email is already taken.
         """
         user = await self._repo.get_user_by_id(user_id)
@@ -1318,6 +1319,21 @@ class AuthService:
                 raise ConflictError(
                     f"Email '{payload.email}' is already in use."
                 )
+            if payload.email.lower() != (user.email or "").lower():
+                # Email takeover vector — require password re-authentication,
+                # same verify path as the password-change branch below.
+                if not payload.current_password:
+                    raise ValidationError(
+                        "Current password is required to change email."
+                    )
+                if user.password_hash is None:
+                    raise ValidationError(
+                        "This account does not have a password set."
+                    )
+                if not verify_password(
+                    payload.current_password, user.password_hash
+                ):
+                    raise AuthenticationError("Current password is incorrect.")
             update_kwargs["email"] = payload.email
             has_changes = True
 

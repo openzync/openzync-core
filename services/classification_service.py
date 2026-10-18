@@ -38,8 +38,10 @@ class ClassificationService:
         session_id: UUID,
         project_id: UUID | None = None,
         sort: SortSpec | None = None,
-    ) -> list[ClassificationResponse]:
-        """Return all classifications for episodes in a session.
+        limit: int = 100,
+        cursor: str | None = None,
+    ) -> tuple[list[ClassificationResponse], str | None]:
+        """Return a page of classifications for episodes in a session.
 
         Default ``sequence_number ASC`` (locked); ``created_at`` alt
         offered without breaking the default.
@@ -50,10 +52,13 @@ class ClassificationService:
             project_id: Optional project UUID for intra-org isolation
                 of the session ownership check.
             sort: Validated sort spec (forwarded opaque to the repository).
+            limit: Maximum results per page (capped at 500).
+            cursor: Opaque cursor from a previous page.
 
         Returns:
-            List of ``ClassificationResponse`` objects, ordered by episode
-            sequence number by default.  May be empty if no classifications exist yet.
+            Tuple of ``(classifications, next_cursor)`` — ``next_cursor``
+            is ``None`` when there are no more pages. May be empty if no
+            classifications exist yet.
 
         Raises:
             NotFoundError: If the session does not exist.
@@ -65,9 +70,11 @@ class ClassificationService:
         if session is None:
             raise NotFoundError(f"Session '{session_id}' not found")
 
-        classifications = await self._repo.get_by_session(org_id, session_id, sort=sort)
+        classifications, next_cursor = await self._repo.get_by_session(
+            org_id, session_id, sort=sort, limit=limit, cursor=cursor
+        )
         if not classifications:
-            return []
+            return [], None
 
         # Batch-fetch episode content to avoid N+1
         episode_ids = [c.episode_id for c in classifications]
@@ -87,7 +94,7 @@ class ClassificationService:
                 role=entry[1],
             )
             for c in classifications
-        ]
+        ], next_cursor
 
     async def get_classification_for_episode(
         self,

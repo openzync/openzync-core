@@ -235,7 +235,7 @@ def create_app() -> FastAPI:
 
     # Runtime 8 — Trusted Host: prevent host-header attacks in production.
     allowed_hosts = (
-        settings.HOSTS_ALLOWED.split(",")
+        [o.strip() for o in settings.HOSTS_ALLOWED.split(",") if o.strip()]
         if settings.ENVIRONMENT == "production"
         else ["*"]
     )
@@ -270,13 +270,17 @@ def create_app() -> FastAPI:
     app.add_middleware(LoggingMiddleware)
 
     # Runtime 0 (outermost) — CORS: intercepts OPTIONS preflight BEFORE AuthMiddleware
-    # rejects them.
+    # rejects them. Methods/headers are an explicit allowlist (frontend sends
+    # Authorization + Content-Type; X-Request-ID is accepted for tracing) —
+    # never "*" with allow_credentials=True.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.CORS_ORIGINS.split(","),
+        allow_origins=[
+            o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()
+        ],
         allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key"],
     )
 
     # ── Routers ──────────────────────────────────────────────────────────

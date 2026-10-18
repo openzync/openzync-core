@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import signal
 import sys
 from collections.abc import Awaitable, Callable
 from typing import Any, NoReturn
@@ -143,43 +142,9 @@ LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
 ]
 """Tasks assigned to the low-priority queue (scheduled batch)."""
 
-
-# ═════════════════════════════════════════════════════════════════════════════
-# Signal handling
-# ═════════════════════════════════════════════════════════════════════════════
-
-
-_shutdown_requested: bool = False
-"""Global flag — set by :func:`handle_signal`; checked by the worker loop."""
-
-
-def handle_signal(signum: int, _frame: object | None = None) -> None:
-    """Handle SIGTERM/SIGINT for graceful shutdown.
-
-    Sets a global flag; the worker loop checks this between jobs.  The current
-    job completes; no new jobs are accepted.  A second signal forces an exit.
-
-    Args:
-        signum: Signal number (e.g. ``signal.SIGTERM``).
-        _frame: Current stack frame (ignored — present for signal handler API
-            compatibility).
-    """
-    global _shutdown_requested  # noqa: PLW0603  — intentional module-level flag
-
-    if _shutdown_requested:
-        # Second signal received while already shutting down — force exit.
-        logger.warning(
-            "shutdown.force_exit",
-            signal=signal.Signals(signum).name,
-        )
-        sys.exit(1)
-
-    _shutdown_requested = True
-    logger.info(
-        "shutdown.signal_received",
-        signal=signal.Signals(signum).name,
-        message="Finishing current jobs, not accepting new ones.",
-    )
+# note: SIGTERM/SIGINT are handled by ARQ itself (Worker.async_run installs
+# its own handlers) — a custom loop.add_signal_handler here replaced ARQ's
+# and broke graceful shutdown, so there is intentionally no signal code.
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -233,7 +198,9 @@ async def monitor_queue_depth(redis: ArqRedis, interval: int = 15) -> None:
         settings.low_queue_full,
     ]
 
-    while not _shutdown_requested:
+    # ARQ's shutdown (SIGTERM/SIGINT via Worker.async_run) cancels this
+    # task — CancelledError propagates out of the sleep and ends the loop.
+    while True:
         for queue_name in queue_names:
             try:
                 # ARQ stores pending jobs in a Redis sorted set: {queue_name}:jobs
@@ -682,13 +649,6 @@ async def main() -> NoReturn:
         high_concurrency=min(settings.MAX_WORKERS, 8),
         low_concurrency=max(1, settings.MAX_WORKERS // 4),
     )
-
-    # ── Signal handlers ────────────────────────────────────────────────
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, lambda s=sig: handle_signal(s))
-
-    logger.info("worker.signal_handlers_registered")
 
     # ── Health check web server ────────────────────────────────────────
     # Store the worker itself, not worker.pool: ARQ assigns .pool inside

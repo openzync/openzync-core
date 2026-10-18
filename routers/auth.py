@@ -73,12 +73,10 @@ router = APIRouter(
 def _client_ip(request: Request) -> str:
     """Extract the client IP address from the request.
 
-    Respects the ``X-Forwarded-For`` header for reverse-proxy deployments.
-    Falls back to ``request.client.host``.
+    Uses the direct peer address only — ``X-Forwarded-For`` is
+    client-controlled and must not be trusted (no TRUSTED_PROXY setting
+    exists in core/config.py). Falls back to ``"unknown"``.
     """
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
     if request.client:
         return request.client.host
     return "unknown"
