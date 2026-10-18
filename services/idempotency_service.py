@@ -551,6 +551,43 @@ class IdempotencyService:
             )
         return ContentHashClaim(won=won, winner=winner)
 
+    async def release_content_hash(
+        self,
+        org_id: str,
+        user_id: str,
+        session_id: str,
+        messages: list[dict[str, Any]],
+    ) -> None:
+        """Release a previously won content-hash claim (failure path only).
+
+        Deletes the Redis claim key so a retry of the same content can
+        claim fresh instead of replaying a ``job_id`` whose ingest never
+        completed. The ``ingest_dedup`` DB row remains the arbiter: if the
+        failed attempt persisted it, the retry replays the winner via the
+        DB backstop; if it rolled back, the retry proceeds cleanly.
+
+        Fail-open: Redis errors are logged and swallowed — a lost release
+        only risks a stale replay, never a failed request. The claim path
+        (:meth:`claim_content_hash`) stays fail-closed.
+
+        Args:
+            org_id: Organisation UUID string.
+            user_id: User UUID string.
+            session_id: Session UUID string.
+            messages: List of message dicts (recomputes the claim key).
+        """
+        content_hash = self.compute_content_hash(
+            org_id, user_id, session_id, messages
+        )
+        try:
+            await self._redis.delete(self._content_prefix + content_hash)
+        except Exception:
+            logger.warning(
+                "idempotency.content_hash_release_failed",
+                extra={"content_hash": content_hash[:16] + "..."},
+                exc_info=True,
+            )
+
     # ──────────────────────────────────────────────────────────────────────────
     # Worker-level idempotency
     # ──────────────────────────────────────────────────────────────────────────

@@ -70,13 +70,14 @@ class TestClassificationService:
         service, mock_repo, _mock_session_repo, _mock_episode_repo = (
             self._make_service()
         )
-        mock_repo.get_by_session.return_value = []
+        mock_repo.get_by_session.return_value = ([], None)
 
-        result = await service.get_classifications_for_session(
+        result, next_cursor = await service.get_classifications_for_session(
             org_id=self.ORG_ID,
             session_id=uuid4(),
         )
         assert isinstance(result, list)
+        assert next_cursor is None
 
     @pytest.mark.asyncio
     async def test_get_classifications_for_session_with_results(self) -> None:
@@ -85,9 +86,9 @@ class TestClassificationService:
             self._make_service()
         )
         mock_cls = self._mock_classification(intent="greeting", emotion="positive")
-        mock_repo.get_by_session.return_value = [mock_cls]
+        mock_repo.get_by_session.return_value = ([mock_cls], None)
 
-        result = await service.get_classifications_for_session(
+        result, _next_cursor = await service.get_classifications_for_session(
             org_id=self.ORG_ID,
             session_id=uuid4(),
         )
@@ -117,14 +118,14 @@ class TestClassificationService:
         )
         mock_cls.valence = "negative"
         mock_cls.arousal = "high"
-        mock_repo.get_by_session.return_value = [mock_cls]
+        mock_repo.get_by_session.return_value = ([mock_cls], None)
 
         # Provide real episode content
         mock_episode_repo.get_content_batch.return_value = {
             episode_id: ("Hello, I need help!", "user"),
         }
 
-        result = await service.get_classifications_for_session(
+        result, _next_cursor = await service.get_classifications_for_session(
             org_id=self.ORG_ID,
             session_id=uuid4(),
         )

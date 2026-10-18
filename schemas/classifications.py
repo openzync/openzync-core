@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ClassificationResponse(BaseModel):
@@ -34,4 +34,6 @@ class ClassificationListResponse(BaseModel):
     """Response model for listing classifications within a session."""
 
     data: list[ClassificationResponse]
-    total: int
+    total: int = Field(description="Full collection total, not the current page count.")
+    next_cursor: str | None = None
+    has_more: bool = False

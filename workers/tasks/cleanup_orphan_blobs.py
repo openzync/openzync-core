@@ -189,7 +189,9 @@ async def cleanup_orphan_blobs(
 
             svc = BlobStorageService(db, blob_repo)
 
-            # Delete from S3 (best-effort)
+            # S3 delete raises on failure — DB rows are deleted only after
+            # S3 confirms, so a failed job retries with state intact instead
+            # of dropping DB rows for bytes that still exist.
             await svc.delete_blobs(blobs, storage_config)
 
             # Delete from DB

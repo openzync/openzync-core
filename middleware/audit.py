@@ -223,6 +223,10 @@ class AuditMiddleware:
         method = scope.get("method", "GET")
         path = scope.get("path", "")
 
+        # Decide buffering BEFORE calling the app — exempt traffic (GET,
+        # OPTIONS, internal paths) is never buffered.
+        should_buffer = not (method in ("OPTIONS", "GET") or path in EXEMPT_PATHS)
+
         # ── Buffer response body for audit capture ──────────────────────
         status_code: int = 200
         body_chunks: list[bytes] = []
@@ -237,10 +241,10 @@ class AuditMiddleware:
                     body_chunks.append(chunk)
             await send(message)
 
-        await self.app(scope, receive, send_wrapper)
+        await self.app(scope, receive, send_wrapper if should_buffer else send)
 
         # ── Post-response: enqueue audit (fire-and-forget) ──────────────
-        if method in ("OPTIONS", "GET") or path in EXEMPT_PATHS:
+        if not should_buffer:
             return
 
         try:
@@ -289,10 +293,9 @@ class AuditMiddleware:
             actor_type = None
 
         # ── IP address ─────────────────────────────────────────────────────
-        forwarded = headers.get(b"x-forwarded-for", b"").decode()
-        ip_address: str = forwarded.split(",")[0].strip() if forwarded else (
-            scope["client"][0] if scope.get("client") else "unknown"
-        )
+        # Direct peer only — X-Forwarded-For is client-controlled and no
+        # TRUSTED_PROXY setting exists, so it must not be trusted.
+        ip_address: str = scope["client"][0] if scope.get("client") else "unknown"
 
         # ── Details payload ────────────────────────────────────────────────
         query_bytes: bytes = scope.get("query_string", b"")

@@ -60,6 +60,17 @@ def _get_extraction_service(
 async def list_structured_extractions(
     request: Request,
     session_id: UUID = Path(...),
+    limit: int = Query(
+        default=100,
+        ge=1,
+        le=500,
+        description="Maximum results per page (1–500).",
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous list response for "
+        "pagination.",
+    ),
     sort_by: ExtractionSortBy | None = Query(
         default=None,
         description="Sort key (default sequence_number, locked).",
@@ -70,7 +81,7 @@ async def list_structured_extractions(
     ),
     service: StructuredExtractionService = Depends(_get_extraction_service),
 ) -> StructuredExtractionListResponse:
-    """List all structured extractions for episodes in a session.
+    """List structured extractions for episodes in a session (paginated).
 
     Returns an empty list if no episodes in the session have been processed
     by the ``extract_structured`` worker yet, or if no structured schemas
@@ -78,11 +89,24 @@ async def list_structured_extractions(
     """
     org_id = UUID(request.state.org_id)
     project_id = UUID(request.path_params["project_id"])
-    return await service.get_session_extractions(
+    items, next_cursor = await service.get_session_extractions(
         org_id=org_id,
         session_id=session_id,
         project_id=project_id,
         sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
+        limit=limit,
+        cursor=cursor,
+    )
+    total = await service.count_extractions_for_session(
+        org_id=org_id,
+        session_id=session_id,
+        project_id=project_id,
+    )
+    return StructuredExtractionListResponse(
+        items=items,
+        total=total,
+        next_cursor=next_cursor,
+        has_more=next_cursor is not None,
     )
 
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import time
+from uuid import uuid4
 
 import orjson
 import redis.asyncio as aioredis
@@ -115,9 +116,9 @@ async def _check_rate_limit(
 ) -> tuple[bool, int, int]:
     """Check and increment the sliding-window rate limit.
 
-    Uses a Redis sorted set where each member is a unique timestamp (in
-    milliseconds) and the score is that same timestamp.  Old entries outside
-    the window are pruned with ``ZREMRANGEBYSCORE``.
+    Uses a Redis sorted set where each member is a unique
+    ``{timestamp_ms}:{uuid4}`` entry scored by that timestamp.  Old entries
+    outside the window are pruned with ``ZREMRANGEBYSCORE``.
 
     Args:
         redis: Async Redis client.
@@ -138,9 +139,13 @@ async def _check_rate_limit(
 
     pipe = redis.pipeline(transaction=True)
 
+    # Member is unique per request — a bare timestamp collides when two
+    # requests land in the same millisecond (second request overwrites the
+    # first in the ZSET, under-counting the window).
+    member = f"{now_ms}:{uuid4().hex}"
     pipe.zremrangebyscore(key, 0, cutoff_ms)
     pipe.zcard(key)
-    pipe.zadd(key, {str(now_ms): now_ms})  # type: ignore[arg-type]
+    pipe.zadd(key, {member: now_ms})  # type: ignore[arg-type]
     pipe.expire(key, window_seconds + 5)
 
     results = await pipe.execute()

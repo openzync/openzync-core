@@ -48,34 +48,38 @@ class TestDialogClassificationRepository:
     async def test_get_by_session(
         self, repo: DialogClassificationRepository, mock_db: AsyncMock
     ) -> None:
-        """get_by_session returns classifications for all episodes in a session."""
+        """get_by_session returns (classifications, next_cursor) for a session."""
         classifications = [
             self._mock_classification(),
             self._mock_classification(),
         ]
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = classifications
+        mock_result.all.return_value = [
+            (c, MagicMock()) for c in classifications
+        ]
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_session(
+        rows, next_cursor = await repo.get_by_session(
             org_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
-        assert result == classifications
+        assert rows == classifications
+        assert next_cursor is None
 
     async def test_get_by_session_empty(
         self, repo: DialogClassificationRepository, mock_db: AsyncMock
     ) -> None:
-        """get_by_session returns empty list when no classifications exist."""
+        """get_by_session returns ([], None) when no classifications exist."""
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = []
+        mock_result.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_session(
+        rows, next_cursor = await repo.get_by_session(
             org_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
-        assert result == []
+        assert rows == []
+        assert next_cursor is None
 
     # ── get_by_episode ─────────────────────────────────────────────────────────
 

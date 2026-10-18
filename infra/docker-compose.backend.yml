@@ -450,10 +450,13 @@ services:
   redis:
     image: redis:7-alpine
     ports: ["127.0.0.1:6380:6379"]
-    # Cap cache memory to free ~200MB headroom on the 1.9GB VPS. No
-    # persistence conflict: redis-data still holds RDB snapshots in /data;
-    # --maxmemory only bounds evictable keys (allkeys-lru), appendonly stays off.
-    command: ["redis-server", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    # Cap cache memory to free ~200MB headroom on the 1.9GB VPS. noeviction
+    # (not allkeys-lru): DB 0 is shared between cache keys AND ARQ job +
+    # dedup keys, so LRU eviction would silently drop queued/dedup state.
+    # Capped writes fail loudly instead; size cache keys with TTLs.
+    # Persistence: redis-data still holds RDB snapshots in /data; appendonly
+    # coexists with RDB (no conflict), so AOF is on for job durability.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
     volumes:
       - redis-data:/data
     healthcheck:

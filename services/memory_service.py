@@ -17,7 +17,9 @@ expressions in this file.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections import Counter
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
@@ -113,6 +115,63 @@ def _decode_claim_payload(
         return job_id, int(count_str)
     except ValueError:
         return job_id, fallback_count
+
+
+async def _resolve_storage_config(org_id: UUID) -> dict[str, Any]:
+    """Resolve per-org blob storage config from OpenBao.
+
+    Matches the pattern in extract_blob_text.py and enrich_episode.py.
+    Falls back to MinIO dev defaults when OpenBao is unreachable.
+
+    Args:
+        org_id: The organization UUID.
+
+    Returns:
+        Flattened storage config dict for ``BlobStorageConfig``.
+    """
+    from core.config import BootstrapSettings
+    from core.openbao import OpenBaoClient
+    from core.org_config import get_org_config
+
+    storage_config: dict[str, Any] = {
+        "backend": "s3",
+        "endpoint_url": "http://minio:9000",
+        "region": "auto",
+        "access_key_id": "",
+        "secret_access_key": "",
+        "bucket_name": "openzync-blobs",
+        "max_blob_size_mb": 50,
+    }
+    try:
+        bootstrap = BootstrapSettings()
+        async with OpenBaoClient(
+            bootstrap.OPENBAO_ADDR,
+            bootstrap.OPENBAO_ROLE_ID,
+            bootstrap.OPENBAO_SECRET_ID,
+            timeout=10.0,
+        ) as _tmp_bao:
+            org_cfg = await get_org_config(
+                org_id,
+                redis=None,
+                bao_client=_tmp_bao,
+            )
+            org_storage = org_cfg.to_blob_storage_config()
+            if org_storage:
+                storage_config.update(org_storage)
+    except Exception:
+        try:
+            from core.config import get_settings
+
+            environment = get_settings().ENVIRONMENT
+        except Exception:
+            environment = "unknown"
+        logger.warning(
+            "memory.org_storage_config_fetch_failed",
+            extra={"org_id": str(org_id), "environment": environment},
+            exc_info=True,
+        )
+        # Falls back to defaults — works for MinIO in dev
+    return storage_config
 
 
 class MemoryService:
@@ -385,6 +444,12 @@ class MemoryService:
                 session_id=session_id,
                 content_hash=content_hash,
             )
+            # Our Redis claim holds this attempt's job_id but the DB
+            # winner stands — release so future replays resolve the true
+            # winner via the DB backstop instead of our dead claim.
+            await self._idem.release_content_hash(
+                str(org_id), str(created_by), str(session_id), msgs
+            )
             return IngestMemoryResponse(
                 job_id=str(prior_job_id) if prior_job_id else None,
                 episode_count=len(messages),
@@ -409,6 +474,10 @@ class MemoryService:
             # the losing claim lost on the same content_hash, which covers
             # the full message list, so cardinalities are identical and
             # len(messages) IS the winner's episode_count here.
+            # Same stale-claim release as the IntegrityError path above.
+            await self._idem.release_content_hash(
+                str(org_id), str(created_by), str(session_id), msgs
+            )
             return IngestMemoryResponse(
                 job_id=str(prior_job_id) if prior_job_id else None,
                 episode_count=len(messages),
@@ -416,172 +485,189 @@ class MemoryService:
                 message="Content already ingested; returning existing job_id",
             )
 
-        # ── Step 5: Build episode dicts (no sequence numbers yet) ─────────
-        # Sequence numbers are assigned AFTER the row lock below, so the
-        # lock is held only across MAX+1 + INSERT — never across network I/O.
-        episode_dicts = [
-            {
-                "role": msg.role,
-                "content": msg.content,
-                "metadata": msg.metadata,
-                "created_at": msg.created_at,
-            }
-            for msg in messages
-        ]
-
-        # ── Step 6: PII detection & redaction (fail-closed, BEFORE lock) ──
-        # OpenBao is network I/O with unbounded latency — fetching it
-        # while holding SELECT ... FOR UPDATE would serialize every
-        # concurrent ingest behind the slowest PII fetch.
-        pii_config_raw = await self._get_org_pii_config(org_id)
-        pii_mode = (
-            pii_config_raw.get("mode", "mask")
-            if isinstance(pii_config_raw, dict)
-            else "mask"
-        )
-
-        if pii_mode != "off":
-            trace_id = structlog.contextvars.get_contextvars().get(
-                "request_id", str(job_id)
-            )
-            for msg_dict in episode_dicts:
-                msg_dict["content"] = await self._redact_content(
-                    pii_config_raw,
-                    msg_dict["content"],
-                    org_id=org_id,
-                    trace_id=trace_id,
-                )
-
-        # ── Step 7: Lock the session row, assign seq numbers ───────────────
-        # The FOR UPDATE lock serializes concurrent ingests into this
-        # session; it is held only across MAX(sequence_number)+1, seq
-        # assignment, and the batch INSERT below (all local work + one
-        # round-trip — no network I/O under lock).
-        await self._session_repo.get_by_id_for_update(session_id)
-        start_seq = await self._episode_repo.get_next_sequence(session_id)
-        for i, msg_dict in enumerate(episode_dicts):
-            msg_dict["sequence_number"] = start_seq + i
-
-        # ── Step 8: Batch-insert episodes ────────────────────────────────
+        # A won claim is held from here on — any failure below must
+        # release it (fail-open) so a retry re-claims instead of
+        # replaying this attempt's job_id. The ingest_dedup row stays
+        # the arbiter either way (see release_content_hash).
         try:
-            episodes = await self._episode_repo.batch_create(
-                organization_id=org_id,
-                session_id=session_id,
-                project_id=project_id,
-                user_id=created_by,
-                messages=episode_dicts,
+            # ── Step 5: Build episode dicts (no sequence numbers yet) ─────────
+            # Sequence numbers are assigned AFTER the row lock below, so the
+            # lock is held only across MAX+1 + INSERT — never across network I/O.
+            episode_dicts = [
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "metadata": msg.metadata,
+                    "created_at": msg.created_at,
+                }
+                for msg in messages
+            ]
+
+            # ── Step 6: PII detection & redaction (fail-closed, BEFORE lock) ──
+            # OpenBao is network I/O with unbounded latency — fetching it
+            # while holding SELECT ... FOR UPDATE would serialize every
+            # concurrent ingest behind the slowest PII fetch.
+            pii_config_raw = await self._get_org_pii_config(org_id)
+            pii_mode = (
+                pii_config_raw.get("mode", "mask")
+                if isinstance(pii_config_raw, dict)
+                else "mask"
             )
-        except IntegrityError as exc:
-            # Lost the seq race despite the row lock (or a colliding
-            # legacy row) — the unique index held; retry the request.
-            logger.warning(
-                "memory.sequence_conflict",
+
+            if pii_mode != "off":
+                trace_id = structlog.contextvars.get_contextvars().get(
+                    "request_id", str(job_id)
+                )
+                for msg_dict in episode_dicts:
+                    msg_dict["content"] = await self._redact_content(
+                        pii_config_raw,
+                        msg_dict["content"],
+                        org_id=org_id,
+                        trace_id=trace_id,
+                    )
+
+            # ── Step 7: Lock the session row, assign seq numbers ───────────────
+            # The FOR UPDATE lock serializes concurrent ingests into this
+            # session; it is held only across MAX(sequence_number)+1, seq
+            # assignment, and the batch INSERT below (all local work + one
+            # round-trip — no network I/O under lock).
+            await self._session_repo.get_by_id_for_update(session_id)
+            start_seq = await self._episode_repo.get_next_sequence(session_id)
+            for i, msg_dict in enumerate(episode_dicts):
+                msg_dict["sequence_number"] = start_seq + i
+
+            # ── Step 8: Batch-insert episodes ────────────────────────────────
+            try:
+                episodes = await self._episode_repo.batch_create(
+                    organization_id=org_id,
+                    session_id=session_id,
+                    project_id=project_id,
+                    user_id=created_by,
+                    messages=episode_dicts,
+                )
+            except IntegrityError as exc:
+                # Lost the seq race despite the row lock (or a colliding
+                # legacy row) — the unique index held; retry the request.
+                logger.warning(
+                    "memory.sequence_conflict",
+                    extra={
+                        "session_id": str(session_id),
+                        "project_id": str(project_id),
+                        "org_id": str(org_id),
+                        "job_id": str(job_id),
+                    },
+                )
+                raise ConflictError(
+                    "Sequence conflict during ingest — retry the request"
+                ) from exc
+            logger.info(
+                "memory.episodes_created",
                 extra={
+                    "count": len(episodes),
                     "session_id": str(session_id),
                     "project_id": str(project_id),
                     "org_id": str(org_id),
-                    "job_id": str(job_id),
                 },
             )
-            raise ConflictError(
-                "Sequence conflict during ingest — retry the request"
-            ) from exc
-        logger.info(
-            "memory.episodes_created",
-            extra={
-                "count": len(episodes),
-                "session_id": str(session_id),
-                "project_id": str(project_id),
-                "org_id": str(org_id),
-            },
-        )
 
-        # ── Step 9: Upload blobs and persist blob records ────────────────
-        blob_count = 0
-        blob_records: list[Any] = []
-        if uploaded_blobs:
-            blob_count, blob_records = await self._process_blobs(
-                org_id=org_id,
-                project_id=project_id,
-                session_id=session_id,
-                created_by=created_by,
-                episodes=episodes,
-                messages=messages,
-                uploaded_blobs=uploaded_blobs,
+            # ── Step 9: Upload blobs and persist blob records ────────────────
+            blob_count = 0
+            blob_records: list[Any] = []
+            if uploaded_blobs:
+                blob_count, blob_records = await self._process_blobs(
+                    org_id=org_id,
+                    project_id=project_id,
+                    session_id=session_id,
+                    created_by=created_by,
+                    episodes=episodes,
+                    messages=messages,
+                    uploaded_blobs=uploaded_blobs,
+                )
+
+            # ── Commit so workers can see episodes + blobs before tasks ─────
+            await self._db.commit()
+
+            # ── Step 10: Enqueue ARQ tasks with the claimed job_id ───────────
+            episode_dicts = [
+                {
+                    "id": ep.id,
+                    "content": ep.content,
+                    "role": ep.role,
+                    "metadata": ep.metadata_,
+                }
+                for ep in episodes
+            ]
+            await self._enqueue_arq_tasks(
+                job_id=str(job_id),
+                org_id=str(org_id),
+                project_id=str(project_id),
+                session_id=str(session_id),
+                episodes=episode_dicts,
             )
 
-        # ── Commit so workers can see episodes + blobs before tasks ─────
-        await self._db.commit()
+            # ── Step 10b: Enqueue blob text extraction tasks ─────────────────
+            if blob_records:
+                await self._enqueue_blob_extraction_tasks(
+                    blob_records=blob_records,
+                    org_id=org_id,
+                    project_id=project_id,
+                )
 
-        # ── Step 10: Enqueue ARQ tasks with the claimed job_id ───────────
-        episode_dicts = [
-            {
-                "id": ep.id,
-                "content": ep.content,
-                "role": ep.role,
-                "metadata": ep.metadata_,
-            }
-            for ep in episodes
-        ]
-        await self._enqueue_arq_tasks(
-            job_id=str(job_id),
-            org_id=str(org_id),
-            project_id=str(project_id),
-            session_id=str(session_id),
-            episodes=episode_dicts,
-        )
-
-        # ── Step 10b: Enqueue blob text extraction tasks ─────────────────
-        if blob_records:
-            await self._enqueue_blob_extraction_tasks(
-                blob_records=blob_records,
-                org_id=org_id,
-                project_id=project_id,
+            # ── Step 9: Store idempotency key and content hash ──────────────
+            response = IngestMemoryResponse(
+                job_id=str(job_id),
+                episode_count=len(episodes),
+                blob_count=blob_count,
+                status="accepted",
+                message="Messages accepted for processing",
             )
 
-        # ── Step 9: Store idempotency key and content hash ──────────────
-        response = IngestMemoryResponse(
-            job_id=str(job_id),
-            episode_count=len(episodes),
-            blob_count=blob_count,
-            status="accepted",
-            message="Messages accepted for processing",
-        )
+            if idempotency_key is not None:
+                await self._idem.store_idempotency_key(
+                    idempotency_key, body_hash or "", response.model_dump(), str(org_id)
+                )
 
-        if idempotency_key is not None:
-            await self._idem.store_idempotency_key(
-                idempotency_key, body_hash or "", response.model_dump(), str(org_id)
+            # note: no store_content_hash here — the Step 4 Lua claim already
+            # SET the Redis key (payload = job_id) atomically on win. A
+            # post-ingest check-then-store would re-open the TOCTOU window;
+            # store_content_hash remains for non-ingest writers only.
+
+            # ── Step 12: Invalidate context cache for this project ───────────
+            await self._invalidate_context_cache(str(org_id), str(project_id))
+
+            # ── Step 13: Emit webhook events ─────────────────────────────────
+            if self._webhook_service:
+                event_payload = {
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "session_id": str(session_id),
+                    "episode_count": len(episodes),
+                    "job_id": str(job_id),
+                }
+                await self._webhook_service.emit(
+                    organization_id=org_id,
+                    event_type=EventType.INGEST_BATCH_COMPLETED,
+                    payload=event_payload,
+                )
+                await self._webhook_service.emit(
+                    organization_id=org_id,
+                    event_type=EventType.MESSAGE_ADDED,
+                    payload=event_payload,
+                )
+
+            return response
+        except asyncio.CancelledError:
+            await self._db.rollback()
+            await self._idem.release_content_hash(
+                str(org_id), str(created_by), str(session_id), msgs
             )
-
-        # note: no store_content_hash here — the Step 4 Lua claim already
-        # SET the Redis key (payload = job_id) atomically on win. A
-        # post-ingest check-then-store would re-open the TOCTOU window;
-        # store_content_hash remains for non-ingest writers only.
-
-        # ── Step 12: Invalidate context cache for this project ───────────
-        await self._invalidate_context_cache(str(org_id), str(project_id))
-
-        # ── Step 13: Emit webhook events ─────────────────────────────────
-        if self._webhook_service:
-            event_payload = {
-                "org_id": str(org_id),
-                "project_id": str(project_id),
-                "session_id": str(session_id),
-                "episode_count": len(episodes),
-                "job_id": str(job_id),
-            }
-            await self._webhook_service.emit(
-                organization_id=org_id,
-                event_type=EventType.INGEST_BATCH_COMPLETED,
-                payload=event_payload,
+            raise
+        except Exception:
+            await self._db.rollback()
+            await self._idem.release_content_hash(
+                str(org_id), str(created_by), str(session_id), msgs
             )
-            await self._webhook_service.emit(
-                organization_id=org_id,
-                event_type=EventType.MESSAGE_ADDED,
-                payload=event_payload,
-            )
-
-        return response
+            raise
 
     async def delete_project_memory(
         self,
@@ -620,6 +706,22 @@ class MemoryService:
         episodes_deleted = await self._episode_repo.soft_delete_by_project(project_id)
         facts_deleted = await self._fact_repo.soft_delete_by_project(project_id)
 
+        # Delete the project's S3 objects in the same operation — without
+        # this the wipe soft-deletes rows but leaks every blob's bytes.
+        # S3 failure raises (delete_blobs never swallows); DB rows stay
+        # for the orphan-blob cleanup worker (episodes are now soft-deleted).
+        blob_rows = await self._blob_repo.get_by_project(project_id)
+        if blob_rows:
+            from services.blob_storage_service import BlobStorageService
+
+            storage_config = await _resolve_storage_config(org_id)
+            # S3 first, then row delete — delete_blobs raises on S3
+            # failure so rows stay for the orphan-blob cleanup worker.
+            await BlobStorageService(self._db, self._blob_repo).delete_blobs(
+                blob_rows, storage_config
+            )
+            await self._blob_repo.delete_by_ids([b.id for b in blob_rows])
+
         logger.info(
             "memory.project_memory_deleted",
             extra={
@@ -627,6 +729,7 @@ class MemoryService:
                 "org_id": str(org_id),
                 "episodes_deleted": episodes_deleted,
                 "facts_deleted": facts_deleted,
+                "blobs_deleted": len(blob_rows),
             },
         )
 
@@ -993,58 +1096,58 @@ class MemoryService:
         if not ep_blob_metas:
             return 0, []
 
-        # Resolve per-org storage config from OpenBao (matches the
-        # pattern in extract_blob_text.py and enrich_episode.py).
-        from core.config import BootstrapSettings
-        from core.openbao import OpenBaoClient
-        from core.org_config import get_org_config
+        storage_config = await _resolve_storage_config(org_id)
 
-        storage_config: dict[str, Any] = {
-            "backend": "s3",
-            "endpoint_url": "http://minio:9000",
-            "region": "auto",
-            "access_key_id": "",
-            "secret_access_key": "",
-            "bucket_name": "openzync-blobs",
-            "max_blob_size_mb": 50,
-        }
-        try:
-            bootstrap = BootstrapSettings()
-            async with OpenBaoClient(
-                bootstrap.OPENBAO_ADDR,
-                bootstrap.OPENBAO_ROLE_ID,
-                bootstrap.OPENBAO_SECRET_ID,
-                timeout=10.0,
-            ) as _tmp_bao:
-                org_cfg = await get_org_config(
-                    org_id,
-                    redis=None,
-                    bao_client=_tmp_bao,
-                )
-                org_storage = org_cfg.to_blob_storage_config()
-                if org_storage:
-                    storage_config.update(org_storage)
-        except Exception:
-            logger.warning(
-                "memory.org_storage_config_fetch_failed",
-                extra={"org_id": str(org_id)},
-                exc_info=True,
-            )
-            # Falls back to defaults — works for MinIO in dev
+        from core.blob_storage import BlobStorageConfig
 
-        from services.blob_storage_service import BlobStorageService
+        from services.blob_storage_service import (
+            BlobStorageService,
+            read_upload_bounded,
+        )
+
+        max_bytes = BlobStorageConfig.from_org_config(storage_config).max_blob_bytes
+        # Stream per episode — read only the files each episode references
+        # so peak RSS is one episode's blobs plus all shared-so-far
+        # (freed at return), not the whole request.
+        # UploadFile.read() is a one-shot stream, so files referenced by
+        # multiple episodes stay cached until return.
+        use_counts = Counter(
+            meta.blob_id for _, metas in ep_blob_metas for meta in metas
+        )
+        shared_ids = {bid for bid, n in use_counts.items() if n > 1}
+        shared_bytes: dict[int, bytes] = {}
 
         blob_svc = BlobStorageService(self._db, self._blob_repo)
         blob_records: list[Any] = []
 
         for episode_id, metas in ep_blob_metas:
+            needed_ids = {meta.blob_id for meta in metas}
+            slots: list[UploadFile | bytes] = [b""] * len(uploaded_blobs)
+            for bid in needed_ids:
+                if bid >= len(uploaded_blobs):
+                    raise ValidationError(
+                        f"blob_id {bid} out of range: "
+                        f"only {len(uploaded_blobs)} files uploaded"
+                    )
+                cached = shared_bytes.get(bid)
+                if cached is not None:
+                    slots[bid] = cached
+                    continue
+                data = await read_upload_bounded(
+                    uploaded_blobs[bid],
+                    max_bytes,
+                    uploaded_blobs[bid].filename or "unnamed",
+                )
+                slots[bid] = data
+                if bid in shared_ids:
+                    shared_bytes[bid] = data
             records = await blob_svc.upload_blobs(
                 org_id=org_id,
                 project_id=project_id,
                 episode_id=episode_id,
                 session_id=session_id,
                 created_by=created_by,
-                uploaded_files=uploaded_blobs,
+                uploaded_files=slots,
                 blob_metadatas=metas,
                 storage_config=storage_config,
             )

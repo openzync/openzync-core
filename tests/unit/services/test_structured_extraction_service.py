@@ -15,7 +15,6 @@ from core.exceptions import NotFoundError
 from core.sorting import SortSpec
 from models.structured_extraction import StructuredExtraction
 from schemas.structured_extractions import (
-    StructuredExtractionListResponse,
     StructuredExtractionResponse,
 )
 from services.structured_extraction_service import StructuredExtractionService
@@ -71,25 +70,27 @@ class TestStructuredExtractionService:
 
     @pytest.mark.asyncio
     async def test_get_session_extractions_success(self) -> None:
-        """``get_session_extractions`` returns a list response with extractions."""
+        """``get_session_extractions`` returns (items, cursor) with extractions."""
         service, mock_repo, mock_session_repo = self._make_service()
         mock_session_repo.get_by_uuid.return_value = self._make_session_mock()
-        mock_repo.get_by_session.return_value = [
-            self._make_extraction(episode_id=UUID("00000000-0000-0000-0000-000000000201")),
-            self._make_extraction(episode_id=UUID("00000000-0000-0000-0000-000000000202")),
-        ]
+        mock_repo.get_by_session.return_value = (
+            [
+                self._make_extraction(episode_id=UUID("00000000-0000-0000-0000-000000000201")),
+                self._make_extraction(episode_id=UUID("00000000-0000-0000-0000-000000000202")),
+            ],
+            None,
+        )
 
-        result = await service.get_session_extractions(self.ORG_ID, self.SESSION_ID)
+        items, next_cursor = await service.get_session_extractions(self.ORG_ID, self.SESSION_ID)
 
-        assert isinstance(result, StructuredExtractionListResponse)
-        assert result.total == 2
-        assert len(result.items) == 2
-        assert isinstance(result.items[0], StructuredExtractionResponse)
+        assert len(items) == 2
+        assert next_cursor is None
+        assert isinstance(items[0], StructuredExtractionResponse)
         mock_session_repo.get_by_uuid.assert_awaited_once_with(
             org_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=None,
         )
         mock_repo.get_by_session.assert_awaited_once_with(
-            self.ORG_ID, self.SESSION_ID, sort=None
+            self.ORG_ID, self.SESSION_ID, sort=None, limit=100, cursor=None
         )
 
     @pytest.mark.asyncio
@@ -97,13 +98,13 @@ class TestStructuredExtractionService:
         """An explicit SortSpec is forwarded opaque to the repository."""
         service, mock_repo, mock_session_repo = self._make_service()
         mock_session_repo.get_by_uuid.return_value = self._make_session_mock()
-        mock_repo.get_by_session.return_value = []
+        mock_repo.get_by_session.return_value = ([], None)
         spec = SortSpec(sort_by="created_at", sort_dir="asc")
 
         await service.get_session_extractions(self.ORG_ID, self.SESSION_ID, sort=spec)
 
         mock_repo.get_by_session.assert_awaited_once_with(
-            self.ORG_ID, self.SESSION_ID, sort=spec
+            self.ORG_ID, self.SESSION_ID, sort=spec, limit=100, cursor=None
         )
 
     @pytest.mark.asyncio
@@ -122,14 +123,14 @@ class TestStructuredExtractionService:
         """``get_session_extractions`` passes project_id to session lookup."""
         service, mock_repo, mock_session_repo = self._make_service()
         mock_session_repo.get_by_uuid.return_value = self._make_session_mock()
-        mock_repo.get_by_session.return_value = []
+        mock_repo.get_by_session.return_value = ([], None)
 
-        result = await service.get_session_extractions(
+        items, next_cursor = await service.get_session_extractions(
             self.ORG_ID, self.SESSION_ID, project_id=self.PROJECT_ID,
         )
 
-        assert result.total == 0
-        assert result.items == []
+        assert items == []
+        assert next_cursor is None
         mock_session_repo.get_by_uuid.assert_awaited_once_with(
             org_id=self.ORG_ID, session_id=self.SESSION_ID, project_id=self.PROJECT_ID,
         )
@@ -139,12 +140,12 @@ class TestStructuredExtractionService:
         """``get_session_extractions`` returns empty list when no extractions."""
         service, mock_repo, mock_session_repo = self._make_service()
         mock_session_repo.get_by_uuid.return_value = self._make_session_mock()
-        mock_repo.get_by_session.return_value = []
+        mock_repo.get_by_session.return_value = ([], None)
 
-        result = await service.get_session_extractions(self.ORG_ID, self.SESSION_ID)
+        items, next_cursor = await service.get_session_extractions(self.ORG_ID, self.SESSION_ID)
 
-        assert result.total == 0
-        assert result.items == []
+        assert items == []
+        assert next_cursor is None
 
     # ── get_episode_extraction ──────────────────────────────────────────────
 

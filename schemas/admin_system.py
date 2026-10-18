@@ -100,6 +100,7 @@ SYSTEM_SETTING_CATEGORIES: dict[str, str] = {
     "OZ_FALKORDB_MAX_CONNECTIONS": "Infrastructure",
     "OZ_FALKORDB_SOCKET_TIMEOUT": "Infrastructure",
     "OZ_SURREALDB_URL": "Infrastructure",
+    "OZ_OLLAMA_EMBED_URL": "Infrastructure",
     "OZ_PROMETHEUS_URL": "Infrastructure",
     # Security
     "OZ_SECRET_KEY": "Security",

@@ -72,6 +72,11 @@ async def list_observations(
         le=200,
         description="Maximum results per page.",
     ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous list response for "
+        "pagination.",
+    ),
     sort_by: ObservationSortBy | None = Query(
         default=None,
         description="Sort key (default created_at; name maps to content).",
@@ -95,5 +100,6 @@ async def list_observations(
         subject_entity_id=subject_entity_id,
         observation_type=observation_type,
         limit=limit,
+        cursor=cursor,
         sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
     )

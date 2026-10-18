@@ -174,6 +174,8 @@ class ContextService:
                 query,
                 as_of=as_of.isoformat() if as_of is not None else None,
                 sort=sort,
+                format=format,
+                limit=limit,
             )
             cached = await self._cache.get(cache_key)
             if cached is not None:

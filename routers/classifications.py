@@ -60,6 +60,17 @@ def _get_classification_service(
 async def list_classifications(
     request: Request,
     session_id: UUID = Path(...),
+    limit: int = Query(
+        default=100,
+        ge=1,
+        le=500,
+        description="Maximum results per page (1–500).",
+    ),
+    cursor: str | None = Query(
+        default=None,
+        description="Opaque cursor from a previous list response for "
+        "pagination.",
+    ),
     sort_by: ClassificationSortBy | None = Query(
         default=None,
         description="Sort key (default sequence_number, locked).",
@@ -70,22 +81,31 @@ async def list_classifications(
     ),
     service: ClassificationService = Depends(_get_classification_service),
 ) -> ClassificationListResponse:
-    """List all classifications for episodes in a session.
+    """List classifications for episodes in a session (paginated).
 
     Returns an empty list if no episodes in the session have been classified
     yet (the ``classify_dialog`` worker may not have run yet).
     """
     org_id = UUID(request.state.org_id)
     project_id = UUID(request.path_params["project_id"])
-    classifications = await service.get_classifications_for_session(
+    classifications, next_cursor = await service.get_classifications_for_session(
         org_id=org_id,
         session_id=session_id,
         project_id=project_id,
         sort=SortSpec(sort_by=sort_by, sort_dir=sort_dir),
+        limit=limit,
+        cursor=cursor,
+    )
+    total = await service.count_classifications_for_session(
+        org_id=org_id,
+        session_id=session_id,
+        project_id=project_id,
     )
     return ClassificationListResponse(
         data=classifications,
-        total=len(classifications),
+        total=total,
+        next_cursor=next_cursor,
+        has_more=next_cursor is not None,
     )
 
 

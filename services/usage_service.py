@@ -5,7 +5,7 @@ Write path: :func:`make_sink` builds a :class:`UsageSink
 :func:`core.llm.resolve_backend` callers. The sink persists records via
 :class:`LLMUsageRepository <repositories.llm_usage_repository
 .LLMUsageRepository>` in an isolated session (session factory) or a
-savepoint (active session), and never raises.
+savepoint (active session), logging failures then re-raising into ARQ retry.
 
 Read path: :func:`list_usage` / :func:`summarize_usage` forward filters
 to the repository for the admin read API.
@@ -82,8 +82,9 @@ def make_sink(
     """Build a metering sink carrying org/worker/entity scope.
 
     The returned sink fills scope fields the metering wrapper leaves
-    empty, then persists via :func:`_persist`. It never raises — every
-    failure is logged with worker/org context.
+    empty, then persists via :func:`_persist`. Failures are logged and
+    re-raised into the ARQ retry loop — never swallowed, so a metering
+    outage is visible instead of silently dropping usage rows.
 
     Args:
         target: Session factory (workers) or active session (services).
@@ -97,10 +98,13 @@ def make_sink(
 
     Returns:
         An async callable accepting a :class:`UsageRecord`.
+
+    Raises:
+        Exception: Whatever :func:`_persist` raised (after logging).
     """
 
     async def _sink(record: UsageRecord) -> None:
-        """Fill scope and persist. Never raises (except cancellation)."""
+        """Fill scope and persist. Logs failures, then re-raises for retry."""
         full = replace(
             record,
             org_id=record.org_id or org_id,
@@ -120,6 +124,7 @@ def make_sink(
                 "usage.sink_failed",
                 extra={"worker": worker, "org_id": str(org_id)},
             )
+            raise
 
     return _sink
 
