@@ -1,0 +1,1 @@
+Honor the `cursor` query parameter on `GET /v1/observations` — a cursor from a previous response now returns the following page instead of the first. `total` reports the number of rows in the current page (the graph backend exposes no collection total) and responses include `next_cursor` and `has_more`.

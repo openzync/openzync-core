@@ -1,0 +1,1 @@
+Add `limit` (1–500) and `cursor` pagination to the classifications and structured-extraction list endpoints; `total` now reports the full collection size and responses carry `next_cursor` and `has_more`. Cursors are validated against the sort they were minted with and rejected when they no longer match.
