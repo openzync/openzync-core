@@ -327,10 +327,11 @@ class TestStructuredExtractionRepository:
     async def test_get_by_session(self, engine) -> None:
         async with AsyncSession(engine) as db:
             repo = StructuredExtractionRepository(db)
-            results = await repo.get_by_session(
+            rows, next_cursor = await repo.get_by_session(
                 ORG_ID, uuid4(),
             )
-            assert isinstance(results, list)
+            assert isinstance(rows, list)
+            assert next_cursor is None
 
     async def test_get_by_episode(self, engine) -> None:
         async with AsyncSession(engine) as db:
@@ -349,10 +350,11 @@ class TestDialogClassificationRepository:
     async def test_get_by_session(self, engine) -> None:
         async with AsyncSession(engine) as db:
             repo = DialogClassificationRepository(db)
-            results = await repo.get_by_session(
+            rows, next_cursor = await repo.get_by_session(
                 ORG_ID, session_id=uuid4(),
             )
-            assert isinstance(results, list)
+            assert isinstance(rows, list)
+            assert next_cursor is None
 
     async def test_get_by_episode_not_found(self, engine) -> None:
         async with AsyncSession(engine) as db:

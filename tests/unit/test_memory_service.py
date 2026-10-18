@@ -155,9 +155,11 @@ class TestMemoryService:
 
     @pytest.mark.asyncio
     async def test_delete_user_memory(self, service: MemoryService) -> None:
-        """Delete memory soft-deletes episodes and facts (confirm-gated)."""
+        """Delete memory soft-deletes episodes/facts and walks blob rows."""
         service._episode_repo.soft_delete_by_project.return_value = 5
         service._fact_repo.soft_delete_by_project.return_value = 3
+        service._blob_repo = AsyncMock()
+        service._blob_repo.get_by_project.return_value = []
 
         with patch.object(service, "_invalidate_context_cache"):
             episodes, facts = await service.delete_project_memory(
@@ -174,6 +176,10 @@ class TestMemoryService:
         service._fact_repo.soft_delete_by_project.assert_awaited_once_with(
             self.PROJECT_ID
         )
+        service._blob_repo.get_by_project.assert_awaited_once_with(
+            self.PROJECT_ID
+        )
+        service._blob_repo.delete_by_ids.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_delete_user_memory_confirm_mismatch(

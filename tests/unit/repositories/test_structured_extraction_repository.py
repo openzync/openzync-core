@@ -47,34 +47,38 @@ class TestStructuredExtractionRepository:
     async def test_get_by_session(
         self, repo: StructuredExtractionRepository, mock_db: AsyncMock
     ) -> None:
-        """get_by_session returns extractions ordered by sequence number."""
+        """get_by_session returns (extractions, next_cursor) ordered by sequence."""
         extractions = [
             self._mock_extraction(),
             self._mock_extraction(),
         ]
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = extractions
+        mock_result.all.return_value = [
+            (e, MagicMock()) for e in extractions
+        ]
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_session(
+        rows, next_cursor = await repo.get_by_session(
             org_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
-        assert result == extractions
+        assert rows == extractions
+        assert next_cursor is None
 
     async def test_get_by_session_empty(
         self, repo: StructuredExtractionRepository, mock_db: AsyncMock
     ) -> None:
-        """get_by_session returns empty list when no extractions."""
+        """get_by_session returns ([], None) when no extractions."""
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = []
+        mock_result.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_session(
+        rows, next_cursor = await repo.get_by_session(
             org_id=self.ORG_ID, session_id=self.SESSION_ID
         )
 
-        assert result == []
+        assert rows == []
+        assert next_cursor is None
 
     # ── get_by_episode ─────────────────────────────────────────────────────────
 

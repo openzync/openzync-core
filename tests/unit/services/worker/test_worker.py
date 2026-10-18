@@ -1,9 +1,8 @@
-"""Unit tests for ARQ worker entrypoint — signal handling, metrics, health.
+"""Unit tests for ARQ worker entrypoint — metrics, health, lifecycle.
 
 Tests cover:
-- Module-level shutdown flag and signal handler
 - Prometheus metric creation and recording on job end
-- Queue depth monitoring loop
+- Queue depth monitoring loop (``while True``, ARQ-cancel exit)
 - aiohttp health-check endpoint
 - ``create_arq_worker`` factory function
 - Job lifecycle callbacks (``on_job_end``, ``on_shutdown``)
@@ -11,72 +10,18 @@ Tests cover:
 - ``main`` entrypoint startup / shutdown lifecycle
 - ``entrypoint`` synchronous wrapper
 - ``setup_logging`` structlog configuration
+
+Note: custom SIGTERM handling was removed — ARQ owns signals
+(``Worker.async_run`` installs its own handlers), so there are
+intentionally no signal-handler tests.
 """
 
 from __future__ import annotations
 
 import asyncio
-import signal
-import sys
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-
-@pytest.fixture(autouse=True)
-def _reset_shutdown_flag() -> None:
-    """Reset the module-level shutdown flag before each test.
-
-    Uses ``import services.worker.worker as wmod`` and accesses
-    ``wmod._shutdown_requested`` so mutations via ``handle_signal()``
-    are reflected in assertions (unlike ``from ... import`` which creates
-    a local snapshot).
-    """
-    import services.worker.worker as _wmod
-
-    _wmod._shutdown_requested = False
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Signal handling
-# ═══════════════════════════════════════════════════════════════════════════════
-
-
-@pytest.mark.unit
-class TestHandleSignal:
-    """``handle_signal`` — graceful / forced shutdown."""
-
-    def test_first_signal_sets_flag(self) -> None:
-        """First SIGTERM sets _shutdown_requested and logs."""
-        import services.worker.worker as _wmod
-
-        assert not _wmod._shutdown_requested
-        _wmod.handle_signal(signal.SIGTERM)
-        assert _wmod._shutdown_requested
-
-    def test_second_signal_exits(self) -> None:
-        """Second signal while flag is set calls sys.exit(1)."""
-        import services.worker.worker as _wmod
-
-        _wmod.handle_signal(signal.SIGTERM)  # first
-
-        with patch.object(sys, "exit") as mock_exit:
-            _wmod.handle_signal(signal.SIGTERM)
-            mock_exit.assert_called_once_with(1)
-
-    def test_sigint_behaves_same_as_sigterm(self) -> None:
-        """SIGINT follows the same two-signal pattern as SIGTERM."""
-        import services.worker.worker as _wmod
-
-        _wmod.handle_signal(signal.SIGINT)
-        assert _wmod._shutdown_requested
-
-    def test_frame_arg_is_accepted(self) -> None:
-        """Handler accepts the optional frame argument (signal.signal API)."""
-        import services.worker.worker as _wmod
-
-        _wmod.handle_signal(signal.SIGTERM, {"fake": "frame"})
-        assert True  # no exception raised
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -361,17 +306,12 @@ class TestCreateArqWorker:
 
 @pytest.mark.unit
 class TestMonitorQueueDepth:
-    """``monitor_queue_depth`` background coroutine."""
+    """``monitor_queue_depth`` background coroutine.
 
-    # Helper: set shutdown=True after first loop iteration so the
-    # coroutine returns normally.  _shutdown_requested starts False (run
-    # the loop body) and patched asyncio.sleep flips it to True (exit).
-    # mutable list avoids a dedicated flag class.
-    @staticmethod
-    async def _stop_after_first(*_: object) -> None:
-        import services.worker.worker as _wmod
-
-        _wmod._shutdown_requested = True
+    The loop is ``while True`` — ARQ's shutdown cancels the task, so each
+    test runs one iteration (real ``asyncio.sleep`` patched to a finite
+    wait) and then cancels, asserting ``CancelledError`` propagates.
+    """
 
     @pytest.mark.asyncio
     async def test_sets_gauge_from_redis_zcard(self) -> None:
@@ -383,14 +323,17 @@ class TestMonitorQueueDepth:
         from services.worker.worker import monitor_queue_depth
 
         with (
-            patch("services.worker.worker._shutdown_requested", False),
-            patch("services.worker.worker.asyncio.sleep", self._stop_after_first),
+            patch(
+                "services.worker.worker.asyncio.sleep",
+                side_effect=asyncio.CancelledError(),
+            ),
             patch("services.worker.worker.worker_queue_depth.labels") as mock_labels,
         ):
             mock_gauge = MagicMock()
             mock_labels.return_value = mock_gauge
 
-            await monitor_queue_depth(mock_redis, interval=999)
+            with pytest.raises(asyncio.CancelledError):
+                await monitor_queue_depth(mock_redis, interval=999)
 
             mock_labels.assert_called()
             mock_gauge.set.assert_called_with(42)
@@ -405,13 +348,15 @@ class TestMonitorQueueDepth:
         from services.worker.worker import monitor_queue_depth
 
         with (
-            patch("services.worker.worker._shutdown_requested", False),
-            patch("services.worker.worker.asyncio.sleep", self._stop_after_first),
+            patch(
+                "services.worker.worker.asyncio.sleep",
+                side_effect=asyncio.CancelledError(),
+            ),
             patch("services.worker.worker.worker_queue_depth.labels") as mock_labels,
         ):
-            await monitor_queue_depth(mock_redis, interval=999)
-            # labels are called (to get the label object), but .set() should
-            # NOT be called because depth was None (error from zcard).
+            with pytest.raises(asyncio.CancelledError):
+                await monitor_queue_depth(mock_redis, interval=999)
+            # depth was None (error from zcard) → .set() never called.
             mock_labels.return_value.set.assert_not_called()
 
     @pytest.mark.asyncio
@@ -424,30 +369,33 @@ class TestMonitorQueueDepth:
         from services.worker.worker import monitor_queue_depth
 
         with (
-            patch("services.worker.worker._shutdown_requested", False),
-            patch("services.worker.worker.asyncio.sleep", self._stop_after_first),
+            patch(
+                "services.worker.worker.asyncio.sleep",
+                side_effect=asyncio.CancelledError(),
+            ),
             patch("services.worker.worker.worker_queue_depth.labels") as mock_labels,
         ):
-            await monitor_queue_depth(mock_redis, interval=999)
+            with pytest.raises(asyncio.CancelledError):
+                await monitor_queue_depth(mock_redis, interval=999)
 
             assert mock_labels.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_loop_exits_when_shutdown_flag_set(self) -> None:
-        """When _shutdown_requested is True, the loop body does not execute."""
+    async def test_cancel_exits_loop(self) -> None:
+        """ARQ task cancellation propagates out of the sleep (ends the loop)."""
         _seed_worker_settings()
         mock_redis = AsyncMock()
+        mock_redis.zcard.return_value = 7
 
         from services.worker.worker import monitor_queue_depth
 
-        with (
-            patch("services.worker.worker._shutdown_requested", True),
-            patch("services.worker.worker.worker_queue_depth"),
-        ):
-            await monitor_queue_depth(mock_redis, interval=999)
+        task = asyncio.create_task(monitor_queue_depth(mock_redis, interval=3600))
+        await asyncio.sleep(0)  # let one sampling iteration run
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
-            # zcard should NOT be called since the loop never iterates
-            mock_redis.zcard.assert_not_called()
+        assert mock_redis.zcard.await_count == 2  # high + low queues sampled
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -808,8 +756,8 @@ class TestMain:
             _unpatch_main_deps(_mocks)
 
     @pytest.mark.asyncio
-    async def test_main_registers_signal_handlers(self) -> None:
-        """SIGTERM and SIGINT handlers are registered."""
+    async def test_main_registers_no_custom_signal_handlers(self) -> None:
+        """No custom SIGTERM/SIGINT handlers are registered (ARQ owns signals)."""
         from services.worker.worker import main
 
         _mocks = _patch_main_deps()
@@ -818,10 +766,7 @@ class TestMain:
                 await main()
 
             add_handler = _mocks["loop"].add_signal_handler
-            assert add_handler.call_count == 2
-            sigs = [call[0][0] for call in add_handler.call_args_list]
-            assert signal.SIGTERM in sigs
-            assert signal.SIGINT in sigs
+            add_handler.assert_not_called()
         finally:
             _unpatch_main_deps(_mocks)
 

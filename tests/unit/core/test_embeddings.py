@@ -1,11 +1,12 @@
-"""Unit tests for ``core.embeddings`` — the single local embedder.
+"""Unit tests for ``core.embeddings`` — the Ollama-backed embedder.
 
-The model is faked at the ``fastembed.TextEmbedding`` boundary so nothing is
-downloaded or executed in CI.  The fake deliberately mimics the two behaviours
-of the real ``nomic-embed-text-v1.5`` entry that bit us in production: it
-applies **no** task prefix of its own, and it returns **unnormalised** vectors.
-The module's own contract is asserted: canonical width, float element types,
-unit normalisation, and the asymmetric passage/query split.
+HTTP is faked at the module's shared ``httpx.AsyncClient`` boundary, so no
+Ollama server is needed in CI.  The fake deliberately mimics the two
+behaviours of the real ``nomic-embed-text:v1.5`` ``/api/embed`` endpoint
+that bit us in production: it applies **no** task prefix of its own, and
+it returns **unnormalised** vectors.  The module's own contract is
+asserted: canonical width, float element types, unit normalisation, and
+the asymmetric passage/query split.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from core.embeddings import (
 from core.exceptions import ExternalServiceError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator, Sequence
+    from collections.abc import Iterator
 
 pytestmark = pytest.mark.unit
 
@@ -47,14 +48,33 @@ def _vector_for(text: str, dim: int) -> np.ndarray:
     return np.random.default_rng(seed).standard_normal(dim).astype(np.float32)
 
 
-class _FakeModel:
-    """Stands in for ``fastembed.TextEmbedding``.
+class _FakeEmbedResponse:
+    """Minimal stand-in for the ``httpx.Response`` of ``POST /api/embed``."""
 
-    Records which entrypoint was called and the exact texts it received, so
-    the asymmetric-prefix contract can be asserted on the model boundary
-    rather than inferred from output shape.  ``values`` overrides the derived
-    vectors (used for the unnormalised and zero-norm cases) and ``dim`` can be
-    set low to simulate a misbehaving model.
+    def __init__(self, vectors: list[np.ndarray]) -> None:
+        self._vectors = vectors
+
+    def raise_for_status(self) -> None:
+        pass
+
+    def json(self) -> dict[str, object]:
+        return {
+            "embeddings": [
+                np.asarray(v, dtype=np.float64).tolist() for v in self._vectors
+            ]
+        }
+
+
+class _FakeEmbedClient:
+    """Stands in for the module-level ``httpx.AsyncClient``.
+
+    Records the exact ``input`` payload each entrypoint POSTs, so the
+    asymmetric-prefix contract can be asserted on the HTTP boundary
+    rather than inferred from output shape.  ``values`` overrides the
+    derived vectors (used for the unnormalised and zero-norm cases) and
+    ``dim`` can be set low to simulate a misbehaving model.  The ``calls``
+    side (``passage``/``query``) is inferred from the mandatory prefix —
+    the fake itself applies none, mirroring the real ``/api/embed``.
     """
 
     def __init__(
@@ -65,43 +85,43 @@ class _FakeModel:
         self.calls: list[str] = []
         self.received: list[list[str]] = []
 
-    def _embed(self, kind: str, texts: Sequence[str]) -> Iterator[np.ndarray]:
-        self.calls.append(kind)
-        self.received.append(list(texts))
+    async def post(
+        self, url: str, json: dict[str, object] | None = None, **_kwargs: object
+    ) -> _FakeEmbedResponse:
+        texts = list((json or {}).get("input", []))  # type: ignore[union-attr]
+        self.received.append(texts)
+        if texts and all(t.startswith(PASSAGE_PREFIX) for t in texts):
+            self.calls.append("passage")
+        elif texts and all(t.startswith(QUERY_PREFIX) for t in texts):
+            self.calls.append("query")
+        else:
+            self.calls.append("unprefixed")
         if self._values is not None:
-            return iter(list(self._values))
-        return iter([_vector_for(t, self._dim) for t in texts])
-
-    def passage_embed(
-        self, texts: list[str], **_kwargs: object
-    ) -> Iterator[np.ndarray]:
-        """Return vectors for the document side — prefix applied by us, not here."""
-        return self._embed("passage", texts)
-
-    def query_embed(self, texts: list[str], **_kwargs: object) -> Iterator[np.ndarray]:
-        """Return vectors for the query side — prefix applied by us, not here."""
-        return self._embed("query", texts)
+            vectors = [np.asarray(v) for v in self._values]
+        else:
+            vectors = [_vector_for(t, self._dim) for t in texts]
+        return _FakeEmbedResponse(vectors)
 
 
 @contextlib.contextmanager
-def _installed(fake: _FakeModel) -> Iterator[_FakeModel]:
-    """Install *fake* in the module cache, restoring the previous model after."""
-    original = embeddings_mod._MODEL
-    embeddings_mod._MODEL = fake
+def _installed(fake: _FakeEmbedClient) -> Iterator[_FakeEmbedClient]:
+    """Install *fake* as the module-level HTTP client, restoring after."""
+    original = embeddings_mod._CLIENT
+    embeddings_mod._CLIENT = fake  # type: ignore[assignment]
     try:
         yield fake
     finally:
-        embeddings_mod._MODEL = original
+        embeddings_mod._CLIENT = original
 
 
 @pytest.fixture
 def model():
-    """Install a default fake model in the module cache; cleared afterwards.
+    """Install a default fake HTTP client; cleared afterwards.
 
     Yields:
-        The fake ``TextEmbedding``.
+        The fake ``httpx.AsyncClient``.
     """
-    with _installed(_FakeModel()) as fake:
+    with _installed(_FakeEmbedClient()) as fake:
         yield fake
 
 
@@ -109,7 +129,7 @@ class TestCanonicalConstants:
     """The frozen model/dimension pair."""
 
     def test_model_is_nomic_15(self) -> None:
-        assert CANONICAL_EMBED_MODEL == "nomic-ai/nomic-embed-text-v1.5"
+        assert CANONICAL_EMBED_MODEL == "nomic-embed-text:v1.5"
 
     def test_dim_unchanged_at_768(self) -> None:
         """Two columns, two CHECK constraints and four CASTs depend on this."""
@@ -137,7 +157,7 @@ class TestEmbedPassage:
 
     @pytest.mark.asyncio
     async def test_prepends_document_prefix_to_model_input(self, model) -> None:
-        """The prefix must reach the model — fastembed will not add it."""
+        """The prefix must reach the model — Ollama will not add it."""
         await embed_passage(["x"])
 
         assert model.received == [[f"{PASSAGE_PREFIX}x"]]
@@ -157,7 +177,7 @@ class TestEmbedPassage:
     async def test_wrong_dim_vector_raises(self) -> None:
         """A misbehaving model fails loud at the single validation choke point."""
         with (
-            _installed(_FakeModel(dim=512)),
+            _installed(_FakeEmbedClient(dim=512)),
             pytest.raises(ExternalServiceError) as exc,
         ):
             await embed_passage(["doc"])
@@ -185,7 +205,7 @@ class TestEmbedQuery:
 
     @pytest.mark.asyncio
     async def test_prepends_query_prefix_to_model_input(self, model) -> None:
-        """The prefix must reach the model — fastembed will not add it."""
+        """The prefix must reach the model — Ollama will not add it."""
         await embed_query(["x"])
 
         assert model.received == [[f"{QUERY_PREFIX}x"]]
@@ -201,7 +221,7 @@ class TestEmbedQuery:
     @pytest.mark.asyncio
     async def test_wrong_dim_vector_raises(self) -> None:
         with (
-            _installed(_FakeModel(dim=1024)),
+            _installed(_FakeEmbedClient(dim=1024)),
             pytest.raises(ExternalServiceError) as exc,
         ):
             await embed_query(["q"])
@@ -222,7 +242,7 @@ class TestAsymmetricPrefixes:
     async def test_same_text_embeds_differently_per_side(self, model) -> None:
         """Regression guard: identical text, two prefixes, two distinct vectors.
 
-        Before the fix both sides handed the bare text to fastembed, which
+        Before the fix both sides handed the bare text to Ollama, which
         applies no prefix — so the vectors were byte-identical (cosine 1.0).
         """
         passage = (await embed_passage(["same text"]))[0]
@@ -252,12 +272,12 @@ class TestAsymmetricPrefixes:
 
 
 class TestNormalization:
-    """fastembed returns unnormalized vectors for this model — we normalize."""
+    """Ollama returns unnormalized vectors for this model — we normalize."""
 
     @pytest.mark.asyncio
     async def test_unnormalized_model_output_becomes_unit_norm(self) -> None:
         """All-2.0s input (|v| ~ 39) must come back as a unit vector."""
-        with _installed(_FakeModel(values=np.full((2, CANONICAL_EMBED_DIM), 2.0))):
+        with _installed(_FakeEmbedClient(values=np.full((2, CANONICAL_EMBED_DIM), 2.0))):
             vectors = await embed_passage(["a", "b"])
 
         for vec in vectors:
@@ -267,7 +287,7 @@ class TestNormalization:
 
     @pytest.mark.asyncio
     async def test_query_side_is_normalized_too(self) -> None:
-        with _installed(_FakeModel(values=np.full((1, CANONICAL_EMBED_DIM), 20.0))):
+        with _installed(_FakeEmbedClient(values=np.full((1, CANONICAL_EMBED_DIM), 20.0))):
             vec = (await embed_query(["q"]))[0]
 
         assert math.isclose(math.sqrt(sum(v * v for v in vec)), 1.0, abs_tol=1e-6)
@@ -276,7 +296,7 @@ class TestNormalization:
     async def test_zero_norm_vector_fails_loud(self) -> None:
         """An unnormalisable vector raises rather than becoming NaN."""
         with (
-            _installed(_FakeModel(values=np.zeros((2, CANONICAL_EMBED_DIM)))),
+            _installed(_FakeEmbedClient(values=np.zeros((2, CANONICAL_EMBED_DIM)))),
             pytest.raises(ExternalServiceError) as exc,
         ):
             await embed_passage(["a", "b"])
@@ -289,7 +309,7 @@ class TestNormalization:
     async def test_nan_vector_fails_loud(self) -> None:
         """NaN norms are not > 0, so they take the same loud path — never stored."""
         with (
-            _installed(_FakeModel(values=np.full((1, CANONICAL_EMBED_DIM), np.nan))),
+            _installed(_FakeEmbedClient(values=np.full((1, CANONICAL_EMBED_DIM), np.nan))),
             pytest.raises(ExternalServiceError),
         ):
             await embed_query(["q"])

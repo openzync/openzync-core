@@ -76,20 +76,24 @@ NOW = datetime.now(UTC)
 async def test_list_classifications_success() -> None:
     """GET list returns 200 with a list of classifications."""
     mock_service = AsyncMock()
-    mock_service.get_classifications_for_session.return_value = [
-        ClassificationResponse(
-            id=UUID("00000000-0000-0000-0000-000000000010"),
-            episode_id=EPISODE_ID,
-            intent="inquiry",
-            emotion="neutral",
-            valence="positive",
-            arousal="low",
-            confidence=0.95,
-            created_at=NOW,
-            message="What is the price?",
-            role="user",
-        ),
-    ]
+    mock_service.get_classifications_for_session.return_value = (
+        [
+            ClassificationResponse(
+                id=UUID("00000000-0000-0000-0000-000000000010"),
+                episode_id=EPISODE_ID,
+                intent="inquiry",
+                emotion="neutral",
+                valence="positive",
+                arousal="low",
+                confidence=0.95,
+                created_at=NOW,
+                message="What is the price?",
+                role="user",
+            ),
+        ],
+        None,
+    )
+    mock_service.count_classifications_for_session.return_value = 1
 
     app = _create_app(mock_service)
     transport = ASGITransport(app=app)
@@ -112,6 +116,8 @@ async def test_list_classifications_success() -> None:
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
         sort=SortSpec(None, "asc"),
+        limit=100,
+        cursor=None,
     )
 
 
@@ -119,7 +125,8 @@ async def test_list_classifications_success() -> None:
 async def test_list_classifications_empty() -> None:
     """GET list returns 200 with an empty list when no classifications exist."""
     mock_service = AsyncMock()
-    mock_service.get_classifications_for_session.return_value = []
+    mock_service.get_classifications_for_session.return_value = ([], None)
+    mock_service.count_classifications_for_session.return_value = 0
 
     app = _create_app(mock_service)
     transport = ASGITransport(app=app)

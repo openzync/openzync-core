@@ -260,10 +260,10 @@ class TestCacheService:
     # ── Key builders ─────────────────────────────────────────────────────────
 
     def test_build_context_cache_key_uses_sha256_prefix(self) -> None:
-        """Key format is ctx:{org_id}:{project_id}:{16-char-hex}."""
+        """Key format is ctx:{org_id}:{project_id}:{format}:{limit}:{16-char-hex}."""
         key = CacheService.build_context_cache_key("org1", "proj1", "hello world")
         expected_hash = hashlib.sha256(b"hello world").hexdigest()[:16]
-        assert key == f"ctx:org1:proj1:{expected_hash}"
+        assert key == f"ctx:org1:proj1:text:20:{expected_hash}"
 
     def test_build_project_cache_pattern(self) -> None:
         """Returns ctx:{org_id}:{project_id}:* for SCAN matching."""

@@ -19,7 +19,6 @@ from dependencies.db import get_db
 from dependencies.project_auth import require_project_membership
 from routers.structured_extractions import _get_extraction_service, router
 from schemas.structured_extractions import (
-    StructuredExtractionListResponse,
     StructuredExtractionResponse,
 )
 
@@ -78,8 +77,8 @@ async def test_list_structured_extractions_success() -> None:
     """GET list returns 200 with a list of structured extractions."""
     app = _create_app()
     mock_service = app.state._mock_extraction_service
-    mock_service.get_session_extractions.return_value = StructuredExtractionListResponse(
-        items=[
+    mock_service.get_session_extractions.return_value = (
+        [
             StructuredExtractionResponse(
                 id=UUID("00000000-0000-0000-0000-000000000010"),
                 session_id=SESSION_ID,
@@ -89,8 +88,9 @@ async def test_list_structured_extractions_success() -> None:
                 created_at=NOW,
             ),
         ],
-        total=1,
+        None,
     )
+    mock_service.count_extractions_for_session.return_value = 1
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -110,6 +110,8 @@ async def test_list_structured_extractions_success() -> None:
         session_id=SESSION_ID,
         project_id=PROJECT_ID,
         sort=SortSpec(None, "asc"),
+        limit=100,
+        cursor=None,
     )
 
 
@@ -118,10 +120,8 @@ async def test_list_structured_extractions_empty() -> None:
     """GET list returns 200 with an empty list when no extractions exist."""
     app = _create_app()
     mock_service = app.state._mock_extraction_service
-    mock_service.get_session_extractions.return_value = StructuredExtractionListResponse(
-        items=[],
-        total=0,
-    )
+    mock_service.get_session_extractions.return_value = ([], None)
+    mock_service.count_extractions_for_session.return_value = 0
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:

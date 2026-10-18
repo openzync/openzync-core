@@ -1774,9 +1774,14 @@ class TestAuthService:
             email="new@acme.com"
         )
 
-        payload = UpdateProfileRequest(email="new@acme.com")
+        payload = UpdateProfileRequest(
+            email="new@acme.com", current_password="StrongPass1"  # noqa: S106
+        )
 
-        result = await service.update_profile(self.USER_ID, payload)
+        with patch(
+            "services.auth_service.verify_password", return_value=True
+        ):
+            result = await service.update_profile(self.USER_ID, payload)
 
         assert result.email == "new@acme.com"
         mock_repo.find_user_by_email.assert_awaited_once_with("new@acme.com")

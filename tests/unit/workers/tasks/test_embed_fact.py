@@ -150,25 +150,44 @@ class TestEmbedFact:
     async def test_dimension_mismatch(self) -> None:
         """A non-canonical-dim vector raises ExternalServiceError (fail loud).
 
-        The canonical model is ``nomic-ai/nomic-embed-text-v1.5`` at 768
-        dims — anything else is refused, never stored.
+        The canonical model is ``nomic-embed-text:v1.5`` at 768 dims —
+        anything else is refused, never stored.
 
-        Note the fake is installed at the *model* level, not at
+        Note the fake is installed at the *HTTP client* level, not at
         ``embed_passage``: dimension validation now lives inside the
         embedder, so stubbing the entrypoint would bypass the very check
         this test exists to prove.  The real ``embed_passage`` runs and
-        rejects the 512-wide vector itself.
+        rejects the 512-wide vector itself.  Retry backoff sleeps are
+        stubbed (the mismatch is retryable-transient by status, but every
+        attempt fails identically).
         """
         import numpy as np
 
-        class _WrongDimModel:
-            """Stands in for ``fastembed.TextEmbedding`` — wrong width out."""
+        class _WrongDimResponse:
+            """Minimal ``httpx.Response`` carrying wrong-width vectors."""
 
-            def passage_embed(self, texts, **_kwargs):
-                # Non-zero filler on purpose: ``embed_passage`` normalises before
-                # validating width, so an all-zeros row would trip the zero-norm
-                # guard first and mask the width check under test.
-                return iter(np.ones((len(texts), 512), dtype=np.float32))
+            def __init__(self, count: int) -> None:
+                self._count = count
+
+            def raise_for_status(self) -> None:
+                pass
+
+            def json(self) -> dict:
+                # Non-zero filler on purpose: ``embed_passage`` normalises
+                # before validating width, so an all-zeros row would trip
+                # the zero-norm guard first and mask the width check.
+                return {
+                    "embeddings": [
+                        np.ones(512, dtype=np.float32).tolist()
+                        for _ in range(self._count)
+                    ]
+                }
+
+        class _WrongDimClient:
+            """Stands in for the module-level ``httpx.AsyncClient``."""
+
+            async def post(self, url: str, json: dict | None = None, **_kwargs: object) -> _WrongDimResponse:
+                return _WrongDimResponse(len((json or {}).get("input", [])))
 
         db = self._make_db()
         ctx = self._ctx(db)
@@ -177,7 +196,8 @@ class TestEmbedFact:
         from workers.tasks.embed_fact import embed_fact
 
         with (
-            patch.object(embeddings_mod, "_MODEL", _WrongDimModel()),
+            patch.object(embeddings_mod, "_CLIENT", _WrongDimClient()),
+            patch("workers.tasks.base.asyncio.sleep", new=AsyncMock()),
             pytest.raises(ExternalServiceError) as exc_info,
         ):
             await embed_fact(

@@ -357,8 +357,8 @@ class TestBlobStorageService:
         mock_storage_cls.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_delete_blobs_s3_error_logged_not_raised(self) -> None:
-        """``delete_blobs`` logs S3 errors but does not raise."""
+    async def test_delete_blobs_s3_error_raises(self) -> None:
+        """``delete_blobs`` re-raises S3StorageError so callers can retry."""
         service, _mock_db, _mock_blob_repo = self._make_service()
 
         blob_record = MagicMock()
@@ -372,11 +372,11 @@ class TestBlobStorageService:
             mock_storage.delete.side_effect = S3StorageError("S3 error")
             mock_storage_cls.return_value = mock_storage
 
-            # Should not raise
-            await service.delete_blobs(
-                blob_records=[blob_record],
-                storage_config=self._make_storage_config(),
-            )
+            with pytest.raises(S3StorageError, match="S3 error"):
+                await service.delete_blobs(
+                    blob_records=[blob_record],
+                    storage_config=self._make_storage_config(),
+                )
 
     # ── validate_blob_metadata_count ────────────────────────────────────────
 
