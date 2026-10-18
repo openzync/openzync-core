@@ -232,7 +232,6 @@ omit = [
     "**/conftest.py",
     "**/_version.py",
     "**/locustfile.py",
-    "streamlit_chat/*",
     "services/api/*",        # App bootstrap (factory + ASGI entry) — covered by integration/e2e
 ]
 

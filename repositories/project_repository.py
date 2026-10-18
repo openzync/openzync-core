@@ -236,6 +236,32 @@ class ProjectRepository:
         )
         return list(result.scalars().all())
 
+    async def list_all(
+        self,
+        limit: int | None = None,
+        include_archived: bool = False,
+    ) -> list[Project]:
+        """List every project across all organisations.
+
+        Requires the caller to have set the ``app.bypass_rls`` GUC (or a
+        super-admin context) before invoking — this repository method
+        performs no tenant scoping of its own.
+
+        Args:
+            limit: Maximum number of projects to return.
+            include_archived: If ``True``, include archived projects.
+
+        Returns:
+            A list of :class:`Project` ORM instances, oldest first.
+        """
+        query = select(Project)
+        if not include_archived:
+            query = query.where(Project.is_archived.is_(False))
+        if limit is not None:
+            query = query.limit(limit)
+        result = await self._db.execute(query.order_by(Project.created_at.asc()))
+        return list(result.scalars().all())
+
     async def update(
         self,
         organization_id: UUID,

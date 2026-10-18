@@ -116,6 +116,7 @@ from workers.tasks.link_entities_to_episode import link_entities_to_episode
 from workers.tasks.merge_duplicate_entities import merge_duplicate_entities
 from workers.tasks.reconcile_enrichment import reconcile_enrichment
 from workers.tasks.reconcile_graph_edges import reconcile_graph_edges
+from workers.tasks.reconcile_temporal import reconcile_temporal
 from workers.tasks.summarise_community import summarise_community
 
 HIGH_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
@@ -136,6 +137,7 @@ LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     reconcile_enrichment,
     expire_graph_edges,
     reconcile_graph_edges,
+    reconcile_temporal,  # warn-only temporal consistency scan — daily cron
     cleanup_orphan_blobs,  # orphaned S3 blobs for soft-deleted episodes — daily cron
     extract_blob_text,  # blob text extraction — OCR/PDF, low priority
 ]
@@ -515,7 +517,9 @@ async def main() -> NoReturn:
     # FalkorDB is required — default graph backend is falkordb.
     falkordb_client: FalkorDB | None = None  # type: ignore[name-defined]
     if not getattr(settings, "FALKORDB_URL", None):
-        logger.warning("falkordb_pool.skipped — FALKORDB_URL not set, falkordb backends will 503")
+        logger.warning(
+            "falkordb_pool.skipped — FALKORDB_URL not set, falkordb backends will 503"
+        )
     else:
         try:
             from falkordb.asyncio import FalkorDB
@@ -620,6 +624,14 @@ async def main() -> NoReturn:
             minute=0,
             unique=True,
             job_id="orphaned_blob_cleanup",
+        ),
+        # ── Temporal consistency scan (daily 04:00 UTC) ──────────────
+        cron(
+            reconcile_temporal,
+            hour=4,
+            minute=0,
+            unique=True,
+            job_id="temporal_consistency_scan",
         ),
     ]
 
