@@ -20,14 +20,16 @@ bit before running and skips if already set.
 
 Bitmask:
     Sets ``episodes.enrichment_status`` bit 7
-    (``ENRICHMENT_BLOB_TEXT``) on success — including unsupported MIME
-    types (dispatch returns ``None``: nothing to extract, work complete).
+    (``ENRICHMENT_BLOB_TEXT``) only when text was actually extracted
+    and stored. A genuine no-text outcome (unsupported MIME, empty
+    payload) leaves the bit unset — not an error, but the work is not
+    marked complete either.
 
-Fail-closed: corrupt input, a missing PII policy, and redaction failures
-propagate (no bit, no commit) so ``@with_retry`` retries. Missing
-extractor libraries (``ImportError``) fail fast via ``is_retryable`` —
-a deployment problem retries cannot heal. Nothing is ever stored
-unredacted.
+Fail-closed: corrupt input, a missing PII policy, redaction failures,
+and org-config fetch failures all propagate (no bit, no commit) so
+``@with_retry`` retries. Missing extractor libraries (``ImportError``)
+fail fast via ``is_retryable`` — a deployment problem retries cannot
+heal. Nothing is ever stored unredacted.
 """
 
 from __future__ import annotations
@@ -170,12 +172,15 @@ async def _dispatch_extraction(mime_type: str, data: bytes) -> str | None:
         data: Raw file bytes.
 
     Returns:
-        Extracted text, or ``None`` when the type is unsupported (the
-        caller then marks the work complete without storing text).
+        Extracted text, or ``None`` for a genuine no-text outcome (an
+        unsupported MIME type or an empty payload). The caller leaves the
+        enrichment bit unset and stores nothing for ``None`` — it is not
+        an error, but the work is not marked complete either.
 
     Raises:
         Exception: Propagates extractor failures (corrupt input, missing
-            libraries) so the caller retries instead of marking success.
+            libraries, magic-detection errors) so the caller retries
+            instead of marking success.
     """
     if mime_type.startswith("text/"):
         # text/plain, text/csv, text/markdown, etc.
@@ -202,11 +207,6 @@ async def _dispatch_extraction(mime_type: str, data: bytes) -> str | None:
             return await _dispatch_extraction(detected, data)
     except ImportError:
         pass
-    except Exception:
-        logger.warning(
-            "extract_blob_text.magic_failed",
-            mime_type=mime_type,
-        )
 
     return None
 
@@ -226,24 +226,20 @@ async def _get_org_storage_config(
 
     Returns:
         A dict suitable for ``BlobStorageConfig.from_org_config()``.
-        Returns defaults if config cannot be fetched.
+
+    Raises:
+        Exception: Propagates org-config fetch failures so the task
+            retries instead of silently using wrong storage defaults.
     """
     if bao_client is not None:
         from core.org_config import get_org_config
 
-        try:
-            org_cfg = await get_org_config(
-                UUID(org_id),
-                redis=None,
-                bao_client=bao_client,
-            )
-            return org_cfg.to_blob_storage_config()
-        except Exception:
-            logger.warning(
-                "extract_blob_text.org_config_fetch_failed",
-                org_id=org_id,
-                exc_info=True,
-            )
+        org_cfg = await get_org_config(
+            UUID(org_id),
+            redis=None,
+            bao_client=bao_client,
+        )
+        return org_cfg.to_blob_storage_config()
 
     # Default config (matches docker-compose MinIO defaults)
     return {
@@ -511,11 +507,11 @@ async def extract_blob_text(
             # ── Extract text based on MIME type ─────────────────────────
             # Raises on corrupt input or missing libs (retryable) — the
             # bit below is NOT set and nothing commits on that path.
-            # Dispatch returns None only for unsupported types, which keeps
-            # the set-bit path (nothing to extract, work is complete).
+            # Dispatch returns None only for a genuine no-text outcome
+            # (unsupported MIME or empty payload).
             extracted_text = await _dispatch_extraction(mime_type, data)
 
-            # ── PII redaction (fail-closed) ─────────────────────────────
+            # ── PII redaction (fail-closed) — only when there is text ──
             # Raises PIIUnavailableError when the policy cannot be fetched
             # or redaction fails — update_extracted_text, the enrichment
             # bit, and the commit are all skipped and @with_retry retries.
@@ -528,17 +524,22 @@ async def extract_blob_text(
                     log=log,
                 )
 
-            if extracted_text:
-                await blob_repo.update_extracted_text(UUID(blob_id), extracted_text)
-                log.info(
-                    "extract_blob_text.extraction_done",
-                    extracted_length=len(extracted_text),
-                )
-            else:
+            if not extracted_text:
+                # Genuine no-text outcome (unsupported MIME, empty payload):
+                # not an error, but the enrichment bit stays unset so the
+                # work remains visible to reconcile instead of being
+                # silently marked complete.
                 log.info(
                     "extract_blob_text.no_text_extracted",
                     mime_type=mime_type,
                 )
+                return
+
+            await blob_repo.update_extracted_text(UUID(blob_id), extracted_text)
+            log.info(
+                "extract_blob_text.extraction_done",
+                extracted_length=len(extracted_text),
+            )
 
             # ── Set enrichment status bit via ORM ───────────────────────
             episode.enrichment_status |= ENRICHMENT_BLOB_TEXT

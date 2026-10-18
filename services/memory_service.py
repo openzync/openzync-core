@@ -544,6 +544,7 @@ class MemoryService:
                     project_id=project_id,
                     user_id=created_by,
                     messages=episode_dicts,
+                    start_seq=start_seq,
                 )
             except IntegrityError as exc:
                 # Lost the seq race despite the row lock (or a colliding

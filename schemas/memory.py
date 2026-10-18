@@ -48,6 +48,20 @@ class BlobMetadata(BaseModel):
             raise ValueError("mime_type must not be empty")
         return v.strip().lower()
 
+    @field_validator("file_name")
+    @classmethod
+    def sanitize_file_name(cls, v: str) -> str:
+        """Strip path separators, parent refs, and control chars.
+
+        The name is stored in the DB and echoed back to users — keep it
+        an inert basename (max 255 chars).
+        """
+        name = v.replace("\\", "/").split("/")[-1].replace("..", "")
+        name = "".join(c for c in name if ord(c) >= 32 and ord(c) != 127).strip()
+        if not name:
+            raise ValueError("file_name must not be empty")
+        return name[:255]
+
 
 class Message(BaseModel):
     """A single conversation turn within a session.

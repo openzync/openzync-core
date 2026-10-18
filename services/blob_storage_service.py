@@ -335,11 +335,8 @@ class BlobStorageService:
         storage_key: str,
         storage_config: dict[str, Any],
         expires_in: int = 300,
-    ) -> str | None:
+    ) -> str:
         """Generate a presigned download URL for a blob.
-
-        Returns ``None`` if URL generation fails (caller should serve a
-        temporary-unavailable placeholder).
 
         Args:
             storage_key: S3 object key.
@@ -347,15 +344,13 @@ class BlobStorageService:
             expires_in: URL TTL in seconds (default 5 minutes).
 
         Returns:
-            Presigned URL string, or ``None`` on failure.
+            The presigned URL string.
+
+        Raises:
+            S3StorageError: If URL generation fails — propagated to the
+                caller so the failure is loud and alertable (no silent
+                ``None`` that callers could mistake for success).
         """
-        try:
-            config = BlobStorageConfig.from_org_config(storage_config)
-            storage = BlobStorage(config)
-            return await storage.get_presigned_url(storage_key, expires_in=expires_in)
-        except S3StorageError:
-            logger.warning(
-                "blob_storage_service.download_url_failed",
-                key=storage_key,
-            )
-            return None
+        config = BlobStorageConfig.from_org_config(storage_config)
+        storage = BlobStorage(config)
+        return await storage.get_presigned_url(storage_key, expires_in=expires_in)

@@ -53,17 +53,19 @@ class EpisodeRepository:
         session_id: UUID,
         user_id: UUID,
         messages: list[dict[str, Any]],
+        start_seq: int = 0,
     ) -> list[Episode]:
         """Insert multiple episodes in a single round-trip with RETURNING.
 
         Uses raw SQL to include ``organization_id`` and ``project_id``
         (the schema requires them for RLS and project isolation).
 
-        Each message dict MUST carry a server-assigned ``sequence_number``
+        Sequence numbers are server-assigned as ``start_seq + i``
         (``MemoryService`` computes ``MAX+1`` under a session row lock);
-        client-supplied values are never accepted at the ingest boundary
-        (the request schema has no such field). The ``or i`` fallback
-        exists only for ad-hoc callers that insert unordered batches.
+        per-message ``sequence_number`` values are never read — the old
+        ``msg.get("sequence_number", i)`` fallback restarted at 0 for
+        every batch and interleaved old and new rows under
+        ``ORDER BY seq, id``.
 
         Args:
             organization_id: Tenant scope (included for RLS enforcement).
@@ -71,8 +73,9 @@ class EpisodeRepository:
             session_id: The parent session's UUID.
             user_id: The creating user's UUID.
             messages: List of message dicts, each containing ``role``,
-                ``content``, ``metadata``, ``sequence_number``, and
-                optionally ``created_at``.
+                ``content``, ``metadata``, and optionally ``created_at``.
+            start_seq: First sequence number for this batch (server-assigned
+                ``MAX+1`` from the caller).
 
         Returns:
             A list of ``Episode`` ORM instances with generated fields
@@ -91,15 +94,7 @@ class EpisodeRepository:
 
         for i, msg in enumerate(messages):
             episode_id = uuid4()
-            # Explicit None (or a non-int) falls back to the loop index —
-            # ``dict.get`` alone would pass NULL through and violate NOT NULL.
-            # ``isinstance`` (not ``or``) preserves a valid 0 sequence number.
-            _raw_seq = msg.get("sequence_number", i)
-            seq = (
-                _raw_seq
-                if isinstance(_raw_seq, int) and not isinstance(_raw_seq, bool)
-                else i
-            )
+            seq = start_seq + i
 
             params[f"id_{i}"] = episode_id
             params[f"org_id_{i}"] = organization_id

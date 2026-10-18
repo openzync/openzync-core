@@ -313,6 +313,8 @@ def init_dispatcher() -> GraphBackendDispatcher:
 
     dispatcher = GraphBackendDispatcher()
     dispatcher.register("surrealdb", SurrealGraphBackend)
+    # note: "postgres" is registered but INACTIVE / non-production, kept
+    # for reference only — FalkorDB is live. Do not route orgs to it.
     dispatcher.register("postgres", PostgresGraphBackend)
     dispatcher.register("falkordb", FalkorGraphBackend)
     return dispatcher

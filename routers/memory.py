@@ -132,9 +132,16 @@ async def ingest_messages(
     try:
         payload = IngestMemoryRequest.model_validate_json(data)
     except ValidationError as exc:
+        # ctx["error"] holds the raw ValueError instance (not JSON
+        # serializable) — str() it or Starlette 500s serializing this 422.
+        errors = exc.errors()
+        for error in errors:
+            ctx = error.get("ctx")
+            if ctx and isinstance(ctx.get("error"), Exception):
+                ctx["error"] = str(ctx["error"])
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=exc.errors(),
+            detail=errors,
         ) from exc
 
     # Validate blob reference integrity
