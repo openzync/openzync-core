@@ -1,4 +1,9 @@
-"""PostgreSQL-native graph backend — no external graph DB required.
+"""PostgreSQL-native graph backend — INACTIVE / NON-PRODUCTION.
+
+Kept for reference only — FalkorDB is the live backend. Do not wire this
+up for production traffic (known-deferred issues: invalid-cursor
+pagination restart, string-built WHERE). Retained so the recursive-CTE
+approach stays available for future evaluation.
 
 Implements the ``GraphBackend`` ABC using PostgreSQL tables
 (``graph_entities``, ``graph_relationships``, ``graph_episode_entities``)

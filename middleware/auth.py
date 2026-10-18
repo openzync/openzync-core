@@ -32,6 +32,7 @@ from uuid import UUID
 
 import orjson
 import redis.asyncio as aioredis
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -663,9 +664,22 @@ class AuthMiddleware:
                     scope["state"]["api_key_id"] = cached.get("api_key_id")
                     await self.app(scope, receive, send)
                     return
-            except Exception:
+            except aioredis.RedisError:
+                # Fail closed: Redis also backs the throttle/negative cache,
+                # so falling through to Postgres would be unthrottled.  A
+                # raise here would surface as a plain 500 (ServerErrorMiddleware
+                # wraps this raw-ASGI middleware, above ExceptionMiddleware),
+                # so send the RFC 7807 503 directly to fail closed with the
+                # right status.
                 logger.error("auth.cache_lookup_failed", exc_info=True)
-                raise  # Let the exception propagate — auth layer depends on Redis
+                await _send_rfc7807(
+                    send,
+                    status=503,
+                    title="Service Unavailable",
+                    detail="Authentication service temporarily unavailable.",
+                    path=path,
+                )
+                return
 
         # ── Negative cache check ──────────────────────────────────────────
         # If this lookup_hash was recently looked up and not found in DB,
@@ -681,9 +695,19 @@ class AuthMiddleware:
                         path=path,
                     )
                     return
-            except Exception:
+            except aioredis.RedisError:
+                # Fail closed: the negative cache is part of the Redis-backed
+                # auth defenses; if Redis is down, do not fall through to an
+                # unthrottled DB path.
                 logger.error("auth.negative_cache_check_failed", exc_info=True)
-                # Non-critical — proceed without negative cache
+                await _send_rfc7807(
+                    send,
+                    status=503,
+                    title="Service Unavailable",
+                    detail="Authentication service temporarily unavailable.",
+                    path=path,
+                )
+                return
 
         # ── Per-IP auth miss-rate limit ───────────────────────────────────
         # Prevent a single IP from hammering the DB with many unique
@@ -704,9 +728,19 @@ class AuthMiddleware:
                     path=path,
                 )
                 return
-            except Exception:
+            except aioredis.RedisError:
+                # Fail closed: without the per-IP miss-rate throttle, a single
+                # IP could hammer Postgres with rotated keys.  Send the 503
+                # directly — a raise would surface as a plain 500.
                 logger.error("auth.auth_miss_rate_check_failed", exc_info=True)
-                # Non-critical — proceed without miss-rate limiting
+                await _send_rfc7807(
+                    send,
+                    status=503,
+                    title="Service Unavailable",
+                    detail="Authentication service temporarily unavailable.",
+                    path=path,
+                )
+                return
 
         # ── Check DB ─────────────────────────────────────────────────────
         if db_factory is None:
@@ -725,7 +759,7 @@ class AuthMiddleware:
 
         try:
             key_data = await _query_key_from_db(db_factory, lookup_hash)
-        except Exception:
+        except SQLAlchemyError:
             logger.exception("Failed to query API key from database")
             await _send_rfc7807(
                 send,
@@ -742,7 +776,9 @@ class AuthMiddleware:
             if redis is not None:
                 try:
                     await _mark_negative_cache(redis, lookup_hash)
-                except Exception:
+                except aioredis.RedisError:
+                    # Best-effort: a missed negative-cache write only costs
+                    # an extra DB lookup next time — safe to proceed.
                     logger.error("auth.negative_cache_mark_failed", exc_info=True)
             await _send_rfc7807(
                 send,
@@ -808,7 +844,8 @@ class AuthMiddleware:
             async with db_factory() as session:
                 await ApiKeyRepository(session).update_last_used(UUID(key_data["id"]))
                 await session.commit()
-        except Exception:
+        except SQLAlchemyError:
+            # Best-effort: last_used is observability only — safe to proceed.
             logger.error("auth.last_used_update_failed", exc_info=True)
 
         # ── Cache in Redis (fire-and-forget) ─────────────────────────────
@@ -825,7 +862,9 @@ class AuthMiddleware:
                         "api_key_id": key_data["id"],
                     },
                 )
-            except Exception:
+            except aioredis.RedisError:
+                # Best-effort: a missed cache write only costs a DB lookup
+                # next time — safe to proceed.
                 logger.error("auth.cache_write_failed", exc_info=True)
 
         # ── RLS context is set in dependencies/db.py on the actual request

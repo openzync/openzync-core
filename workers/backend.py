@@ -3,7 +3,9 @@
 No silent Postgres fallback: a backend name that is configured but cannot be
 resolved raises ``GraphBackendUnavailableError`` so the misconfiguration is
 visible and alertable.  ``None`` is only returned when graph is explicitly
-disabled (no org config, or ``graph_backend`` is ``"none"``/empty).
+disabled (``graph_backend`` is ``"none"``/empty); a config-resolution
+failure raises ``GraphBackendUnavailableError`` rather than degrading to
+"disabled".
 
 Usage:
 
@@ -63,8 +65,7 @@ async def resolve_graph_backend(
 
     Returns:
         An initialized ``GraphBackend`` instance, or ``None`` when graph is
-        explicitly disabled for the org (no org config, or backend name is
-        ``"none"``/empty).
+        explicitly disabled for the org (backend name is ``"none"``/empty).
 
     Raises:
         GraphBackendUnavailableError: If ``graph_backend_dispatcher`` is
@@ -86,11 +87,17 @@ async def resolve_graph_backend(
     org_config = await _resolve_org_config(ctx, org_id, db)
 
     if org_config is None:
-        logger.info(
-            "worker.graph_disabled.no_org_config",
+        # Defensive: get_org_config never returns None and the DB fallback
+        # raises on failure, so org_config is only None if resolution broke.
+        # Fail loud rather than run enrichment as if graph were disabled.
+        logger.error(
+            "worker.org_config_unresolved",
             extra={"org_id": str(org_id)},
         )
-        return None
+        raise GraphBackendUnavailableError(
+            f"Org config for org {org_id} resolved to None — cannot run "
+            "enrichment under unknown defaults."
+        )
 
     backend_name = org_config.graph_backend
     if not backend_name or backend_name == "none":
@@ -272,4 +279,8 @@ async def _resolve_org_config(
             extra={"org_id": str(org_id)},
             exc_info=True,
         )
-        return None
+        raise GraphBackendUnavailableError(
+            f"Failed to resolve org config for org {org_id}: OpenBao and "
+            "the DB fallback both failed — cannot run enrichment under "
+            "unknown defaults."
+        ) from None
