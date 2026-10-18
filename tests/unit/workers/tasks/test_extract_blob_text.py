@@ -498,16 +498,17 @@ class TestDispatchExtraction:
 
     @pytest.mark.asyncio
     async def test_magic_exception_logged_and_continues(self) -> None:
-        """Exception in magic.from_buffer is caught, logged, returns None."""
+        """Exception in magic.from_buffer propagates (retryable)."""
         from workers.tasks.extract_blob_text import _dispatch_extraction
 
         mock_magic = MagicMock()
         mock_magic.from_buffer.side_effect = ValueError("magic error")
 
-        with patch.dict("sys.modules", {"magic": mock_magic}):
-            result = await _dispatch_extraction("application/octet-stream", b"data")
-
-        assert result is None
+        with (
+            patch.dict("sys.modules", {"magic": mock_magic}),
+            pytest.raises(ValueError, match="magic error"),
+        ):
+            await _dispatch_extraction("application/octet-stream", b"data")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -540,26 +541,19 @@ class TestGetOrgStorageConfig:
 
     @pytest.mark.asyncio
     async def test_returns_defaults_on_config_fetch_failure(self) -> None:
-        """OpenBao fetch exception → default MinIO config returned."""
+        """OpenBao fetch exception propagates (retryable, no silent defaults)."""
         from workers.tasks.extract_blob_text import _get_org_storage_config
 
         mock_bao = MagicMock()
 
-        with patch(
-            "core.org_config.get_org_config",
-            AsyncMock(side_effect=RuntimeError("Bao down")),
+        with (
+            patch(
+                "core.org_config.get_org_config",
+                AsyncMock(side_effect=RuntimeError("Bao down")),
+            ),
+            pytest.raises(RuntimeError, match="Bao down"),
         ):
-            result = await _get_org_storage_config(_ORG_ID, mock_bao)
-
-        assert result == {
-            "backend": "s3",
-            "endpoint_url": "http://minio:9000",
-            "region": "auto",
-            "access_key_id": "",
-            "secret_access_key": "",
-            "bucket_name": "openzync-blobs",
-            "max_blob_size_mb": 50,
-        }
+            await _get_org_storage_config(_ORG_ID, mock_bao)
 
     @pytest.mark.asyncio
     async def test_returns_defaults_when_bao_client_none(self) -> None:
@@ -840,8 +834,8 @@ class TestExtractBlobText:
     # ═══════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_no_text_extracted_still_sets_bit(self) -> None:
-        """When no text is extracted, the enrichment bit is still set."""
+    async def test_no_text_extracted_leaves_bit_unset(self) -> None:
+        """When no text is extracted, the enrichment bit stays unset."""
         from workers.tasks.extract_blob_text import extract_blob_text
 
         db = self._make_db()
@@ -886,10 +880,10 @@ class TestExtractBlobText:
                 mime_type=_MIME_TYPE,
             )
 
-            # No text was stored, but bit was still set
+            # No text was stored, bit stays unset, nothing commits
             mock_blob_repo.update_extracted_text.assert_not_called()
-            assert mock_episode.enrichment_status & ENRICHMENT_BLOB_TEXT
-            db.commit.assert_awaited_once()
+            assert not (mock_episode.enrichment_status & ENRICHMENT_BLOB_TEXT)
+            db.commit.assert_not_called()
 
     # ═══════════════════════════════════════════════════════════════════════
     # Download failure

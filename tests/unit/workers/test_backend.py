@@ -84,14 +84,16 @@ class TestResolveGraphBackend:
         mock_db: MagicMock,
         mock_dispatcher: MagicMock,
     ) -> None:
-        """Org config resolves to ``None`` → graph disabled, returns ``None``."""
+        """Org config resolves to ``None`` → raises (unknown defaults)."""
         with patch("workers.backend._resolve_org_config", AsyncMock(return_value=None)):
             from workers.backend import resolve_graph_backend
 
             ctx = {"graph_backend_dispatcher": mock_dispatcher}
-            result = await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
-
-        assert result is None
+            with pytest.raises(
+                GraphBackendUnavailableError,
+                match="cannot run enrichment under unknown defaults",
+            ):
+                await resolve_graph_backend(ctx, self.ORG_ID, mock_db)
 
     # ── Backend name is empty / "none" / None ─────────────────────────────
 
@@ -507,10 +509,14 @@ class TestResolveOrgConfig:
         self,
         mock_db: MagicMock,
     ) -> None:
-        """Primary raises, DB fallback also raises → returns ``None``."""
+        """Primary raises, DB fallback also raises → raises ``GraphBackendUnavailableError``."""
         with (
             patch("core.org_config.get_org_config", side_effect=ImportError("no module")),
             patch("repositories.organization_repository.OrganizationRepository") as mock_repo_cls,
+            pytest.raises(
+                GraphBackendUnavailableError,
+                match="cannot run enrichment under unknown defaults",
+            ),
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
@@ -519,18 +525,20 @@ class TestResolveOrgConfig:
             from workers.backend import _resolve_org_config
 
             ctx: dict = {}
-            result = await _resolve_org_config(ctx, self.ORG_ID, mock_db)
-
-        assert result is None
+            await _resolve_org_config(ctx, self.ORG_ID, mock_db)
 
     async def test_primary_fails_with_generic_and_db_fails_too_returns_none(
         self,
         mock_db: MagicMock,
     ) -> None:
-        """Generic exception in primary, then DB fallback fails → returns ``None``."""
+        """Generic exception in primary, then DB fallback fails → raises ``GraphBackendUnavailableError``."""
         with (
             patch("core.org_config.get_org_config", side_effect=RuntimeError("bao timeout")),
             patch("repositories.organization_repository.OrganizationRepository") as mock_repo_cls,
+            pytest.raises(
+                GraphBackendUnavailableError,
+                match="cannot run enrichment under unknown defaults",
+            ),
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
@@ -539,6 +547,4 @@ class TestResolveOrgConfig:
             from workers.backend import _resolve_org_config
 
             ctx: dict = {}
-            result = await _resolve_org_config(ctx, self.ORG_ID, mock_db)
-
-        assert result is None
+            await _resolve_org_config(ctx, self.ORG_ID, mock_db)

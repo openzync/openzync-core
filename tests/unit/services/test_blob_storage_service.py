@@ -419,8 +419,8 @@ class TestBlobStorageService:
         assert url == "https://minio/test-bucket/key?X-Amz=..."
 
     @pytest.mark.asyncio
-    async def test_generate_download_url_returns_none_on_failure(self) -> None:
-        """``generate_download_url`` returns None on S3 error."""
+    async def test_generate_download_url_raises_on_failure(self) -> None:
+        """``generate_download_url`` raises S3StorageError on S3 error."""
         with patch(
             "services.blob_storage_service.BlobStorage",
         ) as mock_storage_cls:
@@ -428,9 +428,8 @@ class TestBlobStorageService:
             mock_storage.get_presigned_url.side_effect = S3StorageError("S3 unreachable")
             mock_storage_cls.return_value = mock_storage
 
-            url = await BlobStorageService.generate_download_url(
-                storage_key="some/key",
-                storage_config=self._make_storage_config(),
-            )
-
-        assert url is None
+            with pytest.raises(S3StorageError, match="S3 unreachable"):
+                await BlobStorageService.generate_download_url(
+                    storage_key="some/key",
+                    storage_config=self._make_storage_config(),
+                )
