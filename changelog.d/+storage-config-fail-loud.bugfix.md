@@ -1,0 +1,1 @@
+Fail loudly when an org's blob storage config cannot be read — a storage misconfiguration now raises `ExternalServiceError` (502) instead of silently writing the documents to the shared dev bucket, and the resolution reuses the app-level OpenBao and Redis clients instead of opening a new AppRole session per call.

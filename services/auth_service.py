@@ -220,6 +220,13 @@ class AuthService:
                 plan="free",
             )
 
+            # Bind the session to the new tenant.  The repository already
+            # bound it (the INSERT's RETURNING clause is filtered by the
+            # organizations SELECT policy); this is the flow's explicit
+            # guarantee that everything after the org row — the prompt
+            # seeding and the admin user insert — is org-scoped.
+            await self._org_repo.set_tenant_context(org.id)
+
             # Seed default prompt templates for the new org
             await self._repo.seed_prompts_for_org(org.id)
 
@@ -288,6 +295,9 @@ class AuthService:
             plan="free",
             status="pending",
         )
+        # Bind the session to the new tenant — the pending admin insert is
+        # org-scoped.
+        await self._org_repo.set_tenant_context(org.id)
         # Pending admin — no password, no invite token yet.  The unique
         # email index (ix_user_email_unique) guarantees the admin email
         # cannot belong to any live user; a duplicate raises IntegrityError
@@ -390,6 +400,10 @@ class AuthService:
             email: The admin's email address.
             name: Optional display name.
         """
+        # The requester is authenticated in *their own* org, so the session
+        # is bound to that tenant — bind it to the new org instead, or the
+        # insert below is rejected by the org-isolation policy.
+        await self._org_repo.set_tenant_context(organization_id)
         await self._repo.create_dashboard_user(
             organization_id=organization_id,
             email=email,
@@ -453,6 +467,10 @@ class AuthService:
             raise AuthorizationError("Registration is disabled")
 
         code = normalize_org_code(payload.org_code)
+        # Bind the join code to the session: it is the credential presented
+        # by an anonymous joiner, and the ``org_join_code_lookup`` policy
+        # exposes exactly the organization row that owns it.
+        await self._org_repo.set_lookup_code(code)
         org = await self._org_repo.get_by_code(code)
         if org is None:
             raise ValidationError("Invalid organization code")
@@ -467,6 +485,10 @@ class AuthService:
             raise AuthorizationError(
                 "This organization is not accepting new members"
             )
+
+        # Bind the session to the resolved tenant — the member insert below
+        # is org-scoped and the request has no org context of its own.
+        await self._org_repo.set_tenant_context(org.id)
 
         existing = await self._repo.find_user_by_email(payload.email)
         if existing is not None:
@@ -532,6 +554,10 @@ class AuthService:
                 "Invalid or expired verification code. "
                 "Please request a new code."
             )
+
+        # Bind the session to the caller's tenant — the email-verification
+        # update and the refresh-token insert below are org-scoped.
+        await self._org_repo.set_tenant_context(user.organization_id)
 
         # Always verify the OTP — even for already-verified users.
         # This prevents an unauthenticated attacker who knows a verified
@@ -674,6 +700,10 @@ class AuthService:
                 "Please request a new code.",
             )
 
+        # Bind the session to the caller's tenant — the password update and
+        # the refresh-token revocation below are org-scoped.
+        await self._org_repo.set_tenant_context(user.organization_id)
+
         # Verify OTP
         verified = await self._otp_service.verify(
             email=payload.email,
@@ -774,6 +804,10 @@ class AuthService:
                 "Invalid or expired login code. "
                 "Please request a new code."
             )
+
+        # Bind the session to the caller's tenant — the auto-verification
+        # update and the refresh-token insert below are org-scoped.
+        await self._org_repo.set_tenant_context(user.organization_id)
 
         verified = await self._otp_service.verify(
             email=payload.email,
@@ -1060,6 +1094,10 @@ class AuthService:
             # Unreachable: the conditional UPDATE only matches existing rows.
             raise AuthenticationError("Refresh token is invalid or has expired.")
 
+        # The token row is the only thing that knows the tenant \u2014 bind the
+        # session to it now, so the rotation writes below are org-scoped.
+        await self._org_repo.set_tenant_context(stored.organization_id)
+
         # Look up the user to get the actual role
         user_id = uuid.UUID(stored.user_id)
         user = await self._repo.get_user_by_id(user_id)
@@ -1177,6 +1215,11 @@ class AuthService:
         Returns:
             A ``TokenResponse`` with fresh tokens.
         """
+        # Bind the session to the token's tenant — the refresh-token insert
+        # below is org-scoped, and every issuance path (login, refresh,
+        # verify-email, invite-accept, passwordless login) lands here.
+        await self._org_repo.set_tenant_context(organization_id)
+
         # Must-change-password flag — read from the source of truth at
         # issue time so a rotated/stale token can never outlive the flag.
         user = await self._repo.get_user_by_id(user_id)

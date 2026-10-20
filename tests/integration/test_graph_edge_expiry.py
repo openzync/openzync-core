@@ -19,6 +19,7 @@ transactions:
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -41,6 +42,35 @@ PROJECT_ID = UUID("00000000-0000-0000-0000-000000000002")
 T0 = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
 T1 = datetime(2026, 2, 1, 12, 0, tzinfo=UTC)
 T2 = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def _seed_worker_settings() -> Iterator[None]:
+    """Seed the ``WorkerSettings`` singleton for this module.
+
+    ``reconcile_graph_edges`` reads its target queue from the worker's own
+    settings (``settings.low_queue_full``) — ARQ never puts ``_queue_name``
+    in the task context, so the queue is derived from the worker's
+    configuration instead.  The singleton is normally populated by
+    ``init_worker_settings_from_bao()`` at worker startup, which does not
+    run in a test.
+
+    ``ENV="test"`` yields the queue name ``OpenZync:test:queue:low`` — the
+    same label the test contexts below already carry.
+    """
+    from services.worker import worker_settings as _ws
+    from services.worker.worker_settings import WorkerSettings
+
+    previous = _ws._settings
+    _ws._settings = WorkerSettings(
+        DATABASE_URL="postgresql+asyncpg://localhost:5432/test",
+        REDIS_URL="redis://localhost:6379/0",
+        ENV="test",
+    )
+    try:
+        yield
+    finally:
+        _ws._settings = previous
 
 
 async def _seed_user(db: AsyncSession, user_id: UUID) -> None:
@@ -131,9 +161,7 @@ async def _await_effect(predicate, timeout_s: float = 10.0) -> Any:
     raise AssertionError("post-commit graph-sync effect did not complete in time")
 
 
-def _entity_triple(
-    src_entity: UUID, tgt_entity: UUID, content: str
-) -> dict[str, Any]:
+def _entity_triple(src_entity: UUID, tgt_entity: UUID, content: str) -> dict[str, Any]:
     return {
         "subject": "Robbie",
         "predicate": "wears",
@@ -180,7 +208,10 @@ class TestCrossFormSupersessionExpiresEdge:
         try:
             backend = PostgresGraphBackend(db=db)
             pre = await backend.traverse(
-                ORG_ID, PROJECT_ID, graph["src_id"], max_depth=1,
+                ORG_ID,
+                PROJECT_ID,
+                graph["src_id"],
+                max_depth=1,
                 at_time=T0 + timedelta(minutes=1),
             )
             assert str(graph["tgt_id"]) in {n["id"] for n in pre}, (
@@ -253,11 +284,17 @@ class TestCrossFormSupersessionExpiresEdge:
         try:
             backend = PostgresGraphBackend(db=db)
             before_t1 = await backend.traverse(
-                ORG_ID, PROJECT_ID, graph["src_id"], max_depth=1,
+                ORG_ID,
+                PROJECT_ID,
+                graph["src_id"],
+                max_depth=1,
                 at_time=T0 + timedelta(minutes=1),
             )
             after_t1 = await backend.traverse(
-                ORG_ID, PROJECT_ID, graph["src_id"], max_depth=1,
+                ORG_ID,
+                PROJECT_ID,
+                graph["src_id"],
+                max_depth=1,
                 at_time=T1 + timedelta(minutes=1),
             )
             assert str(graph["tgt_id"]) in {n["id"] for n in before_t1}, (
@@ -444,9 +481,7 @@ class TestRetractionExpiresEdge:
                 project_id=PROJECT_ID,
                 user_id=user_id,
                 facts=[
-                    _entity_triple(
-                        graph["src_id"], graph["tgt_id"], "supports edge"
-                    )
+                    _entity_triple(graph["src_id"], graph["tgt_id"], "supports edge")
                 ],
                 now=T0,
             )

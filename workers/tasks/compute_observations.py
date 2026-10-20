@@ -28,11 +28,12 @@ from __future__ import annotations
 import structlog
 
 from core.exceptions import EpisodeNotFoundError
-from workers.tasks.base import ENRICHMENT_OBSERVATIONS, with_retry
+from workers.tasks.base import ENRICHMENT_OBSERVATIONS, with_retry, with_task_metrics
 
 logger = structlog.get_logger()
 
 
+@with_task_metrics
 @with_retry(max_retries=3, base_delay_s=2.0)
 async def compute_observations(
     ctx: object,
@@ -80,8 +81,7 @@ async def compute_observations(
     # ═══════════════════════════════════════════════════════════════════════════
     from uuid import UUID
 
-    from sqlalchemy import text
-
+    from core import rls
     from core.config import settings
     from core.db import get_async_session
     from repositories.episode_repository import EpisodeRepository
@@ -122,11 +122,9 @@ async def compute_observations(
             # ── 1. Set RLS context ──────────────────────────────────────────
             # All DB work below is org-scoped via the ``app.org_id`` GUC —
             # without it the RLS policies filter out the project's rows and
-            # the full scan silently finds nothing.
-            await db.execute(
-                text("SELECT set_config('app.org_id', :org_id, true)"),
-                {"org_id": org_id},
-            )
+            # the full scan silently finds nothing.  The binding is
+            # remembered by the session, so the commit below re-applies it.
+            await rls.set_tenant_context(db, org_id)
 
             # ── 2. Clear the pending-observations marker ────────────────────
             # One full-scan run clears the need for everything ingested before

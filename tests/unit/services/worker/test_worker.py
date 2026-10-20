@@ -22,7 +22,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
+from aiohttp import web
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Prometheus metrics
@@ -102,14 +102,18 @@ class TestOnJobEnd:
         ):
             await on_job_end(ctx)
 
-            mock_total.labels.assert_called_once_with(task_type="enrich", status="success")
+            mock_total.labels.assert_called_once_with(
+                task_type="enrich", status="success"
+            )
             mock_total.labels.return_value.inc.assert_called_once()
 
             mock_dur.labels.assert_called_once_with(task_type="enrich")
             mock_dur.labels.return_value.observe.assert_called_once_with(3.5)
 
             mock_org.labels.assert_called_once_with(
-                org_id="org-1", task_type="enrich", status="success",
+                org_id="org-1",
+                task_type="enrich",
+                status="success",
             )
             mock_org.labels.return_value.inc.assert_called_once()
 
@@ -120,14 +124,114 @@ class TestOnJobEnd:
 
         with (
             patch("services.worker.worker.worker_tasks_total") as mock_total,
-            patch("services.worker.worker.worker_task_duration_seconds") as mock_dur,
+            patch("services.worker.worker.worker_task_duration_seconds"),
             patch("services.worker.worker.worker_tasks_per_org") as mock_org,
         ):
             await on_job_end({})
 
-            mock_total.labels.assert_called_once_with(task_type="unknown", status="success")
+            mock_total.labels.assert_called_once_with(
+                task_type="unknown", status="success"
+            )
             mock_org.labels.assert_called_once_with(
-                org_id="unknown", task_type="unknown", status="success",
+                org_id="unknown",
+                task_type="unknown",
+                status="success",
+            )
+
+    @pytest.mark.asyncio
+    async def test_failure_status_increments_the_failure_counter(self) -> None:
+        """A ctx carrying ``status="failure"`` is counted as a failure.
+
+        ``on_job_end`` used to hard-code ``status="success"`` — every
+        failed job was reported as a success.
+        """
+        from services.worker.worker import on_job_end
+
+        ctx: dict = {
+            "job_id": "j-1",
+            "task_type": "deliver_webhook",
+            "org_id": "org-1",
+            "trace_id": "t-1",
+            "runtime": 1.25,
+            "status": "failure",
+        }
+
+        with (
+            patch("services.worker.worker.worker_tasks_total") as mock_total,
+            patch("services.worker.worker.worker_task_duration_seconds"),
+            patch("services.worker.worker.worker_tasks_per_org") as mock_org,
+        ):
+            await on_job_end(ctx)
+
+            mock_total.labels.assert_called_once_with(
+                task_type="deliver_webhook",
+                status="failure",
+            )
+            mock_total.labels.return_value.inc.assert_called_once()
+            mock_org.labels.assert_called_once_with(
+                org_id="org-1",
+                task_type="deliver_webhook",
+                status="failure",
+            )
+            mock_org.labels.return_value.inc.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_success_status_increments_the_success_counter(self) -> None:
+        """A ctx carrying ``status="success"`` is counted as a success."""
+        from services.worker.worker import on_job_end
+
+        ctx: dict = {
+            "job_id": "j-1",
+            "task_type": "embed_episode",
+            "org_id": "org-1",
+            "runtime": 0.5,
+            "status": "success",
+        }
+
+        with (
+            patch("services.worker.worker.worker_tasks_total") as mock_total,
+            patch("services.worker.worker.worker_task_duration_seconds"),
+            patch("services.worker.worker.worker_tasks_per_org") as mock_org,
+        ):
+            await on_job_end(ctx)
+
+            mock_total.labels.assert_called_once_with(
+                task_type="embed_episode",
+                status="success",
+            )
+            mock_org.labels.assert_called_once_with(
+                org_id="org-1",
+                task_type="embed_episode",
+                status="success",
+            )
+
+    @pytest.mark.asyncio
+    async def test_task_type_and_org_id_are_read_from_the_ctx(self) -> None:
+        """The task type and org id come from the ctx, not from a default.
+
+        ``with_task_metrics`` writes them onto the shared ARQ ctx dict;
+        ``on_job_end`` must read them back instead of reporting every job
+        as ``task_type="unknown"`` / ``org_id="unknown"``.
+        """
+        from services.worker.worker import on_job_end
+
+        ctx: dict = {"task_type": "deliver_webhook", "org_id": "org-42"}
+
+        with (
+            patch("services.worker.worker.worker_tasks_total") as mock_total,
+            patch("services.worker.worker.worker_task_duration_seconds"),
+            patch("services.worker.worker.worker_tasks_per_org") as mock_org,
+        ):
+            await on_job_end(ctx)
+
+            mock_total.labels.assert_called_once_with(
+                task_type="deliver_webhook",
+                status="success",
+            )
+            mock_org.labels.assert_called_once_with(
+                org_id="org-42",
+                task_type="deliver_webhook",
+                status="success",
             )
 
 
@@ -193,7 +297,10 @@ class TestCreateArqWorker:
         async def dummy_task(_ctx: object) -> str:
             return "done"
 
-        with self._default_patches(), patch("services.worker.worker.ArqWorker") as mock_aw_cls:
+        with (
+            self._default_patches(),
+            patch("services.worker.worker.ArqWorker") as mock_aw_cls,
+        ):
             create_arq_worker(
                 queue_name="high",
                 functions=[dummy_task],
@@ -220,7 +327,10 @@ class TestCreateArqWorker:
 
         shared_ctx = {"db_engine": "fake"}
 
-        with self._default_patches(), patch("services.worker.worker.ArqWorker") as mock_aw_cls:
+        with (
+            self._default_patches(),
+            patch("services.worker.worker.ArqWorker") as mock_aw_cls,
+        ):
             create_arq_worker(
                 queue_name="high",
                 functions=[dummy_task],
@@ -241,7 +351,10 @@ class TestCreateArqWorker:
         async def dummy_task(_ctx: object) -> str:
             return "done"
 
-        with self._default_patches(), patch("services.worker.worker.ArqWorker") as mock_aw_cls:
+        with (
+            self._default_patches(),
+            patch("services.worker.worker.ArqWorker") as mock_aw_cls,
+        ):
             create_arq_worker(
                 queue_name="high",
                 functions=[dummy_task],
@@ -264,7 +377,10 @@ class TestCreateArqWorker:
 
         cron_job = cron(dummy_task, minute=0)
 
-        with self._default_patches(), patch("services.worker.worker.ArqWorker") as mock_aw_cls:
+        with (
+            self._default_patches(),
+            patch("services.worker.worker.ArqWorker") as mock_aw_cls,
+        ):
             create_arq_worker(
                 queue_name="low",
                 functions=[dummy_task],
@@ -287,7 +403,10 @@ class TestCreateArqWorker:
         async def dummy_task(_ctx: object) -> str:
             return "done"
 
-        with self._default_patches(), patch("services.worker.worker.ArqWorker") as mock_aw_cls:
+        with (
+            self._default_patches(),
+            patch("services.worker.worker.ArqWorker") as mock_aw_cls,
+        ):
             create_arq_worker(
                 queue_name="high",
                 functions=[dummy_task],
@@ -297,6 +416,168 @@ class TestCreateArqWorker:
             )
 
             assert mock_aw_cls.call_args.kwargs["cron_jobs"] == []
+
+    def test_worker_max_tries_is_one(self) -> None:
+        """The worker itself never retries a job.
+
+        Every task owns its retry policy through the explicit
+        ``@with_retry`` decorator; ARQ's default of 5 would stack on top
+        of it (and on the LLM backend's own retries).
+        """
+        from arq.connections import RedisSettings
+
+        from services.worker.worker import create_arq_worker
+
+        async def dummy_task(_ctx: object) -> str:
+            return "done"
+
+        with (
+            self._default_patches(),
+            patch("services.worker.worker.ArqWorker") as mock_aw_cls,
+        ):
+            create_arq_worker(
+                queue_name="high",
+                functions=[dummy_task],
+                redis_settings=RedisSettings(host="localhost"),
+                concurrency=4,
+                timeout=300,
+            )
+
+            assert mock_aw_cls.call_args.kwargs["max_tries"] == 1
+
+    def test_deliver_webhook_is_registered_with_a_higher_max_tries(self) -> None:
+        """``deliver_webhook`` keeps ARQ-level retries.
+
+        It is the only task that drives its backoff through ARQ's
+        ``Retry``, so it must be registered with a per-function
+        ``max_tries`` — otherwise the webhook retries stop working.
+        """
+        from arq.connections import RedisSettings
+
+        from services.worker.tasks.deliver_webhook import MAX_ATTEMPTS, deliver_webhook
+        from services.worker.worker import create_arq_worker
+
+        with (
+            self._default_patches(),
+            patch("services.worker.worker.ArqWorker") as mock_aw_cls,
+        ):
+            create_arq_worker(
+                queue_name="low",
+                functions=[deliver_webhook],
+                redis_settings=RedisSettings(host="localhost"),
+                concurrency=4,
+                timeout=300,
+            )
+
+            functions = mock_aw_cls.call_args.kwargs["functions"]
+            webhook = next(f for f in functions if f.name == "deliver_webhook")
+            assert webhook.max_tries == MAX_ATTEMPTS
+            assert webhook.max_tries > 1
+
+    def test_other_tasks_inherit_the_worker_max_tries(self) -> None:
+        """Tasks without an override carry ``max_tries=None``.
+
+        ``None`` makes ARQ fall back to the worker's own ``max_tries=1``.
+        """
+        from arq.connections import RedisSettings
+
+        from services.worker.tasks.deliver_webhook import deliver_webhook
+        from services.worker.worker import create_arq_worker
+
+        async def dummy_task(_ctx: object) -> str:
+            return "done"
+
+        with (
+            self._default_patches(),
+            patch("services.worker.worker.ArqWorker") as mock_aw_cls,
+        ):
+            create_arq_worker(
+                queue_name="low",
+                functions=[dummy_task, deliver_webhook],
+                redis_settings=RedisSettings(host="localhost"),
+                concurrency=4,
+                timeout=300,
+            )
+
+            functions = mock_aw_cls.call_args.kwargs["functions"]
+            others = [f for f in functions if f.name != "deliver_webhook"]
+            assert others
+            for fn in others:
+                assert fn.max_tries is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# RLS-scoped session factory
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.unit
+class TestRlsScopedSessionFactory:
+    """``rls_scoped_session_factory`` — the worker pool fails closed.
+
+    The worker shares one connection pool across every task.  The tenant
+    context is bound **transaction-locally**, so it is discarded when the
+    transaction ends and can never stand on a pooled connection.  Opening
+    every session with an **empty** tenant still matters: a task that
+    forgets to bind its tenant sees no rows at all instead of another
+    org's rows.
+    """
+
+    @pytest.mark.asyncio
+    async def test_session_carries_an_empty_tenant(self) -> None:
+        """The tenant is initialised to '' — not inherited from a prior task."""
+        from services.worker.worker import rls_scoped_session_factory
+
+        session = AsyncMock()
+        session.__aenter__.return_value = session
+        session.__aexit__.return_value = None
+        factory = MagicMock()
+        factory.return_value = session
+
+        scoped = rls_scoped_session_factory(factory)
+
+        async with scoped() as opened:
+            assert opened is session
+
+        calls = session.execute.await_args_list
+        assert len(calls) == 1
+        sql, params = calls[0].args[0], calls[0].args[1]
+        # One statement, transaction-local (``is_local => true``): the
+        # context cannot outlive the transaction and cannot be carried
+        # onto the connection the next task picks up.
+        assert str(sql) == (
+            "SELECT set_config('app.org_id', :org_id, true), "
+            "set_config('app.bypass_rls', :bypass_rls, true), "
+            "set_config('app.lookup_code', :lookup_code, true)"
+        )
+        # An empty tenant — the pool fails closed instead of leaking the
+        # previous task's org into this one.
+        assert params == {
+            "org_id": "",
+            # The bypass is pinned off and any stale lookup code is cleared.
+            "bypass_rls": "false",
+            "lookup_code": "",
+        }
+
+    @pytest.mark.asyncio
+    async def test_every_session_is_initialised(self) -> None:
+        """A second session from the same factory is initialised too."""
+        from services.worker.worker import rls_scoped_session_factory
+
+        session = AsyncMock()
+        session.__aenter__.return_value = session
+        session.__aexit__.return_value = None
+        factory = MagicMock()
+        factory.return_value = session
+
+        scoped = rls_scoped_session_factory(factory)
+
+        async with scoped():
+            pass
+        async with scoped():
+            pass
+
+        assert session.execute.await_count == 2
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -397,6 +678,39 @@ class TestMonitorQueueDepth:
 
         assert mock_redis.zcard.await_count == 2  # high + low queues sampled
 
+    @pytest.mark.asyncio
+    async def test_zcard_uses_the_bare_queue_name(self) -> None:
+        """Queue depth is read from the bare queue name.
+
+        ARQ stores pending jobs in a sorted set named exactly the queue
+        name (``arq/connections.py``: ``pipe.zadd(_queue_name, ...)``).
+        The old ``f"{queue_name}:jobs"`` key never existed, so the gauge
+        stayed at zero forever.
+        """
+        _seed_worker_settings()
+        mock_redis = AsyncMock()
+        mock_redis.zcard.return_value = 3
+
+        from services.worker.worker import monitor_queue_depth
+
+        with (
+            patch(
+                "services.worker.worker.asyncio.sleep",
+                side_effect=asyncio.CancelledError(),
+            ),
+            patch("services.worker.worker.worker_queue_depth.labels"),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await monitor_queue_depth(mock_redis, interval=999)
+
+        called_with = [call.args[0] for call in mock_redis.zcard.await_args_list]
+        assert called_with == [
+            "OpenZync:test:queue:high",
+            "OpenZync:test:queue:low",
+        ]
+        # The old suffixed key would never match ARQ's pending-job set.
+        assert all(":jobs" not in name for name in called_with)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Health check endpoint
@@ -481,7 +795,9 @@ class TestHealthCheck:
 
         resp = await health_check(request)
         assert resp.status == 503
-        assert b"unhealthy" in (resp.body if isinstance(resp.body, bytes) else str(resp.body).encode())
+        assert b"unhealthy" in (
+            resp.body if isinstance(resp.body, bytes) else str(resp.body).encode()
+        )
 
     @pytest.mark.asyncio
     async def test_unhealthy_when_pool_not_ready_and_redis_down(self) -> None:
@@ -662,8 +978,15 @@ class TestTaskRegistry:
         assert "enrich_episode" in names
         assert "embed_episode" in names
         assert "embed_fact" in names
-        assert not ({"classify_dialog", "extract_entities",
-                     "extract_facts", "extract_structured"} & names)
+        assert not (
+            {
+                "classify_dialog",
+                "extract_entities",
+                "extract_facts",
+                "extract_structured",
+            }
+            & names
+        )
 
     def test_low_queue_has_expected_tasks(self) -> None:
         """Low-priority queue contains batch / scheduled tasks."""
@@ -709,7 +1032,11 @@ class TestSetupLogging:
 
         with (
             patch("services.worker.worker.structlog.configure") as mock_cfg,
-            patch("services.worker.worker.settings.STRUCTLOG_FORMAT", "console", create=True),
+            patch(
+                "services.worker.worker.settings.STRUCTLOG_FORMAT",
+                "console",
+                create=True,
+            ),
         ):
             setup_logging()
 
@@ -723,7 +1050,9 @@ class TestSetupLogging:
 
         with (
             patch("services.worker.worker.structlog.configure") as mock_cfg,
-            patch("services.worker.worker.settings.STRUCTLOG_FORMAT", "json", create=True),
+            patch(
+                "services.worker.worker.settings.STRUCTLOG_FORMAT", "json", create=True
+            ),
         ):
             setup_logging()
 
@@ -752,6 +1081,7 @@ class TestMain:
 
             assert _mocks["create_arq_worker"].call_count == 2
             _mocks["prewarm_embeddings"].assert_awaited_once()
+            _mocks["init_arq"].assert_awaited_once()
         finally:
             _unpatch_main_deps(_mocks)
 
@@ -836,7 +1166,8 @@ class TestMain:
             cron_jobs = calls[1].kwargs["cron_jobs"]
 
             matches = [
-                job for job in cron_jobs
+                job
+                for job in cron_jobs
                 if getattr(job, "job_id", None) == "orphaned_blob_cleanup"
             ]
             assert len(matches) == 1
@@ -877,7 +1208,8 @@ class TestMain:
             cron_jobs = calls[1].kwargs["cron_jobs"]
 
             matches = [
-                job for job in cron_jobs
+                job
+                for job in cron_jobs
                 if getattr(job, "job_id", None) == "nightly_community_detection"
             ]
             assert len(matches) == 1
@@ -968,7 +1300,7 @@ def _patch_main_deps() -> dict:
     _bs.OPENBAO_WORKER_ROLE_ID = None
     _bs.OPENBAO_ROLE_ID = "role"
     _bs.OPENBAO_WORKER_SECRET_ID = None
-    _bs.OPENBAO_SECRET_ID = "secret"
+    _bs.OPENBAO_SECRET_ID = "secret"  # noqa: S105  — mock value, not a credential
     _bs.OPENBAO_ADDR = "http://localhost:8200"
 
     bs_patch = patch("services.worker.worker.BootstrapSettings", return_value=_bs)
@@ -1051,6 +1383,23 @@ def _patch_main_deps() -> dict:
     _patchers.append(prewarm_patch)
     mocks["prewarm_embeddings"] = _prewarm
 
+    # ── init_arq / close_arq (lazy import from core.arq in main()) ─────
+    # Source-module target so the ``from core.arq import close_arq,
+    # init_arq`` inside ``main()`` resolves to the mocks. Without this
+    # the real init_arq runs create_pool under the mocked loop and all 7
+    # TestMain tests fail with ConnectionError from real Redis.
+    _init_arq = AsyncMock()
+    init_arq_patch = patch("core.arq.init_arq", new=_init_arq)
+    init_arq_patch.start()
+    _patchers.append(init_arq_patch)
+    mocks["init_arq"] = _init_arq
+
+    _close_arq = AsyncMock()
+    close_arq_patch = patch("core.arq.close_arq", new=_close_arq)
+    close_arq_patch.start()
+    _patchers.append(close_arq_patch)
+    mocks["close_arq"] = _close_arq
+
     # ── FalkorDB / BlockingConnectionPool — lazy import in try/except ────
     # falkordb IS installed in the test env, so the lazy import succeeds
     # and ``BlockingConnectionPool.from_url(settings.FALKORDB_URL)`` runs
@@ -1060,7 +1409,9 @@ def _patch_main_deps() -> dict:
 
     _bcp_orig = _redis_asyncio.BlockingConnectionPool  # save for restore
     _bcp_mock = MagicMock()
-    _bcp_mock.from_url = MagicMock(side_effect=ImportError("test env — falkordb disabled"))
+    _bcp_mock.from_url = MagicMock(
+        side_effect=ImportError("test env — falkordb disabled")
+    )
     _redis_asyncio.BlockingConnectionPool = _bcp_mock  # type: ignore[assignment]
     mocks["_bcp_orig"] = _bcp_orig
 
@@ -1136,7 +1487,9 @@ def _patch_main_deps() -> dict:
 
     # ── asyncio.get_running_loop ─────────────────────────────────────────
     _loop = MagicMock()
-    loop_patch = patch("services.worker.worker.asyncio.get_running_loop", return_value=_loop)
+    loop_patch = patch(
+        "services.worker.worker.asyncio.get_running_loop", return_value=_loop
+    )
     loop_patch.start()
     _patchers.append(loop_patch)
     mocks["loop"] = _loop

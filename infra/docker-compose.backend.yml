@@ -88,6 +88,9 @@
 #                              secret while unset, so the gate stays off)
 #   OZ_RATE_LIMIT_IP_MAX=10
 #   OZ_RATE_LIMIT_WINDOW_SEC=60
+#   OZ_DB_POOL_SIZE=5
+#   OZ_DB_MAX_OVERFLOW=1
+#   OZ_TRUSTED_PROXY_IPS=172.28.0.0/24  (the compose network subnet)
 #
 # SurrealDB still needs --profile alt-graph:
 #   OZ_SURREALDB_URL=ws://surrealdb:8000/rpc \
@@ -181,6 +184,17 @@ services:
       OZ_SURREALDB_URL: "${OZ_SURREALDB_URL:-}"
       OZ_RATE_LIMIT_IP_MAX: "${OZ_RATE_LIMIT_IP_MAX:-10}"
       OZ_RATE_LIMIT_WINDOW_SEC: "${OZ_RATE_LIMIT_WINDOW_SEC:-60}"
+      # DB pool budget — replicas x (pool_size + max_overflow) must stay
+      # below Postgres max_connections (100 by default).  The compose stack
+      # runs one api + one worker, so 5 + 1 per process is far inside it.
+      OZ_DB_POOL_SIZE: "${OZ_DB_POOL_SIZE:-5}"
+      OZ_DB_MAX_OVERFLOW: "${OZ_DB_MAX_OVERFLOW:-1}"
+      # Peers allowed to set X-Forwarded-For.  Defaults to the compose
+      # network subnet (see the `networks` block) because the api sits
+      # behind the nginx reverse proxy on that network — without it every
+      # request would be attributed to the proxy and the per-IP rate
+      # limiters would become platform-wide buckets.
+      OZ_TRUSTED_PROXY_IPS: "${OZ_TRUSTED_PROXY_IPS:-172.28.0.0/24}"
       OZ_HOSTS_ALLOWED: "${OZ_HOSTS_ALLOWED:-localhost:8000}"
       OZ_PROMPT_CACHING_ENABLED: "${OZ_PROMPT_CACHING_ENABLED:-true}"
       OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS: "${OZ_PROMPT_CACHING_ANTHROPIC_MIN_TOKENS:-1024}"
@@ -355,6 +369,13 @@ services:
       # OZ_* vars come from /run/secrets/system.env (rendered by the Agent).
       OZ_OPENBAO_ADDR: "http://openbao:8200"
       UVICORN_WORKERS: "1"
+      # Peers allowed to set X-Forwarded-For — uvicorn's
+      # --forwarded-allow-ips.  Must cover the reverse proxy (nginx) that
+      # fronts the api on the compose network; the subnet is pinned in the
+      # `networks` block below so the trusted range is explicit rather
+      # than whatever the default bridge happens to be.  Never "*": a
+      # client could then forge its own IP and bypass the per-IP limiters.
+      OZ_TRUSTED_PROXY_IPS: "${OZ_TRUSTED_PROXY_IPS:-172.28.0.0/24}"
       # Graph-backend system URLs (alt-graph profile). The runtime value
       # comes from the OpenBao system secret (sourced from system.env by the
       # entrypoint AFTER container env), which wins over these parity entries.
@@ -684,6 +705,14 @@ services:
 networks:
   default:
     name: openzync_network
+    # Explicit subnet so the trusted-proxy range can name the network the
+    # api and the reverse proxy share (OZ_TRUSTED_PROXY_IPS).  Relying on
+    # Docker's auto-assigned bridge range would make the trusted range
+    # unknowable — and the api's own clients must not be able to set
+    # X-Forwarded-For.
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
 
 volumes:
   minio-blob-data: {}

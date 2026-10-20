@@ -31,7 +31,13 @@ dependencies = [
     "asyncpg>=0.29.0",
     "bcrypt>=4.0.0",
     "email-validator>=2.1.0,<3",
-    "fastapi>=0.110.0",
+    # 0.117.0 is the first release where a `-> None` return annotation is
+    # resolved to `None` instead of `type(None)` (fastapi/fastapi#9425), so
+    # 204/304 routes no longer trip FastAPI's "status code must not have a
+    # response body" assertion.  Do not lower this floor — the previous
+    # `fastapi.routing.is_body_allowed_for_status_code` monkey-patch that
+    # papered over the older bug has been removed.
+    "fastapi>=0.117.0",
     "fastmcp>=3.2.0",
     "httpx[http2]>=0.27.0",
     "jinja2>=3.1.0",

@@ -20,6 +20,7 @@ from uuid import UUID
 from sqlalchemy import String, func, or_, select
 from sqlalchemy import update as sa_update
 
+from core import rls
 from core.cursor import decode_cursor, encode_cursor
 from core.exceptions import ValidationError
 from core.sorting import SortSpec, resolve_order_by
@@ -233,13 +234,14 @@ class UserRepository:
         Returns:
             The User if found, or ``None``.
         """
-        result = await self._db.execute(
-            select(User).where(
-                User.email == email,
-                User.is_deleted.is_(False),
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(User).where(
+                    User.email == email,
+                    User.is_deleted.is_(False),
+                )
             )
-        )
-        return result.scalar_one_or_none()
+            return result.scalar_one_or_none()
 
     # ── Invite flow ─────────────────────────────────────────────────────────
 
@@ -258,14 +260,15 @@ class UserRepository:
             The User with a matching non-expired-agnostic pending invite,
             or ``None``.
         """
-        result = await self._db.execute(
-            select(User).where(
-                User.invite_token_hash == token_hash,
-                User.is_active.is_(True),
-                User.is_deleted.is_(False),
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(User).where(
+                    User.invite_token_hash == token_hash,
+                    User.is_active.is_(True),
+                    User.is_deleted.is_(False),
+                )
             )
-        )
-        return result.scalar_one_or_none()
+            return result.scalar_one_or_none()
 
     async def find_pending_admin_by_org(self, organization_id: UUID) -> User | None:
         """Find an org's pending admin user (approval flow).
@@ -395,9 +398,10 @@ class UserRepository:
             # so there is nothing to synchronize.
             .execution_options(synchronize_session=False)
         )
-        result = await self._db.execute(stmt)
-        row = result.first()
-        await self._db.flush()
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(stmt)
+            row = result.first()
+            await self._db.flush()
         if row is None:
             return None
         return ClaimedInvite(

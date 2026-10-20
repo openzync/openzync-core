@@ -13,20 +13,18 @@ Key patterns:
 
 from __future__ import annotations
 
-import logging
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select, text, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core import rls
 from core.org_codes import generate_org_code
 from models.organization import Organization
 from models.refresh_token import RefreshToken
 from models.user import User
-
-logger = logging.getLogger(__name__)
 
 
 class AuthRepository:
@@ -46,8 +44,8 @@ class AuthRepository:
         """Find a dashboard user by email (global lookup).
 
         Uses the partial unique index on ``email`` — email is globally
-        unique across all organizations. Runs under a scoped RLS
-        bypass (reset in ``finally``) so public-login sessions with no
+        unique across all organizations. Runs under a scoped RLS bypass
+        (reset in ``finally``) so public-login sessions with no
         org context can see the row.
 
         Args:
@@ -56,10 +54,7 @@ class AuthRepository:
         Returns:
             The User with ``password_hash`` set, or ``None``.
         """
-        await self._db.execute(
-            text("SELECT set_config('app.bypass_rls', 'true', true)")
-        )
-        try:
+        async with rls.rls_bypass(self._db):
             result = await self._db.execute(
                 select(User).where(
                     User.email == email,
@@ -67,13 +62,6 @@ class AuthRepository:
                 )
             )
             return result.scalar_one_or_none()
-        except Exception:
-            logger.exception("find_user_by_email lookup failed")
-            raise
-        finally:
-            await self._db.execute(
-                text("SELECT set_config('app.bypass_rls', 'false', true)")
-            )
 
     async def get_user_by_id(self, user_id: uuid.UUID) -> User | None:
         """Get a user by UUID (no org scope — used during token validation).
@@ -87,10 +75,7 @@ class AuthRepository:
         Returns:
             The User if found, or ``None``.
         """
-        await self._db.execute(
-            text("SELECT set_config('app.bypass_rls', 'true', true)")
-        )
-        try:
+        async with rls.rls_bypass(self._db):
             result = await self._db.execute(
                 select(User).where(
                     User.id == user_id,
@@ -98,15 +83,6 @@ class AuthRepository:
                 )
             )
             return result.scalar_one_or_none()
-        except Exception:
-            logger.exception(
-                "get_user_by_id lookup failed: user_id=%s", user_id
-            )
-            raise
-        finally:
-            await self._db.execute(
-                text("SELECT set_config('app.bypass_rls', 'false', true)")
-            )
 
     # ── Organization ────────────────────────────────────────────────────────
 
@@ -114,6 +90,14 @@ class AuthRepository:
         self, name: str, plan: str = "free", status: str = "approved"
     ) -> Organization:
         """Create a new organization.
+
+        The organization id is minted here (not by the database) so the
+        session can be bound to the new tenant *before* the row is
+        written: SQLAlchemy appends a ``RETURNING`` clause to the INSERT
+        (for the ``created_at``/``updated_at`` server defaults) and that
+        clause is filtered by the table's SELECT policy — a session that is
+        not bound to the new organization cannot see the row it just
+        created, and the insert is rejected.
 
         Args:
             name: Organization name.
@@ -125,11 +109,13 @@ class AuthRepository:
             The newly created Organization.
         """
         org = Organization(
+            id=uuid.uuid4(),
             name=name,
             plan=plan,
             status=status,
             org_code=generate_org_code(),
         )
+        await rls.set_tenant_context(self._db, org.id)
         self._db.add(org)
         await self._db.flush()
         await self._db.refresh(org)
@@ -245,15 +231,16 @@ class AuthRepository:
         Returns:
             The RefreshToken if found, or ``None``.
         """
-        result = await self._db.execute(
-            select(RefreshToken).where(
-                RefreshToken.token_hash == token_hash,
-                RefreshToken.is_revoked.is_(False),
-                # expires_at is TIMESTAMP WITHOUT TIME ZONE — naive UTC.
-                RefreshToken.expires_at > datetime.now(UTC).replace(tzinfo=None),
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(RefreshToken).where(
+                    RefreshToken.token_hash == token_hash,
+                    RefreshToken.is_revoked.is_(False),
+                    # expires_at is TIMESTAMP WITHOUT TIME ZONE — naive UTC.
+                    RefreshToken.expires_at > datetime.now(UTC).replace(tzinfo=None),
+                )
             )
-        )
-        return result.scalar_one_or_none()
+            return result.scalar_one_or_none()
 
     async def get_refresh_token_by_hash(
         self, token_hash: str
@@ -269,10 +256,11 @@ class AuthRepository:
         Returns:
             The RefreshToken (revoked or not) or ``None``.
         """
-        result = await self._db.execute(
-            select(RefreshToken).where(RefreshToken.token_hash == token_hash)
-        )
-        return result.scalar_one_or_none()
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(RefreshToken).where(RefreshToken.token_hash == token_hash)
+            )
+            return result.scalar_one_or_none()
 
     async def get_refresh_token_by_id(
         self, token_id: uuid.UUID
@@ -285,10 +273,11 @@ class AuthRepository:
         Returns:
             The RefreshToken or ``None``.
         """
-        result = await self._db.execute(
-            select(RefreshToken).where(RefreshToken.id == token_id)
-        )
-        return result.scalar_one_or_none()
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(RefreshToken).where(RefreshToken.id == token_id)
+            )
+            return result.scalar_one_or_none()
 
     async def revoke_refresh_token_if_current(self, token_hash: str) -> bool:
         """Atomically claim a refresh token by revoking it in place.
@@ -304,18 +293,19 @@ class AuthRepository:
         Returns:
             ``True`` if this caller claimed (revoked) the token.
         """
-        result = await self._db.execute(
-            update(RefreshToken)
-            .where(
-                RefreshToken.token_hash == token_hash,
-                RefreshToken.is_revoked.is_(False),
-                # expires_at is TIMESTAMP WITHOUT TIME ZONE — naive UTC.
-                RefreshToken.expires_at > datetime.now(UTC).replace(tzinfo=None),
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                update(RefreshToken)
+                .where(
+                    RefreshToken.token_hash == token_hash,
+                    RefreshToken.is_revoked.is_(False),
+                    # expires_at is TIMESTAMP WITHOUT TIME ZONE — naive UTC.
+                    RefreshToken.expires_at > datetime.now(UTC).replace(tzinfo=None),
+                )
+                .values(is_revoked=True)
             )
-            .values(is_revoked=True)
-        )
-        await self._db.flush()
-        return result.rowcount == 1  # type: ignore[attr-defined,no-any-return]
+            await self._db.flush()
+            return result.rowcount == 1  # type: ignore[attr-defined,no-any-return]
 
     async def set_refresh_token_rotated_by(
         self,
@@ -349,16 +339,17 @@ class AuthRepository:
         """
         if not token_ids:
             return 0
-        result = await self._db.execute(
-            update(RefreshToken)
-            .where(
-                RefreshToken.id.in_(token_ids),
-                RefreshToken.is_revoked.is_(False),
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                update(RefreshToken)
+                .where(
+                    RefreshToken.id.in_(token_ids),
+                    RefreshToken.is_revoked.is_(False),
+                )
+                .values(is_revoked=True)
             )
-            .values(is_revoked=True)
-        )
-        await self._db.flush()
-        return result.rowcount or 0  # type: ignore[attr-defined]
+            await self._db.flush()
+            return result.rowcount or 0  # type: ignore[attr-defined]
 
     async def revoke_refresh_token(
         self,

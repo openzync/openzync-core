@@ -27,10 +27,10 @@ from typing import Any
 from uuid import UUID
 
 from prometheus_client import Counter
-from sqlalchemy import text
 
+from core import rls
 from middleware.metrics import METRICS_REGISTRY
-from workers.tasks.base import with_retry
+from workers.tasks.base import with_retry, with_task_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -98,13 +98,11 @@ async def _expire_graph_edges(
 
     async with session_factory() as db:
         # Single-org task: scope RLS to this org before any org-scoped
-        # query.  The policies call current_setting('app.org_id') without
-        # missing_ok, which raises UndefinedObjectError when the GUC is
-        # unset on the worker's session.
-        await db.execute(
-            text("SELECT set_config('app.org_id', :org_id, true)"),
-            {"org_id": str(org_id)},
-        )
+        # query.  The policies read NULLIF(current_setting('app.org_id',
+        # true), ''), so an unset context matches no rows instead of
+        # raising.  The binding is remembered by the session, so the commit
+        # below re-applies it.
+        await rls.set_tenant_context(db, org_id)
         backend = await _resolve_backend(ctx, org_id, db)
         if backend is None:
             logger.info(
@@ -139,6 +137,7 @@ async def _expire_graph_edges(
         return count
 
 
+@with_task_metrics
 async def expire_graph_edges(
     ctx: dict[str, Any],
     *,

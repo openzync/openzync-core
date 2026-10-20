@@ -12,6 +12,7 @@ from uuid import UUID
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core import rls
 from core.sorting import SortSpec, resolve_order_by
 from models.organization import Organization
 
@@ -40,6 +41,34 @@ class OrganizationRepository:
         multi-table transactions that span multiple repository methods.
         """
         return self._db
+
+    # ── Tenant context ──────────────────────────────────────────────────────
+
+    async def set_tenant_context(self, org_id: UUID) -> None:
+        """Bind this session to one tenant (organization).
+
+        The public flows (signup, join, login, refresh) only learn their
+        tenant *after* their first lookup, so they bind the session to the
+        resolved organization before any org-scoped write.  Session-scoped,
+        so the tenant survives a mid-request commit.
+
+        Args:
+            org_id: The organization UUID the session may act on.
+        """
+        await rls.set_tenant_context(self._db, org_id)
+
+    async def set_lookup_code(self, code: str) -> None:
+        """Allow a single-row read of the organization owning ``code``.
+
+        The public org-code join presents the code as its credential, so
+        the code is bound to the session and the ``org_join_code_lookup``
+        policy exposes exactly that one organization row.  A wrong code
+        matches nothing.
+
+        Args:
+            code: The normalized organization code.
+        """
+        await rls.set_lookup_code(self._db, code)
 
     # ── Organization rows ───────────────────────────────────────────────────
 

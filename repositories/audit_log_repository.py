@@ -12,6 +12,7 @@ from uuid import UUID
 from sqlalchemy import func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core import rls
 from core.sorting import SortSpec, resolve_order_by
 from models.audit_log import AuditLog
 
@@ -88,6 +89,15 @@ class AuditLogRepository:
             details=details if details is not None else {},
             ip_address=ip_address,
         )
+        # The audit writer runs on its own session (the ARQ job) with no
+        # tenant context — bind the session to the entry's organization so
+        # the org-scoped row passes the audit_logs policy.  An entry without
+        # an organization is a platform-level row: no tenant-scoped policy
+        # admits it, so the writer must have enabled the RLS bypass (the ARQ
+        # audit task does).  Without that bypass the insert is refused by
+        # the database — loudly, never silently dropped.
+        if organization_id is not None:
+            await rls.set_tenant_context(self._db, organization_id)
         self._db.add(entry)
         await self._db.flush()
         await self._db.commit()
@@ -117,7 +127,11 @@ class AuditLogRepository:
         ``status_code`` (``details->>status_code``), ``actor_id``.
 
         Args:
-            organization_id: Filter by org (passed from service).
+            organization_id: Filter by org.  ``None`` means *platform-wide* —
+                the caller's own isolation (an RLS-bypass session) decides
+                what is visible.  A concrete UUID restricts the result to
+                that organization, including the exclusion of the
+                platform-level rows that carry no organization.
             action: Exact-match filter on action.
             actor_id: Exact-match filter on actor_id.
             actor_type: Exact-match filter on actor_type.
@@ -136,11 +150,17 @@ class AuditLogRepository:
         Returns:
             Tuple of (entries, total_count).
         """
-        # Base query — RLS handles org isolation via organization_id
+        # The org filter is applied here, not left to the policy: RLS is an
+        # *additional* filter, and the audit table also holds platform-level
+        # rows (no organization) that a tenant must never see.  A tenant
+        # admin reading the audit trail must not learn another tenant's
+        # authentication attempts, their client IPs or their request ids.
         base = select(AuditLog)
         count_base = select(func.count(AuditLog.id))
 
         conditions = []
+        if organization_id is not None:
+            conditions.append(AuditLog.organization_id == organization_id)
         if action is not None:
             conditions.append(AuditLog.action == action)
         if actor_id is not None:

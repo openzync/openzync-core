@@ -298,10 +298,12 @@ class TestSummariseCommunity:
     async def test_discovery_sets_bypass_rls_before_org_query(self) -> None:
         """RLS bypass is set before the org-discovery query in cron mode.
 
-        Regression for the RLS fix: without the transaction-local
-        ``set_config('app.bypass_rls', 'true', true)`` the organizations
+        Regression for the RLS fix: without the bypass the organizations
         policy (migrations/0001) admits no rows under any RLS-enforced
         role, so the nightly run silently returns "skipped".
+
+        The bypass is bound through ``core.rls``, so it is remembered on
+        the session and survives the per-org commit.
         """
         oid = uuid4()
         db = self._make_db(org_ids=[oid], project_ids=[])
@@ -316,24 +318,30 @@ class TestSummariseCommunity:
 
         calls = db.execute.call_args_list
         assert str(calls[0].args[0]) == (
-            "SELECT set_config('app.bypass_rls', 'true', true)"
+            "SELECT set_config('app.org_id', :org_id, true), "
+            "set_config('app.bypass_rls', :bypass_rls, true), "
+            "set_config('app.lookup_code', :lookup_code, true)"
         )
+        # The bypass is on, and no tenant is bound — the scan is
+        # platform-wide.
+        assert calls[0].args[1] == {
+            "org_id": "",
+            "bypass_rls": "true",
+            "lookup_code": "",
+        }
         assert "organizations" in str(calls[1].args[0]).lower()
 
     @pytest.mark.asyncio
     async def test_process_org_sets_org_id_context(self) -> None:
         """RLS app.org_id context is set before per-org project discovery.
 
-        Regression for the RLS fix: without the transaction-local
-        ``set_config('app.org_id', ...)`` the projects policy
-        (migrations/0019) admits no rows for this org, so every org
-        silently reports zero projects.
+        Regression for the RLS fix: without the tenant binding the
+        projects policy (migrations/0019) admits no rows for this org, so
+        every org silently reports zero projects.
 
-        The statement is pinned to exact full-string equality (including the
-        trailing ``, true)``) so a regression to session-local
-        ``set_config('app.org_id', :org_id, false)`` fails this test — the
-        bug class this fix batch prevents (cf. the ``59c3fcb79b85``
-        session-level precedent in the cleanup worker docstring).
+        The per-org work drops the discovery bypass and binds the tenant
+        instead — through ``core.rls``, so the binding is remembered on
+        the session and re-applied after ``_process_org``'s commit.
         """
         oid = uuid4()
         db = self._make_db(org_ids=[], project_ids=[uuid4()])
@@ -349,11 +357,19 @@ class TestSummariseCommunity:
             await summarise_community(ctx=self._ctx(db), org_id=str(oid))
 
         calls = db.execute.call_args_list
-        assert str(calls[0].args[0]) == (
-            "SELECT set_config('app.org_id', :org_id, true)"
-        )
-        assert calls[0].args[1] == {"org_id": str(oid)}
-        assert "projects" in str(calls[1].args[0]).lower()
+        # The discovery bypass is dropped…
+        assert calls[0].args[1] == {
+            "org_id": "",
+            "bypass_rls": "false",
+            "lookup_code": "",
+        }
+        # …and the tenant is bound before the project query.
+        assert calls[1].args[1] == {
+            "org_id": str(oid),
+            "bypass_rls": "false",
+            "lookup_code": "",
+        }
+        assert "projects" in str(calls[2].args[0]).lower()
 
     @pytest.mark.asyncio
     async def test_org_failure_rolls_back_transaction(self) -> None:
@@ -361,7 +377,7 @@ class TestSummariseCommunity:
 
         Regression for the review fix: without the per-org rollback, a
         failed org aborts the shared transaction and the next org's
-        ``set_config`` raises ``InFailedSqlTransaction``, cascading to
+        context binding raises ``InFailedSqlTransaction``, cascading to
         "All orgs failed".  With it, ``db.rollback`` is awaited, the org is
         collected as failed, and the run reports ``partial`` with only the
         successful org's commit issued.
@@ -379,13 +395,16 @@ class TestSummariseCommunity:
         db = AsyncMock()
         db.__aenter__.return_value = db
         db.__aexit__.return_value = None
-        # bypass_rls + org-discovery + org_1 set_config + org_1 project
-        # query + org_2 set_config + org_2 project query (raises).
+        # bypass_rls + org-discovery + org_1 drop-bypass + org_1 tenant
+        # bind + org_1 project query + org_2 drop-bypass + org_2 tenant
+        # bind + org_2 project query (raises).
         db.execute.side_effect = [
             empty,
             discovery,
             empty,
+            empty,
             proj_result,
+            empty,
             empty,
             Exception("mid-org DB error"),
         ]
@@ -416,8 +435,8 @@ class TestSummariseCommunity:
         (discovery mode, >1 org): without it, a regression that swallows
         per-org failures and reports success would pass tests.  Both orgs
         must be attempted and their failures aggregated into the raised
-        error — the per-org ``set_config`` calls below prove both were
-        reached despite the first org's failure.
+        error — the per-org tenant bindings below prove both were reached
+        despite the first org's failure.
         """
         org_1 = uuid4()
         org_2 = uuid4()
@@ -430,13 +449,16 @@ class TestSummariseCommunity:
         db = AsyncMock()
         db.__aenter__.return_value = db
         db.__aexit__.return_value = None
-        # bypass_rls + org discovery + org_1 set_config + org_1 project
-        # query (raises) + org_2 set_config + org_2 project query (raises).
+        # bypass_rls + org discovery + org_1 drop-bypass + org_1 tenant
+        # bind + org_1 project query (raises) + org_2 drop-bypass +
+        # org_2 tenant bind + org_2 project query (raises).
         db.execute.side_effect = [
             empty,
             discovery,
             empty,
+            empty,
             Exception("project select failed"),
+            empty,
             empty,
             Exception("project select failed"),
         ]
@@ -453,6 +475,6 @@ class TestSummariseCommunity:
                 await summarise_community(ctx=self._ctx(db))
 
         calls = db.execute.call_args_list
-        # Both orgs were attempted — each org's set_config ran with its id.
-        assert calls[2].args[1] == {"org_id": str(org_1)}
-        assert calls[4].args[1] == {"org_id": str(org_2)}
+        # Both orgs were attempted — each org's tenant binding ran with its id.
+        assert calls[3].args[1]["org_id"] == str(org_1)
+        assert calls[6].args[1]["org_id"] == str(org_2)

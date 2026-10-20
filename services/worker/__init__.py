@@ -12,7 +12,8 @@ implemented (Phase 1b+).
 
 from __future__ import annotations
 
-from services.worker.worker_settings import WorkerSettings, get_queue_name, settings
+from core.queue_names import get_queue_name
+from services.worker.worker_settings import WorkerSettings, settings
 
 __all__ = [
     "WorkerSettings",

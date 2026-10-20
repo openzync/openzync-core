@@ -35,10 +35,23 @@ from uuid import UUID
 import orjson
 import structlog
 
+from core import rls
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+    from contextlib import AbstractAsyncContextManager
+
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
     from packages.graph_backend.interface import GraphBackend
+
+    # The worker hands out either a plain ``async_sessionmaker`` or the
+    # RLS-scoped wrapper (``services.worker.worker.rls_scoped_session_factory``),
+    # whose call returns an async context manager instead of a bare session.
+    SessionFactory = (
+        async_sessionmaker[AsyncSession]
+        | Callable[[], AbstractAsyncContextManager[AsyncSession]]
+    )
 
 logger = structlog.get_logger(__name__)
 
@@ -247,12 +260,18 @@ async def _fetch_session_entities(
 
         if isinstance(graph_backend, PostgresGraphBackend):
             async with db_session_factory() as fresh_db:
-                fresh_backend = PostgresGraphBackend(db=fresh_db)
-                entities = await fresh_backend.get_entities_for_session(
-                    org_id=org_id,
-                    project_id=project_id,
-                    session_id=session_id,
-                )
+                try:
+                    # The graph tables are tenant-scoped — bind the session
+                    # before the backend reads them.
+                    await rls.set_tenant_context(fresh_db, org_id)
+                    fresh_backend = PostgresGraphBackend(db=fresh_db)
+                    entities = await fresh_backend.get_entities_for_session(
+                        org_id=org_id,
+                        project_id=project_id,
+                        session_id=session_id,
+                    )
+                finally:
+                    await rls.release_tenant_context(fresh_db)
             return {"known_entities": entities}
 
     # SurrealDB and FalkorDB manage their own connections — safe to use
@@ -311,7 +330,9 @@ async def _fetch_session_recent_history(
     from models.episode import Episode  # noqa: PLC0415 — lazy import
 
     query = (
-        select(Episode)
+        # Column-only select — detached scalars, no ORM expiry risk
+        # past session close (same class of bug as the template-text leak).
+        select(Episode.role, Episode.content)
         .where(
             Episode.session_id == session_id,
             Episode.is_deleted == False,  # noqa: E712 — SQLAlchemy boolean
@@ -323,9 +344,9 @@ async def _fetch_session_recent_history(
         query = query.where(Episode.id != episode_id)
 
     result = await db.execute(query)
-    recent_eps = list(result.scalars().all())
-    recent_eps.reverse()  # chronological order
-    recent_history = [{"role": ep.role, "content": ep.content} for ep in recent_eps]
+    rows = list(result.all())
+    rows.reverse()  # chronological order
+    recent_history = [{"role": r[0], "content": r[1]} for r in rows]
     return {"recent_history": recent_history}
 
 
@@ -779,12 +800,16 @@ async def _fetch_user_entities(
 
         if isinstance(graph_backend, PostgresGraphBackend):
             async with db_session_factory() as fresh_db:
-                backend = PostgresGraphBackend(db=fresh_db)
-                return {
-                    "entities": await _collect_user_entities(
-                        backend, org_id, user_id, by_project
-                    )
-                }
+                try:
+                    await rls.set_tenant_context(fresh_db, org_id)
+                    backend = PostgresGraphBackend(db=fresh_db)
+                    return {
+                        "entities": await _collect_user_entities(
+                            backend, org_id, user_id, by_project
+                        )
+                    }
+                finally:
+                    await rls.release_tenant_context(fresh_db)
 
     # SurrealDB and FalkorDB manage their own connections — safe to use
     # the backend's internal session directly.
@@ -951,7 +976,7 @@ async def render_prompt(
     user_id: UUID | str | None = None,
     project_id: UUID | str | None = None,
     graph_backend: GraphBackend | None = None,
-    db_session_factory: async_sessionmaker[AsyncSession] | None = None,
+    db_session_factory: SessionFactory | None = None,
     return_context: bool = False,
     **extra_context: Any,
 ) -> str | tuple[str, dict[str, Any]]:
@@ -1057,27 +1082,33 @@ async def render_prompt(
         )
 
         async with db_session_factory() as db:
-            for source in sources:
-                provider = _PROVIDER_DISPATCH.get(source)
-                if provider is None:
-                    continue
+            try:
+                # Every provider below reads tenant-scoped rows — bind the
+                # session to the org before the first query.
+                await rls.set_tenant_context(db, resolved_org_id)
+                for source in sources:
+                    provider = _PROVIDER_DISPATCH.get(source)
+                    if provider is None:
+                        continue
 
-                result = await provider(
-                    db=db,
-                    org_id=resolved_org_id,
-                    episode_id=resolved_episode_id,
-                    session_id=resolved_session_id,
-                    user_id=resolved_user_id,
-                    project_id=resolved_project_id,
-                    graph_backend=graph_backend,
-                    db_session_factory=db_session_factory,
-                )
+                    result = await provider(
+                        db=db,
+                        org_id=resolved_org_id,
+                        episode_id=resolved_episode_id,
+                        session_id=resolved_session_id,
+                        user_id=resolved_user_id,
+                        project_id=resolved_project_id,
+                        graph_backend=graph_backend,
+                        db_session_factory=db_session_factory,
+                    )
 
-                # Provider returns dict[str, Any] — merge into context,
-                # but do NOT overwrite caller-provided extra_context.
-                for k, v in result.items():
-                    if k not in extra_context:
-                        context[k] = v
+                    # Provider returns dict[str, Any] — merge into context,
+                    # but do NOT overwrite caller-provided extra_context.
+                    for k, v in result.items():
+                        if k not in extra_context:
+                            context[k] = v
+            finally:
+                await rls.release_tenant_context(db)
 
         # ── Computed variables (derived from injected data) ────────────
         if prompt_type == "user_summary" and "episodes" in context:
@@ -1097,7 +1128,7 @@ async def render_prompt(
 async def resolve_prompt_template_by_type(
     type: str,
     org_id: UUID | str,
-    db_session_factory: async_sessionmaker[AsyncSession],
+    db_session_factory: SessionFactory,
 ) -> str | None:
     """Resolve the active default prompt template for a given type.
 
@@ -1122,10 +1153,15 @@ async def resolve_prompt_template_by_type(
     )
 
     async with db_session_factory() as session:
-        repo = PromptTemplateRepository(session)
-        template = await repo.get_active_by_type(org_id=org_id, type=type)
+        try:
+            await rls.set_tenant_context(session, org_id)
+            repo = PromptTemplateRepository(session)
+            # Column-only scalar — a detached str, safe past session close.
+            text = await repo.get_active_text_by_type(org_id=org_id, type=type)
+        finally:
+            await rls.release_tenant_context(session)
 
-    return template.template_text if template is not None else None
+    return text
 
 
 # ── 7. Prompt assembly helper ─────────────────────────────────────────────────

@@ -34,10 +34,11 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from sqlalchemy import select
 
+from core.rls import release_tenant_context
 from models.organization import Organization
 from models.project import Project
 from workers.backend import resolve_graph_backend
-from workers.tasks.base import with_retry
+from workers.tasks.base import with_retry, with_task_metrics
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -61,6 +62,7 @@ _BULK_SEARCH_LIMIT: int = 100
 # ── Public ARQ task (decorated with retry) ─────────────────────────────────────
 
 
+@with_task_metrics
 @with_retry(max_retries=2, base_delay_s=5.0)
 async def merge_duplicate_entities(
     ctx: dict,
@@ -81,6 +83,7 @@ async def merge_duplicate_entities(
         ``clusters_merged``, ``entities_merged``,
         ``relationships_rewired``.
     """
+    from core import rls
     from core.config import settings
     from core.db import get_async_session
 
@@ -102,62 +105,80 @@ async def merge_duplicate_entities(
 
     try:
         async with _session_factory() as db:
-            # Determine which orgs to process
-            if org_id:
-                org_ids = [uuid.UUID(org_id)]
-            else:
-                org_ids = await _find_eligible_orgs(db)
+            try:
+                # Determine which orgs to process
+                if org_id:
+                    org_ids = [uuid.UUID(org_id)]
+                else:
+                    # Platform-wide sweep: the organization list is not
+                    # tenant-scoped, so the scan runs under the RLS bypass.
+                    # The bypass is transaction-scoped on purpose — end the
+                    # transaction right after so the per-org work below runs
+                    # under the tenant context and not under the bypass.
+                    async with rls.rls_bypass(db):
+                        org_ids = await _find_eligible_orgs(db)
+                    await db.rollback()
 
-            if not org_ids:
-                logger.info("merge_duplicates.no_eligible_orgs")
-                return {
-                    "status": "skipped",
-                    "reason": "No eligible orgs found",
-                }
+                if not org_ids:
+                    logger.info("merge_duplicates.no_eligible_orgs")
+                    return {
+                        "status": "skipped",
+                        "reason": "No eligible orgs found",
+                    }
 
-            org_errors: list[str] = []
-            total_clusters = 0
-            total_merged = 0
-            total_rewired = 0
+                org_errors: list[str] = []
+                total_clusters = 0
+                total_merged = 0
+                total_rewired = 0
 
-            for current_org_id in org_ids:
-                try:
-                    clusters = await _process_org(
-                        ctx, db, current_org_id,
+                for current_org_id in org_ids:
+                    # Bind the session to the org being processed before any
+                    # org-scoped query — under enforced RLS an unbound session
+                    # sees no rows.
+                    await rls.set_tenant_context(db, current_org_id)
+                    try:
+                        clusters = await _process_org(
+                            ctx, db, current_org_id,
+                        )
+                        total_clusters += clusters["clusters"]
+                        total_merged += clusters["entities_merged"]
+                        total_rewired += clusters["relationships_rewired"]
+                    except Exception as exc:
+                        logger.error(
+                            "merge_duplicates.org_failed",
+                            org_id=str(current_org_id),
+                            error=str(exc),
+                        )
+                        org_errors.append(str(current_org_id))
+                        # Drop the failed org's transaction so the next org
+                        # starts on a clean session (an aborted transaction
+                        # would reject every following statement).
+                        await db.rollback()
+
+                if org_errors and len(org_errors) == len(org_ids):
+                    raise RuntimeError(
+                        f"All {len(org_ids)} orgs failed: {', '.join(org_errors)}"
                     )
-                    total_clusters += clusters["clusters"]
-                    total_merged += clusters["entities_merged"]
-                    total_rewired += clusters["relationships_rewired"]
-                except Exception as exc:
-                    logger.error(
-                        "merge_duplicates.org_failed",
-                        org_id=str(current_org_id),
-                        error=str(exc),
-                    )
-                    org_errors.append(str(current_org_id))
 
-            if org_errors and len(org_errors) == len(org_ids):
-                raise RuntimeError(
-                    f"All {len(org_ids)} orgs failed: {', '.join(org_errors)}"
+                logger.info(
+                    "merge_duplicates.completed",
+                    orgs_processed=len(org_ids),
+                    orgs_failed=len(org_errors),
+                    clusters_merged=total_clusters,
+                    entities_merged=total_merged,
+                    relationships_rewired=total_rewired,
                 )
 
-            logger.info(
-                "merge_duplicates.completed",
-                orgs_processed=len(org_ids),
-                orgs_failed=len(org_errors),
-                clusters_merged=total_clusters,
-                entities_merged=total_merged,
-                relationships_rewired=total_rewired,
-            )
-
-            return {
-                "status": "completed" if not org_errors else "partial",
-                "orgs_processed": len(org_ids),
-                "orgs_failed": len(org_errors),
-                "clusters_merged": total_clusters,
-                "entities_merged": total_merged,
-                "relationships_rewired": total_rewired,
-            }
+                return {
+                    "status": "completed" if not org_errors else "partial",
+                    "orgs_processed": len(org_ids),
+                    "orgs_failed": len(org_errors),
+                    "clusters_merged": total_clusters,
+                    "entities_merged": total_merged,
+                    "relationships_rewired": total_rewired,
+                }
+            finally:
+                await release_tenant_context(db)
 
     finally:
         if _own_engine:

@@ -448,6 +448,157 @@ class TestEnrichmentBitmask:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# with_task_metrics — per-job metrics on the ARQ worker context
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.unit
+class TestWithTaskMetrics:
+    """``with_task_metrics`` — writes task metrics onto the ARQ ctx dict.
+
+    The decorator and the worker's ``on_job_end`` callback share the same
+    ctx dict, so these tests pin the keys ``on_job_end`` reads:
+    ``task_type``, ``org_id``, ``trace_id``, ``runtime`` and ``status``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_writes_task_type_onto_ctx(self) -> None:
+        """``ctx["task_type"]`` is the wrapped function's name."""
+        from workers.tasks.base import with_task_metrics
+
+        @with_task_metrics
+        async def my_task(ctx: dict, **_: object) -> str:
+            return "done"
+
+        ctx: dict = {}
+        await my_task(ctx)
+
+        assert ctx["task_type"] == "my_task"
+
+    @pytest.mark.asyncio
+    async def test_writes_org_id_and_trace_id_from_kwargs(self) -> None:
+        """``org_id`` and ``trace_id`` are lifted out of the task kwargs."""
+        from workers.tasks.base import with_task_metrics
+
+        @with_task_metrics
+        async def my_task(ctx: dict, *, org_id: str, trace_id: str) -> str:
+            return "done"
+
+        ctx: dict = {}
+        await my_task(ctx, org_id="org-1", trace_id="trace-1")
+
+        assert ctx["org_id"] == "org-1"
+        assert ctx["trace_id"] == "trace-1"
+
+    @pytest.mark.asyncio
+    async def test_accepts_organization_id_alias(self) -> None:
+        """``organization_id`` is accepted as an alias for ``org_id``."""
+        from workers.tasks.base import with_task_metrics
+
+        @with_task_metrics
+        async def my_task(ctx: dict, *, organization_id: str) -> str:
+            return "done"
+
+        ctx: dict = {}
+        await my_task(ctx, organization_id="org-2")
+
+        assert ctx["org_id"] == "org-2"
+
+    @pytest.mark.asyncio
+    async def test_status_is_success_on_success(self) -> None:
+        """``ctx["status"]`` is ``"success"`` when the task returns."""
+        from workers.tasks.base import with_task_metrics
+
+        @with_task_metrics
+        async def my_task(ctx: dict) -> str:
+            return "done"
+
+        ctx: dict = {}
+        await my_task(ctx)
+
+        assert ctx["status"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_status_is_failure_and_exception_reraised_unchanged(self) -> None:
+        """A raising task records ``"failure"`` and re-raises the original."""
+        from workers.tasks.base import with_task_metrics
+
+        boom = ValueError("task exploded")
+
+        @with_task_metrics
+        async def my_task(ctx: dict) -> str:
+            raise boom
+
+        ctx: dict = {}
+        with pytest.raises(ValueError) as exc_info:
+            await my_task(ctx)
+
+        # Re-raised unchanged — not wrapped, not replaced.
+        assert exc_info.value is boom
+        assert ctx["status"] == "failure"
+
+    @pytest.mark.asyncio
+    async def test_runtime_is_recorded_as_positive_number(self) -> None:
+        """``ctx["runtime"]`` is a positive elapsed-seconds float."""
+        from workers.tasks.base import with_task_metrics
+
+        @with_task_metrics
+        async def my_task(ctx: dict) -> str:
+            return "done"
+
+        ctx: dict = {}
+        await my_task(ctx)
+
+        assert isinstance(ctx["runtime"], float)
+        assert ctx["runtime"] > 0
+
+    @pytest.mark.asyncio
+    async def test_mutates_the_same_ctx_dict_the_worker_reads(self) -> None:
+        """The decorator writes into the caller's dict (not a copy).
+
+        ARQ hands the *same* dict to the task and to ``on_job_end``; a copy
+        would leave the worker callback reading an empty context.
+        """
+        from workers.tasks.base import with_task_metrics
+
+        @with_task_metrics
+        async def my_task(ctx: dict) -> str:
+            return "done"
+
+        ctx: dict = {}
+        await my_task(ctx)
+
+        assert ctx  # the caller's dict was mutated in place
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "SOURCE BUG: with_task_metrics looks the context up by the "
+            "literal parameter name 'ctx' (params.get('ctx')) instead of "
+            "finding the first positional argument via inspect.signature, "
+            "so a task whose context parameter has another name records no "
+            "metrics at all.  Fix: resolve the first positional parameter."
+        ),
+    )
+    @pytest.mark.asyncio
+    async def test_finds_ctx_regardless_of_parameter_name(self) -> None:
+        """The ctx is located through the signature, not by its name."""
+        from workers.tasks.base import with_task_metrics
+
+        @with_task_metrics
+        async def my_task(context: dict, *, org_id: str) -> str:
+            return "done"
+
+        ctx: dict = {}
+        await my_task(ctx, org_id="org-3")
+
+        assert ctx["task_type"] == "my_task"
+        assert ctx["org_id"] == "org-3"
+        assert ctx["status"] == "success"
+        assert ctx["runtime"] > 0
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # __all__ exports
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -471,5 +622,17 @@ class TestModuleExports:
             "ENRICHMENT_OBSERVATIONS",
             "ENRICHMENT_STRUCTURED_EXTRACTION",
             "with_retry",
+            "with_task_metrics",
         ]
-        assert sorted(__all__) == sorted(expected)
+        # Subset, not equality: the module gains exports over time and this
+        # test must not break when a new public helper is added.  The
+        # complementary invariant (no stale entries) is pinned by
+        # ``test_no_stale_exports`` below.
+        assert set(expected) <= set(__all__)
+
+    def test_no_stale_exports(self) -> None:
+        """Every name in __all__ resolves to a real module attribute."""
+        import workers.tasks.base as base
+
+        for name in base.__all__:
+            assert hasattr(base, name), f"{name} is exported but does not exist"

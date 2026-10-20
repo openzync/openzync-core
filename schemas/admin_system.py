@@ -102,6 +102,8 @@ SYSTEM_SETTING_CATEGORIES: dict[str, str] = {
     "OZ_SURREALDB_URL": "Infrastructure",
     "OZ_OLLAMA_EMBED_URL": "Infrastructure",
     "OZ_PROMETHEUS_URL": "Infrastructure",
+    "OZ_DB_POOL_SIZE": "Infrastructure",
+    "OZ_DB_MAX_OVERFLOW": "Infrastructure",
     # Security
     "OZ_SECRET_KEY": "Security",
     "OZ_WEBHOOK_SIGNING_SECRET": "Security",
@@ -123,6 +125,7 @@ SYSTEM_SETTING_CATEGORIES: dict[str, str] = {
     "OZ_CORS_ORIGINS": "Platform",
     "OZ_FRONTEND_URL": "Platform",
     "OZ_HOSTS_ALLOWED": "Platform",
+    "OZ_TRUSTED_PROXY_IPS": "Platform",
     "OZ_MAX_WORKERS": "Platform",
     "OZ_RATE_LIMIT_IP_MAX": "Platform",
     "OZ_RATE_LIMIT_WINDOW_SEC": "Platform",

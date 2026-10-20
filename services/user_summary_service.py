@@ -14,12 +14,17 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import ARQPool
+from core.config import get_settings
 from core.exceptions import CacheUnavailableError, RateLimitError
+from core.queue_names import get_queue_name
 from repositories.custom_instruction_repository import CustomInstructionRepository
 from repositories.user_repository import UserRepository
 from schemas.user_summary import UserSummaryResponse, UserSummaryTriggerResponse
 
 logger = logging.getLogger(__name__)
+
+ARQ_QUEUE = "low"
+"""Queue the ``generate_user_summary`` job runs on (low-priority batch)."""
 
 
 class UserSummaryService:
@@ -113,6 +118,7 @@ class UserSummaryService:
 
         await self._arq.enqueue(
             "generate_user_summary",
+            queue_name=get_queue_name(get_settings().ENVIRONMENT, ARQ_QUEUE),
             org_id=str(org_id),
             user_id=str(user_id),
             trace_id=str(uuid.uuid4()),

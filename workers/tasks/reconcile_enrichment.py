@@ -23,6 +23,8 @@ from typing import Any
 
 import structlog
 
+from core import rls
+from services.worker.worker_settings import settings
 from workers.tasks.base import (
     ENRICHMENT_CLASSIFICATION,
     ENRICHMENT_EMBEDDING,
@@ -31,6 +33,7 @@ from workers.tasks.base import (
     ENRICHMENT_FACTS,
     ENRICHMENT_STRUCTURED_EXTRACTION,
     LLM_INVALIDATION_BIT,
+    with_task_metrics,
 )
 
 # Combined LLM enrichment bits — one task replaces 4 individual LLM calls
@@ -123,7 +126,7 @@ async def _repair_missing_fact_embeddings(
     Returns:
         Number of ``embed_fact`` jobs enqueued.
     """
-    from sqlalchemy import select, text
+    from sqlalchemy import select
 
     from models.fact import Fact
     from models.project import Project
@@ -131,9 +134,11 @@ async def _repair_missing_fact_embeddings(
     rows: list[dict[str, Any]] = []
     async with session_factory() as db:
         # Cross-org cron scan: bypass RLS so every org is visible.  The
-        # policies call current_setting('app.org_id') without missing_ok,
-        # which raises UndefinedObjectError when the GUC is unset.
-        await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+        # policies read NULLIF(current_setting('app.org_id', true), ''),
+        # so an unset context matches no rows — the bypass is what makes
+        # the platform-wide scan possible.  The bypass is bound on the
+        # session, so it survives a commit instead of silently vanishing.
+        await rls.set_bypass_rls(db, True)
         result = await db.execute(
             select(
                 Fact.id,
@@ -203,6 +208,7 @@ async def _repair_missing_fact_embeddings(
     return enqueued
 
 
+@with_task_metrics
 async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
     """Detect stale episodes and re-enqueue missing enrichment tasks.
 
@@ -238,14 +244,14 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
         logger.error("reconcile_enrichment.no_arq_redis")
         return "Skipped: no redis in ARQ ctx"
 
-    queue_name: str | None = ctx.get("_queue_name")
-    if queue_name is None:
-        # Fallback: use the low queue (where this cron runs).
-        queue_name = "OpenZync:development:queue:low"
+    # Queue targets come from the worker's own settings.  ARQ never puts
+    # ``_queue_name`` in the task context, so the previous ctx lookup always
+    # fell back to a hard-coded development queue that no production worker
+    # consumes — the crash-recovery safety net wrote to a dead queue.
+    low_queue_name: str = settings.low_queue_full
+    high_queue_name: str = settings.high_queue_full
 
     # ── Backlog guard: skip if high-priority queue is already deep ────────
-    # Derive the high queue name from the low queue name by replacing suffix.
-    high_queue_name = queue_name.replace(":low", ":high")
     try:
         high_depth = await arq_redis.zcard(high_queue_name)
     except Exception:
@@ -272,7 +278,7 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
     )
 
     # ── Query stale episodes ─────────────────────────────────────────────
-    from sqlalchemy import or_, select, text
+    from sqlalchemy import or_, select
 
     from models.episode import Episode
     from models.project import Project
@@ -284,7 +290,7 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
     async with session_factory() as db:
         # Cross-org cron scan: bypass RLS so every org is visible (same
         # reason as the fact-embedding pass above).
-        await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+        await rls.set_bypass_rls(db, True)
         result = await db.execute(
             select(
                 Episode.id,
@@ -371,7 +377,7 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
             task_kwargs = {k: v for k, v in base_kwargs.items() if k in fields}
             if "role" in fields and "role" not in task_kwargs:
                 task_kwargs["role"] = "user"
-            target_queue = queue_name if queue_label == "low" else high_queue_name
+            target_queue = low_queue_name if queue_label == "low" else high_queue_name
 
             try:
                 await arq_redis.enqueue_job(
@@ -396,7 +402,7 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
             task_kwargs = {k: v for k, v in base_kwargs.items() if k in kwarg_set}
             if "role" in kwarg_set and "role" not in task_kwargs:
                 task_kwargs["role"] = "user"
-            target_queue = queue_name if queue_label == "low" else high_queue_name
+            target_queue = low_queue_name if queue_label == "low" else high_queue_name
 
             try:
                 await arq_redis.enqueue_job(

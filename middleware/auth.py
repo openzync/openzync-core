@@ -26,7 +26,7 @@ RFC 7807 error bodies are returned for all 401/403 responses.
 from __future__ import annotations
 
 import logging
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any, cast
 from uuid import UUID
 
@@ -281,6 +281,36 @@ async def _cache_key_in_redis(
     """
     cache_key = f"{AUTH_CACHE_PREFIX}{lookup_hash}"
     await redis.setex(cache_key, ttl, orjson.dumps(data))
+
+
+def _is_cached_key_expired(cached: dict[str, Any]) -> bool:
+    """Check whether a cached API key entry has passed its own expiry.
+
+    The Redis entry lives for :data:`AUTH_CACHE_TTL` (300 s) but a key may
+    expire sooner — the DB path rejects an expired key, so the cache path
+    must reject it too, or an expired key keeps authenticating for up to
+    five extra minutes.  The comparison mirrors the DB path exactly: a
+    naive timestamp is read as UTC and the key is expired when the expiry
+    is strictly before ``now(UTC)``.
+
+    Args:
+        cached: The cached auth payload.
+
+    Returns:
+        ``True`` if the key has expired (or its expiry is unreadable, in
+        which case the entry is treated as expired — fail closed).
+    """
+    raw = cached.get("expires_at")
+    if raw is None:
+        return False
+    try:
+        expires = datetime.fromisoformat(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        logger.warning("auth.cache_expiry_unreadable", extra={"expires_at": str(raw)})
+        return True
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=UTC)
+    return expires < datetime.now(UTC)
 
 
 # ── Negative cache + auth miss-rate limiting ─────────────────────────────
@@ -656,6 +686,21 @@ class AuthMiddleware:
             try:
                 cached = await _lookup_key_in_redis(redis, lookup_hash)
                 if cached is not None:
+                    if _is_cached_key_expired(cached):
+                        # The cached entry outlives the key's own expiry
+                        # (cache TTL is 300 s, expiry can be sooner) — the
+                        # DB path rejects expired keys, so the cache path
+                        # must reject them too.  Evict the stale entry so
+                        # the next request takes the DB path.
+                        await redis.delete(f"{AUTH_CACHE_PREFIX}{lookup_hash}")
+                        await _send_rfc7807(
+                            send,
+                            status=401,
+                            title="API Key Expired",
+                            detail="This API key has expired.",
+                            path=path,
+                        )
+                        return
                     scope["state"]["auth_type"] = "api_key"
                     scope["state"]["org_id"] = cached["org_id"]
                     scope["state"]["user_id"] = cached.get("created_by")
@@ -812,8 +857,6 @@ class AuthMiddleware:
             return
 
         if key_data.get("expires_at") is not None:
-            from datetime import datetime
-
             expires = key_data["expires_at"]
             if expires.tzinfo is None:
                 expires = expires.replace(tzinfo=UTC)
@@ -839,7 +882,10 @@ class AuthMiddleware:
         scope["state"]["api_key_project_id"] = key_data.get("project_id")
         scope["state"]["api_key_id"] = key_data["id"]
 
-        # ═ Update last_used timestamp (fire-and-forget) ═══════════════════
+        # ═ Update last_used timestamp (best-effort) ═════════════════════
+        # The UPDATE is conditional (only writes when the stored value is
+        # older than 5 minutes), so a busy key does not cause a DB write on
+        # every request.  Best-effort: last_used is observability only.
         try:
             async with db_factory() as session:
                 await ApiKeyRepository(session).update_last_used(UUID(key_data["id"]))
@@ -851,6 +897,7 @@ class AuthMiddleware:
         # ── Cache in Redis (fire-and-forget) ─────────────────────────────
         if redis is not None:
             try:
+                expires_at = key_data.get("expires_at")
                 await _cache_key_in_redis(
                     redis,
                     lookup_hash,
@@ -860,6 +907,12 @@ class AuthMiddleware:
                         "project_id": key_data.get("project_id"),
                         "created_by": created_by,
                         "api_key_id": key_data["id"],
+                        # Cached so the cache-hit path can reject an expired
+                        # key — the cache TTL (300 s) outlives a key's own
+                        # expiry, so the expiry must travel with the entry.
+                        "expires_at": (
+                            expires_at.isoformat() if expires_at is not None else None
+                        ),
                     },
                 )
             except aioredis.RedisError:

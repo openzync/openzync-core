@@ -29,6 +29,10 @@ from typing import Any
 
 from sqlalchemy import text
 
+from core import rls
+from services.worker.worker_settings import settings
+from workers.tasks.base import with_task_metrics
+
 logger = logging.getLogger(__name__)
 
 RECONCILE_BATCH_SIZE: int = 200
@@ -70,6 +74,7 @@ LIMIT :limit
 """
 
 
+@with_task_metrics
 async def reconcile_graph_edges(ctx: dict[str, Any]) -> str:
     """Expire active graph edges that no effective-at-now fact re-asserts.
 
@@ -99,19 +104,22 @@ async def reconcile_graph_edges(ctx: dict[str, Any]) -> str:
         logger.error("reconcile_graph_edges.no_arq_redis")
         return "Skipped: no redis in ARQ ctx"
 
-    queue_name: str | None = ctx.get("_queue_name")
-    if queue_name is None:
-        # Fallback: the low queue (where this cron runs).
-        queue_name = "OpenZync:development:queue:low"
+    # Queue target comes from the worker's own settings.  ARQ never puts
+    # ``_queue_name`` in the task context, so the previous ctx lookup always
+    # fell back to a hard-coded development queue that no production worker
+    # consumes.  ``expire_graph_edges`` runs on the low-priority queue.
+    queue_name: str = settings.low_queue_full
 
     # ── Scan stale edges (Postgres anti-join) ───────────────────────────
     now = datetime.now(UTC)
     stale_edges: list[dict[str, Any]] = []
     async with session_factory() as db:
         # Cross-org cron scan: bypass RLS so every org is visible.  The
-        # policies call current_setting('app.org_id') without missing_ok,
-        # which raises UndefinedObjectError when the GUC is unset.
-        await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+        # policies read NULLIF(current_setting('app.org_id', true), ''),
+        # so an unset context matches no rows — the bypass is what makes
+        # the platform-wide scan possible.  The bypass is bound on the
+        # session, so it survives a commit instead of silently vanishing.
+        await rls.set_bypass_rls(db, True)
         result = await db.execute(
             text(STALE_EDGES_SQL),
             # Scan and enqueue share the same instant: ``now`` is also the

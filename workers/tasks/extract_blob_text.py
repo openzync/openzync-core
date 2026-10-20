@@ -39,9 +39,8 @@ import io
 from uuid import UUID
 
 import structlog
-from sqlalchemy import text
 
-from workers.tasks.base import ENRICHMENT_BLOB_TEXT, with_retry
+from workers.tasks.base import ENRICHMENT_BLOB_TEXT, with_retry, with_task_metrics
 
 logger = structlog.get_logger(__name__)
 
@@ -374,6 +373,7 @@ def _is_retryable(exc: BaseException) -> bool:
     return not isinstance(exc, ImportError)
 
 
+@with_task_metrics
 @with_retry(max_retries=2, base_delay_s=2.0, is_retryable=_is_retryable)
 async def extract_blob_text(
     ctx: object,
@@ -431,6 +431,7 @@ async def extract_blob_text(
     log.info("extract_blob_text.start")
 
     # Lazy imports — ARQ workers run in a separate process.
+    from core import rls
     from core.blob_storage import BlobStorage, BlobStorageConfig
     from core.config import settings
     from core.db import get_async_session
@@ -456,10 +457,10 @@ async def extract_blob_text(
     try:
         async with session_factory() as db:
             # ── Set RLS context ─────────────────────────────────────────
-            await db.execute(
-                text("SELECT set_config('app.org_id', :oid, true)"),
-                {"oid": org_id},
-            )
+            # The binding is remembered by the session, so the commit below
+            # re-applies it — a bare ``set_config`` would leave the session
+            # un-tenanted after that commit.
+            await rls.set_tenant_context(db, org_id)
 
             blob_repo = EpisodeBlobRepository(db)
             episode_repo = EpisodeRepository(db)

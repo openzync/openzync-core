@@ -17,7 +17,7 @@ class TestInitDbEngine:
         from core.db import init_db_engine
 
         with patch("core.db.create_async_engine") as mock_create:
-            engine = init_db_engine("postgresql+asyncpg://u:p@localhost:5432/test")
+            init_db_engine("postgresql+asyncpg://u:p@localhost:5432/test")
             mock_create.assert_called_once()
             args, kwargs = mock_create.call_args
             assert "postgresql+asyncpg://" in str(args[0])
@@ -26,7 +26,9 @@ class TestInitDbEngine:
         """Engine raises ValueError when URL lacks +asyncpg driver."""
         from core.db import init_db_engine
 
-        with pytest.raises(ValueError, match="must use the postgresql\\+asyncpg:// scheme"):
+        with pytest.raises(
+            ValueError, match="must use the postgresql\\+asyncpg:// scheme"
+        ):
             init_db_engine("postgresql://u:p@localhost:5432/test")
 
     def test_non_postgres_url_passes_through(self) -> None:
@@ -38,15 +40,44 @@ class TestInitDbEngine:
             mock_create.assert_called_once()
 
     def test_default_pool_settings(self) -> None:
-        """Engine is created with sensible pool defaults."""
+        """Pool sizing comes from the runtime settings (5 + 1 by default).
+
+        The pool budget is ``replicas x (pool_size + max_overflow) < Postgres
+        max_connections`` — a hard-coded 20 + 10 blows that budget at HPA
+        scale, so the size is settings-driven.
+        """
         from core.db import init_db_engine
 
         with patch("core.db.create_async_engine") as mock_create:
             init_db_engine("postgresql+asyncpg://u:p@localhost:5432/test")
             _args, kwargs = mock_create.call_args
             assert kwargs["pool_pre_ping"] is True
-            assert kwargs["pool_size"] == 20
-            assert kwargs["max_overflow"] == 10
+            assert kwargs["pool_size"] == 5
+            assert kwargs["max_overflow"] == 1
+
+    def test_pool_settings_follow_runtime_settings(self) -> None:
+        """Overriding ``DB_POOL_SIZE`` / ``DB_MAX_OVERFLOW`` resizes the pool."""
+        from core.config import Settings
+        from core.db import init_db_engine
+
+        settings = Settings(
+            DATABASE_URL="postgresql+asyncpg://u:p@localhost:5432/test",
+            REDIS_URL="redis://localhost:6379/1",
+            SECRET_KEY="a" * 32,
+            WEBHOOK_SIGNING_SECRET="b" * 32,
+            ENVIRONMENT="test",
+            DB_POOL_SIZE=7,
+            DB_MAX_OVERFLOW=3,
+        )
+
+        with (
+            patch("core.config.get_settings", return_value=settings),
+            patch("core.db.create_async_engine") as mock_create,
+        ):
+            init_db_engine("postgresql+asyncpg://u:p@localhost:5432/test")
+            _args, kwargs = mock_create.call_args
+            assert kwargs["pool_size"] == 7
+            assert kwargs["max_overflow"] == 3
 
     def test_custom_pool_settings_override(self) -> None:
         """Caller-supplied kwargs override defaults."""
@@ -91,14 +122,23 @@ class TestGetAsyncSession:
     """get_async_session returns a properly configured sessionmaker."""
 
     def test_returns_async_sessionmaker(self) -> None:
-        """Factory produces AsyncSession instances."""
+        """Factory produces RlsAsyncSession instances.
+
+        The tenant context is bound transaction-locally, so a plain
+        ``AsyncSession`` would lose it at the next COMMIT.  The factory
+        must therefore produce ``core.rls.RlsAsyncSession``, which
+        re-binds the context to the transaction that follows every commit
+        and rollback.
+        """
         from core.db import get_async_session
+        from core.rls import RlsAsyncSession
 
         mock_engine = MagicMock(spec=AsyncEngine)
         factory = get_async_session(mock_engine)
         assert factory is not None
-        # The factory class produces AsyncSession
-        assert factory.class_ is AsyncSession
+        assert factory.class_ is RlsAsyncSession
+        # It is still an AsyncSession — the subclass only adds the re-bind.
+        assert issubclass(factory.class_, AsyncSession)
 
     def test_sessionmaker_configured(self) -> None:
         """Factory has expire_on_commit=False and correct bind."""

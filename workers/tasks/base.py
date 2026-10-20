@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import inspect
 import logging
+import time
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar
 
 if TYPE_CHECKING:
@@ -183,6 +185,60 @@ def with_retry(
     return decorator
 
 
+def with_task_metrics(func: Callable[F, T]) -> Callable[F, T]:
+    """Record per-job task metrics on the ARQ worker context.
+
+    ARQ hands the **same** context dict to the task function and to the
+    worker's ``on_job_end`` callback, but it only ever populates
+    ``job_id``, ``job_try``, ``enqueue_time`` and ``score``.  Without this
+    decorator every job is reported as ``task_type="unknown"`` with
+    ``status="success"`` and a zero duration, whatever actually happened.
+
+    Apply it as the **outermost** decorator (listed above ``@with_retry``)
+    so the recorded runtime covers every retry attempt and the status
+    reflects the final outcome of the job, not of the last attempt.
+
+    Args:
+        func: The task coroutine.  Its first parameter must be the ARQ
+            context dict (``ctx``).
+
+    Returns:
+        The wrapped coroutine.
+    """
+    signature = inspect.signature(func)
+
+    @functools.wraps(func)
+    async def wrapper(*args: Any, **kwargs: Any) -> Any:
+        params = signature.bind_partial(*args, **kwargs).arguments
+        ctx = params.get("ctx")
+        started = time.perf_counter()
+
+        if isinstance(ctx, dict):
+            ctx["task_type"] = func.__name__
+            org_id = params.get("org_id") or params.get("organization_id")
+            if org_id:
+                ctx["org_id"] = str(org_id)
+            trace_id = params.get("trace_id")
+            if trace_id:
+                ctx["trace_id"] = str(trace_id)
+
+        try:
+            result = await func(*args, **kwargs)
+        except BaseException:
+            status = "failure"
+            raise
+        else:
+            status = "success"
+        finally:
+            if isinstance(ctx, dict):
+                ctx["status"] = status
+                ctx["runtime"] = time.perf_counter() - started
+
+        return result
+
+    return wrapper  # type: ignore[return-value]
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 __all__ = [
@@ -196,4 +252,5 @@ __all__ = [
     "ENRICHMENT_OBSERVATIONS",
     "ENRICHMENT_STRUCTURED_EXTRACTION",
     "with_retry",
+    "with_task_metrics",
 ]

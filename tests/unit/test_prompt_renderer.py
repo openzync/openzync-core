@@ -97,10 +97,20 @@ class MockResult:
 
 
 class FakeAsyncSession:
-    """Minimal proxy that acts like an ``AsyncSession`` for ``async with``."""
+    """Minimal proxy that acts like an ``AsyncSession`` for ``async with``.
+
+    The RLS tenant context is set and released through ``execute`` /
+    ``rollback`` / ``commit``, so the fake records both the statements it
+    ran and the order of the session operations — that is what lets the
+    tests pin *when* the tenant was bound.
+    """
 
     def __init__(self, execute_result: list[Any] | None = None) -> None:
         self._execute_result = execute_result or []
+        self.executed: list[tuple[str, Any]] = []
+        """``(sql, params)`` of every statement executed on this session."""
+        self.operations: list[str] = []
+        """Ordered log of session operations: execute / rollback / commit."""
 
     async def __aenter__(self) -> FakeAsyncSession:
         return self
@@ -109,7 +119,18 @@ class FakeAsyncSession:
         pass
 
     async def execute(self, query: Any, params: Any | None = None) -> MockResult:
+        sql = str(query.text if hasattr(query, "text") else query)
+        self.executed.append((sql, params))
+        self.operations.append("execute")
         return MockResult(self._execute_result)
+
+    async def rollback(self) -> None:
+        """No-op — the RLS release sequence rolls back the transaction."""
+        self.operations.append("rollback")
+
+    async def commit(self) -> None:
+        """No-op — recorded so a test can prove the release issues none."""
+        self.operations.append("commit")
 
     def add(self, instance: Any) -> None:
         pass
@@ -131,9 +152,13 @@ class _FakeSessionFactory:
 
     def __init__(self, execute_result: list[Any] | None = None) -> None:
         self._execute_result = execute_result or []
+        self.sessions: list[FakeAsyncSession] = []
+        """Every session this factory handed out, in creation order."""
 
     def __call__(self) -> FakeAsyncSession:
-        return FakeAsyncSession(self._execute_result)
+        session = FakeAsyncSession(self._execute_result)
+        self.sessions.append(session)
+        return session
 
 
 def make_fake_session_factory(
@@ -579,13 +604,13 @@ class TestResolveByType:
         )
 
         class MockRepo:
-            async def get_active_by_type(self, **kwargs: Any) -> None:
+            async def get_active_text_by_type(self, **kwargs: Any) -> None:
                 return None
 
         monkeypatch.setattr(
             PromptTemplateRepository,
-            "get_active_by_type",
-            MockRepo().get_active_by_type,
+            "get_active_text_by_type",
+            MockRepo().get_active_text_by_type,
         )
 
         result = await resolve_prompt_template_by_type(
@@ -606,13 +631,13 @@ class TestResolveByType:
         )
 
         class MockRepo:
-            async def get_active_by_type(self, **kwargs: Any) -> None:
+            async def get_active_text_by_type(self, **kwargs: Any) -> None:
                 return None
 
         monkeypatch.setattr(
             PromptTemplateRepository,
-            "get_active_by_type",
-            MockRepo().get_active_by_type,
+            "get_active_text_by_type",
+            MockRepo().get_active_text_by_type,
         )
 
         result = await resolve_prompt_template_by_type(
@@ -629,22 +654,19 @@ class TestResolveByType:
         org_id: UUID,
         monkeypatch: MonkeyPatch,
     ) -> None:
-        """Mock repo returns a template with template_text."""
+        """Mock repo returns the template text directly (str | None)."""
         from repositories.prompt_template_repository import (
             PromptTemplateRepository,
         )
 
-        class MockTemplate:
-            template_text = "You are a helpful assistant."
-
         class MockRepo:
-            async def get_active_by_type(self, **kwargs: Any) -> MockTemplate:
-                return MockTemplate()
+            async def get_active_text_by_type(self, **kwargs: Any) -> str:
+                return "You are a helpful assistant."
 
         monkeypatch.setattr(
             PromptTemplateRepository,
-            "get_active_by_type",
-            MockRepo().get_active_by_type,
+            "get_active_text_by_type",
+            MockRepo().get_active_text_by_type,
         )
 
         result = await resolve_prompt_template_by_type(
@@ -653,6 +675,134 @@ class TestResolveByType:
             make_fake_session_factory(),
         )
         assert result == "You are a helpful assistant."
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# RLS tenant context
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.unit
+class TestRlsTenantContext:
+    """The renderer binds the tenant before it queries and releases it after.
+
+    Under enforced row-level security a session with no ``app.org_id`` sees
+    zero rows, so the binding is not optional — it has to happen *before*
+    the first provider query.  The release has to happen *before* the
+    session closes: it drops the remembered context and rolls back.  It
+    issues no statement, because the context is bound transaction-locally
+    and PostgreSQL has already discarded it when the transaction ends.
+    """
+
+    @staticmethod
+    def _stub_providers(monkeypatch: MonkeyPatch) -> list[list[tuple[str, Any]]]:
+        """Replace every provider with one that records the session state.
+
+        Returns:
+            One entry per provider call, holding the statements the session
+            had already run when the provider was entered.
+        """
+        from services.worker.prompt_renderer import _PROVIDER_DISPATCH, DataSource
+
+        seen: list[list[tuple[str, Any]]] = []
+
+        async def provider(**kwargs: Any) -> dict[str, Any]:
+            seen.append(list(kwargs["db"].executed))
+            return {}
+
+        for source in DataSource:
+            monkeypatch.setitem(_PROVIDER_DISPATCH, source, provider)
+        return seen
+
+    @pytest.mark.asyncio
+    async def test_context_is_bound_before_the_first_provider_query(
+        self,
+        org_id: UUID,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        """Every provider sees the tenant already bound."""
+        seen = self._stub_providers(monkeypatch)
+
+        await render_prompt(
+            "fact_extraction",
+            org_id=org_id,
+            db_session_factory=make_fake_session_factory(),
+            template_text="Extract: {{ conversation }}",
+        )
+
+        assert seen, "the providers must have run"
+        for executed in seen:
+            assert "app.org_id" in executed[0][0]
+            assert executed[0][1] == {
+                "org_id": str(org_id),
+                "bypass_rls": "false",
+                "lookup_code": "",
+            }
+
+    @pytest.mark.asyncio
+    async def test_context_is_released_before_the_session_closes(
+        self,
+        org_id: UUID,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        """The release rolls back — it does not issue a reset statement.
+
+        The context is bound transaction-locally, so the end of the
+        transaction already discarded it.  There is nothing left standing
+        on the pooled connection to reset, and a reset statement would be
+        a session-scoped GUC that could outlive the transaction.
+        """
+        self._stub_providers(monkeypatch)
+        factory = make_fake_session_factory()
+
+        await render_prompt(
+            "fact_extraction",
+            org_id=org_id,
+            db_session_factory=factory,
+            template_text="Extract: {{ conversation }}",
+        )
+
+        session = factory.sessions[0]
+        assert session.operations[0] == "execute"
+        assert session.operations[-1] == "rollback"
+        # The release issued no statement of its own.
+        assert session.operations.count("execute") == 1
+        assert "commit" not in session.operations
+
+    @pytest.mark.asyncio
+    async def test_resolve_by_type_binds_and_releases_the_context(
+        self,
+        org_id: UUID,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        """The template lookup is tenant-scoped too — bind before, release after."""
+        from repositories.prompt_template_repository import PromptTemplateRepository
+
+        class MockRepo:
+            async def get_active_text_by_type(self, **kwargs: Any) -> None:
+                return None
+
+        monkeypatch.setattr(
+            PromptTemplateRepository,
+            "get_active_text_by_type",
+            MockRepo().get_active_text_by_type,
+        )
+        factory = make_fake_session_factory()
+
+        await resolve_prompt_template_by_type("fact_extraction", org_id, factory)
+
+        session = factory.sessions[0]
+        assert session.executed[0][0] == (
+            "SELECT set_config('app.org_id', :org_id, true), "
+            "set_config('app.bypass_rls', :bypass_rls, true), "
+            "set_config('app.lookup_code', :lookup_code, true)"
+        )
+        assert session.executed[0][1] == {
+            "org_id": str(org_id),
+            "bypass_rls": "false",
+            "lookup_code": "",
+        }
+        assert session.operations[-1] == "rollback"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -886,14 +1036,9 @@ class TestProviderFetchSessionRecentHistory:
     ) -> None:
         """Excludes current episode from results."""
 
-        class FakeEp:
-            def __init__(self, role: str, content: str) -> None:
-                self.role = role
-                self.content = content
-
         rows = [
-            FakeEp("assistant", "Hi there"),
-            FakeEp("user", "Hello"),
+            ("assistant", "Hi there"),
+            ("user", "Hello"),
         ]
         session = FakeAsyncSession(rows)
 
@@ -918,12 +1063,7 @@ class TestProviderFetchSessionRecentHistory:
     ) -> None:
         """Returns all recent history without episode filter."""
 
-        class FakeEp:
-            def __init__(self, role: str, content: str) -> None:
-                self.role = role
-                self.content = content
-
-        rows = [FakeEp("user", "Only message")]
+        rows = [("user", "Only message")]
         session = FakeAsyncSession(rows)
 
         result = await _fetch_session_recent_history(

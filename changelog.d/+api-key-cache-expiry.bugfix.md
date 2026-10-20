@@ -1,0 +1,1 @@
+Reject an expired API key on the Redis cache-hit path — the cached entry now carries `expires_at` and is re-checked with the same comparison the database path uses, so a key can no longer authenticate for up to five minutes past its expiry.

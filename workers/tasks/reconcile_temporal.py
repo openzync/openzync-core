@@ -14,11 +14,12 @@ from __future__ import annotations
 from typing import Any
 
 import structlog
-from sqlalchemy import text
 
+from core import rls
 from repositories.fact_repository import FactRepository
 from repositories.project_repository import ProjectRepository
 from services.temporal_service import TemporalValidationService
+from workers.tasks.base import with_task_metrics
 
 logger = structlog.get_logger()
 
@@ -26,6 +27,7 @@ RECONCILE_BATCH_SIZE: int = 100
 """Maximum number of projects scanned per cron tick."""
 
 
+@with_task_metrics
 async def reconcile_temporal(ctx: dict[str, Any]) -> str:
     """Scan every (non-archived) project for temporal-consistency issues.
 
@@ -49,9 +51,11 @@ async def reconcile_temporal(ctx: dict[str, Any]) -> str:
 
     async with session_factory() as db:
         # Cross-org cron scan: bypass RLS so every org is visible.  The
-        # policies call current_setting('app.org_id') without missing_ok,
-        # which raises UndefinedObjectError when the GUC is unset.
-        await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+        # policies read NULLIF(current_setting('app.org_id', true), ''),
+        # so an unset context matches no rows — the bypass is what makes
+        # the platform-wide scan possible.  The bypass is bound on the
+        # session, so it survives a commit instead of silently vanishing.
+        await rls.set_bypass_rls(db, True)
 
         projects = await ProjectRepository(db).list_all(limit=RECONCILE_BATCH_SIZE)
 

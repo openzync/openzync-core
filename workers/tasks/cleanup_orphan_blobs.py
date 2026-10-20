@@ -21,10 +21,10 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from models.organization import Organization
-from workers.tasks.base import with_retry
+from workers.tasks.base import with_retry, with_task_metrics
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 logger = structlog.get_logger(__name__)
 
 
+@with_task_metrics
 @with_retry(max_retries=2, base_delay_s=2.0)
 async def cleanup_orphan_blobs(
     ctx: object,
@@ -81,6 +82,7 @@ async def cleanup_orphan_blobs(
     log.info("cleanup_orphan_blobs.start")
 
     # Lazy imports — ARQ workers run in separate process.
+    from core import rls
     from core.config import settings
     from core.db import get_async_session
     from repositories.episode_blob_repository import EpisodeBlobRepository
@@ -119,10 +121,13 @@ async def cleanup_orphan_blobs(
         org_log = logger.bind(org_id=org_id)
         org_log.info("cleanup_orphan_blobs.org_start")
 
-        await db.execute(
-            text("SELECT set_config('app.org_id', :oid, true)"),
-            {"oid": org_id},
-        )
+        # Bind the tenant on the session.  ``rls.set_tenant_context`` is
+        # remembered by the session, so the per-org commit below re-applies
+        # it — a bare ``set_config`` would leave the session un-tenanted
+        # after that commit.  The discovery scan above ran under a bypass;
+        # the per-org work drops it and runs tenant-scoped.
+        await rls.set_bypass_rls(db, False)
+        await rls.set_tenant_context(db, org_uuid)
 
         blob_repo = EpisodeBlobRepository(db)
 
@@ -224,14 +229,10 @@ async def cleanup_orphan_blobs(
                 # would silently continue.  Safe to bypass: get_orphaned_blobs
                 # filters by org, and the blob IDs it returns are the same
                 # org-scoped IDs passed to delete_by_ids in this iteration
-                # (provenance).  Transaction
-                # local (is_local=true), unlike the 59c3fcb79b85 migration
-                # precedent (session-level false): this session is shared
-                # across all orgs, and the setting expires at the first
-                # per-org commit instead of leaking into later orgs.
-                await db.execute(
-                    text("SELECT set_config('app.bypass_rls', 'true', true)")
-                )
+                # (provenance).  The bypass is bound on the session (so it
+                # survives the per-org commit); the per-org work drops it
+                # again and binds the tenant instead.
+                await rls.set_bypass_rls(db, True)
                 result = await db.execute(select(Organization.id))
                 org_ids = [r[0] for r in result.all()]
 

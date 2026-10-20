@@ -19,31 +19,12 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from core.openbao import SYSTEM_KEY_MAPPING, OpenBaoClient
+from core.queue_names import get_queue_name
 
-
-def get_queue_name(env: str, queue_type: str) -> str:
-    """Generate a namespaced queue name.
-
-    Pattern: ``OpenZync:{env}:queue:{queue_type}``
-
-    Examples:
-        ``OpenZync:dev:queue:high``
-        ``OpenZync:prod:queue:low``
-
-    Args:
-        env: Environment name (e.g. ``dev``, ``staging``, ``prod``).
-        queue_type: Queue type — one of ``"high"`` (real-time ingestion) or
-            ``"low"`` (scheduled batch / background maintenance).
-
-    Returns:
-        Fully qualified queue name string.
-
-    Raises:
-        ValueError: If ``queue_type`` is not ``"high"`` or ``"low"``.
-    """
-    if queue_type not in ("high", "low"):
-        raise ValueError(f"queue_type must be 'high' or 'low', got {queue_type!r}")
-    return f"OpenZync:{env}:queue:{queue_type}"
+# The queue-name builder lives in ``core.queue_names`` — the API enqueues
+# into the same queues the worker consumes, so it must not import from the
+# worker package.  It is re-exported here because it is part of this
+# module's public surface.
 
 
 class WorkerSettings(BaseModel):
@@ -61,6 +42,24 @@ class WorkerSettings(BaseModel):
             "PostgreSQL connection string used by SQLAlchemy async engine. "
             "Must use the ``postgresql+asyncpg://`` scheme. "
             "Loaded from OpenBao — no default."
+        ),
+    )
+    DB_POOL_SIZE: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        description=(
+            "SQLAlchemy pool size per worker process.  Sizing rule: "
+            "replicas x (pool_size + max_overflow) < Postgres max_connections."
+        ),
+    )
+    DB_MAX_OVERFLOW: int = Field(
+        default=1,
+        ge=0,
+        le=100,
+        description=(
+            "Extra connections a worker process may open above "
+            "DB_POOL_SIZE before tasks queue."
         ),
     )
 
@@ -257,6 +256,8 @@ class WorkerSettings(BaseModel):
             "OZ_FALKORDB_SOCKET_TIMEOUT",
             "OZ_SURREALDB_URL",
             "OZ_MAX_WORKERS",
+            "OZ_DB_POOL_SIZE",
+            "OZ_DB_MAX_OVERFLOW",
         })
         # Canary: fail fast if SYSTEM_KEY_MAPPING drifts from worker keys
         _canary = _WORKER_KEYS - SYSTEM_KEY_MAPPING.keys()
@@ -274,6 +275,8 @@ class WorkerSettings(BaseModel):
             "OZ_MAX_WORKERS",
             "OZ_FALKORDB_MAX_CONNECTIONS",
             "OZ_FALKORDB_SOCKET_TIMEOUT",
+            "OZ_DB_POOL_SIZE",
+            "OZ_DB_MAX_OVERFLOW",
         })
 
         kwargs: dict[str, Any] = {}

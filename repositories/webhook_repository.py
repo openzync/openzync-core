@@ -8,6 +8,7 @@ import orjson
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core import rls
 from core.sorting import SortSpec, resolve_order_by
 from models.webhook import WebhookEndpoint
 
@@ -75,7 +76,10 @@ class WebhookRepository:
             organization_id=organization_id,
             name=name,
             url=url,
-            events=orjson.dumps(events if events is not None else []),
+            # orjson.dumps returns bytes; the column is TEXT and asyncpg
+            # rejects bytes for a varchar parameter ("expected str, got
+            # bytes"), so the JSON is decoded to str.
+            events=orjson.dumps(events if events is not None else []).decode(),
             signing_secret=signing_secret,
         )
         self._db.add(endpoint)
@@ -97,7 +101,13 @@ class WebhookRepository:
         update_data: dict[str, object] = {}
         if "events" in kwargs:
             events_val = kwargs["events"]
-            update_data["events"] = orjson.dumps(events_val) if isinstance(events_val, list) else events_val
+            # orjson.dumps returns bytes — the column is TEXT and asyncpg
+            # rejects bytes for a varchar parameter.
+            update_data["events"] = (
+                orjson.dumps(events_val).decode()
+                if isinstance(events_val, list)
+                else events_val
+            )
         for key in ("name", "url", "is_active", "last_delivery_at", "signing_secret"):
             if key in kwargs:
                 update_data[key] = kwargs[key]
@@ -158,7 +168,16 @@ class WebhookRepository:
         organization_id: uuid.UUID,
         event_type: str,
     ) -> list[WebhookEndpoint]:
-        """Get all active endpoints that subscribe to a given event type."""
+        """Get all active endpoints that subscribe to a given event type.
+
+        The tenant is bound to the session first: ``webhook_endpoints`` is
+        RLS-scoped and the session may hold a pooled connection that
+        carries no tenant (or a stale one) — e.g. after a mid-request
+        commit, which returns the connection to the pool.  Without the
+        binding the lookup would match no rows and the event would be
+        silently dropped.
+        """
+        await rls.set_tenant_context(self._db, organization_id)
         result = await self._db.execute(
             select(WebhookEndpoint).where(
                 WebhookEndpoint.organization_id == organization_id,

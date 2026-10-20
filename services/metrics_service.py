@@ -18,7 +18,9 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
+from core.config import get_settings
 from core.exceptions import MetricsUnavailableError
+from core.queue_names import get_queue_name
 from schemas.admin_metrics import (
     ErrorTimeseriesPoint,
     LatencyPercentiles,
@@ -89,12 +91,41 @@ COUNTER_QUERIES: list[tuple[str, str]] = [
     ("active_requests", "sum(openzync_http_requests_in_progress)"),
 ]
 
-QUEUE_QUERIES: list[tuple[str, str]] = [
-    ("queue_high", 'openzync_worker_queue_depth{queue_name="high"}'),
-    ("queue_low", 'openzync_worker_queue_depth{queue_name="low"}'),
-]
 
-ALL_QUERIES = LATENCY_QUERIES + RATE_QUERIES + COUNTER_QUERIES + QUEUE_QUERIES
+def _queue_queries() -> list[tuple[str, str]]:
+    """Build the queue-depth PromQL selectors for the running environment.
+
+    The worker labels ``openzync_worker_queue_depth`` with the *fully
+    qualified* queue name (``OpenZync:{env}:queue:{type}``), so the selector
+    has to use that same name — a bare ``"high"``/``"low"`` matches no series
+    and the dashboard always renders an empty queue depth.
+
+    The API process cannot read the worker settings singleton (it is only
+    initialised in the worker process), but both processes read
+    ``OZ_ENVIRONMENT`` from OpenBao, so the environment is the one value
+    needed to rebuild the label exactly.
+
+    Returns:
+        List of ``(name, PromQL)`` pairs for the high and low priority queues.
+    """
+    env = get_settings().ENVIRONMENT
+    high = get_queue_name(env, "high")
+    low = get_queue_name(env, "low")
+    return [
+        ("queue_high", f'openzync_worker_queue_depth{{queue_name="{high}"}}'),
+        ("queue_low", f'openzync_worker_queue_depth{{queue_name="{low}"}}'),
+    ]
+
+
+def _all_queries() -> list[tuple[str, str]]:
+    """Return every instant query run by :meth:`MetricsService.get_summary`.
+
+    Returns:
+        List of ``(name, PromQL)`` pairs covering latency, rate, counter and
+        queue-depth metrics.
+    """
+    return [*LATENCY_QUERIES, *RATE_QUERIES, *COUNTER_QUERIES, *_queue_queries()]
+
 
 # ── Range query definitions (for time-series charts) ─────────────────────────
 # These use [5m] rate windows; the query_range window/step is caller-supplied
@@ -204,11 +235,12 @@ class MetricsService:
         results: dict[str, float] = {}
 
         # Build org-scoped instant queries (queue stays global — see _inject_org_filter).
+        all_queries = _all_queries()
         if _is_org_scoped(org_id):
             assert org_id is not None  # narrowed by _is_org_scoped
             effective_all = [
                 (name, _inject_org_filter(promql, org_id))
-                for name, promql in ALL_QUERIES
+                for name, promql in all_queries
             ]
             effective_retrieval = {
                 k: _inject_org_filter(v, org_id)
@@ -226,7 +258,7 @@ class MetricsService:
                 for k, v in GRAPH_LATENCY_RANGE_QUERIES.items()
             }
         else:
-            effective_all = ALL_QUERIES
+            effective_all = all_queries
             effective_retrieval = RETRIEVAL_RANGE_QUERIES
             effective_error = ERROR_RANGE_QUERIES
             effective_ctx_lat = CONTEXT_LATENCY_RANGE_QUERIES

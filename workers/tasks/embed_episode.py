@@ -13,11 +13,17 @@ from __future__ import annotations
 import structlog
 
 from core.exceptions import EpisodeNotFoundError
-from workers.tasks.base import ENRICHMENT_EMBEDDING, with_retry
+from core.rls import release_tenant_context
+from workers.tasks.base import (
+    ENRICHMENT_EMBEDDING,
+    with_retry,
+    with_task_metrics,
+)
 
 logger = structlog.get_logger()
 
 
+@with_task_metrics
 @with_retry(max_retries=3, base_delay_s=2.0)
 async def embed_episode(
     ctx: object,
@@ -57,6 +63,7 @@ async def embed_episode(
 
     from sqlalchemy import text
 
+    from core import rls
     from core.config import settings
     from core.db import get_async_session
     from core.embeddings import CANONICAL_EMBED_DIM, embed_passage
@@ -91,38 +98,46 @@ async def embed_episode(
 
     # ── 2a. Idempotency check — skip if embedding bit already set ────────────
     async with session_factory() as idempotency_db:
-        episode_repo = EpisodeRepository(idempotency_db)
-        episode = await episode_repo.get_by_id(uuid.UUID(episode_id))
-        if episode is None:
-            logger.warning(
-                "embed_episode.episode_not_found",
-                episode_id=episode_id,
-            )
-            raise EpisodeNotFoundError(
-                message=f"Episode {episode_id} not found for embedding.",
-                detail={"episode_id": episode_id},
-            )
-        if episode.enrichment_status & ENRICHMENT_EMBEDDING:
-            logger.debug(
-                "embed_episode.skipped_already_done",
-                episode_id=episode_id,
-                enrichment_status=episode.enrichment_status,
-            )
-            return
+        try:
+            # Bind the session to the tenant before the first org-scoped
+            # query — under enforced RLS an unbound session sees no rows.
+            await rls.set_tenant_context(idempotency_db, org_id)
+            episode_repo = EpisodeRepository(idempotency_db)
+            episode = await episode_repo.get_by_id(uuid.UUID(episode_id))
+            if episode is None:
+                logger.warning(
+                    "embed_episode.episode_not_found",
+                    episode_id=episode_id,
+                )
+                raise EpisodeNotFoundError(
+                    message=f"Episode {episode_id} not found for embedding.",
+                    detail={"episode_id": episode_id},
+                )
+            if episode.enrichment_status & ENRICHMENT_EMBEDDING:
+                logger.debug(
+                    "embed_episode.skipped_already_done",
+                    episode_id=episode_id,
+                    enrichment_status=episode.enrichment_status,
+                )
+                return
 
-        # Archived-project guard: pause-and-resume. Fail-closed (missing
-        # row counts as archived). Early return sets no bits, so
-        # un-archiving resumes via reconcile or retry.
-        if await ProjectRepository(idempotency_db).is_archived(
-            uuid.UUID(org_id), uuid.UUID(project_id)
-        ):
-            logger.info(
-                "embed_episode.project_archived_skipping",
-                episode_id=episode_id,
-                org_id=org_id,
-                project_id=project_id,
-            )
-            return
+            # Archived-project guard: pause-and-resume. Fail-closed (missing
+            # row counts as archived). Early return sets no bits, so
+            # un-archiving resumes via reconcile or retry.
+            if await ProjectRepository(idempotency_db).is_archived(
+                uuid.UUID(org_id), uuid.UUID(project_id)
+            ):
+                logger.info(
+                    "embed_episode.project_archived_skipping",
+                    episode_id=episode_id,
+                    org_id=org_id,
+                    project_id=project_id,
+                )
+                return
+        finally:
+            # Reset before the session closes — the context is session-scoped
+            # and would otherwise stay on the pooled connection.
+            await release_tenant_context(idempotency_db)
 
     # ── 3. Generate embedding ────────────────────────────────────────────
     try:
@@ -145,22 +160,26 @@ async def embed_episode(
 
     try:
         async with session_factory() as db:
-            await db.execute(
-                text(
-                    "UPDATE episodes SET embedding = "  # noqa: S608
-                    f"CAST(:embedding AS vector({CANONICAL_EMBED_DIM})) "
-                    "WHERE id = :id"
-                    # S608 justification: interpolates the int constant
-                    # CANONICAL_EMBED_DIM into a static CAST, never user input.
-                ),
-                {"embedding": embedding, "id": episode_id},
-            )
-            # Set bit 1 on enrichment_status to mark completion.
-            episode_repo = EpisodeRepository(db)
-            await episode_repo.apply_enrichment_bits(
-                uuid.UUID(episode_id), ENRICHMENT_EMBEDDING
-            )
-            await db.commit()
+            try:
+                await rls.set_tenant_context(db, org_id)
+                await db.execute(
+                    text(
+                        "UPDATE episodes SET embedding = "  # noqa: S608
+                        f"CAST(:embedding AS vector({CANONICAL_EMBED_DIM})) "
+                        "WHERE id = :id"
+                        # S608 justification: interpolates the int constant
+                        # CANONICAL_EMBED_DIM into a static CAST, never user input.
+                    ),
+                    {"embedding": embedding, "id": episode_id},
+                )
+                # Set bit 1 on enrichment_status to mark completion.
+                episode_repo = EpisodeRepository(db)
+                await episode_repo.apply_enrichment_bits(
+                    uuid.UUID(episode_id), ENRICHMENT_EMBEDDING
+                )
+                await db.commit()
+            finally:
+                await release_tenant_context(db)
 
         logger.info(
             "embed_episode.completed",

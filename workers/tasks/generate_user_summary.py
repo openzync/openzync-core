@@ -23,12 +23,14 @@ import uuid
 
 import structlog
 
+from core.rls import release_tenant_context
 from services.worker.prompt_renderer import render_prompt
-from workers.tasks.base import with_retry
+from workers.tasks.base import with_retry, with_task_metrics
 
 logger = structlog.get_logger()
 
 
+@with_task_metrics
 @with_retry(max_retries=2, base_delay_s=5.0)
 async def generate_user_summary(
     ctx: object,
@@ -65,6 +67,7 @@ async def generate_user_summary(
     if trace_id:
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
 
+    from core import rls
     from core.config import settings
     from core.db import get_async_session
     from core.org_config import get_org_config
@@ -106,11 +109,17 @@ async def generate_user_summary(
     graph_backend = None
     try:
         async with session_factory() as _backend_db:
-            graph_backend = await resolve_graph_backend(
-                ctx if isinstance(ctx, dict) else {},
-                uuid.UUID(org_id),
-                _backend_db,
-            )
+            try:
+                # The org-config lookup behind the graph backend is an
+                # org-scoped read — bind the tenant first.
+                await rls.set_tenant_context(_backend_db, org_id)
+                graph_backend = await resolve_graph_backend(
+                    ctx if isinstance(ctx, dict) else {},
+                    uuid.UUID(org_id),
+                    _backend_db,
+                )
+            finally:
+                await release_tenant_context(_backend_db)
     except GraphBackendUnavailableError:
         logger.error(
             "user_summary.graph_backend_unavailable",
@@ -214,11 +223,15 @@ async def generate_user_summary(
 
     try:
         async with session_factory() as db:
-            await UserRepository(db).update_summary(
-                user_id=uuid.UUID(user_id),
-                summary=response.content,
-            )
-            await db.commit()
+            try:
+                await rls.set_tenant_context(db, org_id)
+                await UserRepository(db).update_summary(
+                    user_id=uuid.UUID(user_id),
+                    summary=response.content,
+                )
+                await db.commit()
+            finally:
+                await release_tenant_context(db)
     except Exception as exc:
         logger.error(
             "user_summary.persist_failed",

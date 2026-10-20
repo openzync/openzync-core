@@ -44,10 +44,12 @@ from core.config import get_settings
 from core.events import EventType
 from core.exceptions import (
     ConflictError,
+    ExternalServiceError,
     NotFoundError,
     PIIUnavailableError,
     ValidationError,
 )
+from core.queue_names import get_queue_name
 from repositories.episode_blob_repository import EpisodeBlobRepository
 from repositories.episode_repository import EpisodeRepository
 from repositories.fact_repository import FactRepository
@@ -59,7 +61,6 @@ from repositories.user_repository import UserRepository
 from schemas.memory import IngestMemoryResponse, Message
 from services.idempotency_service import IdempotencyService, IdempotencyStatus
 from services.webhook_service import WebhookService
-from services.worker.worker_settings import get_queue_name
 
 logger = logging.getLogger(__name__)
 
@@ -115,63 +116,6 @@ def _decode_claim_payload(
         return job_id, int(count_str)
     except ValueError:
         return job_id, fallback_count
-
-
-async def _resolve_storage_config(org_id: UUID) -> dict[str, Any]:
-    """Resolve per-org blob storage config from OpenBao.
-
-    Matches the pattern in extract_blob_text.py and enrich_episode.py.
-    Falls back to MinIO dev defaults when OpenBao is unreachable.
-
-    Args:
-        org_id: The organization UUID.
-
-    Returns:
-        Flattened storage config dict for ``BlobStorageConfig``.
-    """
-    from core.config import BootstrapSettings
-    from core.openbao import OpenBaoClient
-    from core.org_config import get_org_config
-
-    storage_config: dict[str, Any] = {
-        "backend": "s3",
-        "endpoint_url": "http://minio:9000",
-        "region": "auto",
-        "access_key_id": "",
-        "secret_access_key": "",
-        "bucket_name": "openzync-blobs",
-        "max_blob_size_mb": 50,
-    }
-    try:
-        bootstrap = BootstrapSettings()
-        async with OpenBaoClient(
-            bootstrap.OPENBAO_ADDR,
-            bootstrap.OPENBAO_ROLE_ID,
-            bootstrap.OPENBAO_SECRET_ID,
-            timeout=10.0,
-        ) as _tmp_bao:
-            org_cfg = await get_org_config(
-                org_id,
-                redis=None,
-                bao_client=_tmp_bao,
-            )
-            org_storage = org_cfg.to_blob_storage_config()
-            if org_storage:
-                storage_config.update(org_storage)
-    except Exception:
-        try:
-            from core.config import get_settings
-
-            environment = get_settings().ENVIRONMENT
-        except Exception:
-            environment = "unknown"
-        logger.warning(
-            "memory.org_storage_config_fetch_failed",
-            extra={"org_id": str(org_id), "environment": environment},
-            exc_info=True,
-        )
-        # Falls back to defaults — works for MinIO in dev
-    return storage_config
 
 
 class MemoryService:
@@ -294,6 +238,8 @@ class MemoryService:
             NotFoundError: If the project does not exist or is archived.
             PIIUnavailableError: If the PII policy cannot be fetched or
                 redaction fails — nothing is persisted.
+            ExternalServiceError: If the org's blob storage config cannot be
+                read from OpenBao — nothing is written to the wrong bucket.
         """
         # ── Step 0: Block ingests to archived projects ───────────────────
         # get_by_id filters is_archived=False, so archived and missing
@@ -698,6 +644,8 @@ class MemoryService:
         Raises:
             ValidationError: If ``confirm`` does not match ``project_id``
                 (→ 422, nothing is deleted).
+            ExternalServiceError: If the org's blob storage config cannot be
+                read from OpenBao — the stored objects are left in place.
         """
         if confirm != str(project_id):
             raise ValidationError(
@@ -715,7 +663,7 @@ class MemoryService:
         if blob_rows:
             from services.blob_storage_service import BlobStorageService
 
-            storage_config = await _resolve_storage_config(org_id)
+            storage_config = await self._resolve_storage_config(org_id)
             # S3 first, then row delete — delete_blobs raises on S3
             # failure so rows stay for the orphan-blob cleanup worker.
             await BlobStorageService(self._db, self._blob_repo).delete_blobs(
@@ -757,6 +705,61 @@ class MemoryService:
     # ──────────────────────────────────────────────────────────────────────────
     # Internal helpers
     # ──────────────────────────────────────────────────────────────────────────
+
+    async def _resolve_storage_config(self, org_id: UUID) -> dict[str, Any]:
+        """Resolve the org's blob storage config from OpenBao — fail loud.
+
+        The org's S3 settings are read with the app-level OpenBao client
+        (an AppRole login per call is both slow and needless) and the
+        app-level Redis client, so the 300 s org-config cache is used.
+
+        A storage misconfiguration must never degrade to the shared dev
+        bucket: an org that configured its own bucket would silently have
+        its documents written to ``openzync-blobs`` instead.  Any failure
+        to read the org's config therefore raises
+        :class:`ExternalServiceError` (→ 502) rather than falling back to
+        the defaults.
+
+        Args:
+            org_id: The organization UUID.
+
+        Returns:
+            Flattened storage config dict for ``BlobStorageConfig``.
+
+        Raises:
+            ExternalServiceError: If the org's storage config cannot be read.
+        """
+        from core.org_config import get_org_config
+
+        try:
+            org_cfg = await get_org_config(
+                org_id,
+                redis=self._redis,
+                bao_client=self._bao_client,
+            )
+        except Exception as exc:
+            logger.error(
+                "memory.org_storage_config_fetch_failed",
+                extra={"org_id": str(org_id)},
+                exc_info=True,
+            )
+            raise ExternalServiceError(
+                f"Blob storage config for org {org_id} could not be read from OpenBao."
+            ) from exc
+
+        # Platform defaults (the shared MinIO bucket of the compose stack)
+        # are overridden by whatever the org has configured explicitly.
+        storage_config: dict[str, Any] = {
+            "backend": "s3",
+            "endpoint_url": "http://minio:9000",
+            "region": "auto",
+            "access_key_id": "",
+            "secret_access_key": "",
+            "bucket_name": "openzync-blobs",
+            "max_blob_size_mb": 50,
+        }
+        storage_config.update(org_cfg.to_blob_storage_config())
+        return storage_config
 
     async def _resolve_user(
         self,
@@ -1097,7 +1100,8 @@ class MemoryService:
         if not ep_blob_metas:
             return 0, []
 
-        storage_config = await _resolve_storage_config(org_id)
+        # Resolved once per ingest — not per blob.
+        storage_config = await self._resolve_storage_config(org_id)
 
         from core.blob_storage import BlobStorageConfig
 

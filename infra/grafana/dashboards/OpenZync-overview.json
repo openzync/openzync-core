@@ -205,12 +205,12 @@
       },
       "targets": [
         {
-          "expr": "openzync_worker_queue_depth{queue_name=\"high\"}",
+          "expr": "openzync_worker_queue_depth{queue_name=~\"OpenZync:.*:queue:high\"}",
           "legendFormat": "High Priority",
           "refId": "A"
         },
         {
-          "expr": "openzync_worker_queue_depth{queue_name=\"low\"}",
+          "expr": "openzync_worker_queue_depth{queue_name=~\"OpenZync:.*:queue:low\"}",
           "legendFormat": "Low Priority",
           "refId": "B"
         }

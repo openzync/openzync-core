@@ -29,8 +29,8 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from core.audit import get_audit_metadata
 from core.config import get_settings
 from core.exceptions import DatabaseUnavailableError
+from core.queue_names import get_queue_name
 from services.pii_service import PIIDetector, PIIRedactor
-from services.worker.worker_settings import get_queue_name
 
 logger = logging.getLogger(__name__)
 

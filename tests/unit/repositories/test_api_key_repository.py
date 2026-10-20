@@ -40,7 +40,9 @@ class TestApiKeyRepository:
         key.key_hash = overrides.get("key_hash", "def456")
         key.salt = overrides.get("salt", "salt123")
         key.prefix = overrides.get("prefix", "oz_test_")
-        key.permissions = overrides.get("permissions", ["project:read", "project:write"])
+        key.permissions = overrides.get(
+            "permissions", ["project:read", "project:write"]
+        )
         key.is_revoked = overrides.get("is_revoked", False)
         key.last_used_at = overrides.get("last_used_at")
         key.created_at = overrides.get("created_at")
@@ -116,9 +118,7 @@ class TestApiKeyRepository:
         mock_result.scalar_one_or_none.return_value = key
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_id(
-            organization_id=self.ORG_ID, key_id=self.KEY_ID
-        )
+        result = await repo.get_by_id(organization_id=self.ORG_ID, key_id=self.KEY_ID)
 
         assert result == key
 
@@ -130,9 +130,7 @@ class TestApiKeyRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.get_by_id(
-            organization_id=self.ORG_ID, key_id=self.KEY_ID
-        )
+        result = await repo.get_by_id(organization_id=self.ORG_ID, key_id=self.KEY_ID)
 
         assert result is None
 
@@ -218,9 +216,7 @@ class TestApiKeyRepository:
         mock_result.scalar_one_or_none.return_value = key
         mock_db.execute.return_value = mock_result
 
-        result = await repo.revoke(
-            organization_id=self.ORG_ID, key_id=self.KEY_ID
-        )
+        result = await repo.revoke(organization_id=self.ORG_ID, key_id=self.KEY_ID)
 
         assert result is not None
         assert result.is_revoked is True
@@ -235,9 +231,7 @@ class TestApiKeyRepository:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        result = await repo.revoke(
-            organization_id=self.ORG_ID, key_id=self.KEY_ID
-        )
+        result = await repo.revoke(organization_id=self.ORG_ID, key_id=self.KEY_ID)
 
         assert result is None
         mock_db.flush.assert_not_called()
@@ -290,10 +284,36 @@ class TestApiKeyRepository:
     async def test_update_last_used(
         self, repo: ApiKeyRepository, mock_db: AsyncMock
     ) -> None:
-        """update_last_used executes update and flushes."""
+        """update_last_used writes last_used_at only when it is unset or stale.
+
+        The write is conditional — a busy key must not produce one DB write
+        per request — and it runs inside a scoped RLS bypass, because the
+        caller (the auth middleware) has no tenant context yet.
+        """
         mock_db.execute.return_value = MagicMock()
 
         await repo.update_last_used(key_id=self.KEY_ID)
 
-        mock_db.execute.assert_awaited_once()
+        statements = [call.args[0] for call in mock_db.execute.await_args_list]
+        executed = [str(stmt) for stmt in statements]
+
+        # The bypass is opened and closed around the write, and it is
+        # transaction-scoped (``is_local`` → true), so it cannot outlive the
+        # transaction.
+        assert "set_config('app.bypass_rls', 'true', true)" in executed[0]
+        assert "set_config('app.bypass_rls', 'false', true)" in executed[-1]
+
+        # Exactly one statement is the write itself.
+        updates = [stmt for stmt in statements if str(stmt).startswith("UPDATE")]
+        assert len(updates) == 1
+        update = updates[0]
+        assert "UPDATE api_keys" in str(update)
+        assert "SET last_used_at=now()" in str(update)
+        # Conditional: only when last_used_at is unset or older than the
+        # write interval.
+        assert "api_keys.last_used_at IS NULL" in str(update)
+        assert "interval '5 minutes'" in str(update)
+        # Scoped to the key.
+        assert self.KEY_ID in update.compile().params.values()
+
         mock_db.flush.assert_awaited_once()

@@ -38,6 +38,18 @@ api:
     maxReplicas: 10
     targetCPUUtilizationPercentage: 70
     targetMemoryUtilizationPercentage: 80
+  # ── DB connection budget ───────────────────────────────────────────────
+  # Every API replica and every worker replica opens up to
+  #   pool_size + max_overflow
+  # Postgres connections.  The budget must satisfy:
+  #
+  #   replicas x (pool_size + max_overflow) < max_connections
+  #
+  # With api.maxReplicas=10, worker.maxReplicas=5 and the pool defaults
+  # below (5 + 1):  15 x 6 = 90 connections — inside the Postgres default
+  # of 100.  Raising the pool size or the replica counts means raising
+  # max_connections on the database first, or the database runs out of
+  # connections and requests queue.
   ingress:
     enabled: false
     host: api.openzync.tech
@@ -133,6 +145,21 @@ config:
   # Rate limiting
   rateLimitIpMax: 100
   rateLimitWindowSec: 60
+
+  # ── DB connection pool ──────────────────────────────────────────────────
+  # See the budget note next to api.autoscaling above:
+  #   replicas x (dbPoolSize + dbMaxOverflow) < max_connections
+  dbPoolSize: 5
+  dbMaxOverflow: 1
+
+  # ── Reverse proxy ───────────────────────────────────────────────────────
+  # Peers allowed to set X-Forwarded-For (uvicorn --forwarded-allow-ips).
+  # Must cover the ingress/reverse-proxy tier that fronts the api, otherwise
+  # every request is attributed to the proxy and the per-IP rate limiters
+  # become platform-wide buckets.  Narrow this to the ingress controller's
+  # pod or node CIDR.  Never "*" — a client could then forge its own IP.
+  # 10.244.0.0/16 is the kubeadm/kind default pod CIDR.
+  trustedProxyIps: "10.244.0.0/16"
 
   # CORS
   corsOrigins: "http://localhost:3000"

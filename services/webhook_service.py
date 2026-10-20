@@ -30,11 +30,11 @@ import orjson
 
 from core.arq import get_arq
 from core.config import get_settings
+from core.queue_names import get_queue_name
 from core.sorting import SortSpec
 from middleware.metrics import webhook_emit_failures_total
 from models.webhook import WebhookEndpoint
 from repositories.webhook_repository import WebhookRepository
-from services.worker.worker_settings import get_queue_name
 
 logger = logging.getLogger("openzync.webhooks")
 
@@ -280,7 +280,6 @@ class WebhookService:
                     body=body,
                     event_type=event_type,
                     signature=signature,
-                    attempt=0,
                 )
 
             await asyncio.gather(*[_enqueue_one(ep) for ep in endpoints])

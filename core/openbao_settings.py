@@ -42,6 +42,8 @@ _INT_FIELDS = {
     "RATE_LIMIT_IP_MAX",
     "RATE_LIMIT_WINDOW_SEC",
     "SMTP_PORT",
+    "DB_POOL_SIZE",
+    "DB_MAX_OVERFLOW",
 }
 """Set of ``Settings`` field names whose values must be cast to ``int``.
 

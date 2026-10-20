@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from uuid import uuid4
 
 import pytest
@@ -250,3 +250,112 @@ class TestEmbedEpisode:
             )
 
             embedder.assert_awaited_once()
+
+    # ── RLS tenant context ────────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_tenant_is_bound_before_the_episode_is_read(
+        self, embedder: AsyncMock
+    ) -> None:
+        """The ``app.org_id`` binding happens before the row is read.
+
+        Under enforced row-level security a session that queries first and
+        binds second sees zero rows — the task would report success
+        having done nothing at all.
+
+        The binding is transaction-local and carries all three GUCs, so it
+        cannot outlive the transaction nor stand on the pooled connection.
+        """
+        with (
+            patch("workers.tasks.base.with_retry", lambda **kw: lambda f: f),
+            patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
+        ):
+            episode = MagicMock()
+            episode.id = _EPISODE_ID
+            episode.enrichment_status = 0
+
+            mock_repo = AsyncMock()
+            mock_repo.get_by_id.return_value = episode
+            mock_repo_cls.return_value = mock_repo
+
+            db = self._make_db()
+            recorder = Mock()
+            recorder.attach_mock(db.execute, "execute")
+            recorder.attach_mock(mock_repo.get_by_id, "get_by_id")
+
+            from workers.tasks.embed_episode import embed_episode
+
+            await embed_episode(
+                ctx=self._ctx(db),
+                episode_id=_EPISODE_ID,
+                org_id=_ORG_ID,
+                project_id=_PROJECT_ID,
+                content=_CONTENT,
+            )
+
+            calls = recorder.mock_calls
+            read_index = next(i for i, c in enumerate(calls) if c[0] == "get_by_id")
+            # Exactly one statement ran before the read — the tenant bind.
+            assert [c[0] for c in calls[:read_index]] == ["execute"]
+            assert "app.org_id" in str(calls[0].args[0])
+            assert calls[0].args[1] == {
+                "org_id": _ORG_ID,
+                "bypass_rls": "false",
+                "lookup_code": "",
+            }
+
+    @pytest.mark.asyncio
+    async def test_tenant_context_is_released_before_the_session_closes(
+        self, embedder: AsyncMock
+    ) -> None:
+        """The release rolls back — it issues no reset statement.
+
+        The context is bound transaction-locally, so the end of the
+        transaction already discarded it: there is nothing left standing
+        on the pooled connection to reset.  The release therefore drops
+        the remembered context and rolls back, and nothing else.
+        """
+        with (
+            patch("workers.tasks.base.with_retry", lambda **kw: lambda f: f),
+            patch("repositories.episode_repository.EpisodeRepository") as mock_repo_cls,
+        ):
+            episode = MagicMock()
+            episode.id = _EPISODE_ID
+            episode.enrichment_status = 0
+
+            mock_repo = AsyncMock()
+            mock_repo.get_by_id.return_value = episode
+            mock_repo_cls.return_value = mock_repo
+
+            db = self._make_db()
+            recorder = Mock()
+            recorder.attach_mock(db.execute, "execute")
+            recorder.attach_mock(db.rollback, "rollback")
+            recorder.attach_mock(db.commit, "commit")
+
+            from workers.tasks.embed_episode import embed_episode
+
+            await embed_episode(
+                ctx=self._ctx(db),
+                episode_id=_EPISODE_ID,
+                org_id=_ORG_ID,
+                project_id=_PROJECT_ID,
+                content=_CONTENT,
+            )
+
+            ops = [c[0] for c in recorder.mock_calls]
+            # The idempotency session: bind → read → release (rollback).
+            # The write session: bind → update → commit → release (rollback).
+            assert ops == [
+                "execute",
+                "rollback",
+                "execute",
+                "execute",
+                "commit",
+                "rollback",
+            ]
+            # The release issued no statement of its own — the last
+            # statement is the write, not a context reset.
+            assert "set_config('app.org_id', ''" not in str(
+                db.execute.await_args_list[-1].args[0]
+            )
