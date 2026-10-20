@@ -1,0 +1,1 @@
+Size the SQLAlchemy connection pool from settings (`OZ_DB_POOL_SIZE` / `OZ_DB_MAX_OVERFLOW`, default 5 + 1) in both the API and the worker, so `replicas x (pool_size + max_overflow)` stays inside the database's `max_connections` budget at HPA scale.

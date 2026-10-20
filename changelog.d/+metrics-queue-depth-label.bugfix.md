@@ -1,0 +1,1 @@
+Match the admin dashboard's queue-depth PromQL selector to the label the worker actually emits — the fully qualified queue name (`OpenZync:{env}:queue:{high|low}`) instead of the bare `high`/`low`, which matched no series and left queue depth permanently empty on the dashboard.
