@@ -1081,6 +1081,7 @@ class TestMain:
 
             assert _mocks["create_arq_worker"].call_count == 2
             _mocks["prewarm_embeddings"].assert_awaited_once()
+            _mocks["init_arq"].assert_awaited_once()
         finally:
             _unpatch_main_deps(_mocks)
 
@@ -1381,6 +1382,23 @@ def _patch_main_deps() -> dict:
     prewarm_patch.start()
     _patchers.append(prewarm_patch)
     mocks["prewarm_embeddings"] = _prewarm
+
+    # ── init_arq / close_arq (lazy import from core.arq in main()) ─────
+    # Source-module target so the ``from core.arq import close_arq,
+    # init_arq`` inside ``main()`` resolves to the mocks. Without this
+    # the real init_arq runs create_pool under the mocked loop and all 7
+    # TestMain tests fail with ConnectionError from real Redis.
+    _init_arq = AsyncMock()
+    init_arq_patch = patch("core.arq.init_arq", new=_init_arq)
+    init_arq_patch.start()
+    _patchers.append(init_arq_patch)
+    mocks["init_arq"] = _init_arq
+
+    _close_arq = AsyncMock()
+    close_arq_patch = patch("core.arq.close_arq", new=_close_arq)
+    close_arq_patch.start()
+    _patchers.append(close_arq_patch)
+    mocks["close_arq"] = _close_arq
 
     # ── FalkorDB / BlockingConnectionPool — lazy import in try/except ────
     # falkordb IS installed in the test env, so the lazy import succeeds
