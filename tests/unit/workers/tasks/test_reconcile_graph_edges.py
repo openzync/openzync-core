@@ -12,11 +12,12 @@ No I/O — the session result rows and ARQ redis are mocked.
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
 
+from services.worker.worker_settings import WorkerSettings, settings
 from workers.tasks.reconcile_graph_edges import reconcile_graph_edges
 
 pytestmark = pytest.mark.unit
@@ -27,6 +28,7 @@ SRC_ENTITY = UUID("00000000-0000-0000-0000-00000000aaaa")
 TGT_ENTITY = UUID("00000000-0000-0000-0000-00000000bbbb")
 EDGE_ID = UUID("00000000-0000-0000-0000-000000000100")
 QUEUE = "OpenZync:test:queue:low"
+"""The low queue the conftest fixture configures (``ENV="test"``)."""
 
 
 def _edge_row(**overrides) -> SimpleNamespace:
@@ -74,7 +76,9 @@ class TestReconcileGraphEdges:
         ctx = {
             "db_session_factory": _factory(db),
             "redis": redis,
-            "_queue_name": QUEUE,
+            # Decoy: ARQ never sets ``_queue_name`` in the task context, so
+            # the target queue comes from the worker settings, not from here.
+            "_queue_name": "OpenZync:decoy:queue:low",
         }
 
         summary = await reconcile_graph_edges(ctx)
@@ -92,7 +96,7 @@ class TestReconcileGraphEdges:
         # Reconcile-sourced expiries carry the EDGE id as provenance (no
         # superseding fact exists) and are tagged for the low queue.
         assert kwargs["fact_id"] == str(EDGE_ID)
-        assert kwargs["_queue_name"] == QUEUE
+        assert kwargs["_queue_name"] == settings.low_queue_full
         assert "at_time" in kwargs
 
     @pytest.mark.asyncio
@@ -124,8 +128,15 @@ class TestReconcileGraphEdges:
         assert summary == "Skipped: no redis in ARQ ctx"
 
     @pytest.mark.asyncio
-    async def test_queue_name_defaults_when_absent(self) -> None:
-        """Cron without ``_queue_name`` falls back to the dev low queue."""
+    async def test_target_queue_comes_from_worker_settings(self) -> None:
+        """The enqueue target is the worker's configured low queue.
+
+        ARQ never puts ``_queue_name`` in the task context, so the old
+        ``ctx.get("_queue_name")`` lookup always fell back to a hard-coded
+        ``OpenZync:development:queue:low`` that no production worker
+        consumes — the crash-recovery safety net wrote to a dead queue.
+        The target now comes from ``settings.low_queue_full``.
+        """
         db = _make_db([_edge_row()])
         captured: dict = {}
 
@@ -135,16 +146,31 @@ class TestReconcileGraphEdges:
 
         redis = AsyncMock()
         redis.enqueue_job = _enqueue_job
-        ctx = {"db_session_factory": _factory(db), "redis": redis}
+        # A decoy in the ctx: ARQ never sets it, so it must be ignored.
+        ctx = {
+            "db_session_factory": _factory(db),
+            "redis": redis,
+            "_queue_name": "OpenZync:decoy:queue:low",
+        }
 
-        await reconcile_graph_edges(ctx)
+        prod_settings = WorkerSettings(
+            DATABASE_URL="postgresql+asyncpg://localhost:5432/test",
+            REDIS_URL="redis://localhost:6379/0",
+            ENV="prod",
+        )
+        with patch("services.worker.worker_settings._settings", prod_settings):
+            await reconcile_graph_edges(ctx)
 
-        assert captured["_queue_name"] == "OpenZync:development:queue:low"
+        assert captured["_queue_name"] == "OpenZync:prod:queue:low"
+        # The development-only literal is gone — the queue is not hard-coded.
+        assert captured["_queue_name"] != "OpenZync:development:queue:low"
 
     @pytest.mark.asyncio
     async def test_enqueue_failure_logged_and_continues(self) -> None:
         """A failed enqueue is logged and skipped — the tick still completes."""
-        db = _make_db([_edge_row(), _edge_row(id=UUID("00000000-0000-0000-0000-000000000101"))])
+        db = _make_db(
+            [_edge_row(), _edge_row(id=UUID("00000000-0000-0000-0000-000000000101"))]
+        )
         enqueued: list[str] = []
 
         async def _flaky(task: str, **kwargs) -> str:

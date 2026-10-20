@@ -8,6 +8,7 @@ requirement and runs before any user exists.
 from __future__ import annotations
 
 import secrets
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -17,6 +18,7 @@ import structlog
 import yaml
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core import rls
 from core.exceptions import ConflictError, NotFoundError
 from core.openbao import OpenBaoClient
 from core.org_codes import generate_org_code
@@ -92,11 +94,18 @@ class OrganizationService:
         self._validate_org_name(payload.name)
 
         # ── 1. Create organization ───────────────────────────────────────
+        # The id is minted here so the session can be bound to the new
+        # tenant before the row is written — SQLAlchemy appends a RETURNING
+        # clause to the INSERT (server defaults) and that clause is filtered
+        # by the table's SELECT policy: a session that is not bound to the
+        # new organization cannot see the row it just created.
         org = Organization(
+            id=uuid.uuid4(),
             name=payload.name,
             plan=payload.plan,
             org_code=generate_org_code(),
         )
+        await rls.set_tenant_context(self._db, org.id)
         self._db.add(org)
         await self._db.flush()
         await self._db.refresh(org)

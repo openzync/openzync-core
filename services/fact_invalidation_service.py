@@ -1084,7 +1084,16 @@ class FactInvalidationService:
             fresh: AsyncSession | None = None
             service = self._webhook_service
             if _reuse():
+                from core import rls
+
                 fresh = AsyncSession(bind=self._db.bind, expire_on_commit=False)
+                # The fresh session checks out its own pooled connection,
+                # which may carry no tenant (or a stale one).  The
+                # ``webhook_endpoints`` lookup inside ``emit`` is
+                # RLS-scoped, so bind the session to the emitting org
+                # before it reads — an un-bound session matches no rows and
+                # the event would be silently dropped.
+                await rls.init_context(fresh, str(org_id))
                 service = WebhookService(repo=WebhookRepository(fresh))
             try:
                 await service.emit(
@@ -1190,6 +1199,7 @@ class FactInvalidationService:
             events: Supersession transitions recorded during ingest.
             at_time: The supersession instant (deterministic).
         """
+        from core import rls
         from packages.graph_backend.postgres import PostgresGraphBackend
         from services.graph_edge_sync_service import GraphEdgeSyncService
 
@@ -1209,6 +1219,14 @@ class FactInvalidationService:
                             bind=self._db.bind, expire_on_commit=False
                         )
                         fresh_sessions.append(fresh)
+                        # The fresh session checks out its own pooled
+                        # connection, which may carry a tenant (or a stale
+                        # bypass) from an earlier request.  Initialise the
+                        # context before the backend reads the graph
+                        # tables — they are RLS-protected, so an
+                        # uninitialised session would silently match no
+                        # rows and the expiry would be a no-op.
+                        await rls.init_context(fresh, str(org_id))
                         rebuilt.append(
                             PostgresGraphBackend(
                                 db=fresh,

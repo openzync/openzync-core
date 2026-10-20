@@ -92,7 +92,9 @@ class TestExpireGraphEdgesTask:
     async def test_graph_disabled_backend_none_returns_zero(self) -> None:
         """Org has no graph backend → no-op, count 0, no commit of an expiry."""
         db = _make_db()
-        with patch("workers.backend.resolve_graph_backend", new=AsyncMock(return_value=None)):
+        with patch(
+            "workers.backend.resolve_graph_backend", new=AsyncMock(return_value=None)
+        ):
             result = await expire_graph_edges(ctx=_ctx(db), **_TASK_ARGS)
 
         assert result == f"expired 0 edge(s) for {SRC_ENTITY}->{TGT_ENTITY} reports_to"
@@ -121,7 +123,10 @@ class TestExpireGraphEdgesTask:
 
         backend.expire_relationships_matching = _flaky
         with (
-            patch("workers.backend.resolve_graph_backend", new=AsyncMock(return_value=backend)),
+            patch(
+                "workers.backend.resolve_graph_backend",
+                new=AsyncMock(return_value=backend),
+            ),
             patch("workers.tasks.base.asyncio.sleep", new=AsyncMock()),
         ):
             result = await expire_graph_edges(ctx=_ctx(db), **_TASK_ARGS)
@@ -139,7 +144,10 @@ class TestExpireGraphEdgesTask:
             side_effect=RuntimeError("backend down")
         )
         with (
-            patch("workers.backend.resolve_graph_backend", new=AsyncMock(return_value=backend)),
+            patch(
+                "workers.backend.resolve_graph_backend",
+                new=AsyncMock(return_value=backend),
+            ),
             patch("workers.tasks.base.asyncio.sleep", new=AsyncMock()),
         ):
             with pytest.raises(RuntimeError, match="backend down"):
@@ -156,7 +164,10 @@ class TestExpireGraphEdgesTask:
             side_effect=RuntimeError("backend down")
         )
         with (
-            patch("workers.backend.resolve_graph_backend", new=AsyncMock(return_value=backend)),
+            patch(
+                "workers.backend.resolve_graph_backend",
+                new=AsyncMock(return_value=backend),
+            ),
             patch("workers.tasks.base.asyncio.sleep", new=AsyncMock()),
             patch(
                 "workers.tasks.expire_graph_edges.graph_edge_sync_failures_total"
@@ -168,7 +179,9 @@ class TestExpireGraphEdgesTask:
         mock_counter.inc.assert_called_once()
         # The failure log carries the full context in the record's extra
         # (structured logging) — fact_id, triple, at_time, error.
-        failed = [r for r in caplog.records if r.getMessage() == "expire_graph_edges.failed"]
+        failed = [
+            r for r in caplog.records if r.getMessage() == "expire_graph_edges.failed"
+        ]
         assert failed, "the final failure must be logged loudly"
         record = failed[0]
         assert record.fact_id == str(FACT_ID)
@@ -179,9 +192,8 @@ class TestExpireGraphEdgesTask:
 class TestExpireGraphEdgesRls:
     """Per-org RLS scoping — ``app.org_id`` is set before any org query.
 
-    Same root cause as the cron scans (``current_setting('app.org_id')``
-    without ``missing_ok`` raises ``UndefinedObjectError`` on the worker
-    session), but the fix differs by design: this is a single-org task, so
+    Same root cause as the cron scans (an unset tenant context matches no
+    rows), but the fix differs by design: this is a single-org task, so
     it scopes RLS to the task org instead of bypassing it.
     """
 
@@ -200,12 +212,21 @@ class TestExpireGraphEdgesRls:
         assert len(calls) >= 1
         first = calls[0]
         assert "app.org_id" in str(first.args[0])
-        assert first.args[1] == {"org_id": str(ORG_ID)}
+        assert first.args[1] == {
+            "org_id": str(ORG_ID),
+            "bypass_rls": "false",
+            "lookup_code": "",
+        }
         backend.expire_relationships_matching.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_single_org_task_never_bypasses_rls(self) -> None:
-        """Scoping, not bypassing — no ``app.bypass_rls`` on this path."""
+        """Scoping, not bypassing — the bypass is never enabled.
+
+        The context statement always names all three GUCs, so the bypass
+        is asserted by its *value*: it must stay ``'false'`` on every
+        binding this task performs.
+        """
         db = _make_db()
         backend = _backend(count=1)
         with patch(
@@ -214,5 +235,12 @@ class TestExpireGraphEdgesRls:
         ):
             await expire_graph_edges(ctx=_ctx(db), **_TASK_ARGS)
 
-        all_sql = " ".join(str(call.args[0]) for call in db.execute.await_args_list)
-        assert "app.bypass_rls" not in all_sql
+        bindings = [
+            call.args[1]
+            for call in db.execute.await_args_list
+            if len(call.args) > 1
+            and isinstance(call.args[1], dict)
+            and "bypass_rls" in call.args[1]
+        ]
+        assert bindings, "the task must bind the RLS context"
+        assert {b["bypass_rls"] for b in bindings} == {"false"}

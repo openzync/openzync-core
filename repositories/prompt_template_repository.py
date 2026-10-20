@@ -89,6 +89,33 @@ class PromptTemplateRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_active_text_by_type(
+        self,
+        org_id: UUID,
+        type: str,
+    ) -> str | None:
+        """Get the active default template body for a given type.
+
+        Column-only query — returns a detached ``str`` with no ORM
+        expiry risk, safe to use after the session closes.
+
+        Args:
+            org_id: The organisation UUID.
+            type: The template type (e.g. ``"fact_extraction"``).
+
+        Returns:
+            The active type-default template body, or ``None``.
+        """
+        result = await self._db.execute(
+            select(PromptTemplate.template_text).where(
+                PromptTemplate.organization_id == org_id,
+                PromptTemplate.type == type,
+                PromptTemplate.is_default_for_type.is_(True),
+                PromptTemplate.is_active.is_(True),
+            )
+        )
+        return result.scalar_one_or_none()
+
     async def get_version(
         self,
         org_id: UUID,

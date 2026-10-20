@@ -31,6 +31,7 @@ from workers.tasks.base import (  # noqa: F401  — re-export
     ENRICHMENT_OBSERVATIONS,
     ENRICHMENT_STRUCTURED_EXTRACTION,
     with_retry,
+    with_task_metrics,
 )
 
 logger: structlog.stdlib.BoundLogger = structlog.get_logger(__name__)
@@ -99,4 +100,5 @@ __all__ = [
     "ENRICHMENT_STRUCTURED_EXTRACTION",
     "_is_retryable",
     "with_retry",
+    "with_task_metrics",
 ]

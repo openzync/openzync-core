@@ -103,6 +103,12 @@ _SAFE_EDGE_TYPE_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 MAX_TRAVERSAL_DEPTH: int = 5
 """Hard cap on BFS depth to prevent unbounded traversals."""
 
+_CO_OCCURRENCE_QUERY_TIMEOUT_MS: int = 30_000
+"""FalkorDB server-side timeout for the co-occurrence pair query."""
+
+_CO_OCCURRENCE_MAX_PAIRS: int = 500
+"""Row cap for the co-occurrence pair query — bounds scan output."""
+
 _REDISEARCH_ESCAPE_CHARS = frozenset("\\!\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~")
 """Chars RediSearch parses as query operators — escape with a backslash."""
 
@@ -2207,7 +2213,9 @@ class FalkorGraphBackend(GraphBackend):
 
         Uses the ``(:Episode)-[:MENTIONS]->(:Entity)`` pattern: two entities
         co-occur when they share a common episode.  Results are sorted by
-        co-occurrence count descending.
+        co-occurrence count descending, capped at
+        ``_CO_OCCURRENCE_MAX_PAIRS`` rows with a server-side timeout of
+        ``_CO_OCCURRENCE_QUERY_TIMEOUT_MS`` ms.
 
         Args:
             org_id: Organisational scope.
@@ -2224,7 +2232,7 @@ class FalkorGraphBackend(GraphBackend):
 
         try:
             result = await graph.query(
-                """
+                f"""
                 MATCH (a:Entity)<-[:MENTIONS]-(ep:Episode)-[:MENTIONS]->(b:Entity)
                 WHERE a.id < b.id
                   AND a.organization_id = $org_id
@@ -2237,12 +2245,14 @@ class FalkorGraphBackend(GraphBackend):
                        b.id AS entity_b_id, b.name AS entity_b_name,
                        co_count
                 ORDER BY co_count DESC
+                LIMIT {_CO_OCCURRENCE_MAX_PAIRS}
                 """,
                 {
                     "org_id": str(org_id),
                     "project_id": str(project_id),
                     "min_co_count": min_co_count,
                 },
+                timeout=_CO_OCCURRENCE_QUERY_TIMEOUT_MS,
             )
             pairs = []
             for row in result.result_set:

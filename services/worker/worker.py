@@ -26,11 +26,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from collections.abc import Awaitable, Callable
-from typing import Any, NoReturn
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import structlog
 from aiohttp import web
+from arq import func as arq_func
 from arq.connections import ArqRedis, RedisSettings, create_pool
 from arq.cron import CronJob, cron
 from arq.worker import Worker as ArqWorker
@@ -39,11 +41,14 @@ from prometheus_client import start_http_server as start_prometheus_server
 
 from core.config import BootstrapSettings, init_settings
 from core.openbao import OpenBaoClient
+from core.queue_names import get_queue_name
 from services.worker.worker_settings import (
-    get_queue_name,
     init_worker_settings_from_bao,
     settings,
 )
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Structlog setup
@@ -102,7 +107,7 @@ logger: structlog.stdlib.BoundLogger = structlog.get_logger("OpenZync.worker")
 # ═════════════════════════════════════════════════════════════════════════════
 
 from services.worker.tasks.audit_log import write_audit_log
-from services.worker.tasks.deliver_webhook import deliver_webhook
+from services.worker.tasks.deliver_webhook import MAX_ATTEMPTS, deliver_webhook
 from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 from workers.tasks.compute_observations import compute_observations
 from workers.tasks.embed_episode import embed_episode
@@ -141,6 +146,16 @@ LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     extract_blob_text,  # blob text extraction — OCR/PDF, low priority
 ]
 """Tasks assigned to the low-priority queue (scheduled batch)."""
+
+TASK_MAX_TRIES: dict[str, int] = {
+    deliver_webhook.__name__: MAX_ATTEMPTS,
+}
+"""Per-task ARQ retry overrides.
+
+``deliver_webhook`` is the only task that drives its own backoff through
+ARQ's ``Retry`` (every other task uses the explicit ``@with_retry``
+decorator), so it is the only one that needs ARQ-level retries.
+"""
 
 # note: SIGTERM/SIGINT are handled by ARQ itself (Worker.async_run installs
 # its own handlers) — a custom loop.add_signal_handler here replaced ARQ's
@@ -203,8 +218,9 @@ async def monitor_queue_depth(redis: ArqRedis, interval: int = 15) -> None:
     while True:
         for queue_name in queue_names:
             try:
-                # ARQ stores pending jobs in a Redis sorted set: {queue_name}:jobs
-                depth = await redis.zcard(f"{queue_name}:jobs")  # type: ignore[arg-type]
+                # ARQ stores pending jobs in a sorted set named exactly the
+                # queue name (arq/connections.py: pipe.zadd(_queue_name, ...)).
+                depth = await redis.zcard(queue_name)  # type: ignore[arg-type]
             except Exception:
                 depth = None
 
@@ -212,6 +228,39 @@ async def monitor_queue_depth(redis: ArqRedis, interval: int = 15) -> None:
                 worker_queue_depth.labels(queue_name=queue_name).set(depth)
 
         await asyncio.sleep(interval)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Helper: RLS-scoped session factory
+# ═════════════════════════════════════════════════════════════════════════════
+
+
+def rls_scoped_session_factory(
+    factory: async_sessionmaker[AsyncSession],
+) -> Callable[[], AbstractAsyncContextManager[AsyncSession]]:
+    """Wrap a session factory so every worker session starts tenant-free.
+
+    The worker shares one connection pool across every task, and a
+    session-scoped ``app.org_id`` outlives the transaction on the pooled
+    connection.  Initialising the context to an **empty** tenant when the
+    session is opened makes the pool fail closed: a task that forgets to
+    bind its tenant sees no rows at all instead of another org's rows.
+
+    Args:
+        factory: The raw session factory bound to the worker's engine.
+
+    Returns:
+        A callable that opens a session with a clean RLS context.
+    """
+    from core import rls
+
+    @asynccontextmanager
+    async def _session() -> AsyncIterator[AsyncSession]:
+        async with factory() as session:
+            await rls.init_context(session, None)
+            yield session
+
+    return _session
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -249,7 +298,9 @@ def create_arq_worker(
     return ArqWorker(
         ctx=ctx if ctx is not None else {},
         redis_settings=redis_settings,
-        functions=functions,
+        functions=[
+            arq_func(f, max_tries=TASK_MAX_TRIES.get(f.__name__)) for f in functions
+        ],
         queue_name=get_queue_name(settings.ENV, queue_name),
         max_jobs=concurrency,
         job_timeout=timeout,
@@ -259,6 +310,13 @@ def create_arq_worker(
         on_job_end=on_job_end,
         on_shutdown=on_shutdown,
         cron_jobs=cron_jobs if cron_jobs is not None else [],
+        # max_tries=1: the explicit @with_retry decorators own the retry
+        # policy — ARQ's default of 5 would stack on top of them (and on the
+        # LLM backend's own retries) for up to 45 provider calls per episode.
+        # Safe only because the reconcile cron now re-enqueues repair jobs to
+        # a queue a worker actually reads — that cron is the crash-recovery
+        # safety net this setting gives up.
+        max_tries=1,
     )
 
 
@@ -270,19 +328,23 @@ def create_arq_worker(
 async def on_job_end(ctx: dict[str, Any]) -> None:
     """Log and record Prometheus metrics when a job ends.
 
-    Called by ARQ after a job completes (success or failure).
-    The ``ctx`` dict may contain ``job_id`` depending on ARQ version,
-    but we always read it from the context.
+    Called by ARQ after a job completes — for failed jobs too.  The task
+    function and this callback share the same ``ctx`` dict, so the
+    ``task_type`` / ``org_id`` / ``trace_id`` / ``runtime`` / ``status``
+    keys written by the :func:`with_task_metrics` decorator are visible
+    here.
 
     Args:
         ctx: ARQ worker context dict (includes ``task_type``, ``org_id``,
-            ``trace_id`` — populated by each task function).
+            ``trace_id``, ``runtime`` and ``status`` — populated by each
+            task function).
     """
     job_id = ctx.get("job_id", "unknown")
     task_type = ctx.get("task_type", "unknown")
     org_id = ctx.get("org_id", "unknown")
     trace_id = ctx.get("trace_id", "unknown")
     duration_s: float = ctx.get("runtime", 0.0)
+    status: str = ctx.get("status", "success")
 
     logger.info(
         "job.completed",
@@ -290,15 +352,16 @@ async def on_job_end(ctx: dict[str, Any]) -> None:
         org_id=org_id,
         task_type=task_type,
         job_id=job_id,
+        status=status,
         duration_ms=round(duration_s * 1000),
     )
 
-    worker_tasks_total.labels(task_type=task_type, status="success").inc()
+    worker_tasks_total.labels(task_type=task_type, status=status).inc()
     worker_task_duration_seconds.labels(task_type=task_type).observe(duration_s)
     worker_tasks_per_org.labels(
         org_id=org_id,
         task_type=task_type,
-        status="success",
+        status=status,
     ).inc()
 
 
@@ -455,14 +518,17 @@ async def main() -> NoReturn:
     # One engine per worker process, shared across all task invocations.
     # Eliminates per-task connection churn that would exhaust PostgreSQL's
     # max_connections at scale.
+    # The pool size comes from the runtime settings so the worker draws
+    # from the same budget as the API: replicas x (pool_size + max_overflow)
+    # must stay below Postgres max_connections.
     from core.db import get_async_session, init_db_engine
 
     db_engine = init_db_engine(
         str(settings.DATABASE_URL),
-        pool_size=10,
-        max_overflow=5,
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
     )
-    db_session_factory = get_async_session(db_engine)
+    db_session_factory = rls_scoped_session_factory(get_async_session(db_engine))
 
     # ── Graph backend dispatcher ──────────────────────────────────────────
     # Single app-level registry of backend classes.  Per-org resolution

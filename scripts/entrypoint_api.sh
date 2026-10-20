@@ -67,4 +67,13 @@ log "DATABASE_URL set: $(echo "$OZ_DATABASE_URL" | sed 's|://[^:]*:[^@]*@|://***
 log "SECRET_KEY set: ${OZ_SECRET_KEY:+yes (length=${#OZ_SECRET_KEY})}"
 
 log "Starting uvicorn ..."
-exec uvicorn services.api.asgi:app --host 0.0.0.0 --port 8000 --workers "${UVICORN_WORKERS:-1}"
+# --proxy-headers makes uvicorn rewrite scope["client"] from X-Forwarded-For
+# so the per-IP rate limiters and the audit log see the real client instead
+# of the reverse proxy.  Only peers listed in --forwarded-allow-ips may set
+# that header — an unset OZ_TRUSTED_PROXY_IPS falls back to 127.0.0.1
+# (uvicorn's own default), never to "*", so a client-supplied
+# X-Forwarded-For from an arbitrary peer is ignored.
+exec uvicorn services.api.asgi:app --host 0.0.0.0 --port 8000 \
+    --workers "${UVICORN_WORKERS:-1}" \
+    --proxy-headers \
+    --forwarded-allow-ips="${OZ_TRUSTED_PROXY_IPS:-127.0.0.1}"

@@ -28,13 +28,13 @@ from core.arq import get_arq
 from core.config import get_settings
 from core.events import EventType
 from core.exceptions import NotFoundError
+from core.queue_names import get_queue_name
 from core.sorting import SortSpec
 from repositories.fact_repository import FactRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
 from schemas.facts import FactBatchResponse, FactResponse, FactTriple
 from services.webhook_service import WebhookService
-from services.worker.worker_settings import get_queue_name
 
 logger = logging.getLogger(__name__)
 

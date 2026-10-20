@@ -186,7 +186,9 @@ class TestEmbedFact:
         class _WrongDimClient:
             """Stands in for the module-level ``httpx.AsyncClient``."""
 
-            async def post(self, url: str, json: dict | None = None, **_kwargs: object) -> _WrongDimResponse:
+            async def post(
+                self, url: str, json: dict | None = None, **_kwargs: object
+            ) -> _WrongDimResponse:
                 return _WrongDimResponse(len((json or {}).get("input", [])))
 
         db = self._make_db()
@@ -271,6 +273,128 @@ class TestEmbedFact:
             org_id=_ORG_ID,
             content=None,
         )
+
+    # ── RLS tenant context ────────────────────────────────────────────────
+
+    @pytest.mark.asyncio
+    async def test_tenant_is_bound_before_the_fact_is_read(
+        self, embedder: AsyncMock
+    ) -> None:
+        """The ``app.org_id`` binding happens before the fact is read.
+
+        Under enforced row-level security a session that queries first and
+        binds second sees zero rows — the task would embed nothing and
+        still report success.
+
+        The binding is transaction-local and carries all three GUCs, so it
+        cannot outlive the transaction nor stand on the pooled connection.
+        """
+        db = self._make_db()
+        row = MagicMock()
+        row.__getitem__.return_value = "fact content from database"
+        db.execute.return_value.one_or_none.return_value = row
+
+        from workers.tasks.embed_fact import embed_fact
+
+        await embed_fact(
+            ctx=self._ctx(db),
+            fact_id=_FACT_ID,
+            org_id=_ORG_ID,
+            content=None,
+        )
+
+        calls = db.execute.await_args_list
+        assert "app.org_id" in str(calls[0].args[0])
+        assert calls[0].args[1] == {
+            "org_id": _ORG_ID,
+            "bypass_rls": "false",
+            "lookup_code": "",
+        }
+        assert "SELECT content FROM facts" in str(calls[1].args[0])
+
+    @pytest.mark.asyncio
+    async def test_tenant_context_is_released_before_the_session_closes(
+        self, embedder: AsyncMock
+    ) -> None:
+        """The release rolls back — it issues no reset statement.
+
+        The context is bound transaction-locally, so the end of the
+        transaction already discarded it: there is nothing left standing
+        on the pooled connection to reset.  The release therefore drops
+        the remembered context and rolls back, and nothing else.
+        """
+        db = self._make_db()
+        row = MagicMock()
+        row.__getitem__.return_value = "fact content from database"
+        db.execute.return_value.one_or_none.return_value = row
+
+        ops: list[str] = []
+        query_result = db.execute.return_value
+
+        async def _execute(*args: object, **kwargs: object) -> object:
+            ops.append("execute")
+            return query_result
+
+        async def _commit() -> None:
+            ops.append("commit")
+
+        async def _rollback() -> None:
+            ops.append("rollback")
+
+        db.execute.side_effect = _execute
+        db.commit.side_effect = _commit
+        db.rollback.side_effect = _rollback
+
+        from workers.tasks.embed_fact import embed_fact
+
+        await embed_fact(
+            ctx=self._ctx(db),
+            fact_id=_FACT_ID,
+            org_id=_ORG_ID,
+            content=None,
+        )
+
+        # The read session: bind → select → release (rollback).
+        # The write session: bind → update → commit → release (rollback).
+        assert ops == [
+            "execute",
+            "execute",
+            "rollback",
+            "execute",
+            "execute",
+            "commit",
+            "rollback",
+        ]
+        # The release issued no statement of its own — the last statement
+        # is the write, not a context reset.
+        assert "set_config('app.org_id', ''" not in str(
+            db.execute.await_args_list[-1].args[0]
+        )
+
+    @pytest.mark.asyncio
+    async def test_missing_org_id_fails_loudly(self, embedder: AsyncMock) -> None:
+        """No org_id → RuntimeError, before anything is read or written.
+
+        The tenant context cannot be derived without an org, and a task
+        that proceeded without one would write nothing under enforced RLS
+        and still report success.
+        """
+        db = self._make_db()
+
+        from workers.tasks.embed_fact import embed_fact
+
+        with (
+            patch("workers.tasks.base.asyncio.sleep", new=AsyncMock()),
+            pytest.raises(RuntimeError, match="org_id"),
+        ):
+            await embed_fact(
+                ctx=self._ctx(db),
+                fact_id=_FACT_ID,
+                content=_CONTENT,
+            )
+
+        db.execute.assert_not_called()
+        embedder.assert_not_awaited()
 
 
 def _exc_with_status(status_code: int) -> Exception:

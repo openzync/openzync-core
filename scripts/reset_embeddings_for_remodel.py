@@ -101,9 +101,9 @@ async def run(db_url: str, *, dry_run: bool) -> None:
     engine = init_db_engine(db_url, pool_size=2, max_overflow=1)
     try:
         async with get_async_session(engine)() as db:
-            # Cross-org maintenance: the RLS policies call
-            # current_setting('app.org_id') without missing_ok, which
-            # raises when the GUC is unset. Same bypass the reconcile cron uses.
+            # Cross-org maintenance: the RLS policies read
+            # NULLIF(current_setting('app.org_id', true), ''), so an unset
+            # context matches no rows.  Same bypass the reconcile cron uses.
             await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
 
             episodes, facts = await _count_rows(db)

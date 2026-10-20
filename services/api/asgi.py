@@ -52,19 +52,6 @@ except RuntimeError:
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as _pool:
         _pool.submit(lambda: asyncio.run(_bootstrap())).result()
 
-# ═══════════════════════════════════════════════════════════════════════════
-# Monkey-patch: Fix FastAPI 0.115.x regression where `-> None` annotation
-# causes `assert is_body_allowed_for_status_code(204)` to fail because
-# `response_model` is set to `<class 'NoneType'>` (truthy) instead of `None`.
-# This is a pre-existing issue unrelated to the OpenBao migration.
-# TODO: Remove when FastAPI dependency is pinned to a fixed version (>0.115.6).
-# ═══════════════════════════════════════════════════════════════════════════
-import fastapi.routing as _fr_cb  # noqa: E402
-
-# Patch the reference inside fastapi.routing (where it's used in assertions)
-_fr_cb.is_body_allowed_for_status_code = lambda code: True
-# ═══════════════════════════════════════════════════════════════════════════
-
 from services.api.main import create_app  # noqa: E402
 
 app = create_app()

@@ -602,7 +602,7 @@ async def process_facts_output(
     # its own retry cycle.
     if arq_redis is not None and persisted_ids:
         try:
-            from services.worker.worker_settings import get_queue_name
+            from core.queue_names import get_queue_name
             from services.worker.worker_settings import settings as w_settings
 
             for fact_obj in new_facts:

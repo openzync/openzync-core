@@ -17,7 +17,7 @@ import uuid
 from typing import TYPE_CHECKING, cast
 
 import structlog
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from core.exceptions import EpisodeNotFoundError, GraphBackendUnavailableError
 from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
@@ -28,6 +28,7 @@ from workers.tasks.base import (
     ENRICHMENT_STRUCTURED_EXTRACTION,
     LLM_INVALIDATION_BIT,
     with_retry,
+    with_task_metrics,
 )
 
 if TYPE_CHECKING:
@@ -95,6 +96,7 @@ async def _resolve_existing_fact_refs(
     return ref_to_fact
 
 
+@with_task_metrics
 @with_retry(max_retries=3, base_delay_s=2.0)
 async def enrich_episode(
     ctx: object,
@@ -152,6 +154,7 @@ async def enrich_episode(
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
 
     # Lazy imports — ARQ workers run in a separate process.
+    from core import rls
     from core.config import settings
     from core.db import get_async_session
     from core.llm import build_cache_config, resolve_backend
@@ -201,10 +204,10 @@ async def enrich_episode(
     try:
         async with session_factory() as db:
             # ── 1-2. Set RLS context + idempotency check ─────────────────
-            await db.execute(
-                text("SELECT set_config('app.org_id', :oid, true)"),
-                {"oid": org_id},
-            )
+            # The binding is remembered by the session, so the commit at the
+            # end of the task re-applies it — a bare ``set_config`` would
+            # leave the session un-tenanted after that commit.
+            await rls.set_tenant_context(db, org_id)
 
             episode_repo = EpisodeRepository(db)
             episode = await episode_repo.get_by_id_for_update(uuid.UUID(episode_id))

@@ -48,6 +48,8 @@ from sqlalchemy.ext.asyncio import (
 )
 from sqlalchemy.util.concurrency import await_only
 
+from core.rls import RlsAsyncSession
+
 # Re-export the RLS-aware dependency so `from core.db import get_db` resolves
 # to the same function as `from dependencies.db import get_db`. The canonical
 # definition lives in dependencies/db.py (sets tenant isolation context,
@@ -57,6 +59,12 @@ from dependencies.db import get_db as get_db
 
 def init_db_engine(database_url: str, **kwargs: Any) -> AsyncEngine:
     """Create and return an async SQLAlchemy engine.
+
+    The connection pool is sized from the runtime settings
+    (``DB_POOL_SIZE`` / ``DB_MAX_OVERFLOW``) so that every process in a
+    scaled-out deployment draws from the same, explicit budget.  The
+    sizing rule is ``replicas x (pool_size + max_overflow) <
+    max_connections`` — see the Helm chart values for the worked example.
 
     Args:
         database_url: PostgreSQL connection string.
@@ -75,11 +83,14 @@ def init_db_engine(database_url: str, **kwargs: Any) -> AsyncEngine:
             "operations. Got: " + database_url
         )
 
+    from core.config import get_settings
+
+    settings = get_settings()
     engine = create_async_engine(
         database_url,
         pool_pre_ping=True,
-        pool_size=kwargs.pop("pool_size", 20),
-        max_overflow=kwargs.pop("max_overflow", 10),
+        pool_size=kwargs.pop("pool_size", settings.DB_POOL_SIZE),
+        max_overflow=kwargs.pop("max_overflow", settings.DB_MAX_OVERFLOW),
         pool_recycle=kwargs.pop("pool_recycle", 3600),
         echo=kwargs.pop("echo", False),
         connect_args={"statement_cache_size": 0},
@@ -149,6 +160,11 @@ def get_async_session(
 ) -> async_sessionmaker[AsyncSession]:
     """Create a session factory bound to the given engine.
 
+    The factory produces :class:`core.rls.RlsAsyncSession` instances, so
+    every session re-binds its tenant context to the transaction that
+    follows a commit — the tenant context is bound transaction-locally and
+    a bare :class:`AsyncSession` would lose it at the next ``COMMIT``.
+
     Args:
         engine: An initialised :class:`AsyncEngine`.
 
@@ -158,7 +174,7 @@ def get_async_session(
     """
     return async_sessionmaker(
         bind=engine,
-        class_=AsyncSession,
+        class_=RlsAsyncSession,
         expire_on_commit=False,
         join_transaction_mode="create_savepoint",
     )

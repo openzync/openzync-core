@@ -16,6 +16,9 @@ data:
   OZ_JWT_REFRESH_TOKEN_TTL_DAYS: {{ .Values.config.jwtRefreshTokenTtlDays | quote }}
   OZ_RATE_LIMIT_IP_MAX: {{ .Values.config.rateLimitIpMax | quote }}
   OZ_RATE_LIMIT_WINDOW_SEC: {{ .Values.config.rateLimitWindowSec | quote }}
+  OZ_DB_POOL_SIZE: {{ .Values.config.dbPoolSize | quote }}
+  OZ_DB_MAX_OVERFLOW: {{ .Values.config.dbMaxOverflow | quote }}
+  OZ_TRUSTED_PROXY_IPS: {{ .Values.config.trustedProxyIps | quote }}
   OZ_CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
   OZ_OTLP_ENDPOINT: {{ .Values.config.otlpEndpoint | quote }}
   OLLAMA_BASE_URL: {{ .Values.config.ollamaBaseUrl | quote }}

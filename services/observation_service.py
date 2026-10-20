@@ -63,7 +63,7 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.exceptions import GraphBackendUnavailableError
+from core.exceptions import ExternalServiceError, GraphBackendUnavailableError
 from models.graph_observation import ObservationType
 from packages.graph_backend.interface import GraphBackend
 
@@ -245,11 +245,23 @@ class ObservationService:
         self._assert_backend()
         counts: dict[str, int] = {}
 
-        # ── 1. Co-occurrence ──────────────────────────────────────────────────
-        co_pairs = await self.detect_co_occurrences(project_id, organization_id)
-        count = await self._persist_co_occurrences(
-            co_pairs, project_id, organization_id, llm_backend,
-        )
+        # ── 1. Co-occurrence (fail-open) ─────────────────────────────────────
+        # A graph-timeout here must not abort temporal/behavioral
+        # detection — record zero and continue.
+        try:
+            co_pairs = await self.detect_co_occurrences(project_id, organization_id)
+            count = await self._persist_co_occurrences(
+                co_pairs, project_id, organization_id, llm_backend,
+            )
+        except ExternalServiceError as exc:
+            logger.warning(
+                "observation_service.co_occurrences_skipped",
+                project_id=str(project_id),
+                organization_id=str(organization_id),
+                min_co_count=self._min_co_count,
+                error=str(exc),
+            )
+            count = 0
         counts[str(ObservationType.CO_OCCURRENCE)] = count
         logger.info(
             "observation_service.co_occurrences_detected",

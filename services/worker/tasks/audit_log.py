@@ -14,11 +14,14 @@ from uuid import UUID
 import orjson
 import structlog
 
+from core.rls import release_tenant_context
 from services.audit_log_service import AuditLogService
+from services.worker.tasks.base import with_task_metrics
 
 logger = logging.getLogger(__name__)
 
 
+@with_task_metrics
 async def write_audit_log(
     ctx: dict[str, Any],
     *,
@@ -52,6 +55,7 @@ async def write_audit_log(
     if trace_id:
         structlog.contextvars.bind_contextvars(trace_id=trace_id)
 
+    from core import rls
     from core.config import settings
     from core.db import get_async_session, init_db_engine
 
@@ -67,17 +71,32 @@ async def write_audit_log(
 
     try:
         async with _session_factory() as db_session:
-            service = AuditLogService(db_session)
-            await service.log_action(
-                organization_id=org_uuid,
-                actor_id=actor_id,
-                actor_type=actor_type,
-                action=action,
-                resource_type=resource_type,
-                resource_id=resource_id,
-                details=parsed_details,
-                ip_address=ip_address,
-            )
+            try:
+                # ``audit_logs`` is tenant-scoped — initialise the context
+                # before the row is written, or the insert is rejected by
+                # the policy.  An organisation-less row (a platform-level
+                # audit of an unauthenticated request) belongs to no tenant,
+                # and the tightened policy admits no such row to a
+                # tenant-scoped session: it is written under an explicit
+                # RLS bypass, on a session that does nothing else.
+                await rls.init_context(
+                    db_session, str(org_uuid) if org_uuid is not None else None
+                )
+                if org_uuid is None:
+                    await rls.set_bypass_rls(db_session, True)
+                service = AuditLogService(db_session)
+                await service.log_action(
+                    organization_id=org_uuid,
+                    actor_id=actor_id,
+                    actor_type=actor_type,
+                    action=action,
+                    resource_type=resource_type,
+                    resource_id=resource_id,
+                    details=parsed_details,
+                    ip_address=ip_address,
+                )
+            finally:
+                await release_tenant_context(db_session)
     except Exception:
         logger.exception(
             "audit_task.write_failed",

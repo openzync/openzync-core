@@ -144,6 +144,27 @@ class Settings(BaseModel):
     DATABASE_URL: str = Field(
         description="PostgreSQL connection string used by SQLAlchemy async engine.",
     )
+    DB_POOL_SIZE: int = Field(
+        default=5,
+        ge=1,
+        le=100,
+        description=(
+            "SQLAlchemy pool size per process.  Sizing rule: "
+            "replicas x (pool_size + max_overflow) < Postgres max_connections.  "
+            "The default (5 + 1) keeps the Helm maximum (10 API + 5 worker "
+            "replicas) at 90 connections, under the Postgres default of 100."
+        ),
+    )
+    DB_MAX_OVERFLOW: int = Field(
+        default=1,
+        ge=0,
+        le=100,
+        description=(
+            "Extra connections a process may open above DB_POOL_SIZE before "
+            "requests queue.  Counted in the replicas x (pool_size + "
+            "max_overflow) < max_connections budget."
+        ),
+    )
 
     # ── Redis / Caching ───────────────────────────────────────────────────
     REDIS_URL: str = Field(
@@ -192,6 +213,17 @@ class Settings(BaseModel):
             "TrustedHostMiddleware in production "
             "(e.g. 'api.openzync.tech,localhost:3000'). "
             "Accepts '*' in development."
+        ),
+    )
+    TRUSTED_PROXY_IPS: str = Field(
+        default="127.0.0.1",
+        description=(
+            "Peers whose X-Forwarded-For header is trusted as the client IP. "
+            "Consumed by uvicorn (--forwarded-allow-ips) so that the "
+            "per-IP rate limiters and the audit log record the real client "
+            "instead of the reverse proxy.  A CIDR range is allowed. "
+            "'*' is rejected — trusting every peer lets a client forge its "
+            "own IP and bypass the rate limiters."
         ),
     )
 
@@ -313,6 +345,31 @@ class Settings(BaseModel):
     )
 
     # ── Validators ────────────────────────────────────────────────────────
+
+    @field_validator("TRUSTED_PROXY_IPS")
+    @classmethod
+    def _reject_wildcard_trusted_proxies(cls, v: str) -> str:
+        """Reject a wildcard trusted-proxy list.
+
+        Trusting every peer means any client can set ``X-Forwarded-For``
+        and pick its own rate-limit bucket, which defeats the per-IP
+        limiters.  Only explicit addresses or CIDR ranges are allowed.
+
+        Args:
+            v: The configured trusted-proxy list.
+
+        Returns:
+            The validated value.
+
+        Raises:
+            ValueError: If the list contains a wildcard.
+        """
+        if "*" in v:
+            raise ValueError(
+                "TRUSTED_PROXY_IPS must not contain '*' — list the proxy "
+                "addresses or CIDR ranges explicitly"
+            )
+        return v
 
     @field_validator("PROMPT_CACHING_ANTHROPIC_TTL", mode="before")
     @classmethod

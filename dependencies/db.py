@@ -29,6 +29,13 @@ from collections.abc import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.requests import Request
 
+from core.rls import (
+    init_context,
+    release_tenant_context,
+    set_bypass_rls,
+    set_tenant_context,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -36,9 +43,19 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
     """FastAPI dependency that provides an async DB session.
 
     Retrieves the session factory from ``request.app.state.db_session_factory``,
-    opens a session, and yields it.  On exit, the session is closed.  Commit
-    and rollback are **not** handled here — use ``async with session.begin()``
-    in the service layer, or call ``await session.commit()`` explicitly.
+    opens a session, and yields it.  On exit, the session is closed.
+
+    **Commits.**  The request's *data* is the service layer's job — use
+    ``async with session.begin()`` in the service layer, or call
+    ``await session.commit()`` explicitly.  This dependency commits the
+    request's data once, after the handler returns.
+
+    The RLS tenant context is bound **transaction-locally**
+    (``core.rls``), so it is discarded by any commit — including the
+    commit this dependency makes at the end of the request.  The session
+    is an :class:`core.rls.RlsAsyncSession`, which re-binds the context to
+    the transaction that follows every commit, so a mid-request commit
+    never leaves the session un-tenanted.
 
     The session factory is expected to be an
     ``async_sessionmaker[AsyncSession]`` instance created during the app's
@@ -49,11 +66,12 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
 
     RLS context behavior by ``request.state.org_id`` value:
 
-    * ``None`` — public endpoint, no ``set_config`` at all.
+    * ``None`` — public endpoint: the context is initialised with an
+      **empty** tenant, so no org-scoped row is visible and no
+      org-scoped write can succeed.
     * ``""`` / whitespace-only — fail-closed, treated exactly like
-      ``None`` (no ``set_config`` at all, warning logged).
-    * Valid UUID string — ``app.org_id`` set plus ``app.bypass_rls``
-      paired to ``'false'``.
+      ``None`` (empty tenant, warning logged).
+    * Valid UUID string — ``app.org_id`` set to that organization.
 
     Raises:
         RuntimeError: If ``db_session_factory`` has not been set on
@@ -71,40 +89,35 @@ async def get_db(request: Request) -> AsyncGenerator[AsyncSession, None]:
         )
 
     async with factory() as session:
-        # ── Apply RLS context from auth middleware ─────────────────────
-        # Invariant: PUBLIC endpoints (signup/join) run with NO org context
-        # — ``org_id`` is None here, so no set_config runs and the query is
-        # issued as the app DB role.  This is safe only while that role OWNS
-        # the tables (verified: ``openzep`` owns ``organizations``/``users``,
-        # ``rls_forced = false`` → the table owner bypasses RLS).  If the
-        # role ever changes to a non-owner, or FORCE ROW SECURITY is enabled
-        # on those tables, signup/join will silently fail — check this
-        # invariant on deployment.
+        # ── Apply the RLS context ────────────────────────────
+        # The context is bound TRANSACTION-LOCALLY: PostgreSQL discards
+        # it when the transaction ends, so it can never survive onto a
+        # pooled connection that the next request will use.  A statement
+        # that runs without a bound context sees no rows at all — the
+        # policies are fail-closed — so a lost context can never widen a
+        # result set.
+        #
+        # The price is that a mid-request COMMIT discards the context.
+        # ``RlsAsyncSession`` pays that price: it remembers the context
+        # and re-applies it to the session's next transaction, so the
+        # session keeps its own tenant on whichever connection it next
+        # uses.
         org_id: str | None = getattr(request.state, "org_id", None)
-        if org_id is None:
-            pass
-        elif not org_id.strip():
+        if org_id is not None and not org_id.strip():
             logger.warning(
                 "skipping empty app.org_id RLS context: path=%s",
                 request.url.path,
             )
-        else:
-            from sqlalchemy import text
-
-            await session.execute(
-                text("SELECT set_config('app.org_id', :org_id, true)"),
-                {"org_id": org_id},
-            )
-            await session.execute(
-                text("SELECT set_config('app.bypass_rls', 'false', true)"),
-            )
-
+            org_id = None
         try:
+            await init_context(session, org_id)
             yield session
             await session.commit()
         except Exception:
             await session.rollback()
             raise
+        finally:
+            await release_tenant_context(session)
 
 
 async def get_db_superadmin(
@@ -122,6 +135,13 @@ async def get_db_superadmin(
     check raises (non-superadmin, non-platform org, Redis/DB error), no
     session is yielded and the bypass is never set.  Never enable the
     bypass from the org_id/JWT alone.
+
+    The bypass is bound **transaction-locally** (``core.rls``), so it is
+    discarded by any commit, including a mid-request one.  The session is
+    an :class:`core.rls.RlsAsyncSession`, which re-binds the whole
+    context (platform org + bypass) to the transaction that follows every
+    commit, so the bypass survives a mid-request commit and cannot
+    outlive the transaction.
 
     Use ONLY in ``routers/admin_system.py`` and the
     ``approve_org`` transaction.
@@ -157,40 +177,36 @@ async def get_db_superadmin(
             "org_id and user_id must be present on request.state."
         )
 
-    # ── 1. Verify superadmin (DB-verified role) on a clean session ────────
+    # ── 1. Verify superadmin (DB-verified role) on a clean session
     async with factory() as verify_session:
-        from sqlalchemy import text
-
         # Same non-bypass RLS context as get_db: the role lookup must run
-        # under the role's own row visibility.  If the app DB role ever
-        # stops bypassing RLS implicitly (or FORCE ROW SECURITY is enabled),
-        # the lookup fails loudly here instead of silently mis-verifying.
-        await verify_session.execute(
-            text("SELECT set_config('app.org_id', :org_id, true)"),
-            {"org_id": org_id},
-        )
-        await verify_session.execute(
-            text("SELECT set_config('app.bypass_rls', 'false', true)"),
-        )
-        await _ensure_superadmin(request, org_id, user_id, verify_session)
+        # under the role's own row visibility.  Under FORCE ROW LEVEL
+        # SECURITY the lookup either finds the superadmin row (the session
+        # is bound to the platform org) or fails loudly here instead of
+        # silently mis-verifying.
+        try:
+            await init_context(verify_session, org_id)
+            await _ensure_superadmin(request, org_id, user_id, verify_session)
+        finally:
+            await release_tenant_context(verify_session)
 
-    # ── 2. Open the bypass session only now that the check passed ──────────
+    # ── 2. Open the bypass session only now that the check passed
     async with factory() as session:
-        from sqlalchemy import text
-
-        await session.execute(
-            text("SELECT set_config('app.bypass_rls', 'true', true)"),
-        )
-        await session.execute(
-            text("SELECT set_config('app.org_id', :org_id, true)"),
-            {"org_id": str(PLATFORM_ORG_ID)},
-        )
+        # Transaction-local scope: the bypass cannot outlive the
+        # transaction, so it cannot stand on a pooled connection that the
+        # next request will use.  ``RlsAsyncSession`` re-binds it to the
+        # transaction that follows every commit, so the bypass survives a
+        # mid-request commit too.
+        await set_tenant_context(session, PLATFORM_ORG_ID)
+        await set_bypass_rls(session, True)
         try:
             yield session
             await session.commit()
         except Exception:
             await session.rollback()
             raise
+        finally:
+            await release_tenant_context(session)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

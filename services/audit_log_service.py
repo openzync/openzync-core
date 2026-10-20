@@ -102,7 +102,11 @@ class AuditLogService:
         ``status_code``, ``actor_id``.
 
         Args:
-            organization_id: Filter by organization (from auth context).
+            organization_id: Filter by organization.  ``None`` means
+                *platform-wide* — the caller's own isolation decides what is
+                visible (an RLS-bypass session sees every row, including the
+                platform-level rows that carry no organization).  A concrete
+                UUID restricts the result to that organization.
             action: Exact-match filter on action.
             actor_id: Exact-match filter on actor.
             actor_type: Exact-match filter on actor type.

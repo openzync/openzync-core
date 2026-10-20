@@ -9,10 +9,11 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 
-from sqlalchemy import func, select
+from sqlalchemy import func, literal_column, or_, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core import rls
 from core.sorting import SortSpec, resolve_order_by
 from models.api_key import ApiKey
 
@@ -22,6 +23,15 @@ API_KEY_SORTABLE_COLUMNS = {
     "last_used_at": ApiKey.last_used_at,
 }
 """Sortable columns for API keys (default created_at/desc)."""
+
+LAST_USED_WRITE_INTERVAL = "interval '5 minutes'"
+"""Minimum age of ``last_used_at`` before a usage write is issued.
+
+The authentication middleware touches ``last_used_at`` on every API-key
+request.  Writing it unconditionally means one DB write per request; the
+write is therefore conditional — it only lands when the stored value is
+unset or older than this interval.
+"""
 
 
 class ApiKeyRepository:
@@ -187,32 +197,53 @@ class ApiKeyRepository:
         candidate lookup. The full hash verification (with salt) happens in
         the service layer.
 
+        Runs under a scoped RLS bypass: the lookup happens on a
+        short-lived session that has no tenant context yet — the key IS
+        the credential, and the org it belongs to is only known after the
+        row is read.
+
         Args:
             lookup_hash: Unsalted SHA-256 hex digest of the API key prefix.
 
         Returns:
             The ApiKey if found and not soft-deleted, or ``None``.
         """
-        result = await self._db.execute(
-            select(ApiKey).where(
-                ApiKey.lookup_hash == lookup_hash,
-                ApiKey.is_revoked.is_(False),
+        async with rls.rls_bypass(self._db):
+            result = await self._db.execute(
+                select(ApiKey).where(
+                    ApiKey.lookup_hash == lookup_hash,
+                    ApiKey.is_revoked.is_(False),
+                )
             )
-        )
-        return result.scalar_one_or_none()
+            return result.scalar_one_or_none()
 
     async def update_last_used(self, key_id: uuid.UUID) -> None:
         """Update the ``last_used_at`` timestamp for an API key.
 
         Called after every successful API key authentication to track key
-        usage for audit and rotation decisions.
+        usage for audit and rotation decisions.  The write is **conditional**:
+        the row is only touched when ``last_used_at`` is unset or older than
+        :data:`LAST_USED_WRITE_INTERVAL`, so a busy key does not produce one
+        DB write per request.
+
+        Runs under a scoped RLS bypass: the caller is the authentication
+        middleware, which writes on a short-lived session that has no
+        tenant context yet.
 
         Args:
             key_id: The API key UUID to update.
         """
-        await self._db.execute(
-            sa_update(ApiKey)
-            .where(ApiKey.id == key_id)
-            .values(last_used_at=func.now())
-        )
-        await self._db.flush()
+        async with rls.rls_bypass(self._db):
+            await self._db.execute(
+                sa_update(ApiKey)
+                .where(ApiKey.id == key_id)
+                .where(
+                    or_(
+                        ApiKey.last_used_at.is_(None),
+                        ApiKey.last_used_at
+                        < func.now() - literal_column(LAST_USED_WRITE_INTERVAL),
+                    )
+                )
+                .values(last_used_at=func.now())
+            )
+            await self._db.flush()

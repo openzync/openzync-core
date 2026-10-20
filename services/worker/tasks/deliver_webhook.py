@@ -17,6 +17,7 @@ from arq import Retry
 from core.config import get_settings
 from core.db import get_async_session, init_db_engine
 from models.webhook import WebhookDeliveryLog
+from services.worker.tasks.base import with_task_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ HTTP_TIMEOUT = 15.0
 """Seconds to wait for a consumer to respond with a 2xx status."""
 
 
+@with_task_metrics
 async def deliver_webhook(
     ctx: dict[str, Any],
     *,
@@ -35,13 +37,16 @@ async def deliver_webhook(
     body: str,
     event_type: str,
     signature: str,
-    attempt: int = 0,
 ) -> None:
     """Deliver a signed webhook payload to an external endpoint.
 
     Retries up to ``MAX_ATTEMPTS`` with exponential backoff on 5xx or
     network errors.  4xx responses are **not** retried (the consumer is
     rejecting the payload, retrying won't help).
+
+    The attempt number comes from ARQ's own ``job_try`` counter (1 on the
+    first try).  A counter passed as a job kwarg would be frozen at
+    enqueue time and therefore always read 0.
 
     Args:
         ctx: ARQ worker context.
@@ -50,9 +55,9 @@ async def deliver_webhook(
         body: Raw JSON payload string.
         event_type: Event type string (e.g. ``session.created``).
         signature: ``X-Webhook-Signature`` header value (pre-signed).
-        attempt: Zero-indexed attempt counter (passed explicitly since
-            ARQ does not expose a built-in retry count).
     """
+    attempt: int = int(ctx.get("job_try", 1))
+
     headers = {
         "Content-Type": "application/json",
         "X-Webhook-Signature": signature,

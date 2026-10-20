@@ -43,8 +43,8 @@ from uuid import UUID
 
 from core.config import get_settings
 from core.exceptions import ExternalServiceError
+from core.queue_names import get_queue_name
 from packages.graph_backend.postgres import PostgresGraphBackend
-from services.worker.worker_settings import get_queue_name
 
 if TYPE_CHECKING:
     from core.arq import ARQPool

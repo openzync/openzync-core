@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+
+from services.worker.worker_settings import WorkerSettings
 
 _EPISODE_ID = str(uuid4())
 _ORG_ID = str(uuid4())
@@ -62,7 +64,6 @@ class TestReconcileEnrichment:
         ctx: dict = {
             "db_session_factory": session_factory,
             "redis": arq_redis,
-            "_queue_name": "OpenZync:development:queue:low",
         }
 
         from workers.tasks.reconcile_enrichment import reconcile_enrichment
@@ -107,7 +108,6 @@ class TestReconcileEnrichment:
         ctx: dict = {
             "db_session_factory": session_factory,
             "redis": arq_redis,
-            "_queue_name": "OpenZync:development:queue:low",
         }
 
         from workers.tasks.reconcile_enrichment import reconcile_enrichment
@@ -137,7 +137,6 @@ class TestReconcileEnrichment:
         ctx: dict = {
             "db_session_factory": session_factory,
             "redis": arq_redis,
-            "_queue_name": "OpenZync:development:queue:low",
         }
 
         from workers.tasks.reconcile_enrichment import reconcile_enrichment
@@ -147,6 +146,60 @@ class TestReconcileEnrichment:
         assert "Re-enqueued" in result
         # Should enqueue: enrich_episode (LLM combined) + embed_episode + link_entities_to_episode
         assert arq_redis.enqueue_job.call_count >= 3
+
+    @pytest.mark.asyncio
+    async def test_target_queues_come_from_worker_settings(self) -> None:
+        """Enqueue targets are the worker's high / low queues, not literals.
+
+        ARQ never puts ``_queue_name`` in the task context, so the old
+        ``ctx.get("_queue_name")`` lookup always fell back to a hard-coded
+        ``OpenZync:development:queue:low`` that no production worker
+        consumes.  The targets now come from ``settings.high_queue_full``
+        and ``settings.low_queue_full``.
+        """
+        session_factory = MagicMock()
+        db = AsyncMock()
+        db.__aenter__.return_value = db
+        db.__aexit__.return_value = None
+        row = self._mock_row(enrichment_status=0)  # all bits missing
+        result = MagicMock()
+        result.all.return_value = [row]
+        db.execute.return_value = result
+        session_factory.return_value = db
+
+        arq_redis = AsyncMock()
+        arq_redis.zcard.return_value = 0
+        arq_redis.enqueue_job = AsyncMock()
+
+        ctx: dict = {
+            "db_session_factory": session_factory,
+            "redis": arq_redis,
+            # Decoy: ARQ never sets ``_queue_name`` in the task context.
+            "_queue_name": "OpenZync:decoy:queue:low",
+        }
+
+        prod_settings = WorkerSettings(
+            DATABASE_URL="postgresql+asyncpg://localhost:5432/test",
+            REDIS_URL="redis://localhost:6379/0",
+            ENV="prod",
+        )
+
+        from workers.tasks.reconcile_enrichment import reconcile_enrichment
+
+        with patch("services.worker.worker_settings._settings", prod_settings):
+            await reconcile_enrichment(ctx)
+
+        targets = {
+            call.args[0]: call.kwargs["_queue_name"]
+            for call in arq_redis.enqueue_job.await_args_list
+        }
+        # enrich_episode / embed_episode are high-priority, the entity
+        # linking pass is low-priority — both named by the worker settings.
+        assert targets["enrich_episode"] == "OpenZync:prod:queue:high"
+        assert targets["embed_episode"] == "OpenZync:prod:queue:high"
+        assert targets["link_entities_to_episode"] == "OpenZync:prod:queue:low"
+        # The development-only literal is gone.
+        assert "OpenZync:development:queue:low" not in targets.values()
 
     @pytest.mark.asyncio
     async def test_already_enriched_skipped(self) -> None:
@@ -169,7 +222,6 @@ class TestReconcileEnrichment:
         ctx: dict = {
             "db_session_factory": session_factory,
             "redis": arq_redis,
-            "_queue_name": "OpenZync:development:queue:low",
         }
 
         from workers.tasks.reconcile_enrichment import reconcile_enrichment
@@ -201,7 +253,6 @@ class TestReconcileEnrichment:
         ctx: dict = {
             "db_session_factory": session_factory,
             "redis": arq_redis,
-            "_queue_name": "OpenZync:development:queue:low",
         }
 
         from workers.tasks.reconcile_enrichment import reconcile_enrichment
@@ -235,7 +286,6 @@ class TestReconcileEnrichment:
         ctx: dict = {
             "db_session_factory": session_factory,
             "redis": arq_redis,
-            "_queue_name": "OpenZync:development:queue:low",
         }
 
         from workers.tasks.reconcile_enrichment import reconcile_enrichment
@@ -266,12 +316,11 @@ class TestReconcileEnrichment:
         ctx: dict = {
             "db_session_factory": session_factory,
             "redis": arq_redis,
-            "_queue_name": "OpenZync:development:queue:low",
         }
 
         from workers.tasks.reconcile_enrichment import reconcile_enrichment
 
-        with pytest.raises(Exception):
+        with pytest.raises(Exception, match="DB error"):
             await reconcile_enrichment(ctx)
 
     @pytest.mark.asyncio
@@ -295,7 +344,6 @@ class TestReconcileEnrichment:
         ctx: dict = {
             "db_session_factory": session_factory,
             "redis": arq_redis,
-            "_queue_name": "OpenZync:development:queue:low",
         }
 
         from workers.tasks.reconcile_enrichment import reconcile_enrichment
@@ -309,16 +357,16 @@ class TestReconcileEnrichment:
 class TestReconcileEnrichmentRls:
     """Cron RLS regression — both cross-org scans bypass RLS before querying.
 
-    The policies call ``current_setting('app.org_id')`` without
-    ``missing_ok``, which raises ``UndefinedObjectError`` when the GUC is
-    unset on the worker session (every tick failed at boot).  The fix sets
-    ``app.bypass_rls`` at the top of each scan session — fact-embedding
-    repair pass and stale-episode pass — and these tests pin that ordering.
+    The policies read ``NULLIF(current_setting('app.org_id', true), '')``,
+    so an unset context matches no rows — the bypass is what makes the
+    platform-wide scan possible.  The fix sets ``app.bypass_rls`` at the
+    top of each scan session — fact-embedding repair pass and
+    stale-episode pass — and these tests pin that ordering.
     """
 
     @pytest.mark.asyncio
     async def test_bypass_rls_precedes_both_scans(self) -> None:
-        """Each scan session opens with ``set_config('app.bypass_rls')``."""
+        """Each scan session opens with the RLS bypass enabled."""
         session_factory = MagicMock()
         db = AsyncMock()
         db.__aenter__.return_value = db
@@ -334,7 +382,6 @@ class TestReconcileEnrichmentRls:
         ctx: dict = {
             "db_session_factory": session_factory,
             "redis": arq_redis,
-            "_queue_name": "OpenZync:development:queue:low",
         }
 
         from workers.tasks.reconcile_enrichment import reconcile_enrichment
@@ -349,5 +396,17 @@ class TestReconcileEnrichmentRls:
         assert "facts" in stmts[1]
         assert "app.bypass_rls" in stmts[2]
         assert "episodes" in stmts[3]
-        # The bypass removes any need for the per-org GUC on these scans.
-        assert "app.org_id" not in " ".join(stmts)
+        # The bypass removes any need for the per-org GUC on these scans:
+        # every context binding enables the bypass and binds NO tenant —
+        # a stale tenant would narrow the platform-wide scan.
+        bindings = [
+            call.args[1]
+            for call in db.execute.await_args_list
+            if len(call.args) > 1
+            and isinstance(call.args[1], dict)
+            and "bypass_rls" in call.args[1]
+        ]
+        assert bindings
+        for params in bindings:
+            assert params["bypass_rls"] == "true"
+            assert params["org_id"] == ""

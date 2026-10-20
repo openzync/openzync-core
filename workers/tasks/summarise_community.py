@@ -23,11 +23,13 @@ import logging
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 
+from core import rls
 from models.organization import Organization
 from models.project import Project
 from workers.backend import resolve_graph_backend
+from workers.tasks.base import with_task_metrics
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +44,7 @@ COMMUNITY_MIN_ENTITY_COUNT = 5
 """Minimum entities required for community detection to run for a project."""
 
 
+@with_task_metrics
 async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
     """ARQ worker: run community detection and summarisation.
 
@@ -85,11 +88,10 @@ async def summarise_community(ctx: dict, org_id: str | None = None) -> dict:
             else:
                 # RLS: the organizations policy requires bypass_rls or a
                 # matching org_id; a global discovery has neither.
-                # Transaction-local — dies at the first per-org commit, so
-                # it cannot leak into per-org processing.
-                await db.execute(
-                    text("SELECT set_config('app.bypass_rls', 'true', true)")
-                )
+                # The bypass is bound on the session, so it survives the
+                # per-org commit; the per-org work drops it again (see
+                # _process_org) and runs tenant-scoped.
+                await rls.set_bypass_rls(db, True)
                 # Discover eligible orgs via the Organization table — each
                 # org's resolved backend answers authoritatively for entity
                 # counts via get_all_entities().  Direct GraphEntity ORM
@@ -172,11 +174,12 @@ async def _process_org(ctx: dict, db: AsyncSession, org_id: UUID) -> int:
     )
 
     # RLS: projects/organizations policies need app.org_id (or bypass).
-    # Transaction-local, re-applied per org because _process_org commits.
-    await db.execute(
-        text("SELECT set_config('app.org_id', :org_id, true)"),
-        {"org_id": str(org_id)},
-    )
+    # The discovery scan above ran under a bypass; the per-org work drops
+    # it and binds the tenant instead, so it is org-scoped.  The binding is
+    # remembered by the session, so _process_org's commit re-applies it
+    # instead of leaving the session un-tenanted.
+    await rls.set_bypass_rls(db, False)
+    await rls.set_tenant_context(db, org_id)
 
     backend = await resolve_graph_backend(ctx, org_id, db)
     if backend is None:

@@ -110,7 +110,7 @@ class TestAuditLogRepository:
             return mock_count_result
 
         mock_db.execute.side_effect = lambda *a, **kw: (
-            mock_count_result if hasattr(a[0], 'count') else mock_list_result
+            mock_count_result if hasattr(a[0], "count") else mock_list_result
         )
 
         # We'll use two sequential calls instead
@@ -154,9 +154,7 @@ class TestAuditLogRepository:
         mock_count_result.scalar.return_value = 0
         mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
-        result, total = await repo.list(
-            organization_id=self.ORG_ID, limit=10, offset=5
-        )
+        result, total = await repo.list(organization_id=self.ORG_ID, limit=10, offset=5)
 
         assert result == []
         assert total == 0
@@ -229,3 +227,82 @@ class TestAuditLogRepository:
 
         assert result == []
         assert total == 0
+
+    # ── organization filter ───────────────────────────────────────────────────
+
+    @staticmethod
+    def _where_clause(stmt: object) -> str:
+        """The WHERE clause of a compiled statement (empty when there is none).
+
+        The SELECT column list also names ``audit_logs.organization_id``,
+        so only the predicate can answer "is the result filtered by org?".
+        """
+        compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+        _select, _sep, where = compiled.partition("WHERE")
+        return where
+
+    async def test_list_filters_by_organization(
+        self, repo: AuditLogRepository, mock_db: AsyncMock
+    ) -> None:
+        """A concrete organization restricts the result set to that tenant.
+
+        The org filter is applied by the application layer, not left to the
+        RLS policy: RLS is only an *additional* filter, and the audit table
+        also holds platform-level rows (no organization) that a tenant must
+        never see — every unauthenticated request's IP address, user agent,
+        path and query string.
+        """
+        mock_list_result = MagicMock()
+        mock_list_result.scalars.return_value.all.return_value = []
+        mock_count_result = MagicMock()
+        mock_count_result.scalar.return_value = 0
+        mock_db.execute.side_effect = [mock_count_result, mock_list_result]
+
+        await repo.list(organization_id=self.ORG_ID)
+
+        statements = [call.args[0] for call in mock_db.execute.await_args_list]
+        assert len(statements) == 2
+        for stmt in statements:
+            where = self._where_clause(stmt)
+            assert "audit_logs.organization_id" in where
+            assert self.ORG_ID.hex in where
+
+    async def test_list_without_organization_is_platform_wide(
+        self, repo: AuditLogRepository, mock_db: AsyncMock
+    ) -> None:
+        """``None`` means platform-wide — no organization filter is applied.
+
+        The superadmin path reads the whole audit trail; the RLS-bypass
+        session it runs on decides what is visible.  A tenant-scoped
+        ``organization_id IS NULL`` filter would silently hide every
+        platform-level row from the platform admin.
+        """
+        mock_list_result = MagicMock()
+        mock_list_result.scalars.return_value.all.return_value = []
+        mock_count_result = MagicMock()
+        mock_count_result.scalar.return_value = 0
+        mock_db.execute.side_effect = [mock_count_result, mock_list_result]
+
+        await repo.list(organization_id=None)
+
+        statements = [call.args[0] for call in mock_db.execute.await_args_list]
+        assert len(statements) == 2
+        for stmt in statements:
+            assert "audit_logs.organization_id" not in self._where_clause(stmt)
+
+    async def test_list_combines_the_organization_with_the_other_filters(
+        self, repo: AuditLogRepository, mock_db: AsyncMock
+    ) -> None:
+        """The organization filter is ANDed with the other filters."""
+        mock_list_result = MagicMock()
+        mock_list_result.scalars.return_value.all.return_value = []
+        mock_count_result = MagicMock()
+        mock_count_result.scalar.return_value = 0
+        mock_db.execute.side_effect = [mock_count_result, mock_list_result]
+
+        await repo.list(organization_id=self.ORG_ID, action="session.create")
+
+        list_stmt = mock_db.execute.await_args_list[1].args[0]
+        where = self._where_clause(list_stmt)
+        assert "audit_logs.organization_id" in where
+        assert "audit_logs.action" in where

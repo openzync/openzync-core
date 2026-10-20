@@ -8,9 +8,10 @@ New contract (ADR): ``create_organization`` no longer creates an
 ``ApiKey`` or a default ``Project``; ``CreateOrgResponse`` carries only
 the org ID and name.
 """
+
 from __future__ import annotations
 
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -19,6 +20,18 @@ import yaml
 from core.sorting import SortSpec
 from schemas.organizations import CreateOrgRequest, CreateOrgResponse
 from services.organization_service import OrganizationService, OrgCodeInfo
+
+
+class _FakeOrg:
+    """Stand-in for the ``Organization`` ORM instance.
+
+    Mirrors the model closely enough for the contract under test: the
+    instance exposes the ``id`` the constructor was given, so the service's
+    ``org.id`` read-back is the id that was minted in Python.
+    """
+
+    def __init__(self, **fields: object) -> None:
+        self.__dict__.update(fields)
 
 
 @pytest.mark.unit
@@ -49,9 +62,7 @@ class TestOrganizationService:
         mock_db = AsyncMock()
         mock_repo.session = mock_db
 
-        service = OrganizationService(
-            repo=mock_repo, bao_client=bao_client
-        )
+        service = OrganizationService(repo=mock_repo, bao_client=bao_client)
         return service, mock_repo, mock_db
 
     def _make_org_mock(self) -> MagicMock:
@@ -74,22 +85,29 @@ class TestOrganizationService:
 
         No default ``Project`` and no ``ApiKey`` are created, and the
         response carries no API key material.
+
+        New contract: the org id is minted in Python, so the session can be
+        bound to the new tenant BEFORE the row is written — SQLAlchemy
+        appends a RETURNING clause to the INSERT and that clause is
+        filtered by the table's SELECT policy.
         """
         service, mock_repo, mock_db = self._make_service()
         payload = self._make_payload()
-
-        org_mock = self._make_org_mock()
 
         with (
             patch("services.organization_service.Organization") as mock_org_cls,
             # Project is no longer imported by the service — create=True lets
             # us assert the NEW contract: it is never constructed.
-            patch("services.organization_service.Project", create=True) as mock_proj_cls,
+            patch(
+                "services.organization_service.Project", create=True
+            ) as mock_proj_cls,
             patch(
                 "repositories.prompt_template_repository.PromptTemplateRepository",
             ) as mock_pt_repo_cls,
         ):
-            mock_org_cls.return_value = org_mock
+            # The fake instance carries the id it was constructed with, so
+            # the service's ``org.id`` read-back is the minted id.
+            mock_org_cls.side_effect = _FakeOrg
 
             mock_pt_repo = AsyncMock()
             mock_pt_repo.seed_default_prompts.return_value = 5
@@ -97,30 +115,53 @@ class TestOrganizationService:
 
             result = await service.create_organization(payload)
 
+        # Verify only the Organization constructor was called — no default
+        # project and no API key are auto-created.  ``org_code`` is a freshly
+        # generated join code (feature: org-code join flow).
+        mock_org_cls.assert_called_once()
+        kwargs = mock_org_cls.call_args.kwargs
+        assert kwargs["name"] == "Test Org"
+        assert kwargs["plan"] == "free"
+        # The id is minted in Python — the DB never assigns it.
+        assert isinstance(kwargs["id"], UUID)
+        org_id = kwargs["id"]
+        mock_proj_cls.assert_not_called()
+
         assert isinstance(result, CreateOrgResponse)
-        assert result.organization_id == self.ORG_ID
+        assert result.organization_id == org_id
         assert result.organization_name == "Test Org"
         # New contract: the response exposes no API key material.
         assert "api_key" not in CreateOrgResponse.model_fields
         assert result.model_dump() == {
-            "organization_id": self.ORG_ID,
+            "organization_id": org_id,
             "organization_name": "Test Org",
         }
 
-        # Verify only the Organization constructor was called — no default
-        # project and no API key are auto-created.  ``org_code`` is a freshly
-        # generated join code (feature: org-code join flow).
-        mock_org_cls.assert_called_once_with(
-            name="Test Org", plan="free", org_code=ANY,
-        )
-        mock_proj_cls.assert_not_called()
-
         # Verify the generated org code conforms to the code alphabet/length.
-        generated = mock_org_cls.call_args.kwargs["org_code"]
+        generated = kwargs["org_code"]
         from core.org_codes import ORG_CODE_ALPHABET, ORG_CODE_LENGTH
 
         assert len(generated) == ORG_CODE_LENGTH
         assert all(ch in ORG_CODE_ALPHABET for ch in generated)
+
+        # The session is bound to the new tenant BEFORE the row is written:
+        # a session that is not bound to the new organization cannot see the
+        # row it just created (the INSERT's RETURNING clause is filtered by
+        # the table's SELECT policy).  The binding is transaction-local, so
+        # it also carries the bypass pinned off and no lookup code.
+        calls = mock_db.mock_calls
+        tenant_idx = next(
+            i
+            for i, call in enumerate(calls)
+            if call[0] == "execute" and "app.org_id" in str(call.args[0])
+        )
+        add_idx = next(i for i, call in enumerate(calls) if call[0] == "add")
+        assert tenant_idx < add_idx
+        assert calls[tenant_idx].args[1] == {
+            "org_id": str(org_id),
+            "bypass_rls": "false",
+            "lookup_code": "",
+        }
 
         # Verify flush/refresh calls on the DB session (single entity)
         assert mock_db.add.call_count == 1
@@ -155,9 +196,7 @@ class TestOrganizationService:
 
         assert result.organization_id == self.ORG_ID
         mock_pt_repo_cls.assert_called_once_with(mock_db)
-        mock_pt_repo.seed_default_prompts.assert_awaited_once_with(
-            self.ORG_ID
-        )
+        mock_pt_repo.seed_default_prompts.assert_awaited_once_with(self.ORG_ID)
 
     @pytest.mark.asyncio
     async def test_create_organization_with_bao_client_bootstraps_namespace(
@@ -203,9 +242,7 @@ class TestOrganizationService:
         """``create_organization`` logs the OpenBao bootstrap failure but
         still returns a successful ``CreateOrgResponse``."""
         mock_bao = AsyncMock()
-        mock_bao.create_org_namespace.side_effect = RuntimeError(
-            "OpenBao unreachable"
-        )
+        mock_bao.create_org_namespace.side_effect = RuntimeError("OpenBao unreachable")
         service, mock_repo, mock_db = self._make_service(bao_client=mock_bao)
         payload = self._make_payload()
 
@@ -304,7 +341,8 @@ class TestOrganizationService:
         assert info.org_code == "ZZZ2Q9X4"
         assert info.join_enabled is True
         mock_repo.set_org_code.assert_awaited_once_with(
-            self.ORG_ID, "ZZZ2Q9X4",
+            self.ORG_ID,
+            "ZZZ2Q9X4",
         )
 
     @pytest.mark.asyncio
@@ -333,7 +371,8 @@ class TestOrganizationService:
         assert info.org_code == "ZZZ2Q9X4"
         assert info.join_enabled is False
         mock_repo.set_org_code.assert_awaited_once_with(
-            self.ORG_ID, "ZZZ2Q9X4",
+            self.ORG_ID,
+            "ZZZ2Q9X4",
         )
 
     # ── _load_org_defaults ───────────────────────────────────────────────────
@@ -393,9 +432,7 @@ class TestOrganizationService:
         service, mock_repo, _ = self._make_service()
         mock_repo.list_all.return_value = ([], 0)
 
-        orgs, total = await service.list_all_orgs(
-            status="pending", page=2, limit=20
-        )
+        orgs, total = await service.list_all_orgs(status="pending", page=2, limit=20)
 
         assert orgs == []
         assert total == 0
@@ -432,9 +469,7 @@ class TestOrganizationService:
             "services.organization_service.UserRepository",
             return_value=mock_user_repo,
         ):
-            users, total = await service.list_org_members(
-                self.ORG_ID, page=1, limit=50
-            )
+            users, total = await service.list_org_members(self.ORG_ID, page=1, limit=50)
 
         assert len(users) == 1
         assert total == 1
