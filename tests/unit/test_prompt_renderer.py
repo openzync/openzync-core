@@ -604,13 +604,13 @@ class TestResolveByType:
         )
 
         class MockRepo:
-            async def get_active_by_type(self, **kwargs: Any) -> None:
+            async def get_active_text_by_type(self, **kwargs: Any) -> None:
                 return None
 
         monkeypatch.setattr(
             PromptTemplateRepository,
-            "get_active_by_type",
-            MockRepo().get_active_by_type,
+            "get_active_text_by_type",
+            MockRepo().get_active_text_by_type,
         )
 
         result = await resolve_prompt_template_by_type(
@@ -631,13 +631,13 @@ class TestResolveByType:
         )
 
         class MockRepo:
-            async def get_active_by_type(self, **kwargs: Any) -> None:
+            async def get_active_text_by_type(self, **kwargs: Any) -> None:
                 return None
 
         monkeypatch.setattr(
             PromptTemplateRepository,
-            "get_active_by_type",
-            MockRepo().get_active_by_type,
+            "get_active_text_by_type",
+            MockRepo().get_active_text_by_type,
         )
 
         result = await resolve_prompt_template_by_type(
@@ -654,22 +654,19 @@ class TestResolveByType:
         org_id: UUID,
         monkeypatch: MonkeyPatch,
     ) -> None:
-        """Mock repo returns a template with template_text."""
+        """Mock repo returns the template text directly (str | None)."""
         from repositories.prompt_template_repository import (
             PromptTemplateRepository,
         )
 
-        class MockTemplate:
-            template_text = "You are a helpful assistant."
-
         class MockRepo:
-            async def get_active_by_type(self, **kwargs: Any) -> MockTemplate:
-                return MockTemplate()
+            async def get_active_text_by_type(self, **kwargs: Any) -> str:
+                return "You are a helpful assistant."
 
         monkeypatch.setattr(
             PromptTemplateRepository,
-            "get_active_by_type",
-            MockRepo().get_active_by_type,
+            "get_active_text_by_type",
+            MockRepo().get_active_text_by_type,
         )
 
         result = await resolve_prompt_template_by_type(
@@ -782,13 +779,13 @@ class TestRlsTenantContext:
         from repositories.prompt_template_repository import PromptTemplateRepository
 
         class MockRepo:
-            async def get_active_by_type(self, **kwargs: Any) -> None:
+            async def get_active_text_by_type(self, **kwargs: Any) -> None:
                 return None
 
         monkeypatch.setattr(
             PromptTemplateRepository,
-            "get_active_by_type",
-            MockRepo().get_active_by_type,
+            "get_active_text_by_type",
+            MockRepo().get_active_text_by_type,
         )
         factory = make_fake_session_factory()
 
@@ -1039,14 +1036,9 @@ class TestProviderFetchSessionRecentHistory:
     ) -> None:
         """Excludes current episode from results."""
 
-        class FakeEp:
-            def __init__(self, role: str, content: str) -> None:
-                self.role = role
-                self.content = content
-
         rows = [
-            FakeEp("assistant", "Hi there"),
-            FakeEp("user", "Hello"),
+            ("assistant", "Hi there"),
+            ("user", "Hello"),
         ]
         session = FakeAsyncSession(rows)
 
@@ -1071,12 +1063,7 @@ class TestProviderFetchSessionRecentHistory:
     ) -> None:
         """Returns all recent history without episode filter."""
 
-        class FakeEp:
-            def __init__(self, role: str, content: str) -> None:
-                self.role = role
-                self.content = content
-
-        rows = [FakeEp("user", "Only message")]
+        rows = [("user", "Only message")]
         session = FakeAsyncSession(rows)
 
         result = await _fetch_session_recent_history(

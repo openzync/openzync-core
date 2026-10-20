@@ -514,6 +514,17 @@ async def main() -> NoReturn:
         health_port=settings.HEALTH_PORT,
     )
 
+    # ── Init the shared ARQ enqueue pool (worker-process singleton) ──────
+    # Worker tasks enqueue follow-up jobs (e.g. GraphEdgeSyncService
+    # external-backend ``expire_graph_edges``) via the ``core.arq``
+    # singleton fallback.  Without this, every worker-process ``get_arq()``
+    # raises RuntimeError while fact commits stay durable.  Same Redis URL
+    # source as the API lifespan; same singleton, no second pool mechanism.
+    from core.arq import close_arq, init_arq
+
+    await init_arq(str(settings.REDIS_URL))
+    logger.info("worker.arq_pool_initialized")
+
     # ── Create shared DB engine ───────────────────────────────────────────
     # One engine per worker process, shared across all task invocations.
     # Eliminates per-task connection churn that would exhaust PostgreSQL's
@@ -756,6 +767,8 @@ async def main() -> NoReturn:
         logger.debug("worker.surreal_pool_closed")
         await db_engine.dispose()
         logger.debug("worker.db_engine_disposed")
+        await close_arq()
+        logger.debug("worker.arq_pool_closed")
         monitor_task.cancel()
         await runner.cleanup()
         logger.info("worker.stopped")
