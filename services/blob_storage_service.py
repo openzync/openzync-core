@@ -8,6 +8,7 @@ and DB record creation.
 from __future__ import annotations
 
 import hashlib
+import time
 import uuid
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
@@ -43,6 +44,23 @@ _ALLOWED_UPLOAD_MIME_TYPES: frozenset[str] = frozenset(
 )
 
 _UPLOAD_CHUNK_BYTES = 1024 * 1024  # 1 MiB
+
+_PRESIGNED_URL_TTL_SEC = 300
+"""Cache TTL for presigned download URLs — matches the default expires_in."""
+
+_PRESIGNED_URL_CACHE_MAX = 1024
+"""Cap on cached presigned URLs; overflow purges expired entries only."""
+
+_presigned_url_cache: dict[tuple[str, str, str, int], tuple[str, float]] = {}
+"""In-memory presigned-URL cache.
+
+Keyed by ``(endpoint, bucket, key, expires_in)`` → ``(url, cached_at)``.
+Presigned URLs are pure signer output (no revocation on regenerate), so
+caching them for their own TTL is safe — context assembly calls this once
+per blob per request and would otherwise re-sign every time.
+Per-process only: each worker/replica signs independently (harmless
+redundant signer calls, no revocation semantics, 300s signer output only).
+"""
 
 
 def normalize_upload_mime(mime_type: str) -> str:
@@ -112,6 +130,55 @@ async def read_upload_bounded(
                 f"Blob {file_name} exceeds limit of {max_bytes} bytes"
             )
     return bytes(buffer)
+
+
+async def _stream_upload_capped(
+    upload_file: UploadFile,
+    max_bytes: int,
+    file_name: str,
+    storage: BlobStorage,
+    key: str,
+    mime_type: str,
+) -> tuple[str, int]:
+    """Stream an ``UploadFile`` to S3 with incremental SHA-256 and size cap.
+
+    Peak memory is one part, not the whole file.  Exceeding *max_bytes*
+    aborts the multipart upload — no partial object is left behind.
+
+    Args:
+        upload_file: Multipart upload to stream from (one-shot stream).
+        max_bytes: Maximum allowed total size in bytes.
+        file_name: Original file name, used in the error message.
+        storage: The S3 storage client.
+        key: Destination S3 object key.
+        mime_type: Content type for the stored object.
+
+    Returns:
+        Tuple of ``(sha256_hex, total_bytes)``.
+
+    Raises:
+        PayloadTooLargeError: Once the running total exceeds *max_bytes*.
+        S3StorageError: If the S3 upload fails.
+    """
+    hasher = hashlib.sha256()
+    total = 0
+
+    async def _chunks():  # type: ignore[no-untyped-def]
+        nonlocal total
+        while True:
+            chunk = await upload_file.read(_UPLOAD_CHUNK_BYTES)
+            if not chunk:
+                return
+            total += len(chunk)
+            if total > max_bytes:
+                raise PayloadTooLargeError(
+                    f"Blob {file_name} exceeds limit of {max_bytes} bytes"
+                )
+            hasher.update(chunk)
+            yield chunk
+
+    await storage.upload_stream(key=key, chunks=_chunks(), mime_type=mime_type)
+    return hasher.hexdigest(), total
 
 
 class BlobStorageService:
@@ -221,8 +288,6 @@ class BlobStorageService:
                     f"Unsupported MIME type {mime_type!r} for blob {file_name}"
                 )
 
-            data = await read_upload_bounded(upload_file, max_bytes, file_name)
-            content_hash = hashlib.sha256(data).hexdigest()
             blob_index = meta.blob_id  # use blob_id as index
 
             key = storage.build_key(
@@ -233,11 +298,20 @@ class BlobStorageService:
                 file_name=file_name,
             )
 
-            await storage.upload(
-                key=key,
-                data=data,
-                mime_type=mime_type,
-            )
+            if isinstance(upload_file, bytes):
+                data = await read_upload_bounded(upload_file, max_bytes, file_name)
+                content_hash = hashlib.sha256(data).hexdigest()
+                await storage.upload(
+                    key=key,
+                    data=data,
+                    mime_type=mime_type,
+                )
+                file_size = len(data)
+            else:
+                # One-shot stream — peak memory is one part, not the file.
+                content_hash, file_size = await _stream_upload_capped(
+                    upload_file, max_bytes, file_name, storage, key, mime_type
+                )
 
             blob_dicts.append({
                 "id": str(uuid.uuid4()),
@@ -245,7 +319,7 @@ class BlobStorageService:
                 "storage_key": key,
                 "file_name": file_name,
                 "mime_type": mime_type,
-                "file_size": len(data),
+                "file_size": file_size,
                 "content_hash": content_hash,
                 "width": None,  # TODO(me): detect image dimensions in phase 2
                 "height": None,
@@ -336,7 +410,14 @@ class BlobStorageService:
         storage_config: dict[str, Any],
         expires_in: int = 300,
     ) -> str:
-        """Generate a presigned download URL for a blob.
+        """Generate a presigned download URL for a blob (cached).
+
+        Results are cached in-memory keyed by
+        ``(endpoint, bucket, key, expires_in)`` for
+        ``min(expires_in, 300)`` seconds — a cached URL is never served
+        past its own signature expiry. Context assembly fans this out once
+        per blob per request, so the cache turns repeat views of the same
+        episode into zero S3 signer calls.
 
         Args:
             storage_key: S3 object key.
@@ -351,6 +432,26 @@ class BlobStorageService:
                 caller so the failure is loud and alertable (no silent
                 ``None`` that callers could mistake for success).
         """
+        cache_key = (
+            str(storage_config.get("endpoint_url") or ""),
+            str(storage_config.get("bucket_name") or ""),
+            storage_key,
+            expires_in,
+        )
+        now = time.monotonic()
+        if (hit := _presigned_url_cache.get(cache_key)) is not None:
+            url, cached_at = hit
+            if now - cached_at < min(expires_in, _PRESIGNED_URL_TTL_SEC):
+                return url
+        if len(_presigned_url_cache) >= _PRESIGNED_URL_CACHE_MAX:
+            # shortcut: purge expired entries only (amortized — runs on
+            # overflow, not per call); a full cache of live entries simply
+            # skips caching until entries age out.
+            for k, (_, ts) in list(_presigned_url_cache.items()):
+                if now - ts >= min(k[3], _PRESIGNED_URL_TTL_SEC):
+                    del _presigned_url_cache[k]
         config = BlobStorageConfig.from_org_config(storage_config)
         storage = BlobStorage(config)
-        return await storage.get_presigned_url(storage_key, expires_in=expires_in)
+        url = await storage.get_presigned_url(storage_key, expires_in=expires_in)
+        _presigned_url_cache[cache_key] = (url, now)
+        return url

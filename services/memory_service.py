@@ -530,19 +530,22 @@ class MemoryService:
                     messages=messages,
                     uploaded_blobs=uploaded_blobs,
                 )
+            elif any(msg.blobs for msg in messages):
+                # Fail loud — the router only validates blob_ids when files
+                # are present, so metadata-without-files would otherwise
+                # ingest as text-only with blob_count=0 and silently drop
+                # the attachments.
+                raise ValidationError(
+                    "messages reference blobs but no files were uploaded"
+                )
 
             # ── Commit so workers can see episodes + blobs before tasks ─────
             await self._db.commit()
 
             # ── Step 10: Enqueue ARQ tasks with the claimed job_id ───────────
+            # ID-only payloads — workers load content/metadata from the row.
             episode_dicts = [
-                {
-                    "id": ep.id,
-                    "content": ep.content,
-                    "role": ep.role,
-                    "metadata": ep.metadata_,
-                }
-                for ep in episodes
+                {"id": ep.id, "role": ep.role} for ep in episodes
             ]
             await self._enqueue_arq_tasks(
                 job_id=str(job_id),
@@ -963,6 +966,76 @@ class MemoryService:
 
     # ── ARQ Task Enqueue ─────────────────────────────────────────────────────
 
+    _ENQUEUE_DEDUP_TTL_SEC = 7 * 24 * 3600
+    """TTL for the enqueue dedupe set — covers the ARQ retry window."""
+
+    async def _enqueue_one_episode(
+        self,
+        arq_pool: Any,
+        job_id: str,
+        org_id: str,
+        project_id: str,
+        session_id: str,
+        trace_id: str,
+        qname_high: str,
+        qname_low: str,
+        episode_id: str,
+        role: str,
+    ) -> None:
+        """Enqueue the three enrichment tasks for one episode, idempotently.
+
+        Each ``(task, episode)`` pair carries a Redis ``SET NX`` dedupe
+        key, so a retry of the ingest (after a mid-fan-out crash) never
+        double-enqueues work — workers themselves skip completed bits,
+        but duplicate jobs would still waste LLM calls on re-entry.
+
+        Workers load content/metadata from the episode row — only IDs
+        (plus the small ``role``/``session_id`` routing hints) cross the
+        queue, keeping job payloads small.
+
+        Args:
+            arq_pool: The ARQ Redis pool.
+            job_id: The composite job ID for this ingestion.
+            org_id: The organization UUID string.
+            project_id: The project UUID string.
+            session_id: The session UUID string.
+            trace_id: Request trace ID for end-to-end correlation.
+            qname_high: High-priority queue name for this environment.
+            qname_low: Low-priority queue name for this environment.
+            episode_id: The episode UUID string.
+            role: Message role (kept — small, and needed before the
+                episode row is re-read by workers).
+        """
+        tasks = (
+            ("enrich_episode", qname_high, {"session_id": session_id, "role": role}),
+            ("embed_episode", qname_high, {}),
+            ("link_entities_to_episode", qname_low, {"role": role}),
+        )
+        for task_name, qname, extra in tasks:
+            dedup_key = f"memory:enqueued:{task_name}:{episode_id}"
+            claimed = await self._redis.set(
+                dedup_key, job_id, nx=True, ex=self._ENQUEUE_DEDUP_TTL_SEC
+            )
+            if not claimed:
+                logger.info(
+                    "memory.arq_task_already_enqueued",
+                    extra={
+                        "job_id": job_id,
+                        "task": task_name,
+                        "episode_id": episode_id,
+                    },
+                )
+                continue
+            await arq_pool.enqueue(
+                task_name,
+                queue_name=qname,
+                episode_id=episode_id,
+                org_id=org_id,
+                project_id=project_id,
+                trace_id=trace_id,
+                **extra,
+            )
+
     async def _enqueue_arq_tasks(
         self,
         job_id: str,
@@ -982,6 +1055,11 @@ class MemoryService:
         - ``link_entities_to_episode`` (low queue): links extracted entities
           to the episode.
 
+        Enqueues for all episodes concurrently via ``asyncio.gather`` —
+        a sequential loop turns ingest latency into
+        ``3 * N_episodes`` Redis round-trips.  Only IDs cross the queue;
+        workers load content/metadata from the episode row.
+
         If the ARQ pool is unavailable (Redis down), episodes are safe in
         PostgreSQL and will be picked up by a reconciliation worker.
 
@@ -990,7 +1068,7 @@ class MemoryService:
             org_id: The organization UUID string.
             project_id: The project UUID string.
             session_id: The session UUID string.
-            episodes: List of episode dicts with ``id``, ``content``, ``role``.
+            episodes: List of episode dicts with ``id`` and ``role``.
         """
         episode_ids = [ep["id"] for ep in episodes]
         trace_id = structlog.contextvars.get_contextvars().get(
@@ -999,36 +1077,25 @@ class MemoryService:
         try:
             arq_pool = get_arq()
             env = get_settings().ENVIRONMENT
-            qname = get_queue_name(env, "high")
-            for episode in episodes:
-                ep_id = str(episode["id"])
-                content = episode["content"]
-                role = episode.get("role", "user")
-                metadata = episode.get("metadata", {})
-                common = {
-                    "episode_id": ep_id,
-                    "content": content,
-                    "org_id": org_id,
-                    "project_id": project_id,
-                    "trace_id": trace_id,
-                    "metadata": metadata,
-                }
-
-                # Single combined enrichment — replaces 4 LLM workers
-                await arq_pool.enqueue(
-                    "enrich_episode",
-                    queue_name=qname,
-                    **common,
-                    session_id=session_id,
-                    role=role,
+            qname_high = get_queue_name(env, "high")
+            qname_low = get_queue_name(env, "low")
+            await asyncio.gather(
+                *(
+                    self._enqueue_one_episode(
+                        arq_pool,
+                        job_id,
+                        org_id,
+                        project_id,
+                        session_id,
+                        trace_id,
+                        qname_high,
+                        qname_low,
+                        str(episode["id"]),
+                        episode.get("role", "user"),
+                    )
+                    for episode in episodes
                 )
-                await arq_pool.enqueue("embed_episode", queue_name=qname, **common)
-                await arq_pool.enqueue(
-                    "link_entities_to_episode",
-                    queue_name=get_queue_name(env, "low"),
-                    **common,
-                    role=role,
-                )
+            )
 
             logger.info(
                 "memory.arq_tasks_enqueued",
@@ -1112,15 +1179,18 @@ class MemoryService:
 
         max_bytes = BlobStorageConfig.from_org_config(storage_config).max_blob_bytes
         # Stream per episode — read only the files each episode references
-        # so peak RSS is one episode's blobs plus all shared-so-far
-        # (freed at return), not the whole request.
-        # UploadFile.read() is a one-shot stream, so files referenced by
-        # multiple episodes stay cached until return.
+        # so peak RSS is one episode's blobs plus still-unconsumed shared
+        # files, not the whole request. UploadFile.read() is a one-shot
+        # stream, so files referenced by multiple episodes stay cached until
+        # their last referencing episode uploads, then are released.
+        # Every cached blob is capped at max_blob_bytes by
+        # read_upload_bounded — shared files cannot blow the cap silently.
         use_counts = Counter(
             meta.blob_id for _, metas in ep_blob_metas for meta in metas
         )
         shared_ids = {bid for bid, n in use_counts.items() if n > 1}
         shared_bytes: dict[int, bytes] = {}
+        remaining = dict(use_counts)
 
         blob_svc = BlobStorageService(self._db, self._blob_repo)
         blob_records: list[Any] = []
@@ -1157,7 +1227,19 @@ class MemoryService:
                 storage_config=storage_config,
             )
             blob_records.extend(records)
+            # Release shared files whose last referencing episode just
+            # uploaded — without this the cache holds every shared file
+            # until return (peak = whole request for fully-shared blobs).
+            for bid in needed_ids:
+                if bid in shared_ids:
+                    remaining[bid] -= 1
+                    if remaining[bid] <= 0:
+                        del shared_bytes[bid]
 
+        # blob_count reflects persisted blob records (one per referenced
+        # file that actually uploaded) — not metadata entries. A blobs
+        # array with no uploaded files is rejected in ingest() before this
+        # runs, so 0 here genuinely means "no blobs", never "files lost".
         blob_count = len(blob_records)
         logger.info(
             "memory.blobs_uploaded",
@@ -1196,19 +1278,23 @@ class MemoryService:
         try:
             arq_pool = get_arq()
             low_qname = get_queue_name(get_settings().ENVIRONMENT, "low")
-            for blob in blob_records:
-                await arq_pool.enqueue(
-                    "extract_blob_text",
-                    queue_name=low_qname,
-                    blob_id=str(blob.id),
-                    org_id=str(org_id),
-                    project_id=str(project_id),
-                    episode_id=str(blob.episode_id),
-                    storage_key=blob.storage_key,
-                    mime_type=blob.mime_type,
-                    file_name=blob.file_name,
-                    trace_id=trace_id,
+            await asyncio.gather(
+                *(
+                    arq_pool.enqueue(
+                        "extract_blob_text",
+                        queue_name=low_qname,
+                        blob_id=str(blob.id),
+                        org_id=str(org_id),
+                        project_id=str(project_id),
+                        episode_id=str(blob.episode_id),
+                        storage_key=blob.storage_key,
+                        mime_type=blob.mime_type,
+                        file_name=blob.file_name,
+                        trace_id=trace_id,
+                    )
+                    for blob in blob_records
                 )
+            )
             logger.info(
                 "memory.blob_extraction_tasks_enqueued",
                 extra={

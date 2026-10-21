@@ -44,8 +44,8 @@ async def link_entities_to_episode(
     episode_id: str,
     org_id: str,
     project_id: str,
-    content: str,
     role: str,
+    content: str | None = None,
     trace_id: str = "",
     metadata: dict | None = None,
 ) -> None:
@@ -68,8 +68,9 @@ async def link_entities_to_episode(
         episode_id: UUID of the episode to sync.
         org_id: UUID of the owning organization.
         project_id: UUID of the project for project scoping.
-        content: Episode message text (used for entity name matching).
         role: Message role (user/assistant/system/tool).
+        content: Legacy payload from older enqueues.  ``None`` (the new
+            default) matches entity names against the episode row instead.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
         metadata: Optional metadata dict forwarded from the enrichment pipeline.
 
@@ -153,9 +154,11 @@ async def link_entities_to_episode(
                 # silent swallow that would set the link bit with 0 links.
 
                 # Extract potential entity names from content (simple keyword split)
+                # episode_id-only jobs carry no text — match against the row.
+                link_text = content if content is not None else episode.content
                 words = set(
                     w.strip().rstrip(".,!?:;")
-                    for w in content.split()
+                    for w in link_text.split()
                     if len(w.strip()) > 2 and w.strip()[0].isupper()
                 )
 

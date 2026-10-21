@@ -66,10 +66,11 @@ than workers can drain them when there's already a large backlog."""
 # ── Task configuration ─────────────────────────────────────────────────────────
 
 # Non-LLM tasks (individual bits, each enqueued separately).
+# Payloads are ID-only — workers load content/metadata from the row.
 _NON_LLM_TASK_MAP: dict[int, tuple[str, set[str], str]] = {
     ENRICHMENT_EMBEDDING: (
         "embed_episode",
-        {"episode_id", "org_id", "project_id", "content", "trace_id", "metadata"},
+        {"episode_id", "org_id", "project_id", "trace_id"},
         "high",
     ),
     ENRICHMENT_ENTITY_LINKS: (
@@ -78,10 +79,8 @@ _NON_LLM_TASK_MAP: dict[int, tuple[str, set[str], str]] = {
             "episode_id",
             "org_id",
             "project_id",
-            "content",
             "role",
             "trace_id",
-            "metadata",
         },
         "low",
     ),
@@ -94,10 +93,8 @@ _LLM_TASK_DETAILS: tuple[str, set[str], str] = (
         "episode_id",
         "org_id",
         "project_id",
-        "content",
         "session_id",
         "trace_id",
-        "metadata",
         "role",
     },
     "high",
@@ -294,11 +291,9 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
         result = await db.execute(
             select(
                 Episode.id,
-                Episode.content,
                 Episode.organization_id,
                 Episode.project_id,
                 Episode.session_id,
-                Episode.metadata_,
                 Episode.enrichment_status,
             )
             .where(
@@ -327,11 +322,9 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
             stale_episodes.append(
                 {
                     "id": str(row.id),
-                    "content": row.content,
                     "org_id": str(row.organization_id),
                     "project_id": str(row.project_id),
                     "session_id": str(row.session_id),
-                    "metadata": row.metadata_,
                     "enrichment_status": row.enrichment_status,
                 }
             )
@@ -355,20 +348,16 @@ async def reconcile_enrichment(ctx: dict[str, Any]) -> str:
         current_status: int = ep["enrichment_status"]
         org_id: str = ep["org_id"]
         episode_id: str = ep["id"]
-        content: str | None = ep.get("content")
         project_id: str = ep.get("project_id", "")
 
-        # Build superset of all possible kwargs from the DB row
+        # ID-only kwargs — workers load content/metadata from the row.
         base_kwargs: dict[str, Any] = {
             "episode_id": episode_id,
             "org_id": org_id,
             "project_id": project_id,
             "session_id": ep.get("session_id", ""),
-            "metadata": ep.get("metadata", {}),
             "trace_id": f"reconcile_{episode_id[:8]}",
         }
-        if content is not None:
-            base_kwargs["content"] = content
 
         # ── Check combined LLM enrichment ────────────────────────────
         # If ANY of the 4 LLM bits are missing, enqueue enrich_episode once.
