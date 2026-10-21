@@ -67,18 +67,12 @@ class TestRateLimitMiddleware:
         return app
 
     @pytest.mark.asyncio
-    async def test_development_bypasses_rate_limit(self) -> None:
-        """In development environment, rate limiting is bypassed."""
-        import core.config as cfg
-        settings = cfg.Settings(
-            DATABASE_URL="postgresql+asyncpg://u:p@localhost:5432/test",
-            REDIS_URL="redis://localhost:6379/1",
-            SECRET_KEY="a" * 32,
-            WEBHOOK_SIGNING_SECRET="b" * 32,
-            ENVIRONMENT="development",
-        )
+    async def test_enforces_in_development(self) -> None:
+        """Rate limiting is always on — no dev bypass (fail-closed)."""
+        settings = self._create_prod_settings()
+        mock_redis = self._make_mock_redis([None, 0, 1, True])
         with patch("middleware.rate_limit.get_settings", return_value=settings):
-            app = self._create_app()
+            app = self._create_app(mock_redis=mock_redis)
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as c:
                 resp = await c.get("/test")
@@ -88,7 +82,7 @@ class TestRateLimitMiddleware:
     async def test_under_limit_passes(self) -> None:
         """When under the rate limit, the request passes through."""
         settings = self._create_prod_settings()
-        mock_redis = self._make_mock_redis([None, 1, 1, True])
+        mock_redis = self._make_mock_redis([None, 0, 1, True])
         with patch("middleware.rate_limit.get_settings", return_value=settings):
             app = self._create_app(mock_redis=mock_redis)
             transport = ASGITransport(app=app)
@@ -113,7 +107,7 @@ class TestRateLimitMiddleware:
     async def test_rate_limit_headers_present(self) -> None:
         """Rate-limit headers are present on the response when under limit."""
         settings = self._create_prod_settings()
-        mock_redis = self._make_mock_redis([None, 1, 1, True])
+        mock_redis = self._make_mock_redis([None, 0, 1, True])
         with patch("middleware.rate_limit.get_settings", return_value=settings):
             app = self._create_app(mock_redis=mock_redis)
             transport = ASGITransport(app=app)

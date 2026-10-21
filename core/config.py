@@ -422,11 +422,6 @@ class Settings(BaseModel):
     )
 
     # ── Rate Limiting ─────────────────────────────────────────────────────
-    RATE_LIMIT_ENABLED: bool = Field(
-        default=False,
-        description="Enforce rate limiting outside staging/production when True "
-        "(dev/CI override; staging and production always enforce).",
-    )
     RATE_LIMIT_IP_MAX: int = Field(
         default=10,
         ge=1,

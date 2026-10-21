@@ -86,6 +86,7 @@ class TestBlobStorageService:
             "services.blob_storage_service.BlobStorage",
         ) as mock_storage_cls:
             mock_storage = AsyncMock()
+            mock_storage.upload_stream.return_value = "org/proj/ep/blobs/0/test.pdf"
             mock_storage_cls.return_value = mock_storage
 
             result = await service.upload_blobs(
@@ -103,8 +104,10 @@ class TestBlobStorageService:
 
         assert len(result) == 1
         assert result[0].id == mock_blob.id
-        # BlobStorage.upload was called
-        mock_storage.upload.assert_awaited_once()
+        # Prod streams UploadFiles via upload_stream (not upload).
+        mock_storage.upload_stream.assert_awaited_once()
+        _, kwargs = mock_storage.upload_stream.await_args
+        assert kwargs["mime_type"] == "application/pdf"
         mock_blob_repo.batch_create.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -160,19 +163,31 @@ class TestBlobStorageService:
         big_content = b"x" * (51 * 1024 * 1024)
         upload_file = self._make_upload_file(content=big_content)
 
-        with pytest.raises(PayloadTooLargeError, match="exceeds limit"):
-            await service.upload_blobs(
-                org_id=self.ORG_ID,
-                project_id=self.PROJECT_ID,
-                episode_id=self.EPISODE_ID,
-                session_id=self.SESSION_ID,
-                created_by=self.USER_ID,
-                uploaded_files=[upload_file],
-                blob_metadatas=[
-                    BlobMetadata(blob_id=0, mime_type="application/pdf", file_name="big.pdf"),
-                ],
-                storage_config=self._make_storage_config(),
-            )
+        async def _drain(*args: Any, **kwargs: Any) -> str:
+            async for _ in kwargs["chunks"]:
+                pass
+            return "org/proj/ep/blobs/0/big.pdf"
+
+        with patch(
+            "services.blob_storage_service.BlobStorage",
+        ) as mock_storage_cls:
+            mock_storage = AsyncMock()
+            mock_storage.upload_stream.side_effect = _drain
+            mock_storage_cls.return_value = mock_storage
+
+            with pytest.raises(PayloadTooLargeError, match="exceeds limit"):
+                await service.upload_blobs(
+                    org_id=self.ORG_ID,
+                    project_id=self.PROJECT_ID,
+                    episode_id=self.EPISODE_ID,
+                    session_id=self.SESSION_ID,
+                    created_by=self.USER_ID,
+                    uploaded_files=[upload_file],
+                    blob_metadatas=[
+                        BlobMetadata(blob_id=0, mime_type="application/pdf", file_name="big.pdf"),
+                    ],
+                    storage_config=self._make_storage_config(),
+                )
 
     @pytest.mark.asyncio
     async def test_upload_oversized_stops_reading_mid_stream(self) -> None:
@@ -185,19 +200,31 @@ class TestBlobStorageService:
         chunk = b"x" * (1024 * 1024)
         upload_file.read = AsyncMock(side_effect=[chunk, chunk, b"never-read"])
 
-        with pytest.raises(PayloadTooLargeError, match="exceeds limit"):
-            await service.upload_blobs(
-                org_id=self.ORG_ID,
-                project_id=self.PROJECT_ID,
-                episode_id=self.EPISODE_ID,
-                session_id=self.SESSION_ID,
-                created_by=self.USER_ID,
-                uploaded_files=[upload_file],
-                blob_metadatas=[
-                    BlobMetadata(blob_id=0, mime_type="application/pdf", file_name="big.pdf"),
-                ],
-                storage_config=self._make_storage_config(max_blob_size_mb=1),
-            )
+        async def _drain(*args: Any, **kwargs: Any) -> str:
+            async for _ in kwargs["chunks"]:
+                pass
+            return "org/proj/ep/blobs/0/big.pdf"
+
+        with patch(
+            "services.blob_storage_service.BlobStorage",
+        ) as mock_storage_cls:
+            mock_storage = AsyncMock()
+            mock_storage.upload_stream.side_effect = _drain
+            mock_storage_cls.return_value = mock_storage
+
+            with pytest.raises(PayloadTooLargeError, match="exceeds limit"):
+                await service.upload_blobs(
+                    org_id=self.ORG_ID,
+                    project_id=self.PROJECT_ID,
+                    episode_id=self.EPISODE_ID,
+                    session_id=self.SESSION_ID,
+                    created_by=self.USER_ID,
+                    uploaded_files=[upload_file],
+                    blob_metadatas=[
+                        BlobMetadata(blob_id=0, mime_type="application/pdf", file_name="big.pdf"),
+                    ],
+                    storage_config=self._make_storage_config(max_blob_size_mb=1),
+                )
 
         # Mid-stream abort: only 2 of 3 chunks consumed.
         assert upload_file.read.await_count == 2
@@ -244,6 +271,7 @@ class TestBlobStorageService:
             "services.blob_storage_service.BlobStorage",
         ) as mock_storage_cls:
             mock_storage = AsyncMock()
+            mock_storage.upload_stream.return_value = "org/proj/ep/blobs/0/test.pdf"
             mock_storage_cls.return_value = mock_storage
 
             await service.upload_blobs(
@@ -264,7 +292,7 @@ class TestBlobStorageService:
             )
 
         # S3 ContentType and DB record agree on the bare lowercase type.
-        _, kwargs = mock_storage.upload.await_args
+        _, kwargs = mock_storage.upload_stream.await_args
         assert kwargs["mime_type"] == "application/pdf"
         stored = mock_blob_repo.batch_create.await_args.kwargs["blobs"][0]
         assert stored["mime_type"] == "application/pdf"
@@ -301,6 +329,7 @@ class TestBlobStorageService:
             "services.blob_storage_service.BlobStorage",
         ) as mock_storage_cls:
             mock_storage = AsyncMock()
+            mock_storage.upload_stream.return_value = "org/proj/ep/blobs/0/file.bin"
             mock_storage_cls.return_value = mock_storage
 
             result = await service.upload_blobs(
@@ -317,7 +346,7 @@ class TestBlobStorageService:
             )
 
         assert len(result) == 1
-        mock_storage.upload.assert_awaited_once()
+        mock_storage.upload_stream.assert_awaited_once()
 
     # ── delete_blobs ────────────────────────────────────────────────────────
 
@@ -421,6 +450,9 @@ class TestBlobStorageService:
     @pytest.mark.asyncio
     async def test_generate_download_url_raises_on_failure(self) -> None:
         """``generate_download_url`` raises S3StorageError on S3 error."""
+        from services import blob_storage_service as bss
+
+        bss._presigned_url_cache.clear()
         with patch(
             "services.blob_storage_service.BlobStorage",
         ) as mock_storage_cls:
