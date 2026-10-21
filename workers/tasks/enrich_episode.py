@@ -103,7 +103,7 @@ async def enrich_episode(
     episode_id: str,
     org_id: str,
     project_id: str,
-    content: str,
+    content: str | None = None,
     session_id: str | None = None,
     trace_id: str = "",
     metadata: dict | None = None,
@@ -137,7 +137,8 @@ async def enrich_episode(
         episode_id: UUID of the source episode (string, from ARQ).
         org_id: UUID of the owning organization.
         project_id: UUID of the project for project scoping.
-        content: The message text to enrich.
+        content: Legacy payload from older enqueues — ignored.  Text is
+            always loaded from the episode row (``episode_id``-only jobs).
         session_id: UUID of the session (for FK and context assembly).
         trace_id: Request trace ID for end-to-end correlation.
         metadata: Optional metadata dict from the episode.

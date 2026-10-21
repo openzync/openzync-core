@@ -116,9 +116,9 @@ Those endpoints are deliberately unauthenticated — the magic-link token
 in the request body IS the credential presented by the invitee, who has
 no account (and therefore no JWT) yet.
 
-These endpoints do not require an ``Authorization`` header.  The set may be
-extended at the application level.  Paths are matched suffix-wise so that
-versioned routes (e.g. ``/v1/health``) are also recognised.
+These endpoints do not require an ``Authorization`` header.  Paths are
+matched exactly, except the prefixes in :data:`_PUBLIC_PATH_PREFIXES`
+(``/docs/*``, ``/v1/auth/invites/*``).
 """
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -135,11 +135,25 @@ are attempted as JWT first."""
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+_PUBLIC_PATH_PREFIXES: tuple[str, ...] = (
+    "/docs",
+    "/v1/auth/invites",
+)
+"""Path prefixes whose sub-paths are public.
+
+``/docs`` covers the Swagger UI assets; ``/v1/auth/invites`` covers the
+invite magic-link endpoints (the token in the body IS the credential).
+Every other entry in :data:`PUBLIC_ENDPOINTS` is exact-match only.
+"""
+
+
 def _is_public_path(path: str) -> bool:
     """Check if a path is in the public endpoints allowlist.
 
-    Performs both exact and prefix matching (e.g. ``/docs`` matches any
-    sub-path under ``/docs/``).
+    Exact match against :data:`PUBLIC_ENDPOINTS`, plus sub-path match
+    only for the prefixes in :data:`_PUBLIC_PATH_PREFIXES`.  Suffix
+    matching is deliberately NOT used — it would let an attacker reach
+    e.g. ``/health`` via ``/v1/evil/health``.
 
     Args:
         path: The URL path from the request.
@@ -147,10 +161,9 @@ def _is_public_path(path: str) -> bool:
     Returns:
         ``True`` if the path is publicly accessible.
     """
-    return any(
-        path == endpoint or path.endswith(endpoint) or path.startswith(f"{endpoint}/")
-        for endpoint in PUBLIC_ENDPOINTS
-    )
+    if path in PUBLIC_ENDPOINTS:
+        return True
+    return any(path.startswith(f"{prefix}/") for prefix in _PUBLIC_PATH_PREFIXES)
 
 
 def _rfc7807_response(

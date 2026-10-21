@@ -58,11 +58,46 @@ RFC_7807_TYPE_UNAVAILABLE = "https://errors.openzync.tech/rate_limit_unavailable
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+def _is_trusted_proxy(peer_ip: str, trusted: str) -> bool:
+    """Return whether a peer IP is in the trusted-proxy list.
+
+    Supports exact addresses and CIDR ranges (``"127.0.0.1, 10.0.0.0/8"``).
+    Unparseable entries fail closed (treated as untrusted).
+
+    Args:
+        peer_ip: The direct ASGI peer address.
+        trusted: Comma-separated trusted addresses/CIDRs from settings.
+
+    Returns:
+        ``True`` when the peer is trusted to set ``X-Forwarded-For``.
+    """
+    import ipaddress
+
+    try:
+        peer = ipaddress.ip_address(peer_ip)
+    except ValueError:
+        return False
+    for entry in trusted.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        try:
+            if "/" in entry:
+                if peer in ipaddress.ip_network(entry, strict=False):
+                    return True
+            elif peer == ipaddress.ip_address(entry):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def _get_client_ip(scope: Scope) -> str:
     """Extract the originating client IP from the ASGI scope.
 
-    Only the direct ASGI peer address is used; ``X-Forwarded-For`` is not
-    trusted.
+    The leftmost ``X-Forwarded-For`` entry is trusted only when the
+    direct peer is in ``TRUSTED_PROXY_IPS`` — otherwise any client
+    could pick its own rate-limit bucket by forging the header.
 
     Args:
         scope: The ASGI connection scope.
@@ -70,10 +105,20 @@ def _get_client_ip(scope: Scope) -> str:
     Returns:
         The client IP address as a string.
     """
+    peer: str = "unknown"
     client = scope.get("client")
     if client is not None:
-        return client[0]
-    return "unknown"
+        peer = client[0]
+    headers = {
+        k.decode("latin-1").lower(): v.decode("latin-1")
+        for k, v in scope.get("headers", [])
+    }
+    forwarded = headers.get("x-forwarded-for")
+    if forwarded and _is_trusted_proxy(peer, get_settings().TRUSTED_PROXY_IPS):
+        first = forwarded.split(",")[0].strip()
+        if first:
+            return first
+    return peer
 
 
 async def _get_org_rate_limit(
@@ -152,8 +197,11 @@ async def _check_rate_limit(
 
     current_count: int = results[1]
 
-    is_allowed: bool = current_count <= max_requests
-    remaining: int = max(0, max_requests - current_count)
+    # count was read BEFORE this request's member was added, so the
+    # request is allowed only when fewer than max_requests are already
+    # in the window; remaining is what is left AFTER this request.
+    is_allowed: bool = current_count < max_requests
+    remaining: int = max(0, max_requests - current_count - 1)
     reset_time: int = int(now_s) + window_seconds
 
     return is_allowed, remaining, reset_time
@@ -218,12 +266,8 @@ class RateLimitMiddleware:
 
         path = scope.get("path", "")
 
-        # ── Bypass for non-production environments ──────────────────────
-        # Rate limiting is only enforced in staging and production to avoid
-        # hitting per-IP limits during development and CI testing.
-        if get_settings().ENVIRONMENT not in ("staging", "production"):
-            await self.app(scope, receive, send)
-            return
+        # Rate limiting is always on — no env bypass. Only
+        # BYPASS_PATHS (/health, /ready) skip enforcement.
 
         # ── Bypass for critical infrastructure paths ────────────────────
         if path in self._bypass_paths:

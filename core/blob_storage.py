@@ -7,17 +7,24 @@ org config (``OrgConfigBase.to_blob_storage_config()``).
 from __future__ import annotations
 
 import re
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from core.exceptions import ExternalServiceError
+from core.exceptions import ExternalServiceError, PayloadTooLargeError
 
 if TYPE_CHECKING:
     import aioboto3
 
 logger = structlog.get_logger(__name__)
+
+_MIN_MULTIPART_PART_BYTES = 5 * 1024 * 1024
+"""Minimum S3 multipart part size (5 MiB) — smaller parts are buffered."""
+
+_MAX_SAFE_FILE_NAME_CHARS = 128
+"""Maximum characters kept from a sanitized file name in an S3 key."""
 
 
 @dataclass
@@ -154,6 +161,115 @@ class BlobStorage:
             )
             raise S3StorageError(f"Failed to upload blob: {exc}") from exc
 
+    async def upload_stream(
+        self,
+        key: str,
+        chunks: AsyncIterator[bytes],
+        mime_type: str,
+    ) -> str:
+        """Upload a blob to S3 from an async chunk iterator (multipart).
+
+        Streams part-by-part so peak memory is one part, not the whole
+        file.  Parts smaller than 5 MiB are buffered until the minimum
+        S3 part size is reached (except the final part).
+
+        Args:
+            key: S3 object key.
+            chunks: Async iterator yielding ``bytes`` chunks.
+            mime_type: MIME type of the file.
+
+        Returns:
+            The S3 object key (same as *key*, confirmed written).
+
+        Raises:
+            S3StorageError: If the upload fails (multipart is aborted).
+        """
+        session = await self._get_session()
+        try:
+            async with session.client(
+                "s3",
+                endpoint_url=self._config.endpoint_url,
+            ) as s3:
+                created = await s3.create_multipart_upload(
+                    Bucket=self._config.bucket_name,
+                    Key=key,
+                    ContentType=mime_type,
+                )
+                upload_id = created["UploadId"]
+                try:
+                    parts: list[dict[str, Any]] = []
+                    part_number = 1
+                    pending = bytearray()
+                    total = 0
+                    async for chunk in chunks:
+                        pending.extend(chunk)
+                        total += len(chunk)
+                        while len(pending) >= _MIN_MULTIPART_PART_BYTES:
+                            part = bytes(pending[:_MIN_MULTIPART_PART_BYTES])
+                            del pending[:_MIN_MULTIPART_PART_BYTES]
+                            resp = await s3.upload_part(
+                                Bucket=self._config.bucket_name,
+                                Key=key,
+                                PartNumber=part_number,
+                                UploadId=upload_id,
+                                Body=part,
+                            )
+                            parts.append(
+                                {
+                                    "ETag": resp["ETag"],
+                                    "PartNumber": part_number,
+                                }
+                            )
+                            part_number += 1
+                    if pending or not parts:
+                        resp = await s3.upload_part(
+                            Bucket=self._config.bucket_name,
+                            Key=key,
+                            PartNumber=part_number,
+                            UploadId=upload_id,
+                            Body=bytes(pending),
+                        )
+                        parts.append(
+                            {
+                                "ETag": resp["ETag"],
+                                "PartNumber": part_number,
+                            }
+                        )
+                    await s3.complete_multipart_upload(
+                        Bucket=self._config.bucket_name,
+                        Key=key,
+                        UploadId=upload_id,
+                        MultipartUpload={"Parts": parts},
+                    )
+                except Exception:
+                    await s3.abort_multipart_upload(
+                        Bucket=self._config.bucket_name,
+                        Key=key,
+                        UploadId=upload_id,
+                    )
+                    raise
+            logger.info(
+                "blob_storage.upload_stream_success",
+                key=key,
+                bucket=self._config.bucket_name,
+                size=total,
+                mime_type=mime_type,
+            )
+            return key
+        except (S3StorageError, PayloadTooLargeError):
+            # Size-cap violations from the chunk source are caller errors
+            # (HTTP 413), not S3 failures — pass through unwrapped so the
+            # service layer keeps its status-code mapping.
+            raise
+        except Exception as exc:
+            logger.error(
+                "blob_storage.upload_stream_failed",
+                key=key,
+                bucket=self._config.bucket_name,
+                error=str(exc),
+            )
+            raise S3StorageError(f"Failed to stream-upload blob: {exc}") from exc
+
     async def download(self, key: str) -> bytes:
         """Download a blob from S3.
 
@@ -278,6 +394,26 @@ class BlobStorage:
             raise S3StorageError(f"Failed to generate presigned URL: {exc}") from exc
 
     @staticmethod
+    def sanitize_file_name(file_name: str) -> str:
+        r"""Sanitize a caller-supplied file name for use in an S3 key.
+
+        Strips NUL bytes (``\\x00`` and ``%00`` — the latter decodes to NUL
+        downstream and would otherwise survive allow-listing as ``_00``),
+        drops directory components, allow-lists ``[a-zA-Z0-9._-]``
+        (everything else → ``_``), and caps the result at 128 characters.
+
+        Args:
+            file_name: Raw caller-supplied file name.
+
+        Returns:
+            A safe name (``"unnamed"`` when nothing usable remains).
+        """
+        cleaned = file_name.replace("\x00", "").replace("%00", "")
+        base = re.split(r"[/\\]", cleaned)[-1].strip()
+        safe = re.sub(r"[^a-zA-Z0-9._-]", "_", base)[:_MAX_SAFE_FILE_NAME_CHARS]
+        return safe.strip("._") or "unnamed"
+
+    @staticmethod
     def build_key(
         org_id: str,
         project_id: str,
@@ -301,5 +437,5 @@ class BlobStorage:
         Returns:
             A deterministic S3 object key.
         """
-        safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", file_name)
+        safe_name = BlobStorage.sanitize_file_name(file_name)
         return f"blobs/{org_id}/{project_id}/{episode_id}/{blob_index}_{safe_name}"

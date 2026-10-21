@@ -541,7 +541,8 @@ class TestGetOrgStorageConfig:
 
     @pytest.mark.asyncio
     async def test_returns_defaults_on_config_fetch_failure(self) -> None:
-        """OpenBao fetch exception propagates (retryable, no silent defaults)."""
+        """OpenBao fetch failure raises ExternalServiceError (fail-closed, retryable)."""
+        from core.exceptions import ExternalServiceError
         from workers.tasks.extract_blob_text import _get_org_storage_config
 
         mock_bao = MagicMock()
@@ -551,20 +552,18 @@ class TestGetOrgStorageConfig:
                 "core.org_config.get_org_config",
                 AsyncMock(side_effect=RuntimeError("Bao down")),
             ),
-            pytest.raises(RuntimeError, match="Bao down"),
+            pytest.raises(ExternalServiceError, match="could not be read"),
         ):
             await _get_org_storage_config(_ORG_ID, mock_bao)
 
     @pytest.mark.asyncio
     async def test_returns_defaults_when_bao_client_none(self) -> None:
-        """No OpenBao client → default config returned without any fetch."""
+        """No OpenBao client → ExternalServiceError (fail-closed, no defaults)."""
+        from core.exceptions import ExternalServiceError
         from workers.tasks.extract_blob_text import _get_org_storage_config
 
-        result = await _get_org_storage_config(_ORG_ID, None)
-
-        assert result["backend"] == "s3"
-        assert result["bucket_name"] == "openzync-blobs"
-        assert result["endpoint_url"] == "http://minio:9000"
+        with pytest.raises(ExternalServiceError, match="no OpenBao client"):
+            await _get_org_storage_config(_ORG_ID, None)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1079,7 +1078,8 @@ class TestExtractBlobText:
 
     @pytest.mark.asyncio
     async def test_without_bao_client_uses_default_config(self) -> None:
-        """No ``openbao_client`` in ctx → default storage config used."""
+        """No ``openbao_client`` in ctx → ExternalServiceError, no download."""
+        from core.exceptions import ExternalServiceError
         from workers.tasks.extract_blob_text import extract_blob_text
 
         db = self._make_db()
@@ -1110,17 +1110,18 @@ class TestExtractBlobText:
             mock_storage.download = AsyncMock(return_value=b"data")
             mock_storage_cls.return_value = mock_storage
 
-            await extract_blob_text(
-                ctx=ctx,
-                blob_id=_BLOB_ID,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-                episode_id=_EPISODE_ID,
-                storage_key=_STORAGE_KEY,
-                mime_type=_MIME_TYPE,
-            )
+            with pytest.raises(ExternalServiceError, match="no OpenBao client"):
+                await extract_blob_text(
+                    ctx=ctx,
+                    blob_id=_BLOB_ID,
+                    org_id=_ORG_ID,
+                    project_id=_PROJECT_ID,
+                    episode_id=_EPISODE_ID,
+                    storage_key=_STORAGE_KEY,
+                    mime_type=_MIME_TYPE,
+                )
 
-            mock_storage.download.assert_awaited_once()
+            mock_storage.download.assert_not_awaited()
 
     # ═══════════════════════════════════════════════════════════════════════
     # General exception handling

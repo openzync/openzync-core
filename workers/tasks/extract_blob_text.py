@@ -217,7 +217,7 @@ async def _get_org_storage_config(
     org_id: str,
     bao_client: object | None,
 ) -> dict:
-    """Fetch the org's blob storage config from OpenBao.
+    """Fetch the org's blob storage config from OpenBao — fail loud.
 
     Args:
         org_id: The organization UUID string.
@@ -227,29 +227,46 @@ async def _get_org_storage_config(
         A dict suitable for ``BlobStorageConfig.from_org_config()``.
 
     Raises:
-        Exception: Propagates org-config fetch failures so the task
-            retries instead of silently using wrong storage defaults.
+        ExternalServiceError: If there is no OpenBao client or the org
+            config cannot be fetched (→ 502, task retries). Never returns
+            shared-bucket defaults.
     """
-    if bao_client is not None:
-        from core.org_config import get_org_config
+    # ⚠️ BREAKING: a missing OpenBao client used to fall back to the shared
+    # MinIO defaults (org blobs silently written to ``openzync-blobs``); it
+    # now raises ExternalServiceError, matching
+    # MemoryService._resolve_storage_config's 502 behavior.
+    from core.exceptions import ExternalServiceError
 
+    if bao_client is None:
+        logger.error(
+            "extract_blob_text.storage_config_no_client",
+            org_id=org_id,
+        )
+        raise ExternalServiceError(
+            f"Blob storage config for org {org_id} could not be read: "
+            "no OpenBao client in worker context."
+        )
+
+    from core.org_config import get_org_config
+
+    try:
         org_cfg = await get_org_config(
             UUID(org_id),
             redis=None,
             bao_client=bao_client,
         )
-        return org_cfg.to_blob_storage_config()
-
-    # Default config (matches docker-compose MinIO defaults)
-    return {
-        "backend": "s3",
-        "endpoint_url": "http://minio:9000",
-        "region": "auto",
-        "access_key_id": "",
-        "secret_access_key": "",
-        "bucket_name": "openzync-blobs",
-        "max_blob_size_mb": 50,
-    }
+    except ExternalServiceError:
+        raise
+    except Exception as exc:
+        logger.error(
+            "extract_blob_text.storage_config_fetch_failed",
+            org_id=org_id,
+            exc_info=True,
+        )
+        raise ExternalServiceError(
+            f"Blob storage config for org {org_id} could not be read from OpenBao."
+        ) from exc
+    return org_cfg.to_blob_storage_config()
 
 
 # ── Helper: resolve org PII config (fail-closed) ───────────────────────────

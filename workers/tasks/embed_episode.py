@@ -30,7 +30,7 @@ async def embed_episode(
     episode_id: str,
     org_id: str,
     project_id: str,
-    content: str,
+    content: str | None = None,
     trace_id: str = "",
     metadata: dict | None = None,
 ) -> None:
@@ -46,7 +46,8 @@ async def embed_episode(
         episode_id: UUID of the episode to embed.
         org_id: UUID of the owning organisation (for observability / RLS).
         project_id: UUID of the project for project scoping (observability).
-        content: Episode message text to embed.
+        content: Legacy payload from older enqueues.  ``None`` (the new
+            default) loads the text from the episode row instead.
         trace_id: Request trace ID for end-to-end correlation across ARQ tasks.
         metadata: Optional metadata dict forwarded from the enrichment pipeline.
 
@@ -113,6 +114,8 @@ async def embed_episode(
                     message=f"Episode {episode_id} not found for embedding.",
                     detail={"episode_id": episode_id},
                 )
+            # episode_id-only jobs carry no text — load it from the row.
+            episode_text = content if content is not None else episode.content
             if episode.enrichment_status & ENRICHMENT_EMBEDDING:
                 logger.debug(
                     "embed_episode.skipped_already_done",
@@ -141,7 +144,7 @@ async def embed_episode(
 
     # ── 3. Generate embedding ────────────────────────────────────────────
     try:
-        embedding = (await embed_passage([content]))[0]
+        embedding = (await embed_passage([episode_text]))[0]
     except Exception as e:
         logger.error(
             "embed_episode.embedding_failed",
