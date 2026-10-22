@@ -1,1 +1,0 @@
-Fix periodic observation scans aborting entirely when the FalkorDB co-occurrence query timed out: the query now carries a server-side timeout and a result cap, and a co-occurrence backend failure is fail-open (logged, counted as zero) so temporal and behavioral detection still run. One slow graph query no longer blocks the whole non-blocking scan.

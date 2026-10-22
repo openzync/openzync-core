@@ -1,1 +1,0 @@
-Raise the FastAPI floor to `>=0.117.0` and remove the permanent `fastapi.routing.is_body_allowed_for_status_code` monkey-patch — FastAPI 0.117.0 (fastapi/fastapi#9425) resolves a `-> None` return annotation to `None` instead of `type(None)`, so 204 routes no longer need the patched assertion.

@@ -1,1 +1,0 @@
-Fix worker-process fact invalidation crashing with `RuntimeError: ARQ pool has not been initialised`: the worker never initialised the shared ARQ pool (only the API lifespan did). The worker now initialises it at startup and closes it on shutdown; enqueue-failure semantics are unchanged — a failed expiry enqueue still raises loudly.

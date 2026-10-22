@@ -1,1 +1,0 @@
-Probe workers over HTTP (`/health` for liveness, `/ready` for readiness) on the worker health port instead of an exec Redis ping, which only proved Redis was reachable. Also corrects the worker Dockerfile comment to the real default health port, 8081.

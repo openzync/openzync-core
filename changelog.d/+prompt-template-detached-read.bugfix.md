@@ -1,1 +1,0 @@
-Fix episode enrichment failing on every run with a `DetachedInstanceError`: the prompt-template text was read after its database session had closed and rolled back. The template text is now fetched as a scalar inside the session, and recent session history is loaded the same column-only way, so enrichment no longer touches expired ORM state.

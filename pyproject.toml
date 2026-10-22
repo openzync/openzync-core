@@ -106,7 +106,7 @@ all = [
 
 [tool.hatch.version]
 source = "vcs"
-fallback-version = "1.0.0rc4"  # latest tag v1.0.0rc4 without leading v; used when building outside git repo
+fallback-version = "1.0.0"  # used when building outside git repo
 raw-options = { search_parent_directories = true, local_scheme = "no-local-version" }
 
 [tool.hatch.build.targets.sdist]

@@ -1,1 +1,0 @@
-Record the real client IP behind a reverse proxy — uvicorn now runs with `--proxy-headers` and an explicit `--forwarded-allow-ips` (`OZ_TRUSTED_PROXY_IPS`, default `127.0.0.1`), so the per-IP rate limiters and the audit log are keyed on the client instead of the proxy instead of sharing one platform-wide bucket.
