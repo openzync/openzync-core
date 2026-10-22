@@ -705,14 +705,7 @@ services:
 networks:
   default:
     name: openzync_network
-    # Explicit subnet so the trusted-proxy range can name the network the
-    # api and the reverse proxy share (OZ_TRUSTED_PROXY_IPS).  Relying on
-    # Docker's auto-assigned bridge range would make the trusted range
-    # unknowable — and the api's own clients must not be able to set
-    # X-Forwarded-For.
-    ipam:
-      config:
-        - subnet: 172.28.0.0/24
+    external: true # attach-only: compose never creates/removes this network; subnet 172.28.0.0/24 is pinned at creation time by the CD preflight `docker network create --subnet 172.28.0.0/24`.
 
 volumes:
   minio-blob-data: {}

@@ -93,7 +93,11 @@ jobs:
           echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
           SUBNET=$(ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "docker network inspect openzync_network --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'" 2>/dev/null || echo "MISSING")
-          if [ "$SUBNET" = "MISSING" ]; then echo "network absent — compose will create it with the pinned subnet. OK"; exit 0; fi
+          if [ "$SUBNET" = "MISSING" ]; then
+            echo "network absent — creating openzync_network with the pinned subnet..."
+            ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "docker network create --driver bridge --subnet 172.28.0.0/24 openzync_network 2>/dev/null || true"
+            SUBNET=$(ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }}" "docker network inspect openzync_network --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'" 2>/dev/null || echo "MISSING")
+          fi
           if [ "$SUBNET" != "172.28.0.0/24" ]; then echo "::error::openzync_network is $SUBNET, expected 172.28.0.0/24. Run the one-time network migration runbook before deploying."; exit 1; fi
           echo "network subnet OK ($SUBNET)"
 
