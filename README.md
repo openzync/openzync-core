@@ -1,303 +1,150 @@
+<p align="center"><img src="./.github/assets/banner.png" width="100%" alt="OpenZync"></p>
+
 # OpenZync Core
 
-**Persistent, queryable, graph-based memory for AI agents.**
+**Graph memory that survives production.** Self-hosted FastAPI backend, ARQ workers, graph storage.
 
 <p align="center">
-  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPLv3-blue" alt="AGPL v3"></a>
-  <img src="https://img.shields.io/badge/python-%3E%3D3.11-blue" alt="Python 3.11+">
-  <img src="https://img.shields.io/badge/status-alpha-orange" alt="Status: Alpha">
-  <img src="https://img.shields.io/badge/fastapi-0.110+-brightgreen" alt="FastAPI">
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="AGPL 3.0"></a>
+  <a href="https://github.com/openzync/openzync-core/actions/workflows/ci.yml"><img src="https://github.com/openzync/openzync-core/actions/workflows/ci.yml/badge.svg?branch=master" alt="CI"></a>
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
+  <img src="https://img.shields.io/github/v/tag/openzync/openzync-core?label=release" alt="Release">
+  <img src="https://img.shields.io/badge/docs-docs.openzync.tech-blue" alt="Docs">
 </p>
 
-This is the **core backend** of the OpenZync platform — a FastAPI monolith that powers the entire agent memory system. It handles ingestion, enrichment, graph storage, hybrid search, multi-tenant auth, and background workers.
+The backend of the OpenZync platform: the open-source temporal knowledge graph where facts supersede
+instead of overwriting, with hybrid retrieval over PostgreSQL, FalkorDB and SurrealDB, five LLM
+providers, an MCP server and a typed Python SDK. Self-hosted, no vendor lock-in.
 
----
+[Docs](https://docs.openzync.tech/en/latest/) · [Quickstart guide](https://docs.openzync.tech/en/latest/guides/quickstart.html) · [Live app](https://app.openzync.tech) · [Python SDK](https://pypi.org/project/openzync/) · [GitHub org](https://github.com/openzync) · [Contact](mailto:rohnsha0@gmail.com)
 
-## Table of Contents
+## Features
 
-- [What is OpenZync?](#what-is-openzync)
-- [Key Features](#key-features)
-- [Architecture](#architecture)
-- [Quick Start](#quick-start)
-- [API Overview](#api-overview)
-- [Memory Pipeline](#memory-pipeline)
-- [Configuration](#configuration)
-- [Deployment](#deployment)
-- [Development](#development)
-- [License](#license)
+- **Hybrid retrieval** — vector similarity, BM25 full-text and graph traversal, fused into one ranked list. [Memory and context](https://docs.openzync.tech/en/latest/domains/memory_context.html)
+- **Async enrichment** — ARQ workers extract entities, facts, embeddings and classifications off the request path. [Workers](https://docs.openzync.tech/en/latest/domains/workers.html)
+- **Five LLM providers** — Ollama, OpenAI, Azure OpenAI, Anthropic and OpenRouter, with keys per organisation. [LLM](https://docs.openzync.tech/en/latest/domains/llm.html)
+- **Three graph backends** — FalkorDB is the default, SurrealDB is supported, and the PostgreSQL-native backend is deprecated (removed in v1.1.0). [Graph backends](https://docs.openzync.tech/en/latest/domains/graph_backends.html)
+- **Multi-tenant by construction** — org-scoped isolation, JWT and API keys sharing one permission vocabulary. [Auth](https://docs.openzync.tech/en/latest/domains/auth.html)
+- **MCP server** — the same memory exposed as tools to Claude Desktop, Cursor and any MCP client. [MCP server](https://docs.openzync.tech/en/latest/domains/mcp_server.html)
+- **Observable by default** — Prometheus metrics, structlog JSON logs, Grafana dashboards. [Infrastructure](https://docs.openzync.tech/en/latest/domains/infrastructure.html)
 
----
+## Benchmark
 
-## What is OpenZync Core?
+| Category | Accuracy |
+|---|---|
+| Overall (500 questions) | **87.1 %** (436/500) |
+| Temporal reasoning | 100 % (133/133) |
+| Knowledge update | 100 % (78/78) |
+| Single-session, assistant | 100 % (56/56) |
+| Single-session, user | 92.9 % (65/70) |
+| Multi-session | 66.9 % (89/133) |
+| Single-session, preference | 50.0 % (15/30) |
+| Retrieval R@1 / R@5 / R@10 | 0.816 / 0.834 / 0.840 |
 
-OpenZync Core is the backend monolith for the OpenZync agent memory platform. It ingests conversational data, enriches it asynchronously into a knowledge graph with entities, facts, and embeddings, and exposes a hybrid search API for LLM context retrieval.
+<sub>LongMemEval-S, 500 questions, run 2026-10-10 at commit `9e2fd5e`; judge `nvidia/nemotron-3-ultra-550b` (temperature 0); reranker disabled; zero judge errors. Reproduce with [`benchmarks/run_longmemeval.py`](https://github.com/openzync/openzync-core/blob/master/benchmarks/run_longmemeval.py). This run predates the v1.0.0 tag.</sub>
 
-Built for developers who need persistent, queryable agent memory without vendor lock-in. Bring your own LLM (OpenAI, Anthropic, Ollama, Azure) and your own infrastructure.
+<p align="center"><img src="./.github/assets/graph-explorer.png" width="100%"></p>
+*Graph Explorer: 31 nodes and 70 edges extracted from one ingested conversation.*
 
----
+<p align="center"><img src="./.github/assets/facts.png" width="100%"></p>
+*Facts as subject → predicate → object, with confidence and the Retract action.*
 
-## Key Features
+## Why OpenZync
 
-- **Persistent agent memory** — store and retrieve conversation history with full CRUD
-- **Knowledge graph** — automatic entity extraction, relationship mapping, and community detection via Label Propagation
-- **Hybrid search** — vector similarity (pgvector) + BM25 full-text + graph traversal, fused via RRF
-- **Async enrichment pipeline** — ARQ workers extract entities, facts, embeddings, and classifications from ingested messages
-- **Multi-provider LLM** — BYOK support for OpenAI, Anthropic, Ollama, Azure OpenAI
-- **Multi-tenant** — org-scoped data isolation with JWT + API key authentication
-- **MCP server** — expose memory tools to any MCP-compatible LLM (Claude Desktop, etc.)
-- **Admin dashboard** — Next.js frontend for graph exploration and tenant management
-- **Python SDK** — `pip install openzync` (Apache 2.0)
-- **MCP server** — expose agent memory tools to any MCP-compatible client (Claude Desktop, Cursor, etc.)
-- **OpenBao-zero-fallback** — all runtime config auto-generated and stored in OpenBao; only 4 bootstrap secrets in `.env`
-- **Async enrichment pipeline** — ARQ background workers extract entities, facts, embeddings, and classifications
-- **Multi-graph backends** — FalkorDB (default), SurrealDB, or PostgreSQL-native (deprecated — will be removed in v1.1.0)
-- **Observability** — Prometheus metrics, structured logging (structlog), Grafana dashboards
+**Facts supersede; they do not overwrite.** A contradicting fact marks the old one superseded and
+links it to its replacement, so `facts.history()` returns the whole chain and `facts.retract()`
+withdraws a claim without destroying the audit trail —
+[ADR-005](https://github.com/openzync/openzync-docs/blob/main/adr/005-fact-supersession.md).
 
----
+**One query, three indexes.** Vector similarity, BM25 and graph BFS return separate ranked lists,
+fused with reciprocal rank fusion, so an entity name and a paraphrase both land —
+[memory and context](https://docs.openzync.tech/en/latest/domains/memory_context.html).
 
-## Architecture
+**Configuration cannot drift from a stale `.env`.** OpenBao is the only source of runtime config:
+`.env` holds four bootstrap secrets, everything else is generated into OpenBao's `system` secret and
+rendered by the Agent sidecar at startup. No fallback path exists, by design —
+[deployment guide](https://docs.openzync.tech/en/latest/guides/deployment.html).
 
-```mermaid
-flowchart LR
-    Client["Client<br/>(SDK / UI)"] --> API["FastAPI API<br/>:8000"]
-    API --> Services["Services Layer<br/>(business logic)"]
-    Services --> PG[("PostgreSQL 15<br/>+ pgvector")]
-    Services --> FK[("FalkorDB<br/>(default graph)")]
-    Services -->|enqueue jobs| Redis[("Redis 7<br/>queues + cache")]
-    Workers["ARQ Workers<br/>(enrichment +<br/>graph sync)"] --> Redis
-    Workers --> PG
-    Workers --> FK
-    API -->|serve| Client
-```
+## Quick start
 
-The API receives messages and persists them immediately. ARQ background workers asynchronously extract entities, facts, and embeddings, then sync everything to the knowledge graph. Context is retrieved at query time via hybrid search across vector, text, and graph indices.
-
-The system follows an OpenBao-zero-fallback architecture (see [ADR-003](docs/adr/003-openbao-zero-fallback.md) and [ADR-004](docs/adr/004-self-bootstrapping-postgres.md)) — all runtime configuration is auto-generated and stored in OpenBao; only bootstrap secrets (seal key, postgres password, secret key, webhook signing secret) live in `.env`.
-
----
-
-## Quick Start
-
-**Prerequisites:** Docker, Docker Compose v2, and ~3 GB of free disk space.
+Prerequisites: Docker, Docker Compose v2, ~3 GB free disk.
 
 ```bash
-# 1. Clone, set up .env with bootstrap secrets
 git clone https://github.com/openzync/openzync-core.git
 cd openzync-core
 cp .env.example .env
+# Fill the four <replace-with-…> placeholders, generating values with:
+#   openssl rand -hex 32                                            → BAO_STATIC_SEAL_KEY
+#   openssl rand -base64 32                                         → POSTGRES_PASSWORD
+#   python3 -c 'import secrets; print(secrets.token_urlsafe(48))'   → OZ_SECRET_KEY
+#   python3 -c 'import secrets; print(secrets.token_urlsafe(32))'   → OZ_WEBHOOK_SIGNING_SECRET
 
-# Generate bootstrap secrets (POSTGRES_PASSWORD is only needed for Option A)
-echo "BAO_STATIC_SEAL_KEY=$(openssl rand -hex 32)" >> .env
-echo "POSTGRES_PASSWORD=$(openssl rand -base64 32)" >> .env  # Option A only — not used by Option B
-echo "OZ_SECRET_KEY=$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" >> .env
-echo "OZ_WEBHOOK_SIGNING_SECRET=$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')" >> .env
+make docker-up-local   # OpenBao, Postgres, FalkorDB, Redis, api and worker
 
-# 2. Bring up the stack — choose ONE option (both validated 3/3 cycles)
-# FalkorDB is the default graph backend in BOTH options — installed via
-# `docker compose -f infra/docker-compose.backend.yml up -d` (host port 6381).
-# PostgreSQL graph backend is deprecated and will be removed in v1.1.0 — migrate to FalkorDB.
-# ── Option A: Local one-box (self-contained, with pgvector) ──────────────
-docker compose --env-file .env -f infra/docker-compose.backend.yml --profile local-db up -d --build
-# Self-creates postgres (pgvector), auto-generates migrator/app passwords.
-# FalkorDB is always-on (default profile) — no --profile needed.
-
-# ── Option B: External Postgres (production / CI) ────────────────────────
-# Add to .env — host.docker.internal is REQUIRED inside containers;
-# localhost:5432 fails (separate netns). extra_hosts is already in compose
-# for api/worker, so no compose edit is needed.
-echo "OZ_DATABASE_URL=postgresql+asyncpg://openzync:pass@host.docker.internal:5432/openzync" >> .env
-# Make host Postgres reachable from containers (pick one):
-#   socat TCP-LISTEN:5432,bind=0.0.0.0,fork TCP:[::1]:5432 &
-#   # or set host postgresql.conf: listen_addresses = '*'
-docker compose --env-file .env -f infra/docker-compose.backend.yml up -d  # no --profile
-# No postgres/migrate/write-db containers in this mode.
-
-# Timelines (first boot, cold volumes):
-#   Option A: ~41-48s to health 200 + ready database:true
-#     • 0-10s  OpenBao + FalkorDB start (FalkorDB default graph, port 6381)
-#     • 10-30s OpenBao initialised + unsealed; system secrets + AppRole credentials written
-#     • 30-40s Postgres starts + creates DB and least-privilege roles
-#     • 40-50s Alembic migrations run (as openzync_migrator)
-#     • 50-55s Database credentials merged into the OpenBao system secret
-#     • 55-60s api and worker start (OpenBao Agent sidecar authenticates + renders secrets)
-#   Option B: ~21-39s (no postgres phases; FalkorDB + OpenBao → agents → api/worker → redis)
-
-# 3. Verify
-curl -s http://localhost:8000/v1/health   # expect 200
-curl -s http://localhost:8000/v1/ready    # expect database:true, redis:true
-# Option B: `docker compose -f infra/docker-compose.backend.yml ps` shows no
-# postgres / postgres-init / postgres-migrate / openbao-write-db / write-db —
-# only openbao, openbao-init, openbao-agent-*, api, worker, redis.
-# Health/ready still gate on DB via OZ_DATABASE_URL.
-
-# 4. Sign up (returns a confirmation — tokens issued after email verification)
-curl -X POST http://localhost:8000/v1/auth/signup \
-  -H "Content-Type: application/json" \
-  -d '{"email":"demo@example.com","password":"Changeth1s","organization_name":"DemoOrg"}'
-
-# 5. Check the api container logs for the 6-digit OTP, then verify
-curl -X POST http://localhost:8000/v1/auth/verify-email \
-  -H "Content-Type: application/json" \
-  -d '{"email":"demo@example.com","otp":"<otp-from-logs>"}'
-
-# 6. Use the returned access_token for authenticated calls
-export TOKEN="<access-token-from-step-5>"
-curl -X POST http://localhost:8000/v1/projects/{project_id}/memory \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"session_id":"default","messages":[{"role":"user","content":"Hello world"}]}'
+curl -s localhost:8000/health   # {"status":"ok","service":"openzync-api","version":"1.0.0"}
+curl -s localhost:8000/ready    # {"status":"ok","checks":{"database":true,"redis":true,"embeddings":true}}
 ```
 
-> **GHCR — public since 2026-08-31:** `ghcr.io/openzync/openzync-core/api:latest` and `ghcr.io/openzync/openzync-core/worker:latest` are **public** — no `docker login` required.
-> ```bash
-> docker pull ghcr.io/openzync/openzync-core/api:latest
-> docker compose --env-file .env -f infra/docker-compose.backend.yml pull api worker  # unauthenticated
-> ```
-> `ghcr.io/openzync/openzync-blog-engine` stays **private**.
+Create your account in the [dashboard](https://app.openzync.tech), or `POST /v1/auth/signup` here
+with SMTP configured — the OTP is emailed, never logged. First requests:
+[quickstart guide](https://docs.openzync.tech/en/latest/guides/quickstart.html).
 
-**That's it.** No `make migrate`, no manual secret copy-paste, no `.env` full of OZ_* keys. The database password is auto-generated and stored in OpenBao. The api and worker fetch their config from OpenBao at startup.
+Production Compose, Helm and the full config reference: [deployment guide](https://docs.openzync.tech/en/latest/guides/deployment.html).
 
-See [the deployment documentation](./infra) for production setup (Docker Compose and Helm charts).
+## How it works
 
----
+```mermaid
+flowchart LR
+    C["Client<br/>SDK / dashboard"] --> API["FastAPI<br/>:8000"]
+    API --> S["Services<br/>business logic"]
+    S --> PG[("Postgres 15<br/>+ pgvector")]
+    S --> FK[("FalkorDB<br/>default graph")]
+    S -->|enqueue| RD[("Redis<br/>queues + cache")]
+    W["ARQ workers"] --> RD
+    W --> PG & FK
+```
 
-## API Overview
+Writes land in Postgres first, workers enrich and sync the graph, reads fuse three indexes. Layers
+stay strict — `routers → services → repositories → models` — and async throughout.
 
-All endpoints are prefixed with `/v1`.
+**Memory pipeline**
 
-| Endpoint | Description |
-|---|---|
-| `POST /v1/projects/{project_id}/memory` | Ingest conversation messages (episodes) into a project's memory |
-| `GET /v1/projects/{project_id}/context` | Retrieve relevant context for LLM prompts, scoped to a project |
-| `GET /v1/projects/{project_id}/search?q=...` | Hybrid search across a project's episodes, facts, and entities |
-| `GET /v1/projects/{project_id}/graph/nodes` | List knowledge graph entities for a project |
-| `GET /v1/projects/{project_id}/graph/edges` | List knowledge graph relationships for a project |
-| `GET /v1/projects/{project_id}/graph/communities` | List community clusters for a project |
-| `POST /auth/signup` | Register a new user + org |
-| `POST /auth/login` | Authenticate and receive a JWT |
-| `GET /health` | Liveness probe |
-| `GET /ready` | Readiness probe (checks DB + Redis) |
+1. **Ingest** — `POST /v1/projects/{project_id}/memory` stores messages as episodes in PostgreSQL.
+2. **Enrich** — ARQ workers extract entities, facts and classifications, and generate embeddings.
+3. **Graph sync** — entities, relationships and temporal edges are written to the graph backend.
+4. **Retrieve** — vector, BM25 and graph BFS results are fused with RRF and assembled into context.
+5. **Community detection** — Label Propagation groups entities into communities, nightly or post-sync.
 
-### Permissions
+**Permissions**
 
-Authorization uses a single org-scoped permission vocabulary (see [ADR-007](../openzync-docs/adr/007-unified-org-permission-model.rst)), enforced identically for JWT users and API keys via the `require_permission` dependency.
+One vocabulary, enforced identically for JWT users and API keys by `require_permission`
+([ADR-007](https://github.com/openzync/openzync-docs/blob/main/adr/007-unified-org-permission-model.rst)).
+An empty array means all permissions (org `admin`, platform `superadmin`); new members get
+`project:read` and `project:write`. Roles live in the DB, cached 60 s in Redis, fail closed.
 
 | Permission | Grants |
 |---|---|
-| `project:read` | Read projects and their memory, context, search, and graph data |
-| `project:write` | Write project data (ingest, sessions, facts) |
-| `project:manage` | Project lifecycle — create, archive, delete, project settings |
-| `configuration:read` | Read org/project configuration |
-| `configuration:write` | Modify org/project configuration |
-| `members:read` | List org/project members |
-| `members:write` | Add/remove members and change member permissions |
-
-- **Admin wildcard** — org `admin` / platform `superadmin` roles are represented by an empty permissions array (`[]` = all permissions).
-- **Member defaults** — every new user gets `{project:read, project:write}` materialized in `users.permissions`; optional grants are appended.
-- **Roles are DB-verified** (never JWT claims), cached 60s in Redis, fail-closed (infra error = deny).
-- ⚠️ **BREAKING** — API-key `scopes` are renamed to `permissions` and carry the same strings as users. Legacy values (`read`, `write`, `admin`, `admin:write`) are remapped by migration. SDK/MCP consumers that create or inspect keys by scope name must update.
-
-For detailed API docs, run the server and visit `/docs` (Swagger UI) or see the [routers directory](./routers) for endpoint listings.
-
----
-
-## Memory Pipeline
-
-1. **Ingest** — `POST /v1/projects/{project_id}/memory` accepts messages and persists them as episodes in PostgreSQL.
-2. **Enrich** — ARQ workers consume episodes asynchronously: extract entities, facts, and classifications; generate embeddings.
-3. **Graph sync** — entities and relationships are synced to the graph backend (FalkorDB by default; PostgreSQL-native is deprecated and will be removed in v1.1.0), with temporal edges linking episodes to entities.
-4. **Retrieve** — hybrid search combines cosine similarity (pgvector), BM25 full-text, and graph BFS traversal. Results are fused via RRF and assembled into a structured prompt context.
-5. **Community detection** — Label Propagation groups related entities into communities. Runs via nightly cron or event-driven after graph sync (controlled by `OZ_AUTO_RUN_COMMUNITY_DETECTION`).
-
----
-
-## Configuration
-
-OpenZync follows an **OpenBao-zero-fallback** architecture: the OpenBao secrets store is the **sole source of truth** for all runtime configuration. There is no `.env` fallback. The api and worker services fetch their config from OpenBao at startup via the OpenBao Agent sidecar pattern.
-
-### What goes in `.env` (at first boot only)
-
-| Variable | Required? | Description |
-|---|---|---|
-| `BAO_STATIC_SEAL_KEY` | Yes | OpenBao seal key. Generate with `openssl rand -hex 32` (64 hex chars). **Dev only** — production must use Shamir or cloud KMS. If lost, ALL secrets in OpenBao are irrecoverable. |
-| `POSTGRES_PASSWORD` | Yes (first boot) | Postgres superuser password for first-boot cluster init. Generate with `openssl rand -base64 32`. Auto-rotated after bootstrap. |
-| `OZ_SECRET_KEY` | Yes | Application secret key for JWT signing and other crypto operations. Stored in OpenBao system secret. Generate with `python3 -c 'import secrets; print(secrets.token_urlsafe(48))'`. |
-| `OZ_WEBHOOK_SIGNING_SECRET` | Yes | Webhook signing secret (HMAC-SHA256, Svix-compatible). Stored in OpenBao system secret. Generate with `python3 -c 'import secrets; print(secrets.token_urlsafe(32))'`. |
-
-### What OpenZync auto-generates and stores in OpenBao
-
-- **Database credentials** — auto-generated on first boot by `init_postgres.sh`; passwords for `openzync_migrator` (DDL) and `openzync_app` (CRUD) are written to OpenBao KV after the migration completes.
-- **AppRole credentials** — `openzync-app` and `openzync-worker` AppRoles are created at bootstrap; the api/worker OpenBao Agent sidecars authenticate using files in a shared docker volume.
-- **All system config** — Redis URL, secret key, webhook signing secret, CORS origins, rate limits, JWT TTLs, etc. are written to a single combined secret at `system/config/data/system`.
-
-### How the api/worker read config at runtime
-
-Each service has an OpenBao Agent sidecar. The Agent:
-1. Authenticates to OpenBao via AppRole using files in `/openbao-bootstrap/`
-2. Renders the `system` secret to a tmpfs-mounted file as `KEY=VALUE` lines
-3. The api/worker entrypoint script (`scripts/entrypoint_api.sh`, `scripts/entrypoint_worker.sh`) sources that file and `exec`s uvicorn/ARQ
-
-See [ADR-004: Self-Bootstrapping Postgres via OpenBao-Injected Credentials](docs/adr/004-self-bootstrapping-postgres.md) for the full architecture.
-
-### Overriding config at runtime (advanced)
-
-To temporarily override a config value without re-bootstrapping:
-
-```bash
-docker compose -f infra/docker-compose.backend.yml exec openbao \
-  bao kv put -namespace=system/ config/data/system \
-  SECRET_KEY=my-new-secret-key
-```
-
-The OpenBao Agent sidecar re-renders the system secret every 5 minutes (`static_secret_render_interval`), so the api/worker will pick up the new value on the next cycle. The api/worker should be restarted for the change to take effect immediately.
-
----
-
-## Deployment
-
-- **Docker Compose** — `infra/docker-compose.backend.yml` for the backend stack. The frontend has its own deployment at `openzync-frontend/deploy/docker-compose.yml`.
-- **Kubernetes** — Helm chart at `infra/helm/openzync/`.
-- **Requirements** — PostgreSQL 15+ (with pgvector extension), Redis 7+, and an LLM provider (Ollama local or cloud BYOK).
-- **Worker** — The ARQ worker runs as a separate process. In Docker Compose, it is the `worker` service.
-- **Migrations** — Apply with `make migrate` or `alembic upgrade head`.
-
-See the [infra directory](./infra) for Docker Compose, Helm, and deployment configurations.
-
----
+| `project:read` | Read projects, memory, context, search and graph data |
+| `project:write` | Write project data — ingest, sessions, facts |
+| `project:manage` | Project lifecycle: create, archive, delete, settings |
+| `configuration:read` | Read org and project configuration |
+| `configuration:write` | Modify org and project configuration |
+| `members:read` | List org and project members |
+| `members:write` | Add or remove members, change their permissions |
 
 ## Development
 
-For local development with hot-reload:
-
 ```bash
-# First, bring up the supporting infrastructure (OpenBao, Postgres, Redis, worker)
-docker compose -f infra/docker-compose.backend.yml up -d openbao postgres redis worker openbao-agent-api
-
-# Then run the API locally with hot-reload
-make dev   # runs: uvicorn services.api.asgi:app --reload --port 8000
+make dev       # preflight services (OpenBao, Postgres, FalkorDB, Redis, Mailpit), then uvicorn --reload
+make test      # unit tests only — no I/O
+make test-all  # unit + integration + security + e2e
+make lint      # ruff check + ruff format --check
+make migrate   # alembic upgrade head
 ```
 
-The local API process bootstraps from OpenBao (just like the container) and reads the same `system` secret.
-
-Other commands:
-```bash
-make test             # Run unit tests
-make test-all         # Run all tests (unit + integration + security)
-make lint             # Ruff check + mypy
-make lint-fix         # Auto-fix lint issues
-make migrate          # Apply pending Alembic migrations (runs against the bootstrapped DB)
-make docker-up        # Start the full backend stack
-make docker-down      # Stop the backend stack
-```
-
-The project enforces strict separation of concerns (`routers → services → repositories → models`), async throughout, and typed interfaces. See the [docs directory](./docs) for more details, or visit [openzync.readthedocs.io](https://openzync.readthedocs.io).
-
----
+Contributions welcome — read the [contributing guide](https://docs.openzync.tech/en/latest/guides/contributing.html).
 
 ## License
 
-The core platform is licensed under the **GNU Affero General Public License v3** — see [LICENSE](./LICENSE).
-
-**Commercial license** available for SaaS deployments that do not wish to release modifications — contact `rohnsha0@gmail.com`.
-
-The Python SDK (`oss/sdk-python/`) is licensed under **Apache 2.0**.
+AGPL-3.0 — see [LICENSE](./LICENSE). Commercial licence for SaaS deployments that cannot release
+their modifications: `rohnsha0@gmail.com`. If OpenZync is useful to you, a star helps others find it.
