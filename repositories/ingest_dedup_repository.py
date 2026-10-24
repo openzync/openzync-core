@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from models.ingest_dedup import IngestDedup
@@ -22,6 +22,16 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 # ╠ This file contains NO business logic — only query construction.
+
+_DEDUP_TTL = text("interval '48 hours'")
+"""Dedup window — claims older than this no longer suppress re-ingest.
+
+Stale rows are NOT pruned here; expiry is enforced by predicate (reads)
+and opportunistic delete (writes).  A scheduled prune job (and eventually
+a partial unique index on unexpired rows) is still needed — otherwise the
+table grows without bound and the unique index keeps ancient triples
+reserved between re-claims.
+"""
 
 
 class IngestDedupRepository:
@@ -45,6 +55,10 @@ class IngestDedupRepository:
     ) -> bool:
         """Atomically claim a content triple, returning False on duplicate.
 
+        Claims older than 48 h no longer block: expired rows for this
+        triple are deleted first, then the insert races normally under the
+        unique index.
+
         Args:
             project_id: The project UUID scoping the claim.
             session_id: The session UUID scoping the claim.
@@ -55,6 +69,14 @@ class IngestDedupRepository:
             ``True`` if this call inserted the row (claim won), ``False``
             if the row already existed (duplicate).
         """
+        await self._db.execute(
+            delete(IngestDedup).where(
+                IngestDedup.project_id == project_id,
+                IngestDedup.session_id == session_id,
+                IngestDedup.content_hash == content_hash,
+                IngestDedup.created_at < func.now() - _DEDUP_TTL,
+            )
+        )
         stmt = (
             pg_insert(IngestDedup)
             .values(
@@ -81,7 +103,8 @@ class IngestDedupRepository:
 
         Used on the duplicate path (claim lost to a concurrent request) to
         reference the prior ``job_id`` in the response, preserving the
-        pre-fix duplicate response shape.
+        pre-fix duplicate response shape.  Claims older than 48 h are
+        invisible here (treated as no prior claim).
 
         Args:
             project_id: The project UUID scoping the claim.
@@ -89,15 +112,13 @@ class IngestDedupRepository:
             content_hash: The SHA-256 batch content hash.
 
         Returns:
-            The prior ``job_id`` if a claim exists, else ``None``.
+            The prior ``job_id`` if an unexpired claim exists, else ``None``.
         """
-        stmt = (
-            select(IngestDedup.job_id)
-            .where(
-                IngestDedup.project_id == project_id,
-                IngestDedup.session_id == session_id,
-                IngestDedup.content_hash == content_hash,
-            )
+        stmt = select(IngestDedup.job_id).where(
+            IngestDedup.project_id == project_id,
+            IngestDedup.session_id == session_id,
+            IngestDedup.content_hash == content_hash,
+            IngestDedup.created_at > func.now() - _DEDUP_TTL,
         )
         result = await self._db.execute(stmt)
         return result.scalar_one_or_none()

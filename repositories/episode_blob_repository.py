@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.episode_blob import EpisodeBlob
@@ -200,11 +200,22 @@ class EpisodeBlobRepository:
         )
         return list(result.scalars().all())
 
-    async def get_by_project(self, project_id: UUID) -> list[EpisodeBlob]:
-        """Get all blobs for a project.
+    async def get_by_project(
+        self,
+        project_id: UUID,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> list[EpisodeBlob]:
+        """Get blobs for a project, one page at a time.
+
+        Paged so a memory wipe never materializes the whole blob set —
+        callers loop until an empty page.  Deleting each page before
+        fetching the next keeps ``offset`` at 0 in practice.
 
         Args:
             project_id: The project UUID.
+            limit: Max rows per page.
+            offset: Page offset.
 
         Returns:
             List of ``EpisodeBlob`` instances, ordered by creation time.
@@ -213,6 +224,8 @@ class EpisodeBlobRepository:
             select(EpisodeBlob)
             .where(EpisodeBlob.project_id == project_id)
             .order_by(EpisodeBlob.created_at)
+            .limit(limit)
+            .offset(offset)
         )
         return list(result.scalars().all())
 
@@ -359,19 +372,20 @@ class EpisodeBlobRepository:
     async def delete_by_ids(
         self, blob_ids: list[UUID]
     ) -> list[EpisodeBlob]:
-        """Delete blob records by ID and return them.
+        """Delete blob records by ID in a single statement and return them.
 
         Args:
             blob_ids: List of blob UUIDs to delete.
 
         Returns:
-            List of deleted EpisodeBlob instances.
+            List of deleted EpisodeBlob instances (``storage_key`` loaded
+            via ``RETURNING`` for S3 cleanup).
         """
+        if not blob_ids:
+            return []
         result = await self._db.execute(
-            select(EpisodeBlob).where(EpisodeBlob.id.in_(blob_ids))
+            delete(EpisodeBlob)
+            .where(EpisodeBlob.id.in_(blob_ids))
+            .returning(EpisodeBlob)
         )
-        blobs = list(result.scalars().all())
-        for blob in blobs:
-            await self._db.delete(blob)
-        await self._db.flush()
-        return blobs
+        return list(result.scalars().all())

@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any
 
 import structlog
@@ -275,7 +276,7 @@ class PIIDetector:
         return results
 
     def _get_nlp(self) -> Any:
-        """Lazy-load the spaCy language model.
+        """Return the shared spaCy pipeline (loaded once per process).
 
         Returns:
             The spaCy ``Language`` pipeline.
@@ -284,28 +285,7 @@ class PIIDetector:
             ExternalServiceError: If spaCy is not installed or the model
                 cannot be loaded.
         """
-        if self._nlp is not None:
-            return self._nlp
-
-        try:
-            import spacy
-        except ImportError as exc:
-            logger.error("pii.spacy_not_installed", exc_info=True)
-            raise ExternalServiceError(
-                "PII NER model (spaCy) is not installed. "
-                "PII detection requires NER to be available."
-            ) from exc
-
-        try:
-            self._nlp = spacy.load("en_core_web_sm")
-        except OSError as exc:
-            logger.error("pii.ner_model_load_failed", exc_info=True)
-            raise ExternalServiceError(
-                "PII NER model (en_core_web_sm) failed to load. "
-                "PII detection requires NER to be available."
-            ) from exc
-
-        return self._nlp
+        return _load_spacy_model()
 
     # ── Post-processing ───────────────────────────────────────────────────
 
@@ -363,6 +343,46 @@ class PIIDetector:
         return [
             d for d in detections if d.confidence >= self._min_confidence
         ]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Shared spaCy pipeline — loaded once per process, not per detector
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+@lru_cache(maxsize=1)
+def _load_spacy_model() -> Any:
+    """Load ``en_core_web_sm`` once and share it across all detectors.
+
+    Fail-closed like before: missing spaCy or model raises
+    ``ExternalServiceError`` (never a silent regex-only fallback).
+    Load failures are NOT cached — ``lru_cache`` only memoizes returns —
+    so a transient failure retries on the next call.
+
+    Returns:
+        The spaCy ``Language`` pipeline.
+
+    Raises:
+        ExternalServiceError: If spaCy is not installed or the model
+            cannot be loaded.
+    """
+    try:
+        import spacy
+    except ImportError as exc:
+        logger.error("pii.spacy_not_installed", exc_info=True)
+        raise ExternalServiceError(
+            "PII NER model (spaCy) is not installed. "
+            "PII detection requires NER to be available."
+        ) from exc
+
+    try:
+        return spacy.load("en_core_web_sm")
+    except OSError as exc:
+        logger.error("pii.ner_model_load_failed", exc_info=True)
+        raise ExternalServiceError(
+            "PII NER model (en_core_web_sm) failed to load. "
+            "PII detection requires NER to be available."
+        ) from exc
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

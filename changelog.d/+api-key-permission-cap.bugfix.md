@@ -1,0 +1,1 @@
+Restrict project API keys to the `project:*` permission vocabulary and cap the key at the creator's own effective permissions (non-admin creators), so keys can never escalate beyond their creator. Key creation with no in-scope permission is rejected with 422.

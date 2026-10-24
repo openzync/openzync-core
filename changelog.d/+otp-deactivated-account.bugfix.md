@@ -1,0 +1,1 @@
+Treat deactivated or soft-deleted accounts as nonexistent across all OTP flows (verify, reset-password, send, login-OTP), so OTP codes can no longer be issued for or verified against disabled accounts. Responses stay indistinguishable from unknown emails (anti-enumeration).
