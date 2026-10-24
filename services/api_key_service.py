@@ -81,6 +81,11 @@ class ApiKeyService:
             for p in (payload.permissions or ["project:read", "project:write"])
             if p.startswith("project:")
         ]
+        if created_by is not None and self._redis is None:
+            raise ValidationError(
+                "API key creation is unavailable while the "
+                "authorization cache is down."
+            )
         if created_by is not None and self._redis is not None:
             # note: reaches into the repo for the request-scoped session —
             # ApiKeyService holds no session of its own.
