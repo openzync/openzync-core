@@ -119,11 +119,12 @@ class TestIngestContract:
     async def test_initial_batch_returns_202_shape(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
         isolated_fact_session: str,
     ) -> None:
         """Contract 1 — 202 with {job_id, accepted_count, superseded_count, status}."""
-        await _create_user(isolated_auth_client, "ss_202_user")
+        await _create_user(isolated_admin_client, "ss_202_user")
         resp = await isolated_auth_client.post(
             f"/v1/projects/{isolated_project_id}/facts",
             json=_fact_payload(
@@ -142,11 +143,12 @@ class TestIngestContract:
     async def test_identical_batch_replays_same_job_id(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
         isolated_fact_session: str,
     ) -> None:
         """Contract 2 — identical re-post → 202, same job_id, superseded_count 0."""
-        await _create_user(isolated_auth_client, "ss_dedup_user")
+        await _create_user(isolated_admin_client, "ss_dedup_user")
         payload = _fact_payload(
             "DedupEntity", "test", "dedup", session_id=isolated_fact_session
         )
@@ -172,12 +174,13 @@ class TestIngestContract:
     async def test_same_spo_different_content_supersedes(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
         isolated_fact_session: str,
     ) -> None:
         """Contract 3 + B1 — same SPO, different content → superseded_count 1,
         and the dedup replay must NOT swallow the second batch."""
-        await _create_user(isolated_auth_client, "ss_spo_user")
+        await _create_user(isolated_admin_client, "ss_spo_user")
         first = _fact_payload(
             "Alice",
             "likes",
@@ -222,11 +225,12 @@ class TestFactsListTemporal:
     async def test_list_current_and_as_of(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
         isolated_fact_session: str,
     ) -> None:
         """Contracts 3+4+5 — as-of shows old then new; default shows new."""
-        await _create_user(isolated_auth_client, "ss_list_user")
+        await _create_user(isolated_admin_client, "ss_list_user")
         first = _fact_payload(
             "Alice",
             "likes",
@@ -297,7 +301,9 @@ class TestFactsListTemporal:
         assert [f["content"] for f in resp_new.json()["data"]] == ["Alice loves hiking"]
 
     async def test_as_of_garbage_returns_422(
-        self, isolated_auth_client: AsyncClient, isolated_project_id: UUID
+        self,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
     ) -> None:
         """Contract 7 — GET /facts?as_of=garbage → 422."""
         resp = await isolated_auth_client.get(
@@ -309,7 +315,9 @@ class TestFactsListTemporal:
         assert "detail" in resp.json()
 
     async def test_as_of_naive_timestamp_coerced(
-        self, isolated_auth_client: AsyncClient, isolated_project_id: UUID
+        self,
+        isolated_auth_client: AsyncClient,
+        isolated_project_id: UUID,
     ) -> None:
         """Naive ISO-8601 as_of is coerced to UTC-aware (no 500)."""
         resp = await isolated_auth_client.get(
@@ -325,10 +333,11 @@ class TestContextAsOf:
     async def test_context_as_of_returns_original_content(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
         isolated_fact_session: str,
     ) -> None:
-        await _create_user(isolated_auth_client, "ss_ctx_user")
+        await _create_user(isolated_admin_client, "ss_ctx_user")
         first = _fact_payload(
             "Alice",
             "likes",
@@ -396,7 +405,8 @@ class TestContextAsOf:
         assert "Alice likes hiking" not in resp_cur.json()["context"]
 
     async def test_context_as_of_garbage_returns_422(
-        self, isolated_auth_client: AsyncClient, isolated_project_id: UUID
+        self, isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient, isolated_project_id: UUID
     ) -> None:
         resp = await isolated_auth_client.get(
             f"/v1/projects/{isolated_project_id}/context",

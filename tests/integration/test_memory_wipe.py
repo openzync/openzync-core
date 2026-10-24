@@ -47,6 +47,7 @@ class TestMemoryWipe:
         external_id: str = "wipe_user",
         session_id: str = "wipe_session",
         message_count: int = 3,
+        isolated_admin_client: AsyncClient | None = None,
     ) -> str:
         """Create a user, ingest messages, return the user UUID.
 
@@ -56,11 +57,13 @@ class TestMemoryWipe:
             external_id: User external identifier.
             session_id: Session external identifier.
             message_count: Number of messages to ingest.
+            isolated_admin_client: Admin JWT client for ``POST /v1/users``.
 
         Returns:
             The created user's UUID string.
         """
-        user_resp = await isolated_auth_client.post(
+        admin_client = isolated_admin_client or isolated_auth_client
+        user_resp = await admin_client.post(
             "/v1/users",
             json={"external_id": external_id},
         )
@@ -126,6 +129,7 @@ class TestMemoryWipe:
     async def test_wipe_memory_returns_204(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
         """DELETE /v1/projects/{project_id}/memory → 204 + episodes soft-deleted.
@@ -141,6 +145,7 @@ class TestMemoryWipe:
             external_id="wipe_happy_user",
             session_id="wipe_happy_session",
             message_count=5,
+            isolated_admin_client=isolated_admin_client,
         )
 
         # Count episodes before wipe
@@ -176,6 +181,7 @@ class TestMemoryWipe:
     async def test_wipe_confirm_mismatch_returns_422(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
         """DELETE with a non-matching ``confirm`` → 422, nothing deleted."""
@@ -185,6 +191,7 @@ class TestMemoryWipe:
             external_id="wipe_mismatch_user",
             session_id="wipe_mismatch_session",
             message_count=2,
+            isolated_admin_client=isolated_admin_client,
         )
 
         delete_resp = await isolated_auth_client.request(
@@ -227,6 +234,7 @@ class TestMemoryWipe:
     async def test_wipe_twice_is_idempotent(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
         """Two consecutive DELETE /v1/projects/{project_id}/memory →
@@ -242,6 +250,7 @@ class TestMemoryWipe:
             external_id="wipe_twice_user",
             session_id="wipe_twice_session",
             message_count=3,
+            isolated_admin_client=isolated_admin_client,
         )
 
         # First wipe
@@ -325,6 +334,7 @@ class TestMemoryWipe:
     async def test_wipe_preserves_sessions(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
         """DELETE /v1/projects/{project_id}/memory soft-deletes episodes,
@@ -339,6 +349,7 @@ class TestMemoryWipe:
             external_id="wipe_preserve_sesh_user",
             session_id="preserve_me",
             message_count=2,
+            isolated_admin_client=isolated_admin_client,
         )
 
         # Confirm session exists before wipe
@@ -408,7 +419,7 @@ class TestMemoryWipe:
             tenant_b = await bootstrap_tenant(isolated_app, cli, "Org B")
 
             # Create a user for org B so get_current_user_id has a valid UUID
-            cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_b['jwt']}"
             user_resp_b = await cli.post(
                 "/v1/users",
                 json={"external_id": "cross_tenant_wipe_user_b"},
@@ -420,6 +431,7 @@ class TestMemoryWipe:
             isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_b
 
             # Create a session for org B to verify its own resources work
+            cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
             session_resp_b = await cli.post(
                 f"/v1/projects/{tenant_b['project_id']}/sessions",
                 json={"external_id": "org_b_session"},
@@ -432,7 +444,7 @@ class TestMemoryWipe:
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {tenant_a['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_a['jwt']}"
             user_resp = await cli.post(
                 "/v1/users",
                 json={"external_id": "cross_tenant_wipe_user"},

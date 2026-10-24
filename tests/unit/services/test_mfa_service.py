@@ -150,11 +150,12 @@ class TestMfaService:
         """mfa_verify returns tokens when session + OTP are valid."""
         service, mock_repo, mock_otp, mock_redis = self._make_service()
 
-        # Redis returns valid session data
+        # Redis returns valid session data (email-bound).
         session_data = {
             "user_id": str(self.USER_ID),
             "org_id": str(self.ORG_ID),
             "role": "admin",
+            "email": "session-bound@example.com",
         }
         mock_redis.get.return_value = json.dumps(session_data)
         mock_otp.verify = AsyncMock(return_value=True)
@@ -168,7 +169,7 @@ class TestMfaService:
 
         result = await service.mfa_verify(
             MfaVerifyRequest(
-                email="a@b.com",
+                email="attacker@example.com",
                 otp="123456",
                 mfa_session_token="session-tok",
             ),
@@ -177,6 +178,13 @@ class TestMfaService:
         assert isinstance(result, TokenResponse)
         assert result.access_token == "at-mfa"
         assert result.refresh_token == "rt-mfa"
+
+        # OTP verified against the SESSION email, not payload.email.
+        mock_otp.verify.assert_awaited_once_with(
+            email="session-bound@example.com",
+            purpose="mfa",
+            code="123456",
+        )
 
         # Session was consumed (deleted)
         mock_redis.delete.assert_awaited_once_with(
@@ -224,6 +232,7 @@ class TestMfaService:
             "user_id": str(self.USER_ID),
             "org_id": str(self.ORG_ID),
             "role": "admin",
+            "email": "session-bound@example.com",
         }
         mock_redis.get.return_value = json.dumps(session_data)
         mock_otp.verify = AsyncMock(return_value=False)  # OTP doesn't match
@@ -231,7 +240,7 @@ class TestMfaService:
         with pytest.raises(AuthenticationError) as exc_info:
             await service.mfa_verify(
                 MfaVerifyRequest(
-                    email="a@b.com",
+                    email="attacker@example.com",
                     otp="000000",
                     mfa_session_token="tok",
                 ),
@@ -240,6 +249,12 @@ class TestMfaService:
         assert "invalid" in str(exc_info.value.message).lower() or "expired" in str(
             exc_info.value.message,
         ).lower()
+        # OTP verified against the SESSION email, not payload.email.
+        mock_otp.verify.assert_awaited_once_with(
+            email="session-bound@example.com",
+            purpose="mfa",
+            code="000000",
+        )
 
     # ── Enable MFA — correct password ──────────────────────────────────────
 

@@ -170,3 +170,60 @@ class TestSelfPermissionGuard:
             # Capped at the actor set — an admin is wildcard, so the cap
             # is the full permission vocabulary.
             assert set(stored) <= set(ALL_PERMISSIONS)
+
+    @pytest.mark.asyncio
+    async def test_non_admin_patch_other_capped_at_actor_set(
+        self,
+        isolated_app: Any,
+        isolated_org_and_key: dict,
+    ) -> None:
+        """Non-admin PATCH other → 200, stored set is the intersection."""
+        from repositories.auth_repository import AuthRepository
+        from utils.password import hash_password
+
+        org_id = isolated_org_and_key["org_id"]
+        admin_jwt: str = isolated_org_and_key["jwt"]
+        actor_perms = ["members:read", "members:write", "project:read"]
+        async with isolated_app.state.db_session_factory() as session:
+            repo = AuthRepository(session)
+            actor = await repo.create_dashboard_user(
+                organization_id=org_id,
+                email="cap-actor@example.com",
+                password_hash=hash_password(_PASSWORD),
+                role="member",
+                permissions=list(actor_perms),
+            )
+            await repo.mark_email_verified(actor.id)
+            target = await repo.create_dashboard_user(
+                organization_id=org_id,
+                email="cap-target@example.com",
+                password_hash=hash_password(_PASSWORD),
+                role="member",
+                permissions=["project:read"],
+            )
+            await repo.mark_email_verified(target.id)
+            await session.commit()
+            actor_id, target_id = actor.id, target.id
+
+        transport = asgi_transport(isolated_app)
+        async with AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as member_client:
+            member_client.headers["Authorization"] = (
+                f"Bearer {await _login_jwt(isolated_app, 'cap-actor@example.com')}"
+            )
+            requested = ["project:read", "project:write", "members:read"]
+            resp = await member_client.patch(
+                f"/v1/users/{target_id}",
+                json={"permissions": requested},
+            )
+            assert resp.status_code == 200, (
+                f"non-admin PATCH other must be 200, "
+                f"got {resp.status_code}: {resp.text}"
+            )
+            stored = resp.json()["permissions"]
+            assert sorted(stored) == sorted(set(requested) & set(actor_perms)), (
+                "grant must be capped at the actor's own set"
+            )
+            assert set(stored) <= set(actor_perms)
+        _ = (admin_jwt, actor_id)

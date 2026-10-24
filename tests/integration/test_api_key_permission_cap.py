@@ -5,13 +5,13 @@ Covers:
       vocabulary is dropped, leaving an empty grant).
     - Non-admin create key with a ``project:read`` subset → 201, and a
       request above the actor set is capped down to it.
-    - Fail-closed: ``ApiKeyService`` with ``redis=None`` raises instead
-      of minting a key (this is also the #9 blocker-fix case — no
-      second test needed).
+    - Fail-closed: ``get_actor_permissions`` raises 503 when app Redis
+      is missing (this is also the #9 blocker-fix case — no second
+      test needed).
 
 Real Postgres + Redis via testcontainers; real HTTP via ASGITransport
-for the endpoint cases.  The Redis-down case builds the real service
-with ``redis=None`` (no mocks) and asserts nothing is persisted.
+for the endpoint cases.  The Redis-down case drives the real
+``get_actor_permissions`` dependency with real request state.
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ from uuid import UUID
 import pytest
 from httpx import AsyncClient
 
-from core.exceptions import ValidationError
 from tests.integration.conftest import asgi_transport
 
 
@@ -191,33 +190,44 @@ class TestApiKeyPermissionCap:
         isolated_app: Any,
         isolated_org_and_key: dict,
     ) -> None:
-        """``redis=None`` → create raises instead of minting (covers #9)."""
-        from repositories.api_key_repository import ApiKeyRepository
-        from schemas.api_keys import CreateApiKeyRequest
-        from services.api_key_service import ApiKeyService
+        """Missing app Redis → ``get_actor_permissions`` raises 503.
+
+        The cap now lives in the ``get_actor_permissions`` router
+        dependency (``dependencies/auth.py``) — not in
+        ``ApiKeyService`` (whose ``redis=None`` is a no-op cache
+        bypass).  Drive the real dependency with real request state
+        (JWT principal) and no Redis on the app.
+        """
+        from unittest.mock import AsyncMock
+
+        from fastapi import HTTPException, Request
+
+        from dependencies.auth import get_actor_permissions
 
         tenant = isolated_org_and_key
-        member_id = await _seed_member(isolated_app, tenant["org_id"])
-
-        async with isolated_app.state.db_session_factory() as session:
-            service = ApiKeyService(
-                repo=ApiKeyRepository(db=session),
-                redis=None,  # simulates Redis down — fail-closed branch
-            )
-            with pytest.raises(ValidationError, match="authorization cache"):
-                await service.create_project_key(
-                    organization_id=tenant["org_id"],
-                    project_id=tenant["project_id"],
-                    payload=CreateApiKeyRequest(
-                        name="redis-down", permissions=["project:read"]
-                    ),
-                    created_by=member_id,
+        old_redis = isolated_app.state.redis
+        isolated_app.state.redis = None
+        try:
+            scope = {
+                "type": "http",
+                "method": "POST",
+                "path": "/v1/projects/x/api-keys",
+                "headers": [],
+                "query_string": b"",
+                "server": ("test", 80),
+                "scheme": "http",
+                "client": ("test", 50000),
+                "app": isolated_app,
+            }
+            request = Request(scope)
+            request.state.auth_type = "jwt"
+            request.state.user_id = str(tenant["user_id"])
+            request.state.org_id = str(tenant["org_id"])
+            with pytest.raises(HTTPException) as exc_info:
+                await get_actor_permissions(
+                    request,
+                    db=AsyncMock(),
                 )
-            await session.rollback()
-            remaining = await ApiKeyRepository(db=session).list_by_org(
-                organization_id=tenant["org_id"],
-                project_id=tenant["project_id"],
-            )
-        assert all(k.name != "redis-down" for k in remaining), (
-            "fail-closed create must persist nothing"
-        )
+        finally:
+            isolated_app.state.redis = old_redis
+        assert exc_info.value.status_code == 503
