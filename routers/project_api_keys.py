@@ -18,7 +18,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import audit_action
 from core.redis import get_redis
-from dependencies.auth import get_current_user_id, require_org_id, require_permission
+from dependencies.auth import (
+    get_actor_permissions,
+    get_current_user_id,
+    require_org_id,
+    require_permission,
+)
 from dependencies.db import get_db
 from dependencies.project_auth import require_project_membership
 from repositories.api_key_repository import ApiKeyRepository
@@ -111,6 +116,7 @@ async def create_api_key(
     _perm: None = Depends(require_permission("project:manage")),
     org_id: str = Depends(require_org_id),
     user_id: UUID = Depends(get_current_user_id),
+    actor_permissions: frozenset[str] | None = Depends(get_actor_permissions),
 ) -> ApiKeyCreatedResponse:
     """Create a new project-scoped API key.
 
@@ -122,6 +128,8 @@ async def create_api_key(
         org_id: Authenticated organization ID.
         user_id: Authenticated user UUID (stored as ``created_by`` for
             attribution in API-key-authenticated requests).
+        actor_permissions: Creator's grantable set (``None`` = wildcard);
+            the key's permissions are capped to it.
 
     Returns:
         The new key with the raw value (shown once).
@@ -131,6 +139,7 @@ async def create_api_key(
         project_id=project_id,
         payload=payload,
         created_by=user_id,
+        actor_permissions=actor_permissions,
     )
 
     return ApiKeyCreatedResponse(

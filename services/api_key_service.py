@@ -16,7 +16,6 @@ import redis.asyncio as aioredis
 import structlog
 
 from core.exceptions import ValidationError
-from core.rbac import get_effective_permissions, get_org_role
 from core.sorting import SortSpec
 from models.api_key import ApiKey
 from repositories.api_key_repository import ApiKeyRepository
@@ -54,6 +53,7 @@ class ApiKeyService:
         project_id: UUID,
         payload: CreateApiKeyRequest,
         created_by: UUID | None = None,
+        actor_permissions: frozenset[str] | None = None,
     ) -> tuple[ApiKey, str]:
         """Create a new API key scoped to a specific project.
 
@@ -66,6 +66,10 @@ class ApiKeyService:
             payload: Key name from the request body.
             created_by: Optional UUID of the user creating the key.
                 Populated from the JWT session when called via the dashboard.
+            actor_permissions: The creator's grantable permission set,
+                resolved by the ``get_actor_permissions`` router dependency.
+                ``None`` = wildcard (admin/superadmin) or system path
+                (``created_by`` is ``None``) — no cap applied.
 
         Returns:
             A tuple of ``(ApiKey record, raw_key_string)``.
@@ -81,29 +85,9 @@ class ApiKeyService:
             for p in (payload.permissions or ["project:read", "project:write"])
             if p.startswith("project:")
         ]
-        if created_by is not None and self._redis is None:
-            raise ValidationError(
-                "API key creation is unavailable while the "
-                "authorization cache is down."
-            )
-        if created_by is not None and self._redis is not None:
-            # note: reaches into the repo for the request-scoped session —
-            # ApiKeyService holds no session of its own.
-            role = await get_org_role(
-                self._redis,
-                self._repo._db,
-                organization_id,
-                created_by,  # noqa: SLF001
-            )
-            if role not in ("admin", "superadmin"):
-                allowed = await get_effective_permissions(
-                    self._redis,
-                    self._repo._db,
-                    organization_id,
-                    created_by,  # noqa: SLF001
-                )
-                # Cap the key at the creator's own set — keys never escalate.
-                requested = sorted(set(requested) & set(allowed))
+        if created_by is not None and actor_permissions is not None:
+            # Cap the key at the creator's own set — keys never escalate.
+            requested = sorted(set(requested) & set(actor_permissions))
         if not requested:
             raise ValidationError(
                 "API key must include at least one project:* permission "

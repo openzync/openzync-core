@@ -388,5 +388,4 @@ class EpisodeBlobRepository:
             .where(EpisodeBlob.id.in_(blob_ids))
             .returning(EpisodeBlob)
         )
-        await self._db.flush()
         return list(result.scalars().all())

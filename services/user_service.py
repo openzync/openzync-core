@@ -20,8 +20,6 @@ from core.events import EventType
 from core.exceptions import ConflictError, NotFoundError, ValidationError
 from core.rbac import (
     MEMBER_DEFAULT_PERMISSIONS,
-    get_effective_permissions,
-    get_org_role,
     invalidate_permissions,
     invalidate_role,
 )
@@ -309,6 +307,7 @@ class UserService:
         update_fields: dict[str, Any],
         *,
         actor_user_id: UUID,
+        actor_permissions: frozenset[str] | None = None,
     ) -> UserResponse:
         """Update user fields using the new sentinel-safe pattern.
 
@@ -327,8 +326,10 @@ class UserService:
 
         When ``permissions`` is provided, it replaces the current set
         (grants survive a role change — a role change alone never touches
-        the permission array).  The cached permission set is invalidated
-        after any role or permissions change.
+        the permission array).  ``actor_permissions`` caps the grant at the
+        actor's own set (never escalate); ``None`` means the actor is
+        admin/superadmin (wildcard — uncapped).  The cached permission set
+        is invalidated after any role or permissions change.
 
         Args:
             organization_id: Tenant scope (must match the user's org).
@@ -337,6 +338,9 @@ class UserService:
                 Valid keys: ``name``, ``email``, ``metadata``, ``role``,
                 ``permissions``.
             actor_user_id: The authenticated user performing the update.
+            actor_permissions: The actor's grantable permission set,
+                resolved by the ``get_actor_permissions`` router dependency.
+                ``None`` = wildcard (admin/superadmin), no cap applied.
 
         Returns:
             The updated :class:`UserResponse`.
@@ -376,29 +380,12 @@ class UserService:
         if "permissions" in update_fields:
             if user_id == actor_user_id:
                 raise ValidationError("You cannot change your own permissions.")
-            if self._redis is None:
-                raise ValidationError(
-                    "Permission changes are unavailable while the "
-                    "authorization cache is down."
-                )
-            # note: reaches into the repo for the request-scoped session —
-            # UserService holds no session of its own.
-            actor_role = await get_org_role(
-                self._redis,
-                self._repo._db,
-                organization_id,
-                actor_user_id,  # noqa: SLF001
-            )
-            if actor_role not in ("admin", "superadmin"):
-                actor_perms = await get_effective_permissions(
-                    self._redis,
-                    self._repo._db,
-                    organization_id,
-                    actor_user_id,  # noqa: SLF001
-                )
+            if actor_permissions is not None:
                 requested = set(update_fields["permissions"] or [])
                 # Cap the grant at the actor's own set — never escalate.
-                update_fields["permissions"] = sorted(requested & set(actor_perms))
+                update_fields["permissions"] = sorted(
+                    requested & set(actor_permissions)
+                )
 
         user = await self._repo.update(
             organization_id=organization_id,
