@@ -1,0 +1,1 @@
+Bind MFA verification to the email stored in the login session instead of caller-supplied input, closing a session-fixation path where an attacker could verify their own OTP for a victim login. Sessions minted before the binding existed fail closed and require a fresh login.

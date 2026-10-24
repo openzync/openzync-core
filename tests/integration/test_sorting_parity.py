@@ -141,11 +141,11 @@ class TestUsersParity:
 
     _NAMES = ("parity-u-bravo", "parity-u-alpha", "parity-u-charlie")
 
-    async def _seed(self, isolated_auth_client: AsyncClient) -> list[dict[str, Any]]:
+    async def _seed(self, isolated_admin_client: AsyncClient) -> list[dict[str, Any]]:
         """Create three users; return rows in creation order."""
         rows = []
         for ext in self._NAMES:
-            resp = await isolated_auth_client.post(
+            resp = await isolated_admin_client.post(
                 "/v1/users", json={"external_id": ext}
             )
             assert resp.status_code == 201, resp.text
@@ -154,11 +154,11 @@ class TestUsersParity:
 
     @pytest.mark.asyncio
     async def test_default_order_is_created_at_desc(
-        self, isolated_auth_client: AsyncClient
+        self, isolated_admin_client: AsyncClient
     ) -> None:
         """No sort → newest first (creation order reversed)."""
-        await self._seed(isolated_auth_client)
-        resp = await isolated_auth_client.get(
+        await self._seed(isolated_admin_client)
+        resp = await isolated_admin_client.get(
             "/v1/users", params={"search": "parity-u-", "limit": 10}
         )
         assert resp.status_code == 200, resp.text
@@ -167,15 +167,15 @@ class TestUsersParity:
 
     @pytest.mark.asyncio
     async def test_sort_by_external_id_flips(
-        self, isolated_auth_client: AsyncClient
+        self, isolated_admin_client: AsyncClient
     ) -> None:
         """?sort_by=external_id asc/desc flips the exact sequence."""
-        await self._seed(isolated_auth_client)
+        await self._seed(isolated_admin_client)
         params = {"search": "parity-u-", "limit": 10}
-        asc = await isolated_auth_client.get(
+        asc = await isolated_admin_client.get(
             "/v1/users", params={**params, "sort_by": "external_id", "sort_dir": "asc"}
         )
-        desc = await isolated_auth_client.get(
+        desc = await isolated_admin_client.get(
             "/v1/users", params={**params, "sort_by": "external_id", "sort_dir": "desc"}
         )
         assert asc.status_code == 200 and desc.status_code == 200
@@ -186,24 +186,24 @@ class TestUsersParity:
 
     @pytest.mark.asyncio
     async def test_invalid_sort_by_is_422(
-        self, isolated_auth_client: AsyncClient
+        self, isolated_admin_client: AsyncClient
     ) -> None:
         """?sort_by=bogus → 422 (Literal whitelist at the router)."""
-        resp = await isolated_auth_client.get("/v1/users", params={"sort_by": "bogus"})
+        resp = await isolated_admin_client.get("/v1/users", params={"sort_by": "bogus"})
         assert resp.status_code == 422
 
     @pytest.mark.asyncio
     async def test_stale_cursor_under_new_sort_is_422(
-        self, isolated_auth_client: AsyncClient
+        self, isolated_admin_client: AsyncClient
     ) -> None:
         """Cursor from the default sort reused under a new sort → 422."""
-        await self._seed(isolated_auth_client)
-        page1 = await isolated_auth_client.get(
+        await self._seed(isolated_admin_client)
+        page1 = await isolated_admin_client.get(
             "/v1/users", params={"search": "parity-u-", "limit": 1}
         )
         cursor = page1.json()["next_cursor"]
         assert cursor is not None
-        resp = await isolated_auth_client.get(
+        resp = await isolated_admin_client.get(
             "/v1/users",
             params={
                 "search": "parity-u-",
@@ -217,10 +217,10 @@ class TestUsersParity:
 
     @pytest.mark.asyncio
     async def test_stale_shape_cursor_is_422(
-        self, isolated_auth_client: AsyncClient
+        self, isolated_admin_client: AsyncClient
     ) -> None:
         """Legacy ``{"node_id"}`` cursor shape → 422 (strict decoder)."""
-        resp = await isolated_auth_client.get(
+        resp = await isolated_admin_client.get(
             "/v1/users", params={"cursor": STALE_CURSOR}
         )
         assert resp.status_code == 422
@@ -956,7 +956,7 @@ class TestAuditLogsParity:
     async def test_default_desc_and_flip_and_invalid(
         self,
         isolated_app: Any,
-        isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_org_and_key: dict[str, Any],
     ) -> None:
         """Seed entries directly, then: default desc; asc flips; bogus → 422.
@@ -984,7 +984,7 @@ class TestAuditLogsParity:
 
         base = "/v1/admin/audit-logs"
         filt = {"resource_type": "parity-audit", "limit": 50}
-        default = await isolated_auth_client.get(base, params=filt)
+        default = await isolated_admin_client.get(base, params=filt)
         assert default.status_code == 200, default.text
         items = default.json()["items"]
         assert [i["action"] for i in items] == [
@@ -993,10 +993,10 @@ class TestAuditLogsParity:
             "parity.audit.b",
         ]
 
-        asc = await isolated_auth_client.get(
+        asc = await isolated_admin_client.get(
             base, params={**filt, "sort_by": "action", "sort_dir": "asc"}
         )
-        desc = await isolated_auth_client.get(
+        desc = await isolated_admin_client.get(
             base, params={**filt, "sort_by": "action", "sort_dir": "desc"}
         )
         assert asc.status_code == 200 and desc.status_code == 200
@@ -1011,7 +1011,7 @@ class TestAuditLogsParity:
             "parity.audit.a",
         ]
 
-        bad = await isolated_auth_client.get(base, params={"sort_by": "bogus"})
+        bad = await isolated_admin_client.get(base, params={"sort_by": "bogus"})
         assert bad.status_code == 422
 
 

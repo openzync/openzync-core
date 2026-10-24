@@ -326,7 +326,7 @@ class TestUsersRouter:
             _make_user_response({"name": "Alice B."}),
         )
 
-        from dependencies.auth import require_org_id
+        from dependencies.auth import get_actor_permissions, require_org_id
         from dependencies.db import get_db
         from routers.users import get_user_service, router
 
@@ -335,6 +335,7 @@ class TestUsersRouter:
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_user_service] = lambda: mock_instance
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
+        app.dependency_overrides[get_actor_permissions] = lambda: None
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -704,6 +705,7 @@ class TestUsersRouterRoleChanges:
             _make_user_response({"role": "admin", "external_id": "u_1"}),
         )
 
+        from dependencies.auth import get_actor_permissions
         from dependencies.db import get_db
         from routers.users import get_user_service, router
 
@@ -711,6 +713,7 @@ class TestUsersRouterRoleChanges:
         app.include_router(router)
         app.dependency_overrides[get_db] = lambda: AsyncMock()
         app.dependency_overrides[get_user_service] = lambda: mock_instance
+        app.dependency_overrides[get_actor_permissions] = lambda: None
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -735,6 +738,7 @@ class TestUsersRouterRoleChanges:
             user_id=UUID("00000000-0000-0000-0000-0000000000bb"),
             update_fields={"role": "admin"},
             actor_user_id=USER_ID,
+            actor_permissions=None,
         )
 
     @patch("routers.users.UserService")

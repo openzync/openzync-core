@@ -20,6 +20,7 @@ from starlette.responses import Response
 from core.audit import audit_action
 from core.exceptions import RateLimitError, ValidationError
 from dependencies.auth import (
+    get_actor_permissions,
     require_permission,
     require_permission_or_self,
 )
@@ -163,6 +164,7 @@ async def update_user(
     request: Request,
     service: UserService = Depends(get_user_service),
     org_id: str = Depends(require_permission("members:write")),
+    actor_permissions: frozenset[str] | None = Depends(get_actor_permissions),
 ) -> UserResponse:
     """Update user fields.
 
@@ -190,6 +192,7 @@ async def update_user(
         user_id=user_id,
         update_fields=update_fields,
         actor_user_id=UUID(request.state.user_id),
+        actor_permissions=actor_permissions,
     )
 
 

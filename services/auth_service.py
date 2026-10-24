@@ -547,7 +547,7 @@ class AuthService:
                 email has no account (indistinguishable, anti-enumeration).
         """
         user = await self._repo.find_user_by_email(payload.email)
-        if user is None:
+        if user is None or not user.is_active or user.is_deleted:
             # No account → no OTP was ever issued for it.  Raise the exact
             # wrong-code error so missing vs existing emails are indistinguishable.
             raise AuthenticationError(
@@ -694,7 +694,7 @@ class AuthService:
             ValidationError: If the new password is too weak.
         """
         user = await self._repo.find_user_by_email(payload.email)
-        if user is None:
+        if user is None or not user.is_active or user.is_deleted:
             raise AuthenticationError(
                 "Invalid or expired reset code. "
                 "Please request a new code.",
@@ -756,7 +756,7 @@ class AuthService:
             An ``OtpResponse`` confirming the code was sent.
         """
         user = await self._repo.find_user_by_email(email)
-        if user is None:
+        if user is None or not user.is_active or user.is_deleted:
             logger.warning(
                 "security.login_otp_send_unknown_email",
                 extra={"email": email},
@@ -797,7 +797,7 @@ class AuthService:
                 email has no account (indistinguishable, anti-enumeration).
         """
         user = await self._repo.find_user_by_email(payload.email)
-        if user is None:
+        if user is None or not user.is_active or user.is_deleted:
             # No account → no OTP was ever issued for it.  Raise the exact
             # wrong-code error so missing vs existing emails are indistinguishable.
             raise AuthenticationError(
@@ -891,6 +891,10 @@ class AuthService:
                 "user_id": str(user.id),
                 "org_id": str(user.organization_id),
                 "role": role,
+                # Bound at creation: the OTP is verified against this address,
+                # never against caller-supplied input (stops session fixation
+                # where an attacker verifies their own OTP for a victim login).
+                "email": payload.email,
             }
             await self._redis.setex(
                 redis_key,
@@ -950,9 +954,17 @@ class AuthService:
         session_data = json.loads(session_raw)
         await self._redis.delete(redis_key)  # single-use
 
-        # Verify OTP
+        # Fail closed on sessions minted before the email binding existed.
+        session_email = session_data.get("email")
+        if not session_email:
+            raise AuthenticationError(
+                "MFA session has expired or is invalid. Please log in again."
+            )
+
+        # Verify OTP against the session-bound email — payload.email is
+        # ignored so a caller cannot substitute their own address.
         verified = await self._otp_service.verify(
-            email=payload.email,
+            email=session_email,
             purpose="mfa",
             code=payload.otp,
         )

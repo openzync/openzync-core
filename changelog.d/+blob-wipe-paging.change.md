@@ -1,0 +1,1 @@
+Page project memory wipes through blob rows (500 per page, S3-then-row delete per page) instead of materializing the whole blob set, and delete rows in a single `DELETE ... RETURNING` statement with concurrent S3 deletes per page. Large-project wipes no longer OOM, and S3 failures still raise so rows stay for the orphan-blob cleanup worker.

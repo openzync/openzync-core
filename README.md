@@ -32,7 +32,7 @@ providers, an MCP server and a typed Python SDK. Self-hosted, no vendor lock-in.
 
 | Category | Accuracy |
 |---|---|
-| Overall (500 questions) | **87.1 %** (436/500) |
+| Overall (500 questions) | **87.1 %** |
 | Temporal reasoning | 100 % (133/133) |
 | Knowledge update | 100 % (78/78) |
 | Single-session, assistant | 100 % (56/56) |

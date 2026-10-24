@@ -109,11 +109,12 @@ class TestRetractEndpoint:
     async def test_retract_sets_invalid_at(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
         isolated_fact_session: str,
     ) -> None:
         """Retracting an open fact returns 200 with ``invalid_at`` set."""
-        await _create_user(isolated_auth_client, "retract_user")
+        await _create_user(isolated_admin_client, "retract_user")
         fact_id = await _ingest_one_fact(
             isolated_auth_client, isolated_project_id, isolated_fact_session
         )
@@ -135,11 +136,12 @@ class TestRetractEndpoint:
     async def test_retract_is_idempotent_noop(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
         isolated_fact_session: str,
     ) -> None:
         """Re-retracting a closed fact is a 200 no-op — invalid_at unchanged."""
-        await _create_user(isolated_auth_client, "retract_idem_user")
+        await _create_user(isolated_admin_client, "retract_idem_user")
         fact_id = await _ingest_one_fact(
             isolated_auth_client, isolated_project_id, isolated_fact_session
         )
@@ -194,11 +196,12 @@ class TestHistoryEndpoint:
     async def test_history_returns_fact_and_events(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
         isolated_fact_session: str,
     ) -> None:
         """After a retraction the history carries the fact and the event."""
-        await _create_user(isolated_auth_client, "history_user")
+        await _create_user(isolated_admin_client, "history_user")
         fact_id = await _ingest_one_fact(
             isolated_auth_client, isolated_project_id, isolated_fact_session
         )

@@ -27,6 +27,10 @@ Provides the following auth dependencies:
 7. ``require_superadmin`` — Requires a JWT dashboard session AND the
    platform ``superadmin`` role.
 
+8. ``get_actor_permissions`` — Returns the principal's grantable permission
+   set (``None`` for admin/superadmin wildcard).  Routers pass it to
+   services to cap permission grants; raises 503 when Redis is down.
+
 All dependencies rely on ``request.state`` attributes set by
 :class:`AuthMiddleware <openzync.middleware.auth.AuthMiddleware>`.
 """
@@ -350,6 +354,72 @@ def require_permission_or_self(required_permission: str):
         return org_id
 
     return _permission_or_self_checker
+
+
+async def get_actor_permissions(
+    request: Request,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+) -> frozenset[str] | None:
+    """Resolve the calling principal's grantable permission set.
+
+    Used to cap permission grants so a principal can never escalate beyond
+    its own set.  API keys resolve from
+    ``request.state.api_key_permissions`` (always populated by
+    :class:`AuthMiddleware` — ``None`` is treated as an empty set,
+    fail-closed).  JWT sessions resolve via the org role
+    (``admin``/``superadmin`` are wildcard) or the cached explicit
+    permission set.
+
+    Args:
+        request: The incoming HTTP request.
+        db: Request-scoped async DB session (role/permission lookups).
+
+    Returns:
+        ``None`` for admin/superadmin (uncapped — wildcard), otherwise the
+        actor's permission set used to cap grants.
+
+    Raises:
+        HTTPException: 401 if a JWT session is missing a user id or org id.
+        HTTPException: 503 if Redis is not configured on app state.
+    """
+    if getattr(request.state, "auth_type", None) == "api_key":
+        key_permissions: list[str] | None = getattr(
+            request.state, "api_key_permissions", None
+        )
+        return frozenset(key_permissions or [])
+
+    user_id: str | None = getattr(request.state, "user_id", None)
+    org_id: str | None = getattr(request.state, "org_id", None)
+    if user_id is None or org_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "type": "https://errors.openzync.tech/authentication_error",
+                "title": "Invalid Session",
+                "status": 401,
+                "detail": "The JWT token does not contain a valid user identifier.",
+            },
+        )
+
+    redis = getattr(request.app.state, "redis", None)
+    if redis is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "type": "https://errors.openzync.tech/service_unavailable",
+                "title": "Service Unavailable",
+                "status": 503,
+                "detail": (
+                    "The authorization cache is not configured. "
+                    "Contact the administrator."
+                ),
+            },
+        )
+
+    role = await get_org_role(redis, db, UUID(org_id), UUID(user_id))
+    if role in ("admin", "superadmin"):
+        return None
+    return await get_effective_permissions(redis, db, UUID(org_id), UUID(user_id))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

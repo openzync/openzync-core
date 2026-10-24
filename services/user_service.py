@@ -307,6 +307,7 @@ class UserService:
         update_fields: dict[str, Any],
         *,
         actor_user_id: UUID,
+        actor_permissions: frozenset[str] | None = None,
     ) -> UserResponse:
         """Update user fields using the new sentinel-safe pattern.
 
@@ -325,8 +326,10 @@ class UserService:
 
         When ``permissions`` is provided, it replaces the current set
         (grants survive a role change — a role change alone never touches
-        the permission array).  The cached permission set is invalidated
-        after any role or permissions change.
+        the permission array).  ``actor_permissions`` caps the grant at the
+        actor's own set (never escalate); ``None`` means the actor is
+        admin/superadmin (wildcard — uncapped).  The cached permission set
+        is invalidated after any role or permissions change.
 
         Args:
             organization_id: Tenant scope (must match the user's org).
@@ -335,6 +338,9 @@ class UserService:
                 Valid keys: ``name``, ``email``, ``metadata``, ``role``,
                 ``permissions``.
             actor_user_id: The authenticated user performing the update.
+            actor_permissions: The actor's grantable permission set,
+                resolved by the ``get_actor_permissions`` router dependency.
+                ``None`` = wildcard (admin/superadmin), no cap applied.
 
         Returns:
             The updated :class:`UserResponse`.
@@ -370,6 +376,16 @@ class UserService:
                     raise ValidationError(
                         "Cannot demote the last admin in the organization."
                     )
+
+        if "permissions" in update_fields:
+            if user_id == actor_user_id:
+                raise ValidationError("You cannot change your own permissions.")
+            if actor_permissions is not None:
+                requested = set(update_fields["permissions"] or [])
+                # Cap the grant at the actor's own set — never escalate.
+                update_fields["permissions"] = sorted(
+                    requested & set(actor_permissions)
+                )
 
         user = await self._repo.update(
             organization_id=organization_id,

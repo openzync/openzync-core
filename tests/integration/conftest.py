@@ -359,11 +359,8 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
     project_id = UUID(proj_resp.json()["id"])
 
     # ── Create a project-scoped API key (owner-gated, JWT only) ─────────
-    # ``members:read`` is granted explicitly because suites drive
-    # GET /v1/users* through this key; the default key permissions
-    # (project:read, project:write) no longer satisfy that gate.
-    # ``members:write`` is included because POST /v1/users requires it;
-    # the API-key path checks exact permission membership.
+    # Project keys carry only project:* vocabulary — the service drops
+    # anything else before persistence.
     key_resp = await client.post(
         f"/v1/projects/{project_id}/api-keys",
         json={
@@ -371,8 +368,6 @@ async def bootstrap_tenant(app: Any, client: AsyncClient, org_name: str) -> dict
             "permissions": [
                 "project:read",
                 "project:write",
-                "members:read",
-                "members:write",
             ],
         },
     )
@@ -403,6 +398,23 @@ async def auth_client(app: Any, org_and_key: dict) -> AsyncGenerator[AsyncClient
     transport = asgi_transport(app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         client.headers["Authorization"] = f"Bearer {org_and_key['api_key']}"
+        yield client
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def admin_client(
+    app: Any, org_and_key: dict
+) -> AsyncGenerator[AsyncClient, None]:
+    """HTTP client pre-authenticated with the bootstrap admin JWT.
+
+    Org-wide endpoints (``POST/GET/PATCH/DELETE /v1/users*``,
+    audit-log reads) require ``members:*`` — only the admin JWT
+    (wildcard) satisfies those gates now that the shared key carries
+    project-only permissions.
+    """
+    transport = asgi_transport(app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers["Authorization"] = f"Bearer {org_and_key['jwt']}"
         yield client
 
 
@@ -579,6 +591,23 @@ async def isolated_auth_client(
     transport = asgi_transport(isolated_app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         client.headers["Authorization"] = f"Bearer {isolated_org_and_key['api_key']}"
+        yield client
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def isolated_admin_client(
+    isolated_app: Any,
+    isolated_org_and_key: dict,
+) -> AsyncGenerator[AsyncClient, None]:
+    """JWT-authenticated client backed by the isolated app.
+
+    Mirrors :func:`admin_client` for the per-test isolation fixtures —
+    org-wide calls (``/v1/users*``, audit-logs) must go through this,
+    project-scoped calls stay on ``isolated_auth_client``.
+    """
+    transport = asgi_transport(isolated_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers["Authorization"] = f"Bearer {isolated_org_and_key['jwt']}"
         yield client
 
 

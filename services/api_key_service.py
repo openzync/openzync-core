@@ -15,6 +15,7 @@ from uuid import UUID
 import redis.asyncio as aioredis
 import structlog
 
+from core.exceptions import ValidationError
 from core.sorting import SortSpec
 from models.api_key import ApiKey
 from repositories.api_key_repository import ApiKeyRepository
@@ -52,6 +53,7 @@ class ApiKeyService:
         project_id: UUID,
         payload: CreateApiKeyRequest,
         created_by: UUID | None = None,
+        actor_permissions: frozenset[str] | None = None,
     ) -> tuple[ApiKey, str]:
         """Create a new API key scoped to a specific project.
 
@@ -64,6 +66,10 @@ class ApiKeyService:
             payload: Key name from the request body.
             created_by: Optional UUID of the user creating the key.
                 Populated from the JWT session when called via the dashboard.
+            actor_permissions: The creator's grantable permission set,
+                resolved by the ``get_actor_permissions`` router dependency.
+                ``None`` = wildcard (admin/superadmin) or system path
+                (``created_by`` is ``None``) — no cap applied.
 
         Returns:
             A tuple of ``(ApiKey record, raw_key_string)``.
@@ -71,6 +77,22 @@ class ApiKeyService:
         raw_key = generate_api_key(prefix="oz_live_")
         key_hash, salt = hash_api_key(raw_key)
         lookup_hash = compute_lookup_hash(raw_key)
+
+        # Project keys carry only project:* vocabulary; anything else is
+        # dropped before persistence.
+        requested = [
+            p
+            for p in (payload.permissions or ["project:read", "project:write"])
+            if p.startswith("project:")
+        ]
+        if created_by is not None and actor_permissions is not None:
+            # Cap the key at the creator's own set — keys never escalate.
+            requested = sorted(set(requested) & set(actor_permissions))
+        if not requested:
+            raise ValidationError(
+                "API key must include at least one project:* permission "
+                "within your permission set."
+            )
 
         api_key = await self._repo.create(
             organization_id=organization_id,
@@ -80,9 +102,7 @@ class ApiKeyService:
             salt=salt,
             prefix="oz_live_",
             name=payload.name,
-            # Schema contract: empty payload.permissions → member defaults
-            # seeded here, not in the schema.
-            permissions=payload.permissions or ["project:read", "project:write"],
+            permissions=requested,
             created_by=created_by,
         )
 

@@ -186,7 +186,7 @@ class TestUserCrud:
         user_id = created.json()["id"]
 
         # Fetch the user
-        response = await isolated_auth_client.get(f"/v1/users/{user_id}")
+        response = await admin_client.get(f"/v1/users/{user_id}")
         assert response.status_code == 200, (
             f"Expected 200, got {response.status_code}: {response.text}"
         )
@@ -210,10 +210,10 @@ class TestUserCrud:
     # ═════════════════════════════════════════════════════════════════════
 
     @pytest.mark.asyncio
-    async def test_get_user_not_found(self, isolated_auth_client: AsyncClient) -> None:
+    async def test_get_user_not_found(self, admin_client: AsyncClient) -> None:
         """GET /v1/users with a non-existent UUID → 404."""
         fake_id = "00000000-0000-0000-0000-000000000000"
-        response = await isolated_auth_client.get(f"/v1/users/{fake_id}")
+        response = await admin_client.get(f"/v1/users/{fake_id}")
         assert response.status_code == 404, (
             f"Expected 404 for non-existent user, "
             f"got {response.status_code}: {response.text}"
@@ -302,7 +302,7 @@ class TestUserCrud:
         )
 
         # Fetch and verify merge semantics
-        get_resp = await isolated_auth_client.get(f"/v1/users/{user_id}")
+        get_resp = await admin_client.get(f"/v1/users/{user_id}")
         assert get_resp.status_code == 200
         metadata = get_resp.json()["metadata"]
 
@@ -349,7 +349,7 @@ class TestUserCrud:
         )
 
         # Verify it's gone
-        get_resp = await isolated_auth_client.get(f"/v1/users/{user_id}")
+        get_resp = await admin_client.get(f"/v1/users/{user_id}")
         assert get_resp.status_code == 404, (
             f"Expected 404 after delete, got {get_resp.status_code}: {get_resp.text}"
         )
@@ -377,7 +377,7 @@ class TestUserCrud:
             assert resp.status_code == 201, f"Seed failed at index {i}"
 
         # Page 1: limit=2
-        page1 = await isolated_auth_client.get("/v1/users?limit=2")
+        page1 = await admin_client.get("/v1/users?limit=2")
         assert page1.status_code == 200
         body1 = page1.json()
 
@@ -391,7 +391,7 @@ class TestUserCrud:
         )
 
         # Page 2: follow cursor
-        page2 = await isolated_auth_client.get(
+        page2 = await admin_client.get(
             f"/v1/users?limit=2&cursor={body1['next_cursor']}"
         )
         assert page2.status_code == 200
@@ -401,7 +401,7 @@ class TestUserCrud:
         assert body2["next_cursor"] is not None
 
         # Page 3: final page
-        page3 = await isolated_auth_client.get(
+        page3 = await admin_client.get(
             f"/v1/users?limit=2&cursor={body2['next_cursor']}"
         )
         assert page3.status_code == 200
@@ -441,7 +441,7 @@ class TestUserCrud:
         )
 
         # Search for "alice" — should match by external_id, name, or email
-        response = await isolated_auth_client.get("/v1/users?search=alice")
+        response = await admin_client.get("/v1/users?search=alice")
         assert response.status_code == 200
         body = response.json()
 
@@ -516,10 +516,16 @@ class TestUserCrud:
             user_id = create_resp.json()["id"]
 
         # -- Try to access that user from org B → 404 --
+        # NOTE: must use Org B's admin JWT (members:read via wildcard), not
+        # the project-scoped API key (project:* only → 403 members:read
+        # missing at the permission gate, never reaching the data layer).
+        # The JWT reaches the repository, which must return 404 for a
+        # cross-tenant user id — true data-layer isolation.
         async with AsyncClient(
             transport=ASGITransport(app=isolated_app), base_url="http://test"  # type: ignore[arg-type]
         ) as cli:
-            cli.headers["Authorization"] = f"Bearer {tenant_b['api_key']}"
+            cli.headers["Authorization"] = f"Bearer {tenant_b['jwt']}"
+            isolated_app.dependency_overrides[get_current_user_id] = lambda: user_id_b
             get_resp = await cli.get(f"/v1/users/{user_id}")
 
         assert get_resp.status_code == 404, (

@@ -1319,19 +1319,25 @@ class TestAuthService:
         session_data = (
             '{"user_id":"00000000-0000-0000-0000-000000000002",'
             '"org_id":"00000000-0000-0000-0000-000000000001",'
-            '"role":"admin"}'
+            '"role":"admin","email":"session-bound@example.com"}'
         )
         mock_redis.get.return_value = session_data
         mock_otp.verify.return_value = False
 
         payload = MfaVerifyRequest(
-            email="admin@acme.com",
+            email="attacker@example.com",
             otp="000000",
             mfa_session_token="valid-token",
         )
 
         with pytest.raises(AuthenticationError, match="Invalid or expired"):
             await service.mfa_verify(payload)
+        # OTP verified against the SESSION email, not payload.email.
+        mock_otp.verify.assert_awaited_once_with(
+            email="session-bound@example.com",
+            purpose="mfa",
+            code="000000",
+        )
 
     @pytest.mark.asyncio
     async def test_mfa_verify_happy_path(
@@ -1344,13 +1350,13 @@ class TestAuthService:
         session_data = (
             '{"user_id":"00000000-0000-0000-0000-000000000002",'
             '"org_id":"00000000-0000-0000-0000-000000000001",'
-            '"role":"admin"}'
+            '"role":"admin","email":"session-bound@example.com"}'
         )
         mock_redis.get.return_value = session_data
         mock_otp.verify.return_value = True
 
         payload = MfaVerifyRequest(
-            email="admin@acme.com",
+            email="attacker@example.com",
             otp="654321",
             mfa_session_token="valid-token",
         )
@@ -1364,6 +1370,12 @@ class TestAuthService:
         assert result.access_token == "at"
         assert result.refresh_token == "rt"
         mock_redis.delete.assert_awaited_once_with("mfa:session:valid-token")
+        # OTP verified against the SESSION email, not payload.email.
+        mock_otp.verify.assert_awaited_once_with(
+            email="session-bound@example.com",
+            purpose="mfa",
+            code="654321",
+        )
 
     # ═══════════════════════════════════════════════════════════════════════
     # enable_mfa()

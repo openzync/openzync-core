@@ -432,7 +432,7 @@ class TestEpisodeBlobRepository:
     async def test_delete_by_ids(
         self, repo: EpisodeBlobRepository, mock_db: AsyncMock
     ) -> None:
-        """delete_by_ids removes and returns blobs by their IDs."""
+        """delete_by_ids removes and returns blobs in a single statement."""
         blobs = [self._mock_blob()]
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = blobs
@@ -441,17 +441,29 @@ class TestEpisodeBlobRepository:
         result = await repo.delete_by_ids(blob_ids=[self.BLOB_ID])
 
         assert result == blobs
-        mock_db.flush.assert_awaited_once()
+        mock_db.execute.assert_awaited_once()
+        mock_db.flush.assert_not_awaited()
 
     async def test_delete_by_ids_empty(
         self, repo: EpisodeBlobRepository, mock_db: AsyncMock
     ) -> None:
-        """delete_by_ids returns empty when no blobs match."""
+        """delete_by_ids short-circuits on empty input — no DB round-trip."""
+        result = await repo.delete_by_ids(blob_ids=[])
+
+        assert result == []
+        mock_db.execute.assert_not_called()
+        mock_db.flush.assert_not_awaited()
+
+    async def test_delete_by_ids_no_match_returns_empty(
+        self, repo: EpisodeBlobRepository, mock_db: AsyncMock
+    ) -> None:
+        """delete_by_ids returns empty when ids match nothing."""
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = []
         mock_db.execute.return_value = mock_result
 
-        result = await repo.delete_by_ids(blob_ids=[])
+        result = await repo.delete_by_ids(blob_ids=[self.BLOB_ID])
 
         assert result == []
-        mock_db.flush.assert_awaited_once()
+        mock_db.execute.assert_awaited_once()
+        mock_db.flush.assert_not_awaited()

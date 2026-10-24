@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
     from models.session import Session
     from models.user import User
+    from services.pii_service import PIIService
 
 # Import for type hints only; blob uploads are processed before passing to
 # the worker, and UploadFile isn't available in the worker context.
@@ -461,12 +462,19 @@ class MemoryService:
             )
 
             if pii_mode != "off":
+                from services.pii_service import PIIService
+
+                # Built once per ingest, not per message — construction is
+                # cheap but the NER pipeline it pulls in is not.
+                pii_service = PIIService(pii_config_raw)
+                mask_service = PIIService({**pii_config_raw, "mode": "mask"})
                 trace_id = structlog.contextvars.get_contextvars().get(
                     "request_id", str(job_id)
                 )
                 for msg_dict in episode_dicts:
                     msg_dict["content"] = await self._redact_content(
-                        pii_config_raw,
+                        pii_service,
+                        mask_service,
                         msg_dict["content"],
                         org_id=org_id,
                         trace_id=trace_id,
@@ -660,19 +668,27 @@ class MemoryService:
 
         # Delete the project's S3 objects in the same operation — without
         # this the wipe soft-deletes rows but leaks every blob's bytes.
-        # S3 failure raises (delete_blobs never swallows); DB rows stay
-        # for the orphan-blob cleanup worker (episodes are now soft-deleted).
-        blob_rows = await self._blob_repo.get_by_project(project_id)
-        if blob_rows:
-            from services.blob_storage_service import BlobStorageService
+        # Paged (500/page, rows deleted before the next fetch) so a large
+        # project never materializes all blob rows at once.  S3 failure
+        # raises (delete_blobs never swallows); DB rows stay for the
+        # orphan-blob cleanup worker (episodes are now soft-deleted).
+        blobs_deleted = 0
+        storage_config: dict[str, Any] | None = None
+        while True:
+            page = await self._blob_repo.get_by_project(project_id)
+            if not page:
+                break
+            if storage_config is None:
+                from services.blob_storage_service import BlobStorageService
 
-            storage_config = await self._resolve_storage_config(org_id)
+                storage_config = await self._resolve_storage_config(org_id)
             # S3 first, then row delete — delete_blobs raises on S3
             # failure so rows stay for the orphan-blob cleanup worker.
             await BlobStorageService(self._db, self._blob_repo).delete_blobs(
-                blob_rows, storage_config
+                page, storage_config
             )
-            await self._blob_repo.delete_by_ids([b.id for b in blob_rows])
+            await self._blob_repo.delete_by_ids([b.id for b in page])
+            blobs_deleted += len(page)
 
         logger.info(
             "memory.project_memory_deleted",
@@ -681,7 +697,7 @@ class MemoryService:
                 "org_id": str(org_id),
                 "episodes_deleted": episodes_deleted,
                 "facts_deleted": facts_deleted,
-                "blobs_deleted": len(blob_rows),
+                "blobs_deleted": blobs_deleted,
             },
         )
 
@@ -915,7 +931,8 @@ class MemoryService:
 
     async def _redact_content(
         self,
-        pii_config: dict[str, Any],
+        pii_service: PIIService,
+        mask_service: PIIService,
         content: str,
         *,
         org_id: UUID,
@@ -923,14 +940,16 @@ class MemoryService:
     ) -> str:
         """Redact PII from message content, fail-closed.
 
-        A block-mode ``ValidationError`` downgrades to a single mask pass
-        (preserved semantic — the message is still stored, redacted).  Any
-        other redaction failure raises ``PIIUnavailableError``: the message
-        is never persisted unredacted.  Detections and content are never
-        logged — only org/trace identifiers.
+        Both services are built once per ingest by the caller and reused
+        across messages.  A block-mode ``ValidationError`` downgrades to a
+        single mask pass (preserved semantic — the message is still stored,
+        redacted).  Any other redaction failure raises
+        ``PIIUnavailableError``: the message is never persisted unredacted.
+        Detections and content are never logged — only org/trace identifiers.
 
         Args:
-            pii_config: The PII config dict from :meth:`_get_org_pii_config`.
+            pii_service: The org-configured PII service (shared).
+            mask_service: The mask-mode fallback for block downgrades (shared).
             content: The raw message content.
             org_id: The organization UUID (log context only).
             trace_id: The request trace ID (log context only).
@@ -941,14 +960,10 @@ class MemoryService:
         Raises:
             PIIUnavailableError: If redaction fails unexpectedly.
         """
-        from services.pii_service import PIIService
-
         try:
             try:
-                service = PIIService(pii_config)
-                redacted, _, _ = await service.process_message(content)
+                redacted, _, _ = await pii_service.process_message(content)
             except ValidationError:
-                mask_service = PIIService({**pii_config, "mode": "mask"})
                 redacted, _, _ = await mask_service.process_message(content)
                 logger.info(
                     "memory.pii_blocked_redacted",

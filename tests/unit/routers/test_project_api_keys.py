@@ -177,7 +177,11 @@ class TestProjectApiKeysRouter:
         )
 
         from core.redis import get_redis
-        from dependencies.auth import get_current_user_id, require_org_id
+        from dependencies.auth import (
+            get_actor_permissions,
+            get_current_user_id,
+            require_org_id,
+        )
         from dependencies.db import get_db
         from routers.project_api_keys import _get_service, router
 
@@ -189,6 +193,7 @@ class TestProjectApiKeysRouter:
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
         app.dependency_overrides[get_current_user_id] = lambda: USER_ID
         app.dependency_overrides[_get_service] = lambda: mock_instance
+        app.dependency_overrides[get_actor_permissions] = lambda: None
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):
@@ -222,7 +227,11 @@ class TestProjectApiKeysRouter:
         mock_api_key_service.return_value = mock_instance
 
         from core.redis import get_redis
-        from dependencies.auth import get_current_user_id, require_org_id
+        from dependencies.auth import (
+            get_actor_permissions,
+            get_current_user_id,
+            require_org_id,
+        )
         from dependencies.db import get_db
         from routers.project_api_keys import _get_service, router
 
@@ -234,6 +243,7 @@ class TestProjectApiKeysRouter:
         app.dependency_overrides[require_org_id] = lambda: str(ORG_ID)
         app.dependency_overrides[get_current_user_id] = lambda: USER_ID
         app.dependency_overrides[_get_service] = lambda: mock_instance
+        app.dependency_overrides[get_actor_permissions] = lambda: None
 
         @app.middleware("http")
         async def _mock_auth(request: Request, call_next):

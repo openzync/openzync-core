@@ -89,12 +89,13 @@ class TestSearchFacts:
     async def test_search_returns_facts_by_bm25(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
         isolated_search_session: str,
     ) -> None:
         """POST /facts then GET /v1/projects/{project_id}/search?query=hiking → results contain fact."""
         # Create user
-        user_resp = await isolated_auth_client.post(
+        user_resp = await isolated_admin_client.post(
             "/v1/users",
             json={"external_id": "search_facts_user"},
         )
@@ -139,10 +140,11 @@ class TestSearchFacts:
     async def test_search_returns_empty_for_entities(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
         """GET /search?types=entities → empty (no graph backend)."""
-        user_resp = await isolated_auth_client.post(
+        user_resp = await isolated_admin_client.post(
             "/v1/users",
             json={"external_id": "search_entities_user"},
         )
@@ -162,10 +164,11 @@ class TestSearchFacts:
     async def test_search_requires_query(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
     ) -> None:
         """GET /search without query → 422."""
-        user_resp = await isolated_auth_client.post(
+        user_resp = await isolated_admin_client.post(
             "/v1/users",
             json={"external_id": "search_no_query_user"},
         )
@@ -180,11 +183,12 @@ class TestSearchFacts:
     async def test_search_returns_facts_and_episodes_default(
         self,
         isolated_auth_client: AsyncClient,
+        isolated_admin_client: AsyncClient,
         isolated_project_id: UUID,
         isolated_search_session: str,
     ) -> None:
         """GET /v1/projects/{project_id}/search?query=... returns facts and episodes by default."""
-        user_resp = await isolated_auth_client.post(
+        user_resp = await isolated_admin_client.post(
             "/v1/users",
             json={"external_id": "search_default_types_user"},
         )

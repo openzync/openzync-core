@@ -468,7 +468,11 @@ class HybridRetriever:
             "AND is_deleted = false "
             "AND embedding IS NOT NULL "
             "AND vector_dims(embedding) > 0 "
-            "ORDER BY score DESC "
+            # Raw operator in ORDER BY (not the SELECT alias): only this
+            # form matches the HNSW index.  `ORDER BY score` sorts on a
+            # computed expression and forces a seq scan + full sort.
+            "ORDER BY embedding <=> "
+            f"CAST(:embedding AS vector({CANONICAL_EMBED_DIM})) "
             "LIMIT :limit"
             # S608 justification: interpolates the int constant
             # CANONICAL_EMBED_DIM into a static CAST, never user input.
@@ -529,7 +533,10 @@ class HybridRetriever:
             "AND (valid_to IS NULL OR valid_to > :effective_time) "
             "AND embedding IS NOT NULL "
             "AND vector_dims(embedding) > 0 "
-            "ORDER BY score DESC "
+            # Raw operator in ORDER BY (not the SELECT alias): only this
+            # form matches the HNSW index — see _vector_search_episodes.
+            "ORDER BY embedding <=> "
+            f"CAST(:embedding AS vector({CANONICAL_EMBED_DIM})) "
             "LIMIT :limit"
             # S608 justification: interpolates the int constant
             # CANONICAL_EMBED_DIM into a static CAST, never user input.

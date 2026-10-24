@@ -905,6 +905,33 @@ class TestUserServicePermissionSeeding:
         )
         mock_invalidate_perms.assert_awaited_once_with(mock_redis, self.MEMBER_ID)
 
+    @pytest.mark.asyncio
+    async def test_permissions_update_capped_at_actor_set(self) -> None:
+        """A non-admin grant is intersected with the actor's own set."""
+        service, mock_repo, mock_redis = self._make_service(with_redis=True)
+        mock_repo.update.return_value = self._make_user(
+            role="member", permissions=["project:read"],
+        )
+
+        with patch(
+            "services.user_service.invalidate_permissions", new=AsyncMock(),
+        ):
+            await service.update_user(
+                organization_id=self.ORG_ID,
+                user_id=self.MEMBER_ID,
+                update_fields={
+                    "permissions": ["project:read", "project:write"],
+                },
+                actor_user_id=self.ADMIN_ID,
+                actor_permissions=frozenset({"project:read"}),
+            )
+
+        mock_repo.update.assert_awaited_once_with(
+            organization_id=self.ORG_ID,
+            user_id=self.MEMBER_ID,
+            update_fields={"permissions": ["project:read"]},
+        )
+
 
 class TestUserServiceSuperadminSurface:
     """update_member_role — the platform superadmin cross-org role change."""
