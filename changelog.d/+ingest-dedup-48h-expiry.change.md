@@ -1,0 +1,1 @@
+Ingest dedup claims now expire after 48 hours: expired rows for the triple are deleted before the atomic claim insert, and duplicate lookups ignore claims older than 48 hours. Re-ingesting the same content after the window creates a new job instead of being permanently suppressed.

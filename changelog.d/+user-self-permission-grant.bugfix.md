@@ -1,0 +1,1 @@
+Reject attempts to change your own permission set (`You cannot change your own permissions`) and cap non-admin grants at the actor's own effective permissions, so a member can no longer self-grant or escalate privileges. Permission changes also fail loudly while the authorization cache is down instead of applying unchecked.

@@ -15,6 +15,8 @@ from uuid import UUID
 import redis.asyncio as aioredis
 import structlog
 
+from core.exceptions import ValidationError
+from core.rbac import get_effective_permissions, get_org_role
 from core.sorting import SortSpec
 from models.api_key import ApiKey
 from repositories.api_key_repository import ApiKeyRepository
@@ -72,6 +74,37 @@ class ApiKeyService:
         key_hash, salt = hash_api_key(raw_key)
         lookup_hash = compute_lookup_hash(raw_key)
 
+        # Project keys carry only project:* vocabulary; anything else is
+        # dropped before persistence.
+        requested = [
+            p
+            for p in (payload.permissions or ["project:read", "project:write"])
+            if p.startswith("project:")
+        ]
+        if created_by is not None and self._redis is not None:
+            # note: reaches into the repo for the request-scoped session —
+            # ApiKeyService holds no session of its own.
+            role = await get_org_role(
+                self._redis,
+                self._repo._db,
+                organization_id,
+                created_by,  # noqa: SLF001
+            )
+            if role not in ("admin", "superadmin"):
+                allowed = await get_effective_permissions(
+                    self._redis,
+                    self._repo._db,
+                    organization_id,
+                    created_by,  # noqa: SLF001
+                )
+                # Cap the key at the creator's own set — keys never escalate.
+                requested = sorted(set(requested) & set(allowed))
+        if not requested:
+            raise ValidationError(
+                "API key must include at least one project:* permission "
+                "within your permission set."
+            )
+
         api_key = await self._repo.create(
             organization_id=organization_id,
             project_id=project_id,
@@ -80,9 +113,7 @@ class ApiKeyService:
             salt=salt,
             prefix="oz_live_",
             name=payload.name,
-            # Schema contract: empty payload.permissions → member defaults
-            # seeded here, not in the schema.
-            permissions=payload.permissions or ["project:read", "project:write"],
+            permissions=requested,
             created_by=created_by,
         )
 

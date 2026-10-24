@@ -1,0 +1,1 @@
+Order vector searches by the raw `embedding <=> CAST(:embedding AS vector(...))` operator instead of the `score` SELECT alias, so episode and fact searches match the HNSW index instead of forcing a sequential scan plus full sort. Results are unchanged, only the query plan.

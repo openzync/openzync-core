@@ -20,6 +20,8 @@ from core.events import EventType
 from core.exceptions import ConflictError, NotFoundError, ValidationError
 from core.rbac import (
     MEMBER_DEFAULT_PERMISSIONS,
+    get_effective_permissions,
+    get_org_role,
     invalidate_permissions,
     invalidate_role,
 )
@@ -370,6 +372,33 @@ class UserService:
                     raise ValidationError(
                         "Cannot demote the last admin in the organization."
                     )
+
+        if "permissions" in update_fields:
+            if user_id == actor_user_id:
+                raise ValidationError("You cannot change your own permissions.")
+            if self._redis is None:
+                raise ValidationError(
+                    "Permission changes are unavailable while the "
+                    "authorization cache is down."
+                )
+            # note: reaches into the repo for the request-scoped session —
+            # UserService holds no session of its own.
+            actor_role = await get_org_role(
+                self._redis,
+                self._repo._db,
+                organization_id,
+                actor_user_id,  # noqa: SLF001
+            )
+            if actor_role not in ("admin", "superadmin"):
+                actor_perms = await get_effective_permissions(
+                    self._redis,
+                    self._repo._db,
+                    organization_id,
+                    actor_user_id,  # noqa: SLF001
+                )
+                requested = set(update_fields["permissions"] or [])
+                # Cap the grant at the actor's own set — never escalate.
+                update_fields["permissions"] = sorted(requested & set(actor_perms))
 
         user = await self._repo.update(
             organization_id=organization_id,

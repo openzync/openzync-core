@@ -1,0 +1,1 @@
+Build the PII services once per ingest and share them across all messages instead of constructing a detector per message, and load the spaCy `en_core_web_sm` pipeline once per process via a cached loader. Redaction semantics are unchanged (block-mode downgrade and fail-closed behavior preserved); multi-message ingests no longer pay repeated NER startup cost.

@@ -7,6 +7,7 @@ and DB record creation.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import time
 import uuid
@@ -365,21 +366,21 @@ class BlobStorageService:
         config = BlobStorageConfig.from_org_config(storage_config)
         storage = BlobStorage(config)
 
-        for blob in blob_records:
-            try:
-                await storage.delete(blob.storage_key)
-            except S3StorageError:
-                logger.warning(
-                    "blob_storage_service.delete_failed",
-                    blob_id=str(blob.id),
-                    key=blob.storage_key,
-                )
-                raise
-            logger.info(
-                "blob_storage_service.delete_success",
-                blob_id=str(blob.id),
-                key=blob.storage_key,
+        # One concurrent S3 call per blob instead of serial awaits.
+        # Fail-loud is preserved: the first S3StorageError propagates so
+        # callers keep DB rows for retry instead of leaking objects.
+        try:
+            await asyncio.gather(*(storage.delete(b.storage_key) for b in blob_records))
+        except S3StorageError:
+            logger.warning(
+                "blob_storage_service.delete_failed",
+                blob_count=len(blob_records),
             )
+            raise
+        logger.info(
+            "blob_storage_service.delete_success",
+            blob_count=len(blob_records),
+        )
 
     # ── Validation ──────────────────────────────────────────────────────────
 
