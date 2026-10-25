@@ -35,7 +35,7 @@ class ConcurrencyDetectingFakeSession:
 
     async def execute(
         self, stmt: Any, params: dict[str, Any] | None = None
-    ) -> list[Any]:
+    ) -> Any:
         """Track overlap; fail like ``AsyncSession`` on concurrent use."""
         self._in_flight += 1
         self.max_in_flight = max(self.max_in_flight, self._in_flight)
@@ -43,7 +43,9 @@ class ConcurrencyDetectingFakeSession:
             if self._in_flight > 1:
                 raise InvalidRequestError("concurrent operations are not permitted")
             await asyncio.sleep(0.01)
-            return []
+            mock_result = MagicMock()
+            mock_result.all.return_value = []
+            return mock_result
         finally:
             self._in_flight -= 1
 
@@ -209,11 +211,11 @@ class TestGlobalSearchService:
     @pytest.mark.asyncio
     async def test_search_projects_no_matches(self) -> None:
         """``_search_projects`` returns empty list when no projects match."""
+        from unittest.mock import patch
         service, mock_db = self._make_service()
-
-        mock_db.execute.return_value.all.return_value = []
-
-        results = await service._search_projects("%nothing%", 10)
+        with patch("services.global_search_service.ProjectRepository") as mock_cls:
+            mock_cls.return_value.search_member_projects = AsyncMock(return_value=[])
+            results = await service._search_projects("%nothing%", 10)
         assert results == []
 
     # ── _search_users — label precedence ────────────────────────────────────
@@ -223,10 +225,12 @@ class TestGlobalSearchService:
         """``_search_users`` uses email as label when both name and email exist."""
         service, mock_db = self._make_service()
 
-        row = self._make_db_row("u1", name="Alice", email="alice@example.com")
-        mock_db.execute.return_value = [row]
-
-        results = await service._search_users("%alice%", 10)
+        from datetime import UTC, datetime
+        row = {"id": "u1", "name": "Alice", "email": "alice@example.com", "external_id": "ext", "created_at": datetime(2026,1,1,tzinfo=UTC)}
+        from unittest.mock import patch
+        with patch("services.global_search_service.UserRepository") as mock_cls:
+            mock_cls.return_value.search_by_pattern = AsyncMock(return_value=[row])
+            results = await service._search_users("%alice%", 10)
         assert len(results) == 1
         assert results[0].label == "alice@example.com"
         assert results[0].subtitle == "Alice"
@@ -236,10 +240,12 @@ class TestGlobalSearchService:
         """``_search_users`` uses email as label when name is missing."""
         service, mock_db = self._make_service()
 
-        row = self._make_db_row("u1", name=None, email="anon@example.com")
-        mock_db.execute.return_value = [row]
-
-        results = await service._search_users("%anon%", 10)
+        from datetime import UTC, datetime
+        row = {"id": "u1", "name": None, "email": "anon@example.com", "external_id": None, "created_at": datetime(2026,1,1,tzinfo=UTC)}
+        from unittest.mock import patch
+        with patch("services.global_search_service.UserRepository") as mock_cls:
+            mock_cls.return_value.search_by_pattern = AsyncMock(return_value=[row])
+            results = await service._search_users("%anon%", 10)
         assert len(results) == 1
         assert results[0].label == "anon@example.com"
         assert results[0].subtitle is None
@@ -256,12 +262,12 @@ class TestGlobalSearchService:
         """
         service, mock_db = self._make_service()
 
-        row = self._make_db_row(
-            "u1", name=None, email=None, external_id="ext-123"
-        )
-        mock_db.execute.return_value = [row]
-
-        results = await service._search_users("%ext-123%", 10)
+        from datetime import UTC, datetime
+        row = {"id": "u1", "name": None, "email": None, "external_id": "ext-123", "created_at": datetime(2026,1,1,tzinfo=UTC)}
+        from unittest.mock import patch
+        with patch("services.global_search_service.UserRepository") as mock_cls:
+            mock_cls.return_value.search_by_pattern = AsyncMock(return_value=[row])
+            results = await service._search_users("%ext-123%", 10)
         assert len(results) == 1
         assert results[0].label == "ext-123"
         assert results[0].subtitle is None
@@ -276,12 +282,12 @@ class TestGlobalSearchService:
         """
         service, mock_db = self._make_service()
 
-        row = self._make_db_row(
-            "u1", name=None, email=None, external_id=None
-        )
-        mock_db.execute.return_value = [row]
-
-        results = await service._search_users("%u1%", 10)
+        from datetime import UTC, datetime
+        row = {"id": "u1", "name": None, "email": None, "external_id": None, "created_at": datetime(2026,1,1,tzinfo=UTC)}
+        from unittest.mock import patch
+        with patch("services.global_search_service.UserRepository") as mock_cls:
+            mock_cls.return_value.search_by_pattern = AsyncMock(return_value=[row])
+            results = await service._search_users("%u1%", 10)
         assert len(results) == 1
-        assert results[0].label == str(row.id)
+        assert results[0].label == str(row["id"])
         assert results[0].subtitle is None

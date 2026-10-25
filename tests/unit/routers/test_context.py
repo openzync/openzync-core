@@ -58,6 +58,8 @@ def _create_app() -> FastAPI:
     app.state.graph_backend_dispatcher.create_all_backends.return_value = []
     # Avoid SurrealDB connection path by setting graph_backend to postgres
     app.state.surreal_connection_pool = None
+    # Lifespan provides the session factory; the router reads it for ContextService
+    app.state.db_session_factory = MagicMock()
 
     mock_org_config = OrgConfigBase(graph_backend="postgres")
     app.dependency_overrides[get_org_config] = lambda: mock_org_config

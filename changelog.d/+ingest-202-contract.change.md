@@ -1,0 +1,1 @@
+Changed the ingest contract to 202 Accepted with a Location header at /memory/jobs/{job_id} and documented the dedup-replay edge; CORS/TrustedHost now fail fast with RuntimeError in prod when HOSTS_ALLOWED/CORS_ORIGINS are empty.

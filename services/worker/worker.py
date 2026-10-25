@@ -602,8 +602,8 @@ async def main() -> NoReturn:
 
     logger.info(
         "worker.db_engine_created",
-        pool_size=10,
-        max_overflow=5,
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
     )
 
     # ── Prewarm the frozen embedder (fail-fast) ─────────────────────────
@@ -713,7 +713,7 @@ async def main() -> NoReturn:
         queue_name=settings.LOW_QUEUE_NAME,
         functions=LOW_QUEUE_TASKS,
         redis_settings=redis_settings,
-        concurrency=max(1, settings.MAX_WORKERS // 4),
+        concurrency=max(settings.LOW_MAX_WORKERS, settings.MAX_WORKERS // 4),
         timeout=settings.JOB_TIMEOUT_DEFAULT * 2,
         cron_jobs=all_cron_jobs,
         ctx=worker_ctx,
@@ -724,7 +724,7 @@ async def main() -> NoReturn:
         high_queue=settings.high_queue_full,
         low_queue=settings.low_queue_full,
         high_concurrency=min(settings.MAX_WORKERS, 8),
-        low_concurrency=max(1, settings.MAX_WORKERS // 4),
+        low_concurrency=max(settings.LOW_MAX_WORKERS, settings.MAX_WORKERS // 4),
     )
 
     # ── Health check web server ────────────────────────────────────────

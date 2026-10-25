@@ -17,8 +17,10 @@ api:
   replicaCount: 2
   image:
     repository: openzync-api
-    tag: latest
-    pullPolicy: Always
+    # ⚠️ pin in production, e.g. tag: "v1.2.3" (or "v1.2.3@sha256:<digest>"
+    # for a digest pin). :latest floats — a re-pull can move it under you.
+    tag: "1.0.0"   # release version — keep in lockstep with Chart appVersion. Never :latest.
+    pullPolicy: IfNotPresent
   containerPort: 8000
   health:
     path: /health
@@ -63,8 +65,10 @@ worker:
   replicaCount: 1
   image:
     repository: openzync-worker
-    tag: latest
-    pullPolicy: Always
+    # ⚠️ pin in production, e.g. tag: "v1.2.3" (or "v1.2.3@sha256:<digest>"
+    # for a digest pin). Keep in lockstep with api.image.tag.
+    tag: "1.0.0"   # release version — keep in lockstep with api.image.tag. Never :latest.
+    pullPolicy: IfNotPresent
   health:
     initialDelaySeconds: 15
     periodSeconds: 30

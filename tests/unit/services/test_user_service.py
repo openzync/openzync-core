@@ -725,7 +725,7 @@ class TestUserServiceRoleGuards:
                 actor_user_id=self.ADMIN_ID,
             )
 
-        mock_invalidate.assert_awaited_once_with(_mock_redis, self.MEMBER_ID)
+        mock_invalidate.assert_awaited_once_with(_mock_redis, self.ORG_ID, self.MEMBER_ID)
 
     @pytest.mark.asyncio
     async def test_delete_invalidates_cached_role(self) -> None:
@@ -743,7 +743,7 @@ class TestUserServiceRoleGuards:
                 actor_user_id=self.ADMIN_ID,
             )
 
-        mock_invalidate.assert_awaited_once_with(_mock_redis, self.MEMBER_ID)
+        mock_invalidate.assert_awaited_once_with(_mock_redis, self.ORG_ID, self.MEMBER_ID)
 
 
 @pytest.mark.unit
@@ -874,8 +874,8 @@ class TestUserServicePermissionSeeding:
             user_id=self.MEMBER_ID,
             update_fields={"role": "admin"},
         )
-        mock_invalidate_role.assert_awaited_once_with(mock_redis, self.MEMBER_ID)
-        mock_invalidate_perms.assert_awaited_once_with(mock_redis, self.MEMBER_ID)
+        mock_invalidate_role.assert_awaited_once_with(mock_redis, self.ORG_ID, self.MEMBER_ID)
+        mock_invalidate_perms.assert_awaited_once_with(mock_redis, self.ORG_ID, self.MEMBER_ID)
 
     @pytest.mark.asyncio
     async def test_permissions_update_replaces_set_and_invalidates_cache(
@@ -903,7 +903,7 @@ class TestUserServicePermissionSeeding:
             user_id=self.MEMBER_ID,
             update_fields={"permissions": ["configuration:read"]},
         )
-        mock_invalidate_perms.assert_awaited_once_with(mock_redis, self.MEMBER_ID)
+        mock_invalidate_perms.assert_awaited_once_with(mock_redis, self.ORG_ID, self.MEMBER_ID)
 
     @pytest.mark.asyncio
     async def test_permissions_update_capped_at_actor_set(self) -> None:
@@ -1005,7 +1005,7 @@ class TestUserServiceSuperadminSurface:
                 role="member",
             )
 
-        mock_invalidate.assert_awaited_once_with(ANY, self.USER_ID)
+        mock_invalidate.assert_awaited_once_with(ANY, self.ORG_ID, self.USER_ID)
 
 
 @pytest.mark.unit

@@ -482,7 +482,7 @@ class TestEpisodeBlobRepository:
             assert await repo.get_orphaned_blobs(ORG_ID) == []
 
             episode_repo = EpisodeRepository(db)
-            await episode_repo.soft_delete_by_project(PROJECT_ID)
+            await episode_repo.soft_delete_by_project(PROJECT_ID, ORG_ID)
 
             orphans = await repo.get_orphaned_blobs(ORG_ID)
             assert len(orphans) == 2

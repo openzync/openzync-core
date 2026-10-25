@@ -156,6 +156,8 @@ class TestMemoryService:
     @pytest.mark.asyncio
     async def test_delete_user_memory(self, service: MemoryService) -> None:
         """Delete memory soft-deletes episodes/facts and walks blob rows."""
+        service._project_repo = AsyncMock()
+        service._project_repo.get_by_id.return_value = MagicMock()
         service._episode_repo.soft_delete_by_project.return_value = 5
         service._fact_repo.soft_delete_by_project.return_value = 3
         service._blob_repo = AsyncMock()
@@ -170,14 +172,17 @@ class TestMemoryService:
             )
         assert episodes == 5
         assert facts == 3
+        service._project_repo.get_by_id.assert_awaited_once_with(
+            self.ORG_ID, self.PROJECT_ID
+        )
         service._episode_repo.soft_delete_by_project.assert_awaited_once_with(
-            self.PROJECT_ID
+            self.PROJECT_ID, self.ORG_ID
         )
         service._fact_repo.soft_delete_by_project.assert_awaited_once_with(
-            self.PROJECT_ID
+            self.PROJECT_ID, self.ORG_ID
         )
         service._blob_repo.get_by_project.assert_awaited_once_with(
-            self.PROJECT_ID
+            self.PROJECT_ID, limit=500, offset=0
         )
         service._blob_repo.delete_by_ids.assert_not_awaited()
 

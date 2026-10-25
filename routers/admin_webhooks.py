@@ -96,8 +96,8 @@ async def create_webhook(
 ) -> WebhookSecretResponse:
     """Create a new webhook endpoint.
 
-    Returns the global webhook signing secret so the consumer can verify
-    HMAC-SHA256 signatures.
+    Returns the endpoint's own signing secret so the consumer can verify
+    HMAC-SHA256 signatures. Shown once — never returned again.
     """
     endpoint, secret = await service.create_endpoint(
         organization_id=uuid.UUID(org_id),

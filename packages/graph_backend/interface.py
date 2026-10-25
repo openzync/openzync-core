@@ -12,6 +12,7 @@ graph traversal is possible.
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
@@ -783,6 +784,43 @@ class GraphBackend(ABC):
             directions).  Empty list if no direct relationship exists.
         """
         ...
+
+    async def get_relationship_ids_between_many(
+        self,
+        org_id: UUID,
+        project_id: UUID,
+        pairs: list[tuple[UUID, UUID]],
+    ) -> dict[tuple[UUID, UUID], list[UUID]]:
+        """Get IDs of direct relationships for many entity pairs at once.
+
+        Default implementation fans out over
+        :meth:`get_relationship_ids_between` with ``asyncio.gather`` —
+        one call, no sequential round trips.  Backends with a batch
+        query may override this with a single round trip.
+
+        Args:
+            org_id: Organisational scope.
+            project_id: Project scope.
+            pairs: ``(entity_a_id, entity_b_id)`` tuples to fetch
+                evidence for.
+
+        Returns:
+            Dict mapping each input pair to its relationship UUID list
+            (both directions).  Pairs with no direct relationship map
+            to an empty list.
+        """
+        results = await asyncio.gather(
+            *(
+                self.get_relationship_ids_between(
+                    org_id=org_id,
+                    project_id=project_id,
+                    entity_a_id=a_id,
+                    entity_b_id=b_id,
+                )
+                for a_id, b_id in pairs
+            )
+        )
+        return dict(zip(pairs, results, strict=True))
 
     # ── Group C2: Aggregate Queries (for observation service) ────────────────────
 

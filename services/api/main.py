@@ -106,6 +106,11 @@ def create_app() -> FastAPI:
         # dependencies using ``resolve_and_create(org_config, db)``.
         app.state.graph_backend_dispatcher = init_dispatcher()
 
+        # Aux-outage ledger — components that fail init record a reason
+        # here instead of aborting boot.  /ready reports them as degraded;
+        # only Postgres/Redis/OpenBao (above) stay fail-fast.
+        app.state.degraded: dict[str, str] = {}
+
         # Init SurrealDB per-org connection pool (optional — requires surrealdb).
         from core.surreal_pool import SurrealConnectionPool
 
@@ -131,12 +136,16 @@ def create_app() -> FastAPI:
                 app.state.falkordb_client = FalkorDB(connection_pool=falkordb_pool)
                 logger.info("falkordb_pool.initialised", extra={"url": settings.FALKORDB_URL})
             except Exception as exc:
+                # Aux outage must not kill the API — degrade loudly and
+                # serve.  FalkorDB-backed graph calls 503 until it
+                # recovers; /ready reports the degradation.
+                app.state.falkordb_client = None
+                app.state.degraded["falkordb"] = str(exc)
                 logger.error(
-                    "falkordb_pool.initialisation_failed — FalkorDB is required (default graph)",
+                    "falkordb_pool.init_failed — degraded, backends 503",
                     exc_info=True,
                     extra={"url": settings.FALKORDB_URL, "error": str(exc)},
                 )
-                raise
 
         # ── Init OpenBao client for runtime config + Transit operations ────
         # The bootstrap client in asgi.py loads system settings and is closed.
@@ -157,30 +166,55 @@ def create_app() -> FastAPI:
         app.state.openbao_client = _bao
         logger.info("openbao_client.initialised")
 
-        # ── Seed the platform org + root superadmin (fail-fast) ──────────
-        # Idempotent: no-op when the SYSTEM org already exists.  Any
-        # failure aborts startup loudly — a silently-missing superadmin
-        # would leave the platform unbootstrappable.
+        # ── Verify the webhook-secret Transit key (degraded, not fatal) ──
+        # Webhook signing encrypts at create/rotate time and decrypts at
+        # every emit — without this key webhook writes 502.  An aux
+        # outage degrades (loudly) instead of aborting boot; /ready
+        # reports it until Transit recovers.
+        from core.transit import TransitManager
+
+        try:
+            await TransitManager(_bao).verify_webhook_secret_key()
+        except Exception as exc:
+            app.state.degraded["transit"] = str(exc)
+            logger.error(
+                "transit.key_verify_failed — degraded, webhooks 502",
+                exc_info=True,
+            )
+        else:
+            logger.info("transit.webhook_secret_key_verified")
+
+        # ── Seed the platform org + root superadmin (degraded, not fatal)
+        # Idempotent: no-op when the SYSTEM org already exists.  A seed
+        # failure degrades loudly instead of aborting startup — the API
+        # still serves; /ready reports the degradation.
         try:
             from services.platform_seed import ensure_platform_root
 
             async with app.state.db_session_factory() as seed_session:
                 await ensure_platform_root(seed_session, _bao)
             logger.info("platform_seed.ensured")
-        except Exception:
-            logger.exception("platform_seed.failed — aborting startup")
-            raise
+        except Exception as exc:
+            app.state.degraded["platform_seed"] = str(exc)
+            logger.exception("platform_seed.failed — degraded")
 
-        # ── Prewarm the frozen embedder (fail-fast) ─────────────────────
+        # ── Prewarm the frozen embedder (degraded, not fatal) ───────────
         # DB/Redis/graph backends are up; prove Ollama /api/embed is
         # reachable and run one warm inference before serving traffic.
-        # An unreachable Ollama raises here and aborts boot — no
-        # try/except, loud by design — instead of surfacing as
-        # user-facing 503s.
+        # An unreachable Ollama degrades loudly (embedding calls 503
+        # until it recovers) instead of aborting boot — /ready reports it.
         from core.embeddings import prewarm_embeddings
 
-        await prewarm_embeddings()
-        logger.info("embeddings.prewarmed")
+        try:
+            await prewarm_embeddings()
+        except Exception as exc:
+            app.state.degraded["embeddings"] = str(exc)
+            logger.error(
+                "embeddings.prewarm_failed — degraded, embedding calls may 503",
+                exc_info=True,
+            )
+        else:
+            logger.info("embeddings.prewarmed")
 
         yield
 
@@ -234,11 +268,30 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestIDMiddleware)
 
     # Runtime 8 — Trusted Host: prevent host-header attacks in production.
-    allowed_hosts = (
-        [o.strip() for o in settings.HOSTS_ALLOWED.split(",") if o.strip()]
-        if settings.ENVIRONMENT == "production"
-        else ["*"]
-    )
+    # Non-prod allows anything (local/dev convenience); prod fails CLOSED —
+    # an empty HOSTS_ALLOWED is a startup error, never a silent allow-all.
+    if settings.ENVIRONMENT == "production":
+        allowed_hosts = [
+            o.strip() for o in settings.HOSTS_ALLOWED.split(",") if o.strip()
+        ]
+        if not allowed_hosts:
+            raise RuntimeError(
+                "HOSTS_ALLOWED must not be empty in production — "
+                "TrustedHostMiddleware would reject every request"
+            )
+        cors_origins = [
+            o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()
+        ]
+        if not cors_origins:
+            raise RuntimeError(
+                "CORS_ORIGINS must not be empty in production — "
+                "fail-closed: no origins means no browser access"
+            )
+    else:
+        allowed_hosts = ["*"]
+        cors_origins = [
+            o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()
+        ]
     app.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=allowed_hosts,
@@ -275,9 +328,7 @@ def create_app() -> FastAPI:
     # never "*" with allow_credentials=True.
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            o.strip() for o in settings.CORS_ORIGINS.split(",") if o.strip()
-        ],
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "X-Request-ID", "Idempotency-Key"],

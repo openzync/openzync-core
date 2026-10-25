@@ -264,7 +264,7 @@ class TestFactRepository:
                 project_id=PROJECT_ID,
                 content="Delete me", subject="X", predicate="is", obj="Y",
             )
-            deleted = await repo.soft_delete_by_project(PROJECT_ID)
+            deleted = await repo.soft_delete_by_project(PROJECT_ID, ORG_ID)
             assert deleted >= 1
 
     async def test_list_by_session(self, engine) -> None:

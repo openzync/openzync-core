@@ -27,7 +27,6 @@ from fastapi import (
     File,
     Form,
     Header,
-    HTTPException,
     Request,
     Response,
     UploadFile,
@@ -36,6 +35,7 @@ from fastapi import (
 from pydantic import ValidationError
 
 from core.audit import audit_action
+from core.exceptions import ValidationError as DomainValidationError
 from dependencies.auth import get_current_user_id, require_permission
 from dependencies.project_auth import require_project_membership
 from dependencies.services import get_memory_service
@@ -112,7 +112,10 @@ async def ingest_messages(
         --boundary--
 
     Returns HTTP 202 with a ``Location`` header pointing to the job status
-    endpoint: ``/v1/projects/{project_id}/memory/jobs/{job_id}``.
+    endpoint: ``/v1/projects/{project_id}/memory/jobs/{job_id}``.  (A replay
+    that lost its content-hash claim AND its prior job id — expired dedup
+    row — returns 202 with the ingest committed but no ``Location``; the
+    next identical ingest replays normally with a header.)
     """
     org_id = UUID(request.state.org_id)
     project_id = UUID(request.path_params["project_id"])
@@ -121,11 +124,8 @@ async def ingest_messages(
     # the boundary so an oversized key is a 422, not a 500 propagated from
     # IdempotencyService's internal ValueError (defense-in-depth).
     if idempotency_key is not None and len(idempotency_key) > 255:
-        raise HTTPException(
-            # HTTP_422_UNPROCESSABLE_CONTENT: same status as the deprecated
-            # *_ENTITY alias — repo runs pytest with filterwarnings=error.
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Idempotency-Key must not exceed 255 characters",
+        raise DomainValidationError(
+            "Idempotency-Key must not exceed 255 characters",
         )
 
     # Parse the JSON payload from the multipart form
@@ -133,15 +133,15 @@ async def ingest_messages(
         payload = IngestMemoryRequest.model_validate_json(data)
     except ValidationError as exc:
         # ctx["error"] holds the raw ValueError instance (not JSON
-        # serializable) — str() it or Starlette 500s serializing this 422.
+        # serializable) — str() it or the RFC 7807 renderer 500s on this 422.
         errors = exc.errors()
         for error in errors:
             ctx = error.get("ctx")
             if ctx and isinstance(ctx.get("error"), Exception):
                 ctx["error"] = str(ctx["error"])
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=errors,
+        raise DomainValidationError(
+            "Invalid request payload",
+            detail={"errors": errors},
         ) from exc
 
     # Validate blob reference integrity
@@ -149,9 +149,8 @@ async def ingest_messages(
     for msg in payload.messages:
         for bm in msg.blobs:
             if bm.blob_id < 0:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=f"Invalid blob_id {bm.blob_id}: must be non-negative",
+                raise DomainValidationError(
+                    f"Invalid blob_id {bm.blob_id}: must be non-negative",
                 )
             referenced_ids.add(bm.blob_id)
 
@@ -159,18 +158,16 @@ async def ingest_messages(
         # Every referenced blob must have a corresponding uploaded file
         max_allowed = len(blobs) - 1
         if any(bid > max_allowed for bid in referenced_ids):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail=f"blob_id out of range: max is {max_allowed} "
-                       f"but referenced IDs include {referenced_ids}",
+            raise DomainValidationError(
+                f"blob_id out of range: max is {max_allowed} "
+                f"but referenced IDs include {referenced_ids}",
             )
 
         # Every uploaded file must be referenced by at least one message
         for i, _ in enumerate(blobs):
             if i not in referenced_ids:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                    detail=f"Uploaded file blob_{i} is not referenced by any message",
+                raise DomainValidationError(
+                    f"Uploaded file blob_{i} is not referenced by any message",
                 )
 
     # Canonical body hash — only needed when an Idempotency-Key is present.

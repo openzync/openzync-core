@@ -414,14 +414,18 @@ class EpisodeRepository:
 
     # ── Soft Delete by User ──────────────────────────────────────────────────
 
-    async def soft_delete_by_project(self, project_id: UUID) -> int:
+    async def soft_delete_by_project(
+        self, project_id: UUID, organization_id: UUID
+    ) -> int:
         """Soft-delete all episodes for a project.
 
         Sets ``is_deleted = True`` and ``updated_at = now()`` for every
-        episode belonging to the project. Returns the count of affected rows.
+        episode belonging to the project. The ``organization_id`` predicate
+        is defense-in-depth alongside the service-layer org gate.
 
         Args:
             project_id: The project's UUID.
+            organization_id: Tenant scope — only rows in this org are touched.
 
         Returns:
             Number of episodes soft-deleted.
@@ -429,9 +433,11 @@ class EpisodeRepository:
         result = await self._db.execute(
             text(
                 "UPDATE episodes SET is_deleted = true, updated_at = now() "
-                "WHERE project_id = :project_id AND is_deleted = false"
+                "WHERE project_id = :project_id "
+                "AND organization_id = :organization_id "
+                "AND is_deleted = false"
             ),
-            {"project_id": project_id},
+            {"project_id": project_id, "organization_id": organization_id},
         )
         return result.rowcount  # type: ignore[return-value]
 

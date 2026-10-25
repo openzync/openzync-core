@@ -343,24 +343,38 @@ class ObservationService:
             project_id=project_id,
             min_co_count=self._min_co_count,
         )
+        if not pair_rows:
+            return []
+
+        # Single batch call for supporting evidence — one logical round
+        # trip instead of a sequential query per pair.
+        pairs = [
+            (
+                UUID(row["entity_a_id"])
+                if isinstance(row["entity_a_id"], str)
+                else row["entity_a_id"],
+                UUID(row["entity_b_id"])
+                if isinstance(row["entity_b_id"], str)
+                else row["entity_b_id"],
+            )
+            for row in pair_rows
+        ]
+        evidence = await self._backend.get_relationship_ids_between_many(
+            org_id=organization_id,
+            project_id=project_id,
+            pairs=pairs,
+        )
 
         patterns: list[CoOccurrencePattern] = []
-        for row in pair_rows:
-            # Fetch supporting relationship IDs between this pair
-            rel_ids = await self._backend.get_relationship_ids_between(
-                org_id=organization_id,
-                project_id=project_id,
-                entity_a_id=row["entity_a_id"],
-                entity_b_id=row["entity_b_id"],
-            )
+        for row, (a_id, b_id) in zip(pair_rows, pairs, strict=True):
             patterns.append(CoOccurrencePattern(
-                entity_a_id=UUID(row["entity_a_id"]) if isinstance(row["entity_a_id"], str) else row["entity_a_id"],
+                entity_a_id=a_id,
                 entity_a_name=row["entity_a_name"],
-                entity_b_id=UUID(row["entity_b_id"]) if isinstance(row["entity_b_id"], str) else row["entity_b_id"],
+                entity_b_id=b_id,
                 entity_b_name=row["entity_b_name"],
                 co_count=row["co_count"],
                 total_episodes=total_episodes,
-                relationship_ids=rel_ids,
+                relationship_ids=evidence.get((a_id, b_id), []),
             ))
 
         return patterns

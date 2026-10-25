@@ -25,7 +25,9 @@ from uuid import UUID
 
 import structlog
 
+from core.exceptions import ExternalServiceError
 from core.openbao import OpenBaoClient
+from core.openbao_exceptions import OpenBaoAuthError, OpenBaoError
 
 logger = structlog.get_logger(__name__)
 
@@ -119,12 +121,24 @@ class TransitManager:
 
         Returns:
             OpenBao ciphertext string.
+
+        Raises:
+            ExternalServiceError: If the Transit backend fails — mapped to
+                a JSON 502 by ``register_exception_handlers``, never a
+                plain-text 500.
         """
-        return await self._bao.encrypt_data(
-            WEBHOOK_SECRET_KEY,
-            secret,
-            context=str(webhook_id),
-        )
+        try:
+            return await self._bao.encrypt_data(
+                WEBHOOK_SECRET_KEY,
+                secret,
+                context=str(webhook_id),
+            )
+        except OpenBaoError as exc:
+            raise ExternalServiceError(
+                "Webhook secret encryption failed (OpenBao Transit "
+                f"'{WEBHOOK_SECRET_KEY}').",
+                detail={"key": WEBHOOK_SECRET_KEY},
+            ) from exc
 
     async def decrypt_webhook_secret(
         self,
@@ -139,12 +153,24 @@ class TransitManager:
 
         Returns:
             Decrypted plaintext secret.
+
+        Raises:
+            ExternalServiceError: If the Transit backend fails — mapped to
+                a JSON 502 by ``register_exception_handlers``, never a
+                plain-text 500.
         """
-        return await self._bao.decrypt_data(
-            WEBHOOK_SECRET_KEY,
-            ciphertext,
-            context=str(webhook_id),
-        )
+        try:
+            return await self._bao.decrypt_data(
+                WEBHOOK_SECRET_KEY,
+                ciphertext,
+                context=str(webhook_id),
+            )
+        except OpenBaoError as exc:
+            raise ExternalServiceError(
+                "Webhook secret decryption failed (OpenBao Transit "
+                f"'{WEBHOOK_SECRET_KEY}').",
+                detail={"key": WEBHOOK_SECRET_KEY},
+            ) from exc
 
     # ── PII / User data ────────────────────────────────────────────────────
 
@@ -189,6 +215,36 @@ class TransitManager:
         )
 
     # ── Key lifecycle ──────────────────────────────────────────────────────
+
+    async def verify_webhook_secret_key(self) -> None:
+        """Fail fast if the ``webhook-secret`` Transit key is missing.
+
+        Call once at startup — webhook signing cannot work without this
+        key, and creating endpoints would 502 on every request.
+
+        Raises:
+            ExternalServiceError: If the key does not exist, with the
+                provisioning step in the message.
+        """
+        try:
+            exists = await self._bao.key_exists(WEBHOOK_SECRET_KEY)
+        except OpenBaoAuthError as exc:
+            # 403 on transit/keys/* read — key may exist, only metadata
+            # read is denied. Warn and continue; webhook writes 502 if
+            # the key is truly missing.
+            logger.warning(
+                "transit.key_unverifiable",
+                key=WEBHOOK_SECRET_KEY,
+                error=str(exc),
+            )
+            return
+        if not exists:
+            raise ExternalServiceError(
+                "OpenBao Transit key 'webhook-secret' is missing — "
+                "provision it via scripts/init_openbao.sh (section 13) "
+                "before starting the API.",
+                detail={"key": WEBHOOK_SECRET_KEY},
+            )
 
     async def rotate_all_keys(self) -> dict[str, Any]:
         """Rotate all known encryption keys.

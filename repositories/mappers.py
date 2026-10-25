@@ -3,12 +3,9 @@
 These helpers bridge the ``metadata_`` → ``metadata`` naming convention:
 SQLAlchemy reserves ``metadata`` for its own ``DeclarativeBase``, so the
 ORM attribute is ``metadata_``.  The Pydantic schemas use ``metadata``.
-These functions convert ORM objects to plain dicts with the correct key names.
 
-Placed in the schemas layer because they shape ORM data into the exact
-structure expected by Pydantic response schemas — a data-shaping concern,
-not a data-access concern.  The service layer calls these to prepare
-ORM objects for ``model_validate``.
+Lives in ``repositories/`` (not ``schemas/``) because it imports ORM
+models — schemas must never import the persistence layer.
 """
 
 from __future__ import annotations

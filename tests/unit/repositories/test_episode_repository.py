@@ -358,7 +358,9 @@ class TestEpisodeRepository:
         mock_result.rowcount = 5
         mock_db.execute.return_value = mock_result
 
-        count = await repo.soft_delete_by_project(project_id=self.PROJECT_ID)
+        count = await repo.soft_delete_by_project(
+            project_id=self.PROJECT_ID, organization_id=self.ORG_ID
+        )
 
         assert count == 5
 
@@ -370,7 +372,9 @@ class TestEpisodeRepository:
         mock_result.rowcount = 0
         mock_db.execute.return_value = mock_result
 
-        count = await repo.soft_delete_by_project(project_id=self.PROJECT_ID)
+        count = await repo.soft_delete_by_project(
+            project_id=self.PROJECT_ID, organization_id=self.ORG_ID
+        )
 
         assert count == 0
 

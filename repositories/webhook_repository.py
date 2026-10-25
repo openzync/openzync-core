@@ -70,9 +70,17 @@ class WebhookRepository:
         url: str,
         events: list[str] | None = None,
         signing_secret: str | None = None,
+        endpoint_id: uuid.UUID | None = None,
     ) -> WebhookEndpoint:
-        """Create a new webhook endpoint."""
+        """Create a new webhook endpoint.
+
+        ``signing_secret`` must already be the Transit ciphertext — the
+        service encrypts before calling; the repository never sees
+        plaintext.  ``endpoint_id`` is accepted so the service can
+        pre-generate the UUID and use it as the Transit AAD context.
+        """
         endpoint = WebhookEndpoint(
+            id=endpoint_id if endpoint_id is not None else uuid.uuid4(),
             organization_id=organization_id,
             name=name,
             url=url,

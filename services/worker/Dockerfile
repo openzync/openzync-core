@@ -23,7 +23,7 @@
 #   (the OpenBao Agent sidecar must be running and its tmpfs mounted in)
 # ──────────────────────────────────────────────────────────────────────────────
 
-FROM python:3.12-slim AS builder
+FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS builder
 WORKDIR /app
 
 # APP_VERSION carries the release version into builds without git history
@@ -47,18 +47,22 @@ RUN if [ -n "$APP_VERSION" ]; then export SETUPTOOLS_SCM_PRETEND_VERSION="$APP_V
 
 # ──────────────────────────────────────────────────────────────────────────────
 
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704 AS runtime
 WORKDIR /app
+
+# Run as non-root: appuser owns /app; installed deps copy to its $HOME.
+RUN groupadd -r appuser && useradd -r -g appuser -d /home/appuser -m appuser \
+    && chown appuser:appuser /app
 
 # Propagate the build-time version to runtime so core/_version.py prefers it.
 ARG APP_VERSION=""
 ENV OPENZYNC_VERSION=$APP_VERSION
 
-# Copy installed packages from builder.
-COPY --from=builder /root/.local /root/.local
+# Copy installed packages from builder (into appuser's $HOME for pip --user layout).
+COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
 
 # Copy application source.
-COPY . .
+COPY --chown=appuser:appuser . .
 
 # Copy the entrypoint script — sources OpenBao Agent's rendered secrets,
 # then execs the ARQ worker so it becomes PID 1 and receives signals directly.
@@ -66,9 +70,12 @@ COPY scripts/entrypoint_worker.sh /entrypoint_worker.sh
 RUN chmod +x /entrypoint_worker.sh
 
 # Ensure ~/.local/bin (where pip --user installs scripts) is on PATH.
-ENV PATH=/root/.local/bin:$PATH \
+ENV PATH=/home/appuser/.local/bin:$PATH \
+    HOME=/home/appuser \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
+
+USER appuser
 
 # Worker exposes an aiohttp /health endpoint on settings.HEALTH_PORT (default 8081)
 # managed by the ARQ worker loop. The 30s start-period covers the OpenBao Agent

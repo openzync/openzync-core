@@ -786,6 +786,56 @@ class UserRepository:
         )
         return list(result.scalars().all()), total
 
+    async def search_by_pattern(
+        self,
+        organization_id: UUID,
+        pattern: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Search org users by name/email/external_id ILIKE (global-search leg).
+
+        Excludes soft-deleted users. ``pattern`` is a bound ``%query%``
+        parameter — never interpolated.
+
+        Args:
+            organization_id: Tenant scope.
+            pattern: ILIKE pattern (caller-built, e.g. ``%query%``).
+            limit: Maximum rows.
+
+        Returns:
+            Dicts with ``id`` (str), ``name``, ``email``,
+            ``external_id`` and ``created_at`` (datetime, for recency).
+        """
+        result = await self._db.execute(
+            select(
+                User.id,
+                User.name,
+                User.email,
+                User.external_id,
+                User.created_at,
+            )
+            .where(
+                User.organization_id == organization_id,
+                User.is_deleted.is_(False),
+                or_(
+                    User.name.ilike(pattern),
+                    User.email.ilike(pattern),
+                    User.external_id.ilike(pattern),
+                ),
+            )
+            .limit(limit)
+        )
+        return [
+            {
+                "id": str(row[0]),
+                "name": row[1],
+                "email": row[2],
+                "external_id": row[3],
+                "created_at": row[4],
+            }
+            for row in result.all()
+        ]
+
     # ── Aggregate Stats ─────────────────────────────────────────────────────
 
     async def get_stats(self, user_id: UUID) -> dict[str, int]:

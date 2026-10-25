@@ -84,9 +84,19 @@ async def require_project_membership(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="This API key is scoped to a different project",
             )
-        # Project existence is verified implicitly — a project_id FK
-        # constraint guarantees it, and the API key itself was created
-        # against a real project.
+        # Same org-scoped, archived-excluding lookup as the JWT branch:
+        # a key scoped to an archived (or deleted, or other-org) project
+        # is 404, not silent access.
+        repo = ProjectRepository(db)
+        project = await repo.get_by_id(
+            organization_id=org_id,
+            project_id=project_id,
+        )
+        if project is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Project not found",
+            )
         return
 
     # ── JWT (dashboard user) auth ────────────────────────────────────────

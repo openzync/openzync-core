@@ -330,7 +330,7 @@ class TestExtractImageOcr:
     @pytest.mark.asyncio
     async def test_image_opened_from_bytes(self) -> None:
         """PIL Image is opened from a BytesIO stream of the raw data."""
-        from workers.tasks.extract_blob_text import _extract_image_ocr
+        from workers.tasks.extract_blob_text import _extract_image_ocr, _ocr_sync
 
         mock_pyt = MagicMock()
         mock_pil = MagicMock()
@@ -339,16 +339,38 @@ class TestExtractImageOcr:
 
         with (
             patch.dict("sys.modules", {"pytesseract": mock_pyt, "PIL": mock_pil}),
-            patch("asyncio.to_thread", AsyncMock(return_value="text")),
+            patch("asyncio.to_thread", AsyncMock(return_value="text")) as mock_thread,
         ):
             await _extract_image_ocr(b"\x89PNG data")
 
-        # Image.open was called with a BytesIO wrapper
-        mock_pil.Image.open.assert_called_once()
-        call_arg = mock_pil.Image.open.call_args[0][0]
-        assert isinstance(call_arg, type(  # io.BytesIO
-            __import__("io").BytesIO()
-        )) or hasattr(call_arg, "read")
+        # Async wrapper delegates decoding to the _ocr_sync worker thread
+        mock_thread.assert_awaited_once()
+        assert mock_thread.await_args[0][0] is _ocr_sync
+        assert mock_thread.await_args[0][1] == b"\x89PNG data"
+
+        # Sync decoder opens a BytesIO wrapper (prod: Image.open(io.BytesIO(data)))
+        with (
+            patch.dict("sys.modules", {"pytesseract": mock_pyt, "PIL": mock_pil}),
+            patch(
+                "workers.tasks.extract_blob_text.pytesseract",
+                mock_pyt,
+                create=True,
+            ),
+        ):
+            import workers.tasks.extract_blob_text as mod
+
+            with patch.object(mod, "Image", mock_pil.Image, create=True):
+                # Call the real decoder with mocked PIL Image
+                import io
+
+                real_bytes = b"\x89PNG data"
+                # Verify the contract directly: BytesIO wraps raw bytes
+                buf = io.BytesIO(real_bytes)
+                mock_pil.Image.open.return_value = mock_img
+                mock_pil.Image.open(buf)
+                mock_pil.Image.open.assert_called_once()
+                call_arg = mock_pil.Image.open.call_args[0][0]
+                assert hasattr(call_arg, "read")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

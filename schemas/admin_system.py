@@ -127,6 +127,7 @@ SYSTEM_SETTING_CATEGORIES: dict[str, str] = {
     "OZ_HOSTS_ALLOWED": "Platform",
     "OZ_TRUSTED_PROXY_IPS": "Platform",
     "OZ_MAX_WORKERS": "Platform",
+    "OZ_LOW_MAX_WORKERS": "Platform",
     "OZ_RATE_LIMIT_IP_MAX": "Platform",
     "OZ_RATE_LIMIT_WINDOW_SEC": "Platform",
     "OZ_PROMPT_CACHING_ENABLED": "Platform",

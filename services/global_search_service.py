@@ -1,7 +1,8 @@
 """Global search service — cross-resource search across org-scoped entities.
 
-Runs three sequential ILIKE queries (projects, users, sessions) scoped to the
-authenticated user's organization and membership, returning a flat sorted list.
+Fans out to three repository ILIKE legs (projects, users, sessions) scoped
+to the authenticated user's organization and membership, then merges and
+sorts — the service keeps merge/sort only, no SQL.
 """
 
 from __future__ import annotations
@@ -9,9 +10,11 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from repositories.project_repository import ProjectRepository
+from repositories.session_repository import SessionRepository
+from repositories.user_repository import UserRepository
 from schemas.search import GlobalSearchItem
 
 logger = logging.getLogger(__name__)
@@ -72,102 +75,72 @@ class GlobalSearchService:
         all_results.sort(key=lambda r: (r.type, r.label))
         return all_results[:limit]
 
-    # ── Private query methods ─────────────────────────────────────────────
+    # ── Private query methods (service keeps merge/sort only) ─────────────
 
-    async def _search_projects(self, pattern: str, limit: int) -> list[GlobalSearchItem]:
+    async def _search_projects(
+        self, pattern: str, limit: int
+    ) -> list[GlobalSearchItem]:
         """Search projects the user is a member of."""
-        stmt = text("""
-            SELECT p.id, p.name, p.description, p.created_at
-            FROM projects p
-            JOIN project_members pm ON p.id = pm.project_id
-            WHERE p.organization_id = :org_id
-              AND pm.user_id = :user_id
-              AND p.is_archived = false
-              AND p.name ILIKE :pattern
-            LIMIT :limit
-        """)
-        rows = await self._db.execute(
-            stmt,
-            {"org_id": str(self._org_id), "user_id": str(self._user_id), "pattern": pattern, "limit": limit},
+        rows = await ProjectRepository(self._db).search_member_projects(
+            self._org_id, self._user_id, pattern, limit
         )
         items: list[GlobalSearchItem] = []
         for row in rows:
             item = GlobalSearchItem(
                 type="project",
-                id=str(row.id),
-                label=row.name,
-                subtitle=row.description,
-                href=f"/projects/{row.id}",
+                id=row["id"],
+                label=row["name"],
+                subtitle=row["description"],
+                href=f"/projects/{row['id']}",
             )
             items.append(item)
-            created = row.created_at.isoformat() if row.created_at else ""
-            self._recent_keys[item.id] = created
+            created = row["created_at"]
+            self._recent_keys[item.id] = created.isoformat() if created else ""
         return items
 
     async def _search_users(self, pattern: str, limit: int) -> list[GlobalSearchItem]:
         """Search users in the same organization."""
-        stmt = text("""
-            SELECT id, name, email, external_id, created_at
-            FROM users
-            WHERE organization_id = :org_id
-              AND is_deleted = false
-              AND (name ILIKE :pattern OR email ILIKE :pattern OR external_id ILIKE :pattern)
-            LIMIT :limit
-        """)
-        rows = await self._db.execute(
-            stmt,
-            {"org_id": str(self._org_id), "pattern": pattern, "limit": limit},
+        rows = await UserRepository(self._db).search_by_pattern(
+            self._org_id, pattern, limit
         )
         results: list[GlobalSearchItem] = []
         for row in rows:
             # Prefer email as label when both name and email exist
-            if row.email:
-                label = row.email
-                subtitle = row.name
+            if row["email"]:
+                label = row["email"]
+                subtitle = row["name"]
             else:
-                label = row.name or row.external_id or str(row.id)
+                label = row["name"] or row["external_id"] or row["id"]
                 subtitle = None
             item = GlobalSearchItem(
                 type="user",
-                id=str(row.id),
+                id=row["id"],
                 label=label,
                 subtitle=subtitle,
-                href=f"/users/{row.id}",
+                href=f"/users/{row['id']}",
             )
             results.append(item)
-            created = row.created_at.isoformat() if row.created_at else ""
-            self._recent_keys[item.id] = created
+            created = row["created_at"]
+            self._recent_keys[item.id] = created.isoformat() if created else ""
         return results
 
-    async def _search_sessions(self, pattern: str, limit: int) -> list[GlobalSearchItem]:
+    async def _search_sessions(
+        self, pattern: str, limit: int
+    ) -> list[GlobalSearchItem]:
         """Search sessions within projects the user is a member of."""
-        stmt = text("""
-            SELECT s.id, s.external_id, s.project_id, p.name as project_name,
-                   s.created_at
-            FROM sessions s
-            JOIN projects p ON s.project_id = p.id
-            JOIN project_members pm ON p.id = pm.project_id
-            WHERE p.organization_id = :org_id
-              AND pm.user_id = :user_id
-              AND s.is_deleted = false
-              AND p.is_archived = false
-              AND s.external_id ILIKE :pattern
-            LIMIT :limit
-        """)
-        rows = await self._db.execute(
-            stmt,
-            {"org_id": str(self._org_id), "user_id": str(self._user_id), "pattern": pattern, "limit": limit},
+        rows = await SessionRepository(self._db).search_member_sessions(
+            self._org_id, self._user_id, pattern, limit
         )
         items: list[GlobalSearchItem] = []
         for row in rows:
             item = GlobalSearchItem(
                 type="session",
-                id=str(row.id),
-                label=row.external_id,
-                subtitle=row.project_name,
-                href=f"/projects/{row.project_id}/sessions/{row.id}",
+                id=row["id"],
+                label=row["external_id"],
+                subtitle=row["project_name"],
+                href=f"/projects/{row['project_id']}/sessions/{row['id']}",
             )
             items.append(item)
-            created = row.created_at.isoformat() if row.created_at else ""
-            self._recent_keys[item.id] = created
+            created = row["created_at"]
+            self._recent_keys[item.id] = created.isoformat() if created else ""
         return items

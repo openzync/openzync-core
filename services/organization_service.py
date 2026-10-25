@@ -10,13 +10,13 @@ from __future__ import annotations
 import secrets
 import uuid
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import structlog
 import yaml
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import rls
 from core.exceptions import ConflictError, NotFoundError
@@ -30,10 +30,35 @@ from repositories.user_repository import UserRepository
 from schemas.organizations import CreateOrgRequest, CreateOrgResponse
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
     from services.email_service import EmailService
     from services.invite_service import send_invite_email  # noqa: F401  — re-export
 
 logger = structlog.get_logger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _read_org_defaults_file() -> dict[str, Any]:
+    """Read the default per-org config YAML (cached — baked into the image).
+
+    The file never changes at runtime, so it is parsed once per process
+    instead of on every organization creation.
+
+    Returns:
+        The parsed defaults dict, or ``{}`` when the file is missing or
+        invalid (callers fall back to built-in defaults).
+    """
+    path = Path(__file__).parent.parent / "config" / "defaults" / "org_config.yaml"
+    try:
+        with open(path) as f:
+            return yaml.safe_load(f) or {}
+    except FileNotFoundError:
+        logger.warning("org_config.defaults_file_not_found", path=str(path))
+        return {}
+    except yaml.YAMLError as e:
+        logger.warning("org_config.defaults_file_invalid", path=str(path), error=str(e))
+        return {}
 
 
 @dataclass(frozen=True)
@@ -440,17 +465,11 @@ class OrganizationService:
     def _load_org_defaults(self) -> dict[str, Any]:
         """Load default per-org config values from ``config/defaults/org_config.yaml``.
 
+        Returns a copy — the cached original is never handed out for
+        mutation.
+
         Returns:
             A flat dict of key/value pairs, or ``{}`` if the file is missing
             or unreadable.
         """
-        path = Path(__file__).parent.parent / "config" / "defaults" / "org_config.yaml"
-        try:
-            with open(path) as f:
-                return yaml.safe_load(f) or {}
-        except FileNotFoundError:
-            logger.warning("org_config.defaults_file_not_found", path=str(path))
-            return {}
-        except yaml.YAMLError as e:
-            logger.warning("org_config.defaults_file_invalid", path=str(path), error=str(e))
-            return {}
+        return dict(_read_org_defaults_file())

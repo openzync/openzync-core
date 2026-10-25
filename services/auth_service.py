@@ -369,7 +369,9 @@ class AuthService:
         # Rotate the refresh-token family — every prior session is dead,
         # including the one that logged the default credential in.
         await self._repo.revoke_all_refresh_tokens(user_id)
-        await invalidate_must_change_password(self._redis, user_id)
+        await invalidate_must_change_password(
+            self._redis, user.organization_id, user_id
+        )
 
         logger.info(
             "auth.password_changed",

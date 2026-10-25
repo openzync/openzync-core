@@ -6,14 +6,13 @@ the embedding worker for each ingested fact.
 
 from __future__ import annotations
 
-import hashlib
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
-import orjson
 import structlog
 
 if TYPE_CHECKING:
@@ -34,17 +33,12 @@ from repositories.fact_repository import FactRepository
 from repositories.session_repository import SessionRepository
 from repositories.user_repository import UserRepository
 from schemas.facts import FactBatchResponse, FactResponse, FactTriple
+from services.idempotency_service import IdempotencyService
 from services.webhook_service import WebhookService
 
 logger = logging.getLogger(__name__)
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-
-CONTENT_HASH_PREFIX = "fact_contenthash:"
-"""Redis key prefix for fact content-dedup hash entries."""
-
-IDEMPOTENCY_TTL = 172800  # 48 hours
-"""TTL for idempotency and dedup cache entries (seconds)."""
 
 ARQ_QUEUE = "high"
 """ARQ queue name for fact embedding tasks."""
@@ -79,11 +73,13 @@ class FactService:
         graph_backend_resolver: (
             Callable[[UUID], Awaitable[GraphBackend | None]] | None
         ) = None,
+        idempotency_service: IdempotencyService | None = None,
     ) -> None:
         self._db = db
         self._redis = redis_client
         self._webhook_service = webhook_service
         self._graph_backend_resolver = graph_backend_resolver
+        self._idem = idempotency_service or IdempotencyService(redis_client)
         self._fact_repo = fact_repo or FactRepository(db)
         self._user_repo = user_repo or UserRepository(db)
         self._session_repo = session_repo or SessionRepository(db)
@@ -101,7 +97,8 @@ class FactService:
         """Ingest a batch of facts for a project.
 
         Flow:
-        1. Compute content hash for batch-level dedup.
+        1. Atomically claim the content hash (IdempotencyService Lua
+           claim — the sole dedup arbiter; losers replay the winner).
         2. Resolve the session (NotFoundError if it does not exist).
         3. Bulk-insert facts via the invalidation service (supersedes any
            conflicting active facts — see ``FactInvalidationService``).
@@ -129,43 +126,11 @@ class FactService:
         Raises:
             NotFoundError: If the session does not exist in the project.
         """
-        # ── Step 1: Content-level dedup check ─────────────────────────────
-        content_hash = self._compute_batch_hash(project_id, facts)
-        existing_job_id = await self._check_dedup(content_hash)
-        if existing_job_id is not None:
-            logger.info(
-                "fact_service.content_dedup_hit",
-                extra={
-                    "content_hash": content_hash,
-                    "existing_job_id": existing_job_id,
-                    "project_id": str(project_id),
-                },
-            )
-            return FactBatchResponse(
-                job_id=existing_job_id,
-                accepted_count=len(facts),
-                status="accepted",
-                message="Facts already ingested; returning existing job_id",
-            )
-
-        # ── Step 2: Resolve session ──────────────────────────────────────
-        session = await self._session_repo.get_by_external_id(
-            org_id=org_id,
-            project_id=project_id,
-            external_id=session_external_id,
-        )
-        if session is None:
-            raise NotFoundError(
-                message=f"Session '{session_external_id}' not found "
-                f"in project {project_id}",
-                detail={
-                    "session_external_id": session_external_id,
-                    "project_id": str(project_id),
-                },
-            )
-        session_id = session.id
-
-        # ── Step 3: Early return for empty fact lists ─────────────────────
+        # ── Step 1: Atomic content-level dedup claim ─────────────────────
+        # One Lua GET-or-SET (IdempotencyService.claim_content_hash) — the
+        # sole arbiter. A check-then-set here would let two concurrent
+        # identical batches both pass (TOCTOU); losers replay the winner's
+        # job_id without inserting anything.
         if not facts:
             return FactBatchResponse(
                 job_id="",
@@ -173,60 +138,104 @@ class FactService:
                 status="accepted",
                 message="No facts to ingest",
             )
-
-        # ── Step 4: Supersession-aware insert ─────────────────────────────
-        fact_dicts: list[dict[str, Any]] = [
-            {
-                "subject": f.subject,
-                "predicate": f.predicate,
-                "object": f.object,
-                "content": f.content or f"{f.subject} {f.predicate} {f.object}",
-                "confidence": f.confidence,
-                "source_episode_id": None,
-            }
-            for f in facts
-        ]
-
-        from services.cache_service import CacheService
-        from services.fact_invalidation_service import (
-            PURGE_ONLY_CACHE_TTL,
-            FactInvalidationService,
-        )
-
-        invalidation = FactInvalidationService(
-            db=self._db,
-            fact_repo=self._fact_repo,
-            webhook_service=self._webhook_service,
-            cache_service=(
-                CacheService(self._redis, default_ttl=PURGE_ONLY_CACHE_TTL)
-                if self._redis is not None
-                else None
-            ),
-            graph_sync=await self._resolve_graph_sync(org_id, project_id),
-        )
-        result = await invalidation.ingest_with_supersession(
-            org_id=org_id,
-            project_id=project_id,
-            user_id=created_by,
-            facts=fact_dicts,
-        )
-        created = result.created
-
-        # ── Step 5: Generate job_id and enqueue embedding tasks ───────────
         job_id = str(uuid4())
-        fact_ids = [str(fact.id) for fact in created]
-
-        await self._enqueue_embedding_tasks(
-            job_id=job_id,
-            org_id=str(org_id),
-            project_id=str(project_id),
-            fact_ids=fact_ids,
+        hash_dicts = [f.model_dump() for f in facts]
+        claim = await self._idem.claim_content_hash(
+            str(org_id),
+            str(created_by),
+            session_external_id,
+            hash_dicts,
+            payload=job_id,
         )
+        if not claim.won:
+            logger.info(
+                "fact_service.content_dedup_hit",
+                extra={
+                    "existing_job_id": claim.winner,
+                    "project_id": str(project_id),
+                },
+            )
+            return FactBatchResponse(
+                job_id=claim.winner,
+                accepted_count=len(facts),
+                status="accepted",
+                message="Facts already ingested; returning existing job_id",
+            )
+        # A won claim is held from here on — any failure below must
+        # release it so a retry re-claims instead of replaying this
+        # attempt's job_id.
+        try:
+            # ── Step 2: Resolve session ──────────────────────────────────
+            session = await self._session_repo.get_by_external_id(
+                org_id=org_id,
+                project_id=project_id,
+                external_id=session_external_id,
+            )
+            if session is None:
+                raise NotFoundError(
+                    message=f"Session '{session_external_id}' not found "
+                    f"in project {project_id}",
+                    detail={
+                        "session_external_id": session_external_id,
+                        "project_id": str(project_id),
+                    },
+                )
+            session_id = session.id
 
-        # ── Step 6: Cache content hash for future dedup ───────────────────
-        await self._cache_dedup(content_hash, job_id)
+            # ── Step 4: Supersession-aware insert ──────────────────────────
+            fact_dicts: list[dict[str, Any]] = [
+                {
+                    "subject": f.subject,
+                    "predicate": f.predicate,
+                    "object": f.object,
+                    "content": f.content or f"{f.subject} {f.predicate} {f.object}",
+                    "confidence": f.confidence,
+                    "source_episode_id": None,
+                }
+                for f in facts
+            ]
 
-        # ── Emit webhook event ────────────────────────────────────────
+            from services.cache_service import CacheService
+            from services.fact_invalidation_service import (
+                PURGE_ONLY_CACHE_TTL,
+                FactInvalidationService,
+            )
+
+            invalidation = FactInvalidationService(
+                db=self._db,
+                fact_repo=self._fact_repo,
+                webhook_service=self._webhook_service,
+                cache_service=(
+                    CacheService(self._redis, default_ttl=PURGE_ONLY_CACHE_TTL)
+                    if self._redis is not None
+                    else None
+                ),
+                graph_sync=await self._resolve_graph_sync(org_id, project_id),
+            )
+            result = await invalidation.ingest_with_supersession(
+                org_id=org_id,
+                project_id=project_id,
+                user_id=created_by,
+                facts=fact_dicts,
+            )
+            created = result.created
+
+            # ── Step 5: Enqueue embedding tasks (job_id claimed in Step 1) ──
+            fact_ids = [str(fact.id) for fact in created]
+
+            await self._enqueue_embedding_tasks(
+                job_id=job_id,
+                org_id=str(org_id),
+                project_id=str(project_id),
+                fact_ids=fact_ids,
+            )
+        except Exception:
+            await self._idem.release_content_hash(
+                str(org_id), str(created_by), session_external_id, hash_dicts
+            )
+            raise
+
+        # ── Emit webhook event (best-effort — emit() never raises) ────────
         if self._webhook_service:
             await self._webhook_service.emit(
                 organization_id=org_id,
@@ -493,77 +502,6 @@ class FactService:
 
         return GraphEdgeSyncService(backends=[backend])
 
-    @staticmethod
-    def _compute_batch_hash(
-        project_id: UUID,
-        facts: list[FactTriple],
-    ) -> str:
-        """Compute a SHA-256 hash of (project_id, sorted facts).
-
-        Used for content-level deduplication: identical fact batches from
-        different clients produce the same hash and return the same job_id.
-        ``content`` is part of the fact identity — two batches with the same
-        subject/predicate/object but different content hash differently, so
-        newer content is never dropped by the dedup short-circuit.
-
-        Args:
-            project_id: The project's UUID.
-            facts: The fact triples to hash.
-
-        Returns:
-            A hex-encoded SHA-256 digest.
-        """
-        canonical = orjson.dumps(
-            {
-                "project_id": str(project_id),
-                "facts": sorted(
-                    [
-                        {
-                            "subject": f.subject,
-                            "predicate": f.predicate,
-                            "object": f.object,
-                            "confidence": f.confidence,
-                            # Mirrors the content fallback used at ingest time
-                            # (ingest_facts Step 4) so the hash matches what
-                            # is actually persisted.
-                            "content": (
-                                f.content or f"{f.subject} {f.predicate} {f.object}"
-                            ).strip(),
-                        }
-                        for f in facts
-                    ],
-                    key=lambda x: (x["subject"], x["predicate"], x["object"]),
-                ),
-            },
-            option=orjson.OPT_SORT_KEYS,
-        )
-        return hashlib.sha256(canonical).hexdigest()
-
-    async def _check_dedup(self, content_hash: str) -> str | None:
-        """Check if this exact fact batch has been ingested before.
-
-        Args:
-            content_hash: The SHA-256 content hash.
-
-        Returns:
-            The existing ``job_id`` if found, or ``None``.
-        """
-        existing = await self._redis.get(f"{CONTENT_HASH_PREFIX}{content_hash}")
-        return existing if existing else None
-
-    async def _cache_dedup(self, content_hash: str, job_id: str) -> None:
-        """Cache a content hash to prevent re-ingestion of identical facts.
-
-        Args:
-            content_hash: The SHA-256 content hash.
-            job_id: The job ID to associate with this content.
-        """
-        await self._redis.setex(
-            f"{CONTENT_HASH_PREFIX}{content_hash}",
-            IDEMPOTENCY_TTL,
-            job_id,
-        )
-
     async def _enqueue_embedding_tasks(
         self,
         job_id: str,
@@ -586,15 +524,22 @@ class FactService:
             arq_pool = get_arq()
             qname = get_queue_name(get_settings().ENVIRONMENT, ARQ_QUEUE)
 
-            for fact_id in fact_ids:
-                await arq_pool.enqueue(
-                    "embed_fact",
-                    queue_name=qname,
-                    fact_id=fact_id,
-                    org_id=org_id,
-                    project_id=project_id,
-                    trace_id=trace_id,
+            # Concurrent fan-out — a sequential loop turns ingest latency
+            # into N_fact Redis round-trips (same pattern as the episode
+            # enqueue in memory_service).
+            await asyncio.gather(
+                *(
+                    arq_pool.enqueue(
+                        "embed_fact",
+                        queue_name=qname,
+                        fact_id=fact_id,
+                        org_id=org_id,
+                        project_id=project_id,
+                        trace_id=trace_id,
+                    )
+                    for fact_id in fact_ids
                 )
+            )
 
             logger.info(
                 "fact_service.embedding_tasks_enqueued",

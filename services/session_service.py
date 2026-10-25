@@ -15,9 +15,9 @@ from core.events import EventType
 from core.exceptions import ConflictError, NotFoundError, ValidationError
 from core.sorting import SortSpec
 from repositories.episode_blob_repository import EpisodeBlobRepository
+from repositories.mappers import episode_to_dict, session_to_dict, session_to_list_dict
 from repositories.session_repository import SessionRepository
 from schemas.common import PaginatedResponse
-from schemas.mappers import episode_to_dict, session_to_dict, session_to_list_dict
 from schemas.sessions import (
     MessageResponse,
     SessionListResponse,

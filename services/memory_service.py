@@ -38,7 +38,6 @@ if TYPE_CHECKING:
 # the worker, and UploadFile isn't available in the worker context.
 from fastapi import UploadFile  # noqa: TCH002 — used in method signature
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import get_arq
 from core.config import get_settings
@@ -205,12 +204,14 @@ class MemoryService:
             ``MAX(sequence_number) + 1``, assign numbers, and batch-insert
             episodes into PostgreSQL (``IntegrityError`` on a lost seq
             race → ``ConflictError`` for client retry).
-        10. Upload blobs to S3 and persist blob records.
+        10. Upload blobs to S3 and persist blob records (same transaction —
+            pre-commit failures compensate uploaded S3 keys inline; committed
+            rows carry storage_key for the orphan-blob GC worker).
         11. Enqueue ARQ enrichment tasks (enrich_episode, embed_episode,
             link_entities_to_episode) + blob text extraction tasks.
-        12. Store idempotency key and content hash (payload = job_id)
-            for future dedup.
-        13. Invalidate context cache for this project.
+        12. Store idempotency key for future dedup.
+        13. Post-commit, best-effort: invalidate context cache, emit
+            webhooks (never fail a committed ingest).
         14. Return 202 ``IngestMemoryResponse``.
 
         Args:
@@ -436,6 +437,9 @@ class MemoryService:
         # release it (fail-open) so a retry re-claims instead of
         # replaying this attempt's job_id. The ingest_dedup row stays
         # the arbiter either way (see release_content_hash).
+        # ``uploaded_keys`` tracks S3 objects written by this attempt so a
+        # pre-commit failure can compensate them (see except handlers).
+        uploaded_keys: list[str] = []
         try:
             # ── Step 5: Build episode dicts (no sequence numbers yet) ─────────
             # Sequence numbers are assigned AFTER the row lock below, so the
@@ -526,6 +530,15 @@ class MemoryService:
             )
 
             # ── Step 9: Upload blobs and persist blob records ────────────────
+            # Reconciler path (not post-commit persist): S3 bytes land first,
+            # then blob rows — including storage_key — commit in the SAME
+            # transaction as the episodes. Every committed row therefore
+            # carries its S3 key, and the orphan-blob GC worker
+            # (cleanup_orphan_blobs, keyed on soft-deleted episodes) covers
+            # every post-commit orphan: wipe, rollback-adjacent crashes, and
+            # failed enrichment all converge there. The only window the GC
+            # cannot see is S3-uploaded-then-commit-failed (no DB row), which
+            # the except handlers compensate inline below.
             blob_count = 0
             blob_records: list[Any] = []
             if uploaded_blobs:
@@ -538,6 +551,9 @@ class MemoryService:
                     messages=messages,
                     uploaded_blobs=uploaded_blobs,
                 )
+                uploaded_keys = [
+                    b.storage_key for b in blob_records if b.storage_key
+                ]
             elif any(msg.blobs for msg in messages):
                 # Fail loud — the router only validates blob_ids when files
                 # are present, so metadata-without-files would otherwise
@@ -548,84 +564,113 @@ class MemoryService:
                 )
 
             # ── Commit so workers can see episodes + blobs before tasks ─────
+            # The error-handling block ends HERE. Everything below runs
+            # post-commit: failures must never roll back, compensate blob
+            # files, or release the content-hash claim for committed rows.
             await self._db.commit()
-
-            # ── Step 10: Enqueue ARQ tasks with the claimed job_id ───────────
-            # ID-only payloads — workers load content/metadata from the row.
-            episode_dicts = [
-                {"id": ep.id, "role": ep.role} for ep in episodes
-            ]
-            await self._enqueue_arq_tasks(
-                job_id=str(job_id),
-                org_id=str(org_id),
-                project_id=str(project_id),
-                session_id=str(session_id),
-                episodes=episode_dicts,
-            )
-
-            # ── Step 10b: Enqueue blob text extraction tasks ─────────────────
-            if blob_records:
-                await self._enqueue_blob_extraction_tasks(
-                    blob_records=blob_records,
-                    org_id=org_id,
-                    project_id=project_id,
-                )
-
-            # ── Step 9: Store idempotency key and content hash ──────────────
-            response = IngestMemoryResponse(
-                job_id=str(job_id),
-                episode_count=len(episodes),
-                blob_count=blob_count,
-                status="accepted",
-                message="Messages accepted for processing",
-            )
-
-            if idempotency_key is not None:
-                await self._idem.store_idempotency_key(
-                    idempotency_key, body_hash or "", response.model_dump(), str(org_id)
-                )
-
-            # note: no store_content_hash here — the Step 4 Lua claim already
-            # SET the Redis key (payload = job_id) atomically on win. A
-            # post-ingest check-then-store would re-open the TOCTOU window;
-            # store_content_hash remains for non-ingest writers only.
-
-            # ── Step 12: Invalidate context cache for this project ───────────
-            await self._invalidate_context_cache(str(org_id), str(project_id))
-
-            # ── Step 13: Emit webhook events ─────────────────────────────────
-            if self._webhook_service:
-                event_payload = {
-                    "org_id": str(org_id),
-                    "project_id": str(project_id),
-                    "session_id": str(session_id),
-                    "episode_count": len(episodes),
-                    "job_id": str(job_id),
-                }
-                await self._webhook_service.emit(
-                    organization_id=org_id,
-                    event_type=EventType.INGEST_BATCH_COMPLETED,
-                    payload=event_payload,
-                )
-                await self._webhook_service.emit(
-                    organization_id=org_id,
-                    event_type=EventType.MESSAGE_ADDED,
-                    payload=event_payload,
-                )
-
-            return response
         except asyncio.CancelledError:
             await self._db.rollback()
+            await self._compensate_blob_uploads(org_id, uploaded_keys)
             await self._idem.release_content_hash(
                 str(org_id), str(created_by), str(session_id), msgs
             )
             raise
         except Exception:
             await self._db.rollback()
+            await self._compensate_blob_uploads(org_id, uploaded_keys)
             await self._idem.release_content_hash(
                 str(org_id), str(created_by), str(session_id), msgs
             )
             raise
+
+        # ── Step 10: Enqueue ARQ tasks with the claimed job_id ───────────
+        # Post-commit: episodes are durable, so an enqueue failure raises
+        # loudly (reconciliation replays) instead of silently dropping
+        # work — but it never touches blob files or the dedup claim.
+        # ID-only payloads — workers load content/metadata from the row.
+        episode_dicts = [{"id": ep.id, "role": ep.role} for ep in episodes]
+        await self._enqueue_arq_tasks(
+            job_id=str(job_id),
+            org_id=str(org_id),
+            project_id=str(project_id),
+            session_id=str(session_id),
+            episodes=episode_dicts,
+        )
+
+        # ── Step 10b: Enqueue blob text extraction tasks ─────────────────
+        if blob_records:
+            await self._enqueue_blob_extraction_tasks(
+                blob_records=blob_records,
+                org_id=org_id,
+                project_id=project_id,
+            )
+
+        # ── Step 11: Store idempotency key (best-effort) ─────────────────
+        # Post-commit log-and-continue: a Redis outage here must never turn
+        # a committed ingest into a 500. A retry replays the winner via
+        # the still-held content-hash claim, so nothing ingests twice.
+        response = IngestMemoryResponse(
+            job_id=str(job_id),
+            episode_count=len(episodes),
+            blob_count=blob_count,
+            status="accepted",
+            message="Messages accepted for processing",
+        )
+        if idempotency_key is not None:
+            try:
+                await self._idem.store_idempotency_key(
+                    idempotency_key, body_hash or "", response.model_dump(), str(org_id)
+                )
+            except Exception:
+                # note: no release_content_hash — the claim stays held so
+                # the retry replays this attempt's job_id instead of
+                # re-ingesting.
+                logger.exception(
+                    "memory.idempotency_key_store_failed",
+                    extra={
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                        "job_id": str(job_id),
+                    },
+                )
+
+        # note: no store_content_hash here — the Step 4 Lua claim already
+        # SET the Redis key (payload = job_id) atomically on win. A
+        # post-ingest check-then-store would re-open the TOCTOU window;
+        # store_content_hash remains for non-ingest writers only.
+
+        # ── Steps 12–13: Post-commit effects (best-effort) ─────────────────
+        # The ingest committed above. A purge or webhook failure must never
+        # turn a committed ingest into a 500: purge failures are
+        # logged-and-continued (stale context expires via TTL anyway), and
+        # emit() never raises by contract.
+        try:
+            await self._invalidate_context_cache(str(org_id), str(project_id))
+        except Exception:
+            logger.exception(
+                "memory.context_cache_invalidate_failed",
+                extra={"org_id": str(org_id), "project_id": str(project_id)},
+            )
+        if self._webhook_service:
+            event_payload = {
+                "org_id": str(org_id),
+                "project_id": str(project_id),
+                "session_id": str(session_id),
+                "episode_count": len(episodes),
+                "job_id": str(job_id),
+            }
+            await self._webhook_service.emit(
+                organization_id=org_id,
+                event_type=EventType.INGEST_BATCH_COMPLETED,
+                payload=event_payload,
+            )
+            await self._webhook_service.emit(
+                organization_id=org_id,
+                event_type=EventType.MESSAGE_ADDED,
+                payload=event_payload,
+            )
+
+        return response
 
     async def delete_project_memory(
         self,
@@ -655,39 +700,84 @@ class MemoryService:
         Raises:
             ValidationError: If ``confirm`` does not match ``project_id``
                 (→ 422, nothing is deleted).
-            ExternalServiceError: If the org's blob storage config cannot be
-                read from OpenBao — the stored objects are left in place.
+            NotFoundError: If the project does not exist in this
+                organization or is archived (→ 404, nothing is deleted).
+                # ⚠️ BREAKING: cross-org wipes previously deleted by
+                # project_id alone; they are now rejected.
+                # S3/config failures never raise: rows commit first, the S3
+                # sweep is best-effort, and leftovers stay visible to the
+                # orphan-blob GC worker via the soft-deleted episodes.
         """
         if confirm != str(project_id):
             raise ValidationError(
                 "confirm does not match project_id — memory wipe rejected"
             )
 
-        episodes_deleted = await self._episode_repo.soft_delete_by_project(project_id)
-        facts_deleted = await self._fact_repo.soft_delete_by_project(project_id)
+        # ⚠️ Org gate: the wipe must not touch a project outside the
+        # caller's organization. get_by_id is org-scoped and excludes
+        # archived projects, so cross-org/archived/missing all 404 here.
+        project = await self._project_repo.get_by_id(org_id, project_id)
+        if project is None:
+            raise NotFoundError(
+                message=f"Project {project_id} not found",
+                detail={"project_id": str(project_id)},
+            )
 
-        # Delete the project's S3 objects in the same operation — without
-        # this the wipe soft-deletes rows but leaks every blob's bytes.
-        # Paged (500/page, rows deleted before the next fetch) so a large
-        # project never materializes all blob rows at once.  S3 failure
-        # raises (delete_blobs never swallows); DB rows stay for the
-        # orphan-blob cleanup worker (episodes are now soft-deleted).
+        episodes_deleted = await self._episode_repo.soft_delete_by_project(
+            project_id, org_id
+        )
+        facts_deleted = await self._fact_repo.soft_delete_by_project(
+            project_id, org_id
+        )
+
+        # ── Commit before touching S3 ───────────────────────────────────
+        # Rows are durable now. Every S3 delete below runs post-commit: a
+        # crash leaves blob rows pointing at live objects with soft-deleted
+        # episodes, which cleanup_orphan_blobs retries (S3 + row delete).
+        await self._db.commit()
+
+        # Post-commit S3 sweep, best-effort per page. Blob rows are
+        # deliberately left for the orphan-blob GC worker, so a failure
+        # here only logs loudly and stops the sweep — leftovers stay
+        # GC-visible instead of becoming invisible S3 leaks.
+        from services.blob_storage_service import BlobStorageService
+
         blobs_deleted = 0
+        offset = 0
         storage_config: dict[str, Any] | None = None
         while True:
-            page = await self._blob_repo.get_by_project(project_id)
+            page = await self._blob_repo.get_by_project(
+                project_id, limit=500, offset=offset
+            )
             if not page:
                 break
+            offset += len(page)
             if storage_config is None:
-                from services.blob_storage_service import BlobStorageService
-
-                storage_config = await self._resolve_storage_config(org_id)
-            # S3 first, then row delete — delete_blobs raises on S3
-            # failure so rows stay for the orphan-blob cleanup worker.
-            await BlobStorageService(self._db, self._blob_repo).delete_blobs(
-                page, storage_config
-            )
-            await self._blob_repo.delete_by_ids([b.id for b in page])
+                try:
+                    storage_config = await self._resolve_storage_config(org_id)
+                except Exception:
+                    logger.exception(
+                        "memory.wipe_storage_config_failed",
+                        extra={
+                            "org_id": str(org_id),
+                            "project_id": str(project_id),
+                        },
+                    )
+                    break
+            try:
+                await BlobStorageService(self._db, self._blob_repo).delete_blobs(
+                    page, storage_config
+                )
+            except Exception:
+                logger.exception(
+                    "memory.wipe_blob_delete_failed",
+                    extra={
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                        "page_size": len(page),
+                    },
+                )
+                break
             blobs_deleted += len(page)
 
         logger.info(
@@ -779,6 +869,45 @@ class MemoryService:
         }
         storage_config.update(org_cfg.to_blob_storage_config())
         return storage_config
+
+    async def _compensate_blob_uploads(
+        self, org_id: UUID, storage_keys: list[str]
+    ) -> None:
+        """Delete S3 objects orphaned by a pre-commit ingest failure.
+
+        Uploads landed in S3 but the transaction rolled back, so no blob
+        row references them and the orphan-blob GC worker cannot see them.
+        Loud by design: every failure is logged with the orphaned key, and
+        this method never raises — it must not mask the original exception.
+
+        Args:
+            org_id: The organization UUID (storage config scope).
+            storage_keys: S3 keys uploaded by the failed attempt.
+        """
+        if not storage_keys:
+            return
+        try:
+            from core.blob_storage import BlobStorage, BlobStorageConfig
+
+            storage_config = await self._resolve_storage_config(org_id)
+            storage = BlobStorage(
+                BlobStorageConfig.from_org_config(storage_config)
+            )
+            for key in storage_keys:
+                try:
+                    await storage.delete(key)
+                except Exception:
+                    logger.error(
+                        "memory.blob_compensating_delete_failed",
+                        extra={"org_id": str(org_id), "storage_key": key},
+                        exc_info=True,
+                    )
+        except Exception:
+            logger.error(
+                "memory.blob_compensation_failed",
+                extra={"org_id": str(org_id), "key_count": len(storage_keys)},
+                exc_info=True,
+            )
 
     async def _resolve_user(
         self,

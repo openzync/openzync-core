@@ -51,11 +51,12 @@
 #     postgres-init wrote) via scripts/entrypoint_migrate.sh.
 #
 # Volume note:
-#   api-secrets and worker-secrets are regular named volumes (not tmpfs)
-#   so the sidecar (writer) and the app (reader) can share a single path
-#   across container boundaries. For production, replace them with
-#   tmpfs mounts (e.g. Kubernetes emptyDir.medium: Memory) — see the
-#   `# TechLead note:` in the services block.
+# api-secrets and worker-secrets are regular named volumes (not tmpfs)
+# so the sidecar (writer) and the app (reader) can share a single path
+# across container boundaries. system.env must NEVER be persisted to disk
+# outside these volumes — for production, replace them with tmpfs mounts
+# (e.g. Kubernetes emptyDir.medium: Memory) — see the
+# `# TechLead note:` in the services block.
 #
 # Profiles:
 #   --profile observability  (Prometheus + Grafana + Alloy)
@@ -386,10 +387,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # Aux deps start-order only — FalkorDB/Ollama outages degrade the
+      # API (see lifespan degraded flag + /ready), never block boot.
       falkordb:
-        condition: service_healthy
+        condition: service_started
       ollama:
-        condition: service_healthy
+        condition: service_started
     volumes:
       - api-secrets:/run/secrets:ro   # RO — the app must never write secrets
       - openbao-init-data:/openbao-bootstrap:ro  # AppRole credentials for runtime auth
@@ -450,10 +453,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # Aux deps start-order only — FalkorDB/Ollama outages degrade the
+      # worker (tasks fail loud + retry), never block boot.
       falkordb:
-        condition: service_healthy
+        condition: service_started
       ollama:
-        condition: service_healthy
+        condition: service_started
     volumes:
       - worker-secrets:/run/secrets:ro
       - openbao-init-data:/openbao-bootstrap:ro  # AppRole credentials for runtime auth
@@ -625,7 +630,7 @@ services:
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: "Viewer"        # read-only — was Admin before audit
-      GF_SECURITY_ADMIN_PASSWORD: admin            # dev-only; set via env in production
+      GF_SECURITY_ADMIN_PASSWORD: "${GF_ADMIN_PASSWORD:?GF_ADMIN_PASSWORD is required}"
     volumes:
       - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro,z
       - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro,z

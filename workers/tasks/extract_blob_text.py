@@ -125,9 +125,9 @@ def _extract_text_plain(data: bytes) -> str | None:
 async def _extract_image_ocr(data: bytes) -> str | None:
     """Extract text from an image using Tesseract OCR.
 
-    Offloads the synchronous ``pytesseract`` call to a thread pool via
-    ``asyncio.to_thread()`` so the event loop is not blocked during CPU-bound
-    OCR processing.
+    Offloads the synchronous PIL decode + ``pytesseract`` call to a
+    thread pool via ``asyncio.to_thread()`` so the event loop is not
+    blocked during CPU-bound OCR processing.
 
     Args:
         data: Raw image bytes (PNG, JPEG, WebP, TIFF, BMP, etc.).
@@ -140,8 +140,10 @@ async def _extract_image_ocr(data: bytes) -> str | None:
         Exception: If OCR processing fails (retryable).
     """
     try:
-        import pytesseract
-        from PIL import Image
+        import pytesseract  # noqa: F401 — availability gate; real import runs in _ocr_sync
+        from PIL import (
+            Image,  # noqa: F401 — availability gate; real import runs in _ocr_sync
+        )
     except ImportError:
         logger.warning(
             "extract_blob_text.ocr_not_available",
@@ -149,15 +151,29 @@ async def _extract_image_ocr(data: bytes) -> str | None:
         )
         raise
 
+    text = await asyncio.to_thread(_ocr_sync, data)
+    result = text.strip()
+    return result if result else None
+
+
+def _ocr_sync(data: bytes) -> str:
+    """Decode image bytes and run Tesseract (runs in a worker thread).
+
+    Args:
+        data: Raw image bytes.
+
+    Returns:
+        Raw OCR text (may be blank — the caller strips and filters).
+    """
+    import pytesseract
+    from PIL import Image
+
     image = Image.open(io.BytesIO(data))
-    text = await asyncio.to_thread(
-        pytesseract.image_to_string,
+    return pytesseract.image_to_string(
         image,
         lang="eng",
         config="--psm 3",  # Automatic page segmentation
     )
-    result = text.strip()
-    return result if result else None
 
 
 # ── MIME type dispatch ───────────────────────────────────────────────────────
@@ -186,13 +202,15 @@ async def _dispatch_extraction(mime_type: str, data: bytes) -> str | None:
         return _extract_text_plain(data)
 
     if mime_type == "application/pdf":
-        return _extract_pdf(data)
+        # fitz is CPU-bound sync — off the event loop.
+        return await asyncio.to_thread(_extract_pdf, data)
 
     if mime_type in (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         "application/msword",
     ):
-        return _extract_docx(data)
+        # python-docx is CPU-bound sync — off the event loop.
+        return await asyncio.to_thread(_extract_docx, data)
 
     if mime_type.startswith("image/"):
         return await _extract_image_ocr(data)

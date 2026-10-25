@@ -73,15 +73,23 @@ logger = logging.getLogger(__name__)
 
 
 async def get_webhook_service(
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> WebhookService:
     """Dependency that yields an initialised WebhookService.
 
-    Wires in the webhook repository for endpoint CRUD.
-    Event emission uses ARQ job delivery (not Svix).
+    Wires in the webhook repository for endpoint CRUD plus the Transit
+    encryption manager (from ``app.state.openbao_client``) so signing
+    secrets are encrypted at rest.  Event emission uses ARQ job delivery
+    (not Svix).
     """
+    from core.transit import TransitManager
+
+    bao_client = getattr(request.app.state, "openbao_client", None)
+    transit = TransitManager(bao_client) if bao_client is not None else None
     return WebhookService(
         repo=WebhookRepository(db),
+        transit=transit,
     )
 
 
