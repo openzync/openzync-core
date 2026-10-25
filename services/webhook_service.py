@@ -25,22 +25,36 @@ import secrets
 import time
 import uuid
 from collections.abc import Mapping
+from typing import TYPE_CHECKING
 
 import orjson
 
 from core.arq import get_arq
 from core.config import get_settings
+from core.exceptions import ExternalServiceError
 from core.queue_names import get_queue_name
 from core.sorting import SortSpec
-from middleware.metrics import webhook_emit_failures_total
+from middleware.metrics import webhook_decrypt_skips_total, webhook_emit_failures_total
 from models.webhook import WebhookEndpoint
 from repositories.webhook_repository import WebhookRepository
+
+if TYPE_CHECKING:
+    from core.transit import TransitManager
 
 logger = logging.getLogger("openzync.webhooks")
 
 ARQ_WEBHOOK_QUEUE = "low"
 """Webhook delivery runs on the low-priority queue so it never blocks
 real-time ingestion tasks (classify, embed, extract)."""
+
+
+def _is_transit_ciphertext(value: str) -> bool:
+    """Return whether a stored secret is Transit ciphertext vs legacy plaintext.
+
+    OpenBao Transit returns ``"vault:v<version>:..."`` strings; anything
+    else in the column is a pre-encryption plaintext secret.
+    """
+    return value.startswith("vault:v")
 
 
 def sign_payload(secret: str, payload: bytes) -> str:
@@ -70,10 +84,74 @@ class WebhookService:
 
     Args:
         repo: The webhook repository for endpoint CRUD.
+        transit: Transit encryption manager (from ``app.state.openbao_client``).
+            Required for create/rotate — secrets are encrypted with
+            ``WEBHOOK_SECRET_KEY`` (AAD = endpoint id) before any write.
+            ``None`` only in unit tests that never touch secrets.
     """
 
-    def __init__(self, repo: WebhookRepository) -> None:
+    def __init__(
+        self, repo: WebhookRepository, transit: TransitManager | None = None
+    ) -> None:
         self._repo = repo
+        self._transit = transit
+
+    async def _encrypt_secret(self, endpoint_id: uuid.UUID, secret: str) -> str:
+        """Encrypt a signing secret for storage.
+
+        Raises:
+            ExternalServiceError: If no Transit manager is wired — a
+                secret is never persisted in plaintext on the write path.
+        """
+        if self._transit is None:
+            raise ExternalServiceError(
+                "Webhook signing requires Transit encryption, but no "
+                "TransitManager is wired (OpenBao client missing)."
+            )
+        try:
+            return await self._transit.encrypt_webhook_secret(endpoint_id, secret)
+        except ExternalServiceError:
+            raise
+        except Exception as exc:
+            # note: TransitManager already wraps OpenBaoError, but any other
+            # unexpected failure must still surface as JSON 502, never leak
+            # as a plain-text 500 from the request path.
+            raise ExternalServiceError(
+                "Webhook secret encryption failed.",
+                detail={"endpoint_id": str(endpoint_id)},
+            ) from exc
+
+    async def _decrypt_secret_value(
+        self, endpoint_id: uuid.UUID, raw: str | None
+    ) -> str | None:
+        """Return the plaintext for a stored secret value, or ``None``.
+
+        Legacy plaintext rows (pre-encryption) are used as-is and
+        re-encrypted on next rotation; undecryptable rows log loudly and
+        yield ``None`` so the caller skips the endpoint instead of
+        signing with the wrong key.
+        """
+        if not raw:
+            return None
+        if not _is_transit_ciphertext(raw):
+            return raw
+        if self._transit is None:
+            logger.error(
+                "webhook.secret_undecryptable_no_transit",
+                extra={"endpoint_id": str(endpoint_id)},
+            )
+            webhook_decrypt_skips_total.labels(reason="no_transit").inc()
+            return None
+        try:
+            return await self._transit.decrypt_webhook_secret(endpoint_id, raw)
+        except Exception:
+            logger.error(
+                "webhook.secret_decrypt_failed",
+                extra={"endpoint_id": str(endpoint_id)},
+                exc_info=True,
+            )
+            webhook_decrypt_skips_total.labels(reason="decrypt_failed").inc()
+            return None
 
     # ── Endpoint management ─────────────────────────────────────────────────
 
@@ -122,15 +200,17 @@ class WebhookService:
             A tuple of ``(endpoint_dict, one_time_signing_secret)``.
         """
         signing_secret = secrets.token_urlsafe(43)
+        endpoint_id = uuid.uuid4()
+        # Pre-generated so it doubles as the Transit AAD context.
+        ciphertext = await self._encrypt_secret(endpoint_id, signing_secret)
         endpoint = await self._repo.create(
             organization_id=organization_id,
             name=name,
             url=url,
             events=events,
-            signing_secret=signing_secret,
+            signing_secret=ciphertext,
+            endpoint_id=endpoint_id,
         )
-        # per-org secret stored in DB; upgrade to Transit-at-rest
-        # encryption with core.transit WEBHOOK_SECRET_KEY when TransitManager is wired
         return self._serialize(endpoint), signing_secret
 
     async def rotate_endpoint_secret(
@@ -153,7 +233,8 @@ class WebhookService:
             return None
 
         new_secret = secrets.token_urlsafe(43)
-        await self._repo.update(endpoint_id, signing_secret=new_secret)
+        ciphertext = await self._encrypt_secret(endpoint_id, new_secret)
+        await self._repo.update(endpoint_id, signing_secret=ciphertext)
         return new_secret
 
     async def update_endpoint(
@@ -167,7 +248,14 @@ class WebhookService:
         if not endpoint or endpoint.organization_id != organization_id:
             return None
 
-        updated = await self._repo.update(endpoint_id, **dict(updates))
+        updates = dict(updates)
+        raw_secret = updates.pop("signing_secret", None)
+        if raw_secret is not None:
+            # A secret passed via update is plaintext — encrypt before write.
+            updates["signing_secret"] = await self._encrypt_secret(
+                endpoint_id, str(raw_secret)
+            )
+        updated = await self._repo.update(endpoint_id, **updates)
         return self._serialize(updated) if updated else None
 
     async def toggle_endpoint(
@@ -251,16 +339,33 @@ class WebhookService:
 
             async def _enqueue_one(ep: WebhookEndpoint) -> None:
                 """Enqueue a single delivery, signed with the endpoint's own secret."""
-                signing_secret = ep.signing_secret
-                if not signing_secret:
+                plaintext: str | None
+                stored = ep.signing_secret
+                if stored:
+                    # Decrypt at sign time — the row holds Transit
+                    # ciphertext (or legacy plaintext, used as-is).
+                    plaintext = await self._decrypt_secret_value(ep.id, stored)
+                else:
                     # Legacy row migrated with a NULL secret — backfill one now so
                     # we never fall back to a shared/global secret. Single
                     # conditional UPDATE (WHERE signing_secret IS NULL) so two
                     # concurrent emitters cannot race and write different secrets —
                     # the loser re-reads the winner's secret instead of overwriting.
-                    signing_secret = secrets.token_urlsafe(43)
+                    # Without Transit there is no safe write — skip the endpoint
+                    # (counted, dashboard-visible) instead of persisting plaintext.
+                    if self._transit is None:
+                        logger.error(
+                            "webhook.backfill_skipped_no_transit",
+                            extra={"endpoint_id": str(ep.id)},
+                        )
+                        webhook_decrypt_skips_total.labels(
+                            reason="backfill_no_transit"
+                        ).inc()
+                        return
+                    raw = secrets.token_urlsafe(43)
+                    stored = await self._encrypt_secret(ep.id, raw)
                     if await self._repo.set_signing_secret_if_null(
-                        ep.id, signing_secret=signing_secret,
+                        ep.id, signing_secret=stored,
                     ) == 0:
                         refreshed = await self._repo.get_by_id(ep.id)
                         if refreshed is None or not refreshed.signing_secret:
@@ -269,9 +374,14 @@ class WebhookService:
                                 extra={"endpoint_id": str(ep.id)},
                             )
                             return  # endpoint deleted mid-emit — nothing to deliver
-                        signing_secret = refreshed.signing_secret
-
-                signature = sign_payload(signing_secret, body_bytes)
+                        plaintext = await self._decrypt_secret_value(
+                            ep.id, refreshed.signing_secret
+                        )
+                    else:
+                        plaintext = raw
+                if plaintext is None:
+                    return  # undecryptable — logged above; skip, never sign wrong
+                signature = sign_payload(plaintext, body_bytes)
                 await arq_pool.enqueue(
                     "deliver_webhook",
                     queue_name=queue_name,

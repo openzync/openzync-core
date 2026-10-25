@@ -54,12 +54,14 @@ class WebhookEndpoint(TimestampMixin, Base):
         default=True,
         server_default="true",
     )
-    # per-org secret stored in DB; upgrade to Transit-at-rest
-    # encryption with core.transit WEBHOOK_SECRET_KEY when TransitManager is wired
+    # Transit ciphertext (core.transit WEBHOOK_SECRET_KEY, AAD = endpoint
+    # id); legacy plaintext rows (pre-encryption) are decrypted opportu-
+    # nistically — decrypt falls back to the raw value when it is not a
+    # "vault:v*" ciphertext, and rotation re-encrypts.
     signing_secret: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
-        comment="Per-endpoint HMAC-SHA256 signing secret (shown once at create/rotate)",
+        comment="Per-endpoint HMAC-SHA256 signing secret, Transit-encrypted (shown once at create/rotate)",
     )
     last_delivery_at: Mapped[datetime | None] = mapped_column(nullable=True)
 

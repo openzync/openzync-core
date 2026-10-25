@@ -11,8 +11,10 @@
 # image only — frontend source is never vendored here (AGPLv3/MIT boundary).
 #
 # ⚠️ api/worker/frontend tags float on :latest — a re-pull can move the
-# digest under you. Pass --version TAG to pin; the script pulls :TAG and
-# re-tags it to :latest locally so the compose files resolve to that digest.
+# digest under you. Pass --version TAG to pin (e.g. --version v1.2.3, or
+# --version 'v1.2.3@sha256:<digest>' for a digest pin); the script pulls
+# :TAG and re-tags it to :latest locally so the compose files resolve to
+# that digest.
 #
 # TLS is OUT OF SCOPE — HTTP on loopback only. Terminate TLS upstream
 # (reverse proxy / load balancer) in production.

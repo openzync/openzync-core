@@ -1050,6 +1050,8 @@ class TestBM25Search:
     @pytest.mark.asyncio
     async def test_bm25_search_facts_include_validity_keys(self) -> None:
         """Fact BM25 leg returns dicts carrying valid_from, valid_to, invalid_at."""
+        from unittest.mock import patch
+
         service, _ = self._make_service()
         mock_results = [
             {
@@ -1064,13 +1066,24 @@ class TestBM25Search:
             },
         ]
 
-        service._execute_ranked_query = AsyncMock(return_value=mock_results)
-
-        results = await service._bm25_search_facts(
-            "test",
-            self.PROJECT_ID,
-            limit=20,
-        )
+        with patch(
+            "services.hybrid_retriever.FactRepository",
+        ) as mock_repo_cls:
+            mock_repo_cls.return_value.search_by_bm25 = AsyncMock(
+                return_value=mock_results
+            )
+            results = await service._bm25_search_facts(
+                "test",
+                self.PROJECT_ID,
+                limit=20,
+            )
+            mock_repo_cls.return_value.search_by_bm25.assert_awaited_once_with(
+                query="test",
+                project_id=self.PROJECT_ID,
+                org_id=self.ORG_ID,
+                limit=20,
+                effective_at=None,
+            )
 
         assert len(results) == 1
         assert results[0]["valid_from"] == datetime(2026, 1, 1, tzinfo=UTC)

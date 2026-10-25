@@ -56,6 +56,7 @@ SYSTEM_KEY_MAPPING: dict[str, str] = {
     "OZ_FRONTEND_URL": "OZ_FRONTEND_URL",
     "OZ_HOSTS_ALLOWED": "OZ_HOSTS_ALLOWED",
     "OZ_MAX_WORKERS": "OZ_MAX_WORKERS",
+    "OZ_LOW_MAX_WORKERS": "OZ_LOW_MAX_WORKERS",
     "OZ_JWT_ACCESS_TOKEN_TTL_MINUTES": "OZ_JWT_ACCESS_TOKEN_TTL_MINUTES",
     "OZ_JWT_REFRESH_TOKEN_TTL_DAYS": "OZ_JWT_REFRESH_TOKEN_TTL_DAYS",
     "OZ_FALKORDB_URL": "OZ_FALKORDB_URL",
@@ -930,6 +931,26 @@ class OpenBaoClient:
                 logger.info("Encryption key %r already exists — ignored", key_name)
                 return
             raise
+
+    async def key_exists(
+        self,
+        key_name: str,
+        mount_path: str = "transit",
+    ) -> bool:
+        """Return whether a Transit encryption key exists.
+
+        Args:
+            key_name: Name of the encryption key.
+            mount_path: Transit engine mount path.
+
+        Returns:
+            True if the key exists, False on 404. Other errors raise.
+        """
+        try:
+            await self._request("GET", f"{mount_path}/keys/{key_name}")
+        except OpenBaoSecretNotFoundError:
+            return False
+        return True
 
     async def encrypt_data(
         self,

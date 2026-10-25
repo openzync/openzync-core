@@ -171,10 +171,10 @@ class TestMemoryService:
         assert episodes == 5
         assert facts == 3
         service._episode_repo.soft_delete_by_project.assert_awaited_once_with(
-            self.PROJECT_ID
+            self.PROJECT_ID, self.ORG_ID
         )
         service._fact_repo.soft_delete_by_project.assert_awaited_once_with(
-            self.PROJECT_ID
+            self.PROJECT_ID, self.ORG_ID
         )
         service._blob_repo.get_by_project.assert_awaited_once_with(
             self.PROJECT_ID

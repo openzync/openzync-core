@@ -91,6 +91,16 @@ class WorkerSettings(BaseModel):
             "(LLM API calls, DB queries, embedding)."
         ),
     )
+    LOW_MAX_WORKERS: int = Field(
+        default=2,
+        ge=2,
+        le=32,
+        description=(
+            "Concurrency floor for the low-priority queue worker. "
+            "The low queue holds 12 batch tasks — a floor below 2 starves it "
+            "whenever MAX_WORKERS is small. Floor is contractually 2."
+        ),
+    )
 
     # ── Job defaults ─────────────────────────────────────────────────────────
     JOB_TIMEOUT_DEFAULT: int = Field(
@@ -256,6 +266,7 @@ class WorkerSettings(BaseModel):
             "OZ_FALKORDB_SOCKET_TIMEOUT",
             "OZ_SURREALDB_URL",
             "OZ_MAX_WORKERS",
+            "OZ_LOW_MAX_WORKERS",
             "OZ_DB_POOL_SIZE",
             "OZ_DB_MAX_OVERFLOW",
         })
@@ -273,6 +284,7 @@ class WorkerSettings(BaseModel):
         _FIELD_OVERRIDES: dict[str, str] = {"OZ_ENVIRONMENT": "ENV"}
         _INT_FIELDS: frozenset[str] = frozenset({
             "OZ_MAX_WORKERS",
+            "OZ_LOW_MAX_WORKERS",
             "OZ_FALKORDB_MAX_CONNECTIONS",
             "OZ_FALKORDB_SOCKET_TIMEOUT",
             "OZ_DB_POOL_SIZE",

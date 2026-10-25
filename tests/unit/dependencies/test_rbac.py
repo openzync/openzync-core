@@ -88,7 +88,7 @@ class TestGetOrgRole:
             role = await get_org_role(redis, db_session, ORG_ID, USER_ID)
 
         assert role == "admin"
-        redis.get.assert_awaited_once_with(f"{RBAC_ROLE_CACHE_PREFIX}{USER_ID}")
+        redis.get.assert_awaited_once_with(f"{RBAC_ROLE_CACHE_PREFIX}{ORG_ID}:{USER_ID}")
         mock_user_repo.get_by_uuid.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -106,7 +106,7 @@ class TestGetOrgRole:
         assert role == "admin"
         mock_user_repo.get_by_uuid.assert_awaited_once_with(ORG_ID, USER_ID)
         redis.setex.assert_awaited_once_with(
-            f"{RBAC_ROLE_CACHE_PREFIX}{USER_ID}", RBAC_ROLE_CACHE_TTL, "admin"
+            f"{RBAC_ROLE_CACHE_PREFIX}{ORG_ID}:{USER_ID}", RBAC_ROLE_CACHE_TTL, "admin"
         )
 
     @pytest.mark.asyncio
@@ -196,9 +196,9 @@ class TestInvalidateRole:
         """invalidate_role deletes ``rbac:role:{user_id}``."""
         redis = AsyncMock()
 
-        await invalidate_role(redis, USER_ID)
+        await invalidate_role(redis, ORG_ID, USER_ID)
 
-        redis.delete.assert_awaited_once_with(f"{RBAC_ROLE_CACHE_PREFIX}{USER_ID}")
+        redis.delete.assert_awaited_once_with(f"{RBAC_ROLE_CACHE_PREFIX}{ORG_ID}:{USER_ID}")
 
     @pytest.mark.asyncio
     async def test_redis_failure_logged_not_raised(self) -> None:
@@ -211,7 +211,7 @@ class TestInvalidateRole:
         redis.delete.side_effect = ConnectionError("redis down")
 
         # Must not raise — the exception is caught and logged inside.
-        await invalidate_role(redis, USER_ID)
+        await invalidate_role(redis, ORG_ID, USER_ID)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -254,7 +254,7 @@ class TestGetEffectivePermissions:
             )
 
         assert perms == frozenset({"project:read", "project:write"})
-        redis.get.assert_awaited_once_with(f"{RBAC_PERMS_CACHE_PREFIX}{USER_ID}")
+        redis.get.assert_awaited_once_with(f"{RBAC_PERMS_CACHE_PREFIX}{ORG_ID}:{USER_ID}")
         mock_user_repo.get_by_uuid.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -274,7 +274,7 @@ class TestGetEffectivePermissions:
         assert perms == frozenset({"project:read", "project:write"})
         mock_user_repo.get_by_uuid.assert_awaited_once_with(ORG_ID, USER_ID)
         redis.setex.assert_awaited_once_with(
-            f"{RBAC_PERMS_CACHE_PREFIX}{USER_ID}",
+            f"{RBAC_PERMS_CACHE_PREFIX}{ORG_ID}:{USER_ID}",
             RBAC_PERMS_CACHE_TTL,
             '["project:read", "project:write"]',
         )
@@ -376,9 +376,9 @@ class TestInvalidatePermissions:
         """invalidate_permissions deletes ``rbac:perms:{user_id}``."""
         redis = AsyncMock()
 
-        await invalidate_permissions(redis, USER_ID)
+        await invalidate_permissions(redis, ORG_ID, USER_ID)
 
-        redis.delete.assert_awaited_once_with(f"{RBAC_PERMS_CACHE_PREFIX}{USER_ID}")
+        redis.delete.assert_awaited_once_with(f"{RBAC_PERMS_CACHE_PREFIX}{ORG_ID}:{USER_ID}")
 
     @pytest.mark.asyncio
     async def test_redis_failure_logged_not_raised(self) -> None:
@@ -387,7 +387,7 @@ class TestInvalidatePermissions:
         redis.delete.side_effect = ConnectionError("redis down")
 
         # Must not raise — the exception is caught and logged inside.
-        await invalidate_permissions(redis, USER_ID)
+        await invalidate_permissions(redis, ORG_ID, USER_ID)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

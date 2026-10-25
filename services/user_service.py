@@ -61,33 +61,37 @@ class UserService:
         self._webhook_service = webhook_service
         self._redis = redis
 
-    async def _invalidate_role_cache(self, user_id: UUID) -> None:
+    async def _invalidate_role_cache(self, org_id: UUID, user_id: UUID) -> None:
         """Invalidate the cached role for a user after a role-affecting change.
 
         Args:
+            org_id: The organization UUID scoping the cached entry.
             user_id: The user whose cached role must be dropped.
         """
         if self._redis is None:
             logger.error(
                 "user_service.role_cache_missing_redis",
-                extra={"user_id": str(user_id)},
+                extra={"org_id": str(org_id), "user_id": str(user_id)},
             )
             return
-        await invalidate_role(self._redis, user_id)
+        await invalidate_role(self._redis, org_id, user_id)
 
-    async def _invalidate_permissions_cache(self, user_id: UUID) -> None:
+    async def _invalidate_permissions_cache(
+        self, org_id: UUID, user_id: UUID
+    ) -> None:
         """Invalidate the cached permission set for a user after a change.
 
         Args:
+            org_id: The organization UUID scoping the cached entry.
             user_id: The user whose cached permissions must be dropped.
         """
         if self._redis is None:
             logger.error(
                 "user_service.perms_cache_missing_redis",
-                extra={"user_id": str(user_id)},
+                extra={"org_id": str(org_id), "user_id": str(user_id)},
             )
             return
-        await invalidate_permissions(self._redis, user_id)
+        await invalidate_permissions(self._redis, org_id, user_id)
 
     @staticmethod
     def _permissions_for_role(role: str | None) -> list[str]:
@@ -396,11 +400,11 @@ class UserService:
             raise NotFoundError(f"User {user_id} not found in organization {organization_id}")
 
         if "role" in update_fields:
-            await self._invalidate_role_cache(user_id)
+            await self._invalidate_role_cache(organization_id, user_id)
         if "role" in update_fields or "permissions" in update_fields:
             # A role change alters effective permissions (admin = wildcard),
             # so both caches must drop.
-            await self._invalidate_permissions_cache(user_id)
+            await self._invalidate_permissions_cache(organization_id, user_id)
 
         return UserResponse.model_validate(self._user_to_dict(user))
 
@@ -439,8 +443,8 @@ class UserService:
             raise NotFoundError(
                 f"User {user_id} not found in organization {organization_id}."
             )
-        await self._invalidate_role_cache(user_id)
-        await self._invalidate_permissions_cache(user_id)
+        await self._invalidate_role_cache(organization_id, user_id)
+        await self._invalidate_permissions_cache(organization_id, user_id)
         return user
 
     # ── Delete ──────────────────────────────────────────────────────────────
@@ -508,8 +512,8 @@ class UserService:
                 f"User {user_id} not found in organization {organization_id}"
             )
 
-        await self._invalidate_role_cache(user_id)
-        await self._invalidate_permissions_cache(user_id)
+        await self._invalidate_role_cache(organization_id, user_id)
+        await self._invalidate_permissions_cache(organization_id, user_id)
 
         # TODO(phase2): Enqueue GDPR purge task for 30 days later
         # from workers.gdpr_jobs import schedule_user_purge

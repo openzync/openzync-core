@@ -26,6 +26,7 @@ from models.episode import Episode
 from models.fact import Fact
 from models.graph_observation import GraphObservation
 from models.project import Project
+from models.project_member import ProjectMember
 from models.session import Session
 from repositories.project_repository import archived_project_ids
 from workers.tasks.base import ENRICHMENT_ALL
@@ -246,7 +247,6 @@ class SessionRepository:
 
         has_more = len(rows) == effective_limit
         sessions = list(rows[:limit]) if has_more else list(rows)
-
         next_cursor: str | None = None
         if has_more and sessions:
             last = sessions[-1]
@@ -259,6 +259,60 @@ class SessionRepository:
             next_cursor = self._encode_sort_cursor(req_sort, req_dir, val, last.id)
 
         return sessions, next_cursor
+
+    async def search_member_sessions(
+        self,
+        organization_id: UUID,
+        user_id: UUID,
+        pattern: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Search member sessions by external_id ILIKE (global-search leg).
+
+        Scoped to the org, the user's project memberships, non-deleted
+        sessions and non-archived projects. ``pattern`` is a bound
+        ``%query%`` parameter — never interpolated.
+
+        Args:
+            organization_id: Tenant scope.
+            user_id: Only sessions in projects this user belongs to.
+            pattern: ILIKE pattern (caller-built, e.g. ``%query%``).
+            limit: Maximum rows.
+
+        Returns:
+            Dicts with ``id`` (str), ``external_id``, ``project_id``
+            (str), ``project_name`` and ``created_at`` (datetime, for the
+            recency sort).
+        """
+        result = await self._db.execute(
+            select(
+                Session.id,
+                Session.external_id,
+                Session.project_id,
+                Project.name,
+                Session.created_at,
+            )
+            .join(Project, Session.project_id == Project.id)
+            .join(ProjectMember, ProjectMember.project_id == Project.id)
+            .where(
+                Project.organization_id == organization_id,
+                ProjectMember.user_id == user_id,
+                Session.is_deleted.is_(False),
+                Project.is_archived.is_(False),
+                Session.external_id.ilike(pattern),
+            )
+            .limit(limit)
+        )
+        return [
+            {
+                "id": str(row[0]),
+                "external_id": row[1],
+                "project_id": str(row[2]),
+                "project_name": row[3],
+                "created_at": row[4],
+            }
+            for row in result.all()
+        ]
 
     # ── Messages ────────────────────────────────────────────────────────────
 

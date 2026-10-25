@@ -98,6 +98,7 @@ class ContextService:
         redis: object | None = None,
         graph_backends: list | None = None,
         org_config: OrgConfigBase | None = None,
+        session_factory: object | None = None,
     ) -> None:
         self._db = db
         reranker = RerankerFactory.create(org_config) if org_config else None
@@ -108,6 +109,7 @@ class ContextService:
             graph_backends=graph_backends,
             org_config=org_config,
             reranker=reranker,
+            session_factory=session_factory,
         )
         cache_ttl = (
             org_config.context_cache_ttl

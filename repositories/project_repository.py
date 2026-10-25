@@ -6,6 +6,7 @@ ORM models only — no business logic, no schema construction.
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import Select, func, select
@@ -141,6 +142,55 @@ class ProjectRepository:
             )
         )
         return result.scalar_one_or_none()
+
+    async def search_member_projects(
+        self,
+        organization_id: UUID,
+        user_id: UUID,
+        pattern: str,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Search member projects by name ILIKE (global-search leg).
+
+        Scoped to the org and the user's memberships; archived projects
+        are excluded. ``pattern`` is a bound ``%query%`` parameter —
+        never interpolated.
+
+        Args:
+            organization_id: Tenant scope.
+            user_id: Only projects this user belongs to are returned.
+            pattern: ILIKE pattern (caller-built, e.g. ``%query%``).
+            limit: Maximum rows.
+
+        Returns:
+            Dicts with ``id`` (str), ``name``, ``description`` and
+            ``created_at`` (datetime, for the recency sort).
+        """
+        result = await self._db.execute(
+            select(
+                Project.id,
+                Project.name,
+                Project.description,
+                Project.created_at,
+            )
+            .join(ProjectMember, ProjectMember.project_id == Project.id)
+            .where(
+                Project.organization_id == organization_id,
+                ProjectMember.user_id == user_id,
+                Project.is_archived.is_(False),
+                Project.name.ilike(pattern),
+            )
+            .limit(limit)
+        )
+        return [
+            {
+                "id": str(row[0]),
+                "name": row[1],
+                "description": row[2],
+                "created_at": row[3],
+            }
+            for row in result.all()
+        ]
 
     async def is_archived(self, organization_id: UUID, project_id: UUID) -> bool:
         """Check whether a project is archived (or missing).

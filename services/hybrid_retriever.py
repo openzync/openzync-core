@@ -19,18 +19,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import Select, func, select, text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import Select, text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.exceptions import SearchLegFailedError
+from core.rls import release_tenant_context, set_tenant_context
 from middleware.metrics import graph_search_latency_seconds, reranker_latency_seconds
-from models.episode import Episode
-from models.fact import Fact
 from packages.reranker import DEFAULT_RERANK_TOP_K, DEFAULT_RERANK_TOP_N, RRF_K
+from repositories.episode_repository import EpisodeRepository
+from repositories.fact_repository import FactRepository
 
 if TYPE_CHECKING:
     from packages.graph_backend.interface import GraphBackend
@@ -62,6 +64,7 @@ class HybridRetriever:
         graph_backends: list[GraphBackend] | None = None,
         org_config: OrgConfigBase | None = None,
         reranker: CrossEncoderReranker | None = None,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         self._db = db
         self._org_id = org_id
@@ -69,6 +72,8 @@ class HybridRetriever:
         self._graph_backends = graph_backends or []
         self._org_config = org_config
         self._reranker = reranker
+        self._session_factory = session_factory
+        """Sibling-session factory for concurrent legs (``None`` = sequential)."""
         self._last_query_embedding_dim: int | None = None
         """Dimension of the most recently generated query embedding, or ``None`` if
         no embedding has been generated yet (e.g. all vector legs failed).  Used
@@ -96,17 +101,20 @@ class HybridRetriever:
     ) -> dict[str, Any]:
         """Run hybrid search across all sources and return RRF-merged results.
 
-        Orchestrates five retrieval legs sequentially:
+        Orchestrates five retrieval legs:
 
         - Episodes (vector + BM25)
         - Facts (vector + BM25)
         - Graph entities (BFS from entities matching the query)
 
         The query is embedded exactly once and the resulting vector is
-        shared by both vector legs (episodes and facts).  All legs run
-        sequentially.  If any single leg fails, the entire search fails
-        with a ``SearchLegFailedError`` — no silent partial results are
-        returned.
+        shared by both vector legs (episodes and facts). Legs run
+        concurrently via ``asyncio.gather`` when a sibling-session
+        factory is available — one AsyncSession allows a single
+        in-flight operation, so without a factory the legs run
+        sequentially on the shared session. If any single
+        leg fails, the entire search fails with a
+        ``SearchLegFailedError`` — no silent partial results are returned.
 
         Results are grouped by type in the return dict with source counts.
 
@@ -153,118 +161,90 @@ class HybridRetriever:
         # before any leg-level try/except can re-wrap it.
         query_embedding = await self._embed_query(query, project_id)
 
-        # ── Run all three retrieval legs sequentially ─────────────────────
-        # Each leg returns a list of dicts with at minimum ``id`` and
-        # ``score`` keys for RRF merging.
-        episode_vector_results: list[dict[str, Any]] = []
-        episode_bm25_results: list[dict[str, Any]] = []
-        fact_vector_results: list[dict[str, Any]] = []
-        fact_bm25_results: list[dict[str, Any]] = []
-        entity_results: list[dict[str, Any]] = []
-
+        # ── Run all five retrieval legs ──────────────────────────────────
+        # One AsyncSession allows a single in-flight operation, so each DB
+        # leg runs on a sibling session from the app factory (same RLS
+        # tenant, rolled back independently on failure). Without a factory
+        # the legs run sequentially on the shared session — same results,
+        # no parallelism. ``asyncio.gather`` on one shared session would
+        # interleave operations on it, so the no-factory path awaits each
+        # leg in turn instead of gathering.
         retrieval_limit = (
             max(limit, self._rerank_top_k) if self._reranker is not None else limit
         )
 
-        # Vector search for episodes and facts
-        try:
-            episode_vector_results = await self._vector_search_episodes(
-                query_embedding, project_id, retrieval_limit
+        if self._session_factory is None:
+            episode_vector_results = await self._run_leg(
+                "episode_vector",
+                project_id,
+                lambda r: r._vector_search_episodes(
+                    query_embedding, project_id, retrieval_limit
+                ),
             )
-        except Exception as exc:
-            logger.error(
-                "hybrid_retriever.episode_vector_failed",
-                extra={
-                    "project_id": str(project_id),
-                    "query": query,
-                    "leg": "episode_vector",
-                },
-                exc_info=True,
+            fact_vector_results = await self._run_leg(
+                "fact_vector",
+                project_id,
+                lambda r: r._vector_search_facts(
+                    query_embedding, project_id, retrieval_limit, **as_of_kwargs
+                ),
             )
-            await self._db.rollback()
-            raise SearchLegFailedError(
-                leg_name="episode_vector", original_error=str(exc)
-            ) from exc
-
-        try:
-            fact_vector_results = await self._vector_search_facts(
-                query_embedding, project_id, retrieval_limit, **as_of_kwargs
+            episode_bm25_results = await self._run_leg(
+                "episode_bm25",
+                project_id,
+                lambda r: r._bm25_search_episodes(query, project_id, retrieval_limit),
             )
-        except Exception as exc:
-            logger.error(
-                "hybrid_retriever.fact_vector_failed",
-                extra={
-                    "project_id": str(project_id),
-                    "query": query,
-                    "leg": "fact_vector",
-                },
-                exc_info=True,
+            fact_bm25_results = await self._run_leg(
+                "fact_bm25",
+                project_id,
+                lambda r: r._bm25_search_facts(
+                    query, project_id, retrieval_limit, **as_of_kwargs
+                ),
             )
-            await self._db.rollback()
-            raise SearchLegFailedError(
-                leg_name="fact_vector", original_error=str(exc)
-            ) from exc
-
-        # BM25 search for episodes and facts
-        try:
-            episode_bm25_results = await self._bm25_search_episodes(
-                query, project_id, retrieval_limit
+            entity_results = await self._run_leg(
+                "graph_bfs",
+                project_id,
+                lambda r: r._graph_bfs_search(query, project_id, query_time=query_time),
             )
-        except Exception as exc:
-            logger.error(
-                "hybrid_retriever.episode_bm25_failed",
-                extra={
-                    "project_id": str(project_id),
-                    "query": query,
-                    "leg": "episode_bm25",
-                },
-                exc_info=True,
+        else:
+            (
+                episode_vector_results,
+                fact_vector_results,
+                episode_bm25_results,
+                fact_bm25_results,
+                entity_results,
+            ) = await asyncio.gather(
+                self._run_leg(
+                    "episode_vector",
+                    project_id,
+                    lambda r: r._vector_search_episodes(
+                        query_embedding, project_id, retrieval_limit
+                    ),
+                ),
+                self._run_leg(
+                    "fact_vector",
+                    project_id,
+                    lambda r: r._vector_search_facts(
+                        query_embedding, project_id, retrieval_limit, **as_of_kwargs
+                    ),
+                ),
+                self._run_leg(
+                    "episode_bm25",
+                    project_id,
+                    lambda r: r._bm25_search_episodes(query, project_id, retrieval_limit),
+                ),
+                self._run_leg(
+                    "fact_bm25",
+                    project_id,
+                    lambda r: r._bm25_search_facts(
+                        query, project_id, retrieval_limit, **as_of_kwargs
+                    ),
+                ),
+                self._run_leg(
+                    "graph_bfs",
+                    project_id,
+                    lambda r: r._graph_bfs_search(query, project_id, query_time=query_time),
+                ),
             )
-            await self._db.rollback()
-            raise SearchLegFailedError(
-                leg_name="episode_bm25", original_error=str(exc)
-            ) from exc
-
-        try:
-            fact_bm25_results = await self._bm25_search_facts(
-                query, project_id, retrieval_limit, **as_of_kwargs
-            )
-        except Exception as exc:
-            logger.error(
-                "hybrid_retriever.fact_bm25_failed",
-                extra={
-                    "project_id": str(project_id),
-                    "query": query,
-                    "leg": "fact_bm25",
-                },
-                exc_info=True,
-            )
-            await self._db.rollback()
-            raise SearchLegFailedError(
-                leg_name="fact_bm25", original_error=str(exc)
-            ) from exc
-
-        # Graph BFS via entity name search
-        try:
-            entity_results = await self._graph_bfs_search(
-                query, project_id, query_time=query_time
-            )
-        except SearchLegFailedError:
-            raise
-        except Exception as exc:
-            logger.error(
-                "hybrid_retriever.graph_bfs_failed",
-                extra={
-                    "project_id": str(project_id),
-                    "query": query,
-                    "leg": "graph_bfs",
-                },
-                exc_info=True,
-            )
-            await self._db.rollback()
-            raise SearchLegFailedError(
-                leg_name="graph_bfs", original_error=str(exc)
-            ) from exc
 
         # ── RRF merge per type ────────────────────────────────────────────
         # Use rerank_top_k as the RRF candidate pool size when re-ranking is active
@@ -290,20 +270,31 @@ class HybridRetriever:
 
         if sort == "recent":
             # note: recent re-sorts merged pages by created_at DESC
-            # server-side (items carry ISO created_at; missing → first).
+            # server-side. Items carry ISO strings (BM25 legs), datetimes
+            # (vector legs), or nothing — normalized to epoch so mixed
+            # shapes never raise TypeError in the comparison.
             merged_episodes = sorted(
                 merged_episodes,
-                key=lambda d: (d.get("created_at") or "", d.get("id") or ""),
+                key=lambda d: (
+                    self._to_epoch(d.get("created_at")),
+                    str(d.get("id") or ""),
+                ),
                 reverse=True,
             )
             merged_facts = sorted(
                 merged_facts,
-                key=lambda d: (d.get("created_at") or "", d.get("id") or ""),
+                key=lambda d: (
+                    self._to_epoch(d.get("created_at")),
+                    str(d.get("id") or ""),
+                ),
                 reverse=True,
             )
             entities = sorted(
                 entities,
-                key=lambda d: (d.get("created_at") or "", d.get("id") or ""),
+                key=lambda d: (
+                    self._to_epoch(d.get("created_at")),
+                    str(d.get("id") or ""),
+                ),
                 reverse=True,
             )
 
@@ -368,6 +359,132 @@ class HybridRetriever:
             "total_items": len(merged_episodes) + len(merged_facts) + len(entities),
             "query_embedding_dim": self._last_query_embedding_dim,
         }
+
+    # ── Leg plumbing ─────────────────────────────────────────────────────────
+
+    def _scoped(self, db: AsyncSession) -> HybridRetriever:
+        """Return a retriever with identical config bound to another session.
+
+        Used to run one retrieval leg on a sibling session — a single
+        ``AsyncSession`` allows only one in-flight operation, so
+        concurrent legs cannot share ``self._db``.
+
+        Args:
+            db: The sibling session the leg runs on.
+
+        Returns:
+            A new :class:`HybridRetriever` sharing org, backends, reranker
+            settings, org config, reranker, and Redis, but no session
+            factory (no nesting — the parent fans out, legs never re-fan).
+        """
+        return HybridRetriever(
+            db,
+            self._org_id,
+            redis=self._redis,
+            graph_backends=self._graph_backends,
+            org_config=self._org_config,
+            reranker=self._reranker,
+            session_factory=None,
+        )
+
+    async def _run_leg(
+        self,
+        leg_name: str,
+        project_id: UUID,
+        run: Callable[[HybridRetriever], Awaitable[list[dict[str, Any]]]],
+    ) -> list[dict[str, Any]]:
+        """Run one retrieval leg, failing loud as ``SearchLegFailedError``.
+
+        With a session factory the leg runs on a sibling session bound to
+        this org's RLS tenant; a leg failure rolls back only that session.
+        Without a factory the leg runs sequentially on the shared session.
+        ``SearchLegFailedError`` from the leg itself passes through
+        unwrapped; any other exception is logged with leg context and
+        wrapped. ``CancelledError`` is never swallowed.
+
+        Args:
+            leg_name: Leg identifier for logs and the raised error.
+            project_id: Scoped project UUID (log context).
+            run: Takes the retriever bound to the leg's session and returns
+                that leg's result list.
+
+        Returns:
+            The leg's result list.
+
+        Raises:
+            SearchLegFailedError: If the leg fails.
+        """
+        extra = {
+            "leg": leg_name,
+            "org_id": str(self._org_id),
+            "project_id": str(project_id),
+        }
+        if self._session_factory is None:
+            logger.warning("hybrid_retriever.sequential_leg", extra=extra)
+            try:
+                return await run(self)
+            except SearchLegFailedError:
+                raise
+            except Exception as exc:
+                logger.error(
+                    f"hybrid_retriever.{leg_name}_failed", extra=extra, exc_info=True
+                )
+                await self._db.rollback()
+                raise SearchLegFailedError(
+                    leg_name=leg_name, original_error=str(exc)
+                ) from exc
+        async with self._session_factory() as leg_db:
+            await set_tenant_context(leg_db, self._org_id)
+            try:
+                return await run(self._scoped(leg_db))
+            except SearchLegFailedError:
+                await leg_db.rollback()
+                raise
+            except Exception as exc:
+                logger.error(
+                    f"hybrid_retriever.{leg_name}_failed", extra=extra, exc_info=True
+                )
+                await leg_db.rollback()
+                raise SearchLegFailedError(
+                    leg_name=leg_name, original_error=str(exc)
+                ) from exc
+            finally:
+                await release_tenant_context(leg_db)
+
+    @staticmethod
+    def _to_epoch(value: Any) -> float:
+        """Normalize a ``created_at`` shape to epoch seconds for sorting.
+
+        Legs disagree on shape: vector legs return datetimes, BM25 legs
+        return ISO strings, graph backends may return either or nothing.
+        Missing/unparseable values sort as ``0.0`` (oldest) instead of
+        raising ``TypeError`` on mixed-type comparison.
+
+        Args:
+            value: A datetime, ISO-8601 string, epoch number, or ``None``.
+
+        Returns:
+            Epoch seconds, or ``0.0`` when absent or unparseable.
+        """
+        if value is None:
+            return 0.0
+        if isinstance(value, bool):
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=UTC)
+            return value.timestamp()
+        if isinstance(value, str):
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                return 0.0
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=UTC)
+            return parsed.timestamp()
+        return 0.0
 
     # ── Vector Search ──────────────────────────────────────────────────────────
 
@@ -564,8 +681,10 @@ class HybridRetriever:
     ) -> list[dict[str, Any]]:
         """Keyword search over episodes using PostgreSQL full-text search.
 
-        Uses ``plainto_tsquery`` for user-friendly query parsing and
-        ``ts_rank`` for BM25-like relevance scoring.
+        Delegates to :meth:`EpisodeRepository.search_by_bm25` — this service
+        keeps merge/sort only, no SQL. Uses ``plainto_tsquery`` for
+        user-friendly query parsing and ``ts_rank`` for BM25-like
+        relevance scoring.
 
         Args:
             query: Keyword query string.
@@ -576,27 +695,12 @@ class HybridRetriever:
             A list of result dicts with ``id``, ``content``, ``role``,
             ``score``, and ``created_at`` keys.
         """
-        ts_query = func.plainto_tsquery("english", query)
-        stmt = (
-            select(
-                Episode.id,
-                Episode.content,
-                Episode.role,
-                Episode.created_at,
-                func.ts_rank(
-                    func.to_tsvector("english", Episode.content),
-                    ts_query,
-                ).label("score"),
-            )
-            .where(
-                Episode.project_id == project_id,
-                Episode.is_deleted.is_(False),
-                func.to_tsvector("english", Episode.content).op("@@")(ts_query),
-            )
-            .order_by(text("score DESC"))
-            .limit(limit)
+        return await EpisodeRepository(self._db).search_by_bm25(
+            query=query,
+            project_id=project_id,
+            org_id=self._org_id,
+            limit=limit,
         )
-        return await self._execute_ranked_query(stmt)
 
     async def _bm25_search_facts(
         self,
@@ -607,9 +711,10 @@ class HybridRetriever:
     ) -> list[dict[str, Any]]:
         """Keyword search over facts using PostgreSQL full-text search.
 
-        Facts are filtered by the effective-at predicate against
-        ``query_time`` (``None`` → now) — same supersession semantics as
-        the vector fact leg.
+        Delegates to :meth:`FactRepository.search_by_bm25` — this service
+        keeps merge/sort only, no SQL. Facts are filtered by the
+        effective-at predicate against ``query_time`` (``None`` → now) —
+        same supersession semantics as the vector fact leg.
 
         Args:
             query: Keyword query string.
@@ -622,36 +727,13 @@ class HybridRetriever:
             ``predicate``, ``object``, ``score``, ``confidence``,
             ``valid_from``, ``valid_to``, and ``invalid_at`` keys.
         """
-        ts_query = func.plainto_tsquery("english", query)
-        effective_time = query_time or datetime.now(UTC)
-        stmt = (
-            select(
-                Fact.id,
-                Fact.content,
-                Fact.subject,
-                Fact.predicate,
-                Fact.object,
-                Fact.confidence,
-                Fact.created_at,
-                Fact.valid_from,
-                Fact.valid_to,
-                Fact.invalid_at,
-                func.ts_rank(
-                    func.to_tsvector("english", Fact.content),
-                    ts_query,
-                ).label("score"),
-            )
-            .where(
-                Fact.project_id == project_id,
-                Fact.invalid_at.is_(None) | (Fact.invalid_at > effective_time),
-                Fact.valid_from.is_(None) | (Fact.valid_from <= effective_time),
-                Fact.valid_to.is_(None) | (Fact.valid_to > effective_time),
-                func.to_tsvector("english", Fact.content).op("@@")(ts_query),
-            )
-            .order_by(text("score DESC"))
-            .limit(limit)
+        return await FactRepository(self._db).search_by_bm25(
+            query=query,
+            project_id=project_id,
+            org_id=self._org_id,
+            limit=limit,
+            effective_at=query_time,
         )
-        return await self._execute_ranked_query(stmt)
 
     # ── Graph BFS Search ───────────────────────────────────────────────────────
 
@@ -715,15 +797,35 @@ class HybridRetriever:
         # Merge: deduplicate by id, keep first occurrence (lower distance wins)
         seen: set[str] = set()
         merged: list[dict[str, Any]] = []
-        for r in results:
-            for item in r:
-                item_id = item["id"]
+        for result_list in results:
+            for item in result_list:
+                if not isinstance(item, dict):
+                    logger.warning(
+                        "hybrid_retriever.graph_item_malformed",
+                        extra={"org_id": str(self._org_id)},
+                    )
+                    continue
+                item_id = item.get("id")
+                if not item_id:
+                    logger.warning(
+                        "hybrid_retriever.graph_item_missing_id",
+                        extra={"org_id": str(self._org_id)},
+                    )
+                    continue
+                item_id = str(item_id)
                 if item_id and item_id not in seen:
                     seen.add(item_id)
                     merged.append(item)
 
-        # Sort by distance (closest first), limit to MAX_BFS_RESULTS
-        merged.sort(key=lambda x: x["distance"])
+        # Sort by distance (closest first), limit to MAX_BFS_RESULTS.
+        # A missing/non-numeric distance sorts last instead of raising.
+        def _distance(item: dict[str, Any]) -> float:
+            distance = item.get("distance")
+            if isinstance(distance, bool) or not isinstance(distance, (int, float)):
+                return float("inf")
+            return float(distance)
+
+        merged.sort(key=_distance)
         return merged[:MAX_BFS_RESULTS]
 
     # ── RRF Merge ──────────────────────────────────────────────────────────────

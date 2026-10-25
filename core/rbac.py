@@ -86,28 +86,52 @@ deterministic, canonical order.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-def _role_cache_key(user_id: UUID) -> str:
+def _role_cache_key(org_id: UUID, user_id: UUID) -> str:
     """Build the Redis key for a user's cached role.
 
+    Keyed on ``(org_id, user_id)`` — a user with roles in two orgs must
+    never read one org's role from the other's cache entry.
+
     Args:
+        org_id: The organization UUID.
         user_id: The user's UUID.
 
     Returns:
         The namespaced Redis key string.
     """
-    return f"{RBAC_ROLE_CACHE_PREFIX}{user_id}"
+    return f"{RBAC_ROLE_CACHE_PREFIX}{org_id}:{user_id}"
 
 
-def _perms_cache_key(user_id: UUID) -> str:
+def _perms_cache_key(org_id: UUID, user_id: UUID) -> str:
     """Build the Redis key for a user's cached permission set.
 
+    Keyed on ``(org_id, user_id)`` — same cross-org isolation rationale
+    as :func:`_role_cache_key`.
+
     Args:
+        org_id: The organization UUID.
         user_id: The user's UUID.
 
     Returns:
         The namespaced Redis key string.
     """
-    return f"{RBAC_PERMS_CACHE_PREFIX}{user_id}"
+    return f"{RBAC_PERMS_CACHE_PREFIX}{org_id}:{user_id}"
+
+
+def _pwd_flag_cache_key(org_id: UUID, user_id: UUID) -> str:
+    """Build the Redis key for a user's cached must-change-password flag.
+
+    Keyed on ``(org_id, user_id)`` — same cross-org isolation rationale
+    as :func:`_role_cache_key`.
+
+    Args:
+        org_id: The organization UUID.
+        user_id: The user's UUID.
+
+    Returns:
+        The namespaced Redis key string.
+    """
+    return f"{PWD_FLAG_CACHE_PREFIX}{org_id}:{user_id}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -143,7 +167,7 @@ async def get_org_role(
         inactive, or soft-deleted users, and on read-path infrastructure
         failures.
     """
-    cache_key = _role_cache_key(user_id)
+    cache_key = _role_cache_key(org_id, user_id)
     try:
         cached = await redis.get(cache_key)
         if cached is not None:
@@ -180,22 +204,23 @@ async def get_org_role(
     return role
 
 
-async def invalidate_role(redis: Redis, user_id: UUID) -> None:
-    """Delete the cached role for a user.
+async def invalidate_role(redis: Redis, org_id: UUID, user_id: UUID) -> None:
+    """Delete the cached role for a user in an organization.
 
     Called after a role change or user deletion so the next lookup
     re-reads the source of truth.  Failures are logged, never swallowed.
 
     Args:
         redis: Async Redis client.
+        org_id: The organization UUID scoping the cached entry.
         user_id: The user's UUID.
     """
     try:
-        await redis.delete(_role_cache_key(user_id))
+        await redis.delete(_role_cache_key(org_id, user_id))
     except Exception:
         logger.error(
             "rbac.role_cache_invalidate_failed",
-            extra={"user_id": str(user_id)},
+            extra={"org_id": str(org_id), "user_id": str(user_id)},
             exc_info=True,
         )
 
@@ -229,7 +254,7 @@ async def get_effective_permissions(
         inactive, or soft-deleted users, and on read-path infrastructure
         failures.
     """
-    cache_key = _perms_cache_key(user_id)
+    cache_key = _perms_cache_key(org_id, user_id)
     try:
         cached = await redis.get(cache_key)
         if cached is not None:
@@ -271,22 +296,23 @@ async def get_effective_permissions(
     return permissions
 
 
-async def invalidate_permissions(redis: Redis, user_id: UUID) -> None:
-    """Delete the cached permission set for a user.
+async def invalidate_permissions(redis: Redis, org_id: UUID, user_id: UUID) -> None:
+    """Delete the cached permission set for a user in an organization.
 
     Called after a permission change or user deletion so the next lookup
     re-reads the source of truth.  Failures are logged, never swallowed.
 
     Args:
         redis: Async Redis client.
+        org_id: The organization UUID scoping the cached entry.
         user_id: The user's UUID.
     """
     try:
-        await redis.delete(_perms_cache_key(user_id))
+        await redis.delete(_perms_cache_key(org_id, user_id))
     except Exception:
         logger.error(
             "rbac.perms_cache_invalidate_failed",
-            extra={"user_id": str(user_id)},
+            extra={"org_id": str(org_id), "user_id": str(user_id)},
             exc_info=True,
         )
 
@@ -314,7 +340,7 @@ async def get_must_change_password(
         ``True`` when the user must change their password before using
         dashboard routes, ``False`` otherwise.
     """
-    cache_key = f"{PWD_FLAG_CACHE_PREFIX}{user_id}"
+    cache_key = _pwd_flag_cache_key(org_id, user_id)
     try:
         cached = await redis.get(cache_key)
         if cached is not None:
@@ -354,21 +380,24 @@ async def get_must_change_password(
     return bool(user.must_change_password)
 
 
-async def invalidate_must_change_password(redis: Redis, user_id: UUID) -> None:
-    """Delete the cached must-change-password flag for a user.
+async def invalidate_must_change_password(
+    redis: Redis, org_id: UUID, user_id: UUID
+) -> None:
+    """Delete the cached must-change-password flag for a user in an organization.
 
     Called after a password change clears the flag, so the next lookup
     re-reads the source of truth.  Failures are logged, never swallowed.
 
     Args:
         redis: Async Redis client.
+        org_id: The organization UUID scoping the cached entry.
         user_id: The user's UUID.
     """
     try:
-        await redis.delete(f"{PWD_FLAG_CACHE_PREFIX}{user_id}")
+        await redis.delete(_pwd_flag_cache_key(org_id, user_id))
     except Exception:
         logger.error(
             "rbac.pwd_flag_cache_invalidate_failed",
-            extra={"user_id": str(user_id)},
+            extra={"org_id": str(org_id), "user_id": str(user_id)},
             exc_info=True,
         )

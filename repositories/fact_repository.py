@@ -1033,15 +1033,19 @@ class FactRepository:
 
     # ── Soft Delete by User ──────────────────────────────────────────────────
 
-    async def soft_delete_by_project(self, project_id: UUID) -> int:
+    async def soft_delete_by_project(
+        self, project_id: UUID, organization_id: UUID
+    ) -> int:
         """Soft-delete all facts for a project by setting ``invalid_at``.
 
         Uses the ORM ``update()`` construct rather than raw SQL so that
         SQLAlchemy's column-level ``onupdate`` hook fires for
-        ``updated_at`` on each row.
+        ``updated_at`` on each row. The ``organization_id`` predicate is
+        defense-in-depth alongside the service-layer org gate.
 
         Args:
             project_id: The project's UUID.
+            organization_id: Tenant scope — only rows in this org are touched.
 
         Returns:
             Number of facts invalidated.
@@ -1050,6 +1054,7 @@ class FactRepository:
         result = await self._db.execute(
             update(Fact)
             .where(Fact.project_id == project_id)
+            .where(Fact.organization_id == organization_id)
             .where(Fact.invalid_at.is_(None))
             .values(invalid_at=now, updated_at=now)
         )
@@ -1286,7 +1291,12 @@ class FactRepository:
     # ── BM25 Full-Text Search ─────────────────────────────────────────────────
 
     async def search_by_bm25(
-        self, query: str, project_id: UUID, org_id: UUID, limit: int = 50
+        self,
+        query: str,
+        project_id: UUID,
+        org_id: UUID,
+        limit: int = 50,
+        effective_at: datetime | None = None,
     ) -> list[dict[str, Any]]:
         """Search facts by BM25 full-text (PostgreSQL ``ts_rank``).
 
@@ -1299,16 +1309,20 @@ class FactRepository:
             project_id: Scope results to this project.
             org_id: Tenant scope for multi-tenant isolation.
             limit: Maximum results (capped at 200).
+            effective_at: As-of instant for the validity predicate
+                (``None`` → now). Threaded through by hybrid retrieval so
+                a historical query sees facts as of that instant.
 
         Returns:
             A list of dicts with keys ``id``, ``content``, ``subject``,
             ``predicate``, ``object``, ``confidence``, ``score``,
             ``valid_from``, ``valid_to``, ``invalid_at`` (the validity
-            fields ISO-8601) for prompt-rendering validity checks.
+            fields ISO-8601) and ``created_at`` for prompt-rendering
+            validity checks.
         """
         effective_limit = min(limit, 200)
 
-        now = datetime.now(UTC)
+        effective = effective_at if effective_at is not None else datetime.now(UTC)
         result = await self._db.execute(
             text(
                 """
@@ -1317,7 +1331,7 @@ class FactRepository:
                            to_tsvector('english', content),
                            plainto_tsquery('english', :query)
                        ) AS score,
-                       valid_from, valid_to, invalid_at
+                       valid_from, valid_to, invalid_at, created_at
                 FROM facts
                 WHERE project_id = :project_id
                   AND organization_id = :org_id
@@ -1335,7 +1349,7 @@ class FactRepository:
                 "project_id": project_id,
                 "org_id": org_id,
                 "limit": effective_limit,
-                "effective_at": now,
+                "effective_at": effective,
             },
         )
         return [
@@ -1350,6 +1364,7 @@ class FactRepository:
                 "valid_from": r[7].isoformat() if r[7] else None,
                 "valid_to": r[8].isoformat() if r[8] else None,
                 "invalid_at": r[9].isoformat() if r[9] else None,
+                "created_at": r[10].isoformat() if r[10] else None,
             }
             for r in result.fetchall()
         ]

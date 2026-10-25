@@ -157,6 +157,15 @@ def create_app() -> FastAPI:
         app.state.openbao_client = _bao
         logger.info("openbao_client.initialised")
 
+        # ── Verify the webhook-secret Transit key exists (fail-fast) ─────
+        # Webhook signing encrypts at create/rotate time and decrypts at
+        # every emit — without this key all webhook writes 502. Abort boot
+        # loudly instead of serving a half-working API.
+        from core.transit import TransitManager
+
+        await TransitManager(_bao).verify_webhook_secret_key()
+        logger.info("transit.webhook_secret_key_verified")
+
         # ── Seed the platform org + root superadmin (fail-fast) ──────────
         # Idempotent: no-op when the SYSTEM org already exists.  Any
         # failure aborts startup loudly — a silently-missing superadmin

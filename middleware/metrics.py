@@ -122,6 +122,15 @@ webhook_emit_failures_total = Counter(
     registry=METRICS_REGISTRY,
 )
 
+webhook_decrypt_skips_total = Counter(
+    "openzync_webhook_decrypt_skips_total",
+    "Webhook endpoints skipped because the signing secret could not be "
+    "decrypted (no_transit, decrypt_failed) or safely backfilled "
+    "(backfill_no_transit).",
+    labelnames=["reason"],
+    registry=METRICS_REGISTRY,
+)
+
 # ── ASGI middleware ──────────────────────────────────────────────────────────
 
 

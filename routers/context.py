@@ -161,7 +161,12 @@ async def get_context(
 
     graph_backends = dispatcher.create_all_backends(db, org_config, surreal=surreal)
     service = ContextService(
-        db, org_id, redis, graph_backends=graph_backends, org_config=org_config
+        db,
+        org_id,
+        redis,
+        graph_backends=graph_backends,
+        org_config=org_config,
+        session_factory=request.app.state.db_session_factory,
     )
     result = await service.assemble(
         project_id=project_id,

@@ -141,7 +141,11 @@ async def search_memory(
 
     graph_backends = dispatcher.create_all_backends(db, org_config, surreal=surreal)
     retriever = HybridRetriever(
-        db, org_id, graph_backends=graph_backends, org_config=org_config
+        db,
+        org_id,
+        graph_backends=graph_backends,
+        org_config=org_config,
+        session_factory=request.app.state.db_session_factory,
     )
     results = await retriever.hybrid_search(
         query=query,

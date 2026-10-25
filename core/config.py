@@ -371,6 +371,37 @@ class Settings(BaseModel):
             )
         return v
 
+    # ⚠️ BREAKING: a "*" CORS origin is now a startup error, not a
+    # permissive default. main.py always sets allow_credentials=True, and
+    # browsers reject "*" + credentials — the old value silently broke
+    # credentialed requests while looking open. List explicit origins.
+    @field_validator("CORS_ORIGINS")
+    @classmethod
+    def _reject_wildcard_cors_origins(cls, v: str) -> str:
+        """Reject a wildcard CORS origin while credentials are allowed.
+
+        ``main.py`` serves CORS with ``allow_credentials=True`` (the
+        dashboard sends ``Authorization``), under which a ``"*"`` origin
+        is both rejected by browsers and — where tolerated — a credential
+        leak to any site.  Only explicit origins are allowed.
+
+        Args:
+            v: The configured comma-separated origin list.
+
+        Returns:
+            The validated value.
+
+        Raises:
+            ValueError: If the list contains a wildcard.
+        """
+        if "*" in [o.strip() for o in v.split(",") if o.strip()]:
+            raise ValueError(
+                "CORS_ORIGINS must not contain '*' while "
+                "allow_credentials is True — list the allowed origins "
+                "explicitly"
+            )
+        return v
+
     @field_validator("PROMPT_CACHING_ANTHROPIC_TTL", mode="before")
     @classmethod
     def _validate_cache_ttl(cls, v: str) -> str:
