@@ -272,11 +272,19 @@ class TestMemoryIngestion:
         assert response.status_code == 422, (
             f"Expected 422, got {response.status_code}: {response.text}"
         )
-        detail = response.json()["detail"]
-        assert any(
-            err.get("type") == "missing" and err.get("loc") == ["session_id"]
-            for err in detail
-        ), f"Expected a 'missing' error on session_id, got: {detail}"
+        body = response.json()
+        detail = body.get("detail")
+        # Contract: FastAPI RequestValidationError keeps the default
+        # {"detail": [...]} list shape (not RFC7807); AppError 422s use
+        # RFC7807 {"type","title","status","detail": str}. Handle both.
+        if isinstance(detail, list):
+            assert any(
+                err.get("type") == "missing" and "session_id" in err.get("loc", [])
+                for err in detail
+            ), f"Expected a 'missing' error on session_id, got: {detail}"
+        else:
+            assert body.get("status") == 422
+            assert "session_id" in str(detail)
 
     # ═════════════════════════════════════════════════════════════════════════
     # 6.  Invalid message role → 422 (string_pattern_mismatch)

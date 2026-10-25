@@ -205,6 +205,13 @@ def setup_logging(environment: str, log_level: str) -> None:
     # output. ProcessorFormatter bridges stdlib records through the same
     # processors (PII redaction, request context, JSON in prod), so services
     # only need structlog.get_logger — no per-service changes required.
+    #
+    # basicConfig is the canonical level/format entry point. It is called
+    # AFTER the bridge handler is installed, so in a live process it is a
+    # no-op (root already has handlers) and the level/format above stay
+    # authoritative — this avoids emitting every record twice through a
+    # plain default handler plus the structlog bridge.
+    logging.basicConfig(format="%(message)s", level=log_level.upper())
     formatter = structlog.stdlib.ProcessorFormatter(
         processors=[*shared_processors, renderer],
         foreign_pre_chain=shared_processors,
@@ -213,5 +220,13 @@ def setup_logging(environment: str, log_level: str) -> None:
     handler.setFormatter(formatter)
     root_logger = logging.getLogger()
     root_logger.addHandler(handler)
-    root_logger.setLevel(log_level.upper())
+    try:
+        root_logger.setLevel(log_level.upper())
+    except ValueError:
+        # Unknown level strings must not crash startup — keep the root
+        # default and log loudly instead. (basicConfig above receives the
+        # raw string; stdlib validates it at emit time.)
+        logging.getLogger(__name__).warning(
+            "unknown log level %r, keeping default", log_level
+        )
     logging.captureWarnings(True)

@@ -92,9 +92,21 @@ class TestWebhookService:
     # ── Helpers ──────────────────────────────────────────────────────────────
 
     def _make_service(self) -> tuple[WebhookService, AsyncMock]:
-        """Create WebhookService with mocked repository."""
+        """Create WebhookService with mocked repository + Transit."""
         mock_repo = AsyncMock()
-        service = WebhookService(repo=mock_repo)
+        mock_transit = AsyncMock()
+        mock_transit.encrypt_webhook_secret.side_effect = (
+            lambda eid, sec: f"vault:v1:{sec}"
+        )
+        async def _decrypt(eid, raw: str | None) -> str | None:
+            if raw is None:
+                return None
+            if raw.startswith("vault:v1:"):
+                return raw[len("vault:v1:") :]
+            return raw
+
+        mock_transit.decrypt_webhook_secret.side_effect = _decrypt
+        service = WebhookService(repo=mock_repo, transit=mock_transit)
         return service, mock_repo
 
     def _make_endpoint(
@@ -219,8 +231,11 @@ class TestWebhookService:
         assert len(secret) >= 32
         assert secret != "b" * 32  # global WEBHOOK_SIGNING_SECRET from conftest
         mock_repo.create.assert_awaited_once()
-        # Secret is persisted on the row, not just returned
-        assert mock_repo.create.await_args.kwargs["signing_secret"] == secret
+        # Secret is persisted encrypted (Transit ciphertext), decrypts to secret
+        stored = mock_repo.create.await_args.kwargs["signing_secret"]
+        assert stored != secret
+        assert stored.startswith("vault:v1:")
+        assert stored[len("vault:v1:") :] == secret
 
     @pytest.mark.asyncio
     async def test_create_endpoint_generates_unique_secrets(self) -> None:
@@ -273,9 +288,9 @@ class TestWebhookService:
         assert isinstance(new_secret, str)
         assert len(new_secret) >= 32
         assert new_secret != "whsec_old"  # noqa: S105
-        mock_repo.update.assert_awaited_once_with(
-            self.ENDPOINT_ID, signing_secret=new_secret,
-        )
+        stored = mock_repo.update.await_args.kwargs["signing_secret"]
+        assert stored.startswith("vault:v1:")
+        assert stored[len("vault:v1:") :] == new_secret
 
     @pytest.mark.asyncio
     async def test_rotate_endpoint_secret_wrong_org_returns_none(self) -> None:
@@ -590,12 +605,14 @@ class TestWebhookService:
         ]
         assert mock_repo.set_signing_secret_if_null.await_args.args[0] == legacy_ep.id
         assert isinstance(backfilled, str)
-        assert len(backfilled) >= 32
+        assert backfilled.startswith("vault:v1:")
+        raw = backfilled[len("vault:v1:") :]
+        assert len(raw) >= 32
         signature = mock_arq_pool.enqueue.await_args.kwargs["signature"]
         body_bytes = orjson.dumps(
             {"type": "session.created", "payload": {}},
         )
-        assert _verify_signature(backfilled, body_bytes, signature)
+        assert _verify_signature(raw, body_bytes, signature)
 
     @pytest.mark.asyncio
     async def test_emit_backfill_conflict_reads_existing_secret(self) -> None:

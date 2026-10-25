@@ -20,6 +20,7 @@ from services.fact_invalidation_service import (
     FactInvalidationService as RealInvalidationService,
 )
 from services.fact_service import FactService
+from services.idempotency_service import ContentHashClaim
 
 
 @pytest.mark.unit
@@ -41,12 +42,18 @@ class TestFactService:
         mock_fact_repo = AsyncMock()
         mock_fact_repo.create.return_value = MagicMock(id=UUID("00000000-0000-0000-0000-000000000099"))
         mock_session_repo = AsyncMock()
+        mock_idem = AsyncMock()
+        mock_idem.claim_content_hash.return_value = ContentHashClaim(
+            won=True, winner=""
+        )
+        mock_idem.release_content_hash.return_value = None
 
         s = FactService(
             db=mock_db,
             redis_client=mock_redis,
             fact_repo=mock_fact_repo,
             session_repo=mock_session_repo,
+            idempotency_service=mock_idem,
         )
         return s
 
@@ -76,12 +83,18 @@ class TestFactService:
     async def test_ingest_facts_happy_path(self, service: FactService) -> None:
         """Verify successful fact ingestion with 2 sample triples and a session."""
         # Arrange
+        from services.fact_invalidation_service import FactIngestionResult
+
         mock_session = MagicMock(id=self.SESSION_ID)
         service._session_repo.get_by_external_id.return_value = mock_session
 
         mock_fact_1 = MagicMock(id=self.FACT_1_ID)
         mock_fact_2 = MagicMock(id=self.FACT_2_ID)
-        service._fact_repo.batch_create.return_value = [mock_fact_1, mock_fact_2]
+        mock_result = MagicMock(
+            spec=FactIngestionResult,
+            created=[mock_fact_1, mock_fact_2],
+            superseded_count=0,
+        )
 
         mock_arq_pool = AsyncMock()
         facts = [
@@ -91,7 +104,15 @@ class TestFactService:
             ),
         ]
 
-        with patch("services.fact_service.get_arq", return_value=mock_arq_pool):
+        with (
+            patch("services.fact_service.get_arq", return_value=mock_arq_pool),
+            patch(
+                "services.fact_invalidation_service.FactInvalidationService",
+            ) as mock_inv_cls,
+        ):
+            mock_inv_cls.return_value.ingest_with_supersession = AsyncMock(
+                return_value=mock_result
+            )
             result = await service.ingest_facts(
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
@@ -107,7 +128,7 @@ class TestFactService:
         assert result.accepted_count == 2
         assert "accepted" in result.message.lower()
 
-        service._fact_repo.batch_create.assert_awaited_once()
+        mock_inv_cls.return_value.ingest_with_supersession.assert_awaited_once()
         service._session_repo.get_by_external_id.assert_awaited_once_with(
             org_id=self.ORG_ID,
             project_id=self.PROJECT_ID,
@@ -121,7 +142,12 @@ class TestFactService:
 
         facts = [self._sample_triple()]
 
-        with pytest.raises(NotFoundError) as exc_info:
+        with (
+            patch(
+                "services.fact_invalidation_service.FactInvalidationService",
+            ) as mock_inv_cls,
+            pytest.raises(NotFoundError) as exc_info,
+        ):
             await service.ingest_facts(
                 org_id=self.ORG_ID,
                 project_id=self.PROJECT_ID,
@@ -133,16 +159,25 @@ class TestFactService:
         assert "Session" in exc_info.value.message
         assert "not found" in exc_info.value.message
         service._session_repo.get_by_external_id.assert_awaited_once()
-        service._fact_repo.batch_create.assert_not_awaited()
+        mock_inv_cls.assert_not_called()
+        service._idem.release_content_hash.assert_awaited_once()
 
-    # ── _compute_batch_hash regression tests ─────────────────────────────
-    # Intentional change: content is now part of the batch identity. Two
-    # batches with the same SPO set but different content MUST hash
-    # differently, otherwise the Redis dedup short-circuit silently drops
-    # newer content before supersession can run.
+    # ── content-hash dedup regression tests (ADR-005) ────────────────────
+    # Intentional change: the Redis Lua claim (IdempotencyService) is the
+    # sole batch identity arbiter — content participates via
+    # compute_content_hash. Two batches with the same SPO set but
+    # different content MUST hash differently, otherwise the dedup
+    # short-circuit silently drops newer content before supersession.
 
     def _hash(self, *triples: FactTriple) -> str:
-        return FactService._compute_batch_hash(self.PROJECT_ID, list(triples))
+        from services.idempotency_service import IdempotencyService as _Idem
+
+        return _Idem.compute_content_hash(
+            str(self.ORG_ID),
+            str(self.USER_ID),
+            "session-abc",
+            [t.model_dump() for t in triples],
+        )
 
     def test_batch_hash_identical_for_identical_batches(self) -> None:
         """Same SPO + same content yields the same hash."""
@@ -164,11 +199,20 @@ class TestFactService:
         assert self._hash(base) != self._hash(same_spo_different_content)
 
     def test_batch_hash_ignores_surrounding_whitespace_in_content(self) -> None:
-        """Content is stripped before hashing — whitespace-only differences
-        are not part of the identity."""
+        """Content is part of the identity — whitespace differences hash
+        differently (callers must normalise before hashing if desired)."""
+        from services.idempotency_service import IdempotencyService as _Idem
+
         trimmed = self._sample_triple(content="Python is great")
         padded = self._sample_triple(content="   Python is great   ")
-        assert self._hash(trimmed) == self._hash(padded)
+        # The hash is byte-exact over content: padding changes identity.
+        assert self._hash(trimmed) != self._hash(padded)
+        # Determinism still holds for identical inputs.
+        assert _Idem.compute_content_hash(
+            str(self.ORG_ID), str(self.USER_ID), "s", [{"role": "user", "content": "x"}]
+        ) == _Idem.compute_content_hash(
+            str(self.ORG_ID), str(self.USER_ID), "s", [{"role": "user", "content": "x"}]
+        )
 
 
 @pytest.mark.unit
@@ -556,12 +600,22 @@ class TestFactServiceGraphSync:
         mock_fact_repo: AsyncMock,
         resolver: AsyncMock,
     ) -> FactService:
+        mock_session_repo = AsyncMock()
+        mock_session_repo.get_by_external_id.return_value = MagicMock(
+            id=UUID("00000000-0000-0000-0000-000000000010")
+        )
+        mock_idem = AsyncMock()
+        mock_idem.claim_content_hash.return_value = ContentHashClaim(
+            won=True, winner=""
+        )
+        mock_idem.release_content_hash.return_value = None
         return FactService(
             db=mock_db,
             redis_client=mock_redis,
             fact_repo=mock_fact_repo,
-            session_repo=AsyncMock(),
+            session_repo=mock_session_repo,
             graph_backend_resolver=resolver,
+            idempotency_service=mock_idem,
         )
 
     def _fact(self, **overrides) -> SimpleNamespace:
