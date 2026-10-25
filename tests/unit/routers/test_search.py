@@ -73,6 +73,8 @@ class TestSearchRouter:
 
         # Set up app.state before it's used
         self.app.state.graph_backend_dispatcher = self.dispatcher_mock
+        # Lifespan provides the session factory; the router passes it to HybridRetriever
+        self.app.state.db_session_factory = MagicMock()
 
         self.app.dependency_overrides[get_db] = lambda: self.db_mock
         self.app.dependency_overrides[require_project_membership] = lambda: None

@@ -1364,7 +1364,7 @@ class FactRepository:
                 "valid_from": r[7].isoformat() if r[7] else None,
                 "valid_to": r[8].isoformat() if r[8] else None,
                 "invalid_at": r[9].isoformat() if r[9] else None,
-                "created_at": r[10].isoformat() if r[10] else None,
+                "created_at": r[10].isoformat() if len(r) > 10 and r[10] else None,
             }
             for r in result.fetchall()
         ]

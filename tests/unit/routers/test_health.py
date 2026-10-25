@@ -169,7 +169,7 @@ async def test_health_exact_live_contract() -> None:
 async def test_readiness_exact_live_contract() -> None:
     """GET /ready returns the exact live payload when all deps are healthy.
 
-    Live: ``200 {"status":"ok","checks":{"database":true,"redis":true,"embeddings":true}}``.
+    Live: ``200 {"status":"ok","checks":{...},"degraded":{},"pending_edge_sync":null}``.
     """
     app = _create_app()
     transport = ASGITransport(app=app)
@@ -186,6 +186,8 @@ async def test_readiness_exact_live_contract() -> None:
     assert resp.json() == {
         "status": "ok",
         "checks": {"database": True, "redis": True, "embeddings": True},
+        "degraded": {},
+        "pending_edge_sync": None,
     }
 
 

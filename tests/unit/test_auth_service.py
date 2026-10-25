@@ -557,7 +557,9 @@ class TestAuthService:
         mock_repo.revoke_all_refresh_tokens.assert_awaited_once_with(
             self.USER_ID
         )
-        mock_invalidate.assert_awaited_once_with(mock_redis, self.USER_ID)
+        mock_invalidate.assert_awaited_once_with(
+            mock_redis, user.organization_id, self.USER_ID
+        )
 
     @pytest.mark.asyncio
     async def test_change_password_wrong_old_password_raises(

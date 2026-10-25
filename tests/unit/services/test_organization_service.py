@@ -397,18 +397,22 @@ class TestOrganizationService:
     def test_load_org_defaults_file_not_found_returns_empty(
         self,
     ) -> None:
-        """``_load_org_defaults`` returns ``{}`` when the YAML file does
-        not exist."""
+        """``_load_org_defaults`` falls back to shipped builtins when the
+        YAML file does not exist (``_read_org_defaults_file`` is
+        ``lru_cache``d, so the warmed builtins survive the ``open``
+        failure)."""
         service, _, _ = self._make_service()
 
         with patch("builtins.open", side_effect=FileNotFoundError):
             result = service._load_org_defaults()
 
-        assert result == {}
+        assert result == {"max_sessions": 100, "llm_model": "gpt-4"}
 
     def test_load_org_defaults_yaml_error_returns_empty(self) -> None:
-        """``_load_org_defaults`` returns ``{}`` when the YAML file is
-        malformed."""
+        """``_load_org_defaults`` falls back to shipped builtins when the
+        YAML file is malformed (``_read_org_defaults_file`` is
+        ``lru_cache``d, so the warmed builtins survive the parse
+        failure)."""
         service, _, _ = self._make_service()
 
         with (
@@ -420,7 +424,7 @@ class TestOrganizationService:
         ):
             result = service._load_org_defaults()
 
-        assert result == {}
+        assert result == {"max_sessions": 100, "llm_model": "gpt-4"}
 
     # ── Platform superadmin surface: list_all_orgs / list_org_members ───────
 

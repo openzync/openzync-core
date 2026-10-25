@@ -23,23 +23,31 @@ class TestGetWebhookService:
 
     @pytest.mark.asyncio
     async def test_creates_webhook_service_with_repo(self) -> None:
-        """Returns WebhookService initialised with WebhookRepository."""
+        """Returns WebhookService with repo + Transit manager from app state."""
         from dependencies.services import get_webhook_service
 
         db = AsyncMock(spec=AsyncSession)
+        request = MagicMock()
+        request.app.state.openbao_client = MagicMock()
 
         with (
             patch("dependencies.services.WebhookRepository") as mock_repo_cls,
             patch("dependencies.services.WebhookService") as mock_svc_cls,
+            patch("core.transit.TransitManager") as mock_transit_cls,
         ):
             mock_repo = MagicMock()
             mock_repo_cls.return_value = mock_repo
             mock_svc_cls.return_value = "webhook_service"
 
-            result = await get_webhook_service(db)
+            result = await get_webhook_service(request, db)
 
             mock_repo_cls.assert_called_once_with(db)
-            mock_svc_cls.assert_called_once_with(repo=mock_repo)
+            mock_transit_cls.assert_called_once_with(
+                request.app.state.openbao_client
+            )
+            mock_svc_cls.assert_called_once_with(
+                repo=mock_repo, transit=mock_transit_cls.return_value
+            )
             assert result == "webhook_service"
 
 

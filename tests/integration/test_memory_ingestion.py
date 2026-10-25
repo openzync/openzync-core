@@ -273,18 +273,13 @@ class TestMemoryIngestion:
             f"Expected 422, got {response.status_code}: {response.text}"
         )
         body = response.json()
-        detail = body.get("detail")
-        # Contract: FastAPI RequestValidationError keeps the default
-        # {"detail": [...]} list shape (not RFC7807); AppError 422s use
-        # RFC7807 {"type","title","status","detail": str}. Handle both.
-        if isinstance(detail, list):
-            assert any(
-                err.get("type") == "missing" and "session_id" in err.get("loc", [])
-                for err in detail
-            ), f"Expected a 'missing' error on session_id, got: {detail}"
-        else:
-            assert body.get("status") == 422
-            assert "session_id" in str(detail)
+        # Contract: RFC 7807 — {"type","title","status","detail","errors"}.
+        assert body["detail"] == "Invalid request payload"
+        assert body["status"] == 422
+        assert any(
+            err.get("type") == "missing" and "session_id" in err.get("loc", [])
+            for err in body["errors"]
+        ), f"Expected a 'missing' error on session_id, got: {body['errors']}"
 
     # ═════════════════════════════════════════════════════════════════════════
     # 6.  Invalid message role → 422 (string_pattern_mismatch)
@@ -314,12 +309,15 @@ class TestMemoryIngestion:
         assert response.status_code == 422, (
             f"Expected 422, got {response.status_code}: {response.text}"
         )
-        detail = response.json()["detail"]
+        body = response.json()
+        # Contract: RFC 7807 — {"type","title","status","detail": str,"errors": [...]}.
+        assert body["detail"] == "Invalid request payload"
+        assert body["status"] == 422
         assert any(
             err.get("type") == "string_pattern_mismatch"
-            and err.get("loc") == ["messages", 0, "role"]
-            for err in detail
-        ), f"Expected string_pattern_mismatch on messages.0.role, got: {detail}"
+            and list(err.get("loc", [])) == ["messages", 0, "role"]
+            for err in body["errors"]
+        ), f"Expected string_pattern_mismatch on messages.0.role, got: {body['errors']}"
 
     # ═════════════════════════════════════════════════════════════════════════
     # 7.  Unknown session_id → 404 (session not found)
