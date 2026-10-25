@@ -183,84 +183,123 @@ class TestHybridRetriever:
 
     @pytest.mark.asyncio
     async def test_hybrid_search_episode_vector_leg_failure(self) -> None:
-        """When episode vector leg fails, SearchLegFailedError is raised."""
+        """Single episode-vector failure degrades — surviving legs still merge."""
         service, mock_db = self._make_service()
 
-        # Make the first leg raise
+        # Failing leg returns nothing; every other leg returns data.
         service._vector_search_episodes = AsyncMock(
             side_effect=RuntimeError("pgvector down"),
         )
+        service._vector_search_facts = AsyncMock(
+            return_value=[self._make_item("vf1", 0.85)]
+        )
+        service._bm25_search_episodes = AsyncMock(
+            return_value=[self._make_item("b1", 0.8)]
+        )
+        service._bm25_search_facts = AsyncMock(
+            return_value=[self._make_item("bf1", 0.75)]
+        )
+        service._graph_bfs_search = AsyncMock(
+            return_value=[self._make_item("e1", 1.0, distance=0.5)]
+        )
 
-        with pytest.raises(SearchLegFailedError) as exc_info:
-            await service.hybrid_search("query", self.PROJECT_ID)
+        result = await service.hybrid_search("query", self.PROJECT_ID)
 
-        assert "episode_vector" in str(exc_info.value)
+        assert result["degraded"] is True
+        assert "episode_vector" in result["failed_legs"]
+        # Surviving legs still contribute merged results.
+        assert result["facts"]
+        assert result["entities"]
+        # The failed leg wrapped + rolled back the shared session.
         mock_db.rollback.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_hybrid_search_fact_vector_leg_failure(self) -> None:
-        """When fact vector leg fails, SearchLegFailedError is raised."""
+        """Single fact-vector failure degrades — surviving legs still merge."""
         service, mock_db = self._make_service()
 
-        service._vector_search_episodes = AsyncMock(return_value=[])
+        service._vector_search_episodes = AsyncMock(
+            return_value=[self._make_item("v1", 0.9)]
+        )
         service._vector_search_facts = AsyncMock(
             side_effect=RuntimeError("pgvector down on facts"),
         )
+        service._bm25_search_episodes = AsyncMock(
+            return_value=[self._make_item("b1", 0.8)]
+        )
+        service._bm25_search_facts = AsyncMock(
+            return_value=[self._make_item("bf1", 0.75)]
+        )
+        service._graph_bfs_search = AsyncMock(return_value=[])
 
-        with pytest.raises(SearchLegFailedError) as exc_info:
-            await service.hybrid_search("query", self.PROJECT_ID)
+        result = await service.hybrid_search("query", self.PROJECT_ID)
 
-        assert "fact_vector" in str(exc_info.value)
+        assert result["degraded"] is True
+        assert "fact_vector" in result["failed_legs"]
+        assert result["episodes"]
         mock_db.rollback.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_hybrid_search_episode_bm25_leg_failure(self) -> None:
-        """When episode BM25 leg fails, SearchLegFailedError is raised."""
+        """Single episode-BM25 failure degrades — vector legs still merge."""
         service, mock_db = self._make_service()
 
-        service._vector_search_episodes = AsyncMock(return_value=[])
+        service._vector_search_episodes = AsyncMock(
+            return_value=[self._make_item("v1", 0.9)]
+        )
         service._vector_search_facts = AsyncMock(return_value=[])
         service._bm25_search_episodes = AsyncMock(
             side_effect=RuntimeError("tsquery parse error"),
         )
+        service._bm25_search_facts = AsyncMock(return_value=[])
+        service._graph_bfs_search = AsyncMock(return_value=[])
 
-        with pytest.raises(SearchLegFailedError) as exc_info:
-            await service.hybrid_search("query", self.PROJECT_ID)
+        result = await service.hybrid_search("query", self.PROJECT_ID)
 
-        assert "episode_bm25" in str(exc_info.value)
+        assert result["degraded"] is True
+        assert "episode_bm25" in result["failed_legs"]
+        # The vector episode leg still merged.
+        assert result["episodes"]
         mock_db.rollback.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_hybrid_search_fact_bm25_leg_failure(self) -> None:
-        """When fact BM25 leg fails, SearchLegFailedError is raised."""
+        """Single fact-BM25 failure degrades — vector fact legs still merge."""
         service, mock_db = self._make_service()
 
         service._vector_search_episodes = AsyncMock(return_value=[])
-        service._vector_search_facts = AsyncMock(return_value=[])
+        service._vector_search_facts = AsyncMock(
+            return_value=[self._make_item("vf1", 0.85)]
+        )
         service._bm25_search_episodes = AsyncMock(return_value=[])
         service._bm25_search_facts = AsyncMock(
             side_effect=RuntimeError("tsquery parse error on facts"),
         )
+        service._graph_bfs_search = AsyncMock(return_value=[])
 
-        with pytest.raises(SearchLegFailedError) as exc_info:
-            await service.hybrid_search("query", self.PROJECT_ID)
+        result = await service.hybrid_search("query", self.PROJECT_ID)
 
-        assert "fact_bm25" in str(exc_info.value)
+        assert result["degraded"] is True
+        assert "fact_bm25" in result["failed_legs"]
+        assert result["facts"]
         mock_db.rollback.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_hybrid_search_graph_bfs_searchleg_failed_error_passthrough(
         self,
     ) -> None:
-        """When graph_bfs_search raises SearchLegFailedError directly, it is re-raised.
+        """A ``SearchLegFailedError`` from graph_bfs degrades, unwrapped.
 
-        The handler at line 191 catches ``SearchLegFailedError`` before the
-        generic ``Exception`` handler — the error propagates as-is without
-        logging, rollback, or wrapping.
+        The handler catches ``SearchLegFailedError`` from the leg, records
+        ``graph_bfs`` in ``failed_legs`` and merges the surviving legs —
+        it never propagates. The passthrough skips the generic handler,
+        so no rollback or extra logging wraps it.
         """
         service, mock_db = self._make_service()
 
-        service._vector_search_episodes = AsyncMock(return_value=[])
+        service._vector_search_episodes = AsyncMock(
+            return_value=[self._make_item("v1", 0.9)]
+        )
         service._vector_search_facts = AsyncMock(return_value=[])
         service._bm25_search_episodes = AsyncMock(return_value=[])
         service._bm25_search_facts = AsyncMock(return_value=[])
@@ -271,21 +310,23 @@ class TestHybridRetriever:
             ),
         )
 
-        with pytest.raises(SearchLegFailedError) as exc_info:
-            await service.hybrid_search("query", self.PROJECT_ID)
+        result = await service.hybrid_search("query", self.PROJECT_ID)
 
-        assert "graph_bfs" in str(exc_info.value)
-        # db.rollback should NOT be called — it's a direct passthrough,
-        # not a wrapped exception from the generic handler
+        assert result["degraded"] is True
+        assert "graph_bfs" in result["failed_legs"]
+        assert result["episodes"]
+        # Direct passthrough — not wrapped by the generic handler.
         mock_db.rollback.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_hybrid_search_graph_bfs_leg_failure(self) -> None:
-        """When graph BFS leg fails, SearchLegFailedError is raised."""
+        """Graph BFS failure degrades — vector/BM25 legs still merge."""
         service, mock_db = self._make_service()
 
         # Mock earlier legs to succeed
-        service._vector_search_episodes = AsyncMock(return_value=[])
+        service._vector_search_episodes = AsyncMock(
+            return_value=[self._make_item("v1", 0.9)]
+        )
         service._vector_search_facts = AsyncMock(return_value=[])
         service._bm25_search_episodes = AsyncMock(return_value=[])
         service._bm25_search_facts = AsyncMock(return_value=[])
@@ -293,19 +334,21 @@ class TestHybridRetriever:
             side_effect=RuntimeError("graph backend timeout"),
         )
 
-        with pytest.raises(SearchLegFailedError) as exc_info:
-            await service.hybrid_search("query", self.PROJECT_ID)
+        result = await service.hybrid_search("query", self.PROJECT_ID)
 
-        assert "graph_bfs" in str(exc_info.value)
+        assert result["degraded"] is True
+        assert "graph_bfs" in result["failed_legs"]
+        assert result["episodes"]
+        assert result["entities"] == []
         mock_db.rollback.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_hybrid_search_embed_query_failure_raises(self) -> None:
-        """When the shared embed step fails, hybrid_search raises — no silent fallback.
+        """An embed failure degrades both vector legs — BM25/graph still run.
 
-        The embedding is generated once upstream; its failure propagates
-        as ``SearchLegFailedError(leg="embedding")`` before any leg runs —
-        the search never degrades to BM25-only results.
+        The query is embedded once upstream; its failure marks
+        ``episode_vector`` + ``fact_vector`` degraded while keyword and
+        graph legs still execute and merge.
         """
         service, mock_db = self._make_service()
         service._embed_query = AsyncMock(
@@ -316,30 +359,35 @@ class TestHybridRetriever:
         )
         service._vector_search_episodes = AsyncMock()
         service._vector_search_facts = AsyncMock()
-        service._bm25_search_episodes = AsyncMock()
-        service._bm25_search_facts = AsyncMock()
-        service._graph_bfs_search = AsyncMock()
+        service._bm25_search_episodes = AsyncMock(
+            return_value=[self._make_item("b1", 0.8)]
+        )
+        service._bm25_search_facts = AsyncMock(return_value=[])
+        service._graph_bfs_search = AsyncMock(return_value=[])
 
-        with pytest.raises(SearchLegFailedError) as exc_info:
-            await service.hybrid_search("query", self.PROJECT_ID)
+        result = await service.hybrid_search("query", self.PROJECT_ID)
 
-        assert exc_info.value.detail.get("leg") == "embedding"
-        # No leg executed — a failed embed never falls back to keyword legs.
+        assert result["degraded"] is True
+        assert "episode_vector" in result["failed_legs"]
+        assert "fact_vector" in result["failed_legs"]
+        # Keyword legs still ran and merged — no silent empty return.
+        assert result["episodes"]
+        service._bm25_search_episodes.assert_awaited_once()
+        service._bm25_search_facts.assert_awaited_once()
+        service._graph_bfs_search.assert_awaited_once()
+        # Vector legs never execute without an embedding to search with.
         service._vector_search_episodes.assert_not_awaited()
         service._vector_search_facts.assert_not_awaited()
-        service._bm25_search_episodes.assert_not_awaited()
-        service._bm25_search_facts.assert_not_awaited()
-        service._graph_bfs_search.assert_not_awaited()
         mock_db.rollback.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_hybrid_search_embed_query_failure_discards_ready_legs(
         self,
     ) -> None:
-        """Ready leg results are discarded when the embed step fails.
+        """Embed failure keeps BM25/graph results — partial, not raised.
 
         Even with every leg mocked to return data, an embed failure
-        raises instead of returning partial results.
+        degrades to the BM25/graph subset instead of raising.
         """
         service, _mock_db = self._make_service()
         service._embed_query = AsyncMock(
@@ -362,20 +410,25 @@ class TestHybridRetriever:
         )
         service._graph_bfs_search = AsyncMock(return_value=[self._make_item("e1", 1.0)])
 
-        with pytest.raises(SearchLegFailedError) as exc_info:
-            await service.hybrid_search("query", self.PROJECT_ID)
+        result = await service.hybrid_search("query", self.PROJECT_ID)
 
-        assert exc_info.value.detail.get("leg") == "embedding"
+        assert result["degraded"] is True
+        assert "episode_vector" in result["failed_legs"]
+        assert "fact_vector" in result["failed_legs"]
+        # BM25/graph data survives the embed failure.
+        assert result["episodes"]
+        assert result["facts"]
+        assert result["entities"]
 
     @pytest.mark.asyncio
     async def test_hybrid_search_vector_leg_failure_discards_other_leg_results(
         self,
     ) -> None:
-        """A failing vector leg discards surviving legs' results — no partial return.
+        """A failing vector leg keeps survivors — partial return, no raise.
 
-        The fact/BM25/graph legs all return data, but the episode vector
-        leg fails: the search raises ``SearchLegFailedError`` instead of
-        silently returning the surviving legs' results.
+        The fact/BM25/graph legs all return data and the episode vector
+        leg fails: the search degrades with the survivors merged instead
+        of raising ``SearchLegFailedError``.
         """
         service, mock_db = self._make_service()
 
@@ -393,11 +446,39 @@ class TestHybridRetriever:
         )
         service._graph_bfs_search = AsyncMock(return_value=[self._make_item("e1", 1.0)])
 
+        result = await service.hybrid_search("query", self.PROJECT_ID)
+
+        assert result["degraded"] is True
+        assert "episode_vector" in result["failed_legs"]
+        assert result["facts"]
+        assert result["entities"]
+        mock_db.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_hybrid_search_all_legs_fail_raises(self) -> None:
+        """All five legs failing raises ``SearchLegFailedError`` (leg=all)."""
+        service, _mock_db = self._make_service()
+
+        service._vector_search_episodes = AsyncMock(
+            side_effect=RuntimeError("pgvector down"),
+        )
+        service._vector_search_facts = AsyncMock(
+            side_effect=RuntimeError("pgvector down"),
+        )
+        service._bm25_search_episodes = AsyncMock(
+            side_effect=RuntimeError("tsquery down"),
+        )
+        service._bm25_search_facts = AsyncMock(
+            side_effect=RuntimeError("tsquery down"),
+        )
+        service._graph_bfs_search = AsyncMock(
+            side_effect=RuntimeError("graph down"),
+        )
+
         with pytest.raises(SearchLegFailedError) as exc_info:
             await service.hybrid_search("query", self.PROJECT_ID)
 
-        assert "episode_vector" in str(exc_info.value)
-        mock_db.rollback.assert_awaited_once()
+        assert exc_info.value.detail.get("leg") == "all"
 
     @pytest.mark.asyncio
     async def test_hybrid_search_empty_query(self) -> None:
@@ -526,7 +607,7 @@ class TestHybridRetriever:
 
     @pytest.mark.asyncio
     async def test_hybrid_search_with_reranker_failure(self) -> None:
-        """When reranker fails, SearchLegFailedError is raised."""
+        """Reranker failure degrades to unreranked RRF order — no raise."""
         mock_reranker = AsyncMock()
         mock_reranker.rerank.side_effect = RuntimeError("reranker model OOM")
         mock_reranker.backend_name = "test"
@@ -547,14 +628,16 @@ class TestHybridRetriever:
         service._bm25_search_facts = AsyncMock(return_value=[])
         service._graph_bfs_search = AsyncMock(return_value=[])
 
-        with pytest.raises(SearchLegFailedError) as exc_info:
-            await service.hybrid_search("query", self.PROJECT_ID)
+        result = await service.hybrid_search("query", self.PROJECT_ID)
 
-        assert "reranker" in str(exc_info.value)
+        assert result["degraded"] is True
+        assert "reranker" in result["failed_legs"]
+        # Retrieval legs already succeeded — their results survive unreranked.
+        assert result["episodes"]
 
     @pytest.mark.asyncio
     async def test_hybrid_search_rerank_failure(self) -> None:
-        """Reranker failure raises SearchLegFailedError with ``reranker`` leg name."""
+        """Reranker crash degrades — ``failed_legs`` carries ``reranker``."""
         mock_reranker = AsyncMock()
         mock_reranker.rerank.side_effect = RuntimeError("reranker crashed")
         mock_reranker.backend_name = "test"
@@ -575,12 +658,12 @@ class TestHybridRetriever:
         service._bm25_search_facts = AsyncMock(return_value=[])
         service._graph_bfs_search = AsyncMock(return_value=[])
 
-        with pytest.raises(SearchLegFailedError) as exc_info:
-            await service.hybrid_search("query", self.PROJECT_ID)
+        result = await service.hybrid_search("query", self.PROJECT_ID)
 
-        assert "reranker" in str(exc_info.value)
-        # Verify the leg detail is correct
-        assert exc_info.value.detail.get("leg") == "reranker"
+        assert result["degraded"] is True
+        # The rerank failure is recorded by leg name, not raised.
+        assert "reranker" in result["failed_legs"]
+        assert result["episodes"]
 
 
 @pytest.mark.unit

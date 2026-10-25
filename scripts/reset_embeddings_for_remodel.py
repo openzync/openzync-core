@@ -54,35 +54,68 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+from uuid import UUID
 
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from core.config import settings
 from core.db import get_async_session, init_db_engine
+from core.rls import set_bypass_rls, set_tenant_context
+from models.organization import Organization
 from workers.tasks.base import ENRICHMENT_EMBEDDING
 
 logger = logging.getLogger("reset_embeddings_for_remodel")
 
 
-async def _count_rows(db: AsyncSession) -> tuple[int, int]:
+async def _list_org_ids(engine: AsyncEngine) -> list[UUID]:
+    """Return every organization ID for the per-org reset loop.
+
+    This is a read-only enumeration of ``organizations.id`` — the only
+    statement in this script that runs under ``bypass_rls``, and it
+    writes nothing. Every destructive statement below runs under a
+    per-org tenant context instead.
+
+    Args:
+        engine: An initialised async engine.
+
+    Returns:
+        All organization UUIDs.
+    """
+    async with get_async_session(engine)() as db:
+        await set_bypass_rls(db, True)
+        try:
+            result = await db.execute(select(Organization.id))
+            return [UUID(str(row_id)) for row_id in result.scalars().all()]
+        finally:
+            await db.rollback()
+
+
+async def _count_rows(db: AsyncSession, org_id: UUID) -> tuple[int, int]:
     """Return the number of episode and fact rows this run would reset.
 
     Counts only rows that actually hold a vector — already-NULL rows need
     no work and should not inflate the operator's sense of the blast
-    radius.
+    radius. Scoped to one org (call with the tenant context bound).
 
     Args:
-        db: An open async SQLAlchemy session.
+        db: An open async SQLAlchemy session with the org tenant bound.
+        org_id: The organization the counts are scoped to.
 
     Returns:
-        ``(episodes, facts)`` row counts.
+        ``(episodes, facts)`` row counts for that org.
     """
     episodes = await db.execute(
-        text("SELECT count(*) FROM episodes WHERE embedding IS NOT NULL")  # noqa: S608
+        text(  # noqa: S608
+            "SELECT count(*) FROM episodes "
+            "WHERE embedding IS NOT NULL AND organization_id = :org_id"
+        ).bindparams(org_id=org_id)
     )
     facts = await db.execute(
-        text("SELECT count(*) FROM facts WHERE embedding IS NOT NULL")  # noqa: S608
+        text(  # noqa: S608
+            "SELECT count(*) FROM facts "
+            "WHERE embedding IS NOT NULL AND organization_id = :org_id"
+        ).bindparams(org_id=org_id)
     )
     return episodes.scalar_one(), facts.scalar_one()
 
@@ -100,49 +133,80 @@ async def run(db_url: str, *, dry_run: bool) -> None:
     """
     engine = init_db_engine(db_url, pool_size=2, max_overflow=1)
     try:
-        async with get_async_session(engine)() as db:
-            # Cross-org maintenance: the RLS policies read
-            # NULLIF(current_setting('app.org_id', true), ''), so an unset
-            # context matches no rows.  Same bypass the reconcile cron uses.
-            await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
+        org_ids = await _list_org_ids(engine)
+        if not org_ids:
+            logger.info("reset_embeddings.no_orgs — nothing to reset")
+            return
 
-            episodes, facts = await _count_rows(db)
-            if dry_run:
+        if dry_run:
+            total_episodes = 0
+            total_facts = 0
+            for org_id in org_ids:
+                async with get_async_session(engine)() as db:
+                    await set_tenant_context(db, org_id)
+                    episodes, facts = await _count_rows(db, org_id)
+                    total_episodes += episodes
+                    total_facts += facts
+            logger.info(
+                "reset_embeddings.dry_run episodes=%d facts=%d orgs=%d — "
+                "no rows written",
+                total_episodes,
+                total_facts,
+                len(org_ids),
+            )
+            return
+
+        # Per-org rewrite: each org's rows are nulled inside its own
+        # tenant context — RLS narrows every statement to that org, and
+        # the explicit organization_id predicates scope them even if a
+        # policy were misconfigured. No bulk rewrite ever runs under
+        # bypass_rls.
+        total_episodes = 0
+        total_facts = 0
+        for org_id in org_ids:
+            async with get_async_session(engine)() as db:
+                await set_tenant_context(db, org_id)
+                episodes, facts = await _count_rows(db, org_id)
+
+                # S608: `~{ENRICHMENT_EMBEDDING}` interpolates an int constant
+                # (2), never user input. Clears bit 1 only — other enrichment
+                # bits (entities, facts, classification) survive.
+                await db.execute(
+                    text(
+                        "UPDATE episodes SET embedding = NULL, "  # noqa: S608
+                        "enrichment_status = enrichment_status "
+                        f"& ~{ENRICHMENT_EMBEDDING} "
+                        "WHERE embedding IS NOT NULL "
+                        "AND organization_id = :org_id"
+                    ).bindparams(org_id=org_id)
+                )
+                # embedded_at = NULL returns the row to reconcile's "never
+                # attempted" state; leaving it set would mark it retired and
+                # exclude it from repair forever.
+                await db.execute(
+                    text(
+                        "UPDATE facts SET embedding = NULL, embedded_at = NULL "
+                        "WHERE embedding IS NOT NULL AND organization_id = :org_id"
+                    ).bindparams(org_id=org_id)
+                )
+                await db.commit()
+                total_episodes += episodes
+                total_facts += facts
                 logger.info(
-                    "reset_embeddings.dry_run episodes=%d facts=%d — no rows written",
+                    "reset_embeddings.org_completed org_id=%s episodes=%d facts=%d",
+                    org_id,
                     episodes,
                     facts,
                 )
-                return
 
-            # S608: `~{ENRICHMENT_EMBEDDING}` interpolates an int constant
-            # (2), never user input. Clears bit 1 only — other enrichment
-            # bits (entities, facts, classification) survive.
-            await db.execute(
-                text(
-                    "UPDATE episodes SET embedding = NULL, "  # noqa: S608
-                    f"enrichment_status = enrichment_status & ~{ENRICHMENT_EMBEDDING} "
-                    "WHERE embedding IS NOT NULL"
-                )
-            )
-            # embedded_at = NULL returns the row to reconcile's "never
-            # attempted" state; leaving it set would mark it retired and
-            # exclude it from repair forever.
-            await db.execute(
-                text(
-                    "UPDATE facts SET embedding = NULL, embedded_at = NULL "
-                    "WHERE embedding IS NOT NULL"
-                )
-            )
-            await db.commit()
-
-            logger.info(
-                "reset_embeddings.completed episodes=%d facts=%d — "
-                "reconcile_enrichment will re-enqueue these over the next "
-                "ticks (100 rows/tick); confirm the ARQ worker is running",
-                episodes,
-                facts,
-            )
+        logger.info(
+            "reset_embeddings.completed episodes=%d facts=%d orgs=%d — "
+            "reconcile_enrichment will re-enqueue these over the next "
+            "ticks (100 rows/tick); confirm the ARQ worker is running",
+            total_episodes,
+            total_facts,
+            len(org_ids),
+        )
     finally:
         await engine.dispose()
 

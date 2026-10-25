@@ -1,0 +1,1 @@
+`hybrid_search` now degrades per-leg, reporting `degraded` plus `failed_legs`, and raises `SearchLegFailedError` only when all 5 legs fail. Embedding failure degrades the vector legs while text legs still run, and reranker failure falls back to unreranked RRF instead of failing the request.

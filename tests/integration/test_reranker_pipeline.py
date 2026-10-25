@@ -5,7 +5,8 @@ full retrieval-and-format pipeline:
 
 1. Re-ranker disabled → RRF-only results (no ``reranker_score``).
 2. Re-ranker enabled → results include ``reranker_score``.
-3. Re-ranker failure → propagates as ``SearchLegFailedError``.
+3. Re-ranker failure → degrades to unreranked RRF (``degraded=True``,
+   ``failed_legs`` includes ``"reranker"``; raises only when all legs fail).
 4. Context assembly formatting includes ``reranker_score``.
 
 Uses the testcontainers PostgreSQL + Redis stack from ``conftest.py``,
@@ -22,7 +23,6 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.exceptions import SearchLegFailedError
 from packages.reranker.sentence_transformers import _MODEL_CACHE, _MODEL_LOCKS
 from schemas.organization_config import OrgConfigBase
 from services.context_service import ContextService
@@ -409,7 +409,7 @@ class TestRerankerFailure:
         sample_search_results: dict[str, Any],
         failing_reranker: AsyncMock,
     ) -> None:
-        """When the re-ranker fails, SearchLegFailedError propagates."""
+        """When the re-ranker fails, search degrades to unreranked RRF order."""
         retriever = _build_mocked_retriever(
             mock_db_session,
             ORG_ID,
@@ -418,8 +418,16 @@ class TestRerankerFailure:
             reranker=failing_reranker,
         )
 
-        with pytest.raises(SearchLegFailedError, match="reranker"):
-            await retriever.hybrid_search("python", PROJECT_ID, limit=20)
+        result = await retriever.hybrid_search("python", PROJECT_ID, limit=20)
+
+        assert result["degraded"] is True
+        assert "reranker" in result["failed_legs"]
+        episodes = result["episodes"]
+        assert [ep["id"] for ep in episodes] == ["ep-1", "ep-2", "ep-3"]
+        for ep in episodes:
+            assert "reranker_score" not in ep
+            assert "rrf_score" in ep
+        assert result["facts"]
 
     async def test_reranker_failure_logs_and_raises(
         self,
@@ -427,7 +435,7 @@ class TestRerankerFailure:
         sample_search_results: dict[str, Any],
         failing_reranker: AsyncMock,
     ) -> None:
-        """A failed re-rank logs an error and raises SearchLegFailedError."""
+        """A failed re-rank logs an error and degrades (no raise)."""
         from unittest.mock import patch
 
         retriever = _build_mocked_retriever(
@@ -439,14 +447,17 @@ class TestRerankerFailure:
         )
 
         with patch("services.hybrid_retriever.logger") as mock_logger:
-            with pytest.raises(SearchLegFailedError, match="reranker"):
-                await retriever.hybrid_search("python", PROJECT_ID, limit=20)
+            result = await retriever.hybrid_search("python", PROJECT_ID, limit=20)
 
             # Verify the error was logged with the rerank_failed event
             mock_logger.error.assert_called_once()
             args, kwargs = mock_logger.error.call_args
             assert args[0] == "hybrid_retriever.rerank_failed"
             assert kwargs["extra"]["leg"] == "reranker"
+
+        assert result["degraded"] is True
+        assert "reranker" in result["failed_legs"]
+        assert result["episodes"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -617,7 +628,7 @@ class TestContextAssemblyWithReranker:
         self,
         mock_db_session: AsyncMock,
     ) -> None:
-        """When the re-ranker fails, the error propagates."""
+        """When the re-ranker fails, assembly degrades to unreranked RRF."""
         failing_reranker = AsyncMock()
         failing_reranker.rerank.side_effect = RuntimeError("API timeout")
 
@@ -649,13 +660,17 @@ class TestContextAssemblyWithReranker:
         )
         service._retriever = retriever
 
-        with pytest.raises(SearchLegFailedError, match="reranker"):
-            await service.assemble(
-                project_id=PROJECT_ID,
-                query="python",
-                limit=20,
-                format="text",
-            )
+        result = await service.assemble(
+            project_id=PROJECT_ID,
+            query="python",
+            limit=20,
+            format="text",
+        )
+
+        context_str: str = result["context"]
+        assert "Python great" in context_str
+        assert "reranker_score" not in context_str
+        assert result["metadata"]["cache_hit"] is False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,1 @@
+Bounded blob deletes with `Semaphore(10)`, preserving fail-loud `S3StorageError` semantics. `scripts/reset_embeddings_for_remodel.py` now loops per-org with `set_tenant_context` and org-scoped `UPDATE`s, using the global `bypass_rls` session only for org enumeration.
