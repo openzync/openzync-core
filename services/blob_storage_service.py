@@ -314,18 +314,20 @@ class BlobStorageService:
                     upload_file, max_bytes, file_name, storage, key, mime_type
                 )
 
-            blob_dicts.append({
-                "id": str(uuid.uuid4()),
-                "storage_backend": "s3",
-                "storage_key": key,
-                "file_name": file_name,
-                "mime_type": mime_type,
-                "file_size": file_size,
-                "content_hash": content_hash,
-                "width": None,  # TODO(me): detect image dimensions in phase 2
-                "height": None,
-                "blob_index": blob_index,
-            })
+            blob_dicts.append(
+                {
+                    "id": str(uuid.uuid4()),
+                    "storage_backend": "s3",
+                    "storage_key": key,
+                    "file_name": file_name,
+                    "mime_type": mime_type,
+                    "file_size": file_size,
+                    "content_hash": content_hash,
+                    "width": None,  # TODO(me): detect image dimensions in phase 2
+                    "height": None,
+                    "blob_index": blob_index,
+                }
+            )
 
         if not blob_dicts:
             return []
@@ -366,11 +368,19 @@ class BlobStorageService:
         config = BlobStorageConfig.from_org_config(storage_config)
         storage = BlobStorage(config)
 
-        # One concurrent S3 call per blob instead of serial awaits.
-        # Fail-loud is preserved: the first S3StorageError propagates so
-        # callers keep DB rows for retry instead of leaking objects.
+        # Bound concurrency: one S3 delete per blob, max 10 in flight —
+        # an episode with hundreds of blobs must not fan out unbounded
+        # connections. Fail-loud is preserved: the first S3StorageError
+        # propagates so callers keep DB rows for retry instead of
+        # leaking objects.
+        _delete_semaphore = asyncio.Semaphore(10)
+
+        async def _delete_one(blob: EpisodeBlob) -> None:
+            async with _delete_semaphore:
+                await storage.delete(blob.storage_key)
+
         try:
-            await asyncio.gather(*(storage.delete(b.storage_key) for b in blob_records))
+            await asyncio.gather(*(_delete_one(b) for b in blob_records))
         except S3StorageError:
             logger.warning(
                 "blob_storage_service.delete_failed",

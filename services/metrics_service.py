@@ -292,14 +292,15 @@ class MetricsService:
 
         # ── Range queries for time-series charts ────────────────────────────
         # ONLY the range queries below honor the window. Instant queries
-        # (latencies, rates, queue) above and _fetch_db_counts totals stay
+        # (latencies, rates, queue) above and the admin summary DB totals stay
         # snapshot semantics.
         _end = end if end is not None else datetime.now(UTC)
         _start = start if start is not None else _end - timedelta(hours=24)
         start_iso = _start.isoformat()
         end_iso = _end.isoformat()
-        # Parity with routers/admin_metrics._prom_step: max(1h, window/180).
-        # Duplicated (not imported) — services must not import from routers.
+        # Parity with services/admin_metrics_queries_service._prom_step:
+        # max(1h, window/180). Duplicated (not imported) — no shared
+        # prom-range helper exists yet.
         _window_hours = (_end - _start).total_seconds() / 3600
         _step = f"{max(1, math.ceil(_window_hours / 180))}h"
 

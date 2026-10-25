@@ -37,15 +37,20 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
+import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
 
+from core.exceptions import GraphBackendUnavailableError
 from packages.graph_backend.interface import GraphBackend
 
 if TYPE_CHECKING:
     from schemas.organization_config import OrgConfigBase
 
 logger = logging.getLogger(__name__)
+_resolve_logger = structlog.get_logger(__name__)
 
 
 class GraphBackendDispatcher:
@@ -318,3 +323,62 @@ def init_dispatcher() -> GraphBackendDispatcher:
     dispatcher.register("postgres", PostgresGraphBackend)
     dispatcher.register("falkordb", FalkorGraphBackend)
     return dispatcher
+
+
+async def resolve_graph_backend_fail_soft(
+    request: Request,
+    org_config: OrgConfigBase,
+    org_id: UUID,
+    db: AsyncSession,
+    log_prefix: str,
+) -> GraphBackend | None:
+    """Resolve the org-configured graph backend, fail-soft to ``None``.
+
+    Single home for the dispatcher + SurrealDB-pool + resolve sequence
+    previously triplicated across the admin metrics/stats services. A down
+    or misconfigured graph must not take down the dashboard — every
+    degraded path logs and returns ``None`` (callers render zeros).
+
+    Args:
+        request: FastAPI request (dispatcher + pools live on app state).
+        org_config: Org config (graph backend selection).
+        org_id: Authenticated organization ID (log context + pool key).
+        db: Request-scoped session passed to ``resolve_and_create``.
+        log_prefix: Caller namespace for log events
+            (``"admin_metrics"`` / ``"admin_stats"``).
+
+    Returns:
+        The resolved backend, or ``None`` when the dispatcher is missing,
+        SurrealDB fails, or resolution raises.
+    """
+    dispatcher = getattr(request.app.state, "graph_backend_dispatcher", None)
+    if dispatcher is None:
+        _resolve_logger.warning(f"{log_prefix}.no_graph_dispatcher")
+        return None
+    surreal = None
+    if org_config.graph_backend == "surrealdb":
+        pool = getattr(request.app.state, "surreal_connection_pool", None)
+        if pool is not None:
+            try:
+                surreal = await pool.get_or_create(org_id, org_config)
+            except Exception as exc:
+                _resolve_logger.warning(
+                    f"{log_prefix}.surreal_connection_failed",
+                    error=str(exc),
+                )
+                return None
+    try:
+        return dispatcher.resolve_and_create(
+            org_config,
+            db,
+            surreal=surreal,
+            falkordb_client=getattr(request.app.state, "falkordb_client", None),
+        )
+    except (GraphBackendUnavailableError, ValueError) as exc:
+        _resolve_logger.warning(
+            f"{log_prefix}.graph_backend_unresolved", error=str(exc)
+        )
+        return None
+    except Exception as exc:
+        _resolve_logger.warning(f"{log_prefix}.graph_backend_failed", error=str(exc))
+        return None

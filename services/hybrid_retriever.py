@@ -112,9 +112,11 @@ class HybridRetriever:
         concurrently via ``asyncio.gather`` when a sibling-session
         factory is available — one AsyncSession allows a single
         in-flight operation, so without a factory the legs run
-        sequentially on the shared session. If any single
-        leg fails, the entire search fails with a
-        ``SearchLegFailedError`` — no silent partial results are returned.
+        sequentially on the shared session. A single leg failing no
+        longer fails the search: the leg contributes no results, the
+        failure is logged with leg context, and the response carries
+        ``degraded=True`` plus the ``failed_legs`` names. Only when all
+        five legs fail does the search raise ``SearchLegFailedError``.
 
         Results are grouped by type in the return dict with source counts.
 
@@ -140,10 +142,13 @@ class HybridRetriever:
             - ``communities``: Community summaries (empty if unavailable).
             - ``source_counts``: Item count per source type.
             - ``total_items``: Sum of all items across sources.
+            - ``degraded``: ``True`` when one or more legs failed and the
+              results are partial (RRF fusion ran over the available legs).
+            - ``failed_legs``: Names of the legs that failed (empty when none).
 
         Raises:
-            SearchLegFailedError: If any retrieval leg (vector, BM25,
-                graph BFS, or reranker) fails.
+            SearchLegFailedError: Only when *all* retrieval legs fail.
+                Single-leg failures degrade to partial results instead.
         """
         _search_start = time.monotonic()
 
@@ -156,55 +161,112 @@ class HybridRetriever:
             {} if query_time is None else {"query_time": query_time}
         )
 
-        # ── Embed the query once; both vector legs reuse this vector ──────
-        # Embedding failure propagates as SearchLegFailedError(leg="embedding")
-        # before any leg-level try/except can re-wrap it.
-        query_embedding = await self._embed_query(query, project_id)
-
-        # ── Run all five retrieval legs ──────────────────────────────────
-        # One AsyncSession allows a single in-flight operation, so each DB
-        # leg runs on a sibling session from the app factory (same RLS
-        # tenant, rolled back independently on failure). Without a factory
-        # the legs run sequentially on the shared session — same results,
-        # no parallelism. ``asyncio.gather`` on one shared session would
-        # interleave operations on it, so the no-factory path awaits each
-        # leg in turn instead of gathering.
+        # ── Embed the query once; both vector legs share this vector ──────
+        # An embedding failure degrades (not raises): both vector legs
+        # contribute nothing while BM25/graph legs still run. Only when
+        # every leg fails does hybrid_search raise (checked below).
+        failed_legs: list[str] = []
         retrieval_limit = (
             max(limit, self._rerank_top_k) if self._reranker is not None else limit
         )
+        try:
+            query_embedding = await self._embed_query(query, project_id)
+        except asyncio.CancelledError:
+            raise
+        except SearchLegFailedError as exc:
+            logger.warning(
+                "hybrid_retriever.embedding_degraded",
+                extra={
+                    "org_id": str(self._org_id),
+                    "project_id": str(project_id),
+                    "error": str(exc),
+                },
+            )
+            query_embedding = None
+            failed_legs.extend(["episode_vector", "fact_vector"])
 
-        if self._session_factory is None:
-            episode_vector_results = await self._run_leg(
+        async def _safe_leg(
+            leg_name: str, coro: Awaitable[list[dict[str, Any]]]
+        ) -> list[dict[str, Any]]:
+            """Await one leg, degrading to ``[]`` on leg failure.
+
+            ``CancelledError`` is never swallowed — it propagates so task
+            cancellation still cancels the search.
+            """
+            try:
+                return await coro
+            except asyncio.CancelledError:
+                raise
+            except SearchLegFailedError as exc:
+                failed_legs.append(leg_name)
+                logger.warning(
+                    "hybrid_retriever.leg_degraded",
+                    extra={
+                        "leg": leg_name,
+                        "org_id": str(self._org_id),
+                        "project_id": str(project_id),
+                        "error": str(exc),
+                    },
+                )
+                return []
+
+        async def _run_episode_vector(
+            _embedding: list[float] | None = query_embedding,
+        ) -> list[dict[str, Any]]:
+            if _embedding is None:
+                return []
+            return await self._run_leg(
                 "episode_vector",
                 project_id,
                 lambda r: r._vector_search_episodes(
-                    query_embedding, project_id, retrieval_limit
+                    _embedding, project_id, retrieval_limit
                 ),
             )
-            fact_vector_results = await self._run_leg(
+
+        async def _run_fact_vector(
+            _embedding: list[float] | None = query_embedding,
+        ) -> list[dict[str, Any]]:
+            if _embedding is None:
+                return []
+            return await self._run_leg(
                 "fact_vector",
                 project_id,
                 lambda r: r._vector_search_facts(
-                    query_embedding, project_id, retrieval_limit, **as_of_kwargs
+                    _embedding, project_id, retrieval_limit, **as_of_kwargs
                 ),
             )
-            episode_bm25_results = await self._run_leg(
+
+        async def _run_episode_bm25() -> list[dict[str, Any]]:
+            return await self._run_leg(
                 "episode_bm25",
                 project_id,
                 lambda r: r._bm25_search_episodes(query, project_id, retrieval_limit),
             )
-            fact_bm25_results = await self._run_leg(
+
+        async def _run_fact_bm25() -> list[dict[str, Any]]:
+            return await self._run_leg(
                 "fact_bm25",
                 project_id,
                 lambda r: r._bm25_search_facts(
                     query, project_id, retrieval_limit, **as_of_kwargs
                 ),
             )
-            entity_results = await self._run_leg(
+
+        async def _run_graph_bfs() -> list[dict[str, Any]]:
+            return await self._run_leg(
                 "graph_bfs",
                 project_id,
                 lambda r: r._graph_bfs_search(query, project_id, query_time=query_time),
             )
+
+        if self._session_factory is None:
+            episode_vector_results = await _safe_leg(
+                "episode_vector", _run_episode_vector()
+            )
+            fact_vector_results = await _safe_leg("fact_vector", _run_fact_vector())
+            episode_bm25_results = await _safe_leg("episode_bm25", _run_episode_bm25())
+            fact_bm25_results = await _safe_leg("fact_bm25", _run_fact_bm25())
+            entity_results = await _safe_leg("graph_bfs", _run_graph_bfs())
         else:
             (
                 episode_vector_results,
@@ -213,37 +275,26 @@ class HybridRetriever:
                 fact_bm25_results,
                 entity_results,
             ) = await asyncio.gather(
-                self._run_leg(
-                    "episode_vector",
-                    project_id,
-                    lambda r: r._vector_search_episodes(
-                        query_embedding, project_id, retrieval_limit
-                    ),
-                ),
-                self._run_leg(
-                    "fact_vector",
-                    project_id,
-                    lambda r: r._vector_search_facts(
-                        query_embedding, project_id, retrieval_limit, **as_of_kwargs
-                    ),
-                ),
-                self._run_leg(
-                    "episode_bm25",
-                    project_id,
-                    lambda r: r._bm25_search_episodes(query, project_id, retrieval_limit),
-                ),
-                self._run_leg(
-                    "fact_bm25",
-                    project_id,
-                    lambda r: r._bm25_search_facts(
-                        query, project_id, retrieval_limit, **as_of_kwargs
-                    ),
-                ),
-                self._run_leg(
-                    "graph_bfs",
-                    project_id,
-                    lambda r: r._graph_bfs_search(query, project_id, query_time=query_time),
-                ),
+                _safe_leg("episode_vector", _run_episode_vector()),
+                _safe_leg("fact_vector", _run_fact_vector()),
+                _safe_leg("episode_bm25", _run_episode_bm25()),
+                _safe_leg("fact_bm25", _run_fact_bm25()),
+                _safe_leg("graph_bfs", _run_graph_bfs()),
+            )
+
+        if all(
+            leg in failed_legs
+            for leg in (
+                "episode_vector",
+                "fact_vector",
+                "episode_bm25",
+                "fact_bm25",
+                "graph_bfs",
+            )
+        ):
+            raise SearchLegFailedError(
+                leg_name="all",
+                original_error=f"All retrieval legs failed: {', '.join(failed_legs)}.",
             )
 
         # ── RRF merge per type ────────────────────────────────────────────
@@ -325,12 +376,14 @@ class HybridRetriever:
                         "query": query[:100],
                         "duration_ms": round((time.monotonic() - _rerank_start) * 1000),
                         "leg": "reranker",
+                        "error": str(exc),
                     },
                     exc_info=True,
                 )
-                raise SearchLegFailedError(
-                    leg_name="reranker", original_error=str(exc)
-                ) from exc
+                # Rerank failure degrades to unreranked RRF order — the
+                # retrieval legs already succeeded, so failing the whole
+                # search here would discard good results.
+                failed_legs.append("reranker")
 
         graph_search_latency_seconds.labels(org_id=str(self._org_id)).observe(
             time.monotonic() - _search_start
@@ -358,6 +411,8 @@ class HybridRetriever:
             },
             "total_items": len(merged_episodes) + len(merged_facts) + len(entities),
             "query_embedding_dim": self._last_query_embedding_dim,
+            "degraded": bool(failed_legs),
+            "failed_legs": failed_legs,
         }
 
     # ── Leg plumbing ─────────────────────────────────────────────────────────
