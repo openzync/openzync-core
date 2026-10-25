@@ -6,6 +6,7 @@ the embedding worker for each ingested fact.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -523,15 +524,22 @@ class FactService:
             arq_pool = get_arq()
             qname = get_queue_name(get_settings().ENVIRONMENT, ARQ_QUEUE)
 
-            for fact_id in fact_ids:
-                await arq_pool.enqueue(
-                    "embed_fact",
-                    queue_name=qname,
-                    fact_id=fact_id,
-                    org_id=org_id,
-                    project_id=project_id,
-                    trace_id=trace_id,
+            # Concurrent fan-out — a sequential loop turns ingest latency
+            # into N_fact Redis round-trips (same pattern as the episode
+            # enqueue in memory_service).
+            await asyncio.gather(
+                *(
+                    arq_pool.enqueue(
+                        "embed_fact",
+                        queue_name=qname,
+                        fact_id=fact_id,
+                        org_id=org_id,
+                        project_id=project_id,
+                        trace_id=trace_id,
+                    )
+                    for fact_id in fact_ids
                 )
+            )
 
             logger.info(
                 "fact_service.embedding_tasks_enqueued",

@@ -1,0 +1,53 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# OpenZync Prometheus alert rules — wired to existing counters only
+# (middleware/metrics.py + services/worker/worker.py). No new exporter.
+# ──────────────────────────────────────────────────────────────────────────────
+
+groups:
+  - name: openzync-slo
+    interval: 30s
+    rules:
+      # Error rate above 1% over 5 minutes.
+      - alert: OpenZyncHighErrorRate
+        expr: |
+          (
+            sum(rate(openzync_http_requests_total{status="5xx"}[5m]))
+            /
+            (sum(rate(openzync_http_requests_total[5m])) or vector(1))
+          ) * 100 > 1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "HTTP 5xx error rate above 1%"
+
+      # p95 request latency above 2 seconds over 5 minutes.
+      - alert: OpenZyncHighLatencyP95
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(openzync_http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 request latency above 2s"
+
+      # Total queued jobs above 1000 — workers not keeping up.
+      - alert: OpenZyncQueueBacklog
+        expr: sum(openzync_worker_queue_depth) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Worker queue depth above 1000"
+
+      # More than 5 failed jobs in 5 minutes.
+      - alert: OpenZyncJobsFailing
+        expr: sum(increase(openzync_worker_tasks_total{status="failed"}[5m])) > 5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "More than 5 failed worker jobs in 5m"

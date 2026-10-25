@@ -38,7 +38,6 @@ if TYPE_CHECKING:
 # the worker, and UploadFile isn't available in the worker context.
 from fastapi import UploadFile  # noqa: TCH002 — used in method signature
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.arq import get_arq
 from core.config import get_settings
@@ -565,46 +564,10 @@ class MemoryService:
                 )
 
             # ── Commit so workers can see episodes + blobs before tasks ─────
+            # The error-handling block ends HERE. Everything below runs
+            # post-commit: failures must never roll back, compensate blob
+            # files, or release the content-hash claim for committed rows.
             await self._db.commit()
-
-            # ── Step 10: Enqueue ARQ tasks with the claimed job_id ───────────
-            # ID-only payloads — workers load content/metadata from the row.
-            episode_dicts = [
-                {"id": ep.id, "role": ep.role} for ep in episodes
-            ]
-            await self._enqueue_arq_tasks(
-                job_id=str(job_id),
-                org_id=str(org_id),
-                project_id=str(project_id),
-                session_id=str(session_id),
-                episodes=episode_dicts,
-            )
-
-            # ── Step 10b: Enqueue blob text extraction tasks ─────────────────
-            if blob_records:
-                await self._enqueue_blob_extraction_tasks(
-                    blob_records=blob_records,
-                    org_id=org_id,
-                    project_id=project_id,
-                )
-
-            # ── Step 11: Store idempotency key ───────────────────────────────
-            response = IngestMemoryResponse(
-                job_id=str(job_id),
-                episode_count=len(episodes),
-                blob_count=blob_count,
-                status="accepted",
-                message="Messages accepted for processing",
-            )
-            if idempotency_key is not None:
-                await self._idem.store_idempotency_key(
-                    idempotency_key, body_hash or "", response.model_dump(), str(org_id)
-                )
-
-            # note: no store_content_hash here — the Step 4 Lua claim already
-            # SET the Redis key (payload = job_id) atomically on win. A
-            # post-ingest check-then-store would re-open the TOCTOU window;
-            # store_content_hash remains for non-ingest writers only.
         except asyncio.CancelledError:
             await self._db.rollback()
             await self._compensate_blob_uploads(org_id, uploaded_keys)
@@ -619,6 +582,62 @@ class MemoryService:
                 str(org_id), str(created_by), str(session_id), msgs
             )
             raise
+
+        # ── Step 10: Enqueue ARQ tasks with the claimed job_id ───────────
+        # Post-commit: episodes are durable, so an enqueue failure raises
+        # loudly (reconciliation replays) instead of silently dropping
+        # work — but it never touches blob files or the dedup claim.
+        # ID-only payloads — workers load content/metadata from the row.
+        episode_dicts = [{"id": ep.id, "role": ep.role} for ep in episodes]
+        await self._enqueue_arq_tasks(
+            job_id=str(job_id),
+            org_id=str(org_id),
+            project_id=str(project_id),
+            session_id=str(session_id),
+            episodes=episode_dicts,
+        )
+
+        # ── Step 10b: Enqueue blob text extraction tasks ─────────────────
+        if blob_records:
+            await self._enqueue_blob_extraction_tasks(
+                blob_records=blob_records,
+                org_id=org_id,
+                project_id=project_id,
+            )
+
+        # ── Step 11: Store idempotency key (best-effort) ─────────────────
+        # Post-commit log-and-continue: a Redis outage here must never turn
+        # a committed ingest into a 500. A retry replays the winner via
+        # the still-held content-hash claim, so nothing ingests twice.
+        response = IngestMemoryResponse(
+            job_id=str(job_id),
+            episode_count=len(episodes),
+            blob_count=blob_count,
+            status="accepted",
+            message="Messages accepted for processing",
+        )
+        if idempotency_key is not None:
+            try:
+                await self._idem.store_idempotency_key(
+                    idempotency_key, body_hash or "", response.model_dump(), str(org_id)
+                )
+            except Exception:
+                # note: no release_content_hash — the claim stays held so
+                # the retry replays this attempt's job_id instead of
+                # re-ingesting.
+                logger.exception(
+                    "memory.idempotency_key_store_failed",
+                    extra={
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                        "job_id": str(job_id),
+                    },
+                )
+
+        # note: no store_content_hash here — the Step 4 Lua claim already
+        # SET the Redis key (payload = job_id) atomically on win. A
+        # post-ingest check-then-store would re-open the TOCTOU window;
+        # store_content_hash remains for non-ingest writers only.
 
         # ── Steps 12–13: Post-commit effects (best-effort) ─────────────────
         # The ingest committed above. A purge or webhook failure must never
@@ -685,8 +704,9 @@ class MemoryService:
                 organization or is archived (→ 404, nothing is deleted).
                 # ⚠️ BREAKING: cross-org wipes previously deleted by
                 # project_id alone; they are now rejected.
-            ExternalServiceError: If the org's blob storage config cannot be
-                read from OpenBao — the stored objects are left in place.
+                # S3/config failures never raise: rows commit first, the S3
+                # sweep is best-effort, and leftovers stay visible to the
+                # orphan-blob GC worker via the soft-deleted episodes.
         """
         if confirm != str(project_id):
             raise ValidationError(
@@ -710,28 +730,54 @@ class MemoryService:
             project_id, org_id
         )
 
-        # Delete the project's S3 objects in the same operation — without
-        # this the wipe soft-deletes rows but leaks every blob's bytes.
-        # Paged (500/page, rows deleted before the next fetch) so a large
-        # project never materializes all blob rows at once.  S3 failure
-        # raises (delete_blobs never swallows); DB rows stay for the
-        # orphan-blob cleanup worker (episodes are now soft-deleted).
+        # ── Commit before touching S3 ───────────────────────────────────
+        # Rows are durable now. Every S3 delete below runs post-commit: a
+        # crash leaves blob rows pointing at live objects with soft-deleted
+        # episodes, which cleanup_orphan_blobs retries (S3 + row delete).
+        await self._db.commit()
+
+        # Post-commit S3 sweep, best-effort per page. Blob rows are
+        # deliberately left for the orphan-blob GC worker, so a failure
+        # here only logs loudly and stops the sweep — leftovers stay
+        # GC-visible instead of becoming invisible S3 leaks.
+        from services.blob_storage_service import BlobStorageService
+
         blobs_deleted = 0
+        offset = 0
         storage_config: dict[str, Any] | None = None
         while True:
-            page = await self._blob_repo.get_by_project(project_id)
+            page = await self._blob_repo.get_by_project(
+                project_id, limit=500, offset=offset
+            )
             if not page:
                 break
+            offset += len(page)
             if storage_config is None:
-                from services.blob_storage_service import BlobStorageService
-
-                storage_config = await self._resolve_storage_config(org_id)
-            # S3 first, then row delete — delete_blobs raises on S3
-            # failure so rows stay for the orphan-blob cleanup worker.
-            await BlobStorageService(self._db, self._blob_repo).delete_blobs(
-                page, storage_config
-            )
-            await self._blob_repo.delete_by_ids([b.id for b in page])
+                try:
+                    storage_config = await self._resolve_storage_config(org_id)
+                except Exception:
+                    logger.exception(
+                        "memory.wipe_storage_config_failed",
+                        extra={
+                            "org_id": str(org_id),
+                            "project_id": str(project_id),
+                        },
+                    )
+                    break
+            try:
+                await BlobStorageService(self._db, self._blob_repo).delete_blobs(
+                    page, storage_config
+                )
+            except Exception:
+                logger.exception(
+                    "memory.wipe_blob_delete_failed",
+                    extra={
+                        "org_id": str(org_id),
+                        "project_id": str(project_id),
+                        "page_size": len(page),
+                    },
+                )
+                break
             blobs_deleted += len(page)
 
         logger.info(

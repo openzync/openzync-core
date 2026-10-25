@@ -1,0 +1,1 @@
+Fixed five routers raising raw HTTPException instead of DomainValidationError, so errors now surface as RFC7807 problem responses; bare except is kept only on post-commit best-effort paths and enrichment failures fail loud.

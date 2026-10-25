@@ -1,0 +1,1 @@
+Changed batch ingest for lower latency: fact embeddings now enqueue concurrently, observation evidence uses a single batch call, fitz/PIL parsing runs via to_thread, and org YAML config is lru_cached.

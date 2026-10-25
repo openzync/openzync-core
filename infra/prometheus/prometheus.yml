@@ -1,7 +1,9 @@
 # ──────────────────────────────────────────────────────────────────────────────
 # Prometheus configuration — OpenZync dev mode
 # ──────────────────────────────────────────────────────────────────────────────
-# Scrapes the host API's /metrics endpoint via host.docker.internal.
+# Scrapes the api service's /metrics endpoint over the compose network.
+# For host-run API dev (uvicorn on the laptop, Prometheus in compose),
+# override the target to host.docker.internal:8000 instead.
 # In production, replace with the Kubernetes service discovery.
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -9,11 +11,14 @@ global:
   scrape_interval: 15s
   evaluation_interval: 15s
 
+rule_files:
+  - alerts.yml
+
 scrape_configs:
   - job_name: "openzync-api"
     scrape_interval: 15s
     metrics_path: /metrics
     static_configs:
-      - targets: ["host.docker.internal:8000"]
+      - targets: ["api:8000"]
         labels:
           job: "openzync-api"

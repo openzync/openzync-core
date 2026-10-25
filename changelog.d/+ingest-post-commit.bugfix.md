@@ -1,0 +1,1 @@
+Fixed committed ingest deleting blobs and releasing the idempotency claim on post-commit queue/key-store failure; key-store writes are now best-effort log-and-continue and a retry replays the winning result.

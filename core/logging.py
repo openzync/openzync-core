@@ -202,6 +202,16 @@ def setup_logging(environment: str, log_level: str) -> None:
 
     # Route standard-library logging through structlog so that third-party
     # libraries (uvicorn, sqlalchemy, httpx, etc.) also produce structured
-    # output.
-    logging.basicConfig(format="%(message)s", level=log_level.upper())
+    # output. ProcessorFormatter bridges stdlib records through the same
+    # processors (PII redaction, request context, JSON in prod), so services
+    # only need structlog.get_logger — no per-service changes required.
+    formatter = structlog.stdlib.ProcessorFormatter(
+        processors=[*shared_processors, renderer],
+        foreign_pre_chain=shared_processors,
+    )
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+    root_logger.setLevel(log_level.upper())
     logging.captureWarnings(True)

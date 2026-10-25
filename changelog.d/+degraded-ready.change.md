@@ -1,0 +1,1 @@
+Changed FalkorDB/Ollama-prewarm/Transit/seed failures to degrade via app.state.degraded instead of crashing startup; /health always returns 200, /ready returns 503 while degraded with a pending_edge_sync count, and compose marks falkordb/ollama as service_started dependencies.

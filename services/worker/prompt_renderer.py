@@ -213,17 +213,12 @@ async def _fetch_episode_content(
     if episode_id is None:
         return {"conversation": ""}
 
-    from sqlalchemy import select  # noqa: PLC0415 — lazy import
-
-    from models.episode import Episode  # noqa: PLC0415 — lazy import
-
-    result = await db.execute(
-        select(Episode.content).where(
-            Episode.id == episode_id,
-            Episode.organization_id == org_id,
-        )
+    from repositories.prompt_context_repository import (  # noqa: PLC0415 — lazy import
+        PromptContextRepository,
     )
-    row = result.scalar_one_or_none()
+
+    repo = PromptContextRepository(db)
+    row = await repo.get_episode_content(episode_id=episode_id, org_id=org_id)
     return {"conversation": row if row is not None else ""}
 
 
@@ -325,26 +320,18 @@ async def _fetch_session_recent_history(
     if session_id is None:
         return {"recent_history": []}
 
-    from sqlalchemy import select  # noqa: PLC0415 — lazy import
-
-    from models.episode import Episode  # noqa: PLC0415 — lazy import
-
-    query = (
-        # Column-only select — detached scalars, no ORM expiry risk
-        # past session close (same class of bug as the template-text leak).
-        select(Episode.role, Episode.content)
-        .where(
-            Episode.session_id == session_id,
-            Episode.is_deleted == False,  # noqa: E712 — SQLAlchemy boolean
-        )
-        .order_by(Episode.created_at.desc())
-        .limit(_RECENT_HISTORY_WINDOW)
+    from repositories.prompt_context_repository import (  # noqa: PLC0415 — lazy import
+        PromptContextRepository,
     )
-    if episode_id is not None:
-        query = query.where(Episode.id != episode_id)
 
-    result = await db.execute(query)
-    rows = list(result.all())
+    repo = PromptContextRepository(db)
+    # Column-only rows — detached scalars, no ORM expiry risk past session close.
+    rows = await repo.list_session_recent_history(
+        session_id=session_id,
+        exclude_episode_id=episode_id,
+        limit=_RECENT_HISTORY_WINDOW,
+    )
+    rows = list(rows)
     rows.reverse()  # chronological order
     recent_history = [{"role": r[0], "content": r[1]} for r in rows]
     return {"recent_history": recent_history}
@@ -364,17 +351,12 @@ async def _fetch_episode_metadata(
     if episode_id is None:
         return {"message_metadata": {}}
 
-    from sqlalchemy import select  # noqa: PLC0415 — lazy import
-
-    from models.episode import Episode  # noqa: PLC0415 — lazy import
-
-    result = await db.execute(
-        select(Episode.metadata_).where(
-            Episode.id == episode_id,
-            Episode.organization_id == org_id,
-        )
+    from repositories.prompt_context_repository import (  # noqa: PLC0415 — lazy import
+        PromptContextRepository,
     )
-    row = result.scalar_one_or_none()
+
+    repo = PromptContextRepository(db)
+    row = await repo.get_episode_metadata(episode_id=episode_id, org_id=org_id)
     return {"message_metadata": row if row is not None else {}}
 
 
@@ -397,21 +379,17 @@ async def _fetch_similar_episodes(
     if episode_id is None or user_id is None:
         return {"similar_episodes": []}
 
-    from sqlalchemy import select  # noqa: PLC0415 — lazy import
-
-    from models.episode import Episode  # noqa: PLC0415 — lazy import
+    from repositories.prompt_context_repository import (  # noqa: PLC0415 — lazy import
+        PromptContextRepository,
+    )
 
     # Fetch current episode content + project_id to use as search query
-    ep_result = await db.execute(
-        select(Episode.content, Episode.project_id).where(
-            Episode.id == episode_id,
-            Episode.organization_id == org_id,
-        )
+    found = await PromptContextRepository(db).get_episode_content_and_project(
+        episode_id=episode_id, org_id=org_id
     )
-    row = ep_result.one_or_none()
-    if not row:
+    if found is None:
         return {"similar_episodes": []}
-    query, project_id = row
+    query, project_id = found
 
     from repositories.episode_repository import EpisodeRepository  # noqa: PLC0415
 
@@ -444,21 +422,17 @@ async def _fetch_similar_facts(
     if episode_id is None or user_id is None:
         return {"related_facts": []}
 
-    from sqlalchemy import select  # noqa: PLC0415 — lazy import
-
-    from models.episode import Episode  # noqa: PLC0415 — lazy import
+    from repositories.prompt_context_repository import (  # noqa: PLC0415 — lazy import
+        PromptContextRepository,
+    )
 
     # Fetch current episode content + project_id to use as search query
-    ep_result = await db.execute(
-        select(Episode.content, Episode.project_id).where(
-            Episode.id == episode_id,
-            Episode.organization_id == org_id,
-        )
+    found = await PromptContextRepository(db).get_episode_content_and_project(
+        episode_id=episode_id, org_id=org_id
     )
-    row = ep_result.one_or_none()
-    if not row:
+    if found is None:
         return {"related_facts": []}
-    query, project_id = row
+    query, project_id = found
 
     from repositories.fact_repository import FactRepository  # noqa: PLC0415
 
@@ -482,18 +456,14 @@ async def _fetch_org_entity_types(
     Falls back to the default set if no schemas are configured.
     Returns ``{"entity_types": [...]}``.
     """
-    from sqlalchemy import text  # noqa: PLC0415 — lazy import
-
-    result = await db.execute(
-        text("""
-            SELECT json_schema FROM extraction_schemas
-            WHERE organization_id = :org_id
-              AND type = 'entity_type'
-              AND is_active = true
-        """),
-        {"org_id": org_id},
+    from repositories.prompt_context_repository import (  # noqa: PLC0415 — lazy import
+        PromptContextRepository,
     )
-    schemas = result.all()
+
+    repo = PromptContextRepository(db)
+    schemas = await repo.list_schema_json_by_type(
+        org_id=org_id, schema_type="entity_type"
+    )
 
     if not schemas:
         return {
@@ -508,8 +478,7 @@ async def _fetch_org_entity_types(
         }
 
     types: list[str] = []
-    for row in schemas:
-        schema: dict = row[0]
+    for schema in schemas:
         if (
             isinstance(schema, dict)
             and "types" in schema
@@ -543,18 +512,14 @@ async def _fetch_classification_labels(
     Returns a dict with keys ``intent_labels``, ``emotion_labels``,
     ``valence_options``, ``arousal_options`` (comma-separated strings).
     """
-    from sqlalchemy import text  # noqa: PLC0415 — lazy import
-
-    result = await db.execute(
-        text("""
-            SELECT json_schema FROM extraction_schemas
-            WHERE organization_id = :org_id
-              AND type = 'classification'
-              AND is_active = true
-        """),
-        {"org_id": org_id},
+    from repositories.prompt_context_repository import (  # noqa: PLC0415 — lazy import
+        PromptContextRepository,
     )
-    schemas = result.all()
+
+    repo = PromptContextRepository(db)
+    schemas = await repo.list_schema_json_by_type(
+        org_id=org_id, schema_type="classification"
+    )
 
     if not schemas:
         return {
@@ -574,8 +539,7 @@ async def _fetch_classification_labels(
     valences: set[str] = set()
     arousals: set[str] = set()
 
-    for row in schemas:
-        schema: dict = row[0]
+    for schema in schemas:
         if isinstance(schema, dict):
             if "intent" in schema and isinstance(schema["intent"], list):
                 all_intents.update(schema["intent"])
@@ -615,28 +579,12 @@ async def _fetch_structured_schemas(
     Returns ``{"schemas": [...]}`` — list of dicts with ``id``, ``name``,
     ``json_schema``, ``prompt_template``.
     """
-    from sqlalchemy import text  # noqa: PLC0415 — lazy import
-
-    result = await db.execute(
-        text("""
-            SELECT id, name, json_schema, prompt_template FROM extraction_schemas
-            WHERE organization_id = :org_id
-              AND type = 'structured'
-              AND is_active = true
-            ORDER BY name
-        """),
-        {"org_id": org_id},
+    from repositories.prompt_context_repository import (  # noqa: PLC0415 — lazy import
+        PromptContextRepository,
     )
-    rows = result.all()
-    schemas = [
-        {
-            "id": str(row[0]),
-            "name": row[1],
-            "json_schema": row[2],
-            "prompt_template": row[3],
-        }
-        for row in rows
-    ]
+
+    repo = PromptContextRepository(db)
+    schemas = await repo.list_structured_schemas(org_id=org_id)
     return {"schemas": schemas}
 
 
@@ -653,22 +601,15 @@ async def _fetch_user_episodes(
     if user_id is None:
         return {"episodes": []}
 
-    from sqlalchemy import text  # noqa: PLC0415 — lazy import
-
-    result = await db.execute(
-        text("""
-            SELECT role, content FROM episodes
-            WHERE session_id IN (
-                SELECT id FROM sessions
-                WHERE user_id = :user_id AND organization_id = :org_id
-            )
-            AND is_deleted = false
-            ORDER BY created_at DESC
-            LIMIT 100
-        """),
-        {"user_id": user_id, "org_id": org_id},
+    from repositories.prompt_context_repository import (  # noqa: PLC0415 — lazy import
+        PromptContextRepository,
     )
-    episodes_raw = list(result.fetchall())
+
+    repo = PromptContextRepository(db)
+    episodes_raw = await repo.list_user_episodes(
+        user_id=user_id, org_id=org_id, limit=100
+    )
+    episodes_raw = list(episodes_raw)
     episodes_raw.reverse()  # chronological
     episodes = [{"role": r[0], "content": r[1]} for r in episodes_raw]
     return {"episodes": episodes}
@@ -689,28 +630,19 @@ async def _fetch_user_facts(
 
     from datetime import datetime  # noqa: PLC0415 — lazy import
 
-    from sqlalchemy import text  # noqa: PLC0415 — lazy import
+    from repositories.prompt_context_repository import (  # noqa: PLC0415 — lazy import
+        PromptContextRepository,
+    )
 
-    result = await db.execute(
-        text("""
-            SELECT f.subject, f.predicate, f.object FROM facts f
-            JOIN episodes e ON f.source_episode_id = e.id
-            JOIN sessions s ON e.session_id = s.id
-            WHERE s.user_id = :user_id AND s.organization_id = :org_id
-              AND (f.invalid_at IS NULL OR f.invalid_at > :effective_at)
-              AND (f.valid_from IS NULL OR f.valid_from <= :effective_at)
-              AND (f.valid_to IS NULL OR f.valid_to > :effective_at)
-            ORDER BY f.created_at DESC
-            LIMIT 100
-        """),
-        {
-            "user_id": user_id,
-            "org_id": org_id,
-            "effective_at": datetime.now(UTC),
-        },
+    repo = PromptContextRepository(db)
+    rows = await repo.list_user_facts(
+        user_id=user_id,
+        org_id=org_id,
+        effective_at=datetime.now(UTC),
+        limit=100,
     )
     facts = [
-        {"subject": r[0], "predicate": r[1], "object": r[2]} for r in result.fetchall()
+        {"subject": r[0], "predicate": r[1], "object": r[2]} for r in rows
     ]
     return {"facts": facts}
 
@@ -759,32 +691,19 @@ async def _fetch_user_entities(
             "degrade extraction context."
         )
 
-    from sqlalchemy import text  # noqa: PLC0415 — lazy import
+    from repositories.prompt_context_repository import (  # noqa: PLC0415 — lazy import
+        PromptContextRepository,
+    )
 
-    params: dict[str, Any] = {"user_id": user_id, "org_id": org_id}
-    project_filter = ""
-    if project_id is not None:
-        project_filter = "AND e.project_id = :project_id"
-        params["project_id"] = project_id
-    # Bound cap on the IN-list — most-recent episodes first.
-    params["cap"] = _USER_ENTITIES_EPISODE_CAP
-    # project_filter is a static literal ("" or a fixed AND clause), never
-    # user input; all values are bound parameters — not an injection vector.
-    result = await db.execute(
-        text(
-            "SELECT e.id, e.project_id "  # noqa: S608
-            "FROM episodes e "  # noqa: S608
-            "JOIN sessions s ON e.session_id = s.id "  # noqa: S608
-            "WHERE s.user_id = :user_id AND s.organization_id = :org_id "  # noqa: S608
-            "AND e.is_deleted = false AND s.is_deleted = false "  # noqa: S608
-            f"{project_filter} "  # noqa: S608
-            "ORDER BY e.created_at DESC "  # noqa: S608
-            "LIMIT :cap"  # noqa: S608
-        ),
-        params,
+    repo = PromptContextRepository(db)
+    rows = await repo.list_user_episode_ids(
+        user_id=user_id,
+        org_id=org_id,
+        project_id=project_id,
+        cap=_USER_ENTITIES_EPISODE_CAP,
     )
     by_project: dict[str, list[UUID]] = {}
-    for row in result.fetchall():
+    for row in rows:
         by_project.setdefault(str(row[1]), []).append(UUID(str(row[0])))
     if not by_project:
         return {"entities": []}
@@ -872,26 +791,17 @@ async def _fetch_user_classifications(
     if user_id is None:
         return {"classifications": {"top_intents": [], "top_emotions": []}}
 
-    from sqlalchemy import text  # noqa: PLC0415 — lazy import
+    from repositories.prompt_context_repository import (  # noqa: PLC0415 — lazy import
+        PromptContextRepository,
+    )
 
-    result = await db.execute(
-        text("""
-            SELECT intent, emotion, COUNT(*) as cnt
-            FROM dialog_classifications dc
-            JOIN episodes e ON dc.episode_id = e.id
-            JOIN sessions s ON e.session_id = s.id
-            JOIN projects p ON s.project_id = p.id
-            WHERE s.user_id = :user_id AND s.organization_id = :org_id
-              AND p.is_archived = false
-            GROUP BY intent, emotion
-            ORDER BY cnt DESC
-            LIMIT 5
-        """),
-        {"user_id": user_id, "org_id": org_id},
+    repo = PromptContextRepository(db)
+    rows = await repo.list_user_classifications(
+        user_id=user_id, org_id=org_id, limit=5
     )
     top_intents: list[str] = []
     top_emotions: list[str] = []
-    for r in result.fetchall():
+    for r in rows:
         if r[0]:
             top_intents.append(r[0])
         if r[1]:
