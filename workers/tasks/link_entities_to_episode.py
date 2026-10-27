@@ -14,6 +14,7 @@ links, eliminating the need for a separate graph database.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -22,6 +23,7 @@ import structlog
 from core.exceptions import (
     EpisodeNotFoundError,
     GraphBackendUnavailableError,
+    ValidationError,
 )
 from core.rls import release_tenant_context
 from workers.backend import resolve_graph_backend
@@ -37,8 +39,19 @@ if TYPE_CHECKING:
 logger = structlog.get_logger()
 
 
+def _is_retryable(exc: Exception) -> bool:
+    """Retry everything except permanent input errors.
+
+    A missing episode or an invalid payload will fail identically on
+    every attempt — retrying burns ``@with_retry`` attempts without
+    healing.  They fail fast; everything else (timeouts, pool pressure,
+    transient graph errors) is retried.
+    """
+    return not isinstance(exc, (EpisodeNotFoundError, ValidationError))
+
+
 @with_task_metrics
-@with_retry(max_retries=3, base_delay_s=2.0)
+@with_retry(max_retries=3, base_delay_s=2.0, is_retryable=_is_retryable)
 async def link_entities_to_episode(
     ctx: object,
     episode_id: str,
@@ -153,14 +166,14 @@ async def link_entities_to_episode(
                 # Any other exception from the resolver also propagates — no
                 # silent swallow that would set the link bit with 0 links.
 
-                # Extract potential entity names from content (simple keyword split)
+                # Extract candidate tokens from content (simple keyword split)
                 # episode_id-only jobs carry no text — match against the row.
                 link_text = content if content is not None else episode.content
-                words = set(
+                tokens = {
                     w.strip().rstrip(".,!?:;")
                     for w in link_text.split()
-                    if len(w.strip()) > 2 and w.strip()[0].isupper()
-                )
+                    if len(w.strip()) > 2
+                }
 
                 if backend is None:
                     logger.info(
@@ -172,34 +185,85 @@ async def link_entities_to_episode(
                     # Episodes can be re-linked later when the graph is available.
                     linked = 0
                     words_matched = 0
-                    entities_found_per_word = []
-                else:
-                    # ── 3. Search for matching entities via graph backend ──────────
-
-                    words_matched = 0
                     entities_found_per_word: list[int] = []
+                    words: set[str] = set()
+                else:
+                    # ── 3. Match tokens against known entity names ──────────
+                    # Case-insensitive: a capitalized-first-letter heuristic
+                    # misses lowercase mentions and misfires on
+                    # sentence-initial words.  Only tokens matching a known
+                    # entity name (or one of its words) are searched.
+                    known_tokens: set[str] = set()
+                    try:
+                        cursor: str | None = None
+                        while True:
+                            entity_page = await backend.list_entities(
+                                org_id=UUID(org_id),
+                                project_id=UUID(project_id),
+                                limit=200,
+                                cursor=cursor,
+                            )
+                            for item in entity_page.get("items", []):
+                                name = (item.get("name") or "").strip()
+                                if name:
+                                    known_tokens.add(name.lower())
+                                    known_tokens.update(name.lower().split())
+                            cursor = entity_page.get("next_cursor")
+                            if not entity_page.get("has_more"):
+                                break
+                    except GraphBackendUnavailableError:
+                        logger.warning(
+                            "link_entities_to_episode.entity_list_failed",
+                            org_id=org_id,
+                            exc_info=True,
+                        )
+                        raise
+                    words = {t for t in tokens if t.lower() in known_tokens}
+
+                    # ── 4. Search for matching entities (bounded fan-out) ──
+                    # One bulk_search per word, capped in flight — a long
+                    # episode must not fan out unbounded graph queries.
+                    first_error: GraphBackendUnavailableError | None = None
+                    words_matched = 0
+                    entities_found_per_word = []
                     linked = 0
-                    for word in words:
-                        if not word:
-                            continue
-                        try:
-                            entities = await backend.bulk_search_entities(
+                    _search_semaphore = asyncio.Semaphore(8)
+
+                    async def _search_one(word: str) -> list[dict]:
+                        async with _search_semaphore:
+                            return await backend.bulk_search_entities(
                                 org_id=UUID(org_id),
                                 project_id=UUID(project_id),
                                 query=word,
                                 limit=5,
                             )
-                        except GraphBackendUnavailableError:
-                            logger.warning(
-                                "link_entities_to_episode.search_failed",
-                                word=word,
-                                exc_info=True,
-                            )
-                            continue
 
-                        if entities:
+                    search_results = await asyncio.gather(
+                        *(_search_one(word) for word in sorted(words)),
+                        return_exceptions=True,
+                    )
+                    matched: list[tuple[str, list[dict]]] = []
+                    for word, outcome in zip(
+                        sorted(words), search_results, strict=True
+                    ):
+                        if isinstance(outcome, BaseException):
+                            if isinstance(
+                                outcome, GraphBackendUnavailableError
+                            ):
+                                logger.warning(
+                                    "link_entities_to_episode.search_failed",
+                                    word=word,
+                                    exc_info=outcome,
+                                )
+                                if first_error is None:
+                                    first_error = outcome
+                                continue
+                            raise outcome
+                        if outcome:
                             words_matched += 1
-                            entities_found_per_word.append(len(entities))
+                            entities_found_per_word.append(len(outcome))
+                            matched.append((word, outcome))
+                    for _word, entities in matched:
                         for entity in entities:
                             try:
                                 await backend.link_entity_to_episode(
@@ -209,12 +273,19 @@ async def link_entities_to_episode(
                                     entity_id=UUID(entity["id"]),
                                 )
                                 linked += 1
-                            except GraphBackendUnavailableError:
+                            except GraphBackendUnavailableError as exc:
                                 logger.warning(
                                     "link_entities_to_episode.link_failed",
                                     entity_id=entity.get("id"),
                                     exc_info=True,
                                 )
+                                if first_error is None:
+                                    first_error = exc
+                    if first_error is not None:
+                        # Never set bit 3 on partial work — the retry
+                        # replays the missing links instead of marking
+                        # the episode linked with zero edges.
+                        raise first_error
 
                 # ── 5. Update enrichment_status bit 3 ───────────────────────────
                 episode_repo = EpisodeRepository(db)
@@ -233,11 +304,12 @@ async def link_entities_to_episode(
                             settings as w_settings,
                         )
 
-                        # No-TTL pending marker, keyed per (org, project).
+                        # 1h-TTL pending marker, keyed per (org, project).
                         # compute_observations deletes it when its full project
                         # scan runs; episodes ingested after that set a fresh
-                        # marker. The old 30s TTL was the bug: episodes ingested
-                        # inside the TTL window never re-triggered the scan.
+                        # marker.  No TTL would leak one key per project
+                        # forever in the 128MB noeviction Redis; 1h bounds
+                        # the leak if the deleter ever misses.
                         marker_key = f"observations:pending:{org_id}:{project_id}"
                         if not await arq_redis.get(marker_key):
                             await arq_redis.enqueue_job(
@@ -250,7 +322,7 @@ async def link_entities_to_episode(
                             )
                             # Set only after a successful enqueue — a stale marker
                             # after a failed enqueue would block future triggers.
-                            await arq_redis.set(marker_key, "1")
+                            await arq_redis.set(marker_key, "1", ex=3600)
                             logger.info(
                                 "link_entities_to_episode.scheduled_observations",
                                 episode_id=episode_id,

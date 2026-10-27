@@ -182,13 +182,19 @@ class RlsAsyncSession(AsyncSession):
 
         Raises:
             SQLAlchemyError: If the context could not be re-applied.  The
-                failure propagates — a session that lost its tenant must
-                not continue against an unknown one.
+                failure is logged loudly and propagates — a session that
+                lost its tenant must not continue against an unknown one.
         """
         ctx = self.rls_context
         if ctx.is_empty:
             return
-        await self.execute(_APPLY_CONTEXT_SQL, ctx.as_params())
+        try:
+            await self.execute(_APPLY_CONTEXT_SQL, ctx.as_params())
+        except SQLAlchemyError:
+            # Fail loud: a session that lost its tenant must never
+            # continue against an unknown one.
+            logger.error("rls.context_rebind_failed", exc_info=True)
+            raise
 
 
 def _remembered_context(db: AsyncSession) -> RlsContext:
@@ -340,8 +346,14 @@ async def rls_bypass(db: AsyncSession) -> AsyncIterator[None]:
         try:
             await db.execute(text("SELECT set_config('app.bypass_rls', 'false', true)"))
         except SQLAlchemyError:
-            # The block aborted the transaction (or the connection died), so
-            # the reset cannot run.  A transaction-local SET is discarded by
-            # the rollback that follows, so the bypass is gone either way —
-            # log loudly rather than mask the original error.
-            logger.error("rls.bypass_reset_skipped", exc_info=True)
+            # The reset failed — the transaction is almost certainly
+            # aborted (or the connection died).  Roll back so the
+            # transaction-local bypass dies with the transaction instead
+            # of lingering on a still-open one.  A dead connection is
+            # discarded by the pool, so the bypass cannot leak that way
+            # either — log loudly either way, never mask the original.
+            logger.error("rls.bypass_reset_failed", exc_info=True)
+            try:
+                await db.rollback()
+            except SQLAlchemyError:
+                logger.error("rls.bypass_reset_rollback_failed", exc_info=True)

@@ -45,7 +45,9 @@ space. After changing :data:`CANONICAL_EMBED_MODEL`, run
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import random
 import time
 
 import httpx
@@ -78,7 +80,18 @@ OLLAMA_KEEP_ALIVE: str = "24h"
 F16 weights resident so steady-state inference never pays a reload."""
 
 EMBED_TIMEOUT_S: float = 30.0
-"""Per-request timeout for ``/api/embed`` (10–30s budget)."""
+"""Per-request read/write budget for ``/api/embed`` (10–30s budget)."""
+
+EMBED_CONNECT_TIMEOUT_S: float = 5.0
+"""TCP+TLS connect budget — a hung connect must fail fast, not eat the 30s."""
+
+EMBED_MAX_INFLIGHT: int = 8
+"""Per-process cap on concurrent ``/api/embed`` calls (Ollama serialises
+batches on one GPU; unbounded fan-out from N worker tasks just queues
+inside Ollama while holding event-loop slots here)."""
+
+_EMBED_SEMAPHORE: asyncio.Semaphore = asyncio.Semaphore(EMBED_MAX_INFLIGHT)
+"""Bounds concurrent embed calls per process — see :data:`EMBED_MAX_INFLIGHT`."""
 
 _DEFAULT_BASE_URL: str = "http://ollama:11434"
 """Compose-DNS default for the Ollama server. Overridden by the
@@ -226,6 +239,41 @@ async def prewarm_embeddings() -> None:
     await embed_query(["ready"])
 
 
+async def prewarm_with_retry(max_attempts: int = 3, base_delay_s: float = 1.0) -> None:
+    """Prewarm with jittered retry — absorbs slow Ollama cold starts.
+
+    Only the elected leader calls this at boot (see worker leader lock);
+    followers skip prewarm entirely so N replicas don't stampede one
+    cold Ollama.  Retries cover the cold-start window (model load after
+    an Ollama restart); a still-dead Ollama after ``max_attempts`` raises
+    loud — same fail-fast contract as :func:`prewarm_embeddings`.
+
+    Args:
+        max_attempts: Total prewarm attempts before giving up.
+        base_delay_s: Base backoff between attempts, plus ±50% jitter.
+
+    Raises:
+        Exception: The last attempt's error, unmodified.
+    """
+    last_exc: Exception | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            await prewarm_embeddings()
+            return
+        except Exception as exc:
+            last_exc = exc
+            if attempt == max_attempts:
+                break
+            delay = base_delay_s * attempt * random.uniform(0.5, 1.5)  # noqa: S311 — backoff jitter, not cryptographic
+            logger.warning(
+                "embeddings.prewarm_retry",
+                extra={"attempt": attempt, "delay_s": round(delay, 2)},
+            )
+            await asyncio.sleep(delay)
+    assert last_exc is not None
+    raise last_exc
+
+
 # ── Internal helpers ───────────────────────────────────────────────────
 
 
@@ -253,14 +301,23 @@ def _get_client() -> httpx.AsyncClient:
     """Return the shared client, creating it lazily on first use.
 
     Creation is synchronous and loop-free, so this is safe to call from
-    any coroutine without lifespan wiring.
+    any coroutine without lifespan wiring.  Connect and read/write get
+    separate budgets: a hung TCP connect fails in 5s instead of eating
+    the 30s inference budget.
 
     Returns:
         The module-level shared ``httpx.AsyncClient``.
     """
     global _CLIENT  # noqa: PLW0603 — intentional module-level cache
     if _CLIENT is None:
-        _CLIENT = httpx.AsyncClient(timeout=EMBED_TIMEOUT_S)
+        _CLIENT = httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=EMBED_CONNECT_TIMEOUT_S,
+                read=EMBED_TIMEOUT_S,
+                write=EMBED_TIMEOUT_S,
+                pool=EMBED_CONNECT_TIMEOUT_S,
+            )
+        )
     return _CLIENT
 
 
@@ -294,9 +351,10 @@ async def _check_reachable() -> None:
 async def _post_embed(texts: list[str], *, source: str) -> list[list[float]]:
     """POST one prefixed batch to Ollama ``/api/embed`` and normalise.
 
-    Runs fully on-loop — a single ``httpx`` POST needs no executor, and
-    the numpy normalisation below is trivial. Exactly one retry on
-    transient transport errors, then fail loud; HTTP error statuses fail
+    Runs fully on-loop — one ``httpx`` POST needs no executor, and
+    concurrency is bounded by the per-process semaphore (not the loop).
+    Exactly one retry on transient transport errors AND on retryable
+    statuses (429/5xx) with backoff; anything else fails loud
     immediately with the status and body snippet logged.
 
     Args:
@@ -329,49 +387,68 @@ async def _post_embed(texts: list[str], *, source: str) -> list[list[float]]:
     }
     started = time.perf_counter()
     data: dict = {}
-    for attempt in (1, 2):
-        try:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            break
-        except httpx.HTTPStatusError as exc:
-            duration_ms = round((time.perf_counter() - started) * 1000, 1)
-            logger.error(
-                "embeddings.inference_failed",
-                extra={
-                    "source": source,
-                    "model": CANONICAL_EMBED_MODEL,
-                    "status_code": exc.response.status_code,
-                    "detail": exc.response.text[:500],
-                    "duration_ms": duration_ms,
-                },
-                exc_info=True,
-            )
-            raise
-        except httpx.TransportError as exc:
-            if attempt == 2:
+    async with _EMBED_SEMAPHORE:
+        for attempt in (1, 2):
+            try:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                break
+            except httpx.HTTPStatusError as exc:
+                status = exc.response.status_code
+                retryable = status == 429 or status >= 500
+                if retryable and attempt == 1:
+                    # Ollama 429/5xx under load or mid-reload — back off
+                    # once instead of failing a whole batch loud.
+                    delay = 0.5 * random.uniform(0.5, 1.5)  # noqa: S311 — backoff jitter, not cryptographic
+                    logger.warning(
+                        "embeddings.inference_retry_status",
+                        extra={
+                            "source": source,
+                            "model": CANONICAL_EMBED_MODEL,
+                            "status_code": status,
+                            "attempt": attempt,
+                            "delay_s": round(delay, 2),
+                        },
+                    )
+                    await asyncio.sleep(delay)
+                    continue
                 duration_ms = round((time.perf_counter() - started) * 1000, 1)
                 logger.error(
                     "embeddings.inference_failed",
                     extra={
                         "source": source,
                         "model": CANONICAL_EMBED_MODEL,
-                        "error": str(exc),
+                        "status_code": status,
+                        "detail": exc.response.text[:500],
                         "duration_ms": duration_ms,
                     },
                     exc_info=True,
                 )
                 raise
-            logger.warning(
-                "embeddings.inference_retry",
-                extra={
-                    "source": source,
-                    "model": CANONICAL_EMBED_MODEL,
-                    "attempt": attempt,
-                    "error": str(exc),
-                },
-            )
+            except httpx.TransportError as exc:
+                if attempt == 2:
+                    duration_ms = round((time.perf_counter() - started) * 1000, 1)
+                    logger.error(
+                        "embeddings.inference_failed",
+                        extra={
+                            "source": source,
+                            "model": CANONICAL_EMBED_MODEL,
+                            "error": str(exc),
+                            "duration_ms": duration_ms,
+                        },
+                        exc_info=True,
+                    )
+                    raise
+                logger.warning(
+                    "embeddings.inference_retry",
+                    extra={
+                        "source": source,
+                        "model": CANONICAL_EMBED_MODEL,
+                        "attempt": attempt,
+                        "error": str(exc),
+                    },
+                )
     duration_ms = round((time.perf_counter() - started) * 1000, 1)
     logger.info(
         "embeddings.inference_completed",

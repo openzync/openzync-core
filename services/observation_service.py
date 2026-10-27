@@ -60,7 +60,6 @@ from typing import Any
 from uuid import UUID
 
 import structlog
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import ExternalServiceError, GraphBackendUnavailableError
@@ -916,30 +915,13 @@ class ObservationService:
                 "entity name resolution."
             )
 
-        # Query facts directly (PostgreSQL-native table — not a graph table)
-        result = await self._db.execute(
-            text("""
-                SELECT
-                    f.subject_entity_id AS entity_id,
-                    f.predicate,
-                    COUNT(*) AS predicate_count,
-                    COUNT(*) OVER (PARTITION BY f.subject_entity_id) AS total_facts
-                FROM facts f
-                WHERE f.project_id = :project_id
-                  AND f.subject_entity_id IS NOT NULL
-                  AND (f.invalid_at IS NULL OR f.invalid_at > :effective_at)
-                  AND (f.valid_from IS NULL OR f.valid_from <= :effective_at)
-                  AND (f.valid_to IS NULL OR f.valid_to > :effective_at)
-                GROUP BY f.subject_entity_id, f.predicate
-                HAVING COUNT(*) >= 2
-                ORDER BY entity_id, predicate_count DESC
-            """),
-            {
-                "project_id": project_id,
-                "effective_at": datetime.now(UTC),
-            },
+        # Facts live in PostgreSQL — queried via the repository layer
+        # (services contain zero SQLAlchemy/text()).
+        from repositories.fact_repository import FactRepository  # noqa: PLC0415
+
+        rows = await FactRepository(self._db).get_fact_predicate_counts(
+            project_id, organization_id, datetime.now(UTC)
         )
-        rows = result.mappings().all()
 
         if not rows:
             return []

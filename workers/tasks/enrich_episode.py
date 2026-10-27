@@ -19,7 +19,11 @@ from typing import TYPE_CHECKING, cast
 import structlog
 from sqlalchemy import select
 
-from core.exceptions import EpisodeNotFoundError, GraphBackendUnavailableError
+from core.exceptions import (
+    EpisodeNotFoundError,
+    GraphBackendUnavailableError,
+    ValidationError,
+)
 from services.worker.prompt_renderer import build_enrichment_prompt, render_prompt
 from workers.tasks.base import (
     ENRICHMENT_CLASSIFICATION,
@@ -50,6 +54,17 @@ class PartialEnrichmentError(Exception):
     def __init__(self, message: str, successful_bits: int = 0) -> None:
         self.successful_bits = successful_bits
         super().__init__(message)
+
+
+def _is_retryable(exc: Exception) -> bool:
+    """Retry everything except permanent input errors.
+
+    A missing episode or an invalid payload will fail identically on
+    every attempt — retrying burns ``@with_retry`` attempts without
+    healing.  They fail fast; everything else (timeouts, pool pressure,
+    transient LLM errors) is retried.
+    """
+    return not isinstance(exc, (EpisodeNotFoundError, ValidationError))
 
 
 async def _resolve_existing_fact_refs(
@@ -97,7 +112,7 @@ async def _resolve_existing_fact_refs(
 
 
 @with_task_metrics
-@with_retry(max_retries=3, base_delay_s=2.0)
+@with_retry(max_retries=3, base_delay_s=2.0, is_retryable=_is_retryable)
 async def enrich_episode(
     ctx: object,
     episode_id: str,
@@ -350,10 +365,14 @@ async def enrich_episode(
                         )
                 llm_config_dict = org_cfg.to_llm_config_dict()
             except Exception:
-                log.warning(
+                # No silent default fallback: enriching under the wrong
+                # model/policy silently misroutes cost attribution and
+                # quality.  Fail loud so ARQ retries with the real config.
+                log.error(
                     "enrich_episode.org_config_fetch_failed",
                     exc_info=True,
                 )
+                raise
 
             # ── 5. Single LLM call ──────────────────────────────────────
             log.info("enrich_episode.llm_call_start")

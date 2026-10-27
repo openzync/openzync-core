@@ -17,7 +17,7 @@ Architecture:
 Idempotency:
     Two layers:
     1. Per-episode bit 6 check (inside this worker).
-    2. Per-project no-TTL pending marker
+    2. Per-project pending marker with a 1h TTL
        (``observations:pending:{org_id}:{project_id}``), set by
        ``link_entities_to_episode`` on enqueue and deleted by this worker at
        the start of each run — one full-scan run clears the need.
@@ -27,14 +27,25 @@ from __future__ import annotations
 
 import structlog
 
-from core.exceptions import EpisodeNotFoundError
+from core.exceptions import EpisodeNotFoundError, ValidationError
 from workers.tasks.base import ENRICHMENT_OBSERVATIONS, with_retry, with_task_metrics
 
 logger = structlog.get_logger()
 
 
+def _is_retryable(exc: Exception) -> bool:
+    """Retry everything except permanent input errors.
+
+    A missing episode or an invalid payload will fail identically on
+    every attempt — retrying burns ``@with_retry`` attempts without
+    healing.  They fail fast; everything else (timeouts, pool pressure,
+    transient graph errors) is retried.
+    """
+    return not isinstance(exc, (EpisodeNotFoundError, ValidationError))
+
+
 @with_task_metrics
-@with_retry(max_retries=3, base_delay_s=2.0)
+@with_retry(max_retries=3, base_delay_s=2.0, is_retryable=_is_retryable)
 async def compute_observations(
     ctx: object,
     episode_id: str,

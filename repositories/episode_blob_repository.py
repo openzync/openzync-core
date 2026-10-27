@@ -209,8 +209,11 @@ class EpisodeBlobRepository:
         """Get blobs for a project, one page at a time.
 
         Paged so a memory wipe never materializes the whole blob set —
-        callers loop until an empty page.  Deleting each page before
-        fetching the next keeps ``offset`` at 0 in practice.
+        callers loop until an empty page.  Rows are never deleted by the
+        sweep itself (orphan-blob GC owns row deletion), so ``offset``
+        paging over this stable set cannot skip — provided the order is
+        deterministic, hence the ``(created_at, id)`` tiebreak: equal
+        timestamps would otherwise let LIMIT/OFFSET skip or repeat rows.
 
         Args:
             project_id: The project UUID.
@@ -223,7 +226,7 @@ class EpisodeBlobRepository:
         result = await self._db.execute(
             select(EpisodeBlob)
             .where(EpisodeBlob.project_id == project_id)
-            .order_by(EpisodeBlob.created_at)
+            .order_by(EpisodeBlob.created_at, EpisodeBlob.id)
             .limit(limit)
             .offset(offset)
         )

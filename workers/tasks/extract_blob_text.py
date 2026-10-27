@@ -47,6 +47,9 @@ logger = structlog.get_logger(__name__)
 
 # ── MIME type routing ────────────────────────────────────────────────────────
 
+_GENERIC_MIMES = frozenset({"application/octet-stream", "binary/octet-stream"})
+"""Claimed types carrying no signal — libmagic detection is authoritative."""
+
 
 def _extract_pdf(data: bytes) -> str | None:
     """Extract text from a PDF using PyMuPDF (fitz).

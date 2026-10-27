@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import structlog
 
-from core.exceptions import EpisodeNotFoundError
+from core.exceptions import EpisodeNotFoundError, ValidationError
 from core.rls import release_tenant_context
 from workers.tasks.base import (
     ENRICHMENT_EMBEDDING,
@@ -23,8 +23,19 @@ from workers.tasks.base import (
 logger = structlog.get_logger()
 
 
+def _is_retryable(exc: Exception) -> bool:
+    """Retry everything except permanent input errors.
+
+    A missing episode or an invalid payload will fail identically on
+    every attempt — retrying burns ``@with_retry`` attempts without
+    healing.  They fail fast; everything else (timeouts, pool pressure,
+    transient embedder errors) is retried.
+    """
+    return not isinstance(exc, (EpisodeNotFoundError, ValidationError))
+
+
 @with_task_metrics
-@with_retry(max_retries=3, base_delay_s=2.0)
+@with_retry(max_retries=3, base_delay_s=2.0, is_retryable=_is_retryable)
 async def embed_episode(
     ctx: object,
     episode_id: str,
@@ -97,74 +108,71 @@ async def embed_episode(
     if session_factory is None:
         session_factory = get_async_session(engine)
 
-    # ── 2a. Idempotency check — skip if embedding bit already set ────────────
-    async with session_factory() as idempotency_db:
-        try:
-            # Bind the session to the tenant before the first org-scoped
-            # query — under enforced RLS an unbound session sees no rows.
-            await rls.set_tenant_context(idempotency_db, org_id)
-            episode_repo = EpisodeRepository(idempotency_db)
-            episode = await episode_repo.get_by_id(uuid.UUID(episode_id))
-            if episode is None:
-                logger.warning(
-                    "embed_episode.episode_not_found",
-                    episode_id=episode_id,
-                )
-                raise EpisodeNotFoundError(
-                    message=f"Episode {episode_id} not found for embedding.",
-                    detail={"episode_id": episode_id},
-                )
-            # episode_id-only jobs carry no text — load it from the row.
-            episode_text = content if content is not None else episode.content
-            if episode.enrichment_status & ENRICHMENT_EMBEDDING:
-                logger.debug(
-                    "embed_episode.skipped_already_done",
-                    episode_id=episode_id,
-                    enrichment_status=episode.enrichment_status,
-                )
-                return
-
-            # Archived-project guard: pause-and-resume. Fail-closed (missing
-            # row counts as archived). Early return sets no bits, so
-            # un-archiving resumes via reconcile or retry.
-            if await ProjectRepository(idempotency_db).is_archived(
-                uuid.UUID(org_id), uuid.UUID(project_id)
-            ):
-                logger.info(
-                    "embed_episode.project_archived_skipping",
-                    episode_id=episode_id,
-                    org_id=org_id,
-                    project_id=project_id,
-                )
-                return
-        finally:
-            # Reset before the session closes — the context is session-scoped
-            # and would otherwise stay on the pooled connection.
-            await release_tenant_context(idempotency_db)
-
-    # ── 3. Generate embedding ────────────────────────────────────────────
-    try:
-        embedding = (await embed_passage([episode_text]))[0]
-    except Exception as e:
-        logger.error(
-            "embed_episode.embedding_failed",
-            episode_id=episode_id,
-            error=str(e),
-        )
-        raise
-
-    # ── 4. Store in pgvector and update enrichment_status ─────────────────
-    # The pgvector asyncpg codec IS registered via ``init_db_engine``, so
-    # the vector goes in as native ``list[float]`` — the codec encodes it
-    # and the static ``::vector(768)`` cast only asserts the dimension.
-    # Passing a ``str`` literal here breaks decoding (asyncpg DataError).
-    # ``embed_passage`` already validated the width — the cast cannot
-    # silently reshape.
-
+    # ── 2. Single-session SELECT FOR UPDATE check-then-write ───────────────
+    # One session holds the row lock from the idempotency/archived checks
+    # through the embedding UPDATE, so two concurrent embeds of the same
+    # episode cannot interleave (double embed + lost bit).  The lock is
+    # row-level — only same-episode workers serialize behind it.
     try:
         async with session_factory() as db:
             try:
+                # Bind the session to the tenant before the first org-scoped
+                # query — under enforced RLS an unbound session sees no rows.
                 await rls.set_tenant_context(db, org_id)
+                episode_repo = EpisodeRepository(db)
+                episode = await episode_repo.get_by_id_for_update(uuid.UUID(episode_id))
+                if episode is None:
+                    logger.warning(
+                        "embed_episode.episode_not_found",
+                        episode_id=episode_id,
+                    )
+                    raise EpisodeNotFoundError(
+                        message=f"Episode {episode_id} not found for embedding.",
+                        detail={"episode_id": episode_id},
+                    )
+                # episode_id-only jobs carry no text — load it from the row.
+                episode_text = content if content is not None else episode.content
+                if episode.enrichment_status & ENRICHMENT_EMBEDDING:
+                    logger.debug(
+                        "embed_episode.skipped_already_done",
+                        episode_id=episode_id,
+                        enrichment_status=episode.enrichment_status,
+                    )
+                    return
+
+                # Archived-project guard: pause-and-resume. Fail-closed (missing
+                # row counts as archived). Early return sets no bits, so
+                # un-archiving resumes via reconcile or retry.
+                if await ProjectRepository(db).is_archived(
+                    uuid.UUID(org_id), uuid.UUID(project_id)
+                ):
+                    logger.info(
+                        "embed_episode.project_archived_skipping",
+                        episode_id=episode_id,
+                        org_id=org_id,
+                        project_id=project_id,
+                    )
+                    return
+
+                # ── 3. Generate embedding ────────────────────────────────
+                try:
+                    embedding = (await embed_passage([episode_text]))[0]
+                except Exception as e:
+                    logger.error(
+                        "embed_episode.embedding_failed",
+                        episode_id=episode_id,
+                        error=str(e),
+                    )
+                    raise
+
+                # ── 4. Store in pgvector and update enrichment_status ────
+                # The pgvector asyncpg codec IS registered via
+                # ``init_db_engine``, so the vector goes in as native
+                # ``list[float]`` — the codec encodes it and the static
+                # ``::vector(768)`` cast only asserts the dimension.
+                # Passing a ``str`` literal here breaks decoding (asyncpg DataError).
+                # ``embed_passage`` already validated the width — the cast cannot
+                # silently reshape.
                 await db.execute(
                     text(
                         "UPDATE episodes SET embedding = "  # noqa: S608
@@ -176,12 +184,13 @@ async def embed_episode(
                     {"embedding": embedding, "id": episode_id},
                 )
                 # Set bit 1 on enrichment_status to mark completion.
-                episode_repo = EpisodeRepository(db)
                 await episode_repo.apply_enrichment_bits(
                     uuid.UUID(episode_id), ENRICHMENT_EMBEDDING
                 )
                 await db.commit()
             finally:
+                # Reset before the session closes — the context is session-scoped
+                # and would otherwise stay on the pooled connection.
                 await release_tenant_context(db)
 
         logger.info(

@@ -48,10 +48,10 @@ api:
   #   replicas x (pool_size + max_overflow) < max_connections
   #
   # With api.maxReplicas=10, worker.maxReplicas=5 and the pool defaults
-  # below (5 + 1):  15 x 6 = 90 connections — inside the Postgres default
+  # below (4 + 1):  15 x 5 = 75 connections — inside the Postgres default
   # of 100.  Raising the pool size or the replica counts means raising
-  # max_connections on the database first, or the database runs out of
-  # connections and requests queue.
+  # max_connections on the database first (e.g. to 200), or the database
+  # runs out of connections and requests queue.
   ingress:
     enabled: false
     host: api.openzync.tech
@@ -153,7 +153,7 @@ config:
   # ── DB connection pool ──────────────────────────────────────────────────
   # See the budget note next to api.autoscaling above:
   #   replicas x (dbPoolSize + dbMaxOverflow) < max_connections
-  dbPoolSize: 5
+  dbPoolSize: 4
   dbMaxOverflow: 1
 
   # ── Reverse proxy ───────────────────────────────────────────────────────

@@ -89,7 +89,7 @@
 #                              secret while unset, so the gate stays off)
 #   OZ_RATE_LIMIT_IP_MAX=10
 #   OZ_RATE_LIMIT_WINDOW_SEC=60
-#   OZ_DB_POOL_SIZE=5
+#   OZ_DB_POOL_SIZE=4
 #   OZ_DB_MAX_OVERFLOW=1
 #   OZ_TRUSTED_PROXY_IPS=172.28.0.0/24  (the compose network subnet)
 #
@@ -187,8 +187,8 @@ services:
       OZ_RATE_LIMIT_WINDOW_SEC: "${OZ_RATE_LIMIT_WINDOW_SEC:-60}"
       # DB pool budget — replicas x (pool_size + max_overflow) must stay
       # below Postgres max_connections (100 by default).  The compose stack
-      # runs one api + one worker, so 5 + 1 per process is far inside it.
-      OZ_DB_POOL_SIZE: "${OZ_DB_POOL_SIZE:-5}"
+      # runs one api + one worker, so 4 + 1 per process is far inside it.
+      OZ_DB_POOL_SIZE: "${OZ_DB_POOL_SIZE:-4}"
       OZ_DB_MAX_OVERFLOW: "${OZ_DB_MAX_OVERFLOW:-1}"
       # Peers allowed to set X-Forwarded-For.  Defaults to the compose
       # network subnet (see the `networks` block) because the api sits
@@ -480,6 +480,12 @@ services:
     # (not allkeys-lru): DB 0 is shared between cache keys AND ARQ job +
     # dedup keys, so LRU eviction would silently drop queued/dedup state.
     # Capped writes fail loudly instead; size cache keys with TTLs.
+    # ⚠️ noeviction risk: when maxmemory is hit, EVERY write (including
+    # ARQ enqueues) errors until keys expire — watch `redis_memory_used`
+    # and the OpenZyncQueueBacklog alert, and grow maxmemory before
+    # raising result TTLs or dropping key TTLs.  A memory-usage alert
+    # (e.g. used_memory > 100MB sustained) belongs next to the queue
+    # alerts in infra/prometheus/alerts.yml.
     # Persistence: redis-data still holds RDB snapshots in /data; appendonly
     # coexists with RDB (no conflict), so AOF is on for job durability.
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]

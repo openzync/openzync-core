@@ -36,6 +36,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
 from core.config import PLATFORM_ORG_ID, get_settings
@@ -135,12 +136,29 @@ async def ensure_platform_root(
         is_active=True,
     )
     try:
-        db.add(org)
-        await db.flush()
+        # ON CONFLICT DO NOTHING — N API/worker replicas boot at once and
+        # race this insert; the losers no-op instead of raising, so no
+        # replica needs the Redis leader lock to seed safely.  (The
+        # IntegrityError backstop below stays for exotic races, e.g. a
+        # deferred constraint the DB reports without a conflict target.)
+        await db.execute(
+            pg_insert(Organization)
+            .values(
+                id=org.id,
+                name=org.name,
+                plan=org.plan,
+                status=org.status,
+                join_enabled=org.join_enabled,
+                org_code=org.org_code,
+                is_active=org.is_active,
+            )
+            .on_conflict_do_nothing()
+        )
 
         # Root user — email 'root' is not an address, so email verification
         # is meaningless here; the credential is the password + must-change
-        # gate.
+        # gate.  Same DO NOTHING: a crashed first boot may have committed
+        # the org row but died before the root row.
         await _create_root_user(db, password)
         await db.commit()
     except IntegrityError as err:
@@ -169,40 +187,40 @@ async def ensure_platform_root(
     _log_root_credential_state(password)
 
 
-async def _create_root_user(db: AsyncSession, password: str) -> User:  # noqa: F821
+async def _create_root_user(db: AsyncSession, password: str) -> None:  # noqa: F821
     """Insert the platform root superadmin (RLS-bypass), uncommitted.
 
     Shared by the fresh-seed and the reconcile-missing-root paths so the
-    root row is created identically in both.
+    root row is created identically in both.  ON CONFLICT DO NOTHING —
+    a retry after a crashed first boot no-ops instead of 500ing.
 
     Args:
         db: The seed session.
         password: The OZ_ROOT_PASSWORD credential to hash.
-
-    Returns:
-        The newly created (flushed, uncommitted) root User.
     """
     await db.execute(text("SELECT set_config('app.bypass_rls', 'true', true)"))
     await db.execute(
         text("SELECT set_config('app.org_id', :org_id, true)"),
         {"org_id": str(PLATFORM_ORG_ID)},
     )
-    root = User(
-        organization_id=PLATFORM_ORG_ID,
-        external_id=_ROOT_EXTERNAL_ID,
-        email="root",
-        name="Platform Root",
-        role="superadmin",
-        permissions=[],  # superadmin = wildcard via role
-        password_hash=hash_password(password),
-        is_email_verified=True,
-        must_change_password=True,
-        is_active=True,
-        metadata_={},
+    await db.execute(
+        pg_insert(User)
+        .values(
+            organization_id=PLATFORM_ORG_ID,
+            external_id=_ROOT_EXTERNAL_ID,
+            email="root",
+            name="Platform Root",
+            role="superadmin",
+            permissions=[],  # superadmin = wildcard via role
+            password_hash=hash_password(password),
+            is_email_verified=True,
+            must_change_password=True,
+            is_active=True,
+            metadata_={},
+        )
+        .on_conflict_do_nothing()
     )
-    db.add(root)
     await db.flush()
-    return root
 
 
 def _log_root_credential_state(password: str) -> None:

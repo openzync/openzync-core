@@ -32,6 +32,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import secrets
 import uuid
 from typing import Any
 
@@ -145,14 +146,14 @@ class Settings(BaseModel):
         description="PostgreSQL connection string used by SQLAlchemy async engine.",
     )
     DB_POOL_SIZE: int = Field(
-        default=5,
+        default=4,
         ge=1,
         le=100,
         description=(
             "SQLAlchemy pool size per process.  Sizing rule: "
             "replicas x (pool_size + max_overflow) < Postgres max_connections.  "
-            "The default (5 + 1) keeps the Helm maximum (10 API + 5 worker "
-            "replicas) at 90 connections, under the Postgres default of 100."
+            "The default (4 + 1) keeps the Helm maximum (10 API + 5 worker "
+            "replicas) at 75 connections, inside the Postgres default of 100."
         ),
     )
     DB_MAX_OVERFLOW: int = Field(
@@ -260,14 +261,16 @@ class Settings(BaseModel):
     )
 
     # ── Platform root credential ───────────────────────────────────────────
-    # The seeded root user's initial password.  Default 'admin' is for the
-    # FIRST install only — the seed sets must_change_password=True so the
-    # root user is forced to set a real password at first login, and a loud
-    # ``security.root_default_credentials`` warning is logged whenever the
-    # default is in effect.  Set OZ_ROOT_PASSWORD in OpenBao system config
-    # (via SYSTEM_KEY_MAPPING) to override.  Never log the value itself.
+    # The seeded root user's initial password.  There is deliberately NO
+    # static default: an unset OZ_ROOT_PASSWORD in OpenBao yields a random
+    # one-time password (fail-closed — no install ever shares a known
+    # credential), and the seed forces ``must_change_password=True`` so the
+    # root user sets a real password at first login.  Set OZ_ROOT_PASSWORD
+    # in OpenBao system config (via SYSTEM_KEY_MAPPING) to choose the
+    # initial value explicitly.  Never log the value itself.
     OZ_ROOT_PASSWORD: str = Field(
-        default="admin",
+        default_factory=lambda: secrets.token_urlsafe(32),
+        min_length=16,
         description="Initial password for the seeded platform root user.",
     )
 
@@ -284,7 +287,11 @@ class Settings(BaseModel):
         default=20,
         ge=1,
         le=100,
-        description="Max connections in the FalkorDB connection pool.",
+        description=(
+            "Max connections in the FalkorDB connection pool.  THE single "
+            "canonical value — the worker and every per-request fallback "
+            "pool reuse this; never hardcode a pool size at a call site."
+        ),
     )
     FALKORDB_SOCKET_TIMEOUT: int = Field(
         default=30,
