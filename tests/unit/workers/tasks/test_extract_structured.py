@@ -81,13 +81,16 @@ class TestProcessStructuredOutput:
 
     @pytest.mark.asyncio
     async def test_process_missing_required_fields(self) -> None:
-        """Missing required fields → filled with defaults."""
+        """Missing required fields write zero rows with a warning."""
         db = AsyncMock()
         from workers.tasks.extract_structured import process_structured_output
 
-        with patch(
-            "workers.tasks.extract_structured._validate_against_schema",
-        ) as mock_validate:
+        with (
+            patch(
+                "workers.tasks.extract_structured._validate_against_schema",
+            ) as mock_validate,
+            patch("workers.tasks.extract_structured.logger") as mock_logger,
+        ):
             schema_id = str(uuid4())
             await process_structured_output(
                 db=db, org_id=_ORG_ID, episode_id=_EPISODE_ID,
@@ -105,10 +108,14 @@ class TestProcessStructuredOutput:
                     },
                 }],
             )
-            mock_validate.assert_called_once()
-            cleaned = mock_validate.call_args[0][0]
-            assert cleaned.get("required_field") == "unknown"
-            assert cleaned.get("present") == "value"
+            # Fabricating defaults ("unknown") is gone — the row is skipped.
+            mock_validate.assert_not_called()
+            db.execute.assert_not_called()
+            mock_logger.warning.assert_called_once()
+            assert (
+                mock_logger.warning.call_args.args[0]
+                == "structured_extraction.missing_required_fields"
+            )
 
     @pytest.mark.asyncio
     async def test_process_validation_failure(self) -> None:

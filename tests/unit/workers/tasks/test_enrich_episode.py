@@ -493,8 +493,11 @@ class TestEnrichEpisodeMissingCtx:
             # session factory — use configured mock_db so execute/begin_nested work
             mock_get_session.return_value = MagicMock(return_value=mock_db)
 
-            # Ctx without db_engine or db_session_factory
-            ctx: dict = {"redis": AsyncMock()}
+            # Ctx without db_engine or db_session_factory — but WITH an
+            # openbao_client (same shape as _make_ctx) so enrich_episode
+            # takes the direct OpenBao path instead of the real
+            # BootstrapSettings/OpenBaoClient fallback (live approle login).
+            ctx: dict = {"redis": AsyncMock(), "openbao_client": AsyncMock()}
 
             result = await enrich_episode(
                 ctx=ctx,
@@ -855,8 +858,8 @@ class TestEnrichEpisodeOrgConfig:
     """Behaviour when org config fetch fails."""
 
     @pytest.mark.asyncio
-    async def test_continues_without_llm_config(self) -> None:
-        """When org config fetch fails, LLM call proceeds with None config."""
+    async def test_fails_loud_without_llm_config(self) -> None:
+        """Org config fetch failure aborts loudly — no silent LLM fallback."""
         from workers.tasks.enrich_episode import enrich_episode
 
         mock_db = _mock_successful_db()
@@ -876,14 +879,8 @@ class TestEnrichEpisodeOrgConfig:
             mock_render.return_value = ("p", {"entity_types": [], "known_entities": [], "existing_facts": [], "schemas": []})
             mock_build.return_value = "prompt"
 
-            # Org config fetch raises
+            # Org config fetch raises → fail loud (no silent default).
             mock_org_config.side_effect = RuntimeError("OpenBao unavailable")
-
-            mock_llm = AsyncMock()
-            mock_response = MagicMock()
-            mock_response.validated_data = _make_combined_output()
-            mock_llm.chat.return_value = mock_response
-            mock_resolve_backend.return_value = mock_llm
 
             # process_entities_output must return a dict, not an AsyncMock
             mock_ent.return_value = {}
@@ -894,19 +891,20 @@ class TestEnrichEpisodeOrgConfig:
 
             ctx = _make_ctx(db=mock_db)
 
-            result = await enrich_episode(
-                ctx=ctx,
-                episode_id=_EPISODE_ID,
-                content=_CONTENT,
-                org_id=_ORG_ID,
-                project_id=_PROJECT_ID,
-                session_id=_SESSION_ID,
-                trace_id="trace-1",
-            )
+            with pytest.raises(RuntimeError, match="OpenBao unavailable"):
+                await enrich_episode(
+                    ctx=ctx,
+                    episode_id=_EPISODE_ID,
+                    content=_CONTENT,
+                    org_id=_ORG_ID,
+                    project_id=_PROJECT_ID,
+                    session_id=_SESSION_ID,
+                    trace_id="trace-1",
+                )
 
-            assert result is None
-            # LLM was still called (resolve_backend called with None config)
-            mock_resolve_backend.assert_called_once_with(org_config=None, sink=ANY)
+            # The LLM was never reached and nothing was committed.
+            mock_resolve_backend.assert_not_called()
+            mock_db.commit.assert_not_awaited()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
