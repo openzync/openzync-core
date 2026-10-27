@@ -83,7 +83,9 @@
 #   OZ_JWT_REFRESH_TOKEN_TTL_DAYS=7
 #   OZ_PROMETHEUS_URL=http://prometheus:9090
 #   OZ_FALKORDB_URL=redis://falkordb:6379  (required — FalkorDB is default graph)
-#   OZ_FALKORDB_MAX_CONNECTIONS=20
+#   OZ_FALKORDB_MAX_CONNECTIONS=10  (budget: 15 max Helm replicas x 10 = 150
+#   worst-case — Helm FalkorDB is external with no chart-managed maxclients,
+#   so the pool stays small instead of relying on the server default)
 #   OZ_FALKORDB_SOCKET_TIMEOUT=30
 #   OZ_SURREALDB_URL=          (empty default; key absent from the system
 #                              secret while unset, so the gate stays off)
@@ -177,7 +179,7 @@ services:
       OZ_SMTP_START_TLS: "${OZ_SMTP_START_TLS:-true}"
       OZ_PROMETHEUS_URL: "${OZ_PROMETHEUS_URL:-http://prometheus:9090}"
       OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-redis://falkordb:6379}"
-      OZ_FALKORDB_MAX_CONNECTIONS: "${OZ_FALKORDB_MAX_CONNECTIONS:-20}"
+      OZ_FALKORDB_MAX_CONNECTIONS: "${OZ_FALKORDB_MAX_CONNECTIONS:-10}"
       OZ_FALKORDB_SOCKET_TIMEOUT: "${OZ_FALKORDB_SOCKET_TIMEOUT:-30}"
       # SurrealDB system URL — empty by default so the key is skipped by
       # init_openbao.sh (see KEY_MAPPING) and the org-config gate stays off.
@@ -691,6 +693,9 @@ services:
     container_name: openzync-falkordb
     ports: ["127.0.0.1:6381:6379"]
     environment:
+      # No --maxclients override: the server default (Redis-family 10000)
+      # dwarfs the app-side budget (15 max Helm replicas x pool 10 = 150),
+      # so the pool — not the server — is the binding constraint.
       REDIS_ARGS: "--appendonly yes"
     volumes:
       - falkordb-data:/data

@@ -108,11 +108,11 @@ async def embed_episode(
     if session_factory is None:
         session_factory = get_async_session(engine)
 
-    # ── 2. Single-session SELECT FOR UPDATE check-then-write ───────────────
-    # One session holds the row lock from the idempotency/archived checks
-    # through the embedding UPDATE, so two concurrent embeds of the same
-    # episode cannot interleave (double embed + lost bit).  The lock is
-    # row-level — only same-episode workers serialize behind it.
+    # ── 2. Check (no lock) → embed → re-check under lock, then write ───
+    # The row lock is held only for the final re-check + UPDATE.  The
+    # ~30s Ollama call runs with no lock held, so concurrent same-episode
+    # workers never serialize behind network I/O — the second writer
+    # re-sees the bit set by the first and skips the UPDATE.
     try:
         async with session_factory() as db:
             try:
@@ -120,7 +120,7 @@ async def embed_episode(
                 # query — under enforced RLS an unbound session sees no rows.
                 await rls.set_tenant_context(db, org_id)
                 episode_repo = EpisodeRepository(db)
-                episode = await episode_repo.get_by_id_for_update(uuid.UUID(episode_id))
+                episode = await episode_repo.get_by_id(uuid.UUID(episode_id))
                 if episode is None:
                     logger.warning(
                         "embed_episode.episode_not_found",
@@ -130,7 +130,8 @@ async def embed_episode(
                         message=f"Episode {episode_id} not found for embedding.",
                         detail={"episode_id": episode_id},
                     )
-                # episode_id-only jobs carry no text — load it from the row.
+                # episode_id-only jobs carry no text — load it from the row
+                # now (lazy attributes cannot be touched after close).
                 episode_text = content if content is not None else episode.content
                 if episode.enrichment_status & ENRICHMENT_EMBEDDING:
                     logger.debug(
@@ -153,19 +154,66 @@ async def embed_episode(
                         project_id=project_id,
                     )
                     return
+            finally:
+                # Reset before the session closes — the context is session-scoped
+                # and would otherwise stay on the pooled connection.
+                await release_tenant_context(db)
 
-                # ── 3. Generate embedding ────────────────────────────────
-                try:
-                    embedding = (await embed_passage([episode_text]))[0]
-                except Exception as e:
-                    logger.error(
-                        "embed_episode.embedding_failed",
-                        episode_id=episode_id,
-                        error=str(e),
+        # ── 3. Generate embedding (no lock held) ─────────────────────
+        try:
+            embedding = (await embed_passage([episode_text]))[0]
+        except Exception as e:
+            logger.error(
+                "embed_episode.embedding_failed",
+                episode_id=episode_id,
+                error=str(e),
+            )
+            raise
+
+        # ── 4. Re-acquire row lock, recheck bit, then write ──────────
+        async with session_factory() as db:
+            try:
+                await rls.set_tenant_context(db, org_id)
+                episode_repo = EpisodeRepository(db)
+                # Acquire the row lock first — concurrent same-episode
+                # writers serialize here.  The bit is then rechecked on a
+                # fresh read: under READ COMMITTED the lock acquisition
+                # already waited for the winner's commit, so the re-read
+                # sees its bit and the loser skips the UPDATE instead of
+                # embedding twice.
+                locked = await episode_repo.get_by_id_for_update(
+                    uuid.UUID(episode_id)
+                )
+                if locked is None:
+                    raise EpisodeNotFoundError(
+                        message=f"Episode {episode_id} not found for embedding.",
+                        detail={"episode_id": episode_id},
                     )
-                    raise
+                episode = await episode_repo.get_by_id(uuid.UUID(episode_id))
+                if episode is None:
+                    raise EpisodeNotFoundError(
+                        message=f"Episode {episode_id} not found for embedding.",
+                        detail={"episode_id": episode_id},
+                    )
+                if episode.enrichment_status & ENRICHMENT_EMBEDDING:
+                    logger.debug(
+                        "embed_episode.skipped_already_done",
+                        episode_id=episode_id,
+                        enrichment_status=episode.enrichment_status,
+                    )
+                    return
+                if await ProjectRepository(db).is_archived(
+                    uuid.UUID(org_id), uuid.UUID(project_id)
+                ):
+                    logger.info(
+                        "embed_episode.project_archived_skipping",
+                        episode_id=episode_id,
+                        org_id=org_id,
+                        project_id=project_id,
+                    )
+                    return
 
-                # ── 4. Store in pgvector and update enrichment_status ────
+                # Store in pgvector and update enrichment_status.
                 # The pgvector asyncpg codec IS registered via
                 # ``init_db_engine``, so the vector goes in as native
                 # ``list[float]`` — the codec encodes it and the static
@@ -189,8 +237,6 @@ async def embed_episode(
                 )
                 await db.commit()
             finally:
-                # Reset before the session closes — the context is session-scoped
-                # and would otherwise stay on the pooled connection.
                 await release_tenant_context(db)
 
         logger.info(

@@ -1156,8 +1156,12 @@ class MemoryService:
         retry of the ingest (after a mid-fan-out crash) never
         double-enqueues work — workers themselves skip completed bits,
         but duplicate jobs would still waste LLM calls on re-entry.
-        The key is SET only after a successful enqueue and deleted when
-        the enqueue raises, so a failed enqueue never blocks its retry.
+        The key is claimed atomically (``SET key token NX EX``) BEFORE the
+        enqueue, so two concurrent same-episode ingests cannot double-enqueue
+        — only the replica that owns the claim proceeds. On enqueue failure
+        the key is released only if it still holds our token (Lua
+        compare-and-delete), so a failed enqueue never blocks its retry
+        while a concurrent winner's claim is never stolen.
 
         Workers load content/metadata from the episode row — only IDs
         (plus the small ``role``/``session_id`` routing hints) cross the
@@ -1183,7 +1187,10 @@ class MemoryService:
         )
         for task_name, qname, extra in tasks:
             dedup_key = f"memory:enqueued:{task_name}:{episode_id}"
-            if await self._redis.get(dedup_key):
+            claimed: bool = await self._redis.set(
+                dedup_key, job_id, ex=self._ENQUEUE_DEDUP_TTL_SEC, nx=True
+            )
+            if not claimed:
                 logger.info(
                     "memory.arq_task_already_enqueued",
                     extra={
@@ -1204,11 +1211,17 @@ class MemoryService:
                     **extra,
                 )
             except Exception:
-                # The key is only SET after a successful enqueue, but a
-                # concurrent attempt may have set it in the meantime —
-                # delete it so a retry is never blocked by a failed enqueue.
+                # Release only our own claim — a concurrent winner's key is
+                # never stolen, and without this a failed enqueue would block
+                # its retry until the TTL expires.
                 try:
-                    await self._redis.delete(dedup_key)
+                    await self._redis.eval(
+                        "if redis.call('GET', KEYS[1]) == ARGV[1] then "
+                        "return redis.call('DEL', KEYS[1]) else return 0 end",
+                        1,
+                        dedup_key,
+                        job_id,
+                    )
                 except Exception:
                     logger.exception(
                         "memory.enqueue_dedup_cleanup_failed",
@@ -1219,9 +1232,6 @@ class MemoryService:
                         },
                     )
                 raise
-            await self._redis.set(
-                dedup_key, job_id, ex=self._ENQUEUE_DEDUP_TTL_SEC
-            )
 
     async def _enqueue_arq_tasks(
         self,

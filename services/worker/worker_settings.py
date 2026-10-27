@@ -191,13 +191,13 @@ class WorkerSettings(BaseModel):
         ),
     )
     FALKORDB_MAX_CONNECTIONS: int = Field(
-        default=20,
+        default=10,
         ge=1,
         le=100,
         description=(
             "Max connections in the FalkorDB connection pool.  Must match "
             "core Settings (single canonical value — never hardcode a pool "
-            "size at a call site)."
+            "size at a call site; 15 max Helm replicas x 10 = 150 worst-case)."
         ),
     )
     FALKORDB_SOCKET_TIMEOUT: int = Field(

@@ -38,6 +38,7 @@ from arq.cron import CronJob, cron
 from arq.worker import Worker as ArqWorker
 from prometheus_client import Counter, Gauge, Histogram
 from prometheus_client import start_http_server as start_prometheus_server
+from redis.asyncio import Redis as AsyncRedis
 
 from core.config import BootstrapSettings, init_settings
 from core.openbao import OpenBaoClient
@@ -332,7 +333,9 @@ async def on_job_end(ctx: dict[str, Any]) -> None:
     function and this callback share the same ``ctx`` dict, so the
     ``task_type`` / ``org_id`` / ``trace_id`` / ``runtime`` / ``status``
     keys written by the :func:`with_task_metrics` decorator are visible
-    here.
+    here.  Failed results are re-expired to the short failure TTL —
+    ARQ keeps one TTL for both outcomes, so without this every failure
+    would sit in the 128MB noeviction Redis for the full success window.
 
     Args:
         ctx: ARQ worker context dict (includes ``task_type``, ``org_id``,
@@ -364,6 +367,21 @@ async def on_job_end(ctx: dict[str, Any]) -> None:
         status=status,
     ).inc()
 
+    # Short retention for failures — the success TTL (hours) would pin
+    # every failed payload in the shared 128MB noeviction Redis.
+    if status != "success" and job_id != "unknown":
+        redis = ctx.get("redis")
+        if redis is not None:
+            try:
+                from arq.constants import result_key_prefix  # noqa: PLC0415
+
+                await redis.expire(
+                    result_key_prefix + job_id,
+                    settings.JOB_KEEP_RESULT_FOR_FAILURE,
+                )
+            except Exception:
+                logger.warning("on_job_end.failure_ttl_not_applied", job_id=job_id)
+
 
 async def on_shutdown(_ctx: dict[str, Any]) -> None:
     """Log when the worker pool shuts down and clean up resources.
@@ -382,10 +400,20 @@ async def on_shutdown(_ctx: dict[str, Any]) -> None:
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-async def health_check(request: web.Request) -> web.Response:
-    """ARQ health check — verifies Redis connectivity.
+async def liveness_check(_request: web.Request) -> web.Response:
+    """Liveness probe — always 200 while the process serves HTTP.
 
-    Used by Kubernetes liveness / readiness probes and Docker HEALTHCHECK.
+    Dependency health is the job of ``/ready``.
+    """
+    return web.json_response({"status": "ok"})
+
+
+async def health_check(request: web.Request) -> web.Response:
+    """Readiness probe — Redis + PostgreSQL + Ollama must all answer.
+
+    Used by Kubernetes readiness probes and Docker HEALTHCHECK.  A Redis
+    PING alone is not readiness: a worker that can't reach Postgres or
+    Ollama would still take jobs it can only fail.
 
     The pool is read live from the worker (``app["high_worker"].pool``) —
     never snapshotted at startup, because ARQ only assigns ``worker.pool``
@@ -394,8 +422,8 @@ async def health_check(request: web.Request) -> web.Response:
     reflects Redis reachability instead of startup ordering.
 
     Returns:
-        HTTP 200 with ``{"status": "ok", "redis_connected": true}``
-        HTTP 503 if Redis is unreachable.
+        HTTP 200 with ``{"status": "ok", "checks": {...}}``
+        HTTP 503 with per-check booleans when anything is unreachable.
     """
     pool: ArqRedis | None = None
     worker = request.app.get("high_worker")
@@ -403,23 +431,60 @@ async def health_check(request: web.Request) -> web.Response:
         pool = worker.pool
 
     if pool is None:
-        return await _ping_redis_fresh()
+        redis_ok = (await _ping_redis_fresh()).status == 200
+    else:
+        try:
+            await pool.execute_command("PING")
+            redis_ok = True
+        except Exception as exc:
+            logger.error("health_check.redis_failed", error=str(exc))
+            redis_ok = False
 
+    db_ok = await _check_db(request.app.get("db_engine"))
+    ollama_ok = await _check_ollama()
+
+    checks = {"redis": redis_ok, "database": db_ok, "ollama": ollama_ok}
+    if all(checks.values()):
+        return web.json_response({"status": "ok", "checks": checks})
+    return web.json_response({"status": "degraded", "checks": checks}, status=503)
+
+
+async def _check_db(engine: Any) -> bool:
+    """SELECT 1 through the shared engine (None = not built yet)."""
+    if engine is None:
+        return False
     try:
-        await pool.execute_command("PING")
-        return web.json_response(
-            {"status": "ok", "redis_connected": True},
-        )
+        from sqlalchemy import text  # noqa: PLC0415
+
+        async with engine.connect() as conn:
+            await asyncio.wait_for(conn.execute(text("SELECT 1")), timeout=5)
+        return True
     except Exception as exc:
-        logger.error("health_check.failed", error=str(exc))
-        return web.json_response(
-            {
-                "status": "unhealthy",
-                "redis_connected": False,
-                "error": str(exc),
-            },
-            status=503,
-        )
+        logger.error("health_check.db_failed", error=str(exc))
+        return False
+
+
+async def _check_ollama() -> bool:
+    """GET Ollama /api/tags with a short timeout (False, never raises)."""
+    try:
+        import httpx  # noqa: PLC0415
+
+        from core.config import get_settings  # noqa: PLC0415
+
+        try:
+            base_url = (get_settings().OLLAMA_EMBED_URL or "").rstrip("/") or None
+        except RuntimeError:
+            base_url = None
+        url = f"{base_url or 'http://ollama:11434'}/api/tags"
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=3.0, read=5.0, write=5.0, pool=3.0)
+        ) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+        return True
+    except Exception as exc:
+        logger.error("health_check.ollama_failed", error=str(exc))
+        return False
 
 
 async def _ping_redis_fresh() -> web.Response:
@@ -445,6 +510,75 @@ async def _ping_redis_fresh() -> web.Response:
     finally:
         if fresh is not None:
             await fresh.close()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Leader election (single cron/seed/prewarm runner across N replicas)
+# ═════════════════════════════════════════════════════════════════════════════
+
+LEADER_LOCK_KEY = "openzync:worker:leader"
+"""Redis key for boot-time leader election — holder runs crons + prewarm."""
+
+LEADER_LOCK_TTL_S = 300
+"""Lock TTL; the holder renews every third of it, so a dead leader's
+crons stall at most ~5 min before a redeploy re-elects (followers never
+self-promote — cron registration happens once at boot)."""
+
+
+async def try_acquire_leader_lock(redis: AsyncRedis, owner: str) -> bool:
+    """Attempt boot-time leader election via SET NX EX.
+
+    Args:
+        redis: A raw ``redis.asyncio`` client — never the ``ARQPool``
+            wrapper from :mod:`core.arq` (it exposes only
+            enqueue/pool, no ``.set``).
+        owner: Human-readable owner id (hostname/pid) stored as the value.
+
+    Returns:
+        True for exactly one replica (the leader), False for followers.
+    """
+    try:
+        acquired: bool = await redis.set(
+            LEADER_LOCK_KEY, owner, ex=LEADER_LOCK_TTL_S, nx=True
+        )
+        return bool(acquired)
+    except Exception as exc:
+        # Fail closed: without Redis we can't prove leadership — a replica
+        # that can't reach Redis can't run jobs either, so abort loudly.
+        logger.error("leader_lock.acquire_failed", error=str(exc))
+        raise
+
+
+async def renew_leader_lock(redis: AsyncRedis, owner: str) -> None:
+    """Hold the leader lock for the process lifetime (owner-checked refresh).
+
+    Cancelled on shutdown via the surrounding task.  Refresh failures
+    log loud but don't crash the worker — the worst case is a second
+    replica winning post-TTL election after a redeploy, which converges
+    back to one leader on the next coordinated restart.
+    """
+    while True:
+        await asyncio.sleep(LEADER_LOCK_TTL_S // 3)
+        try:
+            # Owner-checked refresh: a renew finding another owner steps down
+            # instead of stealing (brief double-leader possible, converges
+            # at next election).
+            renewed = await redis.eval(
+                "if redis.call('GET', KEYS[1]) == ARGV[1] then "
+                "return redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2]) "
+                "else return nil end",
+                1,
+                LEADER_LOCK_KEY,
+                owner,
+                str(LEADER_LOCK_TTL_S),
+            )
+            if not renewed:
+                logger.error("leader_lock.lost — another replica holds the lock")
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error("leader_lock.renew_failed", error=str(exc))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -521,9 +655,31 @@ async def main() -> NoReturn:
     # raises RuntimeError while fact commits stay durable.  Same Redis URL
     # source as the API lifespan; same singleton, no second pool mechanism.
     from core.arq import close_arq, init_arq
+    from core.redis import close_redis as close_election_redis
+    from core.redis import init_redis as init_election_redis
 
+    # init_arq returns the core.arq ARQPool wrapper (enqueue/pool only —
+    # no .set), so election gets its own raw redis.asyncio client.
     await init_arq(str(settings.REDIS_URL))
     logger.info("worker.arq_pool_initialized")
+    election_redis = init_election_redis(str(settings.REDIS_URL))
+
+    # ── Leader election (one cron/prewarm runner across N replicas) ────
+    # SET NX EX on a raw redis client: exactly one replica wins.  The
+    # winner registers cron jobs and prewarms Ollama; followers run job
+    # execution only and skip with a log line.  Without this every
+    # replica fires each cron (N× nightly community runs, N× reconciles).
+    import os  # noqa: PLC0415
+    import socket  # noqa: PLC0415
+
+    _owner = f"{socket.gethostname()}:{os.getpid()}"
+    is_leader = await try_acquire_leader_lock(election_redis, _owner)
+    if is_leader:
+        logger.info("worker.elected_leader", owner=_owner)
+        renew_task = asyncio.create_task(renew_leader_lock(election_redis, _owner))
+    else:
+        logger.info("worker.follower_no_crons", owner=_owner)
+        renew_task = None
 
     # ── Create shared DB engine ───────────────────────────────────────────
     # One engine per worker process, shared across all task invocations.
@@ -573,6 +729,7 @@ async def main() -> NoReturn:
                 settings.FALKORDB_URL,
                 max_connections=settings.FALKORDB_MAX_CONNECTIONS,
                 socket_timeout=settings.FALKORDB_SOCKET_TIMEOUT,
+                socket_connect_timeout=5,  # hung TCP must fail fast
                 socket_keepalive=True,
                 decode_responses=True,
             )
@@ -606,15 +763,18 @@ async def main() -> NoReturn:
         max_overflow=settings.DB_MAX_OVERFLOW,
     )
 
-    # ── Prewarm the frozen embedder (fail-fast) ─────────────────────────
-    # Same guarantee as the API lifespan: load the ONNX model and run one
-    # dummy inference before accepting jobs. A corrupt or missing model
-    # bake raises here and aborts boot — no try/except, loud by design —
-    # instead of failing embedding jobs at runtime.
-    from core.embeddings import prewarm_embeddings
+    # ── Prewarm the frozen embedder (leader only, jittered retry) ──────
+    # Same guarantee as the API lifespan: prove Ollama reachable + run one
+    # warm inference before accepting jobs.  Leader-only so N replicas
+    # don't stampede one cold Ollama; followers skip with a log line.
+    # A dead Ollama after retries still aborts boot loudly (no try/except).
+    from core.embeddings import prewarm_with_retry
 
-    await prewarm_embeddings()
-    logger.info("embeddings.prewarmed")
+    if is_leader:
+        await prewarm_with_retry()
+        logger.info("embeddings.prewarmed")
+    else:
+        logger.info("embeddings.prewarm_skipped — follower replica")
 
     # ── Start Prometheus HTTP server ────────────────────────────────────
     try:
@@ -706,8 +866,13 @@ async def main() -> NoReturn:
             mode="event-driven (after link_entities_to_episode)",
         )
 
-    # Combine all cron jobs
-    all_cron_jobs = cron_jobs + community_cron_jobs
+    # Combine all cron jobs — leader only; followers pass [] so ARQ
+    # registers no schedules on this replica (execution still runs).
+    if is_leader:
+        all_cron_jobs = cron_jobs + community_cron_jobs
+    else:
+        all_cron_jobs = []
+        logger.info("worker.cron_skipped — follower replica runs no schedules")
 
     low_worker = create_arq_worker(
         queue_name=settings.LOW_QUEUE_NAME,
@@ -730,10 +895,12 @@ async def main() -> NoReturn:
     # ── Health check web server ────────────────────────────────────────
     # Store the worker itself, not worker.pool: ARQ assigns .pool inside
     # async_run() (after this server starts), so health_check reads it live.
+    # db_engine rides along so /ready can prove Postgres beyond Redis PING.
     health_app = web.Application()
     health_app["high_worker"] = high_worker
+    health_app["db_engine"] = db_engine
     health_app.router.add_get("/ready", health_check)
-    health_app.router.add_get("/health", health_check)
+    health_app.router.add_get("/health", liveness_check)
 
     runner = web.AppRunner(health_app)
     await runner.setup()
@@ -767,6 +934,11 @@ async def main() -> NoReturn:
         logger.debug("worker.surreal_pool_closed")
         await db_engine.dispose()
         logger.debug("worker.db_engine_disposed")
+        if renew_task is not None:
+            renew_task.cancel()
+            await asyncio.gather(renew_task, return_exceptions=True)
+        await close_election_redis(election_redis)
+        logger.debug("worker.election_redis_closed")
         await close_arq()
         logger.debug("worker.arq_pool_closed")
         monitor_task.cancel()

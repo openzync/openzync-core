@@ -266,8 +266,10 @@ class Settings(BaseModel):
     # one-time password (fail-closed — no install ever shares a known
     # credential), and the seed forces ``must_change_password=True`` so the
     # root user sets a real password at first login.  Set OZ_ROOT_PASSWORD
-    # in OpenBao system config (via SYSTEM_KEY_MAPPING) to choose the
-    # initial value explicitly.  Never log the value itself.
+    # in OpenBao system config (via SYSTEM_KEY_MAPPING) BEFORE FIRST BOOT
+    # to choose the initial value explicitly — a random password generated
+    # on an earlier boot is already seeded and cannot be recovered.
+    # Never log the value itself.
     OZ_ROOT_PASSWORD: str = Field(
         default_factory=lambda: secrets.token_urlsafe(32),
         min_length=16,
@@ -284,13 +286,15 @@ class Settings(BaseModel):
         ),
     )
     FALKORDB_MAX_CONNECTIONS: int = Field(
-        default=20,
+        default=10,
         ge=1,
         le=100,
         description=(
             "Max connections in the FalkorDB connection pool.  THE single "
             "canonical value — the worker and every per-request fallback "
-            "pool reuse this; never hardcode a pool size at a call site."
+            "pool reuse this; never hardcode a pool size at a call site.  "
+            "Budget: 15 max Helm replicas x 10 = 150 worst-case, inside "
+            "an unknown external FalkorDB maxclients (compose pins none)."
         ),
     )
     FALKORDB_SOCKET_TIMEOUT: int = Field(

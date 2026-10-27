@@ -138,6 +138,13 @@ config:
   # Graph backend
   graphBackend: "falkordb"
   graphMaxTraversalDepth: 2
+  # ── FalkorDB pool budget ──────────────────────────────────────────────
+  # This chart deploys no FalkorDB server (external — URL only via
+  # secrets.falkordbUrl, no chart-managed maxclients).  The app-side pool
+  # default (OZ_FALKORDB_MAX_CONNECTIONS=10 in code/compose) is the binding
+  # constraint: 15 max replicas (10 api + 5 worker) x 10 = 150 worst-case
+  # connections.  Raising the pool default means budgeting the external
+  # server's maxclients first.
 
   # Context
   contextCacheTtl: 30
