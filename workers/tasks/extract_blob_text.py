@@ -47,6 +47,9 @@ logger = structlog.get_logger(__name__)
 
 # ── MIME type routing ────────────────────────────────────────────────────────
 
+_GENERIC_MIMES = frozenset({"application/octet-stream", "binary/octet-stream"})
+"""Claimed types carrying no signal — libmagic detection is authoritative."""
+
 
 def _extract_pdf(data: bytes) -> str | None:
     """Extract text from a PDF using PyMuPDF (fitz).
@@ -197,6 +200,20 @@ async def _dispatch_extraction(mime_type: str, data: bytes) -> str | None:
             libraries, magic-detection errors) so the caller retries
             instead of marking success.
     """
+    if mime_type in _GENERIC_MIMES:
+        # Generic container claim carries no signal — libmagic decides.
+        # Recursion-safe: a detected generic/empty result is a genuine
+        # no-text outcome, not another round of detection.
+        try:
+            import magic  # python-magic — optional, for MIME detection
+
+            detected = magic.from_buffer(data, mime=True)
+        except ImportError:
+            return None
+        if not detected or detected in _GENERIC_MIMES or detected == mime_type:
+            return None
+        return await _dispatch_extraction(detected, data)
+
     if mime_type.startswith("text/"):
         # text/plain, text/csv, text/markdown, etc.
         return _extract_text_plain(data)

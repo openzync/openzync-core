@@ -43,6 +43,17 @@ groups:
         annotations:
           summary: "Worker queue depth above 1000"
 
+      # Queue depth still climbing over 15m — fires before the backlog
+      # threshold when ingestion outruns the workers (predicts 1000
+      # within 10m).  Pair with OpenZyncQueueBacklog, don't replace it.
+      - alert: OpenZyncQueueGrowing
+        expr: predict_linear(sum(openzync_worker_queue_depth)[15m], 600) > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Worker queue depth trending toward backlog"
+
       # More than 5 failed jobs in 5 minutes.
       - alert: OpenZyncJobsFailing
         expr: sum(increase(openzync_worker_tasks_total{status="failed"}[5m])) > 5
@@ -51,3 +62,14 @@ groups:
           severity: critical
         annotations:
           summary: "More than 5 failed worker jobs in 5m"
+
+      # ── Probe / memory notes (no exporter yet — wire before enabling) ──
+      # /ready!=200: there is no blackbox exporter in this stack, so API
+      # and worker readiness have no Prom metric.  When one is added,
+      # alert on `probe_success{job="openzync-ready"} == 0` (targets:
+      # http://api:8000/ready and http://worker:8081/ready) with
+      # `for: 2m`, severity critical.
+      # Redis noeviction (compose pins --maxmemory 128mb): when the cap
+      # is hit every ARQ enqueue errors.  Alert on
+      # `redis_memory_used_bytes / redis_memory_max_bytes > 0.85 for 5m`
+      # (needs redis_exporter) — grow maxmemory or shorten result TTLs.

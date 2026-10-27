@@ -112,8 +112,12 @@ def collect_schema_validation_errors(data: dict, schema: dict) -> list[str]:
 def parse_extraction_json(raw: str) -> Any:
     """Parse LLM extraction output into a JSON value, tolerating fences.
 
-    Strips markdown code fences, finds the first JSON object or array,
-    and parses it.  Returns ``None`` when no parseable value is found.
+    Strips markdown code fences, skips leading prose up to the first JSON
+    object or array, and parses it.  Returns ``None`` when no parseable
+    value is found — including when trailing garbage follows the value.
+    A truncated or garbage-suffixed payload is never half-parsed: a
+    partial object would write wrong fields downstream, so the whole
+    extraction is rejected instead.
 
     Args:
         raw: Raw LLM response text.
@@ -141,31 +145,7 @@ def parse_extraction_json(raw: str) -> Any:
     try:
         return orjson.loads(text.encode())
     except orjson.JSONDecodeError:
-        pass
-
-    depth = 0
-    in_string = False
-    escaped = False
-    for index, char in enumerate(text):
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-        elif char == '"':
-            in_string = True
-        elif char in "{[":
-            depth += 1
-        elif char in "}]":
-            depth -= 1
-            if depth == 0:
-                try:
-                    return orjson.loads(text[: index + 1].encode())
-                except orjson.JSONDecodeError:
-                    return None
-    return None
+        return None
 
 
 # ── Private helpers ────────────────────────────────────────────────────────────
@@ -252,21 +232,23 @@ async def process_structured_output(
                 k: v for k, v in data.items() if v is not None
             }
 
-            type_defaults: dict[str, object] = {
-                "string": "unknown",
-                "number": 0,
-                "integer": 0,
-                "boolean": False,
-            }
+            # Missing required fields write zero rows: filling "unknown" /
+            # 0 / False fabricates data the LLM never extracted.  The
+            # schema is skipped loudly so the gap stays visible.
             schema_obj: dict[str, object] = schema_info["json_schema"]
-            for field in schema_obj.get("required", []):
-                if field not in cleaned:
-                    ftype: str = (
-                        schema_obj.get("properties", {})
-                        .get(field, {})
-                        .get("type", "string")
-                    )
-                    cleaned[field] = type_defaults.get(ftype, "unknown")
+            missing_fields = [
+                field
+                for field in schema_obj.get("required", [])
+                if field not in cleaned
+            ]
+            if missing_fields:
+                logger.warning(
+                    "structured_extraction.missing_required_fields",
+                    episode_id=episode_id,
+                    schema_name=schema_name,
+                    missing_fields=missing_fields,
+                )
+                continue
 
             try:
                 _validate_against_schema(cleaned, schema_info["json_schema"])

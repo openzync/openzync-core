@@ -45,12 +45,13 @@ class WorkerSettings(BaseModel):
         ),
     )
     DB_POOL_SIZE: int = Field(
-        default=5,
+        default=4,
         ge=1,
         le=100,
         description=(
             "SQLAlchemy pool size per worker process.  Sizing rule: "
-            "replicas x (pool_size + max_overflow) < Postgres max_connections."
+            "replicas x (pool_size + max_overflow) < Postgres max_connections.  "
+            "Must match core Settings — 4 + 1 keeps 15 Helm replicas at 75."
         ),
     )
     DB_MAX_OVERFLOW: int = Field(
@@ -115,10 +116,12 @@ class WorkerSettings(BaseModel):
         description="Seconds to keep successful job results in Redis.",
     )
     JOB_KEEP_RESULT_FOR_FAILURE: int = Field(
-        default=86_400,
+        default=14_400,
         description=(
-            "Seconds to keep failed job results in Redis. "
-            "Longer than success TTL so failed jobs can be debugged."
+            "Seconds to keep FAILED job results in Redis (4h — down from 24h; "
+            "DB 0 shares the 128MB noeviction budget with live queue keys). "
+            "Wired in worker.on_job_end, which re-expires failed results to "
+            "this TTL (ARQ itself keeps one TTL for both outcomes)."
         ),
     )
 
@@ -191,7 +194,11 @@ class WorkerSettings(BaseModel):
         default=10,
         ge=1,
         le=100,
-        description="Max connections in the FalkorDB connection pool.",
+        description=(
+            "Max connections in the FalkorDB connection pool.  Must match "
+            "core Settings (single canonical value — never hardcode a pool "
+            "size at a call site; 15 max Helm replicas x 10 = 150 worst-case)."
+        ),
     )
     FALKORDB_SOCKET_TIMEOUT: int = Field(
         default=10,

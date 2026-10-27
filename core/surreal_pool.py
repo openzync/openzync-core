@@ -49,6 +49,19 @@ DEFAULT_SURREALDB_NAMESPACE: str = "openzync"
 DEFAULT_SURREALDB_DATABASE: str = "openzync"
 """Fallback database when ``org_config.surrealdb_database`` is ``None``."""
 
+SURREAL_IDLE_TTL_S: float = 1800.0
+"""Idle connections older than this are closed and evicted on next access
+(30 min) — without it every org ever seen holds a socket for the worker's
+whole lifetime."""
+
+SURREAL_MAX_CACHED: int = 32
+"""Cap on cached per-org connections — beyond this the least-recently-used
+idle entry is evicted.  Bounds FDs when the org count grows."""
+
+SURREAL_CONNECT_TIMEOUT_S: float = 10.0
+"""Budget for connect+signin+use — a hung SurrealDB must fail fast into
+``GraphBackendUnavailableError``, never hang a worker task."""
+
 
 # ── Pool Implementation ────────────────────────────────────────────────────
 
@@ -100,10 +113,15 @@ class SurrealConnectionPool:
                 for the org, or if the connection attempt fails.
         """
         # ── Fast path: already connected ──────────────────────────────────
+        # Idle entries past SURREAL_IDLE_TTL_S are closed + dropped here so
+        # a dead-idle socket is never handed out (recreated below).
         if org_id in self._pool:
             conn = self._pool[org_id]
-            conn["last_used"] = time.monotonic()
-            return conn["surreal"]
+            if time.monotonic() - conn["last_used"] > SURREAL_IDLE_TTL_S:
+                await self._close_entry(org_id)
+            else:
+                conn["last_used"] = time.monotonic()
+                return conn["surreal"]
 
         # ── Determine connection parameters ────────────────────────────
         if system_url:
@@ -133,15 +151,23 @@ class SurrealConnectionPool:
             if org_id in self._pool:
                 return self._pool[org_id]["surreal"]
 
+            # Cap: evict the least-recently-used entry when full so the
+            # pool can't grow one socket per org without bound.
+            if len(self._pool) >= SURREAL_MAX_CACHED:
+                lru = min(self._pool, key=lambda k: self._pool[k]["last_used"])
+                await self._close_entry(lru)
+                logger.info(
+                    "surreal_pool.evicted_lru",
+                    extra={"org_id": str(lru)},
+                )
+
             # Create a new AsyncSurreal connection
             try:
                 surreal = AsyncSurreal(url)
-                await surreal.connect()
-                await surreal.signin({
-                    "username": username,
-                    "password": password,
-                })
-                await surreal.use(namespace, database)
+                await asyncio.wait_for(
+                    self._connect(surreal, username, password, namespace, database),
+                    timeout=SURREAL_CONNECT_TIMEOUT_S,
+                )
                 self._pool[org_id] = {
                     "surreal": surreal,
                     "last_used": time.monotonic(),
@@ -160,6 +186,35 @@ class SurrealConnectionPool:
                 raise GraphBackendUnavailableError(
                     f"SurrealDB connection failed for organization {org_id}."
                 ) from exc
+
+    @staticmethod
+    async def _connect(
+        surreal: AsyncSurreal,
+        username: str,
+        password: str,
+        namespace: str,
+        database: str,
+    ) -> None:
+        """Run connect+signin+use as one unit (wrapped in a timeout by the caller)."""
+        await surreal.connect()
+        await surreal.signin({
+            "username": username,
+            "password": password,
+        })
+        await surreal.use(namespace, database)
+
+    async def _close_entry(self, org_id: UUID) -> None:
+        """Close and drop one cached entry, logging (not raising) on failure."""
+        conn = self._pool.pop(org_id, None)
+        if conn is None:
+            return
+        try:
+            await conn["surreal"].close()
+        except Exception as exc:
+            logger.warning(
+                "surreal_pool.close_failed",
+                extra={"org_id": str(org_id), "error": str(exc)},
+            )
 
     async def close_all(self) -> None:
         """Close all cached connections (call during application shutdown).

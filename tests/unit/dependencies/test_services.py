@@ -569,8 +569,9 @@ class TestGetGraphService:
 
             mock_pool_cls.from_url.assert_called_once_with(
                 mock_org_config.falkordb_url,
-                max_connections=5,
-                socket_timeout=10,
+                max_connections=10,
+                socket_timeout=30,
+                socket_connect_timeout=5,
                 socket_keepalive=True,
                 decode_responses=True,
             )

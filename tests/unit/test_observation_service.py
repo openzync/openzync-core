@@ -10,7 +10,7 @@ No real database, no network, no LLM calls.
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
@@ -401,20 +401,51 @@ class TestDetectBehavioralPatterns:
         mock_repo: AsyncMock,
         mock_db: AsyncMock,
     ) -> None:
-        """The facts query excludes superseded rows (valid_to closed) via
-        the effective-at predicate — ``invalid_at IS NULL`` alone is not
-        enough after Phase 2 fact supersession."""
-        mock_db.execute.return_value.mappings.return_value.all.return_value = []
-        patterns = await service.detect_behavioral_patterns(PROJECT_ID, organization_id=ORG_ID)
-        assert patterns == []
+        """Org + effective-at predicates reach the predicate-counts query.
 
-        stmt, params = mock_db.execute.call_args.args
-        sql = stmt.text
-        assert "(f.invalid_at IS NULL OR f.invalid_at > :effective_at)" in sql
-        assert "(f.valid_from IS NULL OR f.valid_from <= :effective_at)" in sql
-        assert "(f.valid_to IS NULL OR f.valid_to > :effective_at)" in sql
-        assert "AND f.invalid_at IS NULL\n" not in sql  # old leaky filter gone
-        effective_at = params["effective_at"]
+        ``_get_fact_predicate_counts`` now requires ``organization_id`` and
+        an effective-at datetime, delegates to
+        ``FactRepository.get_fact_predicate_counts`` (which owns the
+        bitemporal filter), and returns ``list[dict]`` — the old raw-SQL
+        assertion path is gone.
+        """
+        from datetime import datetime
+
+        mock_repo.resolve_entity_names.return_value = {
+            str(ENTITY_A_ID): {"name": "EntityA", "entity_type": "Person"}
+        }
+
+        with patch(
+            "repositories.fact_repository.FactRepository"
+        ) as mock_repo_cls:
+            mock_fact_repo = AsyncMock()
+            mock_fact_repo.get_fact_predicate_counts.return_value = [
+                {
+                    "entity_id": ENTITY_A_ID,
+                    "predicate": "upgrades",
+                    "predicate_count": 5,
+                    "total_facts": 8,
+                },
+            ]
+            mock_repo_cls.return_value = mock_fact_repo
+
+            rows = await service._get_fact_predicate_counts(PROJECT_ID, ORG_ID)
+
+        assert isinstance(rows, list)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["entity_id"] == ENTITY_A_ID
+        assert row["entity_name"] == "EntityA"
+        assert row["predicate"] == "upgrades"
+        assert row["predicate_count"] == 5
+
+        # Both scoping predicates reach the repository call.
+        mock_fact_repo.get_fact_predicate_counts.assert_awaited_once()
+        call_args = mock_fact_repo.get_fact_predicate_counts.call_args.args
+        assert call_args[0] == PROJECT_ID
+        assert call_args[1] == ORG_ID
+        effective_at = call_args[2]
+        assert isinstance(effective_at, datetime)
         assert effective_at.tzinfo is not None  # tz-aware now, not naive
 
 

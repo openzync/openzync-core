@@ -323,7 +323,7 @@ bootstrap() {
         -e BAO_SKIP_VERIFY=true \
         -e OZ_REDIS_URL=redis://localhost:6379/0 \
         -e OZ_FALKORDB_URL=redis://localhost:6380 \
-        -e OZ_FALKORDB_MAX_CONNECTIONS=20 \
+        -e OZ_FALKORDB_MAX_CONNECTIONS=10 \
         -e OZ_FALKORDB_SOCKET_TIMEOUT=30 \
         -e OZ_SECRET_KEY="$OZ_SECRET_KEY" \
         -e OZ_WEBHOOK_SIGNING_SECRET="$OZ_WEBHOOK_SIGNING_SECRET" \

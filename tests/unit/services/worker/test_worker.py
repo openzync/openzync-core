@@ -719,7 +719,20 @@ class TestMonitorQueueDepth:
 
 @pytest.mark.unit
 class TestHealthCheck:
-    """``health_check`` aiohttp endpoint."""
+    """``health_check`` readiness endpoint (``/ready``) + ``liveness_check``.
+
+    Contract: ``/health`` is liveness-only (always 200); ``/ready`` proves
+    Redis PING + Postgres ``SELECT 1`` + Ollama ``/api/tags`` and returns
+    200 ``{"status": "ok", "checks": {...}}`` or 503 ``degraded`` with
+    per-check booleans.
+    """
+
+    @staticmethod
+    def _checks(resp: web.Response) -> dict:
+        """Parse the JSON probe body."""
+        import json as _json
+
+        return _json.loads(resp.text)
 
     @staticmethod
     def _make_app_with_pool(pool: object) -> web.Application:
@@ -744,6 +757,17 @@ class TestHealthCheck:
         return app
 
     @staticmethod
+    def _set_key(app: web.Application, key: str, value: object) -> None:
+        """Assign a string key under NotAppKeyWarning suppression (see above)."""
+        import warnings
+
+        from aiohttp.web_exceptions import NotAppKeyWarning
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=NotAppKeyWarning)
+            app[key] = value  # type: ignore[index]
+
+    @staticmethod
     def _make_app_with_worker(worker: object):
         """Create an aiohttp Application holding a pre-built worker stub."""
         import warnings
@@ -759,82 +783,87 @@ class TestHealthCheck:
 
     @pytest.mark.asyncio
     async def test_healthy_when_redis_pings(self) -> None:
-        """Returns 200 with redis_connected=True."""
-        from aiohttp import web
-
+        """All three probes pass → 200 with per-check booleans."""
         from services.worker.worker import health_check
 
         pool = MagicMock()
         pool.execute_command = AsyncMock(return_value=b"PONG")
 
         app = self._make_app_with_pool(pool)
+        self._set_key(app, "db_engine", MagicMock())
 
         request = MagicMock(spec=web.Request)
         request.app = app
 
-        resp = await health_check(request)
+        with (
+            patch("services.worker.worker._check_db", new=AsyncMock(return_value=True)),
+            patch("services.worker.worker._check_ollama", new=AsyncMock(return_value=True)),
+        ):
+            resp = await health_check(request)
         assert resp.status == 200
-        body = resp.body if isinstance(resp.body, bytes) else str(resp.body).encode()
-        assert b"ok" in body
-        assert b"true" in body
+        assert self._checks(resp) == {
+            "status": "ok",
+            "checks": {"redis": True, "database": True, "ollama": True},
+        }
 
     @pytest.mark.asyncio
     async def test_unhealthy_when_redis_fails(self) -> None:
-        """Returns 503 when PING raises."""
-        from aiohttp import web
-
+        """Redis PING raises → 503 degraded, redis=False, rest reported."""
         from services.worker.worker import health_check
 
         pool = MagicMock()
         pool.execute_command = AsyncMock(side_effect=OSError("connection refused"))
 
         app = self._make_app_with_pool(pool)
+        self._set_key(app, "db_engine", MagicMock())
 
         request = MagicMock(spec=web.Request)
         request.app = app
 
-        resp = await health_check(request)
+        with (
+            patch("services.worker.worker._check_db", new=AsyncMock(return_value=True)),
+            patch("services.worker.worker._check_ollama", new=AsyncMock(return_value=True)),
+        ):
+            resp = await health_check(request)
         assert resp.status == 503
-        assert b"unhealthy" in (
-            resp.body if isinstance(resp.body, bytes) else str(resp.body).encode()
-        )
+        assert self._checks(resp) == {
+            "status": "degraded",
+            "checks": {"redis": False, "database": True, "ollama": True},
+        }
 
     @pytest.mark.asyncio
     async def test_unhealthy_when_pool_not_ready_and_redis_down(self) -> None:
-        """Returns 503 when the pool is not ready and Redis is unreachable."""
-        from aiohttp import web
-
+        """No pool yet + fresh PING raises → 503 degraded, redis=False."""
         from services.worker.worker import health_check
-        from services.worker.worker_settings import WorkerSettings
+
+        _seed_worker_settings()
 
         app = web.Application()
+        self._set_key(app, "db_engine", MagicMock())
         request = MagicMock(spec=web.Request)
         request.app = app
 
-        worker_settings = WorkerSettings(
-            DATABASE_URL="postgresql+asyncpg://localhost/test",
-            REDIS_URL="redis://localhost:6379/0",
-        )
         with (
-            patch("services.worker.worker_settings._settings", worker_settings),
             patch(
                 "services.worker.worker.create_pool",
                 new=AsyncMock(side_effect=OSError("connection refused")),
             ),
+            patch("services.worker.worker._check_db", new=AsyncMock(return_value=True)),
+            patch("services.worker.worker._check_ollama", new=AsyncMock(return_value=True)),
         ):
             resp = await health_check(request)
         assert resp.status == 503
-        assert b"unhealthy" in (
-            resp.body if isinstance(resp.body, bytes) else str(resp.body).encode()
-        )
+        assert self._checks(resp) == {
+            "status": "degraded",
+            "checks": {"redis": False, "database": True, "ollama": True},
+        }
 
     @pytest.mark.asyncio
     async def test_healthy_via_fresh_client_when_pool_not_ready(self) -> None:
-        """Returns 200 when worker.pool is None but Redis PINGs via a client."""
-        from aiohttp import web
-
+        """worker.pool None + fresh PING ok (+ db/ollama ok) → 200."""
         from services.worker.worker import health_check
-        from services.worker.worker_settings import WorkerSettings
+
+        _seed_worker_settings()
 
         fresh = MagicMock()
         fresh.execute_command = AsyncMock(return_value=b"PONG")
@@ -843,32 +872,27 @@ class TestHealthCheck:
         worker = MagicMock()
         worker.pool = None
         app = self._make_app_with_worker(worker)
+        self._set_key(app, "db_engine", MagicMock())
 
         request = MagicMock(spec=web.Request)
         request.app = app
 
-        worker_settings = WorkerSettings(
-            DATABASE_URL="postgresql+asyncpg://localhost/test",
-            REDIS_URL="redis://localhost:6379/0",
-        )
         with (
-            patch("services.worker.worker_settings._settings", worker_settings),
             patch(
                 "services.worker.worker.create_pool",
                 new=AsyncMock(return_value=fresh),
             ),
+            patch("services.worker.worker._check_db", new=AsyncMock(return_value=True)),
+            patch("services.worker.worker._check_ollama", new=AsyncMock(return_value=True)),
         ):
             resp = await health_check(request)
         assert resp.status == 200
-        body = resp.body if isinstance(resp.body, bytes) else str(resp.body).encode()
-        assert b"ok" in body
+        assert self._checks(resp)["status"] == "ok"
         fresh.close.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_reads_pool_live_from_worker(self) -> None:
         """Pool assigned after app creation is picked up (no startup snap)."""
-        from aiohttp import web
-
         from services.worker.worker import health_check
 
         pool = MagicMock()
@@ -877,6 +901,7 @@ class TestHealthCheck:
         worker = MagicMock()
         worker.pool = None
         app = self._make_app_with_worker(worker)
+        self._set_key(app, "db_engine", MagicMock())
         # ARQ assigns worker.pool in async_run(), after the health server
         # starts — mutate after app creation to prove the lookup is live.
         worker.pool = pool
@@ -884,51 +909,56 @@ class TestHealthCheck:
         request = MagicMock(spec=web.Request)
         request.app = app
 
-        resp = await health_check(request)
+        with (
+            patch(
+                "services.worker.worker.create_pool",
+                new=AsyncMock(),
+            ) as mock_create_pool,
+            patch("services.worker.worker._check_db", new=AsyncMock(return_value=True)),
+            patch("services.worker.worker._check_ollama", new=AsyncMock(return_value=True)),
+        ):
+            resp = await health_check(request)
         assert resp.status == 200
+        # Live pool was used — no fresh-client fallback.
+        mock_create_pool.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_missing_worker_key_falls_back_to_fresh_client(self) -> None:
         """No ``high_worker`` key at all (pre-startup) → fresh PING → 200."""
-        from aiohttp import web
-
         from services.worker.worker import health_check
-        from services.worker.worker_settings import WorkerSettings
+
+        _seed_worker_settings()
 
         fresh = MagicMock()
         fresh.execute_command = AsyncMock(return_value=b"PONG")
         fresh.close = AsyncMock()
 
         app = web.Application()  # no "high_worker" — server up, workers not built
+        self._set_key(app, "db_engine", MagicMock())
         request = MagicMock(spec=web.Request)
         request.app = app
 
-        worker_settings = WorkerSettings(
-            DATABASE_URL="postgresql+asyncpg://localhost/test",
-            REDIS_URL="redis://localhost:6379/0",
-        )
         with (
-            patch("services.worker.worker_settings._settings", worker_settings),
             patch(
                 "services.worker.worker.create_pool",
                 new=AsyncMock(return_value=fresh),
             ) as mock_create_pool,
+            patch("services.worker.worker._check_db", new=AsyncMock(return_value=True)),
+            patch("services.worker.worker._check_ollama", new=AsyncMock(return_value=True)),
         ):
             resp = await health_check(request)
 
         assert resp.status == 200
-        body = resp.body if isinstance(resp.body, bytes) else str(resp.body).encode()
-        assert b"ok" in body
+        assert self._checks(resp)["status"] == "ok"
         mock_create_pool.assert_awaited_once()
         fresh.close.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_fresh_client_closed_when_ping_fails(self) -> None:
         """Fresh client is closed even when its PING raises (``finally``)."""
-        from aiohttp import web
-
         from services.worker.worker import health_check
-        from services.worker.worker_settings import WorkerSettings
+
+        _seed_worker_settings()
 
         fresh = MagicMock()
         fresh.execute_command = AsyncMock(side_effect=OSError("down"))
@@ -937,24 +967,23 @@ class TestHealthCheck:
         worker = MagicMock()
         worker.pool = None
         app = self._make_app_with_worker(worker)
+        self._set_key(app, "db_engine", MagicMock())
 
         request = MagicMock(spec=web.Request)
         request.app = app
 
-        worker_settings = WorkerSettings(
-            DATABASE_URL="postgresql+asyncpg://localhost/test",
-            REDIS_URL="redis://localhost:6379/0",
-        )
         with (
-            patch("services.worker.worker_settings._settings", worker_settings),
             patch(
                 "services.worker.worker.create_pool",
                 new=AsyncMock(return_value=fresh),
             ),
+            patch("services.worker.worker._check_db", new=AsyncMock(return_value=True)),
+            patch("services.worker.worker._check_ollama", new=AsyncMock(return_value=True)),
         ):
             resp = await health_check(request)
 
         assert resp.status == 503
+        assert self._checks(resp)["checks"]["redis"] is False
         fresh.close.assert_awaited_once()
 
 
@@ -1092,11 +1121,14 @@ class TestMain:
 
         _mocks = _patch_main_deps()
         try:
-            with pytest.raises(asyncio.CancelledError):
+            loop = asyncio.get_running_loop()
+            with (
+                patch.object(loop, "add_signal_handler") as mock_add_handler,
+                pytest.raises(asyncio.CancelledError),
+            ):
                 await main()
 
-            add_handler = _mocks["loop"].add_signal_handler
-            add_handler.assert_not_called()
+            mock_add_handler.assert_not_called()
         finally:
             _unpatch_main_deps(_mocks)
 
@@ -1485,14 +1517,27 @@ def _patch_main_deps() -> dict:
     mqd_patch.start()
     _patchers.append(mqd_patch)
 
-    # ── asyncio.get_running_loop ─────────────────────────────────────────
-    _loop = MagicMock()
-    loop_patch = patch(
-        "services.worker.worker.asyncio.get_running_loop", return_value=_loop
-    )
-    loop_patch.start()
-    _patchers.append(loop_patch)
-    mocks["loop"] = _loop
+    # ── init_redis / close_redis (lazy import from core.redis in main()) ──
+    # Source-module target so the ``from core.redis import ...`` inside
+    # ``main()`` resolves to the mocks.  Without this the real init_redis
+    # builds a real TCP client and the leader-lock SET NX EX dials real
+    # Redis — every TestMain test fails with ConnectionError.
+    _election_redis = AsyncMock()
+    _election_redis.set = AsyncMock(return_value=True)
+    init_redis_patch = patch("core.redis.init_redis", return_value=_election_redis)
+    init_redis_patch.start()
+    _patchers.append(init_redis_patch)
+    mocks["election_redis"] = _election_redis
+
+    _close_election_redis = AsyncMock()
+    close_redis_patch = patch("core.redis.close_redis", new=_close_election_redis)
+    close_redis_patch.start()
+    _patchers.append(close_redis_patch)
+    mocks["close_election_redis"] = _close_election_redis
+
+    # NOTE: no ``asyncio.get_running_loop`` patch.  ``main()`` no longer
+    # touches the loop, and patching it globally poisons the real redis
+    # client's health check (redis/asyncio/connection.py) with a MagicMock.
 
     mocks["_patchers"] = _patchers
     return mocks

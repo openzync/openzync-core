@@ -40,7 +40,7 @@ class TestInitDbEngine:
             mock_create.assert_called_once()
 
     def test_default_pool_settings(self) -> None:
-        """Pool sizing comes from the runtime settings (5 + 1 by default).
+        """Pool sizing comes from the runtime settings (4 + 1 by default).
 
         The pool budget is ``replicas x (pool_size + max_overflow) < Postgres
         max_connections`` — a hard-coded 20 + 10 blows that budget at HPA
@@ -52,7 +52,7 @@ class TestInitDbEngine:
             init_db_engine("postgresql+asyncpg://u:p@localhost:5432/test")
             _args, kwargs = mock_create.call_args
             assert kwargs["pool_pre_ping"] is True
-            assert kwargs["pool_size"] == 5
+            assert kwargs["pool_size"] == 4
             assert kwargs["max_overflow"] == 1
 
     def test_pool_settings_follow_runtime_settings(self) -> None:

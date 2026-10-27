@@ -475,14 +475,24 @@ class MemoryService:
                 trace_id = structlog.contextvars.get_contextvars().get(
                     "request_id", str(job_id)
                 )
-                for msg_dict in episode_dicts:
-                    msg_dict["content"] = await self._redact_content(
-                        pii_service,
-                        mask_service,
-                        msg_dict["content"],
-                        org_id=org_id,
-                        trace_id=trace_id,
-                    )
+                # Bounded fan-out: NER is CPU-heavy, so at most 8 messages
+                # redact concurrently.  Fail-closed is preserved —
+                # _redact_content raises and gather propagates.
+                _redact_semaphore = asyncio.Semaphore(8)
+
+                async def _redact_one(msg_dict: dict) -> None:
+                    async with _redact_semaphore:
+                        msg_dict["content"] = await self._redact_content(
+                            pii_service,
+                            mask_service,
+                            msg_dict["content"],
+                            org_id=org_id,
+                            trace_id=trace_id,
+                        )
+
+                await asyncio.gather(
+                    *(_redact_one(msg_dict) for msg_dict in episode_dicts)
+                )
 
             # ── Step 7: Lock the session row, assign seq numbers ───────────────
             # The FOR UPDATE lock serializes concurrent ingests into this
@@ -584,18 +594,32 @@ class MemoryService:
             raise
 
         # ── Step 10: Enqueue ARQ tasks with the claimed job_id ───────────
-        # Post-commit: episodes are durable, so an enqueue failure raises
-        # loudly (reconciliation replays) instead of silently dropping
-        # work — but it never touches blob files or the dedup claim.
+        # Post-commit: episodes are durable, so an enqueue failure logs
+        # loudly and the 202 stands — the reconciler replays the missing
+        # work.  Raising here would turn a committed ingest into a 500
+        # without un-ingesting anything.
         # ID-only payloads — workers load content/metadata from the row.
         episode_dicts = [{"id": ep.id, "role": ep.role} for ep in episodes]
-        await self._enqueue_arq_tasks(
-            job_id=str(job_id),
-            org_id=str(org_id),
-            project_id=str(project_id),
-            session_id=str(session_id),
-            episodes=episode_dicts,
-        )
+        try:
+            await self._enqueue_arq_tasks(
+                job_id=str(job_id),
+                org_id=str(org_id),
+                project_id=str(project_id),
+                session_id=str(session_id),
+                episodes=episode_dicts,
+            )
+        except Exception:
+            logger.critical(
+                "memory.arq_enqueue_failed_post_commit",
+                extra={
+                    "job_id": str(job_id),
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                    "session_id": str(session_id),
+                    "episode_count": len(episode_dicts),
+                },
+                exc_info=True,
+            )
 
         # ── Step 10b: Enqueue blob text extraction tasks ─────────────────
         if blob_records:
@@ -1128,10 +1152,16 @@ class MemoryService:
     ) -> None:
         """Enqueue the three enrichment tasks for one episode, idempotently.
 
-        Each ``(task, episode)`` pair carries a Redis ``SET NX`` dedupe
-        key, so a retry of the ingest (after a mid-fan-out crash) never
+        Each ``(task, episode)`` pair carries a Redis dedupe key, so a
+        retry of the ingest (after a mid-fan-out crash) never
         double-enqueues work — workers themselves skip completed bits,
         but duplicate jobs would still waste LLM calls on re-entry.
+        The key is claimed atomically (``SET key token NX EX``) BEFORE the
+        enqueue, so two concurrent same-episode ingests cannot double-enqueue
+        — only the replica that owns the claim proceeds. On enqueue failure
+        the key is released only if it still holds our token (Lua
+        compare-and-delete), so a failed enqueue never blocks its retry
+        while a concurrent winner's claim is never stolen.
 
         Workers load content/metadata from the episode row — only IDs
         (plus the small ``role``/``session_id`` routing hints) cross the
@@ -1157,8 +1187,8 @@ class MemoryService:
         )
         for task_name, qname, extra in tasks:
             dedup_key = f"memory:enqueued:{task_name}:{episode_id}"
-            claimed = await self._redis.set(
-                dedup_key, job_id, nx=True, ex=self._ENQUEUE_DEDUP_TTL_SEC
+            claimed: bool = await self._redis.set(
+                dedup_key, job_id, ex=self._ENQUEUE_DEDUP_TTL_SEC, nx=True
             )
             if not claimed:
                 logger.info(
@@ -1170,15 +1200,38 @@ class MemoryService:
                     },
                 )
                 continue
-            await arq_pool.enqueue(
-                task_name,
-                queue_name=qname,
-                episode_id=episode_id,
-                org_id=org_id,
-                project_id=project_id,
-                trace_id=trace_id,
-                **extra,
-            )
+            try:
+                await arq_pool.enqueue(
+                    task_name,
+                    queue_name=qname,
+                    episode_id=episode_id,
+                    org_id=org_id,
+                    project_id=project_id,
+                    trace_id=trace_id,
+                    **extra,
+                )
+            except Exception:
+                # Release only our own claim — a concurrent winner's key is
+                # never stolen, and without this a failed enqueue would block
+                # its retry until the TTL expires.
+                try:
+                    await self._redis.eval(
+                        "if redis.call('GET', KEYS[1]) == ARGV[1] then "
+                        "return redis.call('DEL', KEYS[1]) else return 0 end",
+                        1,
+                        dedup_key,
+                        job_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "memory.enqueue_dedup_cleanup_failed",
+                        extra={
+                            "job_id": job_id,
+                            "task": task_name,
+                            "episode_id": episode_id,
+                        },
+                    )
+                raise
 
     async def _enqueue_arq_tasks(
         self,
@@ -1263,7 +1316,9 @@ class MemoryService:
                     "Episodes are safe in PostgreSQL; reconciliation needed.",
                 },
             )
-            raise  # Propagate so ARQ retry mechanism handles it
+            # Propagate — the post-commit caller logs loudly and keeps
+            # the 202 (the reconciler replays the missing work).
+            raise
 
     # ── Blob Processing ───────────────────────────────────────────────────────
 

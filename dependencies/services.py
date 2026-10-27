@@ -419,10 +419,22 @@ async def get_graph_service(
                 BlockingConnectionPool as AsyncBlockingConnectionPool,
             )
 
+            # Same URL as the process singleton (e.g. compose parity) means
+            # the singleton would have served — it only missed because its
+            # init failed at boot; fail loud instead of forking a second
+            # pool that hides the outage.  Otherwise one pool per distinct
+            # per-org URL, sized from the single canonical setting.
+            _s = get_settings()
+            if org_config.falkordb_url == _s.FALKORDB_URL:
+                raise GraphBackendUnavailableError(
+                    f"FalkorDB configured for org {org_id} but the shared "
+                    "client failed to initialise — refusing a shadow pool."
+                )
             pool = AsyncBlockingConnectionPool.from_url(
                 org_config.falkordb_url,
-                max_connections=5,
-                socket_timeout=10,
+                max_connections=_s.FALKORDB_MAX_CONNECTIONS,
+                socket_timeout=_s.FALKORDB_SOCKET_TIMEOUT,
+                socket_connect_timeout=5,  # hung TCP must fail fast
                 socket_keepalive=True,
                 decode_responses=True,
             )
@@ -585,10 +597,21 @@ async def get_graph_backend_for_project(
                 BlockingConnectionPool as AsyncBlockingConnectionPool,
             )
 
+            # Same guard as get_graph_service: never shadow-pool the system
+            # URL — a missing singleton means a boot outage, not a cue to
+            # fork a second pool.  Per-org URLs pool from the one canonical
+            # size (see Settings.FALKORDB_MAX_CONNECTIONS).
+            _s = get_settings()
+            if org_config.falkordb_url == _s.FALKORDB_URL:
+                raise GraphBackendUnavailableError(
+                    f"FalkorDB configured for org {org_id} but the shared "
+                    "client failed to initialise — refusing a shadow pool."
+                )
             pool = AsyncBlockingConnectionPool.from_url(
                 org_config.falkordb_url,
-                max_connections=5,
-                socket_timeout=10,
+                max_connections=_s.FALKORDB_MAX_CONNECTIONS,
+                socket_timeout=_s.FALKORDB_SOCKET_TIMEOUT,
+                socket_connect_timeout=5,  # hung TCP must fail fast
                 socket_keepalive=True,
                 decode_responses=True,
             )

@@ -46,7 +46,7 @@ class TestEnsurePlatformRoot:
 
     @pytest.mark.asyncio
     async def test_fresh_boot_creates_org_root_and_namespace(self) -> None:
-        """No org yet → org + root user inserted, namespace bootstrapped."""
+        """No org yet → org + root user inserted via ON CONFLICT DO NOTHING."""
         db = AsyncMock()
         bao = AsyncMock()
         org_repo = AsyncMock()
@@ -66,19 +66,13 @@ class TestEnsurePlatformRoot:
         ):
             await ensure_platform_root(db, bao)
 
-        # RLS bypass + org insert + root user + commit.
+        # RLS bypass + idempotent inserts (ON CONFLICT DO NOTHING) + commit.
         assert db.execute.await_count >= 2  # set_config calls
-        db.add.assert_called()
+        db.execute.assert_awaited()
         db.commit.assert_awaited_once()
         bao.create_org_namespace.assert_awaited_once_with(PLATFORM_ORG_ID)
-
-        # The root user is a superadmin with the must-change gate.
-        root = db.add.call_args.args[0]
-        assert root.role == "superadmin"
-        assert root.must_change_password is True
-        assert root.external_id == ROOT_EXTERNAL_ID
-        # Superadmin = wildcard via role — the permission array stays empty.
-        assert root.permissions == []
+        # Insert path only — no ORM db.add (superseded by pg_insert).
+        db.add.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_existing_org_reconciles_namespace_and_root(self) -> None:

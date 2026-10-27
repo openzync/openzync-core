@@ -102,8 +102,13 @@ class EmailService:
     """Async SMTP email delivery service.
 
     Creates a fresh SMTP connection per message (KISS — transactional
-    email volume is low).  Connection pooling can be added later if
-    throughput requirements increase.
+    email volume is low: OTPs + invites only).  No pooling by design:
+    a shared connection would need health-check + reconnect logic for
+    near-zero gain at this throughput.  If volume ever grows (bulk
+    digests, notifications), move sending to a low-priority ARQ job
+    (``deliver_email`` on the low queue, retries via ``with_retry``)
+    instead of pooling here — the queue already owns durability, and
+    SMTP connection churn then moves off the request path entirely.
 
     Args:
         config: SMTP configuration from ``EmailConfig``.

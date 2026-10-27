@@ -1,0 +1,1 @@
+Hold no row lock across the Ollama embedding call: idempotency/archived checks run unlocked, then the row is re-locked and the enrichment bit rechecked before the UPDATE, so concurrent same-episode embeds no longer serialize behind network I/O.

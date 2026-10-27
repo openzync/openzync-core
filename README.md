@@ -64,6 +64,9 @@ fused with reciprocal rank fusion, so an entity name and a paraphrase both land 
 `.env` holds four bootstrap secrets, everything else is generated into OpenBao's `system` secret and
 rendered by the Agent sidecar at startup. No fallback path exists, by design —
 [deployment guide](https://docs.openzync.tech/en/latest/guides/deployment.html).
+Set `OZ_ROOT_PASSWORD` in OpenBao's `system` secret **before first boot** to choose the seeded
+platform root password — otherwise a random one-time password is generated (fail-closed, unrecoverable
+from logs) and the root user must rotate it at first login via `must_change_password`.
 
 ## Quick start
 

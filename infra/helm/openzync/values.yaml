@@ -48,10 +48,10 @@ api:
   #   replicas x (pool_size + max_overflow) < max_connections
   #
   # With api.maxReplicas=10, worker.maxReplicas=5 and the pool defaults
-  # below (5 + 1):  15 x 6 = 90 connections — inside the Postgres default
+  # below (4 + 1):  15 x 5 = 75 connections — inside the Postgres default
   # of 100.  Raising the pool size or the replica counts means raising
-  # max_connections on the database first, or the database runs out of
-  # connections and requests queue.
+  # max_connections on the database first (e.g. to 200), or the database
+  # runs out of connections and requests queue.
   ingress:
     enabled: false
     host: api.openzync.tech
@@ -138,6 +138,13 @@ config:
   # Graph backend
   graphBackend: "falkordb"
   graphMaxTraversalDepth: 2
+  # ── FalkorDB pool budget ──────────────────────────────────────────────
+  # This chart deploys no FalkorDB server (external — URL only via
+  # secrets.falkordbUrl, no chart-managed maxclients).  The app-side pool
+  # default (OZ_FALKORDB_MAX_CONNECTIONS=10 in code/compose) is the binding
+  # constraint: 15 max replicas (10 api + 5 worker) x 10 = 150 worst-case
+  # connections.  Raising the pool default means budgeting the external
+  # server's maxclients first.
 
   # Context
   contextCacheTtl: 30
@@ -153,7 +160,7 @@ config:
   # ── DB connection pool ──────────────────────────────────────────────────
   # See the budget note next to api.autoscaling above:
   #   replicas x (dbPoolSize + dbMaxOverflow) < max_connections
-  dbPoolSize: 5
+  dbPoolSize: 4
   dbMaxOverflow: 1
 
   # ── Reverse proxy ───────────────────────────────────────────────────────

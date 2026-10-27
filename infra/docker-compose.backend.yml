@@ -83,13 +83,15 @@
 #   OZ_JWT_REFRESH_TOKEN_TTL_DAYS=7
 #   OZ_PROMETHEUS_URL=http://prometheus:9090
 #   OZ_FALKORDB_URL=redis://falkordb:6379  (required — FalkorDB is default graph)
-#   OZ_FALKORDB_MAX_CONNECTIONS=20
+#   OZ_FALKORDB_MAX_CONNECTIONS=10  (budget: 15 max Helm replicas x 10 = 150
+#   worst-case — Helm FalkorDB is external with no chart-managed maxclients,
+#   so the pool stays small instead of relying on the server default)
 #   OZ_FALKORDB_SOCKET_TIMEOUT=30
 #   OZ_SURREALDB_URL=          (empty default; key absent from the system
 #                              secret while unset, so the gate stays off)
 #   OZ_RATE_LIMIT_IP_MAX=10
 #   OZ_RATE_LIMIT_WINDOW_SEC=60
-#   OZ_DB_POOL_SIZE=5
+#   OZ_DB_POOL_SIZE=4
 #   OZ_DB_MAX_OVERFLOW=1
 #   OZ_TRUSTED_PROXY_IPS=172.28.0.0/24  (the compose network subnet)
 #
@@ -177,7 +179,7 @@ services:
       OZ_SMTP_START_TLS: "${OZ_SMTP_START_TLS:-true}"
       OZ_PROMETHEUS_URL: "${OZ_PROMETHEUS_URL:-http://prometheus:9090}"
       OZ_FALKORDB_URL: "${OZ_FALKORDB_URL:-redis://falkordb:6379}"
-      OZ_FALKORDB_MAX_CONNECTIONS: "${OZ_FALKORDB_MAX_CONNECTIONS:-20}"
+      OZ_FALKORDB_MAX_CONNECTIONS: "${OZ_FALKORDB_MAX_CONNECTIONS:-10}"
       OZ_FALKORDB_SOCKET_TIMEOUT: "${OZ_FALKORDB_SOCKET_TIMEOUT:-30}"
       # SurrealDB system URL — empty by default so the key is skipped by
       # init_openbao.sh (see KEY_MAPPING) and the org-config gate stays off.
@@ -187,8 +189,8 @@ services:
       OZ_RATE_LIMIT_WINDOW_SEC: "${OZ_RATE_LIMIT_WINDOW_SEC:-60}"
       # DB pool budget — replicas x (pool_size + max_overflow) must stay
       # below Postgres max_connections (100 by default).  The compose stack
-      # runs one api + one worker, so 5 + 1 per process is far inside it.
-      OZ_DB_POOL_SIZE: "${OZ_DB_POOL_SIZE:-5}"
+      # runs one api + one worker, so 4 + 1 per process is far inside it.
+      OZ_DB_POOL_SIZE: "${OZ_DB_POOL_SIZE:-4}"
       OZ_DB_MAX_OVERFLOW: "${OZ_DB_MAX_OVERFLOW:-1}"
       # Peers allowed to set X-Forwarded-For.  Defaults to the compose
       # network subnet (see the `networks` block) because the api sits
@@ -480,6 +482,12 @@ services:
     # (not allkeys-lru): DB 0 is shared between cache keys AND ARQ job +
     # dedup keys, so LRU eviction would silently drop queued/dedup state.
     # Capped writes fail loudly instead; size cache keys with TTLs.
+    # ⚠️ noeviction risk: when maxmemory is hit, EVERY write (including
+    # ARQ enqueues) errors until keys expire — watch `redis_memory_used`
+    # and the OpenZyncQueueBacklog alert, and grow maxmemory before
+    # raising result TTLs or dropping key TTLs.  A memory-usage alert
+    # (e.g. used_memory > 100MB sustained) belongs next to the queue
+    # alerts in infra/prometheus/alerts.yml.
     # Persistence: redis-data still holds RDB snapshots in /data; appendonly
     # coexists with RDB (no conflict), so AOF is on for job durability.
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "noeviction"]
@@ -685,6 +693,9 @@ services:
     container_name: openzync-falkordb
     ports: ["127.0.0.1:6381:6379"]
     environment:
+      # No --maxclients override: the server default (Redis-family 10000)
+      # dwarfs the app-side budget (15 max Helm replicas x pool 10 = 150),
+      # so the pool — not the server — is the binding constraint.
       REDIS_ARGS: "--appendonly yes"
     volumes:
       - falkordb-data:/data

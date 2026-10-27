@@ -92,7 +92,7 @@ def create_app() -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
         # ── Startup ───────────────────────────────────────────────────────
         db_engine = init_db_engine(str(settings.DATABASE_URL))
-        redis_client = await init_redis(str(settings.REDIS_URL))
+        redis_client = init_redis(str(settings.REDIS_URL))
         app.state.db_engine = db_engine
         app.state.redis = redis_client
         app.state.db_session_factory = get_async_session(db_engine)
@@ -130,6 +130,7 @@ def create_app() -> FastAPI:
                     settings.FALKORDB_URL,
                     max_connections=settings.FALKORDB_MAX_CONNECTIONS,
                     socket_timeout=settings.FALKORDB_SOCKET_TIMEOUT,
+                    socket_connect_timeout=5,  # hung TCP must fail fast
                     socket_keepalive=True,
                     decode_responses=True,
                 )
@@ -184,29 +185,38 @@ def create_app() -> FastAPI:
         else:
             logger.info("transit.webhook_secret_key_verified")
 
-        # ── Seed the platform org + root superadmin (degraded, not fatal)
-        # Idempotent: no-op when the SYSTEM org already exists.  A seed
-        # failure degrades loudly instead of aborting startup — the API
-        # still serves; /ready reports the degradation.
+        # ── Seed the platform org + root superadmin (leader-guarded) ────
+        # Idempotent (ON CONFLICT DO NOTHING) AND leader-guarded: exactly
+        # one API replica runs the seed, the rest log and skip.  The seed
+        # is race-safe without the lock, but the lock avoids N replicas
+        # hammering Postgres + OpenBao with the same writes at every
+        # rolling restart.
         try:
             from services.platform_seed import ensure_platform_root
 
-            async with app.state.db_session_factory() as seed_session:
-                await ensure_platform_root(seed_session, _bao)
-            logger.info("platform_seed.ensured")
+            seed_lock: bool = await redis_client.set(
+                "openzync:seed:platform_root", "1", ex=300, nx=True
+            )
+            if seed_lock:
+                async with app.state.db_session_factory() as seed_session:
+                    await ensure_platform_root(seed_session, _bao)
+                logger.info("platform_seed.ensured")
+            else:
+                logger.info("platform_seed.skipped — follower replica")
         except Exception as exc:
             app.state.degraded["platform_seed"] = str(exc)
             logger.exception("platform_seed.failed — degraded")
 
         # ── Prewarm the frozen embedder (degraded, not fatal) ───────────
         # DB/Redis/graph backends are up; prove Ollama /api/embed is
-        # reachable and run one warm inference before serving traffic.
+        # reachable and run one warm inference before serving traffic,
+        # with jittered retry for the Ollama cold-start window.
         # An unreachable Ollama degrades loudly (embedding calls 503
         # until it recovers) instead of aborting boot — /ready reports it.
-        from core.embeddings import prewarm_embeddings
+        from core.embeddings import prewarm_with_retry
 
         try:
-            await prewarm_embeddings()
+            await prewarm_with_retry()
         except Exception as exc:
             app.state.degraded["embeddings"] = str(exc)
             logger.error(

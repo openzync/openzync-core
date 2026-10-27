@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from sqlalchemy import or_, text, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1030,6 +1030,52 @@ class FactRepository:
 
         result = await self._db.execute(stmt)
         return list(result.scalars().all())
+
+    # ── Predicate Aggregates (behavioral patterns) ───────────────────────────
+
+    async def get_fact_predicate_counts(
+        self,
+        project_id: UUID,
+        organization_id: UUID,
+        effective_at: datetime,
+    ) -> list[Any]:
+        """Count effective facts per (subject entity, predicate).
+
+        Backs behavioral-pattern detection: predicates appearing at
+        least twice for one subject entity.  Both scopes are bound
+        parameters — never string-interpolated.
+
+        Args:
+            project_id: Project scope.
+            organization_id: Tenant scope (defense-in-depth alongside RLS).
+            effective_at: Point in time for the bitemporal validity filter.
+
+        Returns:
+            Row mappings with ``entity_id``, ``predicate``,
+            ``predicate_count`` and ``total_facts`` keys.
+        """
+        predicate_count = func.count().label("predicate_count")
+        stmt = (
+            select(
+                Fact.subject_entity_id.label("entity_id"),
+                Fact.predicate,
+                predicate_count,
+                func.count()
+                .over(partition_by=Fact.subject_entity_id)
+                .label("total_facts"),
+            )
+            .where(
+                Fact.project_id == project_id,
+                Fact.organization_id == organization_id,
+                Fact.subject_entity_id.is_not(None),
+                _effective_at_clause(effective_at),
+            )
+            .group_by(Fact.subject_entity_id, Fact.predicate)
+            .having(func.count() >= 2)
+            .order_by(Fact.subject_entity_id, predicate_count.desc())
+        )
+        result = await self._db.execute(stmt)
+        return list(result.mappings().all())
 
     # ── Soft Delete by User ──────────────────────────────────────────────────
 

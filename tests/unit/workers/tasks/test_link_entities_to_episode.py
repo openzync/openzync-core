@@ -45,6 +45,14 @@ class TestLinkEntitiesToEpisode:
     async def test_success(self) -> None:
         """Entity links created correctly for existing entities."""
         mock_backend = AsyncMock()
+        mock_backend.list_entities.return_value = {
+            "items": [
+                {"id": str(uuid4()), "name": "Alice"},
+                {"id": str(uuid4()), "name": "Bob"},
+            ],
+            "next_cursor": None,
+            "has_more": False,
+        }
         mock_backend.bulk_search_entities.return_value = [
             {"id": str(uuid4()), "name": "Alice", "entity_type": "person"},
             {"id": str(uuid4()), "name": "Bob", "entity_type": "person"},
@@ -79,6 +87,11 @@ class TestLinkEntitiesToEpisode:
     async def test_no_matching_entities(self) -> None:
         """No entities match content → still completes and sets bit."""
         mock_backend = AsyncMock()
+        mock_backend.list_entities.return_value = {
+            "items": [],
+            "next_cursor": None,
+            "has_more": False,
+        }
         mock_backend.bulk_search_entities.return_value = []
 
         with (
