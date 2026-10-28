@@ -69,9 +69,6 @@ logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-CONTEXT_CACHE_PATTERN = "ctx:{org_id}:{project_id}:*"
-"""Redis key pattern for context cache entries to invalidate."""
-
 ARQ_TASKS = [
     # Replaces classify_dialog, extract_entities, extract_facts,
     # and extract_structured.
@@ -728,9 +725,11 @@ class MemoryService:
                 organization or is archived (→ 404, nothing is deleted).
                 # ⚠️ BREAKING: cross-org wipes previously deleted by
                 # project_id alone; they are now rejected.
-                # S3/config failures never raise: rows commit first, the S3
-                # sweep is best-effort, and leftovers stay visible to the
-                # orphan-blob GC worker via the soft-deleted episodes.
+                # Storage-config failures raise (→ 502): rows are already
+                # committed, but the S3 sweep must never be silently
+                # skipped — leftovers stay visible to the orphan-blob GC
+                # worker via the soft-deleted episodes. Per-page S3
+                # failures below stay best-effort (log + stop the sweep).
         """
         if confirm != str(project_id):
             raise ValidationError(
@@ -760,38 +759,39 @@ class MemoryService:
         # episodes, which cleanup_orphan_blobs retries (S3 + row delete).
         await self._db.commit()
 
-        # Post-commit S3 sweep, best-effort per page. Blob rows are
-        # deliberately left for the orphan-blob GC worker, so a failure
-        # here only logs loudly and stops the sweep — leftovers stay
-        # GC-visible instead of becoming invisible S3 leaks.
+        # Post-commit S3 sweep — a config failure above raises loudly;
+        # per-page deletes stay best-effort. Blob rows are deliberately
+        # left for the orphan-blob GC worker, so a failure here only logs
+        # loudly and stops the sweep — leftovers stay GC-visible instead
+        # of becoming invisible S3 leaks.
+        from core.blob_storage import BlobStorage, BlobStorageConfig
         from services.blob_storage_service import BlobStorageService
 
         blobs_deleted = 0
-        offset = 0
-        storage_config: dict[str, Any] | None = None
+        last_id: UUID | None = None
+        try:
+            storage_config = await self._resolve_storage_config(org_id)
+        except Exception:
+            logger.exception(
+                "memory.wipe_storage_config_failed",
+                extra={
+                    "org_id": str(org_id),
+                    "project_id": str(project_id),
+                },
+            )
+            raise
+        # One S3 client for the whole sweep — not one per page.
+        storage = BlobStorage(BlobStorageConfig.from_org_config(storage_config))
+        blob_svc = BlobStorageService(self._db, self._blob_repo)
         while True:
-            page = await self._blob_repo.get_by_project(
-                project_id, limit=500, offset=offset
+            page = await self._blob_repo.get_by_project_after(
+                project_id, last_id, limit=500
             )
             if not page:
                 break
-            offset += len(page)
-            if storage_config is None:
-                try:
-                    storage_config = await self._resolve_storage_config(org_id)
-                except Exception:
-                    logger.exception(
-                        "memory.wipe_storage_config_failed",
-                        extra={
-                            "org_id": str(org_id),
-                            "project_id": str(project_id),
-                        },
-                    )
-                    break
+            last_id = page[-1].id
             try:
-                await BlobStorageService(self._db, self._blob_repo).delete_blobs(
-                    page, storage_config
-                )
+                await blob_svc.delete_blobs(page, storage_config, storage=storage)
             except Exception:
                 logger.exception(
                     "memory.wipe_blob_delete_failed",
@@ -1369,14 +1369,17 @@ class MemoryService:
         # Resolved once per ingest — not per blob.
         storage_config = await self._resolve_storage_config(org_id)
 
-        from core.blob_storage import BlobStorageConfig
+        from core.blob_storage import BlobStorage, BlobStorageConfig
 
         from services.blob_storage_service import (
             BlobStorageService,
             read_upload_bounded,
         )
 
-        max_bytes = BlobStorageConfig.from_org_config(storage_config).max_blob_bytes
+        config = BlobStorageConfig.from_org_config(storage_config)
+        max_bytes = config.max_blob_bytes
+        # One S3 client for the whole ingest — not one per episode.
+        storage = BlobStorage(config)
         # Stream per episode — read only the files each episode references
         # so peak RSS is one episode's blobs plus still-unconsumed shared
         # files, not the whole request. UploadFile.read() is a one-shot
@@ -1424,6 +1427,7 @@ class MemoryService:
                 uploaded_files=slots,
                 blob_metadatas=metas,
                 storage_config=storage_config,
+                storage=storage,
             )
             blob_records.extend(records)
             # Release shared files whose last referencing episode just
@@ -1521,33 +1525,29 @@ class MemoryService:
     async def _invalidate_context_cache(self, org_id: str, project_id: str) -> None:
         """Invalidate all context cache entries for a project.
 
-        Called after ingestion so that subsequent context-assembly
-        queries fetch fresh data from the database.
+        O(1) generation bump: every context key carries ``v{generation}``
+        (see :meth:`CacheService.build_context_cache_key`), so bumping
+        the ``ctxver:{org}:{project}`` counter retires all pre-ingest
+        entries at once — no SCAN+DEL loop.  Stale generations expire
+        via TTL.
 
-        Uses Redis ``SCAN`` + ``DEL`` to match the pattern
-        ``ctx:{org_id}:{project_id}:*``.
+        Called after ingestion so subsequent context-assembly queries
+        fetch fresh data from the database.  The caller treats failures
+        as best-effort (logged, never raised).
 
         Args:
             org_id: The organization UUID string.
             project_id: The project UUID string.
         """
-        pattern = CONTEXT_CACHE_PATTERN.format(org_id=org_id, project_id=project_id)
-        cursor: int = 0
-        deleted = 0
-        while True:
-            cursor, keys = await self._redis.scan(
-                cursor=cursor, match=pattern, count=100
-            )
-            if keys:
-                deleted += await self._redis.delete(*keys)
-            if cursor == 0:
-                break
-        if deleted > 0:
-            logger.debug(
-                "memory.context_cache_invalidated",
-                extra={
-                    "org_id": org_id,
-                    "project_id": project_id,
-                    "keys_deleted": deleted,
-                },
-            )
+        from services.cache_service import CacheService
+
+        key = CacheService.build_context_version_key(org_id, project_id)
+        new_version: int = await self._redis.incr(key)
+        logger.debug(
+            "memory.context_cache_invalidated",
+            extra={
+                "org_id": org_id,
+                "project_id": project_id,
+                "new_version": new_version,
+            },
+        )

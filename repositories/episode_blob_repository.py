@@ -232,6 +232,35 @@ class EpisodeBlobRepository:
         )
         return list(result.scalars().all())
 
+    async def get_by_project_after(
+        self,
+        project_id: UUID,
+        last_id: UUID | None,
+        limit: int = 500,
+    ) -> list[EpisodeBlob]:
+        """Get blobs for a project via keyset pagination.
+
+        Successor to :meth:`get_by_project` for sweeps over a mutating
+        set: ``OFFSET`` paging skips or repeats rows when rows disappear
+        mid-sweep (and re-scans from zero each page — O(n²)).  Keying on
+        ``WHERE id > last_id ORDER BY id`` returns each row exactly once
+        regardless of concurrent deletes.
+
+        Args:
+            project_id: The project UUID.
+            last_id: Exclusive lower bound from the previous page's last
+                row (``None`` for the first page).
+            limit: Max rows per page.
+
+        Returns:
+            List of ``EpisodeBlob`` instances ordered by ``id``.
+        """
+        stmt = select(EpisodeBlob).where(EpisodeBlob.project_id == project_id)
+        if last_id is not None:
+            stmt = stmt.where(EpisodeBlob.id > last_id)
+        result = await self._db.execute(stmt.order_by(EpisodeBlob.id).limit(limit))
+        return list(result.scalars().all())
+
     async def get_by_id(self, blob_id: UUID) -> EpisodeBlob | None:
         """Get a single blob by its UUID.
 

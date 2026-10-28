@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from core._version import __version__
 from core.embeddings import is_model_loaded
 from schemas.health import HealthResponse
+from services.health_service import get_pending_edge_sync_count as _edge_count
 
 logger = logging.getLogger(__name__)
 
@@ -97,20 +98,4 @@ async def _pending_edge_sync_count(request: Request) -> int | None:
     ``None`` when the count cannot be computed — /ready reports null
     instead of failing the probe.
     """
-    factory = getattr(request.app.state, "db_session_factory", None)
-    if factory is None:
-        return None
-    try:
-        from core import rls
-        from repositories.graph_relationship_repository import (
-            GraphRelationshipRepository,
-        )
-
-        async with factory() as session:
-            # Platform-wide scan — same bypass as the reconcile cron.
-            await rls.set_bypass_rls(session, True)
-            return await GraphRelationshipRepository(session).count_stale_edges()
-    except Exception:
-        logger.exception("readiness.pending_edge_sync_failed")
-        return None
-
+    return await _edge_count(getattr(request.app.state, "db_session_factory", None))

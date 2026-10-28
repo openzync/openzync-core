@@ -188,6 +188,9 @@ async def _purge_project_context(
         project_id: Project scope (cache key prefix).
     """
     await cache_service.invalidate_project_context(str(org_id), str(project_id))
+    # Bump the generation too: versioned ctx:..:v{gen} keys minted after the
+    # SCAN+DEL must not reuse the pre-purge generation.
+    await cache_service.bump_context_version(str(org_id), str(project_id))
 
 
 @dataclass(frozen=True)

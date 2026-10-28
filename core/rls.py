@@ -357,3 +357,13 @@ async def rls_bypass(db: AsyncSession) -> AsyncIterator[None]:
                 await db.rollback()
             except SQLAlchemyError:
                 logger.error("rls.bypass_reset_rollback_failed", exc_info=True)
+            # Re-assert 'false' on whatever transaction is now current:
+            # after a successful rollback the bypass is gone with the old
+            # transaction, and this pins the fresh one to 'false' so a
+            # pooled-session reuse can never observe a stuck bypass.
+            try:
+                await db.execute(
+                    text("SELECT set_config('app.bypass_rls', 'false', true)")
+                )
+            except SQLAlchemyError:
+                logger.error("rls.bypass_reset_reassert_failed", exc_info=True)

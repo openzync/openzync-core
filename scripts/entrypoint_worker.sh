@@ -25,19 +25,10 @@ log() { echo "[entrypoint_worker] $(date -Iseconds) $*"; }
 
 SECRETS_FILE="/run/secrets/system.env"
 TIMEOUT_SEC=90
-log "Waiting for OpenBao Agent to render secrets to ${SECRETS_FILE} ..."
-_i=0
-while [ "$_i" -lt "${TIMEOUT_SEC}" ]; do
-    if [ -s "${SECRETS_FILE}" ] && grep -q '^OZ_DATABASE_URL=' "${SECRETS_FILE}"; then
-        break
-    fi
-    _i=$((_i + 1))
-    sleep 1
-done
+. /app/scripts/wait_for_secrets.sh
 
-if [ "$_i" -ge "${TIMEOUT_SEC}" ]; then
-    log "FATAL: ${SECRETS_FILE} not rendered within ${TIMEOUT_SEC}s."
-    exit 1
+if ! wait_for_secrets "${SECRETS_FILE}" "${TIMEOUT_SEC}"; then
+  exit 1
 fi
 
 log "OpenBao Agent secrets ready. Sourcing ${SECRETS_FILE} ..."

@@ -267,9 +267,9 @@ async def _lookup_key_in_redis(
     cached = await redis.get(cache_key)
     if cached is not None:
         try:
-            # ⚠️: Data is stored as JSON string.  type: ignore is safe
-            # because we wrote it ourselves.
-            return cast("dict[str, Any]", orjson.loads(cached.encode()))
+            # Redis returns bytes — decode to str first (bytes has no .encode()).
+            raw = cached.decode("utf-8") if isinstance(cached, bytes) else cached
+            return cast("dict[str, Any]", orjson.loads(raw))
         except (orjson.JSONDecodeError, TypeError):
             logger.warning(
                 "Corrupted auth cache entry, ignoring", extra={"key": cache_key}

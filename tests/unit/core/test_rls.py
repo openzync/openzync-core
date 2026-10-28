@@ -272,6 +272,43 @@ class TestRlsBypass:
             "SELECT set_config('app.bypass_rls', 'false', true)"
         )
 
+    @pytest.mark.asyncio
+    async def test_bypass_reset_failure_rolls_back_and_repins_false(
+        self,
+    ) -> None:
+        """A failed reset rolls back and re-pins the bypass off.
+
+        The reset ``set_config('false')`` runs on a possibly-aborted
+        transaction, so it can itself raise: the bypass then dies with
+        the rolled-back transaction instead of lingering on a still-open
+        one, and the fresh transaction is re-pinned to ``'false'`` so a
+        pooled-session reuse can never observe a stuck bypass.
+        """
+        db = _FakeSession()
+        real_execute = db.execute
+        calls = {"count": 0}
+
+        async def _fail_on_reset(query: Any, params: Any | None = None) -> Any:
+            sql = str(query.text if hasattr(query, "text") else query)
+            if "bypass_rls', 'false'" in sql:
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    raise rls.SQLAlchemyError("connection lost")
+            return await real_execute(query, params)
+
+        db.execute = _fail_on_reset  # type: ignore[method-assign]
+
+        async with rls.rls_bypass(db):
+            pass
+
+        assert "rollback" in db.operations
+        # The first reset attempt raised before reaching the session log;
+        # the attempt counter proves it ran, the log proves the re-assert.
+        assert calls["count"] == 2, "reset attempted, then re-asserted"
+        assert db.executed[-1][0] == (
+            "SELECT set_config('app.bypass_rls', 'false', true)"
+        )
+
 
 class TestRlsAsyncSession:
     """``RlsAsyncSession`` — the tenant survives a commit and a rollback.

@@ -88,6 +88,8 @@ def is_allowed_upload_mime(mime_type: str) -> bool:
     Returns:
         ``True`` if ``extract_blob_text`` supports the type.
     """
+    # Total by construction: _dispatch_extraction handles every text/* and
+    # image/* subtype via its prefix branches, so no subtype list is needed.
     return (
         mime_type in _ALLOWED_UPLOAD_MIME_TYPES
         or mime_type.startswith("text/")
@@ -220,6 +222,7 @@ class BlobStorageService:
         uploaded_files: Sequence[UploadFile | bytes],
         blob_metadatas: Sequence[BlobMetadata],
         storage_config: dict[str, Any],
+        storage: BlobStorage | None = None,
     ) -> list[EpisodeBlob]:
         """Upload blobs to S3 and persist metadata in the DB.
 
@@ -241,6 +244,9 @@ class BlobStorageService:
                 schemas.  The ``blob_id`` indexes into ``uploaded_files``.
             storage_config: Flattened org storage config from
                 ``OrgConfigBase.to_blob_storage_config()``.
+            storage: Pre-built S3 client (batch callers build one per
+                ingest, not per episode).  Built from *storage_config*
+                when omitted.
 
         Returns:
             List of created ``EpisodeBlob`` ORM instances.
@@ -252,9 +258,14 @@ class BlobStorageService:
             PayloadTooLargeError: If any blob exceeds the size limit.
             S3StorageError: If the S3 upload fails.
         """
-        config = BlobStorageConfig.from_org_config(storage_config)
-        storage = BlobStorage(config)
-        max_bytes = config.max_blob_bytes
+        # Reuse the caller's client when provided (batch callers build one
+        # per ingest, not per episode) — otherwise build from config.
+        if storage is None:
+            config = BlobStorageConfig.from_org_config(storage_config)
+            storage = BlobStorage(config)
+            max_bytes = config.max_blob_bytes
+        else:
+            max_bytes = BlobStorageConfig.from_org_config(storage_config).max_blob_bytes
         settings = get_settings()
 
         if len(blob_metadatas) > settings.MAX_BLOBS_PER_REQUEST:
@@ -347,6 +358,7 @@ class BlobStorageService:
         self,
         blob_records: Sequence[EpisodeBlob],
         storage_config: dict[str, Any],
+        storage: BlobStorage | None = None,
     ) -> None:
         """Delete blobs from S3 storage.
 
@@ -358,6 +370,9 @@ class BlobStorageService:
             blob_records: List of EpisodeBlob ORM instances to delete.
             storage_config: Org storage config dict from
                 ``OrgConfigBase.to_blob_storage_config()``.
+            storage: Pre-built S3 client (batch callers build one per
+                sweep, not per page).  Built from *storage_config* when
+                omitted.
 
         Raises:
             S3StorageError: If any S3 delete fails.
@@ -365,8 +380,9 @@ class BlobStorageService:
         if not blob_records:
             return
 
-        config = BlobStorageConfig.from_org_config(storage_config)
-        storage = BlobStorage(config)
+        if storage is None:
+            config = BlobStorageConfig.from_org_config(storage_config)
+            storage = BlobStorage(config)
 
         # Bound concurrency: one S3 delete per blob, max 10 in flight —
         # an episode with hundreds of blobs must not fan out unbounded
