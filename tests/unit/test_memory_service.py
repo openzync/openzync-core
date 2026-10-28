@@ -161,7 +161,8 @@ class TestMemoryService:
         service._episode_repo.soft_delete_by_project.return_value = 5
         service._fact_repo.soft_delete_by_project.return_value = 3
         service._blob_repo = AsyncMock()
-        service._blob_repo.get_by_project.return_value = []
+        service._blob_repo.get_by_project_after.return_value = []
+        service._resolve_storage_config = AsyncMock(return_value={})
 
         with patch.object(service, "_invalidate_context_cache"):
             episodes, facts = await service.delete_project_memory(
@@ -181,8 +182,8 @@ class TestMemoryService:
         service._fact_repo.soft_delete_by_project.assert_awaited_once_with(
             self.PROJECT_ID, self.ORG_ID
         )
-        service._blob_repo.get_by_project.assert_awaited_once_with(
-            self.PROJECT_ID, limit=500, offset=0
+        service._blob_repo.get_by_project_after.assert_awaited_once_with(
+            self.PROJECT_ID, None, limit=500
         )
         service._blob_repo.delete_by_ids.assert_not_awaited()
 
@@ -712,24 +713,30 @@ class TestMemoryServiceInternal:
     async def test_invalidate_context_cache_with_keys(
         self, service: MemoryService,
     ) -> None:
-        """_invalidate_context_cache scans and deletes matching Redis keys."""
-        service._redis.scan.return_value = (0, ["key1", "key2"])
-        service._redis.delete.return_value = 2
+        """_invalidate_context_cache bumps the ctxver generation counter."""
+        service._redis.incr.return_value = 7
         await service._invalidate_context_cache(
             str(self.ORG_ID), str(self.PROJECT_ID),
         )
-        service._redis.scan.assert_awaited_once()
-        service._redis.delete.assert_awaited_once_with("key1", "key2")
+        service._redis.incr.assert_awaited_once_with(
+            f"ctxver:{self.ORG_ID}:{self.PROJECT_ID}"
+        )
+        service._redis.scan.assert_not_awaited()
+        service._redis.delete.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_invalidate_context_cache_empty(
         self, service: MemoryService,
     ) -> None:
-        """_invalidate_context_cache does nothing when no keys match."""
+        """_invalidate_context_cache is a single INCR — no SCAN/DELETE."""
+        service._redis.incr.return_value = 1
         await service._invalidate_context_cache(
             str(self.ORG_ID), str(self.PROJECT_ID),
         )
-        service._redis.scan.assert_awaited_once()
+        service._redis.incr.assert_awaited_once_with(
+            f"ctxver:{self.ORG_ID}:{self.PROJECT_ID}"
+        )
+        service._redis.scan.assert_not_awaited()
         service._redis.delete.assert_not_called()
 
 

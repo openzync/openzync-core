@@ -91,7 +91,19 @@ async def _resolve_existing_fact_refs(
     """
     from models.fact import Fact  # noqa: PLC0415 — lazy import
 
-    ids = {uuid.UUID(str(f["id"])) for f in existing_facts if f.get("id")}
+    ids: set[uuid.UUID] = set()
+    for fact_dict in existing_facts:
+        raw = fact_dict.get("id")
+        if raw is None:
+            continue
+        try:
+            ids.add(uuid.UUID(str(raw)))
+        except (ValueError, AttributeError, TypeError):
+            # Malformed id must not poison the whole task — skip and warn.
+            logger.warning(
+                "enrich_episode.malformed_fact_id_skipped",
+                raw_id=str(raw)[:64],
+            )
     if not ids:
         return {}
 

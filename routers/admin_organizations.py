@@ -36,6 +36,7 @@ from schemas.prompt_templates import (
     SystemPromptGroupsResponse,
 )
 from schemas.sorting import PromptSortBy, SortDir, SortSpec
+from services.prompt_template_service import PromptTemplateService
 
 # ── Router ─────────────────────────────────────────────────────────────────
 
@@ -240,21 +241,16 @@ async def set_prompt_template(
         disk default, import it first via ``POST /admin/org/prompts/import``
         and then edit the org-specific copy.
     """
-    repo = PromptTemplateRepository(db)
+    service = PromptTemplateService(db, redis=getattr(request.app.state, "redis", None))
 
-    # ── Create the org-specific override ────────────────────────────────
-    template = await repo.set_for_org(
+    # ── Create the org-specific override (cache dropped inside) ──────────
+    template = await service.set_override(
         org_id=uuid.UUID(org_id),
         name=name,
         text=body.template_text,
         desc=body.description,
         template_type=body.type,
     )
-
-    # ── Invalidate Redis cache for this template ────────────────────────
-    redis = getattr(request.app.state, "redis", None)
-    if redis is not None:
-        await redis.delete(f"prompt_template:{org_id}:{name}")
 
     return PromptTemplateDetail.model_validate(template)
 

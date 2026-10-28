@@ -21,17 +21,9 @@ log() { echo "[entrypoint_api] $(date -Iseconds) $*"; }
 
 log "Waiting for OpenBao Agent to render secrets to /run/secrets/system.env ..."
 
-i=0
-while [ "$i" -lt 90 ]; do
-  if [ -s /run/secrets/system.env ] && grep -q '^OZ_DATABASE_URL=' /run/secrets/system.env; then
-    break
-  fi
-  i=$((i + 1))
-  sleep 1
-done
+. /app/scripts/wait_for_secrets.sh
 
-if [ "$i" -ge 90 ]; then
-  log "FATAL: timed out (90s) waiting for /run/secrets/system.env — sidecar may be down or AppRole auth failing"
+if ! wait_for_secrets "/run/secrets/system.env" 90; then
   exit 1
 fi
 

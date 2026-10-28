@@ -24,6 +24,7 @@ import orjson
 import structlog
 
 from core.embeddings import CANONICAL_EMBED_DIM
+from core.exceptions import CacheUnavailableError
 from middleware.metrics import context_latency_seconds
 from packages.reranker import RerankerFactory
 from services.cache_service import CacheService
@@ -170,6 +171,19 @@ class ContextService:
         # ═══════════════════════════════════════════════════════════════════
         cache_key: str | None = None
         if self._cache is not None:
+            try:
+                version = await self._cache.get_context_version(
+                    str(self._org_id), str(project_id)
+                )
+            except CacheUnavailableError:
+                # Redis blip — fall back to generation "0"; the get below
+                # will miss the same way and we recompute from the DB.
+                logger.warning(
+                    "context.cache_version_unavailable",
+                    org_id=str(self._org_id),
+                    project_id=str(project_id),
+                )
+                version = "0"
             cache_key = self._cache.build_context_cache_key(
                 str(self._org_id),
                 str(project_id),
@@ -178,8 +192,18 @@ class ContextService:
                 sort=sort,
                 format=format,
                 limit=limit,
+                version=version,
             )
-            cached = await self._cache.get(cache_key)
+            try:
+                cached = await self._cache.get(cache_key)
+            except CacheUnavailableError:
+                # Redis blip is a miss, never a 500 — recompute from the DB.
+                logger.warning(
+                    "context.cache_read_unavailable",
+                    org_id=str(self._org_id),
+                    project_id=str(project_id),
+                )
+                cached = None
             if cached is not None:
                 elapsed = (time.monotonic() - start) * 1000
                 context_latency_seconds.labels(
@@ -310,7 +334,16 @@ class ContextService:
         if self._cache is not None and cache_key is not None:
             # Omit ttl — CacheService falls back to default_ttl, which was
             # seeded from the org's configured context_cache_ttl at __init__.
-            await self._cache.set(cache_key, context_str)
+            # Best-effort: a Redis blip must never turn a computed result
+            # into a 500 — the next request simply recomputes.
+            try:
+                await self._cache.set(cache_key, context_str)
+            except CacheUnavailableError:
+                logger.warning(
+                    "context.cache_write_unavailable",
+                    org_id=str(self._org_id),
+                    project_id=str(project_id),
+                )
 
         elapsed = (time.monotonic() - start) * 1000
         context_latency_seconds.labels(type="cold", org_id=str(self._org_id)).observe(

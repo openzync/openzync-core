@@ -370,7 +370,11 @@ async def test_set_prompt_template_success() -> None:
     app.state.redis = AsyncMock()
     app.state.redis.delete = AsyncMock()
 
-    with patch("routers.admin_organizations.PromptTemplateRepository") as repo_cls:
+    # Router delegates to PromptTemplateService, which looks the repo up
+    # in services.prompt_template_service — patch it at that lookup site.
+    with patch(
+        "services.prompt_template_service.PromptTemplateRepository"
+    ) as repo_cls:
         repo_instance = AsyncMock()
         repo_instance.set_for_org.return_value = _make_detail(
             name="custom_prompt",

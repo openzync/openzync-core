@@ -287,10 +287,11 @@ class CacheService:
         sort: str = "relevance",
         format: str = "text",  # noqa: A002
         limit: int = 20,
+        version: str = "0",
     ) -> str:
         """Build a namespaced cache key for context assembly results.
 
-        Format: ``ctx:{org}:{proj}[:{as_of}][:{sort}]:{fmt}:{lim}:{qhash}``
+        Format: ``ctx:{org}:{proj}:v{ver}[:{as_of}][:{sort}]:{fmt}:{lim}:{qhash}``
 
         The query is SHA-256 hashed to keep keys a bounded length
         regardless of query length.  An optional ``as_of`` ISO timestamp
@@ -299,9 +300,10 @@ class CacheService:
         non-default ``sort`` segment keeps relevance/recent orderings
         from colliding.  ``format`` and ``limit`` are always included —
         a cached ``text``/``limit=20`` result must never serve a
-        ``json``/``limit=50`` request.  The ``ctx:{org_id}:{project_id}:``
-        prefix is preserved so project-wide invalidation via
-        ``ctx:{org_id}:{project_id}:*`` keeps working.
+        ``json``/``limit=50`` request.  The ``v{version}`` segment is the
+        per-project cache generation: ingestion bumps it via
+        :meth:`bump_context_version` instead of SCAN+DEL, so invalidation
+        is O(1) and stale keys simply expire via TTL.
 
         Args:
             org_id: The organization UUID string.
@@ -314,12 +316,14 @@ class CacheService:
             format: Output format — ``"text"`` or ``"json"`` (always
                 included; no legacy omission).
             limit: Max items per source type (always included).
+            version: Per-project cache generation from
+                :meth:`get_context_version` (``"0"`` when unknown).
 
         Returns:
             A namespaced Redis key string.
         """
         query_hash = hashlib.sha256(query.encode("utf-8")).hexdigest()[:16]
-        parts = [f"ctx:{org_id}:{project_id}"]
+        parts = [f"ctx:{org_id}:{project_id}", f"v{version}"]
         if as_of is not None:
             parts.append(as_of)
         if sort != "relevance":
@@ -426,6 +430,89 @@ class CacheService:
             ) from exc
 
         return deleted
+
+    # ── Context cache generation (O(1) invalidation) ──────────────────────────
+
+    @staticmethod
+    def build_context_version_key(org_id: str, project_id: str) -> str:
+        """Build the Redis key holding a project's context cache generation.
+
+        Args:
+            org_id: The organization UUID string.
+            project_id: The project UUID string.
+
+        Returns:
+            A namespaced Redis key string (``ctxver:{org}:{proj}``).
+        """
+        return f"ctxver:{org_id}:{project_id}"
+
+    async def get_context_version(self, org_id: str, project_id: str) -> str:
+        """Return the project's current context cache generation.
+
+        Missing key means generation ``"0"`` (nothing ingested yet, or
+        the counter expired — plain ``INCR`` recreates it on next bump).
+
+        Args:
+            org_id: The organization UUID string.
+            project_id: The project UUID string.
+
+        Returns:
+            The generation string for :meth:`build_context_cache_key`.
+
+        Raises:
+            CacheUnavailableError: If Redis is unreachable.
+        """
+        key = self.build_context_version_key(org_id, project_id)
+        try:
+            from redis.asyncio import Redis as AsyncRedis
+
+            r: AsyncRedis = self._redis  # type: ignore[assignment]
+            raw = await r.get(key)
+        except Exception as exc:
+            logger.error(
+                "cache.version_read_failed",
+                extra={"key": key},
+                exc_info=True,
+            )
+            raise CacheUnavailableError(
+                f"Cache version read failed for key '{key}'."
+            ) from exc
+        if raw is None:
+            return "0"
+        return raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+
+    async def bump_context_version(self, org_id: str, project_id: str) -> int:
+        """Atomically bump the project's context cache generation.
+
+        O(1) invalidation: every key minted after this call carries the
+        new generation, so pre-bump entries are never read again and
+        expire via TTL — no SCAN+DEL.
+
+        Args:
+            org_id: The organization UUID string.
+            project_id: The project UUID string.
+
+        Returns:
+            The new generation number.
+
+        Raises:
+            CacheUnavailableError: If Redis is unreachable.
+        """
+        key = self.build_context_version_key(org_id, project_id)
+        try:
+            from redis.asyncio import Redis as AsyncRedis
+
+            r: AsyncRedis = self._redis  # type: ignore[assignment]
+            return int(await r.incr(key))
+        except Exception as exc:
+            logger.error(
+                "cache.version_bump_failed",
+                extra={"key": key},
+                exc_info=True,
+            )
+            raise CacheUnavailableError(
+                f"Cache version bump failed for key '{key}'."
+            ) from exc
 
     async def invalidate_project_context(
         self,

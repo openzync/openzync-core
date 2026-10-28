@@ -818,10 +818,8 @@ class HybridRetriever:
         Returns:
             A list of entity dicts with ``id``, ``name``, ``type``,
             ``summary``, and ``distance`` keys, deduplicated and sorted
-            by distance ascending.
-
-        Raises:
-            SearchLegFailedError: If any graph backend call fails.
+            by distance ascending.  A failing backend contributes no
+            results — it never fails the whole BFS leg.
         """
         if not self._graph_backends:
             logger.debug(
@@ -836,17 +834,31 @@ class HybridRetriever:
         # The graph BFS leg is now as-of-accurate: the same ``query_time``
         # the fact legs filter on is threaded through as ``as_of`` so a
         # historical query sees the graph exactly as it was at that
-        # instant, not the current topology.
-        results = await asyncio.gather(
-            *[
-                backend.retrieve_graph(
+        # instant, not the current topology.  Each backend is guarded
+        # individually — one backend down degrades that leg instead of
+        # killing the whole BFS.
+        async def _safe_retrieve(backend: Any) -> list[dict[str, Any]]:
+            try:
+                result: list[dict[str, Any]] = await backend.retrieve_graph(
                     org_id=self._org_id,
                     project_id=project_id,
                     query=query,
                     as_of=query_time,
                 )
-                for backend in self._graph_backends
-            ],
+            except Exception:
+                logger.warning(
+                    "hybrid_retriever.graph_backend_failed",
+                    extra={
+                        "org_id": str(self._org_id),
+                        "backend": type(backend).__name__,
+                    },
+                    exc_info=True,
+                )
+                return []
+            return result if isinstance(result, list) else []
+
+        results = await asyncio.gather(
+            *[_safe_retrieve(backend) for backend in self._graph_backends],
         )
 
         # Merge: deduplicate by id, keep first occurrence (lower distance wins)
@@ -868,7 +880,7 @@ class HybridRetriever:
                     )
                     continue
                 item_id = str(item_id)
-                if item_id and item_id not in seen:
+                if item_id not in seen:
                     seen.add(item_id)
                     merged.append(item)
 
@@ -917,9 +929,10 @@ class HybridRetriever:
 
         for ranked_list in ranked_lists:
             for rank, item in enumerate(ranked_list, start=1):
-                item_id = str(item["id"])
-                if not item_id:
+                raw = item.get("id")
+                if not raw:
                     continue
+                item_id = str(raw)
 
                 if item_id not in score_map:
                     score_map[item_id] = dict(item)

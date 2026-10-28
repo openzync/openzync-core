@@ -507,15 +507,15 @@ services:
   # Uses the local-db profile (same as Postgres) since it's a dev dependency.
   minio:
     profiles: [local-db]
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     container_name: openzync-minio
     command: server /data --console-address ":9001"
     ports:
       - "127.0.0.1:9000:9000"
       - "127.0.0.1:9001:9001"
     environment:
-      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
-      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minioadmin}"
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}"
     volumes:
       - minio-blob-data:/data
     # mc ready won't work — mc isn't in the minio image. Use the live endpoint.
@@ -530,7 +530,7 @@ services:
   # ── MinIO init (one-shot — create bucket + versioning + lifecycle) ─────────
   minio-init:
     profiles: [local-db]
-    image: minio/mc:latest
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
     container_name: openzync-minio-init
     depends_on:
       minio:
@@ -540,7 +540,7 @@ services:
       - -c
       - |
         sleep 3
-        mc alias set local http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-minioadmin}
+        mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD}
 
         # Create bucket (idempotent)
         mc mb --ignore-existing local/openzync-blobs
@@ -577,8 +577,8 @@ services:
 
         echo "MinIO bucket 'openzync-blobs' ready with versioning and lifecycle."
     environment:
-      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
-      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minioadmin}"
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}"
     logging: *default-logging
     restart: "no"
 
@@ -648,7 +648,7 @@ services:
   # ── Grafana Alloy (OpenTelemetry collector) — OPTIONAL ───────────────────
   alloy:
     profiles: [observability]
-    image: grafana/alloy:latest
+    image: grafana/alloy:v1.7.5
     ports:
       - "4317:4317"
       - "12345:12345"

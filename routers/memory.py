@@ -36,6 +36,7 @@ from fastapi import (
 from pydantic import ValidationError
 
 from core.audit import audit_action
+from core.blob_storage import BlobStorage
 from core.exceptions import (
     PayloadTooLargeError,
 )
@@ -47,6 +48,10 @@ from schemas.memory import (
     DeleteMemoryConfirm,
     IngestMemoryRequest,
     IngestMemoryResponse,
+)
+from services.blob_storage_service import (
+    is_allowed_upload_mime,
+    normalize_upload_mime,
 )
 from services.idempotency_service import IdempotencyService
 from services.memory_service import MemoryService
@@ -161,6 +166,19 @@ async def ingest_messages(
         )
     total_bytes = 0
     for blob in blobs:
+        # Boundary validation before any bytes are read: reject unsupported
+        # types with 422 and sanitize the client-supplied filename so
+        # nothing downstream sees a path traversal or NUL byte.  Reuses
+        # the blob-storage allowlist — never duplicated here.
+        blob.filename = BlobStorage.sanitize_file_name(blob.filename or "unnamed")
+        mime_type = normalize_upload_mime(
+            blob.content_type or "application/octet-stream"
+        )
+        if not is_allowed_upload_mime(mime_type):
+            raise DomainValidationError(
+                f"Unsupported upload MIME type {mime_type!r} "
+                f"for file {blob.filename!r}",
+            )
         size = blob.size
         if size is None:
             size = await asyncio.to_thread(_measure_spooled_size, blob)

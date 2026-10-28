@@ -92,3 +92,42 @@ async def auth_client_org_c(
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         client.headers["Authorization"] = f"Bearer {tenants['c']['api_key']}"
         yield client
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def jwt_client_org_a(
+    isolated_app: Any, tenants: dict[str, dict[str, Any]]
+) -> AsyncGenerator[AsyncClient, None]:
+    """HTTP client authenticated as org A's admin (JWT, wildcard permissions).
+
+    Org user management (``POST/GET/PATCH/DELETE /v1/users*``) requires
+    ``members:*`` — project-scoped API keys carry project-only
+    permissions, so user seeding and user-endpoint assertions go through
+    the bootstrap admin JWT.
+    """
+    transport = asgi_transport(isolated_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers["Authorization"] = f"Bearer {tenants['a']['jwt']}"
+        yield client
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def jwt_client_org_b(
+    isolated_app: Any, tenants: dict[str, dict[str, Any]]
+) -> AsyncGenerator[AsyncClient, None]:
+    """HTTP client authenticated as org B's admin (JWT, wildcard permissions)."""
+    transport = asgi_transport(isolated_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers["Authorization"] = f"Bearer {tenants['b']['jwt']}"
+        yield client
+
+
+@pytest_asyncio.fixture(loop_scope="function")
+async def jwt_client_org_c(
+    isolated_app: Any, tenants: dict[str, dict[str, Any]]
+) -> AsyncGenerator[AsyncClient, None]:
+    """HTTP client authenticated as org C's admin (JWT, wildcard permissions)."""
+    transport = asgi_transport(isolated_app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        client.headers["Authorization"] = f"Bearer {tenants['c']['jwt']}"
+        yield client
