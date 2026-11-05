@@ -26,6 +26,9 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from redis.asyncio import BlockingConnectionPool
 
+from core.addons.guard import install_db_guard, install_rls_guard
+from core.addons.loader import discover_and_load
+from core.addons.middleware import AddonMiddleware
 from core.arq import close_arq, init_arq
 from core.config import get_settings
 from core.db import close_db_engine, get_async_session, init_db_engine
@@ -42,6 +45,7 @@ from middleware.request_id import RequestIDMiddleware
 from middleware.tracing import TracingMiddleware
 from routers import (
     admin,
+    admin_addons,
     admin_invites,
     admin_llm_usage,
     admin_metrics,
@@ -226,6 +230,21 @@ def create_app() -> FastAPI:
         else:
             logger.info("embeddings.prewarmed")
 
+        # ── Load enterprise addons (hot-reloadable, core-only) ──────────
+        # The RLS-bypass guard installs first so addon modules resolve the
+        # denying wrappers; each addon then fails independently into
+        # app.state.degraded — a bad bundle never blocks boot. Routers
+        # mount at /v1/ext/{id} during discovery (lifespan runs before
+        # serving, so late route registration is safe).
+        install_rls_guard()
+        install_db_guard()
+        try:
+            loaded = await discover_and_load(app)
+        except Exception:
+            loaded = []
+            logger.exception("addons.discovery_failed")
+        logger.info("addons.loaded", extra={"addons": loaded})
+
         yield
 
         # ── Shutdown (reverse order of initialisation) ────────────────────
@@ -267,6 +286,7 @@ def create_app() -> FastAPI:
     #   1. LoggingMiddleware
     #   2. TracingMiddleware
     #   3. AuthMiddleware       — sets org_id
+    #   3.5 AddonMiddleware    — inside Auth (sees org_id), dispatches live
     #   4. MetricsMiddleware    — reads org_id (moved inside Auth to be org-scoped)
     #   5. RateLimitMiddleware  — reads org_id
     #   6. AuditMiddleware
@@ -323,6 +343,11 @@ def create_app() -> FastAPI:
     # (Moved inside Auth — previously outermost, could not see org_id.)
     app.add_middleware(MetricsMiddleware)
 
+    # Runtime 3.5 — Addon slot: registered BEFORE Auth so it runs AFTER Auth
+    # (inside it, with org_id set). Single stable entry — hot-loaded addon
+    # middlewares dispatch through it at request time (no stack rebuild).
+    app.add_middleware(AddonMiddleware)
+
     # Runtime 3 — Auth: extract/validate JWT & API key, set request state.
     app.add_middleware(AuthMiddleware)
 
@@ -360,6 +385,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_org_code.router)
     app.include_router(admin_invites.router)
     app.include_router(admin_system.router)
+    app.include_router(admin_addons.router)
     app.include_router(org_requests.router)
     app.include_router(audit_log.router)
     app.include_router(auth.router)

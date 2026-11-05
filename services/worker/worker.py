@@ -109,6 +109,7 @@ logger: structlog.stdlib.BoundLogger = structlog.get_logger("OpenZync.worker")
 
 from services.worker.tasks.audit_log import write_audit_log
 from services.worker.tasks.deliver_webhook import MAX_ATTEMPTS, deliver_webhook
+from workers.addon_dispatch import addon_dispatch
 from workers.tasks.cleanup_orphan_blobs import cleanup_orphan_blobs
 from workers.tasks.compute_observations import compute_observations
 from workers.tasks.embed_episode import embed_episode
@@ -145,6 +146,7 @@ LOW_QUEUE_TASKS: list[Callable[..., Awaitable[Any]]] = [
     reconcile_temporal,  # warn-only temporal consistency scan — daily cron
     cleanup_orphan_blobs,  # orphaned S3 blobs for soft-deleted episodes — daily cron
     extract_blob_text,  # blob text extraction — OCR/PDF, low priority
+    addon_dispatch,  # single stable entry for all addon tasks (hot-reloadable)
 ]
 """Tasks assigned to the low-priority queue (scheduled batch)."""
 
@@ -755,7 +757,41 @@ async def main() -> NoReturn:
         "surreal_connection_pool": surreal_pool,
         "falkordb_client": falkordb_client,
         "openbao_client": _openbao_client,
+        "addon_tasks": {},
+        "addon_state": {},
     }
+
+    # ── Load addon task snapshots (worker-side, tasks only) ─────────────
+    # Same bundles as the API, same signature verification, no router
+    # mounting. Each addon fails independently; dispatch drains disabled
+    # addons via the Redis mirror flag (see workers/addon_dispatch.py).
+    from core.addons.guard import install_rls_guard
+    from core.addons.loader import ADDONS_DIR, load_record_from_dir
+
+    install_rls_guard()
+    try:
+        _secret = await _openbao_client.read_secret("addon/signing-pubkey")
+        _pubkey = ""
+        if isinstance(_secret, dict):
+            _pubkey = str(_secret.get("public_key", "") or _secret.get("value", ""))
+        if ADDONS_DIR.is_dir():
+            for _child in sorted(ADDONS_DIR.iterdir()):
+                if not _child.is_dir() or not (_child / "addon.toml").is_file():
+                    continue
+                try:
+                    _record = await load_record_from_dir(_child, _pubkey)
+                except Exception:
+                    logger.error(
+                        "worker.addon_skipped",
+                        extra={"addon_dir": str(_child)},
+                        exc_info=True,
+                    )
+                    continue
+                for _task_name, _fn in _record.worker_tasks.items():
+                    worker_ctx["addon_tasks"][(_record.id, _task_name)] = _fn
+                worker_ctx["addon_state"][_record.id] = True
+    except Exception:
+        logger.error("worker.addons_load_failed", exc_info=True)
 
     logger.info(
         "worker.db_engine_created",

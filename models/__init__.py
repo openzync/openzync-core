@@ -1,5 +1,6 @@
 """OpenZync ORM models — all models imported here for Alembic detection."""
 
+from models.addon_state import AddonState
 from models.api_key import ApiKey
 from models.audit_log import AuditLog
 from models.base import Base, CreatedAtMixin, TimestampMixin
@@ -28,6 +29,7 @@ __all__: list[str] = [
     "Base",
     "TimestampMixin",
     "CreatedAtMixin",
+    "AddonState",
     "Organization",
     "Project",
     "ProjectMember",
